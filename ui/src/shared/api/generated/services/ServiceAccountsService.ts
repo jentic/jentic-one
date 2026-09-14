@@ -74,7 +74,11 @@ export class ServiceAccountsService {
     }
     /**
      * Archive Service Account
-     * Soft-archive a service account — revokes scope grants.
+     * Archive a service account — terminal-but-kept.
+     *
+     * The row is retained for history, but the action is not reversible and
+     * the account's scope grants are revoked. For the reversible kill switch
+     * use ``:disable`` / ``:enable`` instead.
      * @returns void
      * @throws ApiError
      */

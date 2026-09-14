@@ -6,11 +6,12 @@ injected the credential the harness expects (the harness only checks presence �
 ``{"authenticated": true, "scheme": …}``).
 
 The negative tests fire at distinct pipeline stages (SSRF → discovery →
-toolkit → credential), pinning the broker's gating order:
+binding → rules), pinning the direct-binding gating order (theme-5 Phase 5b —
+direct bindings are the default broker path):
 
-- no credential  → 424 ``credential_not_provisioned``
-- no toolkit bind → 403 ``no_toolkit_binding``
-- unindexed URL   → ``operation_not_found`` (discovery gate, before toolkit)
+- no binding       → 403 ``no_credential_binding``
+- binding, no rules → 403 (zero rules default-deny)
+- unindexed URL    → ``operation_not_found`` (discovery gate, before bindings)
 
 The ``complex`` scheme (two headers) needs multi-credential injection the broker
 doesn't do per vendor — skipped here, tracked as a follow-up.
@@ -28,9 +29,8 @@ from tests.smoke.conftest import (
     HarnessApi,
     SmokeAgent,
     _skip_if_no_admin_surface,
-    authed_request,
     broker_call,
-    provision_toolkit_and_credential,
+    provision_bound_credential,
 )
 
 
@@ -59,7 +59,7 @@ def test_bearer_injection(
 ) -> None:
     """A bearer_token credential is injected as ``Authorization: Bearer …``."""
     _skip_if_no_admin_surface()
-    provision_toolkit_and_credential(
+    provision_bound_credential(
         base_url,
         test_agent,
         credential_body={
@@ -88,7 +88,7 @@ def test_api_key_injection(
 ) -> None:
     """An api_key credential is injected into the ``X-Api-Key`` header."""
     _skip_if_no_admin_surface()
-    provision_toolkit_and_credential(
+    provision_bound_credential(
         base_url,
         test_agent,
         credential_body={
@@ -119,7 +119,7 @@ def test_basic_injection(
 ) -> None:
     """A basic credential is injected as ``Authorization: Basic …``."""
     _skip_if_no_admin_surface()
-    provision_toolkit_and_credential(
+    provision_bound_credential(
         base_url,
         test_agent,
         credential_body={
@@ -156,7 +156,7 @@ def test_oauth2_injection(
     cover injection mechanics.
     """
     _skip_if_no_admin_surface()
-    provision_toolkit_and_credential(
+    provision_bound_credential(
         base_url,
         test_agent,
         credential_body={
@@ -194,57 +194,51 @@ def test_oauth2_injection(
 
 
 @pytest.mark.smoke
-def test_no_credential_returns_424(
+def test_binding_without_rules_is_denied(
     base_url: str,
     broker_url: str,
     test_agent: SmokeAgent,
     harness_api: HarnessApi,
     upstream_incluster_url: str,
 ) -> None:
-    """Toolkit bound but no credential → broker 424 credential_not_provisioned.
+    """A direct binding with zero permission rules default-denies (403).
 
-    The credential gate fires *after* discovery + toolkit selection, so binding a
-    toolkit isolates the missing-credential case.
+    The rule gate fires *after* binding resolution, so binding a credential
+    with an empty rule list isolates the default-deny case from the
+    missing-binding one below.
     """
     _skip_if_no_admin_surface()
-    # Bind a toolkit to the agent (passes select_toolkit) but create no credential.
-    tk, st = authed_request(
-        f"{base_url}/toolkits",
-        method="POST",
-        token=test_agent.owner_token,
-        body={"name": f"smoke-tk-{uuid.uuid4().hex[:12]}"},
+    provision_bound_credential(
+        base_url,
+        test_agent,
+        credential_body={
+            "type": "bearer_token",
+            "name": f"smoke-norules-{uuid.uuid4().hex[:8]}",
+            "api": _api_ref(harness_api),
+            "provider": "static",
+            "token": f"smoke-bearer-{uuid.uuid4().hex[:16]}",
+        },
+        rules=[],  # deliberately rule-less → default-deny
     )
-    assert st == 201 and isinstance(tk, dict), f"Toolkit creation failed: {st} {tk}"
-    toolkit_id = tk["toolkit"]["toolkit_id"]
-    _, st = authed_request(
-        f"{base_url}/agents/{test_agent.agent_id}/toolkits",
-        method="POST",
-        token=test_agent.owner_token,
-        body={"toolkit_id": toolkit_id},
-    )
-    assert st == 201, f"Toolkit bind failed: {st}"
-
     raw, status, _ = broker_call(
         broker_url,
         f"{upstream_incluster_url}/auth/bearer",
         token=test_agent.access_token,
     )
-    assert status == 424, f"expected 424, got {status}: {raw!r}"
-    body: dict[str, Any] = json.loads(raw)
-    assert body.get("type") == "credential_not_provisioned", body
+    assert status == 403, f"expected 403, got {status}: {raw!r}"
 
 
 @pytest.mark.smoke
-def test_no_toolkit_binding_returns_403(
+def test_no_credential_binding_returns_403(
     broker_url: str,
     test_agent: SmokeAgent,
     harness_api: HarnessApi,
     upstream_incluster_url: str,
 ) -> None:
-    """Ingested but no toolkit bound → broker 403 no_toolkit_binding.
+    """Ingested but nothing bound → broker 403 no_credential_binding.
 
     Depends on ``harness_api`` (so the op is discoverable) but provisions no
-    toolkit, so ``select_toolkit`` fails before credential resolution.
+    credential, so direct-binding resolution fails before injection.
     """
     _skip_if_no_admin_surface()
     raw, status, _ = broker_call(
@@ -254,7 +248,7 @@ def test_no_toolkit_binding_returns_403(
     )
     assert status == 403, f"expected 403, got {status}: {raw!r}"
     body: dict[str, Any] = json.loads(raw)
-    assert body.get("type") == "no_toolkit_binding", body
+    assert body.get("type") == "no_credential_binding", body
 
 
 @pytest.mark.smoke
@@ -267,7 +261,7 @@ def test_unregistered_url_returns_operation_not_found(
     """A harness URL that isn't an indexed op → broker operation_not_found.
 
     ``/health`` exists on the harness but isn't in the ingested spec, so discovery
-    returns None before any toolkit/credential check (404-class).
+    returns None before any binding/credential check (404-class).
     """
     _skip_if_no_admin_surface()
     raw, status, _ = broker_call(

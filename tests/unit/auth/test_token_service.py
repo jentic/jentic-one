@@ -671,7 +671,7 @@ async def test_refresh_unapproved_issuing_client_rejected(
     mock_client_repo.get_by_client_id = AsyncMock(return_value=client_row)
 
     svc = TokenService(ctx)
-    with pytest.raises(InvalidGrantError, match="deactivated"):
+    with pytest.raises(InvalidGrantError, match="not active"):
         await svc.refresh("rt_pendingclient", client_id="oc_pending")
 
     mock_at_repo.create.assert_not_called()

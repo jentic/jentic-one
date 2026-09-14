@@ -12,7 +12,11 @@ from datetime import UTC, datetime, timedelta
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from jentic_one.admin.core.permissions import ALL_PERMISSIONS
+from jentic_one.admin.core.permissions import (
+    AGENTS_WRITE,
+    ALL_PERMISSIONS,
+    compute_effective,
+)
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.repos import (
     ActorScopeGrantRepository,
@@ -88,6 +92,19 @@ class AgentConsentOption:
     id: str
     name: str
     scopes: frozenset[str]
+
+
+@dataclass(frozen=True, slots=True)
+class PendingAgentRef:
+    """The newest PENDING agent owned by the consenting user (P4 hybrid).
+
+    Carries only what the awaiting-approval page needs — the id the status
+    blob is bound to and the display name. Deliberately no scopes: a pending
+    agent has no live grants until an admin approves it.
+    """
+
+    id: str
+    name: str
 
 
 class AuthorizeService:
@@ -281,6 +298,70 @@ class AuthorizeService:
                 )
                 for agent in agents
             ]
+
+    async def owner_has_any_agents(self, user_id: str) -> bool:
+        """Whether the user owns ANY agent row, in any status.
+
+        The inline create-agent arm (P4) keys on this, NOT on the active-only
+        picker predicate above: a user whose agents were all disabled or
+        archived by an admin has zero *consentable* agents but is not a
+        first-run user — offering the create form there would let the owner
+        mint a fresh ACTIVE agent mid-flow and sidestep the admin's action.
+        "First run" means zero agent rows, ever.
+        """
+        async with self._ctx.admin_db.session() as session:
+            agents = await AgentRepository.list_by_owner(session, user_id, limit=1)
+            return bool(agents)
+
+    async def user_can_create_active_agent(self, user_id: str) -> bool:
+        """Whether the consenting user would pass POST /agents' ``agents:write`` gate.
+
+        The inline consent creation must not out-privilege the SPA door
+        (security review on P4): every authenticated agent-creation surface
+        requires ``agents:write``, so the mid-flow arm split keys on the SAME
+        math the web gate applies — the user's assigned permission grants
+        expanded through the static implication map (``org:admin`` implies
+        ``agents:write`` there, exactly as ``get_current_identity``'s
+        ``compute_effective`` + org:admin check would admit that caller).
+        Evaluated server-side against the consent handle's subject; the
+        browser asserts nothing.
+        """
+        async with self._ctx.admin_db.session() as session:
+            grants = await UserPermissionGrantRepository.get_grants_for_user(session, user_id)
+        effective = compute_effective({g.permission for g in grants})
+        return AGENTS_WRITE in effective
+
+    async def newest_pending_agent(self, user_id: str) -> PendingAgentRef | None:
+        """The user's newest ``status='pending'`` agent, or None.
+
+        The consent page's awaiting-approval arm (P4 hybrid) keys on this: a
+        user whose only agents sit in PENDING is mid-approval (the inline
+        create's pending arm, or the ``/register`` queue), so re-entering the
+        flow parks them on the awaiting page for the newest one instead of a
+        dead end. Newest-first mirrors the picker's ordering.
+        """
+        async with self._ctx.admin_db.session() as session:
+            agents = await AgentRepository.list_by_owner(
+                session,
+                user_id,
+                limit=1,
+                filters=[Agent.status == ActorStatus.PENDING.value],
+            )
+        if not agents:
+            return None
+        return PendingAgentRef(id=agents[0].id, name=agents[0].name)
+
+    async def get_agent_status(self, agent_id: str) -> str | None:
+        """The raw lifecycle status of an agent row, or None when absent.
+
+        Read path for the anonymous pending-agent status poll: the caller
+        (web layer) collapses it into the tri-state and never exposes more —
+        the blob gating the poll is bound to one agent id, so this can only
+        ever be asked about the agent the flow itself parked on.
+        """
+        async with self._ctx.admin_db.session() as session:
+            agent = await AgentRepository.get_by_id(session, agent_id)
+        return None if agent is None else agent.status
 
     async def issue_authorization_code(
         self,

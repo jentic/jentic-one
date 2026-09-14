@@ -77,7 +77,9 @@ def test_jwt_bearer_grant_missing_assertion(
     )
     assert resp.status_code == 400
     data = resp.json()
-    assert data["type"] == "invalid_grant"
+    # §5.2: a missing parameter is invalid_request (reshaped by _TokenRoute)
+    # — not invalid_grant, and never Problem Details.
+    assert data["error"] == "invalid_request"
 
 
 @patch("jentic_one.auth.web.routers.oauth.AssertionService")
@@ -104,7 +106,8 @@ def test_jwt_bearer_grant_invalid_assertion(
     )
     assert resp.status_code == 400
     data = resp.json()
-    assert data["type"] == "invalid_grant"
+    assert data["error"] == "invalid_grant"
+    assert data["error_description"] == "Assertion is invalid"
 
 
 @patch("jentic_one.auth.web.routers.oauth.AssertionService")
@@ -122,4 +125,6 @@ def test_unsupported_grant_type_returns_400(
     )
     assert resp.status_code == 400
     data = resp.json()
-    assert data["type"] == "invalid_grant"
+    # Missing credentials on a SUPPORTED grant type is a §5.2 invalid_request
+    # (missing required parameter), not unsupported_grant_type.
+    assert data["error"] == "invalid_request"

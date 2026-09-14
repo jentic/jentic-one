@@ -18,6 +18,7 @@ import {
 	type CredentialFormState,
 } from '@/shared/credentials/components/CredentialTypeFields';
 import { buildUpdateBody, validateUpdate } from '@/shared/credentials/lib/formBody';
+import { BoundAgentsSection } from '@/shared/credentials/components/BoundAgentsSection';
 
 interface EditCredentialSheetProps {
 	credentialId: string | null;
@@ -228,6 +229,10 @@ export function EditCredentialSheet({
 									</Button>
 								</div>
 							)}
+
+							{/* Direct agent bindings (theme 5 phase 5a) — read-only
+							    roster; management lives on each agent's Access tab. */}
+							<BoundAgentsSection credentialId={cred.credential_id} open={open} />
 
 							{updateMutation.isError && (
 								<ErrorAlert message={updateMutation.error} />

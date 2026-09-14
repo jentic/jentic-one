@@ -17,7 +17,7 @@ exit: 2
 }
 --- stderr ---
 Denied — recovery required:
-  No credential is provisioned for this call. Provision one, then retry.
-  run: jentic access request --toolkit <vendor/name> --provision --wait
+  No credential is provisioned for this call. File a provisioning plan, then retry.
+  run: jentic access request --provision <vendor/name> --wait
   stuck? jentic doctor
 {"details":{"http_status":424},"error":"the broker denied this call before it reached the upstream API","error_code":"BROKER_DENIED","schema_version":"1"}

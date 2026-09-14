@@ -203,7 +203,11 @@ async def test_jwt_without_actor_type_fails_closed(
 async def test_jwt_claiming_toolkit_actor_type_is_rejected(
     admin_db: DatabaseSession, clean_access_tokens: None
 ) -> None:
-    """A signed JWT can't mint a toolkit identity with zero DB backing (#868)."""
+    """A signed JWT can't mint a toolkit identity with zero DB backing (#868).
+
+    ``toolkit`` is retired from the actor-type enum (theme-5 Phase 4), so the
+    claim is refused as an unknown actor type — still a typed 401.
+    """
     exp = int((datetime.now(UTC) + timedelta(minutes=2)).timestamp())
     token = jwt.encode(
         {"sub": "tk_x", "exp": exp, "actor_type": "toolkit"},
@@ -211,7 +215,7 @@ async def test_jwt_claiming_toolkit_actor_type_is_rejected(
         algorithm="HS256",
     )
 
-    with pytest.raises(TokenValidationError, match="jwt_actor_type_not_allowed"):
+    with pytest.raises(TokenValidationError, match="jwt_actor_type_unknown"):
         await _dual(admin_db).validate(token)
 
 

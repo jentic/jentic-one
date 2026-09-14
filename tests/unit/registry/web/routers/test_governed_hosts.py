@@ -35,7 +35,7 @@ class _StubService:
 def client() -> TestClient:
     app = FastAPI()
     app.include_router(governed_hosts.router)
-    identity = Identity(sub="agt_test", permissions=["toolkits:read"])
+    identity = Identity(sub="agt_test", permissions=["credentials:read"])
     app.dependency_overrides[resolve_identity] = lambda: identity
     app.dependency_overrides[get_governed_hosts_service] = lambda: _StubService()
     return TestClient(app, headers={"Authorization": "Bearer test-token"})

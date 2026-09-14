@@ -610,6 +610,34 @@ describe('AgentRail — shell-mounted live surface', () => {
 		).toBeInTheDocument();
 	});
 
+	it('is a containing block, so sr-only descendants cannot leak scroll height (phantom-scroll pin)', async () => {
+		// Regression pin: feed rows carry `sr-only` spans (position: absolute).
+		// Absolute boxes are clipped only by CONTAINING-BLOCK ancestors — the
+		// aside's static `overflow-hidden` didn't qualify, so those spans
+		// escaped to the shell's sticky wrapper and added ~240px of phantom
+		// document scroll on short pages, dragging the whole rail up with the
+		// scroll (seen on Settings/Toolkits; Workspace masked it with tall
+		// content). The aside must be `position: relative`, which both clips
+		// the escapees and keeps them out of the document's scroll overflow.
+		// The shell caps the rail at viewport height; reproduce that constraint
+		// here — an unconstrained aside would grow to fit and pass vacuously.
+		renderRail(
+			<div style={{ display: 'flex', height: '320px' }}>
+				<AgentRail />
+			</div>,
+		);
+		const aside = await screen.findByRole('complementary', { name: 'Agent rail' });
+		await screen.findByText(/Execution failed: slack\.postMessage/i);
+		expect(getComputedStyle(aside).position).toBe('relative');
+		// And the observable consequence: a 320px-tall rail must not give the
+		// DOCUMENT any scroll height beyond the viewport. Without `relative`,
+		// the sr-only boxes anchor to the initial containing block and extend
+		// the page's scrollable overflow (the phantom scroll from the bug).
+		// (In-flow feed rows may have rects past the aside — they're inside the
+		// feed's own scroll container — so we pin the document, not the rects.)
+		expect(document.documentElement.scrollHeight).toBeLessThanOrEqual(window.innerHeight);
+	});
+
 	it('collapses and persists the collapsed state to localStorage', async () => {
 		const user = userEvent.setup();
 		renderRail(<AgentRail />);

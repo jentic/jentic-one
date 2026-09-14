@@ -159,7 +159,9 @@ def test_third_party_client_without_secret_is_rejected(
     )
 
     assert resp.status_code == 400
-    assert resp.json()["type"] == "invalid_grant"
+    # RFC 6749 §5.2: failed client authentication is `invalid_client`, not
+    # a generic invalid_grant (and never platform Problem Details).
+    assert resp.json()["error"] == "invalid_client"
     mock_oauth_svc.authenticate_for_token_endpoint.assert_awaited_once_with(
         _THIRD_PARTY_CLIENT_ID, None
     )
@@ -239,7 +241,9 @@ def test_public_client_missing_pkce_verifier_is_rejected(
     )
 
     assert resp.status_code == 400
-    assert resp.json()["type"] == "invalid_grant"
+    # §5.2: the missing code_verifier is a malformed token request —
+    # invalid_request — rejected before any client authentication runs.
+    assert resp.json()["error"] == "invalid_request"
     mock_oauth_svc.authenticate_for_token_endpoint.assert_not_awaited()
     mock_authorize_svc.exchange_code.assert_not_awaited()
 

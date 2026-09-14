@@ -21,7 +21,6 @@ import (
 // Defines values for AccessRequestItemRequestAction.
 const (
 	Bind      AccessRequestItemRequestAction = "bind"
-	Create    AccessRequestItemRequestAction = "create"
 	Grant     AccessRequestItemRequestAction = "grant"
 	Provision AccessRequestItemRequestAction = "provision"
 )
@@ -30,8 +29,6 @@ const (
 func (e AccessRequestItemRequestAction) Valid() bool {
 	switch e {
 	case Bind:
-		return true
-	case Create:
 		return true
 	case Grant:
 		return true
@@ -46,7 +43,6 @@ func (e AccessRequestItemRequestAction) Valid() bool {
 const (
 	AccessRequestItemRequestResourceTypeCredential AccessRequestItemRequestResourceType = "credential"
 	AccessRequestItemRequestResourceTypeScope      AccessRequestItemRequestResourceType = "scope"
-	AccessRequestItemRequestResourceTypeToolkit    AccessRequestItemRequestResourceType = "toolkit"
 )
 
 // Valid indicates whether the value is a known member of the AccessRequestItemRequestResourceType enum.
@@ -55,8 +51,6 @@ func (e AccessRequestItemRequestResourceType) Valid() bool {
 	case AccessRequestItemRequestResourceTypeCredential:
 		return true
 	case AccessRequestItemRequestResourceTypeScope:
-		return true
-	case AccessRequestItemRequestResourceTypeToolkit:
 		return true
 	default:
 		return false
@@ -67,7 +61,6 @@ func (e AccessRequestItemRequestResourceType) Valid() bool {
 const (
 	ActorTypeAgent          ActorType = "agent"
 	ActorTypeServiceAccount ActorType = "service_account"
-	ActorTypeToolkit        ActorType = "toolkit"
 	ActorTypeUser           ActorType = "user"
 )
 
@@ -77,8 +70,6 @@ func (e ActorType) Valid() bool {
 	case ActorTypeAgent:
 		return true
 	case ActorTypeServiceAccount:
-		return true
-	case ActorTypeToolkit:
 		return true
 	case ActorTypeUser:
 		return true
@@ -164,6 +155,7 @@ const (
 	AuditTargetTypeOrganisation      AuditTargetType = "organisation"
 	AuditTargetTypeOverlay           AuditTargetType = "overlay"
 	AuditTargetTypePermission        AuditTargetType = "permission"
+	AuditTargetTypePermissionRuleSet AuditTargetType = "permission_rule_set"
 	AuditTargetTypeProviderConfig    AuditTargetType = "provider_config"
 	AuditTargetTypeRevision          AuditTargetType = "revision"
 	AuditTargetTypeServiceAccount    AuditTargetType = "service_account"
@@ -206,6 +198,8 @@ func (e AuditTargetType) Valid() bool {
 	case AuditTargetTypeOverlay:
 		return true
 	case AuditTargetTypePermission:
+		return true
+	case AuditTargetTypePermissionRuleSet:
 		return true
 	case AuditTargetTypeProviderConfig:
 		return true
@@ -282,6 +276,27 @@ const (
 func (e BearerTokenUpdateRequestType) Valid() bool {
 	switch e {
 	case BearerTokenUpdateRequestTypeBearerToken:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ConsentAgentStatusResponseStatus.
+const (
+	ConsentAgentStatusResponseStatusApproved ConsentAgentStatusResponseStatus = "approved"
+	ConsentAgentStatusResponseStatusDenied   ConsentAgentStatusResponseStatus = "denied"
+	ConsentAgentStatusResponseStatusPending  ConsentAgentStatusResponseStatus = "pending"
+)
+
+// Valid indicates whether the value is a known member of the ConsentAgentStatusResponseStatus enum.
+func (e ConsentAgentStatusResponseStatus) Valid() bool {
+	switch e {
+	case ConsentAgentStatusResponseStatusApproved:
+		return true
+	case ConsentAgentStatusResponseStatusDenied:
+		return true
+	case ConsentAgentStatusResponseStatusPending:
 		return true
 	default:
 		return false
@@ -383,9 +398,10 @@ func (e EventSeverity) Valid() bool {
 
 // Defines values for GroupBy.
 const (
-	GroupByAgent   GroupBy = "agent"
-	GroupByApi     GroupBy = "api"
-	GroupByToolkit GroupBy = "toolkit"
+	GroupByAgent      GroupBy = "agent"
+	GroupByApi        GroupBy = "api"
+	GroupByCredential GroupBy = "credential"
+	GroupByToolkit    GroupBy = "toolkit"
 )
 
 // Valid indicates whether the value is a known member of the GroupBy enum.
@@ -394,6 +410,8 @@ func (e GroupBy) Valid() bool {
 	case GroupByAgent:
 		return true
 	case GroupByApi:
+		return true
+	case GroupByCredential:
 		return true
 	case GroupByToolkit:
 		return true
@@ -828,39 +846,39 @@ func (e JenticOneControlWebSchemasAccessRequestsPermissionRuleSchemaMatchMode) V
 	}
 }
 
-// Defines values for JenticOneControlWebSchemasToolkitsPermissionRuleSchemaEffect.
+// Defines values for JenticOneControlWebSchemasPermissionRulesPermissionRuleSchemaEffect.
 const (
-	JenticOneControlWebSchemasToolkitsPermissionRuleSchemaEffectAllow JenticOneControlWebSchemasToolkitsPermissionRuleSchemaEffect = "allow"
-	JenticOneControlWebSchemasToolkitsPermissionRuleSchemaEffectDeny  JenticOneControlWebSchemasToolkitsPermissionRuleSchemaEffect = "deny"
+	JenticOneControlWebSchemasPermissionRulesPermissionRuleSchemaEffectAllow JenticOneControlWebSchemasPermissionRulesPermissionRuleSchemaEffect = "allow"
+	JenticOneControlWebSchemasPermissionRulesPermissionRuleSchemaEffectDeny  JenticOneControlWebSchemasPermissionRulesPermissionRuleSchemaEffect = "deny"
 )
 
-// Valid indicates whether the value is a known member of the JenticOneControlWebSchemasToolkitsPermissionRuleSchemaEffect enum.
-func (e JenticOneControlWebSchemasToolkitsPermissionRuleSchemaEffect) Valid() bool {
+// Valid indicates whether the value is a known member of the JenticOneControlWebSchemasPermissionRulesPermissionRuleSchemaEffect enum.
+func (e JenticOneControlWebSchemasPermissionRulesPermissionRuleSchemaEffect) Valid() bool {
 	switch e {
-	case JenticOneControlWebSchemasToolkitsPermissionRuleSchemaEffectAllow:
+	case JenticOneControlWebSchemasPermissionRulesPermissionRuleSchemaEffectAllow:
 		return true
-	case JenticOneControlWebSchemasToolkitsPermissionRuleSchemaEffectDeny:
+	case JenticOneControlWebSchemasPermissionRulesPermissionRuleSchemaEffectDeny:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for JenticOneControlWebSchemasToolkitsPermissionRuleSchemaMatchMode.
+// Defines values for JenticOneControlWebSchemasPermissionRulesPermissionRuleSchemaMatchMode.
 const (
-	JenticOneControlWebSchemasToolkitsPermissionRuleSchemaMatchModeExact  JenticOneControlWebSchemasToolkitsPermissionRuleSchemaMatchMode = "exact"
-	JenticOneControlWebSchemasToolkitsPermissionRuleSchemaMatchModePrefix JenticOneControlWebSchemasToolkitsPermissionRuleSchemaMatchMode = "prefix"
-	JenticOneControlWebSchemasToolkitsPermissionRuleSchemaMatchModeRegex  JenticOneControlWebSchemasToolkitsPermissionRuleSchemaMatchMode = "regex"
+	JenticOneControlWebSchemasPermissionRulesPermissionRuleSchemaMatchModeExact  JenticOneControlWebSchemasPermissionRulesPermissionRuleSchemaMatchMode = "exact"
+	JenticOneControlWebSchemasPermissionRulesPermissionRuleSchemaMatchModePrefix JenticOneControlWebSchemasPermissionRulesPermissionRuleSchemaMatchMode = "prefix"
+	JenticOneControlWebSchemasPermissionRulesPermissionRuleSchemaMatchModeRegex  JenticOneControlWebSchemasPermissionRulesPermissionRuleSchemaMatchMode = "regex"
 )
 
-// Valid indicates whether the value is a known member of the JenticOneControlWebSchemasToolkitsPermissionRuleSchemaMatchMode enum.
-func (e JenticOneControlWebSchemasToolkitsPermissionRuleSchemaMatchMode) Valid() bool {
+// Valid indicates whether the value is a known member of the JenticOneControlWebSchemasPermissionRulesPermissionRuleSchemaMatchMode enum.
+func (e JenticOneControlWebSchemasPermissionRulesPermissionRuleSchemaMatchMode) Valid() bool {
 	switch e {
-	case JenticOneControlWebSchemasToolkitsPermissionRuleSchemaMatchModeExact:
+	case JenticOneControlWebSchemasPermissionRulesPermissionRuleSchemaMatchModeExact:
 		return true
-	case JenticOneControlWebSchemasToolkitsPermissionRuleSchemaMatchModePrefix:
+	case JenticOneControlWebSchemasPermissionRulesPermissionRuleSchemaMatchModePrefix:
 		return true
-	case JenticOneControlWebSchemasToolkitsPermissionRuleSchemaMatchModeRegex:
+	case JenticOneControlWebSchemasPermissionRulesPermissionRuleSchemaMatchModeRegex:
 		return true
 	default:
 		return false
@@ -947,21 +965,22 @@ type AccessRequestFileRequest struct {
 // AccessRequestItemRequest A single line-item in a file request.
 //
 // **Permission rules:** Rules control which upstream API operations the broker
-// allows through a credential binding. They are enforced per (toolkit_id,
-// credential_id) pair, so they can only be attached to credential:bind items —
-// not toolkit:bind or scope:grant. You do not need toolkits:write scope to set
-// rules; include them directly on the credential:bind item when filing the
-// access request, and the approver's decision persists them on the binding.
+// allows through a direct agent↔credential binding. They are enforced per
+// (agent, credential) pair, so they can only be attached to credential:bind
+// items — not scope:grant. Include them (or a shared “rule_set_id“)
+// directly on the credential:bind item when filing the access request, and
+// the approver's decision persists them on the binding.
 type AccessRequestItemRequest struct {
 	Action            AccessRequestItemRequestAction       `json:"action"`
 	ResourceId        *string                              `json:"resource_id,omitempty"`
 	ResourceReference *map[string]interface{}              `json:"resource_reference,omitempty"`
 	ResourceType      AccessRequestItemRequestResourceType `json:"resource_type"`
 
+	// RuleSetId Shared permission rule set for the binding (credential:bind only), as an alternative to inline rules. While attached, the set's ordered list is the binding's effective policy.
+	RuleSetId *string `json:"rule_set_id,omitempty"`
+
 	// Rules Permission rules for the binding (credential:bind only). Rules are evaluated first-match-wins by the broker; if no rule matches, the request is denied. Example: [{"effect": "allow", "path": ".*"}].
-	Rules  *[]JenticOneControlWebSchemasAccessRequestsPermissionRuleSchema `json:"rules,omitempty"`
-	ToId   *string                                                         `json:"to_id,omitempty"`
-	ToType *string                                                         `json:"to_type,omitempty"`
+	Rules *[]JenticOneControlWebSchemasAccessRequestsPermissionRuleSchema `json:"rules,omitempty"`
 }
 
 // AccessRequestItemRequestAction defines model for AccessRequestItemRequest.Action.
@@ -974,25 +993,28 @@ type AccessRequestItemRequestResourceType string
 type AccessRequestItemResponse struct {
 	Action string `json:"action"`
 
-	// AlreadySatisfied Whether this item's outcome is already in effect (the binding or grant it asks for already exists), letting a reviewer approve manually-fulfilled work instead of re-doing it in the wizard. Populated on single-request GETs for pending credential:bind, toolkit:bind, and scope:grant items; null when not computed (list endpoints, decided items, fulfilment-only intents, an item whose target cannot be determined, an ambiguous toolkit reference — which approval would refuse as filed — or a credential:bind whose credential is not visible to the caller). Toolkit REFERENCES are resolved under the caller's visibility, mirroring decide-time resolution, so False can also mean 'satisfied by a toolkit this caller cannot see'; explicit-id targets are probed directly.
+	// AlreadySatisfied Whether this item's outcome is already in effect (the binding or grant it asks for already exists), letting a reviewer approve manually-fulfilled work instead of re-doing it in the wizard. Populated on single-request GETs for pending credential:bind and scope:grant items; null when not computed (list endpoints, decided items, fulfilment-only intents, an item whose target cannot be determined, an ambiguous credential reference — which approval would refuse as filed — or a credential:bind whose credential is not visible to the caller). API REFERENCES are resolved under the caller's visibility, mirroring decide-time resolution, so False can also mean 'satisfied by a credential this caller cannot see'; explicit-id targets are probed directly.
 	AlreadySatisfied *bool `json:"already_satisfied,omitempty"`
 
-	// AlreadySatisfiedBy For a satisfied toolkit:bind, the id of the toolkit the agent is already bound to — names the exact object so consumers can point the operator at it. Null for other item types and whenever already_satisfied is not true.
-	AlreadySatisfiedBy *string                   `json:"already_satisfied_by,omitempty"`
-	AppliedEffects     *map[string]interface{}   `json:"applied_effects,omitempty"`
-	CredentialName     *string                   `json:"credential_name,omitempty"`
-	DecidedAt          *time.Time                `json:"decided_at,omitempty"`
-	DecidedBy          *string                   `json:"decided_by,omitempty"`
-	DecisionReason     *string                   `json:"decision_reason,omitempty"`
-	Id                 string                    `json:"id"`
-	ResourceId         *string                   `json:"resource_id,omitempty"`
-	ResourceReference  *map[string]interface{}   `json:"resource_reference,omitempty"`
-	ResourceType       string                    `json:"resource_type"`
-	Rules              *[]map[string]interface{} `json:"rules,omitempty"`
-	Status             string                    `json:"status"`
-	ToId               *string                   `json:"to_id,omitempty"`
-	ToType             *string                   `json:"to_type,omitempty"`
-	ToolkitName        *string                   `json:"toolkit_name,omitempty"`
+	// AlreadySatisfiedBy For a satisfied credential:bind, the id of the credential the agent is already bound to — names the exact object so consumers can point the operator at it. Null for other item types and whenever already_satisfied is not true.
+	AlreadySatisfiedBy *string                 `json:"already_satisfied_by,omitempty"`
+	AppliedEffects     *map[string]interface{} `json:"applied_effects,omitempty"`
+	CredentialName     *string                 `json:"credential_name,omitempty"`
+	DecidedAt          *time.Time              `json:"decided_at,omitempty"`
+	DecidedBy          *string                 `json:"decided_by,omitempty"`
+	DecisionReason     *string                 `json:"decision_reason,omitempty"`
+	Id                 string                  `json:"id"`
+	ResourceId         *string                 `json:"resource_id,omitempty"`
+	ResourceReference  *map[string]interface{} `json:"resource_reference,omitempty"`
+	ResourceType       string                  `json:"resource_type"`
+
+	// RuleSetId Shared permission rule set attached to a credential:bind item, as an alternative policy carrier to inline rules.
+	RuleSetId   *string                   `json:"rule_set_id,omitempty"`
+	Rules       *[]map[string]interface{} `json:"rules,omitempty"`
+	Status      string                    `json:"status"`
+	ToId        *string                   `json:"to_id,omitempty"`
+	ToType      *string                   `json:"to_type,omitempty"`
+	ToolkitName *string                   `json:"toolkit_name,omitempty"`
 }
 
 // AccessRequestListResponse Paginated list of access requests.
@@ -1049,6 +1071,13 @@ type ActorSummaryResponse struct {
 	Active bool `json:"active"`
 
 	// ActorType Type of authenticated actor.
+	//
+	// ``toolkit`` is retired (theme-5 Phase 4): toolkit keys resolve as the
+	// service accounts the key-retirement job created, so no code path mints a
+	// toolkit identity. Persisted ``actor_type='toolkit'`` strings survive in
+	// historical rows (events, audit entries, execution records) until the
+	// Phase-6b scope-data sweep; read paths must tolerate the string without
+	// round-tripping it through this enum.
 	ActorType ActorType `json:"actor_type"`
 	CreatedAt time.Time `json:"created_at"`
 	Id        string    `json:"id"`
@@ -1056,6 +1085,13 @@ type ActorSummaryResponse struct {
 }
 
 // ActorType Type of authenticated actor.
+//
+// “toolkit“ is retired (theme-5 Phase 4): toolkit keys resolve as the
+// service accounts the key-retirement job created, so no code path mints a
+// toolkit identity. Persisted “actor_type='toolkit'“ strings survive in
+// historical rows (events, audit entries, execution records) until the
+// Phase-6b scope-data sweep; read paths must tolerate the string without
+// round-tripping it through this enum.
 type ActorType string
 
 // AgentCreateRequest Request body for creating an agent manually.
@@ -1110,8 +1146,8 @@ type AgentScopesResponse struct {
 type AmendItemSchema struct {
 	ItemId     string                                                          `json:"item_id"`
 	ResourceId *string                                                         `json:"resource_id,omitempty"`
+	RuleSetId  *string                                                         `json:"rule_set_id,omitempty"`
 	Rules      *[]JenticOneControlWebSchemasAccessRequestsPermissionRuleSchema `json:"rules,omitempty"`
-	ToId       *string                                                         `json:"to_id,omitempty"`
 }
 
 // AmendRequest Request body for the :amend verb.
@@ -1405,16 +1441,11 @@ type BearerTokenUpdateRequest struct {
 // BearerTokenUpdateRequestType defines model for BearerTokenUpdateRequest.Type.
 type BearerTokenUpdateRequestType string
 
-// BindingWarningSchema A non-fatal signal about a bind (or create-time inline bind).
-type BindingWarningSchema struct {
-	// Code Stable machine-readable warning code.
-	Code string `json:"code"`
-
-	// CredentialId Credential the warning applies to; null when the whole binding is meant.
-	CredentialId *string `json:"credential_id,omitempty"`
-
-	// Message Human-readable explanation with a recovery pointer.
-	Message string `json:"message"`
+// BodyConsentAgentCreate defines model for Body_consentAgentCreate.
+type BodyConsentAgentCreate struct {
+	AgentName    string `json:"agent_name"`
+	ConsentToken string `json:"consent_token"`
+	CreateState  string `json:"create_state"`
 }
 
 // BodyConsentSubmit defines model for Body_consentSubmit.
@@ -1547,12 +1578,80 @@ type ConnectRequestBody struct {
 	Scopes *[]string          `json:"scopes,omitempty"`
 }
 
+// ConsentAgentStatusResponse Minimal tri-state for the consent page's pending-agent awaiting page (P4).
+//
+// Deliberately carries nothing else — no agent name, owner, or scopes — so
+// the anonymous poll endpoint cannot be used to read agent details. The
+// poll is keyed by a signed “agent-status“ blob bound to one agent id,
+// never a bare id, and non-terminal lifecycle states (disabled, archived, a
+// vanished row) all read as “pending“ so the endpoint is not a lifecycle
+// oracle either.
+type ConsentAgentStatusResponse struct {
+	Status ConsentAgentStatusResponseStatus `json:"status"`
+}
+
+// ConsentAgentStatusResponseStatus defines model for ConsentAgentStatusResponse.Status.
+type ConsentAgentStatusResponseStatus string
+
 // CreateAdminRequest Payload for first-run admin creation (one-time setup).
 type CreateAdminRequest struct {
 	Email     string  `json:"email"`
 	FirstName *string `json:"first_name,omitempty"`
 	LastName  *string `json:"last_name,omitempty"`
 	Password  string  `json:"password"`
+}
+
+// CredentialAgentListResponse Paginated list of agents directly bound to a credential.
+type CredentialAgentListResponse struct {
+	Data       []CredentialAgentResponse `json:"data"`
+	HasMore    bool                      `json:"has_more"`
+	NextCursor *string                   `json:"next_cursor,omitempty"`
+}
+
+// CredentialAgentResponse Agent directly bound to a credential (theme 5 phase 1).
+type CredentialAgentResponse struct {
+	AgentId   string    `json:"agent_id"`
+	AgentName string    `json:"agent_name"`
+	BoundAt   time.Time `json:"bound_at"`
+
+	// RuleSetId Shared permission rule set this binding points at, if any. While attached, the set's ordered list is the binding's effective policy; null means the binding's inline rules apply.
+	RuleSetId *string `json:"rule_set_id,omitempty"`
+	Status    string  `json:"status"`
+
+	// Suspended True when the binding is soft-suspended (reversible cut-off): the binding and its rules survive, but the agent cannot execute through this credential until resumed.
+	Suspended bool `json:"suspended"`
+}
+
+// CredentialBindRequest Request body for directly binding a credential to an agent.
+type CredentialBindRequest struct {
+	CredentialId string `json:"credential_id"`
+}
+
+// CredentialBindingEntry Direct agent↔credential binding summary for the /me response (theme 5 phase 1).
+type CredentialBindingEntry struct {
+	BoundAt      time.Time       `json:"bound_at"`
+	CredentialId string          `json:"credential_id"`
+	Name         *string         `json:"name,omitempty"`
+	RuleSetId    *string         `json:"rule_set_id,omitempty"`
+	Serves       *[]ServedApiRef `json:"serves,omitempty"`
+	Suspended    *bool           `json:"suspended,omitempty"`
+}
+
+// CredentialBindingListResponse List of direct credential bindings.
+type CredentialBindingListResponse struct {
+	Data []CredentialBindingResponse `json:"data"`
+}
+
+// CredentialBindingResponse Direct agent↔credential binding representation in API responses.
+type CredentialBindingResponse struct {
+	AgentId      string          `json:"agent_id"`
+	BoundAt      time.Time       `json:"bound_at"`
+	CredentialId string          `json:"credential_id"`
+	Id           string          `json:"id"`
+	Name         *string         `json:"name,omitempty"`
+	RuleSetId    *string         `json:"rule_set_id,omitempty"`
+	Serves       *[]ServedApiRef `json:"serves,omitempty"`
+	Suspended    bool            `json:"suspended"`
 }
 
 // CredentialCreateResponse Create response: redacted + secret shown once.
@@ -1840,7 +1939,7 @@ type ExecutionResponse struct {
 	PinnedRevisions *map[string]interface{} `json:"pinned_revisions,omitempty"`
 	StartedAt       time.Time               `json:"started_at"`
 	Status          string                  `json:"status"`
-	ToolkitId       string                  `json:"toolkit_id"`
+	ToolkitId       *string                 `json:"toolkit_id,omitempty"`
 	ToolkitName     *string                 `json:"toolkit_name,omitempty"`
 	TraceId         string                  `json:"trace_id"`
 }
@@ -1859,12 +1958,13 @@ type ExecutionStatsResponse struct {
 // (divert lists, host filters), so it carries the minimum knowledge — API
 // detail stays behind the existing authenticated reads (“GET /apis“).
 //
-// Deliberately **unpaginated**: the set is bounded by the caller's own toolkit
-// bindings (tens of hosts, not thousands) and the digest must cover the whole
-// set atomically — a paginated digest would be meaningless. This is a
-// documented deviation from the list-endpoint pagination convention.
+// Deliberately **unpaginated**: the set is bounded by the caller's own
+// credential bindings (tens of hosts, not thousands) and the digest must
+// cover the whole set atomically — a paginated digest would be meaningless.
+// This is a documented deviation from the list-endpoint pagination
+// convention.
 type GovernedHostsResponse struct {
-	// Data Governed host entries, normalised (lowercased, FQDN root dot stripped, internationalised names IDNA/punycode-encoded), deduplicated, and sorted — the literal URL-index hosts the broker's discovery matches for the caller's toolkit-bound APIs. An entry is a hostname, a bare IP literal, or either followed by a non-default port (`host[:port]` — default ports are already stripped). Compare case-insensitively (lowercase the incoming host before matching); a gate keying on hostname or SNI alone must strip any `:port` suffix from the entry first. Variable-bearing hosts (defaultless `{var}` server variables) are excluded — the broker's discovery never matches them. On a `5xx` retain the last known set; never fall back to an empty (intercept-nothing) list.
+	// Data Governed host entries, normalised (lowercased, FQDN root dot stripped, internationalised names IDNA/punycode-encoded), deduplicated, and sorted — the literal URL-index hosts the broker's discovery matches for the APIs the caller's bound credentials cover. An entry is a hostname, a bare IP literal, or either followed by a non-default port (`host[:port]` — default ports are already stripped). Compare case-insensitively (lowercase the incoming host before matching); a gate keying on hostname or SNI alone must strip any `:port` suffix from the entry first. Variable-bearing hosts (defaultless `{var}` server variables) are excluded — the broker's discovery never matches them. On a `5xx` retain the last known set; never fall back to an empty (intercept-nothing) list.
 	Data []string `json:"data"`
 
 	// Digest SHA-256 hex digest over the newline-joined `data` list; also emitted as the response's strong `ETag`. To change-poll, send it back quoted — `If-None-Match: "<digest>"` (the bare digest is accepted as a compatibility form) — and expect an empty `304` until the host set changes. Poll at most once per minute.
@@ -1872,6 +1972,11 @@ type GovernedHostsResponse struct {
 }
 
 // GroupBy Grouping dimension for usage statistics.
+//
+// “TOOLKIT“ is deprecated (theme-5 Phase 5b) and will be removed one
+// release later, with the toolkit tables (Phase 6b): execution records
+// carry a “credential_id“ since Phase 2 and the direct-binding path
+// writes no “toolkit_id“, so “CREDENTIAL“ is the replacement axis.
 type GroupBy string
 
 // HealthResponse Health check response for the admin surface.
@@ -1890,6 +1995,9 @@ type HealthResponse struct {
 type InstanceIdentityResponse struct {
 	// Backend Operator-declared backend locality (server.backend): 'local' for a self-hosted install on the operator's own machine/network, 'remote' for a hosted install run elsewhere. A hint, not an authorization signal; defaults to 'local'.
 	Backend InstanceIdentityResponseBackend `json:"backend"`
+
+	// BrokerUrl The broker (data plane) base URL a client should send `execute` traffic to, as configured by the operator (server.mcp.broker_url), with any userinfo stripped. Null when the platform cannot honestly advertise one: on a 'remote' backend a loopback-host value (the config default) describes the control plane's own machine, not an address any client can dial, so it is withheld rather than published as misleading guidance. Deployment metadata, not a secret — the broker URL is handed to every client expected to call it (issue #1249).
+	BrokerUrl *string `json:"broker_url,omitempty"`
 
 	// CanonicalBaseUrl The instance's own canonical base URL (auth.canonical_base_url), with any userinfo stripped; '' if unset.
 	CanonicalBaseUrl string `json:"canonical_base_url"`
@@ -2008,15 +2116,16 @@ type McpConfigRuntime string
 
 // MeAgent Identity response for an agent actor.
 type MeAgent struct {
-	ApprovedBy      *string               `json:"approved_by,omitempty"`
-	Id              string                `json:"id"`
-	Name            string                `json:"name"`
-	ParentAgentId   *string               `json:"parent_agent_id,omitempty"`
-	Scopes          []string              `json:"scopes"`
-	Status          string                `json:"status"`
-	TokenScopes     []string              `json:"token_scopes"`
-	ToolkitBindings []ToolkitBindingEntry `json:"toolkit_bindings"`
-	Type            *MeAgentType          `json:"type,omitempty"`
+	ApprovedBy         *string                   `json:"approved_by,omitempty"`
+	CredentialBindings *[]CredentialBindingEntry `json:"credential_bindings,omitempty"`
+	Id                 string                    `json:"id"`
+	Name               string                    `json:"name"`
+	ParentAgentId      *string                   `json:"parent_agent_id,omitempty"`
+	Scopes             []string                  `json:"scopes"`
+	Status             string                    `json:"status"`
+	TokenScopes        []string                  `json:"token_scopes"`
+	ToolkitBindings    []ToolkitBindingEntry     `json:"toolkit_bindings"`
+	Type               *MeAgentType              `json:"type,omitempty"`
 }
 
 // MeAgentType defines model for MeAgent.Type.
@@ -2410,6 +2519,9 @@ type OAuthGrantAdminResponse struct {
 	// AgentId The agent this grant binds the client to.
 	AgentId string `json:"agent_id"`
 
+	// AgentStatus Lifecycle state of the bound agent (`active`, `disabled`, `archived`, …). A grant on a non-active agent is dormant: the row stays `active` (disable is reversible — re-enable restores the standing consent without a new consent round) but no token resolves while the agent is non-active. Lets listings tell a working connection from a dormant one (#1233).
+	AgentStatus *string `json:"agent_status,omitempty"`
+
 	// CanRevoke Whether the CALLER may revoke this grant (the consenting user, or an admin holding the revoke permission set). May be false even for callers who can list — e.g. a read-only admin.
 	CanRevoke bool `json:"can_revoke"`
 
@@ -2451,6 +2563,9 @@ type OAuthGrantListResponse struct {
 type OAuthGrantResponse struct {
 	// AgentId The agent this grant binds the client to.
 	AgentId string `json:"agent_id"`
+
+	// AgentStatus Lifecycle state of the bound agent (`active`, `disabled`, `archived`, …). A grant on a non-active agent is dormant: the row stays `active` (disable is reversible — re-enable restores the standing consent without a new consent round) but no token resolves while the agent is non-active. Lets listings tell a working connection from a dormant one (#1233).
+	AgentStatus *string `json:"agent_status,omitempty"`
 
 	// CanRevoke Whether the CALLER may revoke this grant (the consenting user, or an admin holding the revoke permission set). May be false even for callers who can list — e.g. the agent's new owner after an ownership transfer, or a read-only admin.
 	CanRevoke bool `json:"can_revoke"`
@@ -2688,7 +2803,7 @@ type PermissionRuleReadSchemaEffect string
 // PermissionRuleReadSchemaMatchMode defines model for PermissionRuleReadSchema.MatchMode.
 type PermissionRuleReadSchemaMatchMode string
 
-// PermissionTestRequest Request body for :test — dry-run a request shape against pooled rules.
+// PermissionTestRequest Request body for :test — dry-run a request shape against the binding's rules.
 type PermissionTestRequest struct {
 	// Method HTTP method of the hypothetical request (case-insensitive).
 	Method string `json:"method"`
@@ -2702,10 +2817,10 @@ type PermissionTestRequest struct {
 
 // PermissionTestResponse Dry-run result matching :class:`PermissionTestResult`.
 type PermissionTestResponse struct {
-	// Allowed Whether the broker would allow this request under the pooled rules.
+	// Allowed Whether the broker would allow this request under the binding's rules.
 	Allowed bool `json:"allowed"`
 
-	// CredentialId Which binding contributed the matching rule — vendor pooling means this may not equal the credential in the request URL.
+	// CredentialId The binding whose rule list contributed the matching rule.
 	CredentialId *string `json:"credential_id,omitempty"`
 
 	// Effect Effect of the matching rule (`allow`/`deny`); null when no match.
@@ -2717,7 +2832,7 @@ type PermissionTestResponse struct {
 	// Matched Whether any rule matched; when false, the outcome is default-deny.
 	Matched bool `json:"matched"`
 
-	// RuleIndex Zero-based index in the vendor-pooled rule list; null when no match.
+	// RuleIndex Zero-based index in the binding's ordered rule list; null when no match.
 	RuleIndex *int `json:"rule_index,omitempty"`
 }
 
@@ -2729,8 +2844,8 @@ type Permissions struct {
 
 // PermissionsPatchRequest Patch permission rules — add and/or remove.
 type PermissionsPatchRequest struct {
-	Add    *[]JenticOneControlWebSchemasToolkitsPermissionRuleSchema `json:"add,omitempty"`
-	Remove *[]int                                                    `json:"remove,omitempty"`
+	Add    *[]JenticOneControlWebSchemasPermissionRulesPermissionRuleSchema `json:"add,omitempty"`
+	Remove *[]int                                                           `json:"remove,omitempty"`
 }
 
 // PreviewInfoResponse The `info` block fields surfaced in a preview.
@@ -2943,6 +3058,58 @@ type RevokeRequest struct {
 	TokenTypeHint *string `json:"token_type_hint,omitempty"`
 }
 
+// RuleSetAttachRequest Point a direct agent↔credential binding at a shared rule set.
+type RuleSetAttachRequest struct {
+	// RuleSetId Id (`prs_…`) of the rule set to attach.
+	RuleSetId string `json:"rule_set_id"`
+}
+
+// RuleSetCreateRequest Create a shared permission rule set (theme 5 phase 1, Q-04).
+type RuleSetCreateRequest struct {
+	Description *string `json:"description,omitempty"`
+
+	// Name Unique human-readable name.
+	Name string `json:"name"`
+
+	// Rules Initial ordered rule list (first-match-wins, default-deny).
+	Rules *[]JenticOneControlWebSchemasPermissionRulesPermissionRuleSchema `json:"rules,omitempty"`
+}
+
+// RuleSetListResponse Paginated list of rule sets.
+type RuleSetListResponse struct {
+	Data       []RuleSetSummaryResponse `json:"data"`
+	HasMore    bool                     `json:"has_more"`
+	NextCursor *string                  `json:"next_cursor,omitempty"`
+}
+
+// RuleSetResponse Rule set detail — the ordered rules plus its referencing-binding count.
+type RuleSetResponse struct {
+	// BindingCount How many agent-credential bindings currently point at this set.
+	BindingCount int                        `json:"binding_count"`
+	CreatedAt    time.Time                  `json:"created_at"`
+	CreatedBy    *string                    `json:"created_by,omitempty"`
+	Description  *string                    `json:"description,omitempty"`
+	Name         string                     `json:"name"`
+	RuleSetId    string                     `json:"rule_set_id"`
+	Rules        []PermissionRuleReadSchema `json:"rules"`
+}
+
+// RuleSetSummaryResponse Rule set list entry.
+type RuleSetSummaryResponse struct {
+	CreatedAt   time.Time `json:"created_at"`
+	CreatedBy   *string   `json:"created_by,omitempty"`
+	Description *string   `json:"description,omitempty"`
+	Name        string    `json:"name"`
+	RuleCount   int       `json:"rule_count"`
+	RuleSetId   string    `json:"rule_set_id"`
+}
+
+// RuleSetUpdateRequest Rename or re-describe a rule set.
+type RuleSetUpdateRequest struct {
+	Description *string `json:"description,omitempty"`
+	Name        *string `json:"name,omitempty"`
+}
+
 // RuntimeConfig Optional per-upstream-call overrides.
 type RuntimeConfig struct {
 	Headers     *map[string]string `json:"headers,omitempty"`
@@ -3120,167 +3287,12 @@ type TokenResponse struct {
 	TokenType *string `json:"token_type,omitempty"`
 }
 
-// ToolkitAgentListResponse Paginated list of agents bound to a toolkit.
-type ToolkitAgentListResponse struct {
-	Data       []ToolkitAgentResponse `json:"data"`
-	HasMore    bool                   `json:"has_more"`
-	NextCursor *string                `json:"next_cursor,omitempty"`
-}
-
-// ToolkitAgentResponse Agent bound to a toolkit.
-type ToolkitAgentResponse struct {
-	AgentId   string    `json:"agent_id"`
-	AgentName string    `json:"agent_name"`
-	BoundAt   time.Time `json:"bound_at"`
-	Status    string    `json:"status"`
-}
-
-// ToolkitBindRequest Request body for binding a toolkit.
-type ToolkitBindRequest struct {
-	ToolkitId string `json:"toolkit_id"`
-}
-
 // ToolkitBindingEntry Toolkit binding summary for the /me response.
 type ToolkitBindingEntry struct {
 	BoundAt   time.Time       `json:"bound_at"`
 	Name      *string         `json:"name,omitempty"`
 	Serves    *[]ServedApiRef `json:"serves,omitempty"`
 	ToolkitId string          `json:"toolkit_id"`
-}
-
-// ToolkitBindingListResponse List of toolkit bindings.
-type ToolkitBindingListResponse struct {
-	Data []ToolkitBindingResponse `json:"data"`
-}
-
-// ToolkitBindingResponse Toolkit binding representation in API responses.
-type ToolkitBindingResponse struct {
-	AgentId   string    `json:"agent_id"`
-	BoundAt   time.Time `json:"bound_at"`
-	Id        string    `json:"id"`
-	ToolkitId string    `json:"toolkit_id"`
-}
-
-// ToolkitCreateRequest Create a new toolkit.
-type ToolkitCreateRequest struct {
-	Active        *bool     `json:"active,omitempty"`
-	CredentialIds *[]string `json:"credential_ids,omitempty"`
-	Description   *string   `json:"description,omitempty"`
-	Name          string    `json:"name"`
-}
-
-// ToolkitCreateResponse Create response: toolkit + api_key shown once.
-type ToolkitCreateResponse struct {
-	ApiKey string `json:"api_key"`
-
-	// Toolkit Toolkit response.
-	Toolkit ToolkitResponse `json:"toolkit"`
-
-	// Warnings Non-fatal signals about the create — e.g. inline-bound credentials that landed with zero permission rules (broker denies by default).
-	Warnings *[]BindingWarningSchema `json:"warnings,omitempty"`
-}
-
-// ToolkitCredentialBindRequest Bind a credential to a toolkit.
-type ToolkitCredentialBindRequest struct {
-	// AllowAll Convenience flag: bind with a single `allow` rule that matches every request for this binding's vendor. Mutually exclusive with `permissions`.
-	AllowAll     *bool                                                     `json:"allow_all,omitempty"`
-	CredentialId string                                                    `json:"credential_id"`
-	Permissions  *[]JenticOneControlWebSchemasToolkitsPermissionRuleSchema `json:"permissions,omitempty"`
-}
-
-// ToolkitCredentialBindingResponse Credential binding response.
-type ToolkitCredentialBindingResponse struct {
-	ApiName   *string   `json:"api_name,omitempty"`
-	ApiVendor *string   `json:"api_vendor,omitempty"`
-	BoundAt   time.Time `json:"bound_at"`
-
-	// CatalogApiId Catalog identity slug of the bound credential's target API (`domain[/sub-api]`), when recorded. Display-only.
-	CatalogApiId   *string                     `json:"catalog_api_id,omitempty"`
-	CredentialId   string                      `json:"credential_id"`
-	CredentialType *string                     `json:"credential_type,omitempty"`
-	Label          *string                     `json:"label,omitempty"`
-	Permissions    *[]PermissionRuleReadSchema `json:"permissions,omitempty"`
-	ToolkitId      string                      `json:"toolkit_id"`
-
-	// Warnings Non-fatal bind-time signals — e.g. a binding that landed with zero permission rules (broker denies by default until rules are added).
-	Warnings *[]BindingWarningSchema `json:"warnings,omitempty"`
-}
-
-// ToolkitCredentialListResponse Paginated list of credential bindings.
-type ToolkitCredentialListResponse struct {
-	Data       []ToolkitCredentialBindingResponse `json:"data"`
-	HasMore    bool                               `json:"has_more"`
-	NextCursor *string                            `json:"next_cursor,omitempty"`
-}
-
-// ToolkitKeyCreateRequest Create a new key for a toolkit.
-type ToolkitKeyCreateRequest struct {
-	AllowedIps *[]string `json:"allowed_ips,omitempty"`
-	Label      *string   `json:"label,omitempty"`
-}
-
-// ToolkitKeyCreateResponse Create response: key + plaintext shown once.
-type ToolkitKeyCreateResponse struct {
-	ApiKey string `json:"api_key"`
-
-	// Key Toolkit key response.
-	Key ToolkitKeyResponse `json:"key"`
-}
-
-// ToolkitKeyListResponse Paginated list of toolkit keys.
-type ToolkitKeyListResponse struct {
-	Data       []ToolkitKeyResponse `json:"data"`
-	HasMore    bool                 `json:"has_more"`
-	NextCursor *string              `json:"next_cursor,omitempty"`
-}
-
-// ToolkitKeyResponse Toolkit key response.
-type ToolkitKeyResponse struct {
-	AllowedIps *[]string  `json:"allowed_ips,omitempty"`
-	CreatedAt  time.Time  `json:"created_at"`
-	KeyId      string     `json:"key_id"`
-	KeyPreview string     `json:"key_preview"`
-	Label      *string    `json:"label,omitempty"`
-	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
-	Revoked    bool       `json:"revoked"`
-	ToolkitId  string     `json:"toolkit_id"`
-}
-
-// ToolkitKeyUpdateRequest Update a toolkit key.
-type ToolkitKeyUpdateRequest struct {
-	AllowedIps *[]string `json:"allowed_ips,omitempty"`
-	Label      *string   `json:"label,omitempty"`
-	Revoked    *bool     `json:"revoked,omitempty"`
-}
-
-// ToolkitListResponse Paginated list of toolkits.
-type ToolkitListResponse struct {
-	Data       []ToolkitResponse `json:"data"`
-	HasMore    bool              `json:"has_more"`
-	NextCursor *string           `json:"next_cursor,omitempty"`
-}
-
-// ToolkitResponse Toolkit response.
-type ToolkitResponse struct {
-	Active bool `json:"active"`
-
-	// Apis Distinct APIs served by this toolkit's credential bindings that are visible to the caller, sorted by vendor/name/version. NULL api_name/api_version mean the credential covers all names/versions for the vendor. Empty when no visible credentials are bound.
-	Apis            *[]ServedApiRef `json:"apis,omitempty"`
-	CreatedAt       time.Time       `json:"created_at"`
-	CreatedBy       *string         `json:"created_by,omitempty"`
-	CredentialCount int             `json:"credential_count"`
-	Description     *string         `json:"description,omitempty"`
-	KeyCount        int             `json:"key_count"`
-	Name            string          `json:"name"`
-	ToolkitId       string          `json:"toolkit_id"`
-	UpdatedAt       *time.Time      `json:"updated_at,omitempty"`
-}
-
-// ToolkitUpdateRequest Update a toolkit.
-type ToolkitUpdateRequest struct {
-	Active      *bool   `json:"active,omitempty"`
-	Description *string `json:"description,omitempty"`
-	Name        *string `json:"name,omitempty"`
 }
 
 // TopOperation Aggregated execution counts for a single operation.
@@ -3432,17 +3444,17 @@ type JenticOneControlWebSchemasAccessRequestsPermissionRuleSchemaEffect string
 // JenticOneControlWebSchemasAccessRequestsPermissionRuleSchemaMatchMode How `path` is interpreted: `regex` (full-match), `prefix` (string prefix), or `exact` (equality). Defaults to `regex` for backwards compatibility.
 type JenticOneControlWebSchemasAccessRequestsPermissionRuleSchemaMatchMode string
 
-// JenticOneControlWebSchemasToolkitsPermissionRuleSchema Permission rule for a toolkit-credential binding.
+// JenticOneControlWebSchemasPermissionRulesPermissionRuleSchema Permission rule for an agent↔credential binding.
 //
 // Rules are evaluated first-match-wins. If no rule matches, the request is
 // denied (default-deny). A binding with zero rules therefore blocks all
 // operations — users must explicitly add at least one allow rule.
-type JenticOneControlWebSchemasToolkitsPermissionRuleSchema struct {
+type JenticOneControlWebSchemasPermissionRulesPermissionRuleSchema struct {
 	// Effect Whether this rule allows or denies the matched request.
-	Effect JenticOneControlWebSchemasToolkitsPermissionRuleSchemaEffect `json:"effect"`
+	Effect JenticOneControlWebSchemasPermissionRulesPermissionRuleSchemaEffect `json:"effect"`
 
 	// MatchMode How `path` is interpreted: `regex` (full-match), `prefix` (string prefix), or `exact` (equality). Defaults to `regex` for backwards compatibility.
-	MatchMode *JenticOneControlWebSchemasToolkitsPermissionRuleSchemaMatchMode `json:"match_mode,omitempty"`
+	MatchMode *JenticOneControlWebSchemasPermissionRulesPermissionRuleSchemaMatchMode `json:"match_mode,omitempty"`
 
 	// Methods HTTP methods to match (case-insensitive). None matches all.
 	Methods *[]string `json:"methods,omitempty"`
@@ -3454,11 +3466,11 @@ type JenticOneControlWebSchemasToolkitsPermissionRuleSchema struct {
 	Path *string `json:"path,omitempty"`
 }
 
-// JenticOneControlWebSchemasToolkitsPermissionRuleSchemaEffect Whether this rule allows or denies the matched request.
-type JenticOneControlWebSchemasToolkitsPermissionRuleSchemaEffect string
+// JenticOneControlWebSchemasPermissionRulesPermissionRuleSchemaEffect Whether this rule allows or denies the matched request.
+type JenticOneControlWebSchemasPermissionRulesPermissionRuleSchemaEffect string
 
-// JenticOneControlWebSchemasToolkitsPermissionRuleSchemaMatchMode How `path` is interpreted: `regex` (full-match), `prefix` (string prefix), or `exact` (equality). Defaults to `regex` for backwards compatibility.
-type JenticOneControlWebSchemasToolkitsPermissionRuleSchemaMatchMode string
+// JenticOneControlWebSchemasPermissionRulesPermissionRuleSchemaMatchMode How `path` is interpreted: `regex` (full-match), `prefix` (string prefix), or `exact` (equality). Defaults to `regex` for backwards compatibility.
+type JenticOneControlWebSchemasPermissionRulesPermissionRuleSchemaMatchMode string
 
 // ListAccessRequestsParams defines parameters for ListAccessRequests.
 type ListAccessRequestsParams struct {
@@ -3510,6 +3522,12 @@ type ListAgentsParams struct {
 	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
 	Limit  *int    `form:"limit,omitempty" json:"limit,omitempty"`
 	Status *string `form:"status,omitempty" json:"status,omitempty"`
+}
+
+// UnbindAgentCredentialParams defines parameters for UnbindAgentCredential.
+type UnbindAgentCredentialParams struct {
+	// Purge Default false: the binding is suspended (reversible; its permission rules survive and :resume restores access). true deletes the binding row outright.
+	Purge *bool `form:"purge,omitempty" json:"purge,omitempty"`
 }
 
 // ListAgentOauthGrantsParams defines parameters for ListAgentOauthGrants.
@@ -3638,6 +3656,15 @@ type OauthCallbackParams struct {
 type UpdateCredentialJSONBody struct {
 	union json.RawMessage
 }
+
+// ListCredentialAgentsParams defines parameters for ListCredentialAgents.
+type ListCredentialAgentsParams struct {
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+	Limit  *int    `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// ReplaceAgentCredentialPermissionsJSONBody defines parameters for ReplaceAgentCredentialPermissions.
+type ReplaceAgentCredentialPermissionsJSONBody = []JenticOneControlWebSchemasPermissionRulesPermissionRuleSchema
 
 // ErrorPageParams defines parameters for ErrorPage.
 type ErrorPageParams struct {
@@ -3785,6 +3812,12 @@ type ConsentPageParams struct {
 	Ch string `form:"ch" json:"ch"`
 }
 
+// ConsentAgentStatusParams defines parameters for ConsentAgentStatus.
+type ConsentAgentStatusParams struct {
+	// St Signed agent-status blob minted by the consent flow's pending arm
+	St string `form:"st" json:"st"`
+}
+
 // TokenEndpointJSONBody defines parameters for TokenEndpoint.
 type TokenEndpointJSONBody struct {
 	Assertion    *string `json:"assertion,omitempty"`
@@ -3809,38 +3842,20 @@ type TokenEndpointFormdataBody struct {
 	RefreshToken *string `form:"refresh_token,omitempty" json:"refresh_token,omitempty"`
 }
 
+// ListPermissionRuleSetsParams defines parameters for ListPermissionRuleSets.
+type ListPermissionRuleSetsParams struct {
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+	Limit  *int    `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// ReplacePermissionRuleSetRulesJSONBody defines parameters for ReplacePermissionRuleSetRules.
+type ReplacePermissionRuleSetRulesJSONBody = []JenticOneControlWebSchemasPermissionRulesPermissionRuleSchema
+
 // ListServiceAccountsParams defines parameters for ListServiceAccounts.
 type ListServiceAccountsParams struct {
 	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
 	Limit  *int    `form:"limit,omitempty" json:"limit,omitempty"`
 	Status *string `form:"status,omitempty" json:"status,omitempty"`
-}
-
-// ListToolkitsParams defines parameters for ListToolkits.
-type ListToolkitsParams struct {
-	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
-	Limit  *int    `form:"limit,omitempty" json:"limit,omitempty"`
-}
-
-// ListToolkitAgentsParams defines parameters for ListToolkitAgents.
-type ListToolkitAgentsParams struct {
-	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
-	Limit  *int    `form:"limit,omitempty" json:"limit,omitempty"`
-}
-
-// ListBindingsParams defines parameters for ListBindings.
-type ListBindingsParams struct {
-	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
-	Limit  *int    `form:"limit,omitempty" json:"limit,omitempty"`
-}
-
-// ReplacePermissionsJSONBody defines parameters for ReplacePermissions.
-type ReplacePermissionsJSONBody = []JenticOneControlWebSchemasToolkitsPermissionRuleSchema
-
-// ListKeysParams defines parameters for ListKeys.
-type ListKeysParams struct {
-	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
-	Limit  *int    `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
 // ListUsersParams defines parameters for ListUsers.
@@ -3877,14 +3892,14 @@ type CreateAgentJSONRequestBody = AgentCreateRequest
 // UpdateAgentJSONRequestBody defines body for UpdateAgent for application/json ContentType.
 type UpdateAgentJSONRequestBody = AgentPatchRequest
 
+// BindAgentCredentialJSONRequestBody defines body for BindAgentCredential for application/json ContentType.
+type BindAgentCredentialJSONRequestBody = CredentialBindRequest
+
 // UpdateAgentJwksJSONRequestBody defines body for UpdateAgentJwks for application/json ContentType.
 type UpdateAgentJwksJSONRequestBody = JwksUpdateRequest
 
 // ReplaceAgentScopesJSONRequestBody defines body for ReplaceAgentScopes for application/json ContentType.
 type ReplaceAgentScopesJSONRequestBody = AgentScopesRequest
-
-// BindToolkitJSONRequestBody defines body for BindToolkit for application/json ContentType.
-type BindToolkitJSONRequestBody = ToolkitBindRequest
 
 // ClaimAgentJSONRequestBody defines body for ClaimAgent for application/json ContentType.
 type ClaimAgentJSONRequestBody = ClaimRequest
@@ -3919,6 +3934,18 @@ type CreateCredentialJSONRequestBody CreateCredentialJSONBody
 // UpdateCredentialJSONRequestBody defines body for UpdateCredential for application/json ContentType.
 type UpdateCredentialJSONRequestBody UpdateCredentialJSONBody
 
+// PatchAgentCredentialPermissionsJSONRequestBody defines body for PatchAgentCredentialPermissions for application/json ContentType.
+type PatchAgentCredentialPermissionsJSONRequestBody = PermissionsPatchRequest
+
+// ReplaceAgentCredentialPermissionsJSONRequestBody defines body for ReplaceAgentCredentialPermissions for application/json ContentType.
+type ReplaceAgentCredentialPermissionsJSONRequestBody = ReplaceAgentCredentialPermissionsJSONBody
+
+// TestAgentCredentialPermissionsJSONRequestBody defines body for TestAgentCredentialPermissions for application/json ContentType.
+type TestAgentCredentialPermissionsJSONRequestBody = PermissionTestRequest
+
+// AttachAgentCredentialRuleSetJSONRequestBody defines body for AttachAgentCredentialRuleSet for application/json ContentType.
+type AttachAgentCredentialRuleSetJSONRequestBody = RuleSetAttachRequest
+
 // ConnectCredentialJSONRequestBody defines body for ConnectCredential for application/json ContentType.
 type ConnectCredentialJSONRequestBody = ConnectRequestBody
 
@@ -3946,6 +3973,9 @@ type ApprovalDecisionEndpointJSONRequestBody = OAuthApprovalDecisionRequest
 // ConsentSubmitFormdataRequestBody defines body for ConsentSubmit for application/x-www-form-urlencoded ContentType.
 type ConsentSubmitFormdataRequestBody = BodyConsentSubmit
 
+// ConsentAgentCreateFormdataRequestBody defines body for ConsentAgentCreate for application/x-www-form-urlencoded ContentType.
+type ConsentAgentCreateFormdataRequestBody = BodyConsentAgentCreate
+
 // IntrospectEndpointJSONRequestBody defines body for IntrospectEndpoint for application/json ContentType.
 type IntrospectEndpointJSONRequestBody = IntrospectRequest
 
@@ -3967,6 +3997,15 @@ type TokenEndpointJSONRequestBody TokenEndpointJSONBody
 // TokenEndpointFormdataRequestBody defines body for TokenEndpoint for application/x-www-form-urlencoded ContentType.
 type TokenEndpointFormdataRequestBody TokenEndpointFormdataBody
 
+// CreatePermissionRuleSetJSONRequestBody defines body for CreatePermissionRuleSet for application/json ContentType.
+type CreatePermissionRuleSetJSONRequestBody = RuleSetCreateRequest
+
+// UpdatePermissionRuleSetJSONRequestBody defines body for UpdatePermissionRuleSet for application/json ContentType.
+type UpdatePermissionRuleSetJSONRequestBody = RuleSetUpdateRequest
+
+// ReplacePermissionRuleSetRulesJSONRequestBody defines body for ReplacePermissionRuleSetRules for application/json ContentType.
+type ReplacePermissionRuleSetRulesJSONRequestBody = ReplacePermissionRuleSetRulesJSONBody
+
 // RegisterEndpointJSONRequestBody defines body for RegisterEndpoint for application/json ContentType.
 type RegisterEndpointJSONRequestBody = RegisterRequest
 
@@ -3981,30 +4020,6 @@ type ReplaceServiceAccountScopesJSONRequestBody = ServiceAccountScopesRequest
 
 // DenyServiceAccountJSONRequestBody defines body for DenyServiceAccount for application/json ContentType.
 type DenyServiceAccountJSONRequestBody = JenticOneAuthWebSchemasServiceAccountsDenyRequest
-
-// CreateToolkitJSONRequestBody defines body for CreateToolkit for application/json ContentType.
-type CreateToolkitJSONRequestBody = ToolkitCreateRequest
-
-// UpdateToolkitJSONRequestBody defines body for UpdateToolkit for application/json ContentType.
-type UpdateToolkitJSONRequestBody = ToolkitUpdateRequest
-
-// BindCredentialJSONRequestBody defines body for BindCredential for application/json ContentType.
-type BindCredentialJSONRequestBody = ToolkitCredentialBindRequest
-
-// PatchPermissionsJSONRequestBody defines body for PatchPermissions for application/json ContentType.
-type PatchPermissionsJSONRequestBody = PermissionsPatchRequest
-
-// ReplacePermissionsJSONRequestBody defines body for ReplacePermissions for application/json ContentType.
-type ReplacePermissionsJSONRequestBody = ReplacePermissionsJSONBody
-
-// TestToolkitPermissionsJSONRequestBody defines body for TestToolkitPermissions for application/json ContentType.
-type TestToolkitPermissionsJSONRequestBody = PermissionTestRequest
-
-// CreateKeyJSONRequestBody defines body for CreateKey for application/json ContentType.
-type CreateKeyJSONRequestBody = ToolkitKeyCreateRequest
-
-// UpdateKeyJSONRequestBody defines body for UpdateKey for application/json ContentType.
-type UpdateKeyJSONRequestBody = ToolkitKeyUpdateRequest
 
 // CreateUserJSONRequestBody defines body for CreateUser for application/json ContentType.
 type CreateUserJSONRequestBody = UserCreateRequest
@@ -5017,11 +5032,13 @@ type ClientInterface interface {
 	// Corresponds with POST /admin/oauth-clients (the `CreateOauthClient` operationId).
 	CreateOauthClient(ctx context.Context, body CreateOauthClientJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// DeactivateOauthClient Deactivate OAuth client
+	// DeactivateOauthClient Disable OAuth client
 	//
-	// Soft-delete an OAuth client by setting active=False.
+	// Disable an OAuth client — the reversible kill switch (sets active=false).
 	//
-	// Deactivated clients can no longer initiate authorization flows.
+	// Disabled clients can no longer initiate authorization flows and their
+	// outstanding tokens stop resolving. Re-enable by patching ``active: true``.
+	// The row is kept; this is not a delete.
 	//
 	// Corresponds with DELETE /admin/oauth-clients/{id} (the `DeactivateOauthClient` operationId).
 	DeactivateOauthClient(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -5069,6 +5086,21 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /admin/oauth-clients/{id}:approve (the `ApproveOauthClient` operationId).
 	ApproveOauthClient(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteOauthClient Delete OAuth client
+	//
+	// Permanently delete an OAuth client. This cannot be undone.
+	//
+	// Terminal, unlike the reversible kill switch (``DELETE`` on this
+	// resource, which only sets ``active=false``): every active grant is
+	// revoked, every token carrying the client's lineage is revoked, and the
+	// registration row is removed — connected applications are fully
+	// disconnected. The audit trail survives. A client that later re-registers
+	// via dynamic client registration is a NEW registration and re-enters the
+	// approval queue as pending; it is never re-attached to the deleted one.
+	//
+	// Corresponds with POST /admin/oauth-clients/{id}:delete (the `DeleteOauthClient` operationId).
+	DeleteOauthClient(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// DenyOauthClientWithBody Deny OAuth client
 	//
@@ -5132,7 +5164,12 @@ type ClientInterface interface {
 
 	// ArchiveAgent Archive Agent
 	//
-	// Soft-archive an agent — revokes scope grants and toolkit bindings.
+	// Archive an agent — terminal-but-kept.
+	//
+	// The row is retained for history, but the action is not reversible and
+	// the agent's authority is swept: scope grants, credential bindings, and
+	// OAuth consent grants are revoked. For the reversible kill switch use
+	// ``:disable`` / ``:enable`` instead.
 	//
 	// Corresponds with DELETE /agents/{agent_id} (the `ArchiveAgent` operationId).
 	ArchiveAgent(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -5175,6 +5212,51 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /agents/{agent_id}/api-key/history (the `GetAgentApiKeyHistory` operationId).
 	GetAgentApiKeyHistory(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListAgentCredentials List Credentials
+	//
+	// List direct credential bindings for an agent — requires agents:read or self.
+	//
+	// Corresponds with GET /agents/{agent_id}/credentials (the `ListAgentCredentials` operationId).
+	ListAgentCredentials(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// BindAgentCredentialWithBody Bind Credential
+	//
+	// Directly bind a credential to an agent (theme 5 phase 1).
+	//
+	// The caller must be able to see the target credential; a credential that
+	// does not exist or is outside the caller's visibility returns 404.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /agents/{agent_id}/credentials (the `BindAgentCredential` operationId).
+	BindAgentCredentialWithBody(ctx context.Context, agentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// BindAgentCredential Bind Credential
+	//
+	// Directly bind a credential to an agent (theme 5 phase 1).
+	//
+	// The caller must be able to see the target credential; a credential that
+	// does not exist or is outside the caller's visibility returns 404.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /agents/{agent_id}/credentials (the `BindAgentCredential` operationId).
+	BindAgentCredential(ctx context.Context, agentId string, body BindAgentCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UnbindAgentCredential Unbind Credential
+	//
+	// Unbind a credential from an agent — suspend by default, purge on request.
+	//
+	// Corresponds with DELETE /agents/{agent_id}/credentials/{credential_id} (the `UnbindAgentCredential` operationId).
+	UnbindAgentCredential(ctx context.Context, agentId string, credentialId string, params *UnbindAgentCredentialParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ResumeAgentCredentialBinding Resume Credential Binding
+	//
+	// Lift a suspended credential binding — the reverse of the default unbind.
+	//
+	// Corresponds with POST /agents/{agent_id}/credentials/{credential_id}:resume (the `ResumeAgentCredentialBinding` operationId).
+	ResumeAgentCredentialBinding(ctx context.Context, agentId string, credentialId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// UpdateAgentJwksWithBody Update Agent Jwks
 	//
@@ -5240,38 +5322,6 @@ type ClientInterface interface {
 	// Corresponds with PUT /agents/{agent_id}/scopes (the `ReplaceAgentScopes` operationId).
 	ReplaceAgentScopes(ctx context.Context, agentId string, body ReplaceAgentScopesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ListAgentToolkits List Toolkits
-	//
-	// List toolkit bindings for an agent — requires agents:read or self.
-	//
-	// Corresponds with GET /agents/{agent_id}/toolkits (the `ListAgentToolkits` operationId).
-	ListAgentToolkits(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// BindToolkitWithBody Bind Toolkit
-	//
-	// Bind a toolkit to an agent.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /agents/{agent_id}/toolkits (the `BindToolkit` operationId).
-	BindToolkitWithBody(ctx context.Context, agentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// BindToolkit Bind Toolkit
-	//
-	// Bind a toolkit to an agent.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /agents/{agent_id}/toolkits (the `BindToolkit` operationId).
-	BindToolkit(ctx context.Context, agentId string, body BindToolkitJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// UnbindToolkit Unbind Toolkit
-	//
-	// Unbind a toolkit from an agent.
-	//
-	// Corresponds with DELETE /agents/{agent_id}/toolkits/{toolkit_id} (the `UnbindToolkit` operationId).
-	UnbindToolkit(ctx context.Context, agentId string, toolkitId string, reqEditors ...RequestEditorFn) (*http.Response, error)
-
 	// ApproveAgent Approve Agent
 	//
 	// Approve a pending agent.
@@ -5290,7 +5340,7 @@ type ClientInterface interface {
 	//
 	// Restricted to ``USER`` actors: ``Agent.owner_id`` is a FK to ``users.id``, so
 	// only a human can own an agent. The ``require_actor_type`` gate rejects a
-	// non-user actor (agent/service-account/toolkit) at the boundary with a 403;
+	// non-user actor (agent/service-account) at the boundary with a 403;
 	// ``AgentService.claim`` re-checks the same invariant as defense-in-depth.
 	//
 	// ``allow_expired_password=True`` is intentional (matching ``GET /agents/{id}``):
@@ -5315,7 +5365,7 @@ type ClientInterface interface {
 	//
 	// Restricted to ``USER`` actors: ``Agent.owner_id`` is a FK to ``users.id``, so
 	// only a human can own an agent. The ``require_actor_type`` gate rejects a
-	// non-user actor (agent/service-account/toolkit) at the boundary with a 403;
+	// non-user actor (agent/service-account) at the boundary with a 403;
 	// ``AgentService.claim`` re-checks the same invariant as defense-in-depth.
 	//
 	// ``allow_expired_password=True`` is intentional (matching ``GET /agents/{id}``):
@@ -5896,6 +5946,121 @@ type ClientInterface interface {
 	// Corresponds with PATCH /credentials/{credential_id} (the `UpdateCredential` operationId).
 	UpdateCredential(ctx context.Context, credentialId string, body UpdateCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ListCredentialAgents List agents bound to credential
+	//
+	// List agents directly bound to a credential with cursor-based pagination.
+	//
+	// The reverse lookup for the credential-detail "Agents" view (theme 5
+	// phase 1) — the direct-binding mirror of ``GET /toolkits/{id}/agents``.
+	// Suspended bindings are included with their flag set.
+	//
+	// Corresponds with GET /credentials/{credential_id}/agents (the `ListCredentialAgents` operationId).
+	ListCredentialAgents(ctx context.Context, credentialId string, params *ListCredentialAgentsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListAgentCredentialPermissions List binding permission rules
+	//
+	// List the ordered PBAC rules for a direct `(agent, credential)` binding.
+	//
+	// Corresponds with GET /credentials/{credential_id}/agents/{agent_id}/permissions (the `ListAgentCredentialPermissions` operationId).
+	ListAgentCredentialPermissions(ctx context.Context, credentialId string, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PatchAgentCredentialPermissionsWithBody Patch binding permission rules
+	//
+	// Additively add and/or remove permission rules on a binding.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PATCH /credentials/{credential_id}/agents/{agent_id}/permissions (the `PatchAgentCredentialPermissions` operationId).
+	PatchAgentCredentialPermissionsWithBody(ctx context.Context, credentialId string, agentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PatchAgentCredentialPermissions Patch binding permission rules
+	//
+	// Additively add and/or remove permission rules on a binding.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PATCH /credentials/{credential_id}/agents/{agent_id}/permissions (the `PatchAgentCredentialPermissions` operationId).
+	PatchAgentCredentialPermissions(ctx context.Context, credentialId string, agentId string, body PatchAgentCredentialPermissionsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReplaceAgentCredentialPermissionsWithBody Replace binding permission rules
+	//
+	// Replace the full set of permission rules for a binding (idempotent PUT).
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /credentials/{credential_id}/agents/{agent_id}/permissions (the `ReplaceAgentCredentialPermissions` operationId).
+	ReplaceAgentCredentialPermissionsWithBody(ctx context.Context, credentialId string, agentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReplaceAgentCredentialPermissions Replace binding permission rules
+	//
+	// Replace the full set of permission rules for a binding (idempotent PUT).
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /credentials/{credential_id}/agents/{agent_id}/permissions (the `ReplaceAgentCredentialPermissions` operationId).
+	ReplaceAgentCredentialPermissions(ctx context.Context, credentialId string, agentId string, body ReplaceAgentCredentialPermissionsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// TestAgentCredentialPermissionsWithBody Dry-run permission evaluation
+	//
+	// Answer "what would the broker do for this request?" without calling upstream.
+	//
+	// Unlike the toolkit `:test` there is **no vendor pooling**: the direct
+	// binding's rules are one ordered first-match-wins list, so the result is
+	// exactly this binding's policy. Default-deny when nothing matches.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /credentials/{credential_id}/agents/{agent_id}/permissions:test (the `TestAgentCredentialPermissions` operationId).
+	TestAgentCredentialPermissionsWithBody(ctx context.Context, credentialId string, agentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// TestAgentCredentialPermissions Dry-run permission evaluation
+	//
+	// Answer "what would the broker do for this request?" without calling upstream.
+	//
+	// Unlike the toolkit `:test` there is **no vendor pooling**: the direct
+	// binding's rules are one ordered first-match-wins list, so the result is
+	// exactly this binding's policy. Default-deny when nothing matches.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /credentials/{credential_id}/agents/{agent_id}/permissions:test (the `TestAgentCredentialPermissions` operationId).
+	TestAgentCredentialPermissions(ctx context.Context, credentialId string, agentId string, body TestAgentCredentialPermissionsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DetachAgentCredentialRuleSet Detach rule set from binding
+	//
+	// Detach the binding's shared rule set — its inline rules apply again.
+	//
+	// Idempotent: detaching a binding already on inline rules is a no-op 204.
+	//
+	// Corresponds with DELETE /credentials/{credential_id}/agents/{agent_id}/rule-set (the `DetachAgentCredentialRuleSet` operationId).
+	DetachAgentCredentialRuleSet(ctx context.Context, credentialId string, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AttachAgentCredentialRuleSetWithBody Attach rule set to binding
+	//
+	// Point the binding at a shared rule set (idempotent PUT).
+	//
+	// While attached, the set's ordered list is the binding's effective policy
+	// and its inline rules are dormant — `permissions:test` evaluates the set.
+	// The set must exist (404 `rule_set_not_found`).
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /credentials/{credential_id}/agents/{agent_id}/rule-set (the `AttachAgentCredentialRuleSet` operationId).
+	AttachAgentCredentialRuleSetWithBody(ctx context.Context, credentialId string, agentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AttachAgentCredentialRuleSet Attach rule set to binding
+	//
+	// Point the binding at a shared rule set (idempotent PUT).
+	//
+	// While attached, the set's ordered list is the binding's effective policy
+	// and its inline rules are dormant — `permissions:test` evaluates the set.
+	// The set must exist (404 `rule_set_not_found`).
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /credentials/{credential_id}/agents/{agent_id}/rule-set (the `AttachAgentCredentialRuleSet` operationId).
+	AttachAgentCredentialRuleSet(ctx context.Context, credentialId string, agentId string, body AttachAgentCredentialRuleSetJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ConnectCredentialWithBody Begin OAuth connect flow
 	//
 	// Initiate the OAuth connect flow for a credential.
@@ -5976,18 +6141,22 @@ type ClientInterface interface {
 
 	// GetGovernedHosts Get Governed Hosts
 	//
-	// The caller's governed host set (toolkit-bound hosts) with an ETag digest.
+	// The caller's governed host set (credential-bound hosts) with an ETag digest.
 	//
 	// **Always self-scoped** — derived from the authenticated identity's own
-	// toolkit bindings; there is no cross-actor or admin variant. Toolkits bind
-	// to agents, so agent-scoped tokens (the OAuth agent-consent flow's output)
-	// are the callers this endpoint serves — a plain user token yields an empty
-	// set. The ``digest`` covers exactly the ``data`` list and is also emitted as
-	// a strong ``ETag``, so integrators poll with ``If-None-Match: "<digest>"``
-	// and get an empty ``304`` until their host set actually changes (the
-	// change-poll seam that replaces ``GET /apis`` enumeration for interception
-	// scoping). Poll at most once per minute; on any ``5xx`` retain the last
-	// known set — never fall back to an empty (intercept-nothing) list.
+	// credential bindings; there is no cross-actor or admin variant. Credentials
+	// bind to agents and service accounts, so agent-scoped tokens (the OAuth
+	// agent-consent flow's output) and `sak_` keys are the callers this endpoint
+	// serves — a plain user token yields an empty set. Suspended bindings and
+	// inactive credentials still contribute their hosts: keep diverting that
+	// traffic, so the broker can refuse it — dropping it from the list would
+	// send it direct to the upstream, unbrokered. The ``digest`` covers exactly
+	// the ``data`` list and is also emitted as a strong ``ETag``, so integrators
+	// poll with ``If-None-Match: "<digest>"`` and get an empty ``304`` until
+	// their host set actually changes (the change-poll seam that replaces
+	// ``GET /apis`` enumeration for interception scoping). Poll at most once per
+	// minute; on any ``5xx`` retain the last known set — never fall back to an
+	// empty (intercept-nothing) list.
 	//
 	// Responses are identity-scoped and marked ``Cache-Control: private,
 	// no-store`` — a shared cache must never serve one actor's host set to
@@ -6384,6 +6553,104 @@ type ClientInterface interface {
 	// Corresponds with POST /oauth/consent (the `ConsentSubmit` operationId).
 	ConsentSubmitWithFormdataBody(ctx context.Context, body ConsentSubmitFormdataRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ConsentAgentCreateWithBody Create the consenting user's first agent inline (consent page)
+	//
+	// Create the consenting user's first agent from the zero-agents consent page (P4).
+	//
+	// The form is rendered only when the consenting user owns zero agents in
+	// any status (the G12(b) first-run dead-end). This submit verifies the signed
+	// single-use ``agent-create`` blob (bound to the consent handle AND the
+	// authenticated subject — no ambient credential is honored, so a cross-site
+	// form cannot drive it: it would need both the unguessable handle and a
+	// blob minted for that very handle), re-validates the handle and the D7
+	// client gate, provisions the user row if deferred provisioning left none
+	// (an affirmative user action, unlike rendering), re-checks the zero-agents
+	// predicate (an agent appearing in between skips creation — idempotent),
+	// creates the agent through the same ``AgentService.create`` path as the
+	// SPA (owner = the consenting user, default agent scopes, same audit +
+	// event), and 303-redirects back into ``GET /oauth/consent`` where the new
+	// agent renders pre-selected.
+	//
+	// Failure arms: expired/tampered/replayed blob and expired handle → the
+	// consent flow's standard ``invalid_consent`` error redirect; a gated
+	// client → ``access_denied``; an invalid agent name → the form re-rendered
+	// with the error inline and a fresh blob.
+	//
+	// Creation posture (security review — the hybrid): the arm is decided
+	// server-side AFTER the subject is resolved/provisioned, against the same
+	// effective-permission math as POST /agents' ``agents:write`` gate. A
+	// permissioned user gets the original behaviour (ACTIVE + 303 re-entry); an
+	// unpermissioned one gets a PENDING agent (the POST /register posture) and
+	// the awaiting-approval page. A per-subject ``set_if_absent`` slot claim
+	// makes N parallel submits (N distinct blobs from N renders) create exactly
+	// one agent — losers re-enter consent, which renders the picker or the
+	// awaiting page as appropriate.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /oauth/consent/agent (the `ConsentAgentCreate` operationId).
+	ConsentAgentCreateWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ConsentAgentCreateWithFormdataBody Create the consenting user's first agent inline (consent page)
+	//
+	// Create the consenting user's first agent from the zero-agents consent page (P4).
+	//
+	// The form is rendered only when the consenting user owns zero agents in
+	// any status (the G12(b) first-run dead-end). This submit verifies the signed
+	// single-use ``agent-create`` blob (bound to the consent handle AND the
+	// authenticated subject — no ambient credential is honored, so a cross-site
+	// form cannot drive it: it would need both the unguessable handle and a
+	// blob minted for that very handle), re-validates the handle and the D7
+	// client gate, provisions the user row if deferred provisioning left none
+	// (an affirmative user action, unlike rendering), re-checks the zero-agents
+	// predicate (an agent appearing in between skips creation — idempotent),
+	// creates the agent through the same ``AgentService.create`` path as the
+	// SPA (owner = the consenting user, default agent scopes, same audit +
+	// event), and 303-redirects back into ``GET /oauth/consent`` where the new
+	// agent renders pre-selected.
+	//
+	// Failure arms: expired/tampered/replayed blob and expired handle → the
+	// consent flow's standard ``invalid_consent`` error redirect; a gated
+	// client → ``access_denied``; an invalid agent name → the form re-rendered
+	// with the error inline and a fresh blob.
+	//
+	// Creation posture (security review — the hybrid): the arm is decided
+	// server-side AFTER the subject is resolved/provisioned, against the same
+	// effective-permission math as POST /agents' ``agents:write`` gate. A
+	// permissioned user gets the original behaviour (ACTIVE + 303 re-entry); an
+	// unpermissioned one gets a PENDING agent (the POST /register posture) and
+	// the awaiting-approval page. A per-subject ``set_if_absent`` slot claim
+	// makes N parallel submits (N distinct blobs from N renders) create exactly
+	// one agent — losers re-enter consent, which renders the picker or the
+	// awaiting page as appropriate.
+	//
+	// Takes a body of the `application/x-www-form-urlencoded` content type.
+	//
+	// Corresponds with POST /oauth/consent/agent (the `ConsentAgentCreate` operationId).
+	ConsentAgentCreateWithFormdataBody(ctx context.Context, body ConsentAgentCreateFormdataRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ConsentAgentStatus Poll pending-agent approval status (consent awaiting page)
+	//
+	// Minimal tri-state poll for the pending-agent awaiting page (P4 hybrid).
+	//
+	// Anonymous but keyed by the signed ``agent-status`` blob — never a bare
+	// agent id, so the endpoint cannot be used to enumerate or probe agents:
+	// the id it reports on is the one SIGNED into the blob, which only the
+	// consent flow mints, and only for an agent it verified belongs to the
+	// handle's subject. The response carries ONLY the tri-state — no name,
+	// owner, or scopes — and non-terminal lifecycle states (disabled, archived,
+	// a vanished row) all read as ``pending``, so possession of a blob is not a
+	// lifecycle oracle either. Any verification failure (bad signature, wrong
+	// purpose, expired ``iat``, malformed blob) is a 400 ``invalid_grant``; the
+	// page treats a 400 as terminal ("retry the connection") because the blob
+	// shares the consent handle's lifetime — a retry re-enters the flow, which
+	// re-parks on a fresh awaiting page while the agent stays pending. Shares
+	// the approval-status poll's own per-IP rate bucket (same cadence, same
+	// caller shape).
+	//
+	// Corresponds with GET /oauth/consent/agent/status (the `ConsentAgentStatus` operationId).
+	ConsentAgentStatus(ctx context.Context, params *ConsentAgentStatusParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// IntrospectEndpointWithBody Introspect Endpoint
 	//
 	// Introspect a token (RFC 7662).
@@ -6592,6 +6859,15 @@ type ClientInterface interface {
 	//
 	// Exchange a refresh token, JWT assertion, authorization code, or client creds for tokens.
 	//
+	// Error responses speak the RFC 6749 §5.2 dialect (top-level ``error`` +
+	// ``error_description``), NOT platform Problem Details — reshaped by
+	// ``_TokenRoute``. Malformed/missing parameters answer ``invalid_request``;
+	// failed client authentication answers ``invalid_client`` (status 401 with a
+	// ``WWW-Authenticate: Basic`` challenge when the client attempted HTTP Basic,
+	// 400 otherwise). On the refresh arm, a revoked consent grant answers
+	// ``invalid_grant`` with ``error_description: "consent grant has been
+	// revoked"`` — terminal; restart the authorization flow.
+	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /oauth/token (the `TokenEndpoint` operationId).
@@ -6600,6 +6876,15 @@ type ClientInterface interface {
 	// TokenEndpoint Token Endpoint
 	//
 	// Exchange a refresh token, JWT assertion, authorization code, or client creds for tokens.
+	//
+	// Error responses speak the RFC 6749 §5.2 dialect (top-level ``error`` +
+	// ``error_description``), NOT platform Problem Details — reshaped by
+	// ``_TokenRoute``. Malformed/missing parameters answer ``invalid_request``;
+	// failed client authentication answers ``invalid_client`` (status 401 with a
+	// ``WWW-Authenticate: Basic`` challenge when the client attempted HTTP Basic,
+	// 400 otherwise). On the refresh arm, a revoked consent grant answers
+	// ``invalid_grant`` with ``error_description: "consent grant has been
+	// revoked"`` — terminal; restart the authorization flow.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -6610,10 +6895,106 @@ type ClientInterface interface {
 	//
 	// Exchange a refresh token, JWT assertion, authorization code, or client creds for tokens.
 	//
+	// Error responses speak the RFC 6749 §5.2 dialect (top-level ``error`` +
+	// ``error_description``), NOT platform Problem Details — reshaped by
+	// ``_TokenRoute``. Malformed/missing parameters answer ``invalid_request``;
+	// failed client authentication answers ``invalid_client`` (status 401 with a
+	// ``WWW-Authenticate: Basic`` challenge when the client attempted HTTP Basic,
+	// 400 otherwise). On the refresh arm, a revoked consent grant answers
+	// ``invalid_grant`` with ``error_description: "consent grant has been
+	// revoked"`` — terminal; restart the authorization flow.
+	//
 	// Takes a body of the `application/x-www-form-urlencoded` content type.
 	//
 	// Corresponds with POST /oauth/token (the `TokenEndpoint` operationId).
 	TokenEndpointWithFormdataBody(ctx context.Context, body TokenEndpointFormdataRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListPermissionRuleSets List permission rule sets
+	//
+	// List shared rule sets with per-set rule counts (cursor-paginated).
+	//
+	// Corresponds with GET /permission-rule-sets (the `ListPermissionRuleSets` operationId).
+	ListPermissionRuleSets(ctx context.Context, params *ListPermissionRuleSetsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreatePermissionRuleSetWithBody Create permission rule set
+	//
+	// Create a named, shareable ordered rule list (theme 5 rule grouping).
+	//
+	// N agent-credential bindings can point at one set, so `permissions:test`
+	// and "revoke this operation everywhere" stay single-place edits.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /permission-rule-sets (the `CreatePermissionRuleSet` operationId).
+	CreatePermissionRuleSetWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreatePermissionRuleSet Create permission rule set
+	//
+	// Create a named, shareable ordered rule list (theme 5 rule grouping).
+	//
+	// N agent-credential bindings can point at one set, so `permissions:test`
+	// and "revoke this operation everywhere" stay single-place edits.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /permission-rule-sets (the `CreatePermissionRuleSet` operationId).
+	CreatePermissionRuleSet(ctx context.Context, body CreatePermissionRuleSetJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeletePermissionRuleSet Delete permission rule set
+	//
+	// Delete a rule set nothing references (409 `rule_set_in_use` otherwise).
+	//
+	// Corresponds with DELETE /permission-rule-sets/{rule_set_id} (the `DeletePermissionRuleSet` operationId).
+	DeletePermissionRuleSet(ctx context.Context, ruleSetId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetPermissionRuleSet Get permission rule set
+	//
+	// Get a rule set with its ordered rules and referencing-binding count.
+	//
+	// Corresponds with GET /permission-rule-sets/{rule_set_id} (the `GetPermissionRuleSet` operationId).
+	GetPermissionRuleSet(ctx context.Context, ruleSetId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdatePermissionRuleSetWithBody Update permission rule set
+	//
+	// Rename or re-describe a rule set (creator or org admin).
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PATCH /permission-rule-sets/{rule_set_id} (the `UpdatePermissionRuleSet` operationId).
+	UpdatePermissionRuleSetWithBody(ctx context.Context, ruleSetId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdatePermissionRuleSet Update permission rule set
+	//
+	// Rename or re-describe a rule set (creator or org admin).
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PATCH /permission-rule-sets/{rule_set_id} (the `UpdatePermissionRuleSet` operationId).
+	UpdatePermissionRuleSet(ctx context.Context, ruleSetId string, body UpdatePermissionRuleSetJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReplacePermissionRuleSetRulesWithBody Replace rule set rules
+	//
+	// Replace the set's full ordered rule list (idempotent PUT).
+	//
+	// Every binding pointing at the set picks the new list up at once — the
+	// single-place edit rule grouping exists for.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /permission-rule-sets/{rule_set_id}/rules (the `ReplacePermissionRuleSetRules` operationId).
+	ReplacePermissionRuleSetRulesWithBody(ctx context.Context, ruleSetId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReplacePermissionRuleSetRules Replace rule set rules
+	//
+	// Replace the set's full ordered rule list (idempotent PUT).
+	//
+	// Every binding pointing at the set picks the new list up at once — the
+	// single-place edit rule grouping exists for.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /permission-rule-sets/{rule_set_id}/rules (the `ReplacePermissionRuleSetRules` operationId).
+	ReplacePermissionRuleSetRules(ctx context.Context, ruleSetId string, body ReplacePermissionRuleSetRulesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListPermissions List Permissions
 	//
@@ -6717,7 +7098,11 @@ type ClientInterface interface {
 
 	// ArchiveServiceAccount Archive Service Account
 	//
-	// Soft-archive a service account — revokes scope grants.
+	// Archive a service account — terminal-but-kept.
+	//
+	// The row is retained for history, but the action is not reversible and
+	// the account's scope grants are revoked. For the reversible kill switch
+	// use ``:disable`` / ``:enable`` instead.
 	//
 	// Corresponds with DELETE /service-accounts/{service_account_id} (the `ArchiveServiceAccount` operationId).
 	ArchiveServiceAccount(ctx context.Context, serviceAccountId string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -6813,239 +7198,6 @@ type ClientInterface interface {
 	// Corresponds with GET /system/version (the `GetVersion` operationId).
 	GetVersion(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ListToolkits List toolkits
-	//
-	// List toolkits with cursor-based pagination.
-	//
-	// Corresponds with GET /toolkits (the `ListToolkits` operationId).
-	ListToolkits(ctx context.Context, params *ListToolkitsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CreateToolkitWithBody Create toolkit
-	//
-	// Create a toolkit and issue its first API key.
-	//
-	// The plaintext key (`jntc_live_…`) is returned **once** in `api_key` and is
-	// never retrievable again. Optional `credential_ids` bind existing credentials
-	// at creation time; each inline bind emits a ``no_permission_rules`` warning
-	// because the broker denies by default until rules are added.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /toolkits (the `CreateToolkit` operationId).
-	CreateToolkitWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CreateToolkit Create toolkit
-	//
-	// Create a toolkit and issue its first API key.
-	//
-	// The plaintext key (`jntc_live_…`) is returned **once** in `api_key` and is
-	// never retrievable again. Optional `credential_ids` bind existing credentials
-	// at creation time; each inline bind emits a ``no_permission_rules`` warning
-	// because the broker denies by default until rules are added.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /toolkits (the `CreateToolkit` operationId).
-	CreateToolkit(ctx context.Context, body CreateToolkitJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// DeleteToolkit Delete toolkit
-	//
-	// Permanently delete a toolkit and cascade-remove its keys, bindings, and permission rules.
-	//
-	// Corresponds with DELETE /toolkits/{toolkit_id} (the `DeleteToolkit` operationId).
-	DeleteToolkit(ctx context.Context, toolkitId string, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetToolkit Get toolkit
-	//
-	// Get a single toolkit by its `tk_…` ID.
-	//
-	// Corresponds with GET /toolkits/{toolkit_id} (the `GetToolkit` operationId).
-	GetToolkit(ctx context.Context, toolkitId string, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// UpdateToolkitWithBody Update toolkit
-	//
-	// Update a toolkit's name, description, or active flag.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with PATCH /toolkits/{toolkit_id} (the `UpdateToolkit` operationId).
-	UpdateToolkitWithBody(ctx context.Context, toolkitId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// UpdateToolkit Update toolkit
-	//
-	// Update a toolkit's name, description, or active flag.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with PATCH /toolkits/{toolkit_id} (the `UpdateToolkit` operationId).
-	UpdateToolkit(ctx context.Context, toolkitId string, body UpdateToolkitJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ListToolkitAgents List agents bound to toolkit
-	//
-	// List agents bound to a toolkit with cursor-based pagination.
-	//
-	// Corresponds with GET /toolkits/{toolkit_id}/agents (the `ListToolkitAgents` operationId).
-	ListToolkitAgents(ctx context.Context, toolkitId string, params *ListToolkitAgentsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ListBindings List toolkit credential bindings
-	//
-	// List the credentials bound to a toolkit with cursor-based pagination.
-	//
-	// Corresponds with GET /toolkits/{toolkit_id}/credentials (the `ListBindings` operationId).
-	ListBindings(ctx context.Context, toolkitId string, params *ListBindingsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// BindCredentialWithBody Bind credential to toolkit
-	//
-	// Bind an existing credential to a toolkit, optionally with inline permission rules.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /toolkits/{toolkit_id}/credentials (the `BindCredential` operationId).
-	BindCredentialWithBody(ctx context.Context, toolkitId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// BindCredential Bind credential to toolkit
-	//
-	// Bind an existing credential to a toolkit, optionally with inline permission rules.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /toolkits/{toolkit_id}/credentials (the `BindCredential` operationId).
-	BindCredential(ctx context.Context, toolkitId string, body BindCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// UnbindCredential Unbind credential from toolkit
-	//
-	// Remove a credential binding from a toolkit (the credential itself is untouched).
-	//
-	// Corresponds with DELETE /toolkits/{toolkit_id}/credentials/{credential_id} (the `UnbindCredential` operationId).
-	UnbindCredential(ctx context.Context, toolkitId string, credentialId string, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ListToolkitPermissions List binding permission rules
-	//
-	// List the fine-grained PBAC rules for a `(toolkit, credential)` binding.
-	//
-	// Corresponds with GET /toolkits/{toolkit_id}/credentials/{credential_id}/permissions (the `ListToolkitPermissions` operationId).
-	ListToolkitPermissions(ctx context.Context, toolkitId string, credentialId string, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// PatchPermissionsWithBody Patch binding permission rules
-	//
-	// Additively add and/or remove permission rules on a binding.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with PATCH /toolkits/{toolkit_id}/credentials/{credential_id}/permissions (the `PatchPermissions` operationId).
-	PatchPermissionsWithBody(ctx context.Context, toolkitId string, credentialId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// PatchPermissions Patch binding permission rules
-	//
-	// Additively add and/or remove permission rules on a binding.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with PATCH /toolkits/{toolkit_id}/credentials/{credential_id}/permissions (the `PatchPermissions` operationId).
-	PatchPermissions(ctx context.Context, toolkitId string, credentialId string, body PatchPermissionsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ReplacePermissionsWithBody Replace binding permission rules
-	//
-	// Replace the full set of permission rules for a binding (idempotent PUT).
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with PUT /toolkits/{toolkit_id}/credentials/{credential_id}/permissions (the `ReplacePermissions` operationId).
-	ReplacePermissionsWithBody(ctx context.Context, toolkitId string, credentialId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ReplacePermissions Replace binding permission rules
-	//
-	// Replace the full set of permission rules for a binding (idempotent PUT).
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with PUT /toolkits/{toolkit_id}/credentials/{credential_id}/permissions (the `ReplacePermissions` operationId).
-	ReplacePermissions(ctx context.Context, toolkitId string, credentialId string, body ReplacePermissionsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// TestToolkitPermissionsWithBody Dry-run permission evaluation
-	//
-	// Answer "what would the broker do for this request?" without calling upstream.
-	//
-	// Evaluates the same **vendor-pooled** rule set the broker sees at request
-	// time — rules from all same-vendor bindings on this toolkit compete in one
-	// ordered list. The response names which binding contributed the matching
-	// rule, which is not obvious from the toolkit id alone under pooling.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /toolkits/{toolkit_id}/credentials/{credential_id}/permissions:test (the `TestToolkitPermissions` operationId).
-	TestToolkitPermissionsWithBody(ctx context.Context, toolkitId string, credentialId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// TestToolkitPermissions Dry-run permission evaluation
-	//
-	// Answer "what would the broker do for this request?" without calling upstream.
-	//
-	// Evaluates the same **vendor-pooled** rule set the broker sees at request
-	// time — rules from all same-vendor bindings on this toolkit compete in one
-	// ordered list. The response names which binding contributed the matching
-	// rule, which is not obvious from the toolkit id alone under pooling.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /toolkits/{toolkit_id}/credentials/{credential_id}/permissions:test (the `TestToolkitPermissions` operationId).
-	TestToolkitPermissions(ctx context.Context, toolkitId string, credentialId string, body TestToolkitPermissionsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ListKeys List toolkit keys
-	//
-	// List a toolkit's API keys (redacted; only `key_preview` is shown).
-	//
-	// Corresponds with GET /toolkits/{toolkit_id}/keys (the `ListKeys` operationId).
-	ListKeys(ctx context.Context, toolkitId string, params *ListKeysParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CreateKeyWithBody Issue toolkit key
-	//
-	// Issue a new API key for a toolkit.
-	//
-	// The plaintext value (`jntc_live_…`) is returned **once** in `api_key`. Issue
-	// a fresh key, switch callers, then revoke the old one (do-and-then-revoke).
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /toolkits/{toolkit_id}/keys (the `CreateKey` operationId).
-	CreateKeyWithBody(ctx context.Context, toolkitId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CreateKey Issue toolkit key
-	//
-	// Issue a new API key for a toolkit.
-	//
-	// The plaintext value (`jntc_live_…`) is returned **once** in `api_key`. Issue
-	// a fresh key, switch callers, then revoke the old one (do-and-then-revoke).
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /toolkits/{toolkit_id}/keys (the `CreateKey` operationId).
-	CreateKey(ctx context.Context, toolkitId string, body CreateKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// DeleteKey Revoke toolkit key
-	//
-	// Revoke (delete) a toolkit API key. Callers using it are rejected immediately.
-	//
-	// Corresponds with DELETE /toolkits/{toolkit_id}/keys/{key_id} (the `DeleteKey` operationId).
-	DeleteKey(ctx context.Context, toolkitId string, keyId string, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// UpdateKeyWithBody Update toolkit key
-	//
-	// Update a key's label, IP allowlist, or revoked flag.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with PATCH /toolkits/{toolkit_id}/keys/{key_id} (the `UpdateKey` operationId).
-	UpdateKeyWithBody(ctx context.Context, toolkitId string, keyId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// UpdateKey Update toolkit key
-	//
-	// Update a key's label, IP allowlist, or revoked flag.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with PATCH /toolkits/{toolkit_id}/keys/{key_id} (the `UpdateKey` operationId).
-	UpdateKey(ctx context.Context, toolkitId string, keyId string, body UpdateKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
 	// ListUsers List Users
 	//
 	// List all users with cursor-based pagination.
@@ -7106,7 +7258,12 @@ type ClientInterface interface {
 
 	// DeleteUser Delete User
 	//
-	// Soft-delete a user.
+	// Delete a user account (terminal-but-kept).
+	//
+	// The row is retained — the account is anonymized (tombstone email) and
+	// deactivated so history and audit references stay resolvable — but the
+	// action is terminal: there is no re-enable arm. For the reversible kill
+	// switch use ``:disable`` / ``:enable`` instead.
 	//
 	// Corresponds with DELETE /users/{user_id} (the `DeleteUser` operationId).
 	DeleteUser(ctx context.Context, userId string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -7677,11 +7834,13 @@ func (c *Client) CreateOauthClient(ctx context.Context, body CreateOauthClientJS
 	return c.Client.Do(req)
 }
 
-// DeactivateOauthClient Deactivate OAuth client
+// DeactivateOauthClient Disable OAuth client
 //
-// Soft-delete an OAuth client by setting active=False.
+// Disable an OAuth client — the reversible kill switch (sets active=false).
 //
-// Deactivated clients can no longer initiate authorization flows.
+// Disabled clients can no longer initiate authorization flows and their
+// outstanding tokens stop resolving. Re-enable by patching “active: true“.
+// The row is kept; this is not a delete.
 //
 // Corresponds with DELETE /admin/oauth-clients/{id} (the `DeactivateOauthClient` operationId).
 func (c *Client) DeactivateOauthClient(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -7780,6 +7939,31 @@ func (c *Client) RotateOauthClientSecret(ctx context.Context, id string, reqEdit
 // Corresponds with POST /admin/oauth-clients/{id}:approve (the `ApproveOauthClient` operationId).
 func (c *Client) ApproveOauthClient(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewApproveOauthClientRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeleteOauthClient Delete OAuth client
+//
+// Permanently delete an OAuth client. This cannot be undone.
+//
+// Terminal, unlike the reversible kill switch (“DELETE“ on this
+// resource, which only sets “active=false“): every active grant is
+// revoked, every token carrying the client's lineage is revoked, and the
+// registration row is removed — connected applications are fully
+// disconnected. The audit trail survives. A client that later re-registers
+// via dynamic client registration is a NEW registration and re-enters the
+// approval queue as pending; it is never re-attached to the deleted one.
+//
+// Corresponds with POST /admin/oauth-clients/{id}:delete (the `DeleteOauthClient` operationId).
+func (c *Client) DeleteOauthClient(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteOauthClientRequest(c.Server, id)
 	if err != nil {
 		return nil, err
 	}
@@ -7912,7 +8096,12 @@ func (c *Client) CreateAgent(ctx context.Context, body CreateAgentJSONRequestBod
 
 // ArchiveAgent Archive Agent
 //
-// Soft-archive an agent — revokes scope grants and toolkit bindings.
+// Archive an agent — terminal-but-kept.
+//
+// The row is retained for history, but the action is not reversible and
+// the agent's authority is swept: scope grants, credential bindings, and
+// OAuth consent grants are revoked. For the reversible kill switch use
+// “:disable“ / “:enable“ instead.
 //
 // Corresponds with DELETE /agents/{agent_id} (the `ArchiveAgent` operationId).
 func (c *Client) ArchiveAgent(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -8006,6 +8195,101 @@ func (c *Client) GetAgentApiKeyInfo(ctx context.Context, agentId string, reqEdit
 // Corresponds with GET /agents/{agent_id}/api-key/history (the `GetAgentApiKeyHistory` operationId).
 func (c *Client) GetAgentApiKeyHistory(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetAgentApiKeyHistoryRequest(c.Server, agentId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListAgentCredentials List Credentials
+//
+// List direct credential bindings for an agent — requires agents:read or self.
+//
+// Corresponds with GET /agents/{agent_id}/credentials (the `ListAgentCredentials` operationId).
+func (c *Client) ListAgentCredentials(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListAgentCredentialsRequest(c.Server, agentId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// BindAgentCredentialWithBody Bind Credential
+//
+// Directly bind a credential to an agent (theme 5 phase 1).
+//
+// The caller must be able to see the target credential; a credential that
+// does not exist or is outside the caller's visibility returns 404.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /agents/{agent_id}/credentials (the `BindAgentCredential` operationId).
+func (c *Client) BindAgentCredentialWithBody(ctx context.Context, agentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewBindAgentCredentialRequestWithBody(c.Server, agentId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// BindAgentCredential Bind Credential
+//
+// Directly bind a credential to an agent (theme 5 phase 1).
+//
+// The caller must be able to see the target credential; a credential that
+// does not exist or is outside the caller's visibility returns 404.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /agents/{agent_id}/credentials (the `BindAgentCredential` operationId).
+func (c *Client) BindAgentCredential(ctx context.Context, agentId string, body BindAgentCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewBindAgentCredentialRequest(c.Server, agentId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UnbindAgentCredential Unbind Credential
+//
+// Unbind a credential from an agent — suspend by default, purge on request.
+//
+// Corresponds with DELETE /agents/{agent_id}/credentials/{credential_id} (the `UnbindAgentCredential` operationId).
+func (c *Client) UnbindAgentCredential(ctx context.Context, agentId string, credentialId string, params *UnbindAgentCredentialParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUnbindAgentCredentialRequest(c.Server, agentId, credentialId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ResumeAgentCredentialBinding Resume Credential Binding
+//
+// Lift a suspended credential binding — the reverse of the default unbind.
+//
+// Corresponds with POST /agents/{agent_id}/credentials/{credential_id}:resume (the `ResumeAgentCredentialBinding` operationId).
+func (c *Client) ResumeAgentCredentialBinding(ctx context.Context, agentId string, credentialId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewResumeAgentCredentialBindingRequest(c.Server, agentId, credentialId)
 	if err != nil {
 		return nil, err
 	}
@@ -8140,78 +8424,6 @@ func (c *Client) ReplaceAgentScopes(ctx context.Context, agentId string, body Re
 	return c.Client.Do(req)
 }
 
-// ListAgentToolkits List Toolkits
-//
-// List toolkit bindings for an agent — requires agents:read or self.
-//
-// Corresponds with GET /agents/{agent_id}/toolkits (the `ListAgentToolkits` operationId).
-func (c *Client) ListAgentToolkits(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListAgentToolkitsRequest(c.Server, agentId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// BindToolkitWithBody Bind Toolkit
-//
-// Bind a toolkit to an agent.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /agents/{agent_id}/toolkits (the `BindToolkit` operationId).
-func (c *Client) BindToolkitWithBody(ctx context.Context, agentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewBindToolkitRequestWithBody(c.Server, agentId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// BindToolkit Bind Toolkit
-//
-// Bind a toolkit to an agent.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /agents/{agent_id}/toolkits (the `BindToolkit` operationId).
-func (c *Client) BindToolkit(ctx context.Context, agentId string, body BindToolkitJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewBindToolkitRequest(c.Server, agentId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// UnbindToolkit Unbind Toolkit
-//
-// Unbind a toolkit from an agent.
-//
-// Corresponds with DELETE /agents/{agent_id}/toolkits/{toolkit_id} (the `UnbindToolkit` operationId).
-func (c *Client) UnbindToolkit(ctx context.Context, agentId string, toolkitId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewUnbindToolkitRequest(c.Server, agentId, toolkitId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
 // ApproveAgent Approve Agent
 //
 // Approve a pending agent.
@@ -8240,7 +8452,7 @@ func (c *Client) ApproveAgent(ctx context.Context, agentId string, reqEditors ..
 //
 // Restricted to “USER“ actors: “Agent.owner_id“ is a FK to “users.id“, so
 // only a human can own an agent. The “require_actor_type“ gate rejects a
-// non-user actor (agent/service-account/toolkit) at the boundary with a 403;
+// non-user actor (agent/service-account) at the boundary with a 403;
 // “AgentService.claim“ re-checks the same invariant as defense-in-depth.
 //
 // “allow_expired_password=True“ is intentional (matching “GET /agents/{id}“):
@@ -8275,7 +8487,7 @@ func (c *Client) ClaimAgentWithBody(ctx context.Context, agentId string, content
 //
 // Restricted to “USER“ actors: “Agent.owner_id“ is a FK to “users.id“, so
 // only a human can own an agent. The “require_actor_type“ gate rejects a
-// non-user actor (agent/service-account/toolkit) at the boundary with a 403;
+// non-user actor (agent/service-account) at the boundary with a 403;
 // “AgentService.claim“ re-checks the same invariant as defense-in-depth.
 //
 // “allow_expired_password=True“ is intentional (matching “GET /agents/{id}“):
@@ -9456,6 +9668,231 @@ func (c *Client) UpdateCredential(ctx context.Context, credentialId string, body
 	return c.Client.Do(req)
 }
 
+// ListCredentialAgents List agents bound to credential
+//
+// List agents directly bound to a credential with cursor-based pagination.
+//
+// The reverse lookup for the credential-detail "Agents" view (theme 5
+// phase 1) — the direct-binding mirror of “GET /toolkits/{id}/agents“.
+// Suspended bindings are included with their flag set.
+//
+// Corresponds with GET /credentials/{credential_id}/agents (the `ListCredentialAgents` operationId).
+func (c *Client) ListCredentialAgents(ctx context.Context, credentialId string, params *ListCredentialAgentsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListCredentialAgentsRequest(c.Server, credentialId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListAgentCredentialPermissions List binding permission rules
+//
+// List the ordered PBAC rules for a direct `(agent, credential)` binding.
+//
+// Corresponds with GET /credentials/{credential_id}/agents/{agent_id}/permissions (the `ListAgentCredentialPermissions` operationId).
+func (c *Client) ListAgentCredentialPermissions(ctx context.Context, credentialId string, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListAgentCredentialPermissionsRequest(c.Server, credentialId, agentId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PatchAgentCredentialPermissionsWithBody Patch binding permission rules
+//
+// Additively add and/or remove permission rules on a binding.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PATCH /credentials/{credential_id}/agents/{agent_id}/permissions (the `PatchAgentCredentialPermissions` operationId).
+func (c *Client) PatchAgentCredentialPermissionsWithBody(ctx context.Context, credentialId string, agentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPatchAgentCredentialPermissionsRequestWithBody(c.Server, credentialId, agentId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PatchAgentCredentialPermissions Patch binding permission rules
+//
+// Additively add and/or remove permission rules on a binding.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PATCH /credentials/{credential_id}/agents/{agent_id}/permissions (the `PatchAgentCredentialPermissions` operationId).
+func (c *Client) PatchAgentCredentialPermissions(ctx context.Context, credentialId string, agentId string, body PatchAgentCredentialPermissionsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPatchAgentCredentialPermissionsRequest(c.Server, credentialId, agentId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReplaceAgentCredentialPermissionsWithBody Replace binding permission rules
+//
+// Replace the full set of permission rules for a binding (idempotent PUT).
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /credentials/{credential_id}/agents/{agent_id}/permissions (the `ReplaceAgentCredentialPermissions` operationId).
+func (c *Client) ReplaceAgentCredentialPermissionsWithBody(ctx context.Context, credentialId string, agentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReplaceAgentCredentialPermissionsRequestWithBody(c.Server, credentialId, agentId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReplaceAgentCredentialPermissions Replace binding permission rules
+//
+// Replace the full set of permission rules for a binding (idempotent PUT).
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /credentials/{credential_id}/agents/{agent_id}/permissions (the `ReplaceAgentCredentialPermissions` operationId).
+func (c *Client) ReplaceAgentCredentialPermissions(ctx context.Context, credentialId string, agentId string, body ReplaceAgentCredentialPermissionsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReplaceAgentCredentialPermissionsRequest(c.Server, credentialId, agentId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// TestAgentCredentialPermissionsWithBody Dry-run permission evaluation
+//
+// Answer "what would the broker do for this request?" without calling upstream.
+//
+// Unlike the toolkit `:test` there is **no vendor pooling**: the direct
+// binding's rules are one ordered first-match-wins list, so the result is
+// exactly this binding's policy. Default-deny when nothing matches.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /credentials/{credential_id}/agents/{agent_id}/permissions:test (the `TestAgentCredentialPermissions` operationId).
+func (c *Client) TestAgentCredentialPermissionsWithBody(ctx context.Context, credentialId string, agentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewTestAgentCredentialPermissionsRequestWithBody(c.Server, credentialId, agentId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// TestAgentCredentialPermissions Dry-run permission evaluation
+//
+// Answer "what would the broker do for this request?" without calling upstream.
+//
+// Unlike the toolkit `:test` there is **no vendor pooling**: the direct
+// binding's rules are one ordered first-match-wins list, so the result is
+// exactly this binding's policy. Default-deny when nothing matches.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /credentials/{credential_id}/agents/{agent_id}/permissions:test (the `TestAgentCredentialPermissions` operationId).
+func (c *Client) TestAgentCredentialPermissions(ctx context.Context, credentialId string, agentId string, body TestAgentCredentialPermissionsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewTestAgentCredentialPermissionsRequest(c.Server, credentialId, agentId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DetachAgentCredentialRuleSet Detach rule set from binding
+//
+// Detach the binding's shared rule set — its inline rules apply again.
+//
+// Idempotent: detaching a binding already on inline rules is a no-op 204.
+//
+// Corresponds with DELETE /credentials/{credential_id}/agents/{agent_id}/rule-set (the `DetachAgentCredentialRuleSet` operationId).
+func (c *Client) DetachAgentCredentialRuleSet(ctx context.Context, credentialId string, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDetachAgentCredentialRuleSetRequest(c.Server, credentialId, agentId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AttachAgentCredentialRuleSetWithBody Attach rule set to binding
+//
+// Point the binding at a shared rule set (idempotent PUT).
+//
+// While attached, the set's ordered list is the binding's effective policy
+// and its inline rules are dormant — `permissions:test` evaluates the set.
+// The set must exist (404 `rule_set_not_found`).
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /credentials/{credential_id}/agents/{agent_id}/rule-set (the `AttachAgentCredentialRuleSet` operationId).
+func (c *Client) AttachAgentCredentialRuleSetWithBody(ctx context.Context, credentialId string, agentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAttachAgentCredentialRuleSetRequestWithBody(c.Server, credentialId, agentId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AttachAgentCredentialRuleSet Attach rule set to binding
+//
+// Point the binding at a shared rule set (idempotent PUT).
+//
+// While attached, the set's ordered list is the binding's effective policy
+// and its inline rules are dormant — `permissions:test` evaluates the set.
+// The set must exist (404 `rule_set_not_found`).
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /credentials/{credential_id}/agents/{agent_id}/rule-set (the `AttachAgentCredentialRuleSet` operationId).
+func (c *Client) AttachAgentCredentialRuleSet(ctx context.Context, credentialId string, agentId string, body AttachAgentCredentialRuleSetJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAttachAgentCredentialRuleSetRequest(c.Server, credentialId, agentId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // ConnectCredentialWithBody Begin OAuth connect flow
 //
 // Initiate the OAuth connect flow for a credential.
@@ -9636,18 +10073,22 @@ func (c *Client) GetExecution(ctx context.Context, executionId string, reqEditor
 
 // GetGovernedHosts Get Governed Hosts
 //
-// The caller's governed host set (toolkit-bound hosts) with an ETag digest.
+// The caller's governed host set (credential-bound hosts) with an ETag digest.
 //
 // **Always self-scoped** — derived from the authenticated identity's own
-// toolkit bindings; there is no cross-actor or admin variant. Toolkits bind
-// to agents, so agent-scoped tokens (the OAuth agent-consent flow's output)
-// are the callers this endpoint serves — a plain user token yields an empty
-// set. The “digest“ covers exactly the “data“ list and is also emitted as
-// a strong “ETag“, so integrators poll with “If-None-Match: "<digest>"“
-// and get an empty “304“ until their host set actually changes (the
-// change-poll seam that replaces “GET /apis“ enumeration for interception
-// scoping). Poll at most once per minute; on any “5xx“ retain the last
-// known set — never fall back to an empty (intercept-nothing) list.
+// credential bindings; there is no cross-actor or admin variant. Credentials
+// bind to agents and service accounts, so agent-scoped tokens (the OAuth
+// agent-consent flow's output) and `sak_` keys are the callers this endpoint
+// serves — a plain user token yields an empty set. Suspended bindings and
+// inactive credentials still contribute their hosts: keep diverting that
+// traffic, so the broker can refuse it — dropping it from the list would
+// send it direct to the upstream, unbrokered. The “digest“ covers exactly
+// the “data“ list and is also emitted as a strong “ETag“, so integrators
+// poll with “If-None-Match: "<digest>"“ and get an empty “304“ until
+// their host set actually changes (the change-poll seam that replaces
+// “GET /apis“ enumeration for interception scoping). Poll at most once per
+// minute; on any “5xx“ retain the last known set — never fall back to an
+// empty (intercept-nothing) list.
 //
 // Responses are identity-scoped and marked “Cache-Control: private,
 // no-store“ — a shared cache must never serve one actor's host set to
@@ -10374,6 +10815,134 @@ func (c *Client) ConsentSubmitWithFormdataBody(ctx context.Context, body Consent
 	return c.Client.Do(req)
 }
 
+// ConsentAgentCreateWithBody Create the consenting user's first agent inline (consent page)
+//
+// Create the consenting user's first agent from the zero-agents consent page (P4).
+//
+// The form is rendered only when the consenting user owns zero agents in
+// any status (the G12(b) first-run dead-end). This submit verifies the signed
+// single-use “agent-create“ blob (bound to the consent handle AND the
+// authenticated subject — no ambient credential is honored, so a cross-site
+// form cannot drive it: it would need both the unguessable handle and a
+// blob minted for that very handle), re-validates the handle and the D7
+// client gate, provisions the user row if deferred provisioning left none
+// (an affirmative user action, unlike rendering), re-checks the zero-agents
+// predicate (an agent appearing in between skips creation — idempotent),
+// creates the agent through the same “AgentService.create“ path as the
+// SPA (owner = the consenting user, default agent scopes, same audit +
+// event), and 303-redirects back into “GET /oauth/consent“ where the new
+// agent renders pre-selected.
+//
+// Failure arms: expired/tampered/replayed blob and expired handle → the
+// consent flow's standard “invalid_consent“ error redirect; a gated
+// client → “access_denied“; an invalid agent name → the form re-rendered
+// with the error inline and a fresh blob.
+//
+// Creation posture (security review — the hybrid): the arm is decided
+// server-side AFTER the subject is resolved/provisioned, against the same
+// effective-permission math as POST /agents' “agents:write“ gate. A
+// permissioned user gets the original behaviour (ACTIVE + 303 re-entry); an
+// unpermissioned one gets a PENDING agent (the POST /register posture) and
+// the awaiting-approval page. A per-subject “set_if_absent“ slot claim
+// makes N parallel submits (N distinct blobs from N renders) create exactly
+// one agent — losers re-enter consent, which renders the picker or the
+// awaiting page as appropriate.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /oauth/consent/agent (the `ConsentAgentCreate` operationId).
+func (c *Client) ConsentAgentCreateWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewConsentAgentCreateRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ConsentAgentCreateWithFormdataBody Create the consenting user's first agent inline (consent page)
+//
+// Create the consenting user's first agent from the zero-agents consent page (P4).
+//
+// The form is rendered only when the consenting user owns zero agents in
+// any status (the G12(b) first-run dead-end). This submit verifies the signed
+// single-use “agent-create“ blob (bound to the consent handle AND the
+// authenticated subject — no ambient credential is honored, so a cross-site
+// form cannot drive it: it would need both the unguessable handle and a
+// blob minted for that very handle), re-validates the handle and the D7
+// client gate, provisions the user row if deferred provisioning left none
+// (an affirmative user action, unlike rendering), re-checks the zero-agents
+// predicate (an agent appearing in between skips creation — idempotent),
+// creates the agent through the same “AgentService.create“ path as the
+// SPA (owner = the consenting user, default agent scopes, same audit +
+// event), and 303-redirects back into “GET /oauth/consent“ where the new
+// agent renders pre-selected.
+//
+// Failure arms: expired/tampered/replayed blob and expired handle → the
+// consent flow's standard “invalid_consent“ error redirect; a gated
+// client → “access_denied“; an invalid agent name → the form re-rendered
+// with the error inline and a fresh blob.
+//
+// Creation posture (security review — the hybrid): the arm is decided
+// server-side AFTER the subject is resolved/provisioned, against the same
+// effective-permission math as POST /agents' “agents:write“ gate. A
+// permissioned user gets the original behaviour (ACTIVE + 303 re-entry); an
+// unpermissioned one gets a PENDING agent (the POST /register posture) and
+// the awaiting-approval page. A per-subject “set_if_absent“ slot claim
+// makes N parallel submits (N distinct blobs from N renders) create exactly
+// one agent — losers re-enter consent, which renders the picker or the
+// awaiting page as appropriate.
+//
+// Takes a body of the `application/x-www-form-urlencoded` content type.
+//
+// Corresponds with POST /oauth/consent/agent (the `ConsentAgentCreate` operationId).
+func (c *Client) ConsentAgentCreateWithFormdataBody(ctx context.Context, body ConsentAgentCreateFormdataRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewConsentAgentCreateRequestWithFormdataBody(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ConsentAgentStatus Poll pending-agent approval status (consent awaiting page)
+//
+// Minimal tri-state poll for the pending-agent awaiting page (P4 hybrid).
+//
+// Anonymous but keyed by the signed “agent-status“ blob — never a bare
+// agent id, so the endpoint cannot be used to enumerate or probe agents:
+// the id it reports on is the one SIGNED into the blob, which only the
+// consent flow mints, and only for an agent it verified belongs to the
+// handle's subject. The response carries ONLY the tri-state — no name,
+// owner, or scopes — and non-terminal lifecycle states (disabled, archived,
+// a vanished row) all read as “pending“, so possession of a blob is not a
+// lifecycle oracle either. Any verification failure (bad signature, wrong
+// purpose, expired “iat“, malformed blob) is a 400 “invalid_grant“; the
+// page treats a 400 as terminal ("retry the connection") because the blob
+// shares the consent handle's lifetime — a retry re-enters the flow, which
+// re-parks on a fresh awaiting page while the agent stays pending. Shares
+// the approval-status poll's own per-IP rate bucket (same cadence, same
+// caller shape).
+//
+// Corresponds with GET /oauth/consent/agent/status (the `ConsentAgentStatus` operationId).
+func (c *Client) ConsentAgentStatus(ctx context.Context, params *ConsentAgentStatusParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewConsentAgentStatusRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // IntrospectEndpointWithBody Introspect Endpoint
 //
 // Introspect a token (RFC 7662).
@@ -10672,6 +11241,15 @@ func (c *Client) SessionContinueEndpoint(ctx context.Context, body SessionContin
 //
 // Exchange a refresh token, JWT assertion, authorization code, or client creds for tokens.
 //
+// Error responses speak the RFC 6749 §5.2 dialect (top-level “error“ +
+// “error_description“), NOT platform Problem Details — reshaped by
+// “_TokenRoute“. Malformed/missing parameters answer “invalid_request“;
+// failed client authentication answers “invalid_client“ (status 401 with a
+// “WWW-Authenticate: Basic“ challenge when the client attempted HTTP Basic,
+// 400 otherwise). On the refresh arm, a revoked consent grant answers
+// “invalid_grant“ with “error_description: "consent grant has been
+// revoked"“ — terminal; restart the authorization flow.
+//
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /oauth/token (the `TokenEndpoint` operationId).
@@ -10690,6 +11268,15 @@ func (c *Client) TokenEndpointWithBody(ctx context.Context, contentType string, 
 // TokenEndpoint Token Endpoint
 //
 // Exchange a refresh token, JWT assertion, authorization code, or client creds for tokens.
+//
+// Error responses speak the RFC 6749 §5.2 dialect (top-level “error“ +
+// “error_description“), NOT platform Problem Details — reshaped by
+// “_TokenRoute“. Malformed/missing parameters answer “invalid_request“;
+// failed client authentication answers “invalid_client“ (status 401 with a
+// “WWW-Authenticate: Basic“ challenge when the client attempted HTTP Basic,
+// 400 otherwise). On the refresh arm, a revoked consent grant answers
+// “invalid_grant“ with “error_description: "consent grant has been
+// revoked"“ — terminal; restart the authorization flow.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -10710,11 +11297,197 @@ func (c *Client) TokenEndpoint(ctx context.Context, body TokenEndpointJSONReques
 //
 // Exchange a refresh token, JWT assertion, authorization code, or client creds for tokens.
 //
+// Error responses speak the RFC 6749 §5.2 dialect (top-level “error“ +
+// “error_description“), NOT platform Problem Details — reshaped by
+// “_TokenRoute“. Malformed/missing parameters answer “invalid_request“;
+// failed client authentication answers “invalid_client“ (status 401 with a
+// “WWW-Authenticate: Basic“ challenge when the client attempted HTTP Basic,
+// 400 otherwise). On the refresh arm, a revoked consent grant answers
+// “invalid_grant“ with “error_description: "consent grant has been
+// revoked"“ — terminal; restart the authorization flow.
+//
 // Takes a body of the `application/x-www-form-urlencoded` content type.
 //
 // Corresponds with POST /oauth/token (the `TokenEndpoint` operationId).
 func (c *Client) TokenEndpointWithFormdataBody(ctx context.Context, body TokenEndpointFormdataRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewTokenEndpointRequestWithFormdataBody(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListPermissionRuleSets List permission rule sets
+//
+// List shared rule sets with per-set rule counts (cursor-paginated).
+//
+// Corresponds with GET /permission-rule-sets (the `ListPermissionRuleSets` operationId).
+func (c *Client) ListPermissionRuleSets(ctx context.Context, params *ListPermissionRuleSetsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListPermissionRuleSetsRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreatePermissionRuleSetWithBody Create permission rule set
+//
+// Create a named, shareable ordered rule list (theme 5 rule grouping).
+//
+// N agent-credential bindings can point at one set, so `permissions:test`
+// and "revoke this operation everywhere" stay single-place edits.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /permission-rule-sets (the `CreatePermissionRuleSet` operationId).
+func (c *Client) CreatePermissionRuleSetWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreatePermissionRuleSetRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreatePermissionRuleSet Create permission rule set
+//
+// Create a named, shareable ordered rule list (theme 5 rule grouping).
+//
+// N agent-credential bindings can point at one set, so `permissions:test`
+// and "revoke this operation everywhere" stay single-place edits.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /permission-rule-sets (the `CreatePermissionRuleSet` operationId).
+func (c *Client) CreatePermissionRuleSet(ctx context.Context, body CreatePermissionRuleSetJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreatePermissionRuleSetRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeletePermissionRuleSet Delete permission rule set
+//
+// Delete a rule set nothing references (409 `rule_set_in_use` otherwise).
+//
+// Corresponds with DELETE /permission-rule-sets/{rule_set_id} (the `DeletePermissionRuleSet` operationId).
+func (c *Client) DeletePermissionRuleSet(ctx context.Context, ruleSetId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeletePermissionRuleSetRequest(c.Server, ruleSetId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetPermissionRuleSet Get permission rule set
+//
+// Get a rule set with its ordered rules and referencing-binding count.
+//
+// Corresponds with GET /permission-rule-sets/{rule_set_id} (the `GetPermissionRuleSet` operationId).
+func (c *Client) GetPermissionRuleSet(ctx context.Context, ruleSetId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetPermissionRuleSetRequest(c.Server, ruleSetId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdatePermissionRuleSetWithBody Update permission rule set
+//
+// Rename or re-describe a rule set (creator or org admin).
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PATCH /permission-rule-sets/{rule_set_id} (the `UpdatePermissionRuleSet` operationId).
+func (c *Client) UpdatePermissionRuleSetWithBody(ctx context.Context, ruleSetId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdatePermissionRuleSetRequestWithBody(c.Server, ruleSetId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdatePermissionRuleSet Update permission rule set
+//
+// Rename or re-describe a rule set (creator or org admin).
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PATCH /permission-rule-sets/{rule_set_id} (the `UpdatePermissionRuleSet` operationId).
+func (c *Client) UpdatePermissionRuleSet(ctx context.Context, ruleSetId string, body UpdatePermissionRuleSetJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdatePermissionRuleSetRequest(c.Server, ruleSetId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReplacePermissionRuleSetRulesWithBody Replace rule set rules
+//
+// Replace the set's full ordered rule list (idempotent PUT).
+//
+// Every binding pointing at the set picks the new list up at once — the
+// single-place edit rule grouping exists for.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /permission-rule-sets/{rule_set_id}/rules (the `ReplacePermissionRuleSetRules` operationId).
+func (c *Client) ReplacePermissionRuleSetRulesWithBody(ctx context.Context, ruleSetId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReplacePermissionRuleSetRulesRequestWithBody(c.Server, ruleSetId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReplacePermissionRuleSetRules Replace rule set rules
+//
+// Replace the set's full ordered rule list (idempotent PUT).
+//
+// Every binding pointing at the set picks the new list up at once — the
+// single-place edit rule grouping exists for.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /permission-rule-sets/{rule_set_id}/rules (the `ReplacePermissionRuleSetRules` operationId).
+func (c *Client) ReplacePermissionRuleSetRules(ctx context.Context, ruleSetId string, body ReplacePermissionRuleSetRulesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReplacePermissionRuleSetRulesRequest(c.Server, ruleSetId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -10947,7 +11720,11 @@ func (c *Client) CreateServiceAccount(ctx context.Context, body CreateServiceAcc
 
 // ArchiveServiceAccount Archive Service Account
 //
-// Soft-archive a service account — revokes scope grants.
+// Archive a service account — terminal-but-kept.
+//
+// The row is retained for history, but the action is not reversible and
+// the account's scope grants are revoked. For the reversible kill switch
+// use “:disable“ / “:enable“ instead.
 //
 // Corresponds with DELETE /service-accounts/{service_account_id} (the `ArchiveServiceAccount` operationId).
 func (c *Client) ArchiveServiceAccount(ctx context.Context, serviceAccountId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -11163,489 +11940,6 @@ func (c *Client) GetVersion(ctx context.Context, reqEditors ...RequestEditorFn) 
 	return c.Client.Do(req)
 }
 
-// ListToolkits List toolkits
-//
-// List toolkits with cursor-based pagination.
-//
-// Corresponds with GET /toolkits (the `ListToolkits` operationId).
-func (c *Client) ListToolkits(ctx context.Context, params *ListToolkitsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListToolkitsRequest(c.Server, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// CreateToolkitWithBody Create toolkit
-//
-// Create a toolkit and issue its first API key.
-//
-// The plaintext key (`jntc_live_…`) is returned **once** in `api_key` and is
-// never retrievable again. Optional `credential_ids` bind existing credentials
-// at creation time; each inline bind emits a “no_permission_rules“ warning
-// because the broker denies by default until rules are added.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /toolkits (the `CreateToolkit` operationId).
-func (c *Client) CreateToolkitWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateToolkitRequestWithBody(c.Server, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// CreateToolkit Create toolkit
-//
-// Create a toolkit and issue its first API key.
-//
-// The plaintext key (`jntc_live_…`) is returned **once** in `api_key` and is
-// never retrievable again. Optional `credential_ids` bind existing credentials
-// at creation time; each inline bind emits a “no_permission_rules“ warning
-// because the broker denies by default until rules are added.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /toolkits (the `CreateToolkit` operationId).
-func (c *Client) CreateToolkit(ctx context.Context, body CreateToolkitJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateToolkitRequest(c.Server, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// DeleteToolkit Delete toolkit
-//
-// Permanently delete a toolkit and cascade-remove its keys, bindings, and permission rules.
-//
-// Corresponds with DELETE /toolkits/{toolkit_id} (the `DeleteToolkit` operationId).
-func (c *Client) DeleteToolkit(ctx context.Context, toolkitId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewDeleteToolkitRequest(c.Server, toolkitId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// GetToolkit Get toolkit
-//
-// Get a single toolkit by its `tk_…` ID.
-//
-// Corresponds with GET /toolkits/{toolkit_id} (the `GetToolkit` operationId).
-func (c *Client) GetToolkit(ctx context.Context, toolkitId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetToolkitRequest(c.Server, toolkitId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// UpdateToolkitWithBody Update toolkit
-//
-// Update a toolkit's name, description, or active flag.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with PATCH /toolkits/{toolkit_id} (the `UpdateToolkit` operationId).
-func (c *Client) UpdateToolkitWithBody(ctx context.Context, toolkitId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewUpdateToolkitRequestWithBody(c.Server, toolkitId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// UpdateToolkit Update toolkit
-//
-// Update a toolkit's name, description, or active flag.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with PATCH /toolkits/{toolkit_id} (the `UpdateToolkit` operationId).
-func (c *Client) UpdateToolkit(ctx context.Context, toolkitId string, body UpdateToolkitJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewUpdateToolkitRequest(c.Server, toolkitId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// ListToolkitAgents List agents bound to toolkit
-//
-// List agents bound to a toolkit with cursor-based pagination.
-//
-// Corresponds with GET /toolkits/{toolkit_id}/agents (the `ListToolkitAgents` operationId).
-func (c *Client) ListToolkitAgents(ctx context.Context, toolkitId string, params *ListToolkitAgentsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListToolkitAgentsRequest(c.Server, toolkitId, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// ListBindings List toolkit credential bindings
-//
-// List the credentials bound to a toolkit with cursor-based pagination.
-//
-// Corresponds with GET /toolkits/{toolkit_id}/credentials (the `ListBindings` operationId).
-func (c *Client) ListBindings(ctx context.Context, toolkitId string, params *ListBindingsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListBindingsRequest(c.Server, toolkitId, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// BindCredentialWithBody Bind credential to toolkit
-//
-// Bind an existing credential to a toolkit, optionally with inline permission rules.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /toolkits/{toolkit_id}/credentials (the `BindCredential` operationId).
-func (c *Client) BindCredentialWithBody(ctx context.Context, toolkitId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewBindCredentialRequestWithBody(c.Server, toolkitId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// BindCredential Bind credential to toolkit
-//
-// Bind an existing credential to a toolkit, optionally with inline permission rules.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /toolkits/{toolkit_id}/credentials (the `BindCredential` operationId).
-func (c *Client) BindCredential(ctx context.Context, toolkitId string, body BindCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewBindCredentialRequest(c.Server, toolkitId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// UnbindCredential Unbind credential from toolkit
-//
-// Remove a credential binding from a toolkit (the credential itself is untouched).
-//
-// Corresponds with DELETE /toolkits/{toolkit_id}/credentials/{credential_id} (the `UnbindCredential` operationId).
-func (c *Client) UnbindCredential(ctx context.Context, toolkitId string, credentialId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewUnbindCredentialRequest(c.Server, toolkitId, credentialId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// ListToolkitPermissions List binding permission rules
-//
-// List the fine-grained PBAC rules for a `(toolkit, credential)` binding.
-//
-// Corresponds with GET /toolkits/{toolkit_id}/credentials/{credential_id}/permissions (the `ListToolkitPermissions` operationId).
-func (c *Client) ListToolkitPermissions(ctx context.Context, toolkitId string, credentialId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListToolkitPermissionsRequest(c.Server, toolkitId, credentialId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// PatchPermissionsWithBody Patch binding permission rules
-//
-// Additively add and/or remove permission rules on a binding.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with PATCH /toolkits/{toolkit_id}/credentials/{credential_id}/permissions (the `PatchPermissions` operationId).
-func (c *Client) PatchPermissionsWithBody(ctx context.Context, toolkitId string, credentialId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPatchPermissionsRequestWithBody(c.Server, toolkitId, credentialId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// PatchPermissions Patch binding permission rules
-//
-// Additively add and/or remove permission rules on a binding.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with PATCH /toolkits/{toolkit_id}/credentials/{credential_id}/permissions (the `PatchPermissions` operationId).
-func (c *Client) PatchPermissions(ctx context.Context, toolkitId string, credentialId string, body PatchPermissionsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPatchPermissionsRequest(c.Server, toolkitId, credentialId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// ReplacePermissionsWithBody Replace binding permission rules
-//
-// Replace the full set of permission rules for a binding (idempotent PUT).
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with PUT /toolkits/{toolkit_id}/credentials/{credential_id}/permissions (the `ReplacePermissions` operationId).
-func (c *Client) ReplacePermissionsWithBody(ctx context.Context, toolkitId string, credentialId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewReplacePermissionsRequestWithBody(c.Server, toolkitId, credentialId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// ReplacePermissions Replace binding permission rules
-//
-// Replace the full set of permission rules for a binding (idempotent PUT).
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with PUT /toolkits/{toolkit_id}/credentials/{credential_id}/permissions (the `ReplacePermissions` operationId).
-func (c *Client) ReplacePermissions(ctx context.Context, toolkitId string, credentialId string, body ReplacePermissionsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewReplacePermissionsRequest(c.Server, toolkitId, credentialId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// TestToolkitPermissionsWithBody Dry-run permission evaluation
-//
-// Answer "what would the broker do for this request?" without calling upstream.
-//
-// Evaluates the same **vendor-pooled** rule set the broker sees at request
-// time — rules from all same-vendor bindings on this toolkit compete in one
-// ordered list. The response names which binding contributed the matching
-// rule, which is not obvious from the toolkit id alone under pooling.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /toolkits/{toolkit_id}/credentials/{credential_id}/permissions:test (the `TestToolkitPermissions` operationId).
-func (c *Client) TestToolkitPermissionsWithBody(ctx context.Context, toolkitId string, credentialId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewTestToolkitPermissionsRequestWithBody(c.Server, toolkitId, credentialId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// TestToolkitPermissions Dry-run permission evaluation
-//
-// Answer "what would the broker do for this request?" without calling upstream.
-//
-// Evaluates the same **vendor-pooled** rule set the broker sees at request
-// time — rules from all same-vendor bindings on this toolkit compete in one
-// ordered list. The response names which binding contributed the matching
-// rule, which is not obvious from the toolkit id alone under pooling.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /toolkits/{toolkit_id}/credentials/{credential_id}/permissions:test (the `TestToolkitPermissions` operationId).
-func (c *Client) TestToolkitPermissions(ctx context.Context, toolkitId string, credentialId string, body TestToolkitPermissionsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewTestToolkitPermissionsRequest(c.Server, toolkitId, credentialId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// ListKeys List toolkit keys
-//
-// List a toolkit's API keys (redacted; only `key_preview` is shown).
-//
-// Corresponds with GET /toolkits/{toolkit_id}/keys (the `ListKeys` operationId).
-func (c *Client) ListKeys(ctx context.Context, toolkitId string, params *ListKeysParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListKeysRequest(c.Server, toolkitId, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// CreateKeyWithBody Issue toolkit key
-//
-// Issue a new API key for a toolkit.
-//
-// The plaintext value (`jntc_live_…`) is returned **once** in `api_key`. Issue
-// a fresh key, switch callers, then revoke the old one (do-and-then-revoke).
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /toolkits/{toolkit_id}/keys (the `CreateKey` operationId).
-func (c *Client) CreateKeyWithBody(ctx context.Context, toolkitId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateKeyRequestWithBody(c.Server, toolkitId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// CreateKey Issue toolkit key
-//
-// Issue a new API key for a toolkit.
-//
-// The plaintext value (`jntc_live_…`) is returned **once** in `api_key`. Issue
-// a fresh key, switch callers, then revoke the old one (do-and-then-revoke).
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /toolkits/{toolkit_id}/keys (the `CreateKey` operationId).
-func (c *Client) CreateKey(ctx context.Context, toolkitId string, body CreateKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateKeyRequest(c.Server, toolkitId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// DeleteKey Revoke toolkit key
-//
-// Revoke (delete) a toolkit API key. Callers using it are rejected immediately.
-//
-// Corresponds with DELETE /toolkits/{toolkit_id}/keys/{key_id} (the `DeleteKey` operationId).
-func (c *Client) DeleteKey(ctx context.Context, toolkitId string, keyId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewDeleteKeyRequest(c.Server, toolkitId, keyId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// UpdateKeyWithBody Update toolkit key
-//
-// Update a key's label, IP allowlist, or revoked flag.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with PATCH /toolkits/{toolkit_id}/keys/{key_id} (the `UpdateKey` operationId).
-func (c *Client) UpdateKeyWithBody(ctx context.Context, toolkitId string, keyId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewUpdateKeyRequestWithBody(c.Server, toolkitId, keyId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// UpdateKey Update toolkit key
-//
-// Update a key's label, IP allowlist, or revoked flag.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with PATCH /toolkits/{toolkit_id}/keys/{key_id} (the `UpdateKey` operationId).
-func (c *Client) UpdateKey(ctx context.Context, toolkitId string, keyId string, body UpdateKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewUpdateKeyRequest(c.Server, toolkitId, keyId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
 // ListUsers List Users
 //
 // List all users with cursor-based pagination.
@@ -11766,7 +12060,12 @@ func (c *Client) ChangePassword(ctx context.Context, body ChangePasswordJSONRequ
 
 // DeleteUser Delete User
 //
-// Soft-delete a user.
+// Delete a user account (terminal-but-kept).
+//
+// The row is retained — the account is anonymized (tombstone email) and
+// deactivated so history and audit references stay resolvable — but the
+// action is terminal: there is no re-enable arm. For the reversible kill
+// switch use “:disable“ / “:enable“ instead.
 //
 // Corresponds with DELETE /users/{user_id} (the `DeleteUser` operationId).
 func (c *Client) DeleteUser(ctx context.Context, userId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -12926,6 +13225,40 @@ func NewApproveOauthClientRequest(server string, id string) (*http.Request, erro
 	return req, nil
 }
 
+// NewDeleteOauthClientRequest constructs an http.Request for the DeleteOauthClient method
+func NewDeleteOauthClientRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/admin/oauth-clients/%s:delete", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewDenyOauthClientRequest calls the generic DenyOauthClient builder with application/json body
 func NewDenyOauthClientRequest(server string, id string, body DenyOauthClientJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -13388,6 +13721,196 @@ func NewGetAgentApiKeyHistoryRequest(server string, agentId string) (*http.Reque
 	return req, nil
 }
 
+// NewListAgentCredentialsRequest constructs an http.Request for the ListAgentCredentials method
+func NewListAgentCredentialsRequest(server string, agentId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "agent_id", agentId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/agents/%s/credentials", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewBindAgentCredentialRequest calls the generic BindAgentCredential builder with application/json body
+func NewBindAgentCredentialRequest(server string, agentId string, body BindAgentCredentialJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewBindAgentCredentialRequestWithBody(server, agentId, "application/json", bodyReader)
+}
+
+// NewBindAgentCredentialRequestWithBody constructs an http.Request for the BindAgentCredential method, with any body, and a specified content type
+func NewBindAgentCredentialRequestWithBody(server string, agentId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "agent_id", agentId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/agents/%s/credentials", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewUnbindAgentCredentialRequest constructs an http.Request for the UnbindAgentCredential method
+func NewUnbindAgentCredentialRequest(server string, agentId string, credentialId string, params *UnbindAgentCredentialParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "agent_id", agentId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "credential_id", credentialId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/agents/%s/credentials/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Purge != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "purge", *params.Purge, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewResumeAgentCredentialBindingRequest constructs an http.Request for the ResumeAgentCredentialBinding method
+func NewResumeAgentCredentialBindingRequest(server string, agentId string, credentialId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "agent_id", agentId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "credential_id", credentialId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/agents/%s/credentials/%s:resume", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewUpdateAgentJwksRequest calls the generic UpdateAgentJwks builder with application/json body
 func NewUpdateAgentJwksRequest(server string, agentId string, body UpdateAgentJwksJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -13597,128 +14120,6 @@ func NewReplaceAgentScopesRequestWithBody(server string, agentId string, content
 	}
 
 	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewListAgentToolkitsRequest constructs an http.Request for the ListAgentToolkits method
-func NewListAgentToolkitsRequest(server string, agentId string) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "agent_id", agentId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/agents/%s/toolkits", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewBindToolkitRequest calls the generic BindToolkit builder with application/json body
-func NewBindToolkitRequest(server string, agentId string, body BindToolkitJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewBindToolkitRequestWithBody(server, agentId, "application/json", bodyReader)
-}
-
-// NewBindToolkitRequestWithBody constructs an http.Request for the BindToolkit method, with any body, and a specified content type
-func NewBindToolkitRequestWithBody(server string, agentId string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "agent_id", agentId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/agents/%s/toolkits", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewUnbindToolkitRequest constructs an http.Request for the UnbindToolkit method
-func NewUnbindToolkitRequest(server string, agentId string, toolkitId string) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "agent_id", agentId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "toolkit_id", toolkitId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/agents/%s/toolkits/%s", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
 
 	return req, nil
 }
@@ -16615,6 +17016,377 @@ func NewUpdateCredentialRequestWithBody(server string, credentialId string, cont
 	return req, nil
 }
 
+// NewListCredentialAgentsRequest constructs an http.Request for the ListCredentialAgents method
+func NewListCredentialAgentsRequest(server string, credentialId string, params *ListCredentialAgentsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "credential_id", credentialId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/credentials/%s/agents", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewListAgentCredentialPermissionsRequest constructs an http.Request for the ListAgentCredentialPermissions method
+func NewListAgentCredentialPermissionsRequest(server string, credentialId string, agentId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "credential_id", credentialId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "agent_id", agentId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/credentials/%s/agents/%s/permissions", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewPatchAgentCredentialPermissionsRequest calls the generic PatchAgentCredentialPermissions builder with application/json body
+func NewPatchAgentCredentialPermissionsRequest(server string, credentialId string, agentId string, body PatchAgentCredentialPermissionsJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPatchAgentCredentialPermissionsRequestWithBody(server, credentialId, agentId, "application/json", bodyReader)
+}
+
+// NewPatchAgentCredentialPermissionsRequestWithBody constructs an http.Request for the PatchAgentCredentialPermissions method, with any body, and a specified content type
+func NewPatchAgentCredentialPermissionsRequestWithBody(server string, credentialId string, agentId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "credential_id", credentialId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "agent_id", agentId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/credentials/%s/agents/%s/permissions", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPatch, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewReplaceAgentCredentialPermissionsRequest calls the generic ReplaceAgentCredentialPermissions builder with application/json body
+func NewReplaceAgentCredentialPermissionsRequest(server string, credentialId string, agentId string, body ReplaceAgentCredentialPermissionsJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewReplaceAgentCredentialPermissionsRequestWithBody(server, credentialId, agentId, "application/json", bodyReader)
+}
+
+// NewReplaceAgentCredentialPermissionsRequestWithBody constructs an http.Request for the ReplaceAgentCredentialPermissions method, with any body, and a specified content type
+func NewReplaceAgentCredentialPermissionsRequestWithBody(server string, credentialId string, agentId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "credential_id", credentialId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "agent_id", agentId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/credentials/%s/agents/%s/permissions", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewTestAgentCredentialPermissionsRequest calls the generic TestAgentCredentialPermissions builder with application/json body
+func NewTestAgentCredentialPermissionsRequest(server string, credentialId string, agentId string, body TestAgentCredentialPermissionsJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewTestAgentCredentialPermissionsRequestWithBody(server, credentialId, agentId, "application/json", bodyReader)
+}
+
+// NewTestAgentCredentialPermissionsRequestWithBody constructs an http.Request for the TestAgentCredentialPermissions method, with any body, and a specified content type
+func NewTestAgentCredentialPermissionsRequestWithBody(server string, credentialId string, agentId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "credential_id", credentialId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "agent_id", agentId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/credentials/%s/agents/%s/permissions:test", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewDetachAgentCredentialRuleSetRequest constructs an http.Request for the DetachAgentCredentialRuleSet method
+func NewDetachAgentCredentialRuleSetRequest(server string, credentialId string, agentId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "credential_id", credentialId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "agent_id", agentId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/credentials/%s/agents/%s/rule-set", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewAttachAgentCredentialRuleSetRequest calls the generic AttachAgentCredentialRuleSet builder with application/json body
+func NewAttachAgentCredentialRuleSetRequest(server string, credentialId string, agentId string, body AttachAgentCredentialRuleSetJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewAttachAgentCredentialRuleSetRequestWithBody(server, credentialId, agentId, "application/json", bodyReader)
+}
+
+// NewAttachAgentCredentialRuleSetRequestWithBody constructs an http.Request for the AttachAgentCredentialRuleSet method, with any body, and a specified content type
+func NewAttachAgentCredentialRuleSetRequestWithBody(server string, credentialId string, agentId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "credential_id", credentialId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "agent_id", agentId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/credentials/%s/agents/%s/rule-set", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewConnectCredentialRequest calls the generic ConnectCredential builder with application/json body
 func NewConnectCredentialRequest(server string, credentialId string, body ConnectCredentialJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -18694,6 +19466,96 @@ func NewConsentSubmitRequestWithBody(server string, contentType string, body io.
 	return req, nil
 }
 
+// NewConsentAgentCreateRequestWithFormdataBody calls the generic ConsentAgentCreate builder with application/x-www-form-urlencoded body
+func NewConsentAgentCreateRequestWithFormdataBody(server string, body ConsentAgentCreateFormdataRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	bodyStr, err := runtime.MarshalForm(body, nil)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = strings.NewReader(bodyStr.Encode())
+	return NewConsentAgentCreateRequestWithBody(server, "application/x-www-form-urlencoded", bodyReader)
+}
+
+// NewConsentAgentCreateRequestWithBody constructs an http.Request for the ConsentAgentCreate method, with any body, and a specified content type
+func NewConsentAgentCreateRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/oauth/consent/agent")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewConsentAgentStatusRequest constructs an http.Request for the ConsentAgentStatus method
+func NewConsentAgentStatusRequest(server string, params *ConsentAgentStatusParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/oauth/consent/agent/status")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "st", params.St, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewIntrospectEndpointRequest calls the generic IntrospectEndpoint builder with application/json body
 func NewIntrospectEndpointRequest(server string, body IntrospectEndpointJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -18907,6 +19769,274 @@ func NewTokenEndpointRequestWithBody(server string, contentType string, body io.
 	}
 
 	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewListPermissionRuleSetsRequest constructs an http.Request for the ListPermissionRuleSets method
+func NewListPermissionRuleSetsRequest(server string, params *ListPermissionRuleSetsParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/permission-rule-sets")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreatePermissionRuleSetRequest calls the generic CreatePermissionRuleSet builder with application/json body
+func NewCreatePermissionRuleSetRequest(server string, body CreatePermissionRuleSetJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreatePermissionRuleSetRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewCreatePermissionRuleSetRequestWithBody constructs an http.Request for the CreatePermissionRuleSet method, with any body, and a specified content type
+func NewCreatePermissionRuleSetRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/permission-rule-sets")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewDeletePermissionRuleSetRequest constructs an http.Request for the DeletePermissionRuleSet method
+func NewDeletePermissionRuleSetRequest(server string, ruleSetId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "rule_set_id", ruleSetId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/permission-rule-sets/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetPermissionRuleSetRequest constructs an http.Request for the GetPermissionRuleSet method
+func NewGetPermissionRuleSetRequest(server string, ruleSetId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "rule_set_id", ruleSetId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/permission-rule-sets/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewUpdatePermissionRuleSetRequest calls the generic UpdatePermissionRuleSet builder with application/json body
+func NewUpdatePermissionRuleSetRequest(server string, ruleSetId string, body UpdatePermissionRuleSetJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewUpdatePermissionRuleSetRequestWithBody(server, ruleSetId, "application/json", bodyReader)
+}
+
+// NewUpdatePermissionRuleSetRequestWithBody constructs an http.Request for the UpdatePermissionRuleSet method, with any body, and a specified content type
+func NewUpdatePermissionRuleSetRequestWithBody(server string, ruleSetId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "rule_set_id", ruleSetId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/permission-rule-sets/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPatch, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewReplacePermissionRuleSetRulesRequest calls the generic ReplacePermissionRuleSetRules builder with application/json body
+func NewReplacePermissionRuleSetRulesRequest(server string, ruleSetId string, body ReplacePermissionRuleSetRulesJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewReplacePermissionRuleSetRulesRequestWithBody(server, ruleSetId, "application/json", bodyReader)
+}
+
+// NewReplacePermissionRuleSetRulesRequestWithBody constructs an http.Request for the ReplacePermissionRuleSetRules method, with any body, and a specified content type
+func NewReplacePermissionRuleSetRulesRequestWithBody(server string, ruleSetId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "rule_set_id", ruleSetId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/permission-rule-sets/%s/rules", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
 	if err != nil {
 		return nil, err
 	}
@@ -19625,879 +20755,6 @@ func NewGetVersionRequest(server string) (*http.Request, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	return req, nil
-}
-
-// NewListToolkitsRequest constructs an http.Request for the ListToolkits method
-func NewListToolkitsRequest(server string, params *ListToolkitsParams) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/toolkits")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	if params != nil {
-		// queryValues collects non-styled parameters (passthrough, JSON)
-		// that are safe to round-trip through url.Values.Encode().
-		queryValues := queryURL.Query()
-		// rawQueryFragments collects pre-encoded query fragments from
-		// styled parameters, preserving literal commas as delimiters
-		// per the OpenAPI spec (e.g. "color=blue,black,brown").
-		var rawQueryFragments []string
-
-		if params.Cursor != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if params.Limit != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if encoded := queryValues.Encode(); encoded != "" {
-			rawQueryFragments = append(rawQueryFragments, encoded)
-		}
-		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewCreateToolkitRequest calls the generic CreateToolkit builder with application/json body
-func NewCreateToolkitRequest(server string, body CreateToolkitJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewCreateToolkitRequestWithBody(server, "application/json", bodyReader)
-}
-
-// NewCreateToolkitRequestWithBody constructs an http.Request for the CreateToolkit method, with any body, and a specified content type
-func NewCreateToolkitRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/toolkits")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewDeleteToolkitRequest constructs an http.Request for the DeleteToolkit method
-func NewDeleteToolkitRequest(server string, toolkitId string) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "toolkit_id", toolkitId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/toolkits/%s", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewGetToolkitRequest constructs an http.Request for the GetToolkit method
-func NewGetToolkitRequest(server string, toolkitId string) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "toolkit_id", toolkitId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/toolkits/%s", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewUpdateToolkitRequest calls the generic UpdateToolkit builder with application/json body
-func NewUpdateToolkitRequest(server string, toolkitId string, body UpdateToolkitJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewUpdateToolkitRequestWithBody(server, toolkitId, "application/json", bodyReader)
-}
-
-// NewUpdateToolkitRequestWithBody constructs an http.Request for the UpdateToolkit method, with any body, and a specified content type
-func NewUpdateToolkitRequestWithBody(server string, toolkitId string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "toolkit_id", toolkitId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/toolkits/%s", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPatch, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewListToolkitAgentsRequest constructs an http.Request for the ListToolkitAgents method
-func NewListToolkitAgentsRequest(server string, toolkitId string, params *ListToolkitAgentsParams) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "toolkit_id", toolkitId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/toolkits/%s/agents", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	if params != nil {
-		// queryValues collects non-styled parameters (passthrough, JSON)
-		// that are safe to round-trip through url.Values.Encode().
-		queryValues := queryURL.Query()
-		// rawQueryFragments collects pre-encoded query fragments from
-		// styled parameters, preserving literal commas as delimiters
-		// per the OpenAPI spec (e.g. "color=blue,black,brown").
-		var rawQueryFragments []string
-
-		if params.Cursor != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if params.Limit != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if encoded := queryValues.Encode(); encoded != "" {
-			rawQueryFragments = append(rawQueryFragments, encoded)
-		}
-		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewListBindingsRequest constructs an http.Request for the ListBindings method
-func NewListBindingsRequest(server string, toolkitId string, params *ListBindingsParams) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "toolkit_id", toolkitId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/toolkits/%s/credentials", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	if params != nil {
-		// queryValues collects non-styled parameters (passthrough, JSON)
-		// that are safe to round-trip through url.Values.Encode().
-		queryValues := queryURL.Query()
-		// rawQueryFragments collects pre-encoded query fragments from
-		// styled parameters, preserving literal commas as delimiters
-		// per the OpenAPI spec (e.g. "color=blue,black,brown").
-		var rawQueryFragments []string
-
-		if params.Cursor != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if params.Limit != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if encoded := queryValues.Encode(); encoded != "" {
-			rawQueryFragments = append(rawQueryFragments, encoded)
-		}
-		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewBindCredentialRequest calls the generic BindCredential builder with application/json body
-func NewBindCredentialRequest(server string, toolkitId string, body BindCredentialJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewBindCredentialRequestWithBody(server, toolkitId, "application/json", bodyReader)
-}
-
-// NewBindCredentialRequestWithBody constructs an http.Request for the BindCredential method, with any body, and a specified content type
-func NewBindCredentialRequestWithBody(server string, toolkitId string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "toolkit_id", toolkitId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/toolkits/%s/credentials", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewUnbindCredentialRequest constructs an http.Request for the UnbindCredential method
-func NewUnbindCredentialRequest(server string, toolkitId string, credentialId string) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "toolkit_id", toolkitId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "credential_id", credentialId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/toolkits/%s/credentials/%s", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewListToolkitPermissionsRequest constructs an http.Request for the ListToolkitPermissions method
-func NewListToolkitPermissionsRequest(server string, toolkitId string, credentialId string) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "toolkit_id", toolkitId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "credential_id", credentialId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/toolkits/%s/credentials/%s/permissions", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewPatchPermissionsRequest calls the generic PatchPermissions builder with application/json body
-func NewPatchPermissionsRequest(server string, toolkitId string, credentialId string, body PatchPermissionsJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewPatchPermissionsRequestWithBody(server, toolkitId, credentialId, "application/json", bodyReader)
-}
-
-// NewPatchPermissionsRequestWithBody constructs an http.Request for the PatchPermissions method, with any body, and a specified content type
-func NewPatchPermissionsRequestWithBody(server string, toolkitId string, credentialId string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "toolkit_id", toolkitId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "credential_id", credentialId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/toolkits/%s/credentials/%s/permissions", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPatch, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewReplacePermissionsRequest calls the generic ReplacePermissions builder with application/json body
-func NewReplacePermissionsRequest(server string, toolkitId string, credentialId string, body ReplacePermissionsJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewReplacePermissionsRequestWithBody(server, toolkitId, credentialId, "application/json", bodyReader)
-}
-
-// NewReplacePermissionsRequestWithBody constructs an http.Request for the ReplacePermissions method, with any body, and a specified content type
-func NewReplacePermissionsRequestWithBody(server string, toolkitId string, credentialId string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "toolkit_id", toolkitId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "credential_id", credentialId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/toolkits/%s/credentials/%s/permissions", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewTestToolkitPermissionsRequest calls the generic TestToolkitPermissions builder with application/json body
-func NewTestToolkitPermissionsRequest(server string, toolkitId string, credentialId string, body TestToolkitPermissionsJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewTestToolkitPermissionsRequestWithBody(server, toolkitId, credentialId, "application/json", bodyReader)
-}
-
-// NewTestToolkitPermissionsRequestWithBody constructs an http.Request for the TestToolkitPermissions method, with any body, and a specified content type
-func NewTestToolkitPermissionsRequestWithBody(server string, toolkitId string, credentialId string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "toolkit_id", toolkitId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "credential_id", credentialId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/toolkits/%s/credentials/%s/permissions:test", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewListKeysRequest constructs an http.Request for the ListKeys method
-func NewListKeysRequest(server string, toolkitId string, params *ListKeysParams) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "toolkit_id", toolkitId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/toolkits/%s/keys", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	if params != nil {
-		// queryValues collects non-styled parameters (passthrough, JSON)
-		// that are safe to round-trip through url.Values.Encode().
-		queryValues := queryURL.Query()
-		// rawQueryFragments collects pre-encoded query fragments from
-		// styled parameters, preserving literal commas as delimiters
-		// per the OpenAPI spec (e.g. "color=blue,black,brown").
-		var rawQueryFragments []string
-
-		if params.Cursor != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if params.Limit != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if encoded := queryValues.Encode(); encoded != "" {
-			rawQueryFragments = append(rawQueryFragments, encoded)
-		}
-		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewCreateKeyRequest calls the generic CreateKey builder with application/json body
-func NewCreateKeyRequest(server string, toolkitId string, body CreateKeyJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewCreateKeyRequestWithBody(server, toolkitId, "application/json", bodyReader)
-}
-
-// NewCreateKeyRequestWithBody constructs an http.Request for the CreateKey method, with any body, and a specified content type
-func NewCreateKeyRequestWithBody(server string, toolkitId string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "toolkit_id", toolkitId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/toolkits/%s/keys", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewDeleteKeyRequest constructs an http.Request for the DeleteKey method
-func NewDeleteKeyRequest(server string, toolkitId string, keyId string) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "toolkit_id", toolkitId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "key_id", keyId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/toolkits/%s/keys/%s", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewUpdateKeyRequest calls the generic UpdateKey builder with application/json body
-func NewUpdateKeyRequest(server string, toolkitId string, keyId string, body UpdateKeyJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewUpdateKeyRequestWithBody(server, toolkitId, keyId, "application/json", bodyReader)
-}
-
-// NewUpdateKeyRequestWithBody constructs an http.Request for the UpdateKey method, with any body, and a specified content type
-func NewUpdateKeyRequestWithBody(server string, toolkitId string, keyId string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "toolkit_id", toolkitId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "key_id", keyId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/toolkits/%s/keys/%s", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPatch, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -21328,11 +21585,13 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /admin/oauth-clients (the `CreateOauthClient` operationId).
 	CreateOauthClientWithResponse(ctx context.Context, body CreateOauthClientJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateOauthClientHTTPResp, error)
 
-	// DeactivateOauthClientWithResponse Deactivate OAuth client
+	// DeactivateOauthClientWithResponse Disable OAuth client
 	//
-	// Soft-delete an OAuth client by setting active=False.
+	// Disable an OAuth client — the reversible kill switch (sets active=false).
 	//
-	// Deactivated clients can no longer initiate authorization flows.
+	// Disabled clients can no longer initiate authorization flows and their
+	// outstanding tokens stop resolving. Re-enable by patching ``active: true``.
+	// The row is kept; this is not a delete.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -21388,6 +21647,23 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /admin/oauth-clients/{id}:approve (the `ApproveOauthClient` operationId).
 	ApproveOauthClientWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*ApproveOauthClientHTTPResp, error)
+
+	// DeleteOauthClientWithResponse Delete OAuth client
+	//
+	// Permanently delete an OAuth client. This cannot be undone.
+	//
+	// Terminal, unlike the reversible kill switch (``DELETE`` on this
+	// resource, which only sets ``active=false``): every active grant is
+	// revoked, every token carrying the client's lineage is revoked, and the
+	// registration row is removed — connected applications are fully
+	// disconnected. The audit trail survives. A client that later re-registers
+	// via dynamic client registration is a NEW registration and re-enters the
+	// approval queue as pending; it is never re-attached to the deleted one.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /admin/oauth-clients/{id}:delete (the `DeleteOauthClient` operationId).
+	DeleteOauthClientWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DeleteOauthClientHTTPResp, error)
 
 	// DenyOauthClientWithBodyWithResponse Deny OAuth client
 	//
@@ -21455,7 +21731,12 @@ type ClientWithResponsesInterface interface {
 
 	// ArchiveAgentWithResponse Archive Agent
 	//
-	// Soft-archive an agent — revokes scope grants and toolkit bindings.
+	// Archive an agent — terminal-but-kept.
+	//
+	// The row is retained for history, but the action is not reversible and
+	// the agent's authority is swept: scope grants, credential bindings, and
+	// OAuth consent grants are revoked. For the reversible kill switch use
+	// ``:disable`` / ``:enable`` instead.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -21506,6 +21787,57 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /agents/{agent_id}/api-key/history (the `GetAgentApiKeyHistory` operationId).
 	GetAgentApiKeyHistoryWithResponse(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*GetAgentApiKeyHistoryHTTPResp, error)
+
+	// ListAgentCredentialsWithResponse List Credentials
+	//
+	// List direct credential bindings for an agent — requires agents:read or self.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /agents/{agent_id}/credentials (the `ListAgentCredentials` operationId).
+	ListAgentCredentialsWithResponse(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*ListAgentCredentialsHTTPResp, error)
+
+	// BindAgentCredentialWithBodyWithResponse Bind Credential
+	//
+	// Directly bind a credential to an agent (theme 5 phase 1).
+	//
+	// The caller must be able to see the target credential; a credential that
+	// does not exist or is outside the caller's visibility returns 404.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /agents/{agent_id}/credentials (the `BindAgentCredential` operationId).
+	BindAgentCredentialWithBodyWithResponse(ctx context.Context, agentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*BindAgentCredentialHTTPResp, error)
+
+	// BindAgentCredentialWithResponse Bind Credential
+	//
+	// Directly bind a credential to an agent (theme 5 phase 1).
+	//
+	// The caller must be able to see the target credential; a credential that
+	// does not exist or is outside the caller's visibility returns 404.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /agents/{agent_id}/credentials (the `BindAgentCredential` operationId).
+	BindAgentCredentialWithResponse(ctx context.Context, agentId string, body BindAgentCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*BindAgentCredentialHTTPResp, error)
+
+	// UnbindAgentCredentialWithResponse Unbind Credential
+	//
+	// Unbind a credential from an agent — suspend by default, purge on request.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /agents/{agent_id}/credentials/{credential_id} (the `UnbindAgentCredential` operationId).
+	UnbindAgentCredentialWithResponse(ctx context.Context, agentId string, credentialId string, params *UnbindAgentCredentialParams, reqEditors ...RequestEditorFn) (*UnbindAgentCredentialHTTPResp, error)
+
+	// ResumeAgentCredentialBindingWithResponse Resume Credential Binding
+	//
+	// Lift a suspended credential binding — the reverse of the default unbind.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /agents/{agent_id}/credentials/{credential_id}:resume (the `ResumeAgentCredentialBinding` operationId).
+	ResumeAgentCredentialBindingWithResponse(ctx context.Context, agentId string, credentialId string, reqEditors ...RequestEditorFn) (*ResumeAgentCredentialBindingHTTPResp, error)
 
 	// UpdateAgentJwksWithBodyWithResponse Update Agent Jwks
 	//
@@ -21575,42 +21907,6 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with PUT /agents/{agent_id}/scopes (the `ReplaceAgentScopes` operationId).
 	ReplaceAgentScopesWithResponse(ctx context.Context, agentId string, body ReplaceAgentScopesJSONRequestBody, reqEditors ...RequestEditorFn) (*ReplaceAgentScopesHTTPResp, error)
 
-	// ListAgentToolkitsWithResponse List Toolkits
-	//
-	// List toolkit bindings for an agent — requires agents:read or self.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with GET /agents/{agent_id}/toolkits (the `ListAgentToolkits` operationId).
-	ListAgentToolkitsWithResponse(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*ListAgentToolkitsHTTPResp, error)
-
-	// BindToolkitWithBodyWithResponse Bind Toolkit
-	//
-	// Bind a toolkit to an agent.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /agents/{agent_id}/toolkits (the `BindToolkit` operationId).
-	BindToolkitWithBodyWithResponse(ctx context.Context, agentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*BindToolkitHTTPResp, error)
-
-	// BindToolkitWithResponse Bind Toolkit
-	//
-	// Bind a toolkit to an agent.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /agents/{agent_id}/toolkits (the `BindToolkit` operationId).
-	BindToolkitWithResponse(ctx context.Context, agentId string, body BindToolkitJSONRequestBody, reqEditors ...RequestEditorFn) (*BindToolkitHTTPResp, error)
-
-	// UnbindToolkitWithResponse Unbind Toolkit
-	//
-	// Unbind a toolkit from an agent.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with DELETE /agents/{agent_id}/toolkits/{toolkit_id} (the `UnbindToolkit` operationId).
-	UnbindToolkitWithResponse(ctx context.Context, agentId string, toolkitId string, reqEditors ...RequestEditorFn) (*UnbindToolkitHTTPResp, error)
-
 	// ApproveAgentWithResponse Approve Agent
 	//
 	// Approve a pending agent.
@@ -21631,7 +21927,7 @@ type ClientWithResponsesInterface interface {
 	//
 	// Restricted to ``USER`` actors: ``Agent.owner_id`` is a FK to ``users.id``, so
 	// only a human can own an agent. The ``require_actor_type`` gate rejects a
-	// non-user actor (agent/service-account/toolkit) at the boundary with a 403;
+	// non-user actor (agent/service-account) at the boundary with a 403;
 	// ``AgentService.claim`` re-checks the same invariant as defense-in-depth.
 	//
 	// ``allow_expired_password=True`` is intentional (matching ``GET /agents/{id}``):
@@ -21656,7 +21952,7 @@ type ClientWithResponsesInterface interface {
 	//
 	// Restricted to ``USER`` actors: ``Agent.owner_id`` is a FK to ``users.id``, so
 	// only a human can own an agent. The ``require_actor_type`` gate rejects a
-	// non-user actor (agent/service-account/toolkit) at the boundary with a 403;
+	// non-user actor (agent/service-account) at the boundary with a 403;
 	// ``AgentService.claim`` re-checks the same invariant as defense-in-depth.
 	//
 	// ``allow_expired_password=True`` is intentional (matching ``GET /agents/{id}``):
@@ -22315,6 +22611,127 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with PATCH /credentials/{credential_id} (the `UpdateCredential` operationId).
 	UpdateCredentialWithResponse(ctx context.Context, credentialId string, body UpdateCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateCredentialHTTPResp, error)
 
+	// ListCredentialAgentsWithResponse List agents bound to credential
+	//
+	// List agents directly bound to a credential with cursor-based pagination.
+	//
+	// The reverse lookup for the credential-detail "Agents" view (theme 5
+	// phase 1) — the direct-binding mirror of ``GET /toolkits/{id}/agents``.
+	// Suspended bindings are included with their flag set.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /credentials/{credential_id}/agents (the `ListCredentialAgents` operationId).
+	ListCredentialAgentsWithResponse(ctx context.Context, credentialId string, params *ListCredentialAgentsParams, reqEditors ...RequestEditorFn) (*ListCredentialAgentsHTTPResp, error)
+
+	// ListAgentCredentialPermissionsWithResponse List binding permission rules
+	//
+	// List the ordered PBAC rules for a direct `(agent, credential)` binding.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /credentials/{credential_id}/agents/{agent_id}/permissions (the `ListAgentCredentialPermissions` operationId).
+	ListAgentCredentialPermissionsWithResponse(ctx context.Context, credentialId string, agentId string, reqEditors ...RequestEditorFn) (*ListAgentCredentialPermissionsHTTPResp, error)
+
+	// PatchAgentCredentialPermissionsWithBodyWithResponse Patch binding permission rules
+	//
+	// Additively add and/or remove permission rules on a binding.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /credentials/{credential_id}/agents/{agent_id}/permissions (the `PatchAgentCredentialPermissions` operationId).
+	PatchAgentCredentialPermissionsWithBodyWithResponse(ctx context.Context, credentialId string, agentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PatchAgentCredentialPermissionsHTTPResp, error)
+
+	// PatchAgentCredentialPermissionsWithResponse Patch binding permission rules
+	//
+	// Additively add and/or remove permission rules on a binding.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /credentials/{credential_id}/agents/{agent_id}/permissions (the `PatchAgentCredentialPermissions` operationId).
+	PatchAgentCredentialPermissionsWithResponse(ctx context.Context, credentialId string, agentId string, body PatchAgentCredentialPermissionsJSONRequestBody, reqEditors ...RequestEditorFn) (*PatchAgentCredentialPermissionsHTTPResp, error)
+
+	// ReplaceAgentCredentialPermissionsWithBodyWithResponse Replace binding permission rules
+	//
+	// Replace the full set of permission rules for a binding (idempotent PUT).
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /credentials/{credential_id}/agents/{agent_id}/permissions (the `ReplaceAgentCredentialPermissions` operationId).
+	ReplaceAgentCredentialPermissionsWithBodyWithResponse(ctx context.Context, credentialId string, agentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReplaceAgentCredentialPermissionsHTTPResp, error)
+
+	// ReplaceAgentCredentialPermissionsWithResponse Replace binding permission rules
+	//
+	// Replace the full set of permission rules for a binding (idempotent PUT).
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /credentials/{credential_id}/agents/{agent_id}/permissions (the `ReplaceAgentCredentialPermissions` operationId).
+	ReplaceAgentCredentialPermissionsWithResponse(ctx context.Context, credentialId string, agentId string, body ReplaceAgentCredentialPermissionsJSONRequestBody, reqEditors ...RequestEditorFn) (*ReplaceAgentCredentialPermissionsHTTPResp, error)
+
+	// TestAgentCredentialPermissionsWithBodyWithResponse Dry-run permission evaluation
+	//
+	// Answer "what would the broker do for this request?" without calling upstream.
+	//
+	// Unlike the toolkit `:test` there is **no vendor pooling**: the direct
+	// binding's rules are one ordered first-match-wins list, so the result is
+	// exactly this binding's policy. Default-deny when nothing matches.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /credentials/{credential_id}/agents/{agent_id}/permissions:test (the `TestAgentCredentialPermissions` operationId).
+	TestAgentCredentialPermissionsWithBodyWithResponse(ctx context.Context, credentialId string, agentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*TestAgentCredentialPermissionsHTTPResp, error)
+
+	// TestAgentCredentialPermissionsWithResponse Dry-run permission evaluation
+	//
+	// Answer "what would the broker do for this request?" without calling upstream.
+	//
+	// Unlike the toolkit `:test` there is **no vendor pooling**: the direct
+	// binding's rules are one ordered first-match-wins list, so the result is
+	// exactly this binding's policy. Default-deny when nothing matches.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /credentials/{credential_id}/agents/{agent_id}/permissions:test (the `TestAgentCredentialPermissions` operationId).
+	TestAgentCredentialPermissionsWithResponse(ctx context.Context, credentialId string, agentId string, body TestAgentCredentialPermissionsJSONRequestBody, reqEditors ...RequestEditorFn) (*TestAgentCredentialPermissionsHTTPResp, error)
+
+	// DetachAgentCredentialRuleSetWithResponse Detach rule set from binding
+	//
+	// Detach the binding's shared rule set — its inline rules apply again.
+	//
+	// Idempotent: detaching a binding already on inline rules is a no-op 204.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /credentials/{credential_id}/agents/{agent_id}/rule-set (the `DetachAgentCredentialRuleSet` operationId).
+	DetachAgentCredentialRuleSetWithResponse(ctx context.Context, credentialId string, agentId string, reqEditors ...RequestEditorFn) (*DetachAgentCredentialRuleSetHTTPResp, error)
+
+	// AttachAgentCredentialRuleSetWithBodyWithResponse Attach rule set to binding
+	//
+	// Point the binding at a shared rule set (idempotent PUT).
+	//
+	// While attached, the set's ordered list is the binding's effective policy
+	// and its inline rules are dormant — `permissions:test` evaluates the set.
+	// The set must exist (404 `rule_set_not_found`).
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /credentials/{credential_id}/agents/{agent_id}/rule-set (the `AttachAgentCredentialRuleSet` operationId).
+	AttachAgentCredentialRuleSetWithBodyWithResponse(ctx context.Context, credentialId string, agentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AttachAgentCredentialRuleSetHTTPResp, error)
+
+	// AttachAgentCredentialRuleSetWithResponse Attach rule set to binding
+	//
+	// Point the binding at a shared rule set (idempotent PUT).
+	//
+	// While attached, the set's ordered list is the binding's effective policy
+	// and its inline rules are dormant — `permissions:test` evaluates the set.
+	// The set must exist (404 `rule_set_not_found`).
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /credentials/{credential_id}/agents/{agent_id}/rule-set (the `AttachAgentCredentialRuleSet` operationId).
+	AttachAgentCredentialRuleSetWithResponse(ctx context.Context, credentialId string, agentId string, body AttachAgentCredentialRuleSetJSONRequestBody, reqEditors ...RequestEditorFn) (*AttachAgentCredentialRuleSetHTTPResp, error)
+
 	// ConnectCredentialWithBodyWithResponse Begin OAuth connect flow
 	//
 	// Initiate the OAuth connect flow for a credential.
@@ -22407,18 +22824,22 @@ type ClientWithResponsesInterface interface {
 
 	// GetGovernedHostsWithResponse Get Governed Hosts
 	//
-	// The caller's governed host set (toolkit-bound hosts) with an ETag digest.
+	// The caller's governed host set (credential-bound hosts) with an ETag digest.
 	//
 	// **Always self-scoped** — derived from the authenticated identity's own
-	// toolkit bindings; there is no cross-actor or admin variant. Toolkits bind
-	// to agents, so agent-scoped tokens (the OAuth agent-consent flow's output)
-	// are the callers this endpoint serves — a plain user token yields an empty
-	// set. The ``digest`` covers exactly the ``data`` list and is also emitted as
-	// a strong ``ETag``, so integrators poll with ``If-None-Match: "<digest>"``
-	// and get an empty ``304`` until their host set actually changes (the
-	// change-poll seam that replaces ``GET /apis`` enumeration for interception
-	// scoping). Poll at most once per minute; on any ``5xx`` retain the last
-	// known set — never fall back to an empty (intercept-nothing) list.
+	// credential bindings; there is no cross-actor or admin variant. Credentials
+	// bind to agents and service accounts, so agent-scoped tokens (the OAuth
+	// agent-consent flow's output) and `sak_` keys are the callers this endpoint
+	// serves — a plain user token yields an empty set. Suspended bindings and
+	// inactive credentials still contribute their hosts: keep diverting that
+	// traffic, so the broker can refuse it — dropping it from the list would
+	// send it direct to the upstream, unbrokered. The ``digest`` covers exactly
+	// the ``data`` list and is also emitted as a strong ``ETag``, so integrators
+	// poll with ``If-None-Match: "<digest>"`` and get an empty ``304`` until
+	// their host set actually changes (the change-poll seam that replaces
+	// ``GET /apis`` enumeration for interception scoping). Poll at most once per
+	// minute; on any ``5xx`` retain the last known set — never fall back to an
+	// empty (intercept-nothing) list.
 	//
 	// Responses are identity-scoped and marked ``Cache-Control: private,
 	// no-store`` — a shared cache must never serve one actor's host set to
@@ -22853,6 +23274,106 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /oauth/consent (the `ConsentSubmit` operationId).
 	ConsentSubmitWithFormdataBodyWithResponse(ctx context.Context, body ConsentSubmitFormdataRequestBody, reqEditors ...RequestEditorFn) (*ConsentSubmitHTTPResp, error)
 
+	// ConsentAgentCreateWithBodyWithResponse Create the consenting user's first agent inline (consent page)
+	//
+	// Create the consenting user's first agent from the zero-agents consent page (P4).
+	//
+	// The form is rendered only when the consenting user owns zero agents in
+	// any status (the G12(b) first-run dead-end). This submit verifies the signed
+	// single-use ``agent-create`` blob (bound to the consent handle AND the
+	// authenticated subject — no ambient credential is honored, so a cross-site
+	// form cannot drive it: it would need both the unguessable handle and a
+	// blob minted for that very handle), re-validates the handle and the D7
+	// client gate, provisions the user row if deferred provisioning left none
+	// (an affirmative user action, unlike rendering), re-checks the zero-agents
+	// predicate (an agent appearing in between skips creation — idempotent),
+	// creates the agent through the same ``AgentService.create`` path as the
+	// SPA (owner = the consenting user, default agent scopes, same audit +
+	// event), and 303-redirects back into ``GET /oauth/consent`` where the new
+	// agent renders pre-selected.
+	//
+	// Failure arms: expired/tampered/replayed blob and expired handle → the
+	// consent flow's standard ``invalid_consent`` error redirect; a gated
+	// client → ``access_denied``; an invalid agent name → the form re-rendered
+	// with the error inline and a fresh blob.
+	//
+	// Creation posture (security review — the hybrid): the arm is decided
+	// server-side AFTER the subject is resolved/provisioned, against the same
+	// effective-permission math as POST /agents' ``agents:write`` gate. A
+	// permissioned user gets the original behaviour (ACTIVE + 303 re-entry); an
+	// unpermissioned one gets a PENDING agent (the POST /register posture) and
+	// the awaiting-approval page. A per-subject ``set_if_absent`` slot claim
+	// makes N parallel submits (N distinct blobs from N renders) create exactly
+	// one agent — losers re-enter consent, which renders the picker or the
+	// awaiting page as appropriate.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /oauth/consent/agent (the `ConsentAgentCreate` operationId).
+	ConsentAgentCreateWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ConsentAgentCreateHTTPResp, error)
+
+	// ConsentAgentCreateWithFormdataBodyWithResponse Create the consenting user's first agent inline (consent page)
+	//
+	// Create the consenting user's first agent from the zero-agents consent page (P4).
+	//
+	// The form is rendered only when the consenting user owns zero agents in
+	// any status (the G12(b) first-run dead-end). This submit verifies the signed
+	// single-use ``agent-create`` blob (bound to the consent handle AND the
+	// authenticated subject — no ambient credential is honored, so a cross-site
+	// form cannot drive it: it would need both the unguessable handle and a
+	// blob minted for that very handle), re-validates the handle and the D7
+	// client gate, provisions the user row if deferred provisioning left none
+	// (an affirmative user action, unlike rendering), re-checks the zero-agents
+	// predicate (an agent appearing in between skips creation — idempotent),
+	// creates the agent through the same ``AgentService.create`` path as the
+	// SPA (owner = the consenting user, default agent scopes, same audit +
+	// event), and 303-redirects back into ``GET /oauth/consent`` where the new
+	// agent renders pre-selected.
+	//
+	// Failure arms: expired/tampered/replayed blob and expired handle → the
+	// consent flow's standard ``invalid_consent`` error redirect; a gated
+	// client → ``access_denied``; an invalid agent name → the form re-rendered
+	// with the error inline and a fresh blob.
+	//
+	// Creation posture (security review — the hybrid): the arm is decided
+	// server-side AFTER the subject is resolved/provisioned, against the same
+	// effective-permission math as POST /agents' ``agents:write`` gate. A
+	// permissioned user gets the original behaviour (ACTIVE + 303 re-entry); an
+	// unpermissioned one gets a PENDING agent (the POST /register posture) and
+	// the awaiting-approval page. A per-subject ``set_if_absent`` slot claim
+	// makes N parallel submits (N distinct blobs from N renders) create exactly
+	// one agent — losers re-enter consent, which renders the picker or the
+	// awaiting page as appropriate.
+	//
+	// Takes a body of the `application/x-www-form-urlencoded` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /oauth/consent/agent (the `ConsentAgentCreate` operationId).
+	ConsentAgentCreateWithFormdataBodyWithResponse(ctx context.Context, body ConsentAgentCreateFormdataRequestBody, reqEditors ...RequestEditorFn) (*ConsentAgentCreateHTTPResp, error)
+
+	// ConsentAgentStatusWithResponse Poll pending-agent approval status (consent awaiting page)
+	//
+	// Minimal tri-state poll for the pending-agent awaiting page (P4 hybrid).
+	//
+	// Anonymous but keyed by the signed ``agent-status`` blob — never a bare
+	// agent id, so the endpoint cannot be used to enumerate or probe agents:
+	// the id it reports on is the one SIGNED into the blob, which only the
+	// consent flow mints, and only for an agent it verified belongs to the
+	// handle's subject. The response carries ONLY the tri-state — no name,
+	// owner, or scopes — and non-terminal lifecycle states (disabled, archived,
+	// a vanished row) all read as ``pending``, so possession of a blob is not a
+	// lifecycle oracle either. Any verification failure (bad signature, wrong
+	// purpose, expired ``iat``, malformed blob) is a 400 ``invalid_grant``; the
+	// page treats a 400 as terminal ("retry the connection") because the blob
+	// shares the consent handle's lifetime — a retry re-enters the flow, which
+	// re-parks on a fresh awaiting page while the agent stays pending. Shares
+	// the approval-status poll's own per-IP rate bucket (same cadence, same
+	// caller shape).
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /oauth/consent/agent/status (the `ConsentAgentStatus` operationId).
+	ConsentAgentStatusWithResponse(ctx context.Context, params *ConsentAgentStatusParams, reqEditors ...RequestEditorFn) (*ConsentAgentStatusHTTPResp, error)
+
 	// IntrospectEndpointWithBodyWithResponse Introspect Endpoint
 	//
 	// Introspect a token (RFC 7662).
@@ -23061,6 +23582,15 @@ type ClientWithResponsesInterface interface {
 	//
 	// Exchange a refresh token, JWT assertion, authorization code, or client creds for tokens.
 	//
+	// Error responses speak the RFC 6749 §5.2 dialect (top-level ``error`` +
+	// ``error_description``), NOT platform Problem Details — reshaped by
+	// ``_TokenRoute``. Malformed/missing parameters answer ``invalid_request``;
+	// failed client authentication answers ``invalid_client`` (status 401 with a
+	// ``WWW-Authenticate: Basic`` challenge when the client attempted HTTP Basic,
+	// 400 otherwise). On the refresh arm, a revoked consent grant answers
+	// ``invalid_grant`` with ``error_description: "consent grant has been
+	// revoked"`` — terminal; restart the authorization flow.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /oauth/token (the `TokenEndpoint` operationId).
@@ -23069,6 +23599,15 @@ type ClientWithResponsesInterface interface {
 	// TokenEndpointWithResponse Token Endpoint
 	//
 	// Exchange a refresh token, JWT assertion, authorization code, or client creds for tokens.
+	//
+	// Error responses speak the RFC 6749 §5.2 dialect (top-level ``error`` +
+	// ``error_description``), NOT platform Problem Details — reshaped by
+	// ``_TokenRoute``. Malformed/missing parameters answer ``invalid_request``;
+	// failed client authentication answers ``invalid_client`` (status 401 with a
+	// ``WWW-Authenticate: Basic`` challenge when the client attempted HTTP Basic,
+	// 400 otherwise). On the refresh arm, a revoked consent grant answers
+	// ``invalid_grant`` with ``error_description: "consent grant has been
+	// revoked"`` — terminal; restart the authorization flow.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -23079,10 +23618,112 @@ type ClientWithResponsesInterface interface {
 	//
 	// Exchange a refresh token, JWT assertion, authorization code, or client creds for tokens.
 	//
+	// Error responses speak the RFC 6749 §5.2 dialect (top-level ``error`` +
+	// ``error_description``), NOT platform Problem Details — reshaped by
+	// ``_TokenRoute``. Malformed/missing parameters answer ``invalid_request``;
+	// failed client authentication answers ``invalid_client`` (status 401 with a
+	// ``WWW-Authenticate: Basic`` challenge when the client attempted HTTP Basic,
+	// 400 otherwise). On the refresh arm, a revoked consent grant answers
+	// ``invalid_grant`` with ``error_description: "consent grant has been
+	// revoked"`` — terminal; restart the authorization flow.
+	//
 	// Takes a body of the `application/x-www-form-urlencoded` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /oauth/token (the `TokenEndpoint` operationId).
 	TokenEndpointWithFormdataBodyWithResponse(ctx context.Context, body TokenEndpointFormdataRequestBody, reqEditors ...RequestEditorFn) (*TokenEndpointHTTPResp, error)
+
+	// ListPermissionRuleSetsWithResponse List permission rule sets
+	//
+	// List shared rule sets with per-set rule counts (cursor-paginated).
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /permission-rule-sets (the `ListPermissionRuleSets` operationId).
+	ListPermissionRuleSetsWithResponse(ctx context.Context, params *ListPermissionRuleSetsParams, reqEditors ...RequestEditorFn) (*ListPermissionRuleSetsHTTPResp, error)
+
+	// CreatePermissionRuleSetWithBodyWithResponse Create permission rule set
+	//
+	// Create a named, shareable ordered rule list (theme 5 rule grouping).
+	//
+	// N agent-credential bindings can point at one set, so `permissions:test`
+	// and "revoke this operation everywhere" stay single-place edits.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /permission-rule-sets (the `CreatePermissionRuleSet` operationId).
+	CreatePermissionRuleSetWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreatePermissionRuleSetHTTPResp, error)
+
+	// CreatePermissionRuleSetWithResponse Create permission rule set
+	//
+	// Create a named, shareable ordered rule list (theme 5 rule grouping).
+	//
+	// N agent-credential bindings can point at one set, so `permissions:test`
+	// and "revoke this operation everywhere" stay single-place edits.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /permission-rule-sets (the `CreatePermissionRuleSet` operationId).
+	CreatePermissionRuleSetWithResponse(ctx context.Context, body CreatePermissionRuleSetJSONRequestBody, reqEditors ...RequestEditorFn) (*CreatePermissionRuleSetHTTPResp, error)
+
+	// DeletePermissionRuleSetWithResponse Delete permission rule set
+	//
+	// Delete a rule set nothing references (409 `rule_set_in_use` otherwise).
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /permission-rule-sets/{rule_set_id} (the `DeletePermissionRuleSet` operationId).
+	DeletePermissionRuleSetWithResponse(ctx context.Context, ruleSetId string, reqEditors ...RequestEditorFn) (*DeletePermissionRuleSetHTTPResp, error)
+
+	// GetPermissionRuleSetWithResponse Get permission rule set
+	//
+	// Get a rule set with its ordered rules and referencing-binding count.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /permission-rule-sets/{rule_set_id} (the `GetPermissionRuleSet` operationId).
+	GetPermissionRuleSetWithResponse(ctx context.Context, ruleSetId string, reqEditors ...RequestEditorFn) (*GetPermissionRuleSetHTTPResp, error)
+
+	// UpdatePermissionRuleSetWithBodyWithResponse Update permission rule set
+	//
+	// Rename or re-describe a rule set (creator or org admin).
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /permission-rule-sets/{rule_set_id} (the `UpdatePermissionRuleSet` operationId).
+	UpdatePermissionRuleSetWithBodyWithResponse(ctx context.Context, ruleSetId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdatePermissionRuleSetHTTPResp, error)
+
+	// UpdatePermissionRuleSetWithResponse Update permission rule set
+	//
+	// Rename or re-describe a rule set (creator or org admin).
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /permission-rule-sets/{rule_set_id} (the `UpdatePermissionRuleSet` operationId).
+	UpdatePermissionRuleSetWithResponse(ctx context.Context, ruleSetId string, body UpdatePermissionRuleSetJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdatePermissionRuleSetHTTPResp, error)
+
+	// ReplacePermissionRuleSetRulesWithBodyWithResponse Replace rule set rules
+	//
+	// Replace the set's full ordered rule list (idempotent PUT).
+	//
+	// Every binding pointing at the set picks the new list up at once — the
+	// single-place edit rule grouping exists for.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /permission-rule-sets/{rule_set_id}/rules (the `ReplacePermissionRuleSetRules` operationId).
+	ReplacePermissionRuleSetRulesWithBodyWithResponse(ctx context.Context, ruleSetId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReplacePermissionRuleSetRulesHTTPResp, error)
+
+	// ReplacePermissionRuleSetRulesWithResponse Replace rule set rules
+	//
+	// Replace the set's full ordered rule list (idempotent PUT).
+	//
+	// Every binding pointing at the set picks the new list up at once — the
+	// single-place edit rule grouping exists for.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /permission-rule-sets/{rule_set_id}/rules (the `ReplacePermissionRuleSetRules` operationId).
+	ReplacePermissionRuleSetRulesWithResponse(ctx context.Context, ruleSetId string, body ReplacePermissionRuleSetRulesJSONRequestBody, reqEditors ...RequestEditorFn) (*ReplacePermissionRuleSetRulesHTTPResp, error)
 
 	// ListPermissionsWithResponse List Permissions
 	//
@@ -23198,7 +23839,11 @@ type ClientWithResponsesInterface interface {
 
 	// ArchiveServiceAccountWithResponse Archive Service Account
 	//
-	// Soft-archive a service account — revokes scope grants.
+	// Archive a service account — terminal-but-kept.
+	//
+	// The row is retained for history, but the action is not reversible and
+	// the account's scope grants are revoked. For the reversible kill switch
+	// use ``:disable`` / ``:enable`` instead.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -23310,257 +23955,6 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /system/version (the `GetVersion` operationId).
 	GetVersionWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetVersionHTTPResp, error)
 
-	// ListToolkitsWithResponse List toolkits
-	//
-	// List toolkits with cursor-based pagination.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with GET /toolkits (the `ListToolkits` operationId).
-	ListToolkitsWithResponse(ctx context.Context, params *ListToolkitsParams, reqEditors ...RequestEditorFn) (*ListToolkitsHTTPResp, error)
-
-	// CreateToolkitWithBodyWithResponse Create toolkit
-	//
-	// Create a toolkit and issue its first API key.
-	//
-	// The plaintext key (`jntc_live_…`) is returned **once** in `api_key` and is
-	// never retrievable again. Optional `credential_ids` bind existing credentials
-	// at creation time; each inline bind emits a ``no_permission_rules`` warning
-	// because the broker denies by default until rules are added.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /toolkits (the `CreateToolkit` operationId).
-	CreateToolkitWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateToolkitHTTPResp, error)
-
-	// CreateToolkitWithResponse Create toolkit
-	//
-	// Create a toolkit and issue its first API key.
-	//
-	// The plaintext key (`jntc_live_…`) is returned **once** in `api_key` and is
-	// never retrievable again. Optional `credential_ids` bind existing credentials
-	// at creation time; each inline bind emits a ``no_permission_rules`` warning
-	// because the broker denies by default until rules are added.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /toolkits (the `CreateToolkit` operationId).
-	CreateToolkitWithResponse(ctx context.Context, body CreateToolkitJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateToolkitHTTPResp, error)
-
-	// DeleteToolkitWithResponse Delete toolkit
-	//
-	// Permanently delete a toolkit and cascade-remove its keys, bindings, and permission rules.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with DELETE /toolkits/{toolkit_id} (the `DeleteToolkit` operationId).
-	DeleteToolkitWithResponse(ctx context.Context, toolkitId string, reqEditors ...RequestEditorFn) (*DeleteToolkitHTTPResp, error)
-
-	// GetToolkitWithResponse Get toolkit
-	//
-	// Get a single toolkit by its `tk_…` ID.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with GET /toolkits/{toolkit_id} (the `GetToolkit` operationId).
-	GetToolkitWithResponse(ctx context.Context, toolkitId string, reqEditors ...RequestEditorFn) (*GetToolkitHTTPResp, error)
-
-	// UpdateToolkitWithBodyWithResponse Update toolkit
-	//
-	// Update a toolkit's name, description, or active flag.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with PATCH /toolkits/{toolkit_id} (the `UpdateToolkit` operationId).
-	UpdateToolkitWithBodyWithResponse(ctx context.Context, toolkitId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateToolkitHTTPResp, error)
-
-	// UpdateToolkitWithResponse Update toolkit
-	//
-	// Update a toolkit's name, description, or active flag.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with PATCH /toolkits/{toolkit_id} (the `UpdateToolkit` operationId).
-	UpdateToolkitWithResponse(ctx context.Context, toolkitId string, body UpdateToolkitJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateToolkitHTTPResp, error)
-
-	// ListToolkitAgentsWithResponse List agents bound to toolkit
-	//
-	// List agents bound to a toolkit with cursor-based pagination.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with GET /toolkits/{toolkit_id}/agents (the `ListToolkitAgents` operationId).
-	ListToolkitAgentsWithResponse(ctx context.Context, toolkitId string, params *ListToolkitAgentsParams, reqEditors ...RequestEditorFn) (*ListToolkitAgentsHTTPResp, error)
-
-	// ListBindingsWithResponse List toolkit credential bindings
-	//
-	// List the credentials bound to a toolkit with cursor-based pagination.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with GET /toolkits/{toolkit_id}/credentials (the `ListBindings` operationId).
-	ListBindingsWithResponse(ctx context.Context, toolkitId string, params *ListBindingsParams, reqEditors ...RequestEditorFn) (*ListBindingsHTTPResp, error)
-
-	// BindCredentialWithBodyWithResponse Bind credential to toolkit
-	//
-	// Bind an existing credential to a toolkit, optionally with inline permission rules.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /toolkits/{toolkit_id}/credentials (the `BindCredential` operationId).
-	BindCredentialWithBodyWithResponse(ctx context.Context, toolkitId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*BindCredentialHTTPResp, error)
-
-	// BindCredentialWithResponse Bind credential to toolkit
-	//
-	// Bind an existing credential to a toolkit, optionally with inline permission rules.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /toolkits/{toolkit_id}/credentials (the `BindCredential` operationId).
-	BindCredentialWithResponse(ctx context.Context, toolkitId string, body BindCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*BindCredentialHTTPResp, error)
-
-	// UnbindCredentialWithResponse Unbind credential from toolkit
-	//
-	// Remove a credential binding from a toolkit (the credential itself is untouched).
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with DELETE /toolkits/{toolkit_id}/credentials/{credential_id} (the `UnbindCredential` operationId).
-	UnbindCredentialWithResponse(ctx context.Context, toolkitId string, credentialId string, reqEditors ...RequestEditorFn) (*UnbindCredentialHTTPResp, error)
-
-	// ListToolkitPermissionsWithResponse List binding permission rules
-	//
-	// List the fine-grained PBAC rules for a `(toolkit, credential)` binding.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with GET /toolkits/{toolkit_id}/credentials/{credential_id}/permissions (the `ListToolkitPermissions` operationId).
-	ListToolkitPermissionsWithResponse(ctx context.Context, toolkitId string, credentialId string, reqEditors ...RequestEditorFn) (*ListToolkitPermissionsHTTPResp, error)
-
-	// PatchPermissionsWithBodyWithResponse Patch binding permission rules
-	//
-	// Additively add and/or remove permission rules on a binding.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with PATCH /toolkits/{toolkit_id}/credentials/{credential_id}/permissions (the `PatchPermissions` operationId).
-	PatchPermissionsWithBodyWithResponse(ctx context.Context, toolkitId string, credentialId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PatchPermissionsHTTPResp, error)
-
-	// PatchPermissionsWithResponse Patch binding permission rules
-	//
-	// Additively add and/or remove permission rules on a binding.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with PATCH /toolkits/{toolkit_id}/credentials/{credential_id}/permissions (the `PatchPermissions` operationId).
-	PatchPermissionsWithResponse(ctx context.Context, toolkitId string, credentialId string, body PatchPermissionsJSONRequestBody, reqEditors ...RequestEditorFn) (*PatchPermissionsHTTPResp, error)
-
-	// ReplacePermissionsWithBodyWithResponse Replace binding permission rules
-	//
-	// Replace the full set of permission rules for a binding (idempotent PUT).
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with PUT /toolkits/{toolkit_id}/credentials/{credential_id}/permissions (the `ReplacePermissions` operationId).
-	ReplacePermissionsWithBodyWithResponse(ctx context.Context, toolkitId string, credentialId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReplacePermissionsHTTPResp, error)
-
-	// ReplacePermissionsWithResponse Replace binding permission rules
-	//
-	// Replace the full set of permission rules for a binding (idempotent PUT).
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with PUT /toolkits/{toolkit_id}/credentials/{credential_id}/permissions (the `ReplacePermissions` operationId).
-	ReplacePermissionsWithResponse(ctx context.Context, toolkitId string, credentialId string, body ReplacePermissionsJSONRequestBody, reqEditors ...RequestEditorFn) (*ReplacePermissionsHTTPResp, error)
-
-	// TestToolkitPermissionsWithBodyWithResponse Dry-run permission evaluation
-	//
-	// Answer "what would the broker do for this request?" without calling upstream.
-	//
-	// Evaluates the same **vendor-pooled** rule set the broker sees at request
-	// time — rules from all same-vendor bindings on this toolkit compete in one
-	// ordered list. The response names which binding contributed the matching
-	// rule, which is not obvious from the toolkit id alone under pooling.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /toolkits/{toolkit_id}/credentials/{credential_id}/permissions:test (the `TestToolkitPermissions` operationId).
-	TestToolkitPermissionsWithBodyWithResponse(ctx context.Context, toolkitId string, credentialId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*TestToolkitPermissionsHTTPResp, error)
-
-	// TestToolkitPermissionsWithResponse Dry-run permission evaluation
-	//
-	// Answer "what would the broker do for this request?" without calling upstream.
-	//
-	// Evaluates the same **vendor-pooled** rule set the broker sees at request
-	// time — rules from all same-vendor bindings on this toolkit compete in one
-	// ordered list. The response names which binding contributed the matching
-	// rule, which is not obvious from the toolkit id alone under pooling.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /toolkits/{toolkit_id}/credentials/{credential_id}/permissions:test (the `TestToolkitPermissions` operationId).
-	TestToolkitPermissionsWithResponse(ctx context.Context, toolkitId string, credentialId string, body TestToolkitPermissionsJSONRequestBody, reqEditors ...RequestEditorFn) (*TestToolkitPermissionsHTTPResp, error)
-
-	// ListKeysWithResponse List toolkit keys
-	//
-	// List a toolkit's API keys (redacted; only `key_preview` is shown).
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with GET /toolkits/{toolkit_id}/keys (the `ListKeys` operationId).
-	ListKeysWithResponse(ctx context.Context, toolkitId string, params *ListKeysParams, reqEditors ...RequestEditorFn) (*ListKeysHTTPResp, error)
-
-	// CreateKeyWithBodyWithResponse Issue toolkit key
-	//
-	// Issue a new API key for a toolkit.
-	//
-	// The plaintext value (`jntc_live_…`) is returned **once** in `api_key`. Issue
-	// a fresh key, switch callers, then revoke the old one (do-and-then-revoke).
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /toolkits/{toolkit_id}/keys (the `CreateKey` operationId).
-	CreateKeyWithBodyWithResponse(ctx context.Context, toolkitId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateKeyHTTPResp, error)
-
-	// CreateKeyWithResponse Issue toolkit key
-	//
-	// Issue a new API key for a toolkit.
-	//
-	// The plaintext value (`jntc_live_…`) is returned **once** in `api_key`. Issue
-	// a fresh key, switch callers, then revoke the old one (do-and-then-revoke).
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /toolkits/{toolkit_id}/keys (the `CreateKey` operationId).
-	CreateKeyWithResponse(ctx context.Context, toolkitId string, body CreateKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateKeyHTTPResp, error)
-
-	// DeleteKeyWithResponse Revoke toolkit key
-	//
-	// Revoke (delete) a toolkit API key. Callers using it are rejected immediately.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with DELETE /toolkits/{toolkit_id}/keys/{key_id} (the `DeleteKey` operationId).
-	DeleteKeyWithResponse(ctx context.Context, toolkitId string, keyId string, reqEditors ...RequestEditorFn) (*DeleteKeyHTTPResp, error)
-
-	// UpdateKeyWithBodyWithResponse Update toolkit key
-	//
-	// Update a key's label, IP allowlist, or revoked flag.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with PATCH /toolkits/{toolkit_id}/keys/{key_id} (the `UpdateKey` operationId).
-	UpdateKeyWithBodyWithResponse(ctx context.Context, toolkitId string, keyId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateKeyHTTPResp, error)
-
-	// UpdateKeyWithResponse Update toolkit key
-	//
-	// Update a key's label, IP allowlist, or revoked flag.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with PATCH /toolkits/{toolkit_id}/keys/{key_id} (the `UpdateKey` operationId).
-	UpdateKeyWithResponse(ctx context.Context, toolkitId string, keyId string, body UpdateKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateKeyHTTPResp, error)
-
 	// ListUsersWithResponse List Users
 	//
 	// List all users with cursor-based pagination.
@@ -23625,7 +24019,12 @@ type ClientWithResponsesInterface interface {
 
 	// DeleteUserWithResponse Delete User
 	//
-	// Soft-delete a user.
+	// Delete a user account (terminal-but-kept).
+	//
+	// The row is retained — the account is anonymized (tombstone email) and
+	// deactivated so history and audit references stay resolvable — but the
+	// action is terminal: there is no re-enable arm. For the reversible kill
+	// switch use ``:disable`` / ``:enable`` instead.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -25644,6 +26043,89 @@ func (r ApproveOauthClientHTTPResp) ContentType() string {
 	return ""
 }
 
+type DeleteOauthClientHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r DeleteOauthClientHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r DeleteOauthClientHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r DeleteOauthClientHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r DeleteOauthClientHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r DeleteOauthClientHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r DeleteOauthClientHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r DeleteOauthClientHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r DeleteOauthClientHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteOauthClientHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteOauthClientHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeleteOauthClientHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type DenyOauthClientHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -26391,6 +26873,331 @@ func (r GetAgentApiKeyHistoryHTTPResp) ContentType() string {
 	return ""
 }
 
+type ListAgentCredentialsHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *CredentialBindingListResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListAgentCredentialsHTTPResp) GetJSON200() *CredentialBindingListResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ListAgentCredentialsHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ListAgentCredentialsHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ListAgentCredentialsHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r ListAgentCredentialsHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r ListAgentCredentialsHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ListAgentCredentialsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ListAgentCredentialsHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListAgentCredentialsHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListAgentCredentialsHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListAgentCredentialsHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type BindAgentCredentialHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *CredentialBindingResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r BindAgentCredentialHTTPResp) GetJSON201() *CredentialBindingResponse {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r BindAgentCredentialHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r BindAgentCredentialHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r BindAgentCredentialHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r BindAgentCredentialHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r BindAgentCredentialHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r BindAgentCredentialHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r BindAgentCredentialHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r BindAgentCredentialHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r BindAgentCredentialHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r BindAgentCredentialHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type UnbindAgentCredentialHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r UnbindAgentCredentialHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r UnbindAgentCredentialHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r UnbindAgentCredentialHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r UnbindAgentCredentialHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r UnbindAgentCredentialHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r UnbindAgentCredentialHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r UnbindAgentCredentialHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r UnbindAgentCredentialHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UnbindAgentCredentialHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r UnbindAgentCredentialHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ResumeAgentCredentialBindingHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *CredentialBindingResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ResumeAgentCredentialBindingHTTPResp) GetJSON200() *CredentialBindingResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ResumeAgentCredentialBindingHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ResumeAgentCredentialBindingHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ResumeAgentCredentialBindingHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r ResumeAgentCredentialBindingHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r ResumeAgentCredentialBindingHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ResumeAgentCredentialBindingHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ResumeAgentCredentialBindingHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ResumeAgentCredentialBindingHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ResumeAgentCredentialBindingHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ResumeAgentCredentialBindingHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type UpdateAgentJwksHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -26724,248 +27531,6 @@ func (r ReplaceAgentScopesHTTPResp) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ReplaceAgentScopesHTTPResp) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type ListAgentToolkitsHTTPResp struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *ToolkitBindingListResponse
-	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
-	ApplicationproblemJSON400 *ProblemDetail
-	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
-	ApplicationproblemJSON401 *ProblemDetail
-	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
-	ApplicationproblemJSON403 *ProblemDetail
-	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
-	ApplicationproblemJSON422 *ProblemDetail
-	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
-	ApplicationproblemJSON500 *ProblemDetail
-	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
-	ApplicationproblemJSON503 *ProblemDetail
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ListAgentToolkitsHTTPResp) GetJSON200() *ToolkitBindingListResponse {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
-func (r ListAgentToolkitsHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
-	return r.ApplicationproblemJSON400
-}
-
-// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
-func (r ListAgentToolkitsHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
-	return r.ApplicationproblemJSON401
-}
-
-// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
-func (r ListAgentToolkitsHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
-	return r.ApplicationproblemJSON403
-}
-
-// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
-func (r ListAgentToolkitsHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
-	return r.ApplicationproblemJSON422
-}
-
-// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
-func (r ListAgentToolkitsHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
-	return r.ApplicationproblemJSON500
-}
-
-// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
-func (r ListAgentToolkitsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
-	return r.ApplicationproblemJSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r ListAgentToolkitsHTTPResp) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r ListAgentToolkitsHTTPResp) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ListAgentToolkitsHTTPResp) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ListAgentToolkitsHTTPResp) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type BindToolkitHTTPResp struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON201 the response for an HTTP 201 `application/json` response
-	JSON201 *ToolkitBindingResponse
-	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
-	ApplicationproblemJSON400 *ProblemDetail
-	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
-	ApplicationproblemJSON401 *ProblemDetail
-	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
-	ApplicationproblemJSON403 *ProblemDetail
-	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
-	ApplicationproblemJSON422 *ProblemDetail
-	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
-	ApplicationproblemJSON500 *ProblemDetail
-	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
-	ApplicationproblemJSON503 *ProblemDetail
-}
-
-// GetJSON201 returns the response for an HTTP 201 `application/json` response
-func (r BindToolkitHTTPResp) GetJSON201() *ToolkitBindingResponse {
-	return r.JSON201
-}
-
-// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
-func (r BindToolkitHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
-	return r.ApplicationproblemJSON400
-}
-
-// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
-func (r BindToolkitHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
-	return r.ApplicationproblemJSON401
-}
-
-// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
-func (r BindToolkitHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
-	return r.ApplicationproblemJSON403
-}
-
-// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
-func (r BindToolkitHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
-	return r.ApplicationproblemJSON422
-}
-
-// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
-func (r BindToolkitHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
-	return r.ApplicationproblemJSON500
-}
-
-// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
-func (r BindToolkitHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
-	return r.ApplicationproblemJSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r BindToolkitHTTPResp) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r BindToolkitHTTPResp) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r BindToolkitHTTPResp) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r BindToolkitHTTPResp) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type UnbindToolkitHTTPResp struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
-	ApplicationproblemJSON400 *ProblemDetail
-	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
-	ApplicationproblemJSON401 *ProblemDetail
-	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
-	ApplicationproblemJSON403 *ProblemDetail
-	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
-	ApplicationproblemJSON422 *ProblemDetail
-	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
-	ApplicationproblemJSON500 *ProblemDetail
-	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
-	ApplicationproblemJSON503 *ProblemDetail
-}
-
-// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
-func (r UnbindToolkitHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
-	return r.ApplicationproblemJSON400
-}
-
-// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
-func (r UnbindToolkitHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
-	return r.ApplicationproblemJSON401
-}
-
-// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
-func (r UnbindToolkitHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
-	return r.ApplicationproblemJSON403
-}
-
-// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
-func (r UnbindToolkitHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
-	return r.ApplicationproblemJSON422
-}
-
-// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
-func (r UnbindToolkitHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
-	return r.ApplicationproblemJSON500
-}
-
-// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
-func (r UnbindToolkitHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
-	return r.ApplicationproblemJSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r UnbindToolkitHTTPResp) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r UnbindToolkitHTTPResp) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r UnbindToolkitHTTPResp) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r UnbindToolkitHTTPResp) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -31086,6 +31651,622 @@ func (r UpdateCredentialHTTPResp) ContentType() string {
 	return ""
 }
 
+type ListCredentialAgentsHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *CredentialAgentListResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListCredentialAgentsHTTPResp) GetJSON200() *CredentialAgentListResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ListCredentialAgentsHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ListCredentialAgentsHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ListCredentialAgentsHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r ListCredentialAgentsHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r ListCredentialAgentsHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r ListCredentialAgentsHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ListCredentialAgentsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ListCredentialAgentsHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListCredentialAgentsHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListCredentialAgentsHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListCredentialAgentsHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListAgentCredentialPermissionsHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PermissionRuleListResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListAgentCredentialPermissionsHTTPResp) GetJSON200() *PermissionRuleListResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ListAgentCredentialPermissionsHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ListAgentCredentialPermissionsHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ListAgentCredentialPermissionsHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r ListAgentCredentialPermissionsHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r ListAgentCredentialPermissionsHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r ListAgentCredentialPermissionsHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ListAgentCredentialPermissionsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ListAgentCredentialPermissionsHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListAgentCredentialPermissionsHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListAgentCredentialPermissionsHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListAgentCredentialPermissionsHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type PatchAgentCredentialPermissionsHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PermissionRuleListResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r PatchAgentCredentialPermissionsHTTPResp) GetJSON200() *PermissionRuleListResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r PatchAgentCredentialPermissionsHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r PatchAgentCredentialPermissionsHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r PatchAgentCredentialPermissionsHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r PatchAgentCredentialPermissionsHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r PatchAgentCredentialPermissionsHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r PatchAgentCredentialPermissionsHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r PatchAgentCredentialPermissionsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r PatchAgentCredentialPermissionsHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r PatchAgentCredentialPermissionsHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PatchAgentCredentialPermissionsHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r PatchAgentCredentialPermissionsHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ReplaceAgentCredentialPermissionsHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PermissionRuleListResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ReplaceAgentCredentialPermissionsHTTPResp) GetJSON200() *PermissionRuleListResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ReplaceAgentCredentialPermissionsHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ReplaceAgentCredentialPermissionsHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ReplaceAgentCredentialPermissionsHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r ReplaceAgentCredentialPermissionsHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r ReplaceAgentCredentialPermissionsHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r ReplaceAgentCredentialPermissionsHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ReplaceAgentCredentialPermissionsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ReplaceAgentCredentialPermissionsHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ReplaceAgentCredentialPermissionsHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReplaceAgentCredentialPermissionsHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ReplaceAgentCredentialPermissionsHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type TestAgentCredentialPermissionsHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PermissionTestResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r TestAgentCredentialPermissionsHTTPResp) GetJSON200() *PermissionTestResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r TestAgentCredentialPermissionsHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r TestAgentCredentialPermissionsHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r TestAgentCredentialPermissionsHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r TestAgentCredentialPermissionsHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r TestAgentCredentialPermissionsHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r TestAgentCredentialPermissionsHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r TestAgentCredentialPermissionsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r TestAgentCredentialPermissionsHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r TestAgentCredentialPermissionsHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r TestAgentCredentialPermissionsHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r TestAgentCredentialPermissionsHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type DetachAgentCredentialRuleSetHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r DetachAgentCredentialRuleSetHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r DetachAgentCredentialRuleSetHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r DetachAgentCredentialRuleSetHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r DetachAgentCredentialRuleSetHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r DetachAgentCredentialRuleSetHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r DetachAgentCredentialRuleSetHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r DetachAgentCredentialRuleSetHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r DetachAgentCredentialRuleSetHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DetachAgentCredentialRuleSetHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DetachAgentCredentialRuleSetHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DetachAgentCredentialRuleSetHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type AttachAgentCredentialRuleSetHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r AttachAgentCredentialRuleSetHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r AttachAgentCredentialRuleSetHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r AttachAgentCredentialRuleSetHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r AttachAgentCredentialRuleSetHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r AttachAgentCredentialRuleSetHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r AttachAgentCredentialRuleSetHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r AttachAgentCredentialRuleSetHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r AttachAgentCredentialRuleSetHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r AttachAgentCredentialRuleSetHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AttachAgentCredentialRuleSetHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r AttachAgentCredentialRuleSetHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ConnectCredentialHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -33635,6 +34816,137 @@ func (r ConsentSubmitHTTPResp) ContentType() string {
 	return ""
 }
 
+type ConsentAgentCreateHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *interface{}
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ConsentAgentCreateHTTPResp) GetJSON200() *interface{} {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ConsentAgentCreateHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r ConsentAgentCreateHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r ConsentAgentCreateHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ConsentAgentCreateHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ConsentAgentCreateHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ConsentAgentCreateHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ConsentAgentCreateHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ConsentAgentCreateHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ConsentAgentStatusHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ConsentAgentStatusResponse
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ConsentAgentStatusHTTPResp) GetJSON200() *ConsentAgentStatusResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r ConsentAgentStatusHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r ConsentAgentStatusHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ConsentAgentStatusHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ConsentAgentStatusHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ConsentAgentStatusHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ConsentAgentStatusHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ConsentAgentStatusHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type IntrospectEndpointHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -33951,10 +35263,6 @@ type TokenEndpointHTTPResp struct {
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *TokenResponse
-	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
-	ApplicationproblemJSON400 *ProblemDetail
-	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
-	ApplicationproblemJSON422 *ProblemDetail
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
@@ -33964,16 +35272,6 @@ type TokenEndpointHTTPResp struct {
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
 func (r TokenEndpointHTTPResp) GetJSON200() *TokenResponse {
 	return r.JSON200
-}
-
-// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
-func (r TokenEndpointHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
-	return r.ApplicationproblemJSON400
-}
-
-// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
-func (r TokenEndpointHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
-	return r.ApplicationproblemJSON422
 }
 
 // GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
@@ -34009,6 +35307,539 @@ func (r TokenEndpointHTTPResp) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r TokenEndpointHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListPermissionRuleSetsHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *RuleSetListResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListPermissionRuleSetsHTTPResp) GetJSON200() *RuleSetListResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ListPermissionRuleSetsHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ListPermissionRuleSetsHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ListPermissionRuleSetsHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r ListPermissionRuleSetsHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r ListPermissionRuleSetsHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ListPermissionRuleSetsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ListPermissionRuleSetsHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListPermissionRuleSetsHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListPermissionRuleSetsHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListPermissionRuleSetsHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreatePermissionRuleSetHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *RuleSetResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreatePermissionRuleSetHTTPResp) GetJSON201() *RuleSetResponse {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r CreatePermissionRuleSetHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r CreatePermissionRuleSetHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r CreatePermissionRuleSetHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r CreatePermissionRuleSetHTTPResp) GetApplicationproblemJSON409() *ProblemDetail {
+	return r.ApplicationproblemJSON409
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r CreatePermissionRuleSetHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r CreatePermissionRuleSetHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r CreatePermissionRuleSetHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r CreatePermissionRuleSetHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreatePermissionRuleSetHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreatePermissionRuleSetHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreatePermissionRuleSetHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type DeletePermissionRuleSetHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r DeletePermissionRuleSetHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r DeletePermissionRuleSetHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r DeletePermissionRuleSetHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r DeletePermissionRuleSetHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r DeletePermissionRuleSetHTTPResp) GetApplicationproblemJSON409() *ProblemDetail {
+	return r.ApplicationproblemJSON409
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r DeletePermissionRuleSetHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r DeletePermissionRuleSetHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r DeletePermissionRuleSetHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r DeletePermissionRuleSetHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeletePermissionRuleSetHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeletePermissionRuleSetHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeletePermissionRuleSetHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetPermissionRuleSetHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *RuleSetResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetPermissionRuleSetHTTPResp) GetJSON200() *RuleSetResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r GetPermissionRuleSetHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r GetPermissionRuleSetHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r GetPermissionRuleSetHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r GetPermissionRuleSetHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r GetPermissionRuleSetHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r GetPermissionRuleSetHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r GetPermissionRuleSetHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r GetPermissionRuleSetHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetPermissionRuleSetHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetPermissionRuleSetHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetPermissionRuleSetHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type UpdatePermissionRuleSetHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *RuleSetResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r UpdatePermissionRuleSetHTTPResp) GetJSON200() *RuleSetResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r UpdatePermissionRuleSetHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r UpdatePermissionRuleSetHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r UpdatePermissionRuleSetHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r UpdatePermissionRuleSetHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r UpdatePermissionRuleSetHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r UpdatePermissionRuleSetHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r UpdatePermissionRuleSetHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r UpdatePermissionRuleSetHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r UpdatePermissionRuleSetHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UpdatePermissionRuleSetHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r UpdatePermissionRuleSetHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ReplacePermissionRuleSetRulesHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PermissionRuleListResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ReplacePermissionRuleSetRulesHTTPResp) GetJSON200() *PermissionRuleListResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ReplacePermissionRuleSetRulesHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ReplacePermissionRuleSetRulesHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ReplacePermissionRuleSetRulesHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r ReplacePermissionRuleSetRulesHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r ReplacePermissionRuleSetRulesHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r ReplacePermissionRuleSetRulesHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ReplacePermissionRuleSetRulesHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ReplacePermissionRuleSetRulesHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ReplacePermissionRuleSetRulesHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReplacePermissionRuleSetRulesHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ReplacePermissionRuleSetRulesHTTPResp) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -35494,1508 +37325,6 @@ func (r GetVersionHTTPResp) ContentType() string {
 	return ""
 }
 
-type ListToolkitsHTTPResp struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *ToolkitListResponse
-	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
-	ApplicationproblemJSON400 *ProblemDetail
-	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
-	ApplicationproblemJSON401 *ProblemDetail
-	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
-	ApplicationproblemJSON403 *ProblemDetail
-	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
-	ApplicationproblemJSON422 *ProblemDetail
-	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
-	ApplicationproblemJSON500 *ProblemDetail
-	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
-	ApplicationproblemJSON503 *ProblemDetail
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ListToolkitsHTTPResp) GetJSON200() *ToolkitListResponse {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
-func (r ListToolkitsHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
-	return r.ApplicationproblemJSON400
-}
-
-// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
-func (r ListToolkitsHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
-	return r.ApplicationproblemJSON401
-}
-
-// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
-func (r ListToolkitsHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
-	return r.ApplicationproblemJSON403
-}
-
-// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
-func (r ListToolkitsHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
-	return r.ApplicationproblemJSON422
-}
-
-// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
-func (r ListToolkitsHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
-	return r.ApplicationproblemJSON500
-}
-
-// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
-func (r ListToolkitsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
-	return r.ApplicationproblemJSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r ListToolkitsHTTPResp) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r ListToolkitsHTTPResp) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ListToolkitsHTTPResp) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ListToolkitsHTTPResp) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type CreateToolkitHTTPResp struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON201 the response for an HTTP 201 `application/json` response
-	JSON201 *ToolkitCreateResponse
-	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
-	ApplicationproblemJSON400 *ProblemDetail
-	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
-	ApplicationproblemJSON401 *ProblemDetail
-	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
-	ApplicationproblemJSON403 *ProblemDetail
-	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
-	ApplicationproblemJSON422 *ProblemDetail
-	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
-	ApplicationproblemJSON500 *ProblemDetail
-	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
-	ApplicationproblemJSON503 *ProblemDetail
-}
-
-// GetJSON201 returns the response for an HTTP 201 `application/json` response
-func (r CreateToolkitHTTPResp) GetJSON201() *ToolkitCreateResponse {
-	return r.JSON201
-}
-
-// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
-func (r CreateToolkitHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
-	return r.ApplicationproblemJSON400
-}
-
-// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
-func (r CreateToolkitHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
-	return r.ApplicationproblemJSON401
-}
-
-// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
-func (r CreateToolkitHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
-	return r.ApplicationproblemJSON403
-}
-
-// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
-func (r CreateToolkitHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
-	return r.ApplicationproblemJSON422
-}
-
-// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
-func (r CreateToolkitHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
-	return r.ApplicationproblemJSON500
-}
-
-// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
-func (r CreateToolkitHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
-	return r.ApplicationproblemJSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r CreateToolkitHTTPResp) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r CreateToolkitHTTPResp) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r CreateToolkitHTTPResp) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r CreateToolkitHTTPResp) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type DeleteToolkitHTTPResp struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
-	ApplicationproblemJSON400 *ProblemDetail
-	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
-	ApplicationproblemJSON401 *ProblemDetail
-	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
-	ApplicationproblemJSON403 *ProblemDetail
-	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
-	ApplicationproblemJSON404 *ProblemDetail
-	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
-	ApplicationproblemJSON422 *ProblemDetail
-	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
-	ApplicationproblemJSON500 *ProblemDetail
-	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
-	ApplicationproblemJSON503 *ProblemDetail
-}
-
-// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
-func (r DeleteToolkitHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
-	return r.ApplicationproblemJSON400
-}
-
-// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
-func (r DeleteToolkitHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
-	return r.ApplicationproblemJSON401
-}
-
-// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
-func (r DeleteToolkitHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
-	return r.ApplicationproblemJSON403
-}
-
-// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
-func (r DeleteToolkitHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
-	return r.ApplicationproblemJSON404
-}
-
-// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
-func (r DeleteToolkitHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
-	return r.ApplicationproblemJSON422
-}
-
-// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
-func (r DeleteToolkitHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
-	return r.ApplicationproblemJSON500
-}
-
-// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
-func (r DeleteToolkitHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
-	return r.ApplicationproblemJSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r DeleteToolkitHTTPResp) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r DeleteToolkitHTTPResp) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r DeleteToolkitHTTPResp) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r DeleteToolkitHTTPResp) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type GetToolkitHTTPResp struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *ToolkitResponse
-	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
-	ApplicationproblemJSON400 *ProblemDetail
-	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
-	ApplicationproblemJSON401 *ProblemDetail
-	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
-	ApplicationproblemJSON403 *ProblemDetail
-	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
-	ApplicationproblemJSON404 *ProblemDetail
-	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
-	ApplicationproblemJSON422 *ProblemDetail
-	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
-	ApplicationproblemJSON500 *ProblemDetail
-	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
-	ApplicationproblemJSON503 *ProblemDetail
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r GetToolkitHTTPResp) GetJSON200() *ToolkitResponse {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
-func (r GetToolkitHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
-	return r.ApplicationproblemJSON400
-}
-
-// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
-func (r GetToolkitHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
-	return r.ApplicationproblemJSON401
-}
-
-// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
-func (r GetToolkitHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
-	return r.ApplicationproblemJSON403
-}
-
-// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
-func (r GetToolkitHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
-	return r.ApplicationproblemJSON404
-}
-
-// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
-func (r GetToolkitHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
-	return r.ApplicationproblemJSON422
-}
-
-// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
-func (r GetToolkitHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
-	return r.ApplicationproblemJSON500
-}
-
-// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
-func (r GetToolkitHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
-	return r.ApplicationproblemJSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r GetToolkitHTTPResp) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r GetToolkitHTTPResp) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r GetToolkitHTTPResp) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r GetToolkitHTTPResp) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type UpdateToolkitHTTPResp struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *ToolkitResponse
-	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
-	ApplicationproblemJSON400 *ProblemDetail
-	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
-	ApplicationproblemJSON401 *ProblemDetail
-	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
-	ApplicationproblemJSON403 *ProblemDetail
-	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
-	ApplicationproblemJSON404 *ProblemDetail
-	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
-	ApplicationproblemJSON422 *ProblemDetail
-	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
-	ApplicationproblemJSON500 *ProblemDetail
-	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
-	ApplicationproblemJSON503 *ProblemDetail
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r UpdateToolkitHTTPResp) GetJSON200() *ToolkitResponse {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
-func (r UpdateToolkitHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
-	return r.ApplicationproblemJSON400
-}
-
-// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
-func (r UpdateToolkitHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
-	return r.ApplicationproblemJSON401
-}
-
-// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
-func (r UpdateToolkitHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
-	return r.ApplicationproblemJSON403
-}
-
-// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
-func (r UpdateToolkitHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
-	return r.ApplicationproblemJSON404
-}
-
-// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
-func (r UpdateToolkitHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
-	return r.ApplicationproblemJSON422
-}
-
-// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
-func (r UpdateToolkitHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
-	return r.ApplicationproblemJSON500
-}
-
-// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
-func (r UpdateToolkitHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
-	return r.ApplicationproblemJSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r UpdateToolkitHTTPResp) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r UpdateToolkitHTTPResp) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r UpdateToolkitHTTPResp) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r UpdateToolkitHTTPResp) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type ListToolkitAgentsHTTPResp struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *ToolkitAgentListResponse
-	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
-	ApplicationproblemJSON400 *ProblemDetail
-	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
-	ApplicationproblemJSON401 *ProblemDetail
-	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
-	ApplicationproblemJSON403 *ProblemDetail
-	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
-	ApplicationproblemJSON404 *ProblemDetail
-	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
-	ApplicationproblemJSON422 *ProblemDetail
-	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
-	ApplicationproblemJSON500 *ProblemDetail
-	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
-	ApplicationproblemJSON503 *ProblemDetail
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ListToolkitAgentsHTTPResp) GetJSON200() *ToolkitAgentListResponse {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
-func (r ListToolkitAgentsHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
-	return r.ApplicationproblemJSON400
-}
-
-// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
-func (r ListToolkitAgentsHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
-	return r.ApplicationproblemJSON401
-}
-
-// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
-func (r ListToolkitAgentsHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
-	return r.ApplicationproblemJSON403
-}
-
-// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
-func (r ListToolkitAgentsHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
-	return r.ApplicationproblemJSON404
-}
-
-// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
-func (r ListToolkitAgentsHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
-	return r.ApplicationproblemJSON422
-}
-
-// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
-func (r ListToolkitAgentsHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
-	return r.ApplicationproblemJSON500
-}
-
-// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
-func (r ListToolkitAgentsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
-	return r.ApplicationproblemJSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r ListToolkitAgentsHTTPResp) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r ListToolkitAgentsHTTPResp) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ListToolkitAgentsHTTPResp) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ListToolkitAgentsHTTPResp) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type ListBindingsHTTPResp struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *ToolkitCredentialListResponse
-	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
-	ApplicationproblemJSON400 *ProblemDetail
-	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
-	ApplicationproblemJSON401 *ProblemDetail
-	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
-	ApplicationproblemJSON403 *ProblemDetail
-	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
-	ApplicationproblemJSON404 *ProblemDetail
-	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
-	ApplicationproblemJSON422 *ProblemDetail
-	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
-	ApplicationproblemJSON500 *ProblemDetail
-	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
-	ApplicationproblemJSON503 *ProblemDetail
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ListBindingsHTTPResp) GetJSON200() *ToolkitCredentialListResponse {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
-func (r ListBindingsHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
-	return r.ApplicationproblemJSON400
-}
-
-// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
-func (r ListBindingsHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
-	return r.ApplicationproblemJSON401
-}
-
-// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
-func (r ListBindingsHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
-	return r.ApplicationproblemJSON403
-}
-
-// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
-func (r ListBindingsHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
-	return r.ApplicationproblemJSON404
-}
-
-// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
-func (r ListBindingsHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
-	return r.ApplicationproblemJSON422
-}
-
-// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
-func (r ListBindingsHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
-	return r.ApplicationproblemJSON500
-}
-
-// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
-func (r ListBindingsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
-	return r.ApplicationproblemJSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r ListBindingsHTTPResp) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r ListBindingsHTTPResp) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ListBindingsHTTPResp) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ListBindingsHTTPResp) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type BindCredentialHTTPResp struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON201 the response for an HTTP 201 `application/json` response
-	JSON201 *ToolkitCredentialBindingResponse
-	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
-	ApplicationproblemJSON400 *ProblemDetail
-	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
-	ApplicationproblemJSON401 *ProblemDetail
-	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
-	ApplicationproblemJSON403 *ProblemDetail
-	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
-	ApplicationproblemJSON404 *ProblemDetail
-	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
-	ApplicationproblemJSON409 *ProblemDetail
-	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
-	ApplicationproblemJSON422 *ProblemDetail
-	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
-	ApplicationproblemJSON500 *ProblemDetail
-	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
-	ApplicationproblemJSON503 *ProblemDetail
-}
-
-// GetJSON201 returns the response for an HTTP 201 `application/json` response
-func (r BindCredentialHTTPResp) GetJSON201() *ToolkitCredentialBindingResponse {
-	return r.JSON201
-}
-
-// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
-func (r BindCredentialHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
-	return r.ApplicationproblemJSON400
-}
-
-// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
-func (r BindCredentialHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
-	return r.ApplicationproblemJSON401
-}
-
-// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
-func (r BindCredentialHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
-	return r.ApplicationproblemJSON403
-}
-
-// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
-func (r BindCredentialHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
-	return r.ApplicationproblemJSON404
-}
-
-// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
-func (r BindCredentialHTTPResp) GetApplicationproblemJSON409() *ProblemDetail {
-	return r.ApplicationproblemJSON409
-}
-
-// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
-func (r BindCredentialHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
-	return r.ApplicationproblemJSON422
-}
-
-// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
-func (r BindCredentialHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
-	return r.ApplicationproblemJSON500
-}
-
-// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
-func (r BindCredentialHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
-	return r.ApplicationproblemJSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r BindCredentialHTTPResp) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r BindCredentialHTTPResp) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r BindCredentialHTTPResp) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r BindCredentialHTTPResp) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type UnbindCredentialHTTPResp struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
-	ApplicationproblemJSON400 *ProblemDetail
-	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
-	ApplicationproblemJSON401 *ProblemDetail
-	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
-	ApplicationproblemJSON403 *ProblemDetail
-	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
-	ApplicationproblemJSON404 *ProblemDetail
-	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
-	ApplicationproblemJSON422 *ProblemDetail
-	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
-	ApplicationproblemJSON500 *ProblemDetail
-	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
-	ApplicationproblemJSON503 *ProblemDetail
-}
-
-// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
-func (r UnbindCredentialHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
-	return r.ApplicationproblemJSON400
-}
-
-// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
-func (r UnbindCredentialHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
-	return r.ApplicationproblemJSON401
-}
-
-// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
-func (r UnbindCredentialHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
-	return r.ApplicationproblemJSON403
-}
-
-// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
-func (r UnbindCredentialHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
-	return r.ApplicationproblemJSON404
-}
-
-// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
-func (r UnbindCredentialHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
-	return r.ApplicationproblemJSON422
-}
-
-// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
-func (r UnbindCredentialHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
-	return r.ApplicationproblemJSON500
-}
-
-// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
-func (r UnbindCredentialHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
-	return r.ApplicationproblemJSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r UnbindCredentialHTTPResp) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r UnbindCredentialHTTPResp) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r UnbindCredentialHTTPResp) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r UnbindCredentialHTTPResp) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type ListToolkitPermissionsHTTPResp struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *PermissionRuleListResponse
-	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
-	ApplicationproblemJSON400 *ProblemDetail
-	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
-	ApplicationproblemJSON401 *ProblemDetail
-	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
-	ApplicationproblemJSON403 *ProblemDetail
-	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
-	ApplicationproblemJSON404 *ProblemDetail
-	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
-	ApplicationproblemJSON422 *ProblemDetail
-	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
-	ApplicationproblemJSON500 *ProblemDetail
-	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
-	ApplicationproblemJSON503 *ProblemDetail
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ListToolkitPermissionsHTTPResp) GetJSON200() *PermissionRuleListResponse {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
-func (r ListToolkitPermissionsHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
-	return r.ApplicationproblemJSON400
-}
-
-// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
-func (r ListToolkitPermissionsHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
-	return r.ApplicationproblemJSON401
-}
-
-// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
-func (r ListToolkitPermissionsHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
-	return r.ApplicationproblemJSON403
-}
-
-// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
-func (r ListToolkitPermissionsHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
-	return r.ApplicationproblemJSON404
-}
-
-// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
-func (r ListToolkitPermissionsHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
-	return r.ApplicationproblemJSON422
-}
-
-// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
-func (r ListToolkitPermissionsHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
-	return r.ApplicationproblemJSON500
-}
-
-// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
-func (r ListToolkitPermissionsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
-	return r.ApplicationproblemJSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r ListToolkitPermissionsHTTPResp) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r ListToolkitPermissionsHTTPResp) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ListToolkitPermissionsHTTPResp) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ListToolkitPermissionsHTTPResp) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type PatchPermissionsHTTPResp struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *PermissionRuleListResponse
-	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
-	ApplicationproblemJSON400 *ProblemDetail
-	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
-	ApplicationproblemJSON401 *ProblemDetail
-	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
-	ApplicationproblemJSON403 *ProblemDetail
-	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
-	ApplicationproblemJSON404 *ProblemDetail
-	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
-	ApplicationproblemJSON422 *ProblemDetail
-	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
-	ApplicationproblemJSON500 *ProblemDetail
-	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
-	ApplicationproblemJSON503 *ProblemDetail
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r PatchPermissionsHTTPResp) GetJSON200() *PermissionRuleListResponse {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
-func (r PatchPermissionsHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
-	return r.ApplicationproblemJSON400
-}
-
-// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
-func (r PatchPermissionsHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
-	return r.ApplicationproblemJSON401
-}
-
-// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
-func (r PatchPermissionsHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
-	return r.ApplicationproblemJSON403
-}
-
-// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
-func (r PatchPermissionsHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
-	return r.ApplicationproblemJSON404
-}
-
-// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
-func (r PatchPermissionsHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
-	return r.ApplicationproblemJSON422
-}
-
-// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
-func (r PatchPermissionsHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
-	return r.ApplicationproblemJSON500
-}
-
-// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
-func (r PatchPermissionsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
-	return r.ApplicationproblemJSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r PatchPermissionsHTTPResp) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r PatchPermissionsHTTPResp) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r PatchPermissionsHTTPResp) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r PatchPermissionsHTTPResp) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type ReplacePermissionsHTTPResp struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *PermissionRuleListResponse
-	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
-	ApplicationproblemJSON400 *ProblemDetail
-	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
-	ApplicationproblemJSON401 *ProblemDetail
-	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
-	ApplicationproblemJSON403 *ProblemDetail
-	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
-	ApplicationproblemJSON404 *ProblemDetail
-	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
-	ApplicationproblemJSON422 *ProblemDetail
-	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
-	ApplicationproblemJSON500 *ProblemDetail
-	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
-	ApplicationproblemJSON503 *ProblemDetail
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ReplacePermissionsHTTPResp) GetJSON200() *PermissionRuleListResponse {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
-func (r ReplacePermissionsHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
-	return r.ApplicationproblemJSON400
-}
-
-// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
-func (r ReplacePermissionsHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
-	return r.ApplicationproblemJSON401
-}
-
-// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
-func (r ReplacePermissionsHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
-	return r.ApplicationproblemJSON403
-}
-
-// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
-func (r ReplacePermissionsHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
-	return r.ApplicationproblemJSON404
-}
-
-// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
-func (r ReplacePermissionsHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
-	return r.ApplicationproblemJSON422
-}
-
-// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
-func (r ReplacePermissionsHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
-	return r.ApplicationproblemJSON500
-}
-
-// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
-func (r ReplacePermissionsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
-	return r.ApplicationproblemJSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r ReplacePermissionsHTTPResp) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r ReplacePermissionsHTTPResp) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ReplacePermissionsHTTPResp) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ReplacePermissionsHTTPResp) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type TestToolkitPermissionsHTTPResp struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *PermissionTestResponse
-	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
-	ApplicationproblemJSON400 *ProblemDetail
-	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
-	ApplicationproblemJSON401 *ProblemDetail
-	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
-	ApplicationproblemJSON403 *ProblemDetail
-	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
-	ApplicationproblemJSON404 *ProblemDetail
-	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
-	ApplicationproblemJSON422 *ProblemDetail
-	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
-	ApplicationproblemJSON500 *ProblemDetail
-	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
-	ApplicationproblemJSON503 *ProblemDetail
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r TestToolkitPermissionsHTTPResp) GetJSON200() *PermissionTestResponse {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
-func (r TestToolkitPermissionsHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
-	return r.ApplicationproblemJSON400
-}
-
-// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
-func (r TestToolkitPermissionsHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
-	return r.ApplicationproblemJSON401
-}
-
-// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
-func (r TestToolkitPermissionsHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
-	return r.ApplicationproblemJSON403
-}
-
-// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
-func (r TestToolkitPermissionsHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
-	return r.ApplicationproblemJSON404
-}
-
-// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
-func (r TestToolkitPermissionsHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
-	return r.ApplicationproblemJSON422
-}
-
-// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
-func (r TestToolkitPermissionsHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
-	return r.ApplicationproblemJSON500
-}
-
-// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
-func (r TestToolkitPermissionsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
-	return r.ApplicationproblemJSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r TestToolkitPermissionsHTTPResp) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r TestToolkitPermissionsHTTPResp) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r TestToolkitPermissionsHTTPResp) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r TestToolkitPermissionsHTTPResp) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type ListKeysHTTPResp struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *ToolkitKeyListResponse
-	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
-	ApplicationproblemJSON400 *ProblemDetail
-	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
-	ApplicationproblemJSON401 *ProblemDetail
-	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
-	ApplicationproblemJSON403 *ProblemDetail
-	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
-	ApplicationproblemJSON404 *ProblemDetail
-	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
-	ApplicationproblemJSON422 *ProblemDetail
-	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
-	ApplicationproblemJSON500 *ProblemDetail
-	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
-	ApplicationproblemJSON503 *ProblemDetail
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ListKeysHTTPResp) GetJSON200() *ToolkitKeyListResponse {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
-func (r ListKeysHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
-	return r.ApplicationproblemJSON400
-}
-
-// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
-func (r ListKeysHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
-	return r.ApplicationproblemJSON401
-}
-
-// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
-func (r ListKeysHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
-	return r.ApplicationproblemJSON403
-}
-
-// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
-func (r ListKeysHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
-	return r.ApplicationproblemJSON404
-}
-
-// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
-func (r ListKeysHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
-	return r.ApplicationproblemJSON422
-}
-
-// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
-func (r ListKeysHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
-	return r.ApplicationproblemJSON500
-}
-
-// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
-func (r ListKeysHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
-	return r.ApplicationproblemJSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r ListKeysHTTPResp) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r ListKeysHTTPResp) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ListKeysHTTPResp) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ListKeysHTTPResp) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type CreateKeyHTTPResp struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON201 the response for an HTTP 201 `application/json` response
-	JSON201 *ToolkitKeyCreateResponse
-	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
-	ApplicationproblemJSON400 *ProblemDetail
-	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
-	ApplicationproblemJSON401 *ProblemDetail
-	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
-	ApplicationproblemJSON403 *ProblemDetail
-	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
-	ApplicationproblemJSON404 *ProblemDetail
-	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
-	ApplicationproblemJSON422 *ProblemDetail
-	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
-	ApplicationproblemJSON500 *ProblemDetail
-	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
-	ApplicationproblemJSON503 *ProblemDetail
-}
-
-// GetJSON201 returns the response for an HTTP 201 `application/json` response
-func (r CreateKeyHTTPResp) GetJSON201() *ToolkitKeyCreateResponse {
-	return r.JSON201
-}
-
-// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
-func (r CreateKeyHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
-	return r.ApplicationproblemJSON400
-}
-
-// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
-func (r CreateKeyHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
-	return r.ApplicationproblemJSON401
-}
-
-// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
-func (r CreateKeyHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
-	return r.ApplicationproblemJSON403
-}
-
-// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
-func (r CreateKeyHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
-	return r.ApplicationproblemJSON404
-}
-
-// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
-func (r CreateKeyHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
-	return r.ApplicationproblemJSON422
-}
-
-// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
-func (r CreateKeyHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
-	return r.ApplicationproblemJSON500
-}
-
-// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
-func (r CreateKeyHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
-	return r.ApplicationproblemJSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r CreateKeyHTTPResp) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r CreateKeyHTTPResp) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r CreateKeyHTTPResp) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r CreateKeyHTTPResp) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type DeleteKeyHTTPResp struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
-	ApplicationproblemJSON400 *ProblemDetail
-	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
-	ApplicationproblemJSON401 *ProblemDetail
-	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
-	ApplicationproblemJSON403 *ProblemDetail
-	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
-	ApplicationproblemJSON404 *ProblemDetail
-	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
-	ApplicationproblemJSON422 *ProblemDetail
-	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
-	ApplicationproblemJSON500 *ProblemDetail
-	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
-	ApplicationproblemJSON503 *ProblemDetail
-}
-
-// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
-func (r DeleteKeyHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
-	return r.ApplicationproblemJSON400
-}
-
-// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
-func (r DeleteKeyHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
-	return r.ApplicationproblemJSON401
-}
-
-// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
-func (r DeleteKeyHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
-	return r.ApplicationproblemJSON403
-}
-
-// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
-func (r DeleteKeyHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
-	return r.ApplicationproblemJSON404
-}
-
-// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
-func (r DeleteKeyHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
-	return r.ApplicationproblemJSON422
-}
-
-// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
-func (r DeleteKeyHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
-	return r.ApplicationproblemJSON500
-}
-
-// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
-func (r DeleteKeyHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
-	return r.ApplicationproblemJSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r DeleteKeyHTTPResp) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r DeleteKeyHTTPResp) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r DeleteKeyHTTPResp) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r DeleteKeyHTTPResp) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type UpdateKeyHTTPResp struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *ToolkitKeyResponse
-	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
-	ApplicationproblemJSON400 *ProblemDetail
-	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
-	ApplicationproblemJSON401 *ProblemDetail
-	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
-	ApplicationproblemJSON403 *ProblemDetail
-	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
-	ApplicationproblemJSON404 *ProblemDetail
-	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
-	ApplicationproblemJSON422 *ProblemDetail
-	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
-	ApplicationproblemJSON500 *ProblemDetail
-	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
-	ApplicationproblemJSON503 *ProblemDetail
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r UpdateKeyHTTPResp) GetJSON200() *ToolkitKeyResponse {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
-func (r UpdateKeyHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
-	return r.ApplicationproblemJSON400
-}
-
-// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
-func (r UpdateKeyHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
-	return r.ApplicationproblemJSON401
-}
-
-// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
-func (r UpdateKeyHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
-	return r.ApplicationproblemJSON403
-}
-
-// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
-func (r UpdateKeyHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
-	return r.ApplicationproblemJSON404
-}
-
-// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
-func (r UpdateKeyHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
-	return r.ApplicationproblemJSON422
-}
-
-// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
-func (r UpdateKeyHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
-	return r.ApplicationproblemJSON500
-}
-
-// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
-func (r UpdateKeyHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
-	return r.ApplicationproblemJSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r UpdateKeyHTTPResp) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r UpdateKeyHTTPResp) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r UpdateKeyHTTPResp) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r UpdateKeyHTTPResp) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
 type ListUsersHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -38424,11 +38753,13 @@ func (c *ClientWithResponses) CreateOauthClientWithResponse(ctx context.Context,
 	return ParseCreateOauthClientHTTPResp(rsp)
 }
 
-// DeactivateOauthClientWithResponse Deactivate OAuth client
+// DeactivateOauthClientWithResponse Disable OAuth client
 //
-// Soft-delete an OAuth client by setting active=False.
+// Disable an OAuth client — the reversible kill switch (sets active=false).
 //
-// Deactivated clients can no longer initiate authorization flows.
+// Disabled clients can no longer initiate authorization flows and their
+// outstanding tokens stop resolving. Re-enable by patching “active: true“.
+// The row is kept; this is not a delete.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -38519,6 +38850,29 @@ func (c *ClientWithResponses) ApproveOauthClientWithResponse(ctx context.Context
 		return nil, err
 	}
 	return ParseApproveOauthClientHTTPResp(rsp)
+}
+
+// DeleteOauthClientWithResponse Delete OAuth client
+//
+// Permanently delete an OAuth client. This cannot be undone.
+//
+// Terminal, unlike the reversible kill switch (“DELETE“ on this
+// resource, which only sets “active=false“): every active grant is
+// revoked, every token carrying the client's lineage is revoked, and the
+// registration row is removed — connected applications are fully
+// disconnected. The audit trail survives. A client that later re-registers
+// via dynamic client registration is a NEW registration and re-enters the
+// approval queue as pending; it is never re-attached to the deleted one.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /admin/oauth-clients/{id}:delete (the `DeleteOauthClient` operationId).
+func (c *ClientWithResponses) DeleteOauthClientWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DeleteOauthClientHTTPResp, error) {
+	rsp, err := c.DeleteOauthClient(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteOauthClientHTTPResp(rsp)
 }
 
 // DenyOauthClientWithBodyWithResponse Deny OAuth client
@@ -38623,7 +38977,12 @@ func (c *ClientWithResponses) CreateAgentWithResponse(ctx context.Context, body 
 
 // ArchiveAgentWithResponse Archive Agent
 //
-// Soft-archive an agent — revokes scope grants and toolkit bindings.
+// Archive an agent — terminal-but-kept.
+//
+// The row is retained for history, but the action is not reversible and
+// the agent's authority is swept: scope grants, credential bindings, and
+// OAuth consent grants are revoked. For the reversible kill switch use
+// “:disable“ / “:enable“ instead.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -38709,6 +39068,87 @@ func (c *ClientWithResponses) GetAgentApiKeyHistoryWithResponse(ctx context.Cont
 		return nil, err
 	}
 	return ParseGetAgentApiKeyHistoryHTTPResp(rsp)
+}
+
+// ListAgentCredentialsWithResponse List Credentials
+//
+// List direct credential bindings for an agent — requires agents:read or self.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /agents/{agent_id}/credentials (the `ListAgentCredentials` operationId).
+func (c *ClientWithResponses) ListAgentCredentialsWithResponse(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*ListAgentCredentialsHTTPResp, error) {
+	rsp, err := c.ListAgentCredentials(ctx, agentId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListAgentCredentialsHTTPResp(rsp)
+}
+
+// BindAgentCredentialWithBodyWithResponse Bind Credential
+//
+// Directly bind a credential to an agent (theme 5 phase 1).
+//
+// The caller must be able to see the target credential; a credential that
+// does not exist or is outside the caller's visibility returns 404.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /agents/{agent_id}/credentials (the `BindAgentCredential` operationId).
+func (c *ClientWithResponses) BindAgentCredentialWithBodyWithResponse(ctx context.Context, agentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*BindAgentCredentialHTTPResp, error) {
+	rsp, err := c.BindAgentCredentialWithBody(ctx, agentId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseBindAgentCredentialHTTPResp(rsp)
+}
+
+// BindAgentCredentialWithResponse Bind Credential
+//
+// Directly bind a credential to an agent (theme 5 phase 1).
+//
+// The caller must be able to see the target credential; a credential that
+// does not exist or is outside the caller's visibility returns 404.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /agents/{agent_id}/credentials (the `BindAgentCredential` operationId).
+func (c *ClientWithResponses) BindAgentCredentialWithResponse(ctx context.Context, agentId string, body BindAgentCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*BindAgentCredentialHTTPResp, error) {
+	rsp, err := c.BindAgentCredential(ctx, agentId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseBindAgentCredentialHTTPResp(rsp)
+}
+
+// UnbindAgentCredentialWithResponse Unbind Credential
+//
+// Unbind a credential from an agent — suspend by default, purge on request.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /agents/{agent_id}/credentials/{credential_id} (the `UnbindAgentCredential` operationId).
+func (c *ClientWithResponses) UnbindAgentCredentialWithResponse(ctx context.Context, agentId string, credentialId string, params *UnbindAgentCredentialParams, reqEditors ...RequestEditorFn) (*UnbindAgentCredentialHTTPResp, error) {
+	rsp, err := c.UnbindAgentCredential(ctx, agentId, credentialId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUnbindAgentCredentialHTTPResp(rsp)
+}
+
+// ResumeAgentCredentialBindingWithResponse Resume Credential Binding
+//
+// Lift a suspended credential binding — the reverse of the default unbind.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /agents/{agent_id}/credentials/{credential_id}:resume (the `ResumeAgentCredentialBinding` operationId).
+func (c *ClientWithResponses) ResumeAgentCredentialBindingWithResponse(ctx context.Context, agentId string, credentialId string, reqEditors ...RequestEditorFn) (*ResumeAgentCredentialBindingHTTPResp, error) {
+	rsp, err := c.ResumeAgentCredentialBinding(ctx, agentId, credentialId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseResumeAgentCredentialBindingHTTPResp(rsp)
 }
 
 // UpdateAgentJwksWithBodyWithResponse Update Agent Jwks
@@ -38815,66 +39255,6 @@ func (c *ClientWithResponses) ReplaceAgentScopesWithResponse(ctx context.Context
 	return ParseReplaceAgentScopesHTTPResp(rsp)
 }
 
-// ListAgentToolkitsWithResponse List Toolkits
-//
-// List toolkit bindings for an agent — requires agents:read or self.
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with GET /agents/{agent_id}/toolkits (the `ListAgentToolkits` operationId).
-func (c *ClientWithResponses) ListAgentToolkitsWithResponse(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*ListAgentToolkitsHTTPResp, error) {
-	rsp, err := c.ListAgentToolkits(ctx, agentId, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseListAgentToolkitsHTTPResp(rsp)
-}
-
-// BindToolkitWithBodyWithResponse Bind Toolkit
-//
-// Bind a toolkit to an agent.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /agents/{agent_id}/toolkits (the `BindToolkit` operationId).
-func (c *ClientWithResponses) BindToolkitWithBodyWithResponse(ctx context.Context, agentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*BindToolkitHTTPResp, error) {
-	rsp, err := c.BindToolkitWithBody(ctx, agentId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseBindToolkitHTTPResp(rsp)
-}
-
-// BindToolkitWithResponse Bind Toolkit
-//
-// Bind a toolkit to an agent.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /agents/{agent_id}/toolkits (the `BindToolkit` operationId).
-func (c *ClientWithResponses) BindToolkitWithResponse(ctx context.Context, agentId string, body BindToolkitJSONRequestBody, reqEditors ...RequestEditorFn) (*BindToolkitHTTPResp, error) {
-	rsp, err := c.BindToolkit(ctx, agentId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseBindToolkitHTTPResp(rsp)
-}
-
-// UnbindToolkitWithResponse Unbind Toolkit
-//
-// Unbind a toolkit from an agent.
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with DELETE /agents/{agent_id}/toolkits/{toolkit_id} (the `UnbindToolkit` operationId).
-func (c *ClientWithResponses) UnbindToolkitWithResponse(ctx context.Context, agentId string, toolkitId string, reqEditors ...RequestEditorFn) (*UnbindToolkitHTTPResp, error) {
-	rsp, err := c.UnbindToolkit(ctx, agentId, toolkitId, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseUnbindToolkitHTTPResp(rsp)
-}
-
 // ApproveAgentWithResponse Approve Agent
 //
 // Approve a pending agent.
@@ -38901,7 +39281,7 @@ func (c *ClientWithResponses) ApproveAgentWithResponse(ctx context.Context, agen
 //
 // Restricted to “USER“ actors: “Agent.owner_id“ is a FK to “users.id“, so
 // only a human can own an agent. The “require_actor_type“ gate rejects a
-// non-user actor (agent/service-account/toolkit) at the boundary with a 403;
+// non-user actor (agent/service-account) at the boundary with a 403;
 // “AgentService.claim“ re-checks the same invariant as defense-in-depth.
 //
 // “allow_expired_password=True“ is intentional (matching “GET /agents/{id}“):
@@ -38932,7 +39312,7 @@ func (c *ClientWithResponses) ClaimAgentWithBodyWithResponse(ctx context.Context
 //
 // Restricted to “USER“ actors: “Agent.owner_id“ is a FK to “users.id“, so
 // only a human can own an agent. The “require_actor_type“ gate rejects a
-// non-user actor (agent/service-account/toolkit) at the boundary with a 403;
+// non-user actor (agent/service-account) at the boundary with a 403;
 // “AgentService.claim“ re-checks the same invariant as defense-in-depth.
 //
 // “allow_expired_password=True“ is intentional (matching “GET /agents/{id}“):
@@ -39951,6 +40331,193 @@ func (c *ClientWithResponses) UpdateCredentialWithResponse(ctx context.Context, 
 	return ParseUpdateCredentialHTTPResp(rsp)
 }
 
+// ListCredentialAgentsWithResponse List agents bound to credential
+//
+// List agents directly bound to a credential with cursor-based pagination.
+//
+// The reverse lookup for the credential-detail "Agents" view (theme 5
+// phase 1) — the direct-binding mirror of “GET /toolkits/{id}/agents“.
+// Suspended bindings are included with their flag set.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /credentials/{credential_id}/agents (the `ListCredentialAgents` operationId).
+func (c *ClientWithResponses) ListCredentialAgentsWithResponse(ctx context.Context, credentialId string, params *ListCredentialAgentsParams, reqEditors ...RequestEditorFn) (*ListCredentialAgentsHTTPResp, error) {
+	rsp, err := c.ListCredentialAgents(ctx, credentialId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListCredentialAgentsHTTPResp(rsp)
+}
+
+// ListAgentCredentialPermissionsWithResponse List binding permission rules
+//
+// List the ordered PBAC rules for a direct `(agent, credential)` binding.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /credentials/{credential_id}/agents/{agent_id}/permissions (the `ListAgentCredentialPermissions` operationId).
+func (c *ClientWithResponses) ListAgentCredentialPermissionsWithResponse(ctx context.Context, credentialId string, agentId string, reqEditors ...RequestEditorFn) (*ListAgentCredentialPermissionsHTTPResp, error) {
+	rsp, err := c.ListAgentCredentialPermissions(ctx, credentialId, agentId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListAgentCredentialPermissionsHTTPResp(rsp)
+}
+
+// PatchAgentCredentialPermissionsWithBodyWithResponse Patch binding permission rules
+//
+// Additively add and/or remove permission rules on a binding.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /credentials/{credential_id}/agents/{agent_id}/permissions (the `PatchAgentCredentialPermissions` operationId).
+func (c *ClientWithResponses) PatchAgentCredentialPermissionsWithBodyWithResponse(ctx context.Context, credentialId string, agentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PatchAgentCredentialPermissionsHTTPResp, error) {
+	rsp, err := c.PatchAgentCredentialPermissionsWithBody(ctx, credentialId, agentId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePatchAgentCredentialPermissionsHTTPResp(rsp)
+}
+
+// PatchAgentCredentialPermissionsWithResponse Patch binding permission rules
+//
+// Additively add and/or remove permission rules on a binding.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /credentials/{credential_id}/agents/{agent_id}/permissions (the `PatchAgentCredentialPermissions` operationId).
+func (c *ClientWithResponses) PatchAgentCredentialPermissionsWithResponse(ctx context.Context, credentialId string, agentId string, body PatchAgentCredentialPermissionsJSONRequestBody, reqEditors ...RequestEditorFn) (*PatchAgentCredentialPermissionsHTTPResp, error) {
+	rsp, err := c.PatchAgentCredentialPermissions(ctx, credentialId, agentId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePatchAgentCredentialPermissionsHTTPResp(rsp)
+}
+
+// ReplaceAgentCredentialPermissionsWithBodyWithResponse Replace binding permission rules
+//
+// Replace the full set of permission rules for a binding (idempotent PUT).
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /credentials/{credential_id}/agents/{agent_id}/permissions (the `ReplaceAgentCredentialPermissions` operationId).
+func (c *ClientWithResponses) ReplaceAgentCredentialPermissionsWithBodyWithResponse(ctx context.Context, credentialId string, agentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReplaceAgentCredentialPermissionsHTTPResp, error) {
+	rsp, err := c.ReplaceAgentCredentialPermissionsWithBody(ctx, credentialId, agentId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReplaceAgentCredentialPermissionsHTTPResp(rsp)
+}
+
+// ReplaceAgentCredentialPermissionsWithResponse Replace binding permission rules
+//
+// Replace the full set of permission rules for a binding (idempotent PUT).
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /credentials/{credential_id}/agents/{agent_id}/permissions (the `ReplaceAgentCredentialPermissions` operationId).
+func (c *ClientWithResponses) ReplaceAgentCredentialPermissionsWithResponse(ctx context.Context, credentialId string, agentId string, body ReplaceAgentCredentialPermissionsJSONRequestBody, reqEditors ...RequestEditorFn) (*ReplaceAgentCredentialPermissionsHTTPResp, error) {
+	rsp, err := c.ReplaceAgentCredentialPermissions(ctx, credentialId, agentId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReplaceAgentCredentialPermissionsHTTPResp(rsp)
+}
+
+// TestAgentCredentialPermissionsWithBodyWithResponse Dry-run permission evaluation
+//
+// Answer "what would the broker do for this request?" without calling upstream.
+//
+// Unlike the toolkit `:test` there is **no vendor pooling**: the direct
+// binding's rules are one ordered first-match-wins list, so the result is
+// exactly this binding's policy. Default-deny when nothing matches.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /credentials/{credential_id}/agents/{agent_id}/permissions:test (the `TestAgentCredentialPermissions` operationId).
+func (c *ClientWithResponses) TestAgentCredentialPermissionsWithBodyWithResponse(ctx context.Context, credentialId string, agentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*TestAgentCredentialPermissionsHTTPResp, error) {
+	rsp, err := c.TestAgentCredentialPermissionsWithBody(ctx, credentialId, agentId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseTestAgentCredentialPermissionsHTTPResp(rsp)
+}
+
+// TestAgentCredentialPermissionsWithResponse Dry-run permission evaluation
+//
+// Answer "what would the broker do for this request?" without calling upstream.
+//
+// Unlike the toolkit `:test` there is **no vendor pooling**: the direct
+// binding's rules are one ordered first-match-wins list, so the result is
+// exactly this binding's policy. Default-deny when nothing matches.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /credentials/{credential_id}/agents/{agent_id}/permissions:test (the `TestAgentCredentialPermissions` operationId).
+func (c *ClientWithResponses) TestAgentCredentialPermissionsWithResponse(ctx context.Context, credentialId string, agentId string, body TestAgentCredentialPermissionsJSONRequestBody, reqEditors ...RequestEditorFn) (*TestAgentCredentialPermissionsHTTPResp, error) {
+	rsp, err := c.TestAgentCredentialPermissions(ctx, credentialId, agentId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseTestAgentCredentialPermissionsHTTPResp(rsp)
+}
+
+// DetachAgentCredentialRuleSetWithResponse Detach rule set from binding
+//
+// Detach the binding's shared rule set — its inline rules apply again.
+//
+// Idempotent: detaching a binding already on inline rules is a no-op 204.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /credentials/{credential_id}/agents/{agent_id}/rule-set (the `DetachAgentCredentialRuleSet` operationId).
+func (c *ClientWithResponses) DetachAgentCredentialRuleSetWithResponse(ctx context.Context, credentialId string, agentId string, reqEditors ...RequestEditorFn) (*DetachAgentCredentialRuleSetHTTPResp, error) {
+	rsp, err := c.DetachAgentCredentialRuleSet(ctx, credentialId, agentId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDetachAgentCredentialRuleSetHTTPResp(rsp)
+}
+
+// AttachAgentCredentialRuleSetWithBodyWithResponse Attach rule set to binding
+//
+// Point the binding at a shared rule set (idempotent PUT).
+//
+// While attached, the set's ordered list is the binding's effective policy
+// and its inline rules are dormant — `permissions:test` evaluates the set.
+// The set must exist (404 `rule_set_not_found`).
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /credentials/{credential_id}/agents/{agent_id}/rule-set (the `AttachAgentCredentialRuleSet` operationId).
+func (c *ClientWithResponses) AttachAgentCredentialRuleSetWithBodyWithResponse(ctx context.Context, credentialId string, agentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AttachAgentCredentialRuleSetHTTPResp, error) {
+	rsp, err := c.AttachAgentCredentialRuleSetWithBody(ctx, credentialId, agentId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAttachAgentCredentialRuleSetHTTPResp(rsp)
+}
+
+// AttachAgentCredentialRuleSetWithResponse Attach rule set to binding
+//
+// Point the binding at a shared rule set (idempotent PUT).
+//
+// While attached, the set's ordered list is the binding's effective policy
+// and its inline rules are dormant — `permissions:test` evaluates the set.
+// The set must exist (404 `rule_set_not_found`).
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /credentials/{credential_id}/agents/{agent_id}/rule-set (the `AttachAgentCredentialRuleSet` operationId).
+func (c *ClientWithResponses) AttachAgentCredentialRuleSetWithResponse(ctx context.Context, credentialId string, agentId string, body AttachAgentCredentialRuleSetJSONRequestBody, reqEditors ...RequestEditorFn) (*AttachAgentCredentialRuleSetHTTPResp, error) {
+	rsp, err := c.AttachAgentCredentialRuleSet(ctx, credentialId, agentId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAttachAgentCredentialRuleSetHTTPResp(rsp)
+}
+
 // ConnectCredentialWithBodyWithResponse Begin OAuth connect flow
 //
 // Initiate the OAuth connect flow for a credential.
@@ -40103,18 +40670,22 @@ func (c *ClientWithResponses) GetExecutionWithResponse(ctx context.Context, exec
 
 // GetGovernedHostsWithResponse Get Governed Hosts
 //
-// The caller's governed host set (toolkit-bound hosts) with an ETag digest.
+// The caller's governed host set (credential-bound hosts) with an ETag digest.
 //
 // **Always self-scoped** — derived from the authenticated identity's own
-// toolkit bindings; there is no cross-actor or admin variant. Toolkits bind
-// to agents, so agent-scoped tokens (the OAuth agent-consent flow's output)
-// are the callers this endpoint serves — a plain user token yields an empty
-// set. The “digest“ covers exactly the “data“ list and is also emitted as
-// a strong “ETag“, so integrators poll with “If-None-Match: "<digest>"“
-// and get an empty “304“ until their host set actually changes (the
-// change-poll seam that replaces “GET /apis“ enumeration for interception
-// scoping). Poll at most once per minute; on any “5xx“ retain the last
-// known set — never fall back to an empty (intercept-nothing) list.
+// credential bindings; there is no cross-actor or admin variant. Credentials
+// bind to agents and service accounts, so agent-scoped tokens (the OAuth
+// agent-consent flow's output) and `sak_` keys are the callers this endpoint
+// serves — a plain user token yields an empty set. Suspended bindings and
+// inactive credentials still contribute their hosts: keep diverting that
+// traffic, so the broker can refuse it — dropping it from the list would
+// send it direct to the upstream, unbrokered. The “digest“ covers exactly
+// the “data“ list and is also emitted as a strong “ETag“, so integrators
+// poll with “If-None-Match: "<digest>"“ and get an empty “304“ until
+// their host set actually changes (the change-poll seam that replaces
+// “GET /apis“ enumeration for interception scoping). Poll at most once per
+// minute; on any “5xx“ retain the last known set — never fall back to an
+// empty (intercept-nothing) list.
 //
 // Responses are identity-scoped and marked “Cache-Control: private,
 // no-store“ — a shared cache must never serve one actor's host set to
@@ -40747,6 +41318,124 @@ func (c *ClientWithResponses) ConsentSubmitWithFormdataBodyWithResponse(ctx cont
 	return ParseConsentSubmitHTTPResp(rsp)
 }
 
+// ConsentAgentCreateWithBodyWithResponse Create the consenting user's first agent inline (consent page)
+//
+// Create the consenting user's first agent from the zero-agents consent page (P4).
+//
+// The form is rendered only when the consenting user owns zero agents in
+// any status (the G12(b) first-run dead-end). This submit verifies the signed
+// single-use “agent-create“ blob (bound to the consent handle AND the
+// authenticated subject — no ambient credential is honored, so a cross-site
+// form cannot drive it: it would need both the unguessable handle and a
+// blob minted for that very handle), re-validates the handle and the D7
+// client gate, provisions the user row if deferred provisioning left none
+// (an affirmative user action, unlike rendering), re-checks the zero-agents
+// predicate (an agent appearing in between skips creation — idempotent),
+// creates the agent through the same “AgentService.create“ path as the
+// SPA (owner = the consenting user, default agent scopes, same audit +
+// event), and 303-redirects back into “GET /oauth/consent“ where the new
+// agent renders pre-selected.
+//
+// Failure arms: expired/tampered/replayed blob and expired handle → the
+// consent flow's standard “invalid_consent“ error redirect; a gated
+// client → “access_denied“; an invalid agent name → the form re-rendered
+// with the error inline and a fresh blob.
+//
+// Creation posture (security review — the hybrid): the arm is decided
+// server-side AFTER the subject is resolved/provisioned, against the same
+// effective-permission math as POST /agents' “agents:write“ gate. A
+// permissioned user gets the original behaviour (ACTIVE + 303 re-entry); an
+// unpermissioned one gets a PENDING agent (the POST /register posture) and
+// the awaiting-approval page. A per-subject “set_if_absent“ slot claim
+// makes N parallel submits (N distinct blobs from N renders) create exactly
+// one agent — losers re-enter consent, which renders the picker or the
+// awaiting page as appropriate.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /oauth/consent/agent (the `ConsentAgentCreate` operationId).
+func (c *ClientWithResponses) ConsentAgentCreateWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ConsentAgentCreateHTTPResp, error) {
+	rsp, err := c.ConsentAgentCreateWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseConsentAgentCreateHTTPResp(rsp)
+}
+
+// ConsentAgentCreateWithFormdataBodyWithResponse Create the consenting user's first agent inline (consent page)
+//
+// Create the consenting user's first agent from the zero-agents consent page (P4).
+//
+// The form is rendered only when the consenting user owns zero agents in
+// any status (the G12(b) first-run dead-end). This submit verifies the signed
+// single-use “agent-create“ blob (bound to the consent handle AND the
+// authenticated subject — no ambient credential is honored, so a cross-site
+// form cannot drive it: it would need both the unguessable handle and a
+// blob minted for that very handle), re-validates the handle and the D7
+// client gate, provisions the user row if deferred provisioning left none
+// (an affirmative user action, unlike rendering), re-checks the zero-agents
+// predicate (an agent appearing in between skips creation — idempotent),
+// creates the agent through the same “AgentService.create“ path as the
+// SPA (owner = the consenting user, default agent scopes, same audit +
+// event), and 303-redirects back into “GET /oauth/consent“ where the new
+// agent renders pre-selected.
+//
+// Failure arms: expired/tampered/replayed blob and expired handle → the
+// consent flow's standard “invalid_consent“ error redirect; a gated
+// client → “access_denied“; an invalid agent name → the form re-rendered
+// with the error inline and a fresh blob.
+//
+// Creation posture (security review — the hybrid): the arm is decided
+// server-side AFTER the subject is resolved/provisioned, against the same
+// effective-permission math as POST /agents' “agents:write“ gate. A
+// permissioned user gets the original behaviour (ACTIVE + 303 re-entry); an
+// unpermissioned one gets a PENDING agent (the POST /register posture) and
+// the awaiting-approval page. A per-subject “set_if_absent“ slot claim
+// makes N parallel submits (N distinct blobs from N renders) create exactly
+// one agent — losers re-enter consent, which renders the picker or the
+// awaiting page as appropriate.
+//
+// Takes a body of the `application/x-www-form-urlencoded` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /oauth/consent/agent (the `ConsentAgentCreate` operationId).
+func (c *ClientWithResponses) ConsentAgentCreateWithFormdataBodyWithResponse(ctx context.Context, body ConsentAgentCreateFormdataRequestBody, reqEditors ...RequestEditorFn) (*ConsentAgentCreateHTTPResp, error) {
+	rsp, err := c.ConsentAgentCreateWithFormdataBody(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseConsentAgentCreateHTTPResp(rsp)
+}
+
+// ConsentAgentStatusWithResponse Poll pending-agent approval status (consent awaiting page)
+//
+// Minimal tri-state poll for the pending-agent awaiting page (P4 hybrid).
+//
+// Anonymous but keyed by the signed “agent-status“ blob — never a bare
+// agent id, so the endpoint cannot be used to enumerate or probe agents:
+// the id it reports on is the one SIGNED into the blob, which only the
+// consent flow mints, and only for an agent it verified belongs to the
+// handle's subject. The response carries ONLY the tri-state — no name,
+// owner, or scopes — and non-terminal lifecycle states (disabled, archived,
+// a vanished row) all read as “pending“, so possession of a blob is not a
+// lifecycle oracle either. Any verification failure (bad signature, wrong
+// purpose, expired “iat“, malformed blob) is a 400 “invalid_grant“; the
+// page treats a 400 as terminal ("retry the connection") because the blob
+// shares the consent handle's lifetime — a retry re-enters the flow, which
+// re-parks on a fresh awaiting page while the agent stays pending. Shares
+// the approval-status poll's own per-IP rate bucket (same cadence, same
+// caller shape).
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /oauth/consent/agent/status (the `ConsentAgentStatus` operationId).
+func (c *ClientWithResponses) ConsentAgentStatusWithResponse(ctx context.Context, params *ConsentAgentStatusParams, reqEditors ...RequestEditorFn) (*ConsentAgentStatusHTTPResp, error) {
+	rsp, err := c.ConsentAgentStatus(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseConsentAgentStatusHTTPResp(rsp)
+}
+
 // IntrospectEndpointWithBodyWithResponse Introspect Endpoint
 //
 // Introspect a token (RFC 7662).
@@ -41009,6 +41698,15 @@ func (c *ClientWithResponses) SessionContinueEndpointWithResponse(ctx context.Co
 //
 // Exchange a refresh token, JWT assertion, authorization code, or client creds for tokens.
 //
+// Error responses speak the RFC 6749 §5.2 dialect (top-level “error“ +
+// “error_description“), NOT platform Problem Details — reshaped by
+// “_TokenRoute“. Malformed/missing parameters answer “invalid_request“;
+// failed client authentication answers “invalid_client“ (status 401 with a
+// “WWW-Authenticate: Basic“ challenge when the client attempted HTTP Basic,
+// 400 otherwise). On the refresh arm, a revoked consent grant answers
+// “invalid_grant“ with “error_description: "consent grant has been
+// revoked"“ — terminal; restart the authorization flow.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /oauth/token (the `TokenEndpoint` operationId).
@@ -41023,6 +41721,15 @@ func (c *ClientWithResponses) TokenEndpointWithBodyWithResponse(ctx context.Cont
 // TokenEndpointWithResponse Token Endpoint
 //
 // Exchange a refresh token, JWT assertion, authorization code, or client creds for tokens.
+//
+// Error responses speak the RFC 6749 §5.2 dialect (top-level “error“ +
+// “error_description“), NOT platform Problem Details — reshaped by
+// “_TokenRoute“. Malformed/missing parameters answer “invalid_request“;
+// failed client authentication answers “invalid_client“ (status 401 with a
+// “WWW-Authenticate: Basic“ challenge when the client attempted HTTP Basic,
+// 400 otherwise). On the refresh arm, a revoked consent grant answers
+// “invalid_grant“ with “error_description: "consent grant has been
+// revoked"“ — terminal; restart the authorization flow.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -41039,6 +41746,15 @@ func (c *ClientWithResponses) TokenEndpointWithResponse(ctx context.Context, bod
 //
 // Exchange a refresh token, JWT assertion, authorization code, or client creds for tokens.
 //
+// Error responses speak the RFC 6749 §5.2 dialect (top-level “error“ +
+// “error_description“), NOT platform Problem Details — reshaped by
+// “_TokenRoute“. Malformed/missing parameters answer “invalid_request“;
+// failed client authentication answers “invalid_client“ (status 401 with a
+// “WWW-Authenticate: Basic“ challenge when the client attempted HTTP Basic,
+// 400 otherwise). On the refresh arm, a revoked consent grant answers
+// “invalid_grant“ with “error_description: "consent grant has been
+// revoked"“ — terminal; restart the authorization flow.
+//
 // Takes a body of the `application/x-www-form-urlencoded` content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /oauth/token (the `TokenEndpoint` operationId).
@@ -41048,6 +41764,153 @@ func (c *ClientWithResponses) TokenEndpointWithFormdataBodyWithResponse(ctx cont
 		return nil, err
 	}
 	return ParseTokenEndpointHTTPResp(rsp)
+}
+
+// ListPermissionRuleSetsWithResponse List permission rule sets
+//
+// List shared rule sets with per-set rule counts (cursor-paginated).
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /permission-rule-sets (the `ListPermissionRuleSets` operationId).
+func (c *ClientWithResponses) ListPermissionRuleSetsWithResponse(ctx context.Context, params *ListPermissionRuleSetsParams, reqEditors ...RequestEditorFn) (*ListPermissionRuleSetsHTTPResp, error) {
+	rsp, err := c.ListPermissionRuleSets(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListPermissionRuleSetsHTTPResp(rsp)
+}
+
+// CreatePermissionRuleSetWithBodyWithResponse Create permission rule set
+//
+// Create a named, shareable ordered rule list (theme 5 rule grouping).
+//
+// N agent-credential bindings can point at one set, so `permissions:test`
+// and "revoke this operation everywhere" stay single-place edits.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /permission-rule-sets (the `CreatePermissionRuleSet` operationId).
+func (c *ClientWithResponses) CreatePermissionRuleSetWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreatePermissionRuleSetHTTPResp, error) {
+	rsp, err := c.CreatePermissionRuleSetWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreatePermissionRuleSetHTTPResp(rsp)
+}
+
+// CreatePermissionRuleSetWithResponse Create permission rule set
+//
+// Create a named, shareable ordered rule list (theme 5 rule grouping).
+//
+// N agent-credential bindings can point at one set, so `permissions:test`
+// and "revoke this operation everywhere" stay single-place edits.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /permission-rule-sets (the `CreatePermissionRuleSet` operationId).
+func (c *ClientWithResponses) CreatePermissionRuleSetWithResponse(ctx context.Context, body CreatePermissionRuleSetJSONRequestBody, reqEditors ...RequestEditorFn) (*CreatePermissionRuleSetHTTPResp, error) {
+	rsp, err := c.CreatePermissionRuleSet(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreatePermissionRuleSetHTTPResp(rsp)
+}
+
+// DeletePermissionRuleSetWithResponse Delete permission rule set
+//
+// Delete a rule set nothing references (409 `rule_set_in_use` otherwise).
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /permission-rule-sets/{rule_set_id} (the `DeletePermissionRuleSet` operationId).
+func (c *ClientWithResponses) DeletePermissionRuleSetWithResponse(ctx context.Context, ruleSetId string, reqEditors ...RequestEditorFn) (*DeletePermissionRuleSetHTTPResp, error) {
+	rsp, err := c.DeletePermissionRuleSet(ctx, ruleSetId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeletePermissionRuleSetHTTPResp(rsp)
+}
+
+// GetPermissionRuleSetWithResponse Get permission rule set
+//
+// Get a rule set with its ordered rules and referencing-binding count.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /permission-rule-sets/{rule_set_id} (the `GetPermissionRuleSet` operationId).
+func (c *ClientWithResponses) GetPermissionRuleSetWithResponse(ctx context.Context, ruleSetId string, reqEditors ...RequestEditorFn) (*GetPermissionRuleSetHTTPResp, error) {
+	rsp, err := c.GetPermissionRuleSet(ctx, ruleSetId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetPermissionRuleSetHTTPResp(rsp)
+}
+
+// UpdatePermissionRuleSetWithBodyWithResponse Update permission rule set
+//
+// Rename or re-describe a rule set (creator or org admin).
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /permission-rule-sets/{rule_set_id} (the `UpdatePermissionRuleSet` operationId).
+func (c *ClientWithResponses) UpdatePermissionRuleSetWithBodyWithResponse(ctx context.Context, ruleSetId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdatePermissionRuleSetHTTPResp, error) {
+	rsp, err := c.UpdatePermissionRuleSetWithBody(ctx, ruleSetId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdatePermissionRuleSetHTTPResp(rsp)
+}
+
+// UpdatePermissionRuleSetWithResponse Update permission rule set
+//
+// Rename or re-describe a rule set (creator or org admin).
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /permission-rule-sets/{rule_set_id} (the `UpdatePermissionRuleSet` operationId).
+func (c *ClientWithResponses) UpdatePermissionRuleSetWithResponse(ctx context.Context, ruleSetId string, body UpdatePermissionRuleSetJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdatePermissionRuleSetHTTPResp, error) {
+	rsp, err := c.UpdatePermissionRuleSet(ctx, ruleSetId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdatePermissionRuleSetHTTPResp(rsp)
+}
+
+// ReplacePermissionRuleSetRulesWithBodyWithResponse Replace rule set rules
+//
+// Replace the set's full ordered rule list (idempotent PUT).
+//
+// Every binding pointing at the set picks the new list up at once — the
+// single-place edit rule grouping exists for.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /permission-rule-sets/{rule_set_id}/rules (the `ReplacePermissionRuleSetRules` operationId).
+func (c *ClientWithResponses) ReplacePermissionRuleSetRulesWithBodyWithResponse(ctx context.Context, ruleSetId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReplacePermissionRuleSetRulesHTTPResp, error) {
+	rsp, err := c.ReplacePermissionRuleSetRulesWithBody(ctx, ruleSetId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReplacePermissionRuleSetRulesHTTPResp(rsp)
+}
+
+// ReplacePermissionRuleSetRulesWithResponse Replace rule set rules
+//
+// Replace the set's full ordered rule list (idempotent PUT).
+//
+// Every binding pointing at the set picks the new list up at once — the
+// single-place edit rule grouping exists for.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /permission-rule-sets/{rule_set_id}/rules (the `ReplacePermissionRuleSetRules` operationId).
+func (c *ClientWithResponses) ReplacePermissionRuleSetRulesWithResponse(ctx context.Context, ruleSetId string, body ReplacePermissionRuleSetRulesJSONRequestBody, reqEditors ...RequestEditorFn) (*ReplacePermissionRuleSetRulesHTTPResp, error) {
+	rsp, err := c.ReplacePermissionRuleSetRules(ctx, ruleSetId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReplacePermissionRuleSetRulesHTTPResp(rsp)
 }
 
 // ListPermissionsWithResponse List Permissions
@@ -41236,7 +42099,11 @@ func (c *ClientWithResponses) CreateServiceAccountWithResponse(ctx context.Conte
 
 // ArchiveServiceAccountWithResponse Archive Service Account
 //
-// Soft-archive a service account — revokes scope grants.
+// Archive a service account — terminal-but-kept.
+//
+// The row is retained for history, but the action is not reversible and
+// the account's scope grants are revoked. For the reversible kill switch
+// use “:disable“ / “:enable“ instead.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -41420,407 +42287,6 @@ func (c *ClientWithResponses) GetVersionWithResponse(ctx context.Context, reqEdi
 	return ParseGetVersionHTTPResp(rsp)
 }
 
-// ListToolkitsWithResponse List toolkits
-//
-// List toolkits with cursor-based pagination.
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with GET /toolkits (the `ListToolkits` operationId).
-func (c *ClientWithResponses) ListToolkitsWithResponse(ctx context.Context, params *ListToolkitsParams, reqEditors ...RequestEditorFn) (*ListToolkitsHTTPResp, error) {
-	rsp, err := c.ListToolkits(ctx, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseListToolkitsHTTPResp(rsp)
-}
-
-// CreateToolkitWithBodyWithResponse Create toolkit
-//
-// Create a toolkit and issue its first API key.
-//
-// The plaintext key (`jntc_live_…`) is returned **once** in `api_key` and is
-// never retrievable again. Optional `credential_ids` bind existing credentials
-// at creation time; each inline bind emits a “no_permission_rules“ warning
-// because the broker denies by default until rules are added.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /toolkits (the `CreateToolkit` operationId).
-func (c *ClientWithResponses) CreateToolkitWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateToolkitHTTPResp, error) {
-	rsp, err := c.CreateToolkitWithBody(ctx, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreateToolkitHTTPResp(rsp)
-}
-
-// CreateToolkitWithResponse Create toolkit
-//
-// Create a toolkit and issue its first API key.
-//
-// The plaintext key (`jntc_live_…`) is returned **once** in `api_key` and is
-// never retrievable again. Optional `credential_ids` bind existing credentials
-// at creation time; each inline bind emits a “no_permission_rules“ warning
-// because the broker denies by default until rules are added.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /toolkits (the `CreateToolkit` operationId).
-func (c *ClientWithResponses) CreateToolkitWithResponse(ctx context.Context, body CreateToolkitJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateToolkitHTTPResp, error) {
-	rsp, err := c.CreateToolkit(ctx, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreateToolkitHTTPResp(rsp)
-}
-
-// DeleteToolkitWithResponse Delete toolkit
-//
-// Permanently delete a toolkit and cascade-remove its keys, bindings, and permission rules.
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with DELETE /toolkits/{toolkit_id} (the `DeleteToolkit` operationId).
-func (c *ClientWithResponses) DeleteToolkitWithResponse(ctx context.Context, toolkitId string, reqEditors ...RequestEditorFn) (*DeleteToolkitHTTPResp, error) {
-	rsp, err := c.DeleteToolkit(ctx, toolkitId, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseDeleteToolkitHTTPResp(rsp)
-}
-
-// GetToolkitWithResponse Get toolkit
-//
-// Get a single toolkit by its `tk_…` ID.
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with GET /toolkits/{toolkit_id} (the `GetToolkit` operationId).
-func (c *ClientWithResponses) GetToolkitWithResponse(ctx context.Context, toolkitId string, reqEditors ...RequestEditorFn) (*GetToolkitHTTPResp, error) {
-	rsp, err := c.GetToolkit(ctx, toolkitId, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetToolkitHTTPResp(rsp)
-}
-
-// UpdateToolkitWithBodyWithResponse Update toolkit
-//
-// Update a toolkit's name, description, or active flag.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with PATCH /toolkits/{toolkit_id} (the `UpdateToolkit` operationId).
-func (c *ClientWithResponses) UpdateToolkitWithBodyWithResponse(ctx context.Context, toolkitId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateToolkitHTTPResp, error) {
-	rsp, err := c.UpdateToolkitWithBody(ctx, toolkitId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseUpdateToolkitHTTPResp(rsp)
-}
-
-// UpdateToolkitWithResponse Update toolkit
-//
-// Update a toolkit's name, description, or active flag.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with PATCH /toolkits/{toolkit_id} (the `UpdateToolkit` operationId).
-func (c *ClientWithResponses) UpdateToolkitWithResponse(ctx context.Context, toolkitId string, body UpdateToolkitJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateToolkitHTTPResp, error) {
-	rsp, err := c.UpdateToolkit(ctx, toolkitId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseUpdateToolkitHTTPResp(rsp)
-}
-
-// ListToolkitAgentsWithResponse List agents bound to toolkit
-//
-// List agents bound to a toolkit with cursor-based pagination.
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with GET /toolkits/{toolkit_id}/agents (the `ListToolkitAgents` operationId).
-func (c *ClientWithResponses) ListToolkitAgentsWithResponse(ctx context.Context, toolkitId string, params *ListToolkitAgentsParams, reqEditors ...RequestEditorFn) (*ListToolkitAgentsHTTPResp, error) {
-	rsp, err := c.ListToolkitAgents(ctx, toolkitId, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseListToolkitAgentsHTTPResp(rsp)
-}
-
-// ListBindingsWithResponse List toolkit credential bindings
-//
-// List the credentials bound to a toolkit with cursor-based pagination.
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with GET /toolkits/{toolkit_id}/credentials (the `ListBindings` operationId).
-func (c *ClientWithResponses) ListBindingsWithResponse(ctx context.Context, toolkitId string, params *ListBindingsParams, reqEditors ...RequestEditorFn) (*ListBindingsHTTPResp, error) {
-	rsp, err := c.ListBindings(ctx, toolkitId, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseListBindingsHTTPResp(rsp)
-}
-
-// BindCredentialWithBodyWithResponse Bind credential to toolkit
-//
-// Bind an existing credential to a toolkit, optionally with inline permission rules.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /toolkits/{toolkit_id}/credentials (the `BindCredential` operationId).
-func (c *ClientWithResponses) BindCredentialWithBodyWithResponse(ctx context.Context, toolkitId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*BindCredentialHTTPResp, error) {
-	rsp, err := c.BindCredentialWithBody(ctx, toolkitId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseBindCredentialHTTPResp(rsp)
-}
-
-// BindCredentialWithResponse Bind credential to toolkit
-//
-// Bind an existing credential to a toolkit, optionally with inline permission rules.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /toolkits/{toolkit_id}/credentials (the `BindCredential` operationId).
-func (c *ClientWithResponses) BindCredentialWithResponse(ctx context.Context, toolkitId string, body BindCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*BindCredentialHTTPResp, error) {
-	rsp, err := c.BindCredential(ctx, toolkitId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseBindCredentialHTTPResp(rsp)
-}
-
-// UnbindCredentialWithResponse Unbind credential from toolkit
-//
-// Remove a credential binding from a toolkit (the credential itself is untouched).
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with DELETE /toolkits/{toolkit_id}/credentials/{credential_id} (the `UnbindCredential` operationId).
-func (c *ClientWithResponses) UnbindCredentialWithResponse(ctx context.Context, toolkitId string, credentialId string, reqEditors ...RequestEditorFn) (*UnbindCredentialHTTPResp, error) {
-	rsp, err := c.UnbindCredential(ctx, toolkitId, credentialId, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseUnbindCredentialHTTPResp(rsp)
-}
-
-// ListToolkitPermissionsWithResponse List binding permission rules
-//
-// List the fine-grained PBAC rules for a `(toolkit, credential)` binding.
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with GET /toolkits/{toolkit_id}/credentials/{credential_id}/permissions (the `ListToolkitPermissions` operationId).
-func (c *ClientWithResponses) ListToolkitPermissionsWithResponse(ctx context.Context, toolkitId string, credentialId string, reqEditors ...RequestEditorFn) (*ListToolkitPermissionsHTTPResp, error) {
-	rsp, err := c.ListToolkitPermissions(ctx, toolkitId, credentialId, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseListToolkitPermissionsHTTPResp(rsp)
-}
-
-// PatchPermissionsWithBodyWithResponse Patch binding permission rules
-//
-// Additively add and/or remove permission rules on a binding.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with PATCH /toolkits/{toolkit_id}/credentials/{credential_id}/permissions (the `PatchPermissions` operationId).
-func (c *ClientWithResponses) PatchPermissionsWithBodyWithResponse(ctx context.Context, toolkitId string, credentialId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PatchPermissionsHTTPResp, error) {
-	rsp, err := c.PatchPermissionsWithBody(ctx, toolkitId, credentialId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParsePatchPermissionsHTTPResp(rsp)
-}
-
-// PatchPermissionsWithResponse Patch binding permission rules
-//
-// Additively add and/or remove permission rules on a binding.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with PATCH /toolkits/{toolkit_id}/credentials/{credential_id}/permissions (the `PatchPermissions` operationId).
-func (c *ClientWithResponses) PatchPermissionsWithResponse(ctx context.Context, toolkitId string, credentialId string, body PatchPermissionsJSONRequestBody, reqEditors ...RequestEditorFn) (*PatchPermissionsHTTPResp, error) {
-	rsp, err := c.PatchPermissions(ctx, toolkitId, credentialId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParsePatchPermissionsHTTPResp(rsp)
-}
-
-// ReplacePermissionsWithBodyWithResponse Replace binding permission rules
-//
-// Replace the full set of permission rules for a binding (idempotent PUT).
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with PUT /toolkits/{toolkit_id}/credentials/{credential_id}/permissions (the `ReplacePermissions` operationId).
-func (c *ClientWithResponses) ReplacePermissionsWithBodyWithResponse(ctx context.Context, toolkitId string, credentialId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReplacePermissionsHTTPResp, error) {
-	rsp, err := c.ReplacePermissionsWithBody(ctx, toolkitId, credentialId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseReplacePermissionsHTTPResp(rsp)
-}
-
-// ReplacePermissionsWithResponse Replace binding permission rules
-//
-// Replace the full set of permission rules for a binding (idempotent PUT).
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with PUT /toolkits/{toolkit_id}/credentials/{credential_id}/permissions (the `ReplacePermissions` operationId).
-func (c *ClientWithResponses) ReplacePermissionsWithResponse(ctx context.Context, toolkitId string, credentialId string, body ReplacePermissionsJSONRequestBody, reqEditors ...RequestEditorFn) (*ReplacePermissionsHTTPResp, error) {
-	rsp, err := c.ReplacePermissions(ctx, toolkitId, credentialId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseReplacePermissionsHTTPResp(rsp)
-}
-
-// TestToolkitPermissionsWithBodyWithResponse Dry-run permission evaluation
-//
-// Answer "what would the broker do for this request?" without calling upstream.
-//
-// Evaluates the same **vendor-pooled** rule set the broker sees at request
-// time — rules from all same-vendor bindings on this toolkit compete in one
-// ordered list. The response names which binding contributed the matching
-// rule, which is not obvious from the toolkit id alone under pooling.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /toolkits/{toolkit_id}/credentials/{credential_id}/permissions:test (the `TestToolkitPermissions` operationId).
-func (c *ClientWithResponses) TestToolkitPermissionsWithBodyWithResponse(ctx context.Context, toolkitId string, credentialId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*TestToolkitPermissionsHTTPResp, error) {
-	rsp, err := c.TestToolkitPermissionsWithBody(ctx, toolkitId, credentialId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseTestToolkitPermissionsHTTPResp(rsp)
-}
-
-// TestToolkitPermissionsWithResponse Dry-run permission evaluation
-//
-// Answer "what would the broker do for this request?" without calling upstream.
-//
-// Evaluates the same **vendor-pooled** rule set the broker sees at request
-// time — rules from all same-vendor bindings on this toolkit compete in one
-// ordered list. The response names which binding contributed the matching
-// rule, which is not obvious from the toolkit id alone under pooling.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /toolkits/{toolkit_id}/credentials/{credential_id}/permissions:test (the `TestToolkitPermissions` operationId).
-func (c *ClientWithResponses) TestToolkitPermissionsWithResponse(ctx context.Context, toolkitId string, credentialId string, body TestToolkitPermissionsJSONRequestBody, reqEditors ...RequestEditorFn) (*TestToolkitPermissionsHTTPResp, error) {
-	rsp, err := c.TestToolkitPermissions(ctx, toolkitId, credentialId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseTestToolkitPermissionsHTTPResp(rsp)
-}
-
-// ListKeysWithResponse List toolkit keys
-//
-// List a toolkit's API keys (redacted; only `key_preview` is shown).
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with GET /toolkits/{toolkit_id}/keys (the `ListKeys` operationId).
-func (c *ClientWithResponses) ListKeysWithResponse(ctx context.Context, toolkitId string, params *ListKeysParams, reqEditors ...RequestEditorFn) (*ListKeysHTTPResp, error) {
-	rsp, err := c.ListKeys(ctx, toolkitId, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseListKeysHTTPResp(rsp)
-}
-
-// CreateKeyWithBodyWithResponse Issue toolkit key
-//
-// Issue a new API key for a toolkit.
-//
-// The plaintext value (`jntc_live_…`) is returned **once** in `api_key`. Issue
-// a fresh key, switch callers, then revoke the old one (do-and-then-revoke).
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /toolkits/{toolkit_id}/keys (the `CreateKey` operationId).
-func (c *ClientWithResponses) CreateKeyWithBodyWithResponse(ctx context.Context, toolkitId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateKeyHTTPResp, error) {
-	rsp, err := c.CreateKeyWithBody(ctx, toolkitId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreateKeyHTTPResp(rsp)
-}
-
-// CreateKeyWithResponse Issue toolkit key
-//
-// Issue a new API key for a toolkit.
-//
-// The plaintext value (`jntc_live_…`) is returned **once** in `api_key`. Issue
-// a fresh key, switch callers, then revoke the old one (do-and-then-revoke).
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /toolkits/{toolkit_id}/keys (the `CreateKey` operationId).
-func (c *ClientWithResponses) CreateKeyWithResponse(ctx context.Context, toolkitId string, body CreateKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateKeyHTTPResp, error) {
-	rsp, err := c.CreateKey(ctx, toolkitId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreateKeyHTTPResp(rsp)
-}
-
-// DeleteKeyWithResponse Revoke toolkit key
-//
-// Revoke (delete) a toolkit API key. Callers using it are rejected immediately.
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with DELETE /toolkits/{toolkit_id}/keys/{key_id} (the `DeleteKey` operationId).
-func (c *ClientWithResponses) DeleteKeyWithResponse(ctx context.Context, toolkitId string, keyId string, reqEditors ...RequestEditorFn) (*DeleteKeyHTTPResp, error) {
-	rsp, err := c.DeleteKey(ctx, toolkitId, keyId, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseDeleteKeyHTTPResp(rsp)
-}
-
-// UpdateKeyWithBodyWithResponse Update toolkit key
-//
-// Update a key's label, IP allowlist, or revoked flag.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with PATCH /toolkits/{toolkit_id}/keys/{key_id} (the `UpdateKey` operationId).
-func (c *ClientWithResponses) UpdateKeyWithBodyWithResponse(ctx context.Context, toolkitId string, keyId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateKeyHTTPResp, error) {
-	rsp, err := c.UpdateKeyWithBody(ctx, toolkitId, keyId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseUpdateKeyHTTPResp(rsp)
-}
-
-// UpdateKeyWithResponse Update toolkit key
-//
-// Update a key's label, IP allowlist, or revoked flag.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with PATCH /toolkits/{toolkit_id}/keys/{key_id} (the `UpdateKey` operationId).
-func (c *ClientWithResponses) UpdateKeyWithResponse(ctx context.Context, toolkitId string, keyId string, body UpdateKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateKeyHTTPResp, error) {
-	rsp, err := c.UpdateKey(ctx, toolkitId, keyId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseUpdateKeyHTTPResp(rsp)
-}
-
 // ListUsersWithResponse List Users
 //
 // List all users with cursor-based pagination.
@@ -41921,7 +42387,12 @@ func (c *ClientWithResponses) ChangePasswordWithResponse(ctx context.Context, bo
 
 // DeleteUserWithResponse Delete User
 //
-// Soft-delete a user.
+// Delete a user account (terminal-but-kept).
+//
+// The row is retained — the account is anonymized (tombstone email) and
+// deactivated so history and audit references stay resolvable — but the
+// action is terminal: there is no re-enable arm. For the reversible kill
+// switch use “:disable“ / “:enable“ instead.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -43684,6 +44155,77 @@ func ParseApproveOauthClientHTTPResp(rsp *http.Response) (*ApproveOauthClientHTT
 	return response, nil
 }
 
+// ParseDeleteOauthClientHTTPResp parses an HTTP response from a DeleteOauthClientWithResponse call
+func ParseDeleteOauthClientHTTPResp(rsp *http.Response) (*DeleteOauthClientHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteOauthClientHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseDenyOauthClientHTTPResp parses an HTTP response from a DenyOauthClientWithResponse call
 func ParseDenyOauthClientHTTPResp(rsp *http.Response) (*DenyOauthClientHTTPResp, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -44299,6 +44841,274 @@ func ParseGetAgentApiKeyHistoryHTTPResp(rsp *http.Response) (*GetAgentApiKeyHist
 	return response, nil
 }
 
+// ParseListAgentCredentialsHTTPResp parses an HTTP response from a ListAgentCredentialsWithResponse call
+func ParseListAgentCredentialsHTTPResp(rsp *http.Response) (*ListAgentCredentialsHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListAgentCredentialsHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest CredentialBindingListResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseBindAgentCredentialHTTPResp parses an HTTP response from a BindAgentCredentialWithResponse call
+func ParseBindAgentCredentialHTTPResp(rsp *http.Response) (*BindAgentCredentialHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &BindAgentCredentialHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest CredentialBindingResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseUnbindAgentCredentialHTTPResp parses an HTTP response from a UnbindAgentCredentialWithResponse call
+func ParseUnbindAgentCredentialHTTPResp(rsp *http.Response) (*UnbindAgentCredentialHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UnbindAgentCredentialHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseResumeAgentCredentialBindingHTTPResp parses an HTTP response from a ResumeAgentCredentialBindingWithResponse call
+func ParseResumeAgentCredentialBindingHTTPResp(rsp *http.Response) (*ResumeAgentCredentialBindingHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ResumeAgentCredentialBindingHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest CredentialBindingResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseUpdateAgentJwksHTTPResp parses an HTTP response from a UpdateAgentJwksWithResponse call
 func ParseUpdateAgentJwksHTTPResp(rsp *http.Response) (*UpdateAgentJwksHTTPResp, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -44530,206 +45340,6 @@ func ParseReplaceAgentScopesHTTPResp(rsp *http.Response) (*ReplaceAgentScopesHTT
 			return nil, err
 		}
 		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON422 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON503 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseListAgentToolkitsHTTPResp parses an HTTP response from a ListAgentToolkitsWithResponse call
-func ParseListAgentToolkitsHTTPResp(rsp *http.Response) (*ListAgentToolkitsHTTPResp, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ListAgentToolkitsHTTPResp{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ToolkitBindingListResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON422 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON503 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseBindToolkitHTTPResp parses an HTTP response from a BindToolkitWithResponse call
-func ParseBindToolkitHTTPResp(rsp *http.Response) (*BindToolkitHTTPResp, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &BindToolkitHTTPResp{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest ToolkitBindingResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON201 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON422 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON503 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseUnbindToolkitHTTPResp parses an HTTP response from a UnbindToolkitWithResponse call
-func ParseUnbindToolkitHTTPResp(rsp *http.Response) (*UnbindToolkitHTTPResp, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &UnbindToolkitHTTPResp{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case rsp.StatusCode == 204:
-		break // No content-type
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
 		var dest ProblemDetail
@@ -48157,6 +48767,523 @@ func ParseUpdateCredentialHTTPResp(rsp *http.Response) (*UpdateCredentialHTTPRes
 	return response, nil
 }
 
+// ParseListCredentialAgentsHTTPResp parses an HTTP response from a ListCredentialAgentsWithResponse call
+func ParseListCredentialAgentsHTTPResp(rsp *http.Response) (*ListCredentialAgentsHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListCredentialAgentsHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest CredentialAgentListResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListAgentCredentialPermissionsHTTPResp parses an HTTP response from a ListAgentCredentialPermissionsWithResponse call
+func ParseListAgentCredentialPermissionsHTTPResp(rsp *http.Response) (*ListAgentCredentialPermissionsHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListAgentCredentialPermissionsHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PermissionRuleListResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParsePatchAgentCredentialPermissionsHTTPResp parses an HTTP response from a PatchAgentCredentialPermissionsWithResponse call
+func ParsePatchAgentCredentialPermissionsHTTPResp(rsp *http.Response) (*PatchAgentCredentialPermissionsHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PatchAgentCredentialPermissionsHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PermissionRuleListResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseReplaceAgentCredentialPermissionsHTTPResp parses an HTTP response from a ReplaceAgentCredentialPermissionsWithResponse call
+func ParseReplaceAgentCredentialPermissionsHTTPResp(rsp *http.Response) (*ReplaceAgentCredentialPermissionsHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReplaceAgentCredentialPermissionsHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PermissionRuleListResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseTestAgentCredentialPermissionsHTTPResp parses an HTTP response from a TestAgentCredentialPermissionsWithResponse call
+func ParseTestAgentCredentialPermissionsHTTPResp(rsp *http.Response) (*TestAgentCredentialPermissionsHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &TestAgentCredentialPermissionsHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PermissionTestResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDetachAgentCredentialRuleSetHTTPResp parses an HTTP response from a DetachAgentCredentialRuleSetWithResponse call
+func ParseDetachAgentCredentialRuleSetHTTPResp(rsp *http.Response) (*DetachAgentCredentialRuleSetHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DetachAgentCredentialRuleSetHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseAttachAgentCredentialRuleSetHTTPResp parses an HTTP response from a AttachAgentCredentialRuleSetWithResponse call
+func ParseAttachAgentCredentialRuleSetHTTPResp(rsp *http.Response) (*AttachAgentCredentialRuleSetHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AttachAgentCredentialRuleSetHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseConnectCredentialHTTPResp parses an HTTP response from a ConnectCredentialWithResponse call
 func ParseConnectCredentialHTTPResp(rsp *http.Response) (*ConnectCredentialHTTPResp, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -50220,6 +51347,110 @@ func ParseConsentSubmitHTTPResp(rsp *http.Response) (*ConsentSubmitHTTPResp, err
 	return response, nil
 }
 
+// ParseConsentAgentCreateHTTPResp parses an HTTP response from a ConsentAgentCreateWithResponse call
+func ParseConsentAgentCreateHTTPResp(rsp *http.Response) (*ConsentAgentCreateHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ConsentAgentCreateHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest interface{}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseConsentAgentStatusHTTPResp parses an HTTP response from a ConsentAgentStatusWithResponse call
+func ParseConsentAgentStatusHTTPResp(rsp *http.Response) (*ConsentAgentStatusHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ConsentAgentStatusHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ConsentAgentStatusResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case rsp.StatusCode == 400:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseIntrospectEndpointHTTPResp parses an HTTP response from a IntrospectEndpointWithResponse call
 func ParseIntrospectEndpointHTTPResp(rsp *http.Response) (*IntrospectEndpointHTTPResp, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -50510,12 +51741,450 @@ func ParseTokenEndpointHTTPResp(rsp *http.Response) (*TokenEndpointHTTPResp, err
 		}
 		response.JSON200 = &dest
 
+	case rsp.StatusCode == 400:
+		break // No content-type
+
+	case rsp.StatusCode == 429:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListPermissionRuleSetsHTTPResp parses an HTTP response from a ListPermissionRuleSetsWithResponse call
+func ParseListPermissionRuleSetsHTTPResp(rsp *http.Response) (*ListPermissionRuleSetsHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListPermissionRuleSetsHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest RuleSetListResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
 		var dest ProblemDetail
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreatePermissionRuleSetHTTPResp parses an HTTP response from a CreatePermissionRuleSetWithResponse call
+func ParseCreatePermissionRuleSetHTTPResp(rsp *http.Response) (*CreatePermissionRuleSetHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreatePermissionRuleSetHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest RuleSetResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeletePermissionRuleSetHTTPResp parses an HTTP response from a DeletePermissionRuleSetWithResponse call
+func ParseDeletePermissionRuleSetHTTPResp(rsp *http.Response) (*DeletePermissionRuleSetHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeletePermissionRuleSetHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetPermissionRuleSetHTTPResp parses an HTTP response from a GetPermissionRuleSetWithResponse call
+func ParseGetPermissionRuleSetHTTPResp(rsp *http.Response) (*GetPermissionRuleSetHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetPermissionRuleSetHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest RuleSetResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseUpdatePermissionRuleSetHTTPResp parses an HTTP response from a UpdatePermissionRuleSetWithResponse call
+func ParseUpdatePermissionRuleSetHTTPResp(rsp *http.Response) (*UpdatePermissionRuleSetHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UpdatePermissionRuleSetHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest RuleSetResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseReplacePermissionRuleSetRulesHTTPResp parses an HTTP response from a ReplacePermissionRuleSetRulesWithResponse call
+func ParseReplacePermissionRuleSetRulesHTTPResp(rsp *http.Response) (*ReplacePermissionRuleSetRulesHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReplacePermissionRuleSetRulesHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PermissionRuleListResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest ProblemDetail
@@ -51740,1262 +53409,6 @@ func ParseGetVersionHTTPResp(rsp *http.Response) (*GetVersionHTTPResp, error) {
 			return nil, err
 		}
 		response.JSON200 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseListToolkitsHTTPResp parses an HTTP response from a ListToolkitsWithResponse call
-func ParseListToolkitsHTTPResp(rsp *http.Response) (*ListToolkitsHTTPResp, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ListToolkitsHTTPResp{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ToolkitListResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON422 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON503 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseCreateToolkitHTTPResp parses an HTTP response from a CreateToolkitWithResponse call
-func ParseCreateToolkitHTTPResp(rsp *http.Response) (*CreateToolkitHTTPResp, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &CreateToolkitHTTPResp{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest ToolkitCreateResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON201 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON422 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON503 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseDeleteToolkitHTTPResp parses an HTTP response from a DeleteToolkitWithResponse call
-func ParseDeleteToolkitHTTPResp(rsp *http.Response) (*DeleteToolkitHTTPResp, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &DeleteToolkitHTTPResp{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case rsp.StatusCode == 204:
-		break // No content-type
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON422 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON503 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseGetToolkitHTTPResp parses an HTTP response from a GetToolkitWithResponse call
-func ParseGetToolkitHTTPResp(rsp *http.Response) (*GetToolkitHTTPResp, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &GetToolkitHTTPResp{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ToolkitResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON422 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON503 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseUpdateToolkitHTTPResp parses an HTTP response from a UpdateToolkitWithResponse call
-func ParseUpdateToolkitHTTPResp(rsp *http.Response) (*UpdateToolkitHTTPResp, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &UpdateToolkitHTTPResp{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ToolkitResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON422 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON503 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseListToolkitAgentsHTTPResp parses an HTTP response from a ListToolkitAgentsWithResponse call
-func ParseListToolkitAgentsHTTPResp(rsp *http.Response) (*ListToolkitAgentsHTTPResp, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ListToolkitAgentsHTTPResp{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ToolkitAgentListResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON422 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON503 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseListBindingsHTTPResp parses an HTTP response from a ListBindingsWithResponse call
-func ParseListBindingsHTTPResp(rsp *http.Response) (*ListBindingsHTTPResp, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ListBindingsHTTPResp{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ToolkitCredentialListResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON422 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON503 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseBindCredentialHTTPResp parses an HTTP response from a BindCredentialWithResponse call
-func ParseBindCredentialHTTPResp(rsp *http.Response) (*BindCredentialHTTPResp, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &BindCredentialHTTPResp{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest ToolkitCredentialBindingResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON201 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON409 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON422 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON503 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseUnbindCredentialHTTPResp parses an HTTP response from a UnbindCredentialWithResponse call
-func ParseUnbindCredentialHTTPResp(rsp *http.Response) (*UnbindCredentialHTTPResp, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &UnbindCredentialHTTPResp{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case rsp.StatusCode == 204:
-		break // No content-type
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON422 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON503 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseListToolkitPermissionsHTTPResp parses an HTTP response from a ListToolkitPermissionsWithResponse call
-func ParseListToolkitPermissionsHTTPResp(rsp *http.Response) (*ListToolkitPermissionsHTTPResp, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ListToolkitPermissionsHTTPResp{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest PermissionRuleListResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON422 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON503 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParsePatchPermissionsHTTPResp parses an HTTP response from a PatchPermissionsWithResponse call
-func ParsePatchPermissionsHTTPResp(rsp *http.Response) (*PatchPermissionsHTTPResp, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &PatchPermissionsHTTPResp{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest PermissionRuleListResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON422 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON503 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseReplacePermissionsHTTPResp parses an HTTP response from a ReplacePermissionsWithResponse call
-func ParseReplacePermissionsHTTPResp(rsp *http.Response) (*ReplacePermissionsHTTPResp, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ReplacePermissionsHTTPResp{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest PermissionRuleListResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON422 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON503 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseTestToolkitPermissionsHTTPResp parses an HTTP response from a TestToolkitPermissionsWithResponse call
-func ParseTestToolkitPermissionsHTTPResp(rsp *http.Response) (*TestToolkitPermissionsHTTPResp, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &TestToolkitPermissionsHTTPResp{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest PermissionTestResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON422 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON503 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseListKeysHTTPResp parses an HTTP response from a ListKeysWithResponse call
-func ParseListKeysHTTPResp(rsp *http.Response) (*ListKeysHTTPResp, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ListKeysHTTPResp{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ToolkitKeyListResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON422 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON503 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseCreateKeyHTTPResp parses an HTTP response from a CreateKeyWithResponse call
-func ParseCreateKeyHTTPResp(rsp *http.Response) (*CreateKeyHTTPResp, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &CreateKeyHTTPResp{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest ToolkitKeyCreateResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON201 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON422 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON503 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseDeleteKeyHTTPResp parses an HTTP response from a DeleteKeyWithResponse call
-func ParseDeleteKeyHTTPResp(rsp *http.Response) (*DeleteKeyHTTPResp, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &DeleteKeyHTTPResp{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case rsp.StatusCode == 204:
-		break // No content-type
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON422 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON503 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseUpdateKeyHTTPResp parses an HTTP response from a UpdateKeyWithResponse call
-func ParseUpdateKeyHTTPResp(rsp *http.Response) (*UpdateKeyHTTPResp, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &UpdateKeyHTTPResp{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ToolkitKeyResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON422 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON503 = &dest
 
 	}
 

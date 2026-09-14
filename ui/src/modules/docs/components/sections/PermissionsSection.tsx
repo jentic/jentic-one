@@ -124,7 +124,7 @@ export function PermissionsSection({ payload }: { payload: ReferencePayload }) {
 					count={counts.ownershipGated}
 				>
 					No scope needed. You may read or modify resources you created (and credentials
-					bound to your toolkits). <code className="font-mono">org:admin</code> sees
+					bound to your agents). <code className="font-mono">org:admin</code> sees
 					everything.
 				</ModelCard>
 			</div>

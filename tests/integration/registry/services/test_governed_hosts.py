@@ -16,11 +16,9 @@ from collections.abc import AsyncGenerator
 import pytest
 from sqlalchemy import delete, update
 
-from jentic_one.admin.core.schema.agent_toolkit_bindings import AgentToolkitBinding
+from jentic_one.admin.core.schema.agent_credential_bindings import AgentCredentialBinding
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.control.core.schema.credentials import Credential
-from jentic_one.control.core.schema.toolkit_credential_bindings import ToolkitCredentialBinding
-from jentic_one.control.core.schema.toolkits import Toolkit
 from jentic_one.registry.core.schema.api_revisions import ApiRevision
 from jentic_one.registry.core.schema.apis import Api
 from jentic_one.registry.core.schema.operation_url_index import OperationURLIndex
@@ -47,12 +45,10 @@ async def clean_tables(integration_context: Context) -> AsyncGenerator[None, Non
             await session.execute(delete(Api).where(Api.vendor == _VENDOR))
             await session.commit()
         async with integration_context.control_db.session() as session:
-            await session.execute(delete(ToolkitCredentialBinding))
             await session.execute(delete(Credential).where(Credential.api_vendor == _VENDOR))
-            await session.execute(delete(Toolkit).where(Toolkit.name.like("tk-gvhi-%")))
             await session.commit()
         async with integration_context.admin_db.session() as session:
-            await session.execute(delete(AgentToolkitBinding))
+            await session.execute(delete(AgentCredentialBinding))
             await session.execute(delete(Agent).where(Agent.name.like("gvhi-%")))
             await session.commit()
 
@@ -61,12 +57,12 @@ async def clean_tables(integration_context: Context) -> AsyncGenerator[None, Non
     await _truncate()
 
 
-async def _seed_api_toolkit_agent(ctx: Context, *, tag: str, url: str) -> tuple[str, str]:
-    """One API (served at ``url``) + toolkit + credential + agent.
+async def _seed_api_credential_agent(ctx: Context, *, tag: str, url: str) -> tuple[str, str]:
+    """One API (served at ``url``) + covering credential + bound agent.
 
-    Returns ``(agent_id, toolkit_id)``. The registry seed mirrors the ingest's
-    ``URLIndexStage`` (same ``build_index_entry`` the broker's discovery
-    matches against).
+    Returns ``(agent_id, credential_id)``. The registry seed mirrors the
+    ingest's ``URLIndexStage`` (same ``build_index_entry`` the broker's
+    discovery matches against).
     """
     op_path = "/things"
     async with ctx.registry_db.session() as session:
@@ -98,7 +94,6 @@ async def _seed_api_toolkit_agent(ctx: Context, *, tag: str, url: str) -> tuple[
         await session.commit()
 
     async with ctx.control_db.session() as session:
-        toolkit = Toolkit(name=f"tk-gvhi-{tag}")
         credential = Credential(
             type="token_value",
             name=f"cred-gvhi-{tag}",
@@ -106,34 +101,35 @@ async def _seed_api_toolkit_agent(ctx: Context, *, tag: str, url: str) -> tuple[
             api_name=tag,
             api_version="v1",
         )
-        session.add_all([toolkit, credential])
+        session.add(credential)
         await session.flush()
-        session.add(ToolkitCredentialBinding(toolkit_id=toolkit.id, credential_id=credential.id))
-        toolkit_id = toolkit.id
+        credential_id = credential.id
         await session.commit()
 
     async with ctx.admin_db.session() as session:
         agent = Agent(name=f"gvhi-{tag}", registered_by="usr_gvhi_test")
         session.add(agent)
         await session.flush()
-        session.add(AgentToolkitBinding(agent_id=agent.id, toolkit_id=toolkit_id))
+        session.add(AgentCredentialBinding(agent_id=agent.id, credential_id=credential_id))
         agent_id = agent.id
         await session.commit()
-    return agent_id, toolkit_id
+    return agent_id, credential_id
 
 
 def _agent_identity(agent_id: str) -> Identity:
-    return Identity(sub=agent_id, actor_type=ActorType.AGENT, permissions=["owner:toolkits:read"])
+    return Identity(
+        sub=agent_id, actor_type=ActorType.AGENT, permissions=["owner:credentials:read"]
+    )
 
 
 @pytest.mark.usefixtures("clean_tables")
 async def test_identity_scoping_two_agents_disjoint(integration_context: Context) -> None:
-    """Each agent sees only its own toolkit-derived hosts — an unscoped read on
+    """Each agent sees only its own binding-derived hosts — an unscoped read on
     any of the three legs fails this test on both backends."""
-    agent_a, _ = await _seed_api_toolkit_agent(
+    agent_a, _ = await _seed_api_credential_agent(
         integration_context, tag="alpha", url="https://alpha.gvhi.test/v1"
     )
-    agent_b, _ = await _seed_api_toolkit_agent(
+    agent_b, _ = await _seed_api_credential_agent(
         integration_context, tag="beta", url="https://beta.gvhi.test/v1"
     )
     svc = GovernedHostsService(integration_context)
@@ -151,7 +147,7 @@ async def test_identity_scoping_two_agents_disjoint(integration_context: Context
 async def test_digest_is_stable_until_bindings_change(integration_context: Context) -> None:
     """The change-poll contract at derivation level: the digest is stable
     across repeated reads and changes exactly when the host set does."""
-    agent_id, _ = await _seed_api_toolkit_agent(
+    agent_id, _ = await _seed_api_credential_agent(
         integration_context, tag="alpha", url="https://alpha.gvhi.test/v1"
     )
     svc = GovernedHostsService(integration_context)
@@ -162,11 +158,11 @@ async def test_digest_is_stable_until_bindings_change(integration_context: Conte
     assert first == second
 
     # A second bound API changes the host set → a new digest.
-    _, toolkit_b = await _seed_api_toolkit_agent(
+    _, cred_b = await _seed_api_credential_agent(
         integration_context, tag="beta", url="https://beta.gvhi.test/v1"
     )
     async with integration_context.admin_db.session() as session:
-        session.add(AgentToolkitBinding(agent_id=agent_id, toolkit_id=toolkit_b))
+        session.add(AgentCredentialBinding(agent_id=agent_id, credential_id=cred_b))
         await session.commit()
 
     changed = await svc.get_governed_hosts(identity)

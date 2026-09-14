@@ -206,20 +206,40 @@ def test_enabled_credential_less_tools_call_is_challenged() -> None:
         assert resp.headers["www-authenticate"] == _CHALLENGE
 
 
-def test_credential_less_resources_read_is_challenged() -> None:
-    """resources/read stays OFF the pre-auth whitelist until resources are
-    actually served — a future registration must not land pre-auth by default
-    (the listings stay whitelisted; they are empty and connection-independent)."""
+def test_credential_less_resources_read_of_a_skill_is_served() -> None:
+    """The skill-resources slice's flip of the old 401 pin: ``resources/read``
+    is on the pre-auth whitelist and a credential-less read of a shipped
+    skill serves the document (the same bytes ``GET /skills/*`` already
+    serves without a credential — zero new exposure). The readable set stays
+    public-only, pinned three-layered in ``test_resources.py``."""
     with make_client(oauth_enabled=True) as client:
         read = client.post(
             "/mcp",
             json=_rpc("resources/read", {"uri": "skill://jentic"}),
             headers=_ACCEPT,
         )
-        assert read.status_code == 401
-        assert read.headers["www-authenticate"] == _CHALLENGE
+        assert read.status_code == 200
+        body = read.json()
+        assert "error" not in body
+        contents = body["result"]["contents"]
+        assert contents[0]["text"].strip()
+        assert contents[0]["mimeType"] == "text/markdown; charset=utf-8"
         listing = client.post("/mcp", json=_rpc("resources/list"), headers=_ACCEPT)
         assert listing.status_code == 200
+
+
+def test_batch_mixing_resources_read_with_tools_call_still_requires_credential() -> None:
+    """The batched-body rule survives the whitelist widening: pre-auth only
+    when ALL methods in a batch are whitelisted — ``resources/read`` cannot
+    smuggle a ``tools/call`` past the gate."""
+    with make_client(oauth_enabled=True) as client:
+        batch = [
+            _rpc("resources/read", {"uri": "skill://jentic"}, id_=1),
+            _rpc("tools/call", {"name": "whoami", "arguments": {}}, id_=2),
+        ]
+        resp = client.post("/mcp", content=json.dumps(batch), headers=_ACCEPT)
+        assert resp.status_code == 401
+        assert resp.headers["www-authenticate"] == _CHALLENGE
 
 
 def test_authenticated_get_is_405_and_never_reaches_the_sse_arm() -> None:

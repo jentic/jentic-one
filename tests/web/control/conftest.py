@@ -27,9 +27,9 @@ def _effective(*permissions: str) -> list[str]:
 
     Mirrors production identity resolution (``PermissionService.get_effective_*``
     returns the implication-expanded set), which the ``resolve_identity`` override
-    bypasses. Without this, an identity granted only ``toolkits:write`` would fail
-    the route-level ``toolkits:read`` intersection check that the dependency
-    performs verbatim against ``identity.permissions``.
+    bypasses. Without this, an identity granted only ``credentials:write`` would
+    fail the route-level ``credentials:read`` intersection check that the
+    dependency performs verbatim against ``identity.permissions``.
     """
     return sorted(compute_effective(set(permissions)))
 
@@ -161,13 +161,13 @@ async def clean_access_requests(web_context: Context) -> AsyncGenerator[None, No
 
 
 # A bound but orphaned agent (issues #665/#682): it owns nothing (parent_actor_id
-# None, like the jentic-cli-default bootstrap agent) but is bound to tk_target via
-# the seed_binding fixture. It carries the default agent owner-read scopes so it
-# passes the route gate; visibility must then come purely from the binding.
+# None, like the jentic-cli-default bootstrap agent). It carries the default agent
+# owner-read scope so it passes the route gate; any credential visibility must
+# then come from a direct binding (it has none for the seeded credential).
 BOUND_ORPHAN_IDENTITY = Identity(
     sub=FILER_SUB,
     email="orphan@test.local",
-    permissions=["owner:toolkits:read", "owner:credentials:read"],
+    permissions=["owner:credentials:read"],
     actor_type=ActorType.AGENT,
     parent_actor_id=None,
 )
@@ -179,57 +179,6 @@ def bound_orphan_client(
 ) -> Iterator[TestClient]:
     """TestClient as a bound-but-orphaned agent (owns nothing, bound to tk_target)."""
     app = _build_app(web_context, BOUND_ORPHAN_IDENTITY)
-    with TestClient(app) as tc:
-        yield tc
-
-
-# A bound orphan that ALSO holds toolkits:write (issue #682, write path): it owns
-# nothing but is bound to tk_target, so a write to that toolkit must succeed —
-# not 404 as owner-only scoping produced before the fix.
-BOUND_ORPHAN_WRITER_IDENTITY = Identity(
-    sub=FILER_SUB,
-    email="orphan-writer@test.local",
-    permissions=["toolkits:write", "owner:toolkits:read", "owner:credentials:read"],
-    actor_type=ActorType.AGENT,
-    parent_actor_id=None,
-)
-
-# A writer that neither owns nor is bound to tk_target and is not org:admin. A
-# write to tk_target (which exists, owned by OWNER_SUB) must be 403 — naming the
-# real requirement — not a misleading 404 (issue #682).
-UNBOUND_WRITER_IDENTITY = Identity(
-    sub="usr_webtest_unbound_writer",
-    email="unbound-writer@test.local",
-    permissions=["toolkits:write"],
-)
-
-
-@pytest.fixture()
-def bound_orphan_writer_client(
-    web_context: Context, seed_binding: None, clean_access_requests: None
-) -> Iterator[TestClient]:
-    """TestClient as a bound-but-orphaned agent that holds toolkits:write."""
-    app = _build_app(web_context, BOUND_ORPHAN_WRITER_IDENTITY)
-    with TestClient(app) as tc:
-        yield tc
-
-
-@pytest.fixture()
-def unbound_writer_client(
-    web_context: Context, seed_binding: None, clean_access_requests: None
-) -> Iterator[TestClient]:
-    """TestClient holding toolkits:write but neither owning nor bound to tk_target."""
-    app = _build_app(web_context, UNBOUND_WRITER_IDENTITY)
-    with TestClient(app) as tc:
-        yield tc
-
-
-@pytest.fixture()
-def admin_writer_client(
-    web_context: Context, seed_binding: None, clean_access_requests: None
-) -> Iterator[TestClient]:
-    """TestClient as org:admin against the seed_binding toolkit (tk_target)."""
-    app = _build_app(web_context, ADMIN_IDENTITY)
     with TestClient(app) as tc:
         yield tc
 
@@ -279,64 +228,21 @@ def unauthed_client(web_context: Context, clean_access_requests: None) -> Iterat
         yield tc
 
 
-# --- Toolkit-focused clients (no access-request seeding) ---
-
-TOOLKIT_OWNER_IDENTITY = Identity(
-    sub="usr_webtest_tk_owner",
-    email="tkowner@test.local",
-    permissions=_effective("toolkits:write"),
-)
-
-TOOLKIT_ADMIN_IDENTITY = Identity(
-    sub="usr_webtest_tk_admin",
-    email="tkadmin@test.local",
-    permissions=_effective("org:admin", "toolkits:write"),
-)
-
-
-@pytest.fixture()
-async def clean_toolkits(web_context: Context) -> AsyncGenerator[None, None]:
-    """Remove toolkits created by toolkit test identities."""
-    yield
-    async with web_context.control_db.session() as session:
-        await session.execute(
-            text("DELETE FROM toolkits WHERE created_by IN (:owner, :admin)"),
-            {"owner": "usr_webtest_tk_owner", "admin": "usr_webtest_tk_admin"},
-        )
-        await session.commit()
-
-
-@pytest.fixture()
-def tk_owner_client(web_context: Context, clean_toolkits: None) -> Iterator[TestClient]:
-    """TestClient as toolkit owner (has toolkits:write)."""
-    app = _build_app(web_context, TOOLKIT_OWNER_IDENTITY)
-    with TestClient(app) as tc:
-        yield tc
-
-
-@pytest.fixture()
-def tk_admin_client(web_context: Context, clean_toolkits: None) -> Iterator[TestClient]:
-    """TestClient as org admin (has org:admin + toolkits:write)."""
-    app = _build_app(web_context, TOOLKIT_ADMIN_IDENTITY)
-    with TestClient(app) as tc:
-        yield tc
-
-
 # --- Permission-gating clients (least-privilege enforcement) ---
 
-# A delegated agent minted the DEFAULT_AGENT_SCOPES owner-read scopes (never the
-# bare credentials:read / toolkits:read). The route guard must admit it via the
-# OR-listed owner scope so the control/scoping delegation filter can run.
+# A delegated agent minted the DEFAULT_AGENT_SCOPES owner-read scope (never the
+# bare credentials:read). The route guard must admit it via the OR-listed owner
+# scope so the control/scoping delegation filter can run.
 DELEGATED_AGENT_IDENTITY = Identity(
     sub="agnt_webtest_delegated",
     email="delegated@test.local",
-    permissions=["owner:credentials:read", "owner:toolkits:read"],
+    permissions=["owner:credentials:read"],
     actor_type=ActorType.AGENT,
     parent_actor_id="usr_webtest_delegated_owner",
 )
 
-# A caller holding a real scope, but not one that gates credentials/toolkits —
-# proves the gate actually denies under-scoped callers (not just the happy path).
+# A caller holding a real scope, but not one that gates credentials — proves
+# the gate actually denies under-scoped callers (not just the happy path).
 WRONG_SCOPE_IDENTITY = Identity(
     sub="usr_webtest_wrong_scope",
     email="wrongscope@test.local",

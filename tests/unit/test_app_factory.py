@@ -138,7 +138,7 @@ def test_broker_surface_gets_admin_db_access(app_config: AppConfig) -> None:
 
 def test_registry_surface_gets_admin_and_control_db_access(app_config: AppConfig) -> None:
     """A standalone registry surface needs all three databases: admin for the
-    auth verifier and GET /governed-hosts' toolkit-binding leg, control for the
+    auth verifier and GET /governed-hosts' credential-binding leg, control for the
     governed-hosts credential-scope leg (issue #1278)."""
     allowed = _expand_allowed_dbs(["registry"], app_config)
     assert allowed >= {"registry", "admin", "control"}

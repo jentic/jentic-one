@@ -3,8 +3,8 @@
 Derives the minimum host set an integrator needs to scope interception for one
 identity (per-agent proxy catch-lists, least-knowledge host filtering), plus a
 content-derived digest for O(1) ETag change-polling. The pipeline is the one the
-broker already runs per-request (admin bindings → control credential scopes →
-registry resolution), inverted to enumerate rather than match — see
+broker already runs per-request (admin credential bindings → control credential
+scopes → registry resolution), inverted to enumerate rather than match — see
 ``registry/repos/governed_hosts_repo.py``.
 """
 
@@ -21,7 +21,6 @@ from jentic_one.registry.repos.governed_hosts_repo import GovernedHostsRepositor
 from jentic_one.registry.services.errors import GovernedHostsUnavailableError
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
-from jentic_one.shared.models import ActorType
 
 logger = structlog.get_logger(__name__)
 
@@ -78,7 +77,7 @@ class GovernedHostsService:
     """Derives the caller's governed host set across the three databases.
 
     **Always self-scoped**: the set is derived for the authenticated identity's
-    own toolkit bindings — there is deliberately no cross-actor or admin
+    own credential bindings — there is deliberately no cross-actor or admin
     variant.
     """
 
@@ -88,12 +87,14 @@ class GovernedHostsService:
     async def get_governed_hosts(self, identity: Identity) -> GovernedHostsView:
         """Derive the host set for ``identity`` (canonical order, with digest).
 
-        A toolkit key authenticates *as the toolkit itself* (its ``sub`` is the
-        toolkit id — see ``broker/repos/toolkit_key_resolver.py``), so the
-        admin binding leg short-circuits. Other actor types resolve through
-        ``agent_toolkit_bindings`` — a plain **user** token therefore yields an
-        empty set (toolkits bind to agents, not users; the OAuth agent-consent
-        flow is what leaves an integrator holding an agent-scoped token).
+        Bindings key on the identity's ``sub`` — ``agent_credential_bindings``
+        holds agents and service accounts alike. A plain **user** token
+        therefore yields an empty set (credentials bind to agents, not users;
+        the OAuth agent-consent flow is what leaves an integrator holding an
+        agent-scoped token). Suspended bindings and inactive credentials still
+        contribute their hosts: a cut-off is only enforced if the traffic
+        still diverts to the broker to be refused (see
+        ``governed_hosts_repo.py``).
 
         Hosts are the literal URL-index patterns the broker's discovery
         matches; variable-bearing (``{var}``) hosts are excluded because
@@ -112,31 +113,28 @@ class GovernedHostsService:
             if not self._ctx.is_db_allowed(db_name):
                 raise GovernedHostsUnavailableError(db_name)
 
-        if identity.actor_type is ActorType.TOOLKIT:
-            toolkit_ids = {identity.sub}
-        else:
-            async with self._ctx.admin_db.session() as session:
-                toolkit_ids = await GovernedHostsRepository.toolkit_ids_for_identity(
-                    session, sub=identity.sub
-                )
-        if not toolkit_ids:
+        async with self._ctx.admin_db.session() as session:
+            credential_ids = await GovernedHostsRepository.credential_ids_for_identity(
+                session, sub=identity.sub
+            )
+        if not credential_ids:
             logger.info(
                 "governed_hosts_empty",
-                reason="no_toolkit_bindings",
+                reason="no_credential_bindings",
                 actor_type=identity.actor_type,
             )
             return _EMPTY_VIEW
 
         async with self._ctx.control_db.session() as session:
-            scopes = await GovernedHostsRepository.credential_scopes_for_toolkits(
-                session, toolkit_ids=toolkit_ids
+            scopes = await GovernedHostsRepository.credential_scopes_for_ids(
+                session, credential_ids=credential_ids
             )
         if not scopes:
             logger.info(
                 "governed_hosts_empty",
                 reason="no_credential_scopes",
                 actor_type=identity.actor_type,
-                toolkit_count=len(toolkit_ids),
+                binding_count=len(credential_ids),
             )
             return _EMPTY_VIEW
 
@@ -150,7 +148,7 @@ class GovernedHostsService:
         logger.info(
             "governed_hosts_derived",
             actor_type=identity.actor_type,
-            toolkit_count=len(toolkit_ids),
+            binding_count=len(credential_ids),
             scope_count=len(scopes),
             host_count=len(canonical),
             digest=digest,

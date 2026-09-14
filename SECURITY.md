@@ -54,7 +54,7 @@ Jentic One is designed so that **credentials never leave the data plane**:
 > plane" guarantee holds on the network, but **not** when the agent runs as the
 > same OS user as the broker — a same-user process can read the key and database
 > directly. Do not run the broker in the same trust boundary as your agent for
-> real credentials. See **[docs/security/hardening.md](docs/security/hardening.md)**
+> real credentials. See **[docs/security/README.md](docs/security/README.md)**
 > for the deployment-tier ladder, agent-sandboxing options, and a production
 > checklist.
 

@@ -156,7 +156,7 @@ export function usageToLatencySeries(usage: UsageResponse): UsageTrendPoint[] {
 	return usage.buckets.filter((b) => b.total > 0).map((b) => ({ ts: b.ts, value: b.avg_ms }));
 }
 
-/** One top api/toolkit/agent row for the usage-context table. */
+/** One top api/credential/agent row for the usage-context table. */
 export interface TopUsageRow {
 	id: string;
 	label: string;
@@ -171,11 +171,12 @@ export interface TopUsageRow {
 /**
  * Format a top-row key into a display label, per grouping dimension. The
  * backend composes keys mechanically (see monitoring_repo.grouped_top):
- * api → "vendor/name" (NULLs coalesced to "unknown"), toolkit → the raw
- * toolkit_id, agent → "actor_type/actor_id" (NULL propagates to a null key).
- * Strip the mechanical prefixes and surface null/unknown groups as an
- * explicit "Unattributed" bucket. (Monitor derives the same labels in its
- * own lib — modules can't share siblings' code, and the rule is small.)
+ * api → "vendor/name" (NULLs coalesced to "unknown"), credential → the raw
+ * credential_id ("unknown" when unattributed), agent → "actor_type/actor_id"
+ * (NULL propagates to a null key). Strip the mechanical prefixes and surface
+ * null/unknown groups as an explicit "Unattributed" bucket. (Monitor derives
+ * the same labels in its own lib — modules can't share siblings' code, and
+ * the rule is small.)
  */
 function formatTopRowLabel(groupBy: string, key: string | null | undefined): string {
 	if (!key) return 'Unattributed';
@@ -189,6 +190,9 @@ function formatTopRowLabel(groupBy: string, key: string | null | undefined): str
 		const slash = key.indexOf('/');
 		return slash >= 0 ? key.slice(slash + 1) || 'Unattributed' : key;
 	}
+	if (groupBy === 'credential') {
+		return key === 'unknown' ? 'Unattributed' : key;
+	}
 	return key;
 }
 
@@ -198,7 +202,7 @@ export function usageToTopRows(usage: UsageResponse): TopUsageRow[] {
 		.map((row) => {
 			const total = row.total ?? 0;
 			// The generated type says `key: string`, but the SQL key expression
-			// is nullable on the wire for toolkit/agent groupings.
+			// is nullable on the wire for some groupings.
 			const key = (row.key ?? null) as string | null;
 			return {
 				id: key ?? '__unattributed__',

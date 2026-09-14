@@ -259,7 +259,7 @@ export function AgentRail() {
 
 	if (collapsed) {
 		return (
-			<aside className="bg-muted border-border hidden w-10 shrink-0 flex-col items-center border-l xl:flex">
+			<aside className="bg-muted border-border relative hidden w-10 shrink-0 flex-col items-center border-l xl:flex">
 				<Button
 					variant="ghost"
 					size="icon"
@@ -329,7 +329,16 @@ export function AgentRail() {
 	return (
 		<aside
 			aria-label="Agent rail"
-			className="bg-muted border-border hidden w-72 shrink-0 flex-col overflow-hidden border-l xl:flex"
+			// `relative` is load-bearing: feed rows carry `sr-only` (absolutely
+			// positioned) spans, and absolute boxes are only clipped by ancestors
+			// in their CONTAINING-BLOCK chain — the static `overflow-hidden` here
+			// and the feed's `overflow-y-auto` don't qualify. Without a positioned
+			// ancestor those spans escaped to the sticky wrapper, adding ~240px of
+			// phantom document scroll on short pages, which in turn dragged the
+			// whole rail up with the scroll (the sticky wrapper is clamped to its
+			// row, and the row only grows with real `main` content). See #1318
+			// review follow-up: rail scrolled away on Settings/Toolkits.
+			className="bg-muted border-border relative hidden w-72 shrink-0 flex-col overflow-hidden border-l xl:flex"
 			onMouseEnter={() => setHoverFrozen(true)}
 			onMouseLeave={() => setHoverFrozen(false)}
 		>

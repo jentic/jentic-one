@@ -126,7 +126,7 @@ func TestMCPExecute_EnvelopeMatchesSharedGoldens(t *testing.T) {
 				t.Fatalf("handleExecute: %v", err)
 			}
 			if res.IsError {
-				t.Fatalf("unexpected soft error: %v", res.Content)
+				t.Fatalf("unexpected soft error: %s", toolResultText(res))
 			}
 
 			payload := decodeToolJSON(t, res)

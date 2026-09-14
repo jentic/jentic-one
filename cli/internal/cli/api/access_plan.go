@@ -11,42 +11,53 @@ import (
 	"github.com/jentic/jentic-one/cli/client/generated/control"
 )
 
-var errAccessTargetRequired = errors.New("specify what to request: --toolkit <vendor/name>, --toolkit-id <tk_…>, --scope <scope>, or --provision <vendor/name> (repeat and combine to compose one request)")
+var errAccessTargetRequired = errors.New("specify what to request: --api <vendor/name>, --scope <scope>, or --provision <vendor/name> (repeat and combine to compose one request)")
 
 type accessRequestOptions struct {
-	toolkits   []string
-	toolkitIDs []string
-	scopes     []string
-	provisions []string
-	auths      []string
-	rulesJSONs []string
-	reason     string
-	wait       bool
-	timeout    time.Duration
-	json       bool
+	apis []string
+	// deprecatedToolkits backs the hidden --toolkit alias (deprecated for one
+	// release); its values fold into apis via allAPIs().
+	deprecatedToolkits []string
+	toolkitIDs         []string
+	scopes             []string
+	provisions         []string
+	auths              []string
+	rulesJSONs         []string
+	reason             string
+	wait               bool
+	timeout            time.Duration
+	json               bool
+}
+
+// allAPIs folds the deprecated --toolkit alias values into the --api list, in
+// flag order (--api values first). Both flags file the same credential:bind
+// item, so the fold happens once here and everything downstream sees one list.
+func (o *accessRequestOptions) allAPIs() []string {
+	return cleanValues(append(append([]string{}, o.apis...), o.deprecatedToolkits...))
 }
 
 // targetCount is the number of distinct targets the request names — each
-// --provision plan counts as one target, as does each --toolkit/--toolkit-id/
-// --scope item. It decides composite behavior (e.g. the 409 handling).
+// --provision plan counts as one target, as does each --api/--scope item (and
+// each value of the hidden legacy flags). It decides composite behavior (e.g.
+// the 409 handling).
 func (o *accessRequestOptions) targetCount() int {
-	return len(cleanValues(o.provisions)) + len(cleanValues(o.toolkits)) +
+	return len(cleanValues(o.provisions)) + len(o.allAPIs()) +
 		len(cleanValues(o.toolkitIDs)) + len(cleanValues(o.scopes))
 }
 
 // compose builds the full item list for the request from every target flag, in
-// fulfilment order: provisioning plans first (one 4-item chain per --provision,
-// in flag order), then toolkit binds by reference, by id, and scope grants.
-// Targets are validated as a set — duplicates and a --toolkit/--provision pair
+// fulfilment order: provisioning plans first (one 2-item chain per --provision,
+// in flag order), then credential binds by API reference, and scope grants.
+// Targets are validated as a set — duplicates and an --api/--provision pair
 // naming the same API are rejected, since they would file conflicting or
 // redundant intents the approving human then has to untangle.
 func (o *accessRequestOptions) compose() ([]control.AccessRequestItemRequest, error) {
 	provisions := cleanValues(o.provisions)
-	toolkits := cleanValues(o.toolkits)
+	apis := o.allAPIs()
 	toolkitIDs := cleanValues(o.toolkitIDs)
 	scopes := cleanValues(o.scopes)
 
-	if len(provisions)+len(toolkits)+len(toolkitIDs)+len(scopes) == 0 {
+	if len(provisions)+len(apis)+len(toolkitIDs)+len(scopes) == 0 {
 		return nil, errAccessTargetRequired
 	}
 	if len(provisions) == 0 && (len(cleanValues(o.auths)) > 0 || len(cleanValues(o.rulesJSONs)) > 0) {
@@ -60,15 +71,15 @@ func (o *accessRequestOptions) compose() ([]control.AccessRequestItemRequest, er
 	if err != nil {
 		return nil, err
 	}
-	toolkitKeys, err := canonicalRefKeys("--toolkit", toolkits)
+	apiKeys, err := canonicalRefKeys("--api", apis)
 	if err != nil {
 		return nil, err
 	}
-	for _, k := range toolkitKeys {
+	for _, k := range apiKeys {
 		for _, p := range provKeys {
 			if k == p {
-				return nil, fmt.Errorf("%s is named by both --toolkit and --provision; "+
-					"a provisioning plan already ends with the toolkit binding, so drop the --toolkit", k)
+				return nil, fmt.Errorf("%s is named by both --api and --provision; "+
+					"a provisioning plan already ends with the credential binding, so drop the --api", k)
 			}
 		}
 	}
@@ -96,19 +107,27 @@ func (o *accessRequestOptions) compose() ([]control.AccessRequestItemRequest, er
 		}
 		items = append(items, chain...)
 	}
-	for _, t := range toolkits {
-		ref, refErr := parseToolkitRef(t)
+	for _, t := range apis {
+		ref, refErr := parseAccessRef(t)
 		if refErr != nil {
 			return nil, refErr
 		}
+		// Theme-5 Phase 3: the surviving bind verb is credential:bind
+		// (agent↔credential); an --api vendor/name files it by API
+		// reference. The approver resolves the reference to a concrete,
+		// visible credential at decide time. The server substitutes a
+		// read-only default policy when no rules are given.
 		items = append(items, control.AccessRequestItemRequest{
-			ResourceType: control.AccessRequestItemRequestResourceTypeToolkit, Action: control.Bind, ResourceReference: &ref,
+			ResourceType: control.AccessRequestItemRequestResourceTypeCredential, Action: control.Bind, ResourceReference: &ref,
 		})
 	}
-	for _, id := range toolkitIDs {
-		items = append(items, control.AccessRequestItemRequest{
-			ResourceType: control.AccessRequestItemRequestResourceTypeToolkit, Action: control.Bind, ResourceId: ptr(id),
-		})
+	if len(toolkitIDs) > 0 {
+		// Toolkit ids no longer resolve to anything: toolkits were retired
+		// (theme-5 phase 3) and access is granted per credential. Fail with a
+		// re-file directive rather than filing an item the server will 422.
+		return nil, fmt.Errorf("--toolkit-id is no longer supported: toolkits were retired; "+
+			"use --api <vendor/name> to request access to the API by reference "+
+			"(got --toolkit-id %s)", toolkitIDs[0])
 	}
 	for _, s := range scopes {
 		items = append(items, control.AccessRequestItemRequest{
@@ -146,7 +165,7 @@ func firstDuplicate(values []string) string {
 func canonicalRefKeys(flag string, values []string) ([]string, error) {
 	keys := make([]string, 0, len(values))
 	for _, v := range values {
-		ref, err := parseToolkitRef(v)
+		ref, err := parseAccessRef(v)
 		if err != nil {
 			return nil, err
 		}
@@ -231,7 +250,7 @@ func splitKeyedValue(flag, raw string, provKeys []string) (key, value string, ke
 		return "", "", false, nil
 	}
 	candidate := strings.TrimSpace(raw[:eq])
-	ref, refErr := parseToolkitRef(candidate)
+	ref, refErr := parseAccessRef(candidate)
 	if refErr != nil {
 		return "", "", false, nil //nolint:nilerr // an unparsable key prefix means "bare value", not a failure.
 	}
@@ -260,12 +279,12 @@ var validAuthTypes = map[string]bool{
 
 // buildProvisionPlan builds one full provisioning plan for a --provision
 // target: the ordered set of items describing the whole path to first
-// execution. The agent files intent (create toolkit, provision a credential,
-// bind it with proposed rules, bind the agent); a human fulfils the
-// create/provision steps via the dashboard, which writes the resulting ids back
-// onto the bind items before approving. Returns the items in fulfilment order.
+// execution. The agent files intent (provision a credential, bind the agent to
+// it with proposed rules); a human fulfils the provision step via the
+// dashboard, which writes the resulting credential id back onto the bind item
+// before approving. Returns the items in fulfilment order.
 func buildProvisionPlan(provision, auth, rulesJSON string) ([]control.AccessRequestItemRequest, error) {
-	ref, err := parseToolkitRef(provision)
+	ref, err := parseAccessRef(provision)
 	if err != nil {
 		return nil, err
 	}
@@ -290,22 +309,19 @@ func buildProvisionPlan(provision, auth, rulesJSON string) ([]control.AccessRequ
 		return nil, err
 	}
 
-	// The plan is a fixed 4-item chain (toolkit:create, credential:provision,
-	// credential:bind, toolkit:bind); preallocate to that capacity.
-	items := make([]control.AccessRequestItemRequest, 0, 4)
-	// Step 1: create a toolkit that will serve this API.
-	items = append(items, control.AccessRequestItemRequest{
-		ResourceType: control.AccessRequestItemRequestResourceTypeToolkit, Action: control.Create, ResourceReference: &ref,
-	})
-	// Step 2: provision a credential for this API. security_scheme carries the
+	// The plan is a fixed 2-item chain (credential:provision,
+	// credential:bind — theme-5 phase 3 collapsed the toolkit steps);
+	// preallocate to that capacity.
+	items := make([]control.AccessRequestItemRequest, 0, 2)
+	// Step 1: provision a credential for this API. security_scheme carries the
 	// agent-detected auth type so the operator's credential form can pre-select
 	// it; the operator enters the secret — it never rides in the agent-filed
 	// plan. For a no-auth API (`--auth none`) we still emit this item with
 	// security_scheme=no_auth: a credential row is required for the
-	// credential:bind effect to attach the toolkit binding + rules to (the
-	// broker keys rules on `(toolkit, credential)` and resolves a no_auth
-	// credential as a no-op auth). The wizard auto-creates the NO_AUTH
-	// credential — the operator is not prompted for a secret.
+	// credential:bind effect to attach the binding + rules to (the broker keys
+	// rules on `(agent, credential)` and resolves a no_auth credential as a
+	// no-op auth). The wizard auto-creates the NO_AUTH credential — the
+	// operator is not prompted for a secret.
 	provRef := map[string]any{}
 	for k, v := range ref {
 		provRef[k] = v
@@ -314,21 +330,16 @@ func buildProvisionPlan(provision, auth, rulesJSON string) ([]control.AccessRequ
 	items = append(items, control.AccessRequestItemRequest{
 		ResourceType: control.AccessRequestItemRequestResourceTypeCredential, Action: control.Provision, ResourceReference: &provRef,
 	})
-	// Step 3: bind the (to-be-created) credential to the (to-be-created)
-	// toolkit, carrying the agent's proposed first-pass rules. The operator
-	// amends the concrete credential/toolkit ids onto this item before approval.
-	// The API reference is stamped on so the item names its chain: item order
-	// is not guaranteed server-side, and in a composite request with several
-	// plans the bare item would be indistinguishable from its siblings (it also
-	// keeps pending-dedup from colliding two different plans' bind items). The
-	// server ignores the reference for credential:bind — only the amended ids
-	// wire the effect.
+	// Step 2: bind the agent to the (to-be-created) credential, carrying the
+	// agent's proposed first-pass rules. The operator amends the concrete
+	// credential id onto this item before approval. The API reference is
+	// stamped on so the item names its chain: item order is not guaranteed
+	// server-side, and in a composite request with several plans the bare item
+	// would be indistinguishable from its siblings (it also keeps
+	// pending-dedup from colliding two different plans' bind items, and lets
+	// per-item plan governance tie the bind to its intent).
 	items = append(items, control.AccessRequestItemRequest{
 		ResourceType: control.AccessRequestItemRequestResourceTypeCredential, Action: control.Bind, ResourceReference: &ref, Rules: rules,
-	})
-	// Step 4: bind the agent to the toolkit, named by the same API reference.
-	items = append(items, control.AccessRequestItemRequest{
-		ResourceType: control.AccessRequestItemRequestResourceTypeToolkit, Action: control.Bind, ResourceReference: &ref,
 	})
 	return items, nil
 }
@@ -349,13 +360,13 @@ func parseProposedRules(raw string) (*[]control.JenticOneControlWebSchemasAccess
 	return &rules, nil
 }
 
-// parseToolkitRef splits "vendor/name[/version]" into a resource_reference. The
+// parseAccessRef splits "vendor/name[/version]" into a resource_reference. The
 // agent names the API it discovered via search; the server resolves it to a
-// concrete toolkit at decide time.
-func parseToolkitRef(s string) (map[string]any, error) {
+// concrete credential at decide time.
+func parseAccessRef(s string) (map[string]any, error) {
 	parts := strings.Split(strings.TrimSpace(s), "/")
 	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
-		return nil, fmt.Errorf("--toolkit must be vendor/name or vendor/name/version, got %q", s)
+		return nil, fmt.Errorf("an API reference must be vendor/name or vendor/name/version, got %q", s)
 	}
 	ref := map[string]any{"vendor": parts[0], "name": parts[1]}
 	if len(parts) >= 3 && parts[2] != "" {

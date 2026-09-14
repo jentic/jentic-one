@@ -70,7 +70,6 @@ func (BearerTokenCreateRequest) RequiredFields() []string {
 	return []string{"api", "name", "token", "type"}
 }
 func (BearerTokenUpdateRequest) RequiredFields() []string { return []string{"type"} }
-func (BindingWarningSchema) RequiredFields() []string     { return []string{"code", "message"} }
 func (CatalogEntryLinksResponse) RequiredFields() []string {
 	return []string{"import", "operations", "self"}
 }
@@ -84,9 +83,20 @@ func (CatalogRefreshResponse) RequiredFields() []string { return []string{"count
 func (ChangePasswordRequest) RequiredFields() []string {
 	return []string{"current_password", "new_password"}
 }
-func (ClaimRequest) RequiredFields() []string             { return []string{"token"} }
-func (ConnectChallengeResponse) RequiredFields() []string { return []string{"authorize_url", "state"} }
-func (CreateAdminRequest) RequiredFields() []string       { return []string{"email", "password"} }
+func (ClaimRequest) RequiredFields() []string                { return []string{"token"} }
+func (ConnectChallengeResponse) RequiredFields() []string    { return []string{"authorize_url", "state"} }
+func (ConsentAgentStatusResponse) RequiredFields() []string  { return []string{"status"} }
+func (CreateAdminRequest) RequiredFields() []string          { return []string{"email", "password"} }
+func (CredentialAgentListResponse) RequiredFields() []string { return []string{"data", "has_more"} }
+func (CredentialAgentResponse) RequiredFields() []string {
+	return []string{"agent_id", "agent_name", "bound_at", "status", "suspended"}
+}
+func (CredentialBindRequest) RequiredFields() []string         { return []string{"credential_id"} }
+func (CredentialBindingEntry) RequiredFields() []string        { return []string{"bound_at", "credential_id"} }
+func (CredentialBindingListResponse) RequiredFields() []string { return []string{"data"} }
+func (CredentialBindingResponse) RequiredFields() []string {
+	return []string{"agent_id", "bound_at", "credential_id", "id", "suspended"}
+}
 func (CredentialCreateResponse) RequiredFields() []string { return []string{"credential", "secret"} }
 func (CredentialListResponse) RequiredFields() []string   { return []string{"data", "has_more"} }
 func (CredentialRedactedResponse) RequiredFields() []string {
@@ -116,7 +126,7 @@ func (EventResponse) RequiredFields() []string {
 func (ExecutionListResponse) RequiredFields() []string { return []string{"data", "has_more"} }
 func (ExecutionRecordLinks) RequiredFields() []string  { return []string{"self"} }
 func (ExecutionResponse) RequiredFields() []string {
-	return []string{"_links", "actor_id", "actor_type", "created_at", "execution_id", "started_at", "status", "toolkit_id", "trace_id"}
+	return []string{"_links", "actor_id", "actor_type", "created_at", "execution_id", "started_at", "status", "trace_id"}
 }
 func (ExecutionStatsResponse) RequiredFields() []string {
 	return []string{"daily_buckets", "success_rate_percent", "top_operations", "total_executions"}
@@ -238,8 +248,17 @@ func (RegisterRequest) RequiredFields() []string           { return []string{"cl
 func (RegisterResponse) RequiredFields() []string {
 	return []string{"client_id", "registration_access_token", "registration_client_uri", "status"}
 }
-func (RegistrationStatusResponse) RequiredFields() []string  { return []string{"client_id", "status"} }
-func (RevokeRequest) RequiredFields() []string               { return []string{"token"} }
+func (RegistrationStatusResponse) RequiredFields() []string { return []string{"client_id", "status"} }
+func (RevokeRequest) RequiredFields() []string              { return []string{"token"} }
+func (RuleSetAttachRequest) RequiredFields() []string       { return []string{"rule_set_id"} }
+func (RuleSetCreateRequest) RequiredFields() []string       { return []string{"name"} }
+func (RuleSetListResponse) RequiredFields() []string        { return []string{"data", "has_more"} }
+func (RuleSetResponse) RequiredFields() []string {
+	return []string{"binding_count", "created_at", "name", "rule_set_id", "rules"}
+}
+func (RuleSetSummaryResponse) RequiredFields() []string {
+	return []string{"created_at", "name", "rule_count", "rule_set_id"}
+}
 func (SearchLinksResponse) RequiredFields() []string         { return []string{"inspect"} }
 func (SearchRequest) RequiredFields() []string               { return []string{"query"} }
 func (SearchResponse) RequiredFields() []string              { return []string{"data", "has_more"} }
@@ -258,34 +277,9 @@ func (SetPermissionsRequest) RequiredFields() []string        { return []string{
 func (Sigv4CreateRequest) RequiredFields() []string {
 	return []string{"access_key_id", "api", "aws_region", "aws_service", "name", "secret_access_key", "type"}
 }
-func (Sigv4UpdateRequest) RequiredFields() []string       { return []string{"type"} }
-func (TokenResponse) RequiredFields() []string            { return []string{"access_token", "expires_in"} }
-func (ToolkitAgentListResponse) RequiredFields() []string { return []string{"data", "has_more"} }
-func (ToolkitAgentResponse) RequiredFields() []string {
-	return []string{"agent_id", "agent_name", "bound_at", "status"}
-}
-func (ToolkitBindRequest) RequiredFields() []string         { return []string{"toolkit_id"} }
-func (ToolkitBindingEntry) RequiredFields() []string        { return []string{"bound_at", "toolkit_id"} }
-func (ToolkitBindingListResponse) RequiredFields() []string { return []string{"data"} }
-func (ToolkitBindingResponse) RequiredFields() []string {
-	return []string{"agent_id", "bound_at", "id", "toolkit_id"}
-}
-func (ToolkitCreateRequest) RequiredFields() []string         { return []string{"name"} }
-func (ToolkitCreateResponse) RequiredFields() []string        { return []string{"api_key", "toolkit"} }
-func (ToolkitCredentialBindRequest) RequiredFields() []string { return []string{"credential_id"} }
-func (ToolkitCredentialBindingResponse) RequiredFields() []string {
-	return []string{"bound_at", "credential_id", "toolkit_id"}
-}
-func (ToolkitCredentialListResponse) RequiredFields() []string { return []string{"data", "has_more"} }
-func (ToolkitKeyCreateResponse) RequiredFields() []string      { return []string{"api_key", "key"} }
-func (ToolkitKeyListResponse) RequiredFields() []string        { return []string{"data", "has_more"} }
-func (ToolkitKeyResponse) RequiredFields() []string {
-	return []string{"created_at", "key_id", "key_preview", "revoked", "toolkit_id"}
-}
-func (ToolkitListResponse) RequiredFields() []string { return []string{"data", "has_more"} }
-func (ToolkitResponse) RequiredFields() []string {
-	return []string{"active", "created_at", "credential_count", "key_count", "name", "toolkit_id"}
-}
+func (Sigv4UpdateRequest) RequiredFields() []string  { return []string{"type"} }
+func (TokenResponse) RequiredFields() []string       { return []string{"access_token", "expires_in"} }
+func (ToolkitBindingEntry) RequiredFields() []string { return []string{"bound_at", "toolkit_id"} }
 func (TopOperation) RequiredFields() []string {
 	return []string{"api_name", "api_vendor", "failed", "operation_id", "total"}
 }

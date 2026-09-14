@@ -11,25 +11,27 @@ import structlog
 
 from jentic_one.control.core.schema.access_request_items import AccessRequestItem
 from jentic_one.control.core.schema.credentials import Credential
+from jentic_one.control.repos.agent_permission_rule_repo import AgentPermissionRuleRepository
 from jentic_one.control.repos.credential_repo import CredentialRepository
-from jentic_one.control.repos.effects_repo import BindTargetMissingError, EffectsRepository
-from jentic_one.control.repos.toolkit_permission_repo import ToolkitPermissionRepository
-from jentic_one.control.scoping.filters import build_access_filters, toolkit_owner_scope
+from jentic_one.control.repos.effects_repo import EffectsRepository
+from jentic_one.control.repos.permission_rule_set_repo import PermissionRuleSetRepository
+from jentic_one.control.scoping.filters import build_access_filters, credential_owner_scope
 from jentic_one.control.services.access_requests.errors import (
     CredentialNotFoundForBindError,
+    CredentialReferenceAmbiguousError,
+    CredentialReferenceUnresolvedError,
     ProvisioningPlanNotFulfilledError,
     RequiredFieldMissingError,
+    RuleSetNotFoundForBindError,
     RulesNotSupportedForBindError,
-    ToolkitNotVisibleError,
-    ToolkitReferenceAmbiguousError,
-    ToolkitReferenceUnresolvedError,
+    RulesRequiredForBindError,
+    UnsupportedAccessRequestItemError,
     assert_grantable_scope,
 )
 from jentic_one.control.services.access_requests.schemas.effects import (
     CredentialBindEffect,
     ScopeGrantEffect,
     SkippedEffect,
-    ToolkitBindEffect,
 )
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_best_effort
 from jentic_one.shared.auth.identity import Identity
@@ -40,21 +42,18 @@ from jentic_one.shared.models.api_identity import slugify_api_field
 
 logger = structlog.get_logger(__name__)
 
-EffectResult = CredentialBindEffect | ToolkitBindEffect | ScopeGrantEffect | SkippedEffect
+EffectResult = CredentialBindEffect | ScopeGrantEffect | SkippedEffect
 
 
-# The fulfilment-only intent item types that mark a request as a provisioning
+# The fulfilment-only intent item type that marks a request as a provisioning
 # plan. Exposed here (rather than only on the service) so ``plan_governance_for_items``
 # — the pure function that computes which binds a plan governs — stays close
-# to the phase table it consults.
-PLAN_INTENT_COMBINATIONS: frozenset[tuple[str, str]] = frozenset(
-    {("toolkit", "create"), ("credential", "provision")}
-)
+# to the phase table it consults. (Theme-5 Phase 3: ``toolkit:create`` is gone;
+# a plan is now the 2-item ``credential:provision`` + ``credential:bind`` chain.)
+PLAN_INTENT_COMBINATIONS: frozenset[tuple[str, str]] = frozenset({("credential", "provision")})
 
 # Bind item combinations whose fulfilment contract flips inside a plan.
-_PLAN_GOVERNABLE_BINDS: frozenset[tuple[str, str]] = frozenset(
-    {("credential", "bind"), ("toolkit", "bind")}
-)
+_PLAN_GOVERNABLE_BINDS: frozenset[tuple[str, str]] = frozenset({("credential", "bind")})
 
 # Item statuses that keep an intent (or bind) "live" for the purposes of
 # governance. A withdrawn/denied intent no longer defines a plan on a later
@@ -75,6 +74,7 @@ class _PlanGovernanceItem(Protocol):
     id: str
     resource_type: str
     action: str
+    resource_id: str | None
     resource_reference: dict[str, Any] | None
     status: str
 
@@ -106,11 +106,9 @@ class PlanGovernance:
     """Why a bind item is governed by a provisioning plan.
 
     Carries the specific live intent item ids whose fulfilment the wizard
-    must stamp before this bind can approve, and — for ``toolkit:bind`` — the
-    canonical ``(vendor, name)`` slug key that made those intents relevant.
-    ``credential:bind`` items intentionally leave ``governing_api`` at
-    ``None``: the credential-bind governance rule is "any live intent" (#778),
-    not tied to a specific API.
+    must stamp before this bind can approve, and the canonical
+    ``(vendor, name)`` slug key that made those intents relevant (``None``
+    when the bind was governed conservatively — an unattributable reference).
 
     Default construction (``PlanGovernance()``) means "not governed by any
     plan" — the plain fulfilment contract applies. ``is_governed`` is the
@@ -139,36 +137,33 @@ def plan_governance_for_items(
     """Compute per-item plan governance for a request's bind items.
 
     A request is a *plan* iff it carries at least one live fulfilment-only
-    intent (``toolkit:create`` / ``credential:provision``). This function
-    returns a mapping from bind ``item_id`` to :class:`PlanGovernance` for
-    every bind whose fulfilment contract the plan flips — the bind can only
-    be satisfied by ids stamped by the wizard (see
+    intent (``credential:provision``). This function returns a mapping from
+    bind ``item_id`` to :class:`PlanGovernance` for every ``credential:bind``
+    whose fulfilment contract the plan flips — the bind can only be satisfied
+    by the credential id stamped by the wizard (see
     ``EffectApplicator.validate``); a plain approval of such a bind denies
     with :class:`ProvisioningPlanNotFulfilledError`. Bind items not in the
     mapping are governed by the plain contract.
 
     Governance is per-item, not request-wide (issue #778):
 
-    - A ``toolkit:bind`` is governed iff a live intent's canonical
+    - A ``credential:bind`` is governed iff a live intent's canonical
       ``(vendor, name)`` matches the bind's ``resource_reference``. Version is
       not part of the key — an intent for ``vendor/name`` covers all versions.
       A bind for a different API is *not* governed and resolves normally by
-      its reference. A bind with an *unattributable* reference (missing or
-      vendor-less) is governed conservatively: it can never resolve by
-      reference, so the plan-aware denial beats the bare resolution error.
-    - A ``credential:bind`` is governed whenever any live intent exists in
-      the request: agents never carry credential ids at file time, so a
-      credential-bind sharing a request with an intent is always the wizard's
-      to satisfy.
+      its reference (or its explicit ``resource_id``). A bind with an
+      *unattributable* reference (missing or vendor-less) **and no explicit
+      id** is governed conservatively: it can never resolve by reference, so
+      the plan-aware denial beats the bare resolution error.
 
     Non-live intents (``denied`` / ``withdrawn``) do not govern — abandoning a
     plan reverts remaining binds to the plain contract on the next decide.
 
-    The mapping value carries *which* live intent(s) govern this bind and, for
-    ``toolkit:bind``, *which* API tuple made them relevant — richer than a
-    boolean so a diagnostic (an ``UNFULFILLABLE`` DENY reason, an operator
-    dashboard row) can name the intent the wizard needs to fulfil rather than
-    just "some plan somewhere".
+    The mapping value carries *which* live intent(s) govern this bind and
+    *which* API tuple made them relevant — richer than a boolean so a
+    diagnostic (an ``UNFULFILLABLE`` DENY reason, an operator dashboard row)
+    can name the intent the wizard needs to fulfil rather than just "some plan
+    somewhere".
     """
     live_intents = [
         it
@@ -198,23 +193,20 @@ def plan_governance_for_items(
             # An already-decided bind isn't going to be re-validated; excluding
             # it keeps the mapping to items decide() actually processes.
             continue
-        if key == ("credential", "bind"):
-            # Every live intent could plausibly be the reason this credential
-            # bind exists — record them all so a diagnostic can name them.
-            governance[item.id] = PlanGovernance(governing_intent_ids=all_live_intent_ids)
-            continue
-        # ("toolkit", "bind"): governed only when a live intent targets the
-        # same API. An untargeted intent (unusual — the CLI always fills a
-        # reference) is treated as covering all bind targets to preserve the
-        # pre-#778 conservative behaviour for that edge case.
         bind_key = _canonical_api_key(item.resource_reference)
         if bind_key is None:
+            if item.resource_id:
+                # An explicit-id bind sharing a request with a plan resolves by
+                # its id under the plain contract — it isn't the wizard's to
+                # satisfy (it may have been stamped by a previous wizard pass).
+                continue
             # An unattributable bind (no reference, or a vendor-less one) can
             # never resolve by reference — letting it fall to the plain
-            # contract would surface a bare ValueError from resolution (a 500
-            # that strands the request pending) instead of a legible denial.
-            # Treat it as governed by every live intent, the conservative
-            # pre-#778 behaviour for malformed refs inside a plan.
+            # contract would surface a bare resolution error (a denial that
+            # strands the operator without context) instead of a legible,
+            # plan-aware denial. Treat it as governed by every live intent,
+            # the conservative pre-#778 behaviour for malformed refs inside a
+            # plan.
             governance[item.id] = PlanGovernance(governing_intent_ids=all_live_intent_ids)
             continue
         matching_intent_ids: list[str] = list(untargeted_intent_ids)
@@ -231,15 +223,24 @@ def plan_governance_for_items(
 class EffectPhase(enum.Enum):
     """Which transaction phase applies an effect.
 
-    ``CONTROL_SESSION`` effects are written in the caller's control-DB
-    transaction and are therefore atomic with the decision. ``ADMIN`` effects
-    write to the admin DB in their own independent transaction and are applied
-    after the control commit (reconcilable on retry). ``FULFILMENT_ONLY`` items
-    (``toolkit:create``, ``credential:provision``) are provisioning-plan
-    placeholders: the applicator never mutates state for them — a human fulfils
-    them out-of-band via the existing create endpoints — so approving one is a
-    recorded no-op. ``UNSUPPORTED`` is a no-op (skipped) effect for an unknown
-    ``(resource_type, action)`` pair.
+    ``ADMIN`` effects write to the admin DB in their own independent
+    transaction and are applied after the control commit (reconcilable on
+    retry). ``credential:bind`` is an ADMIN effect with a **control-first
+    prologue** (theme-5 hard problem 6): its permission rules are committed to
+    the control DB *before* the admin-DB binding row, so a crash between the
+    two leaves inert rules, never a live rule-less bind. ``FULFILMENT_ONLY``
+    items (``credential:provision``) are provisioning-plan placeholders: the
+    applicator never mutates state for them — a human fulfils them out-of-band
+    via the existing create endpoints — so approving one is a recorded no-op.
+    ``UNSUPPORTED`` marks a retired/unknown ``(resource_type, action)`` pair;
+    it is a **hard failure** at validate/apply time (Phase 3), never a silent
+    skip — a Phase-3 server with a pre-Phase-5 client must fail loudly, not
+    approve-and-grant-nothing.
+
+    ``CONTROL_SESSION`` (an effect written atomically in the caller's
+    control-DB transaction) currently has no members — the toolkit-era
+    ``credential:bind`` was the last one — but the phase and its inline-apply
+    path in ``decide()`` are kept for future single-DB effects.
     """
 
     CONTROL_SESSION = "control_session"
@@ -250,12 +251,11 @@ class EffectPhase(enum.Enum):
 
 # Single source of truth for routing a (resource_type, action) pair to its phase.
 # ``apply()`` and the service both consult this so the dispatch knowledge lives
-# in one place.
+# in one place. Retired pairs (toolkit:create, toolkit:bind) are intentionally
+# absent: they classify as UNSUPPORTED and fail hard (see EffectPhase).
 _EFFECT_PHASES: dict[tuple[str, str], EffectPhase] = {
-    ("credential", "bind"): EffectPhase.CONTROL_SESSION,
-    ("toolkit", "bind"): EffectPhase.ADMIN,
+    ("credential", "bind"): EffectPhase.ADMIN,
     ("scope", "grant"): EffectPhase.ADMIN,
-    ("toolkit", "create"): EffectPhase.FULFILMENT_ONLY,
     ("credential", "provision"): EffectPhase.FULFILMENT_ONLY,
 }
 
@@ -275,8 +275,36 @@ def admin_effect_keys() -> tuple[tuple[str, str], ...]:
     return tuple(key for key, phase in _EFFECT_PHASES.items() if phase is EffectPhase.ADMIN)
 
 
+@dataclass(frozen=True, slots=True)
+class PreparedEffect:
+    """Control-phase output carried from ``prepare()`` to ``complete()``.
+
+    For ``credential:bind`` it records the resolved credential id and how many
+    inline rules were written in the (already committed) control transaction;
+    other effects carry nothing.
+    """
+
+    credential_id: str | None = None
+    rules_applied: int = 0
+
+
 class EffectApplicator:
-    """Applies authorization effects for approved access-request items."""
+    """Applies authorization effects for approved access-request items.
+
+    Admin-DB effects are applied in two stages (theme-5 hard problem 6):
+
+    1. :meth:`prepare` — runs inside a caller-owned **control** transaction;
+       resolves/authorizes the target and writes the control-DB half of the
+       effect (a ``credential:bind``'s permission rules). The caller commits
+       this transaction before stage 2, so the policy is durable first.
+    2. :meth:`complete` — writes the admin-DB half (the binding row / scope
+       grant) in its own transaction, idempotently.
+
+    A crash between the stages leaves inert rules — never a live rule-less
+    bind — and the un-acked ``applied_effects IS NULL`` marker makes the item
+    reconcilable on the next ``decide()``. :meth:`apply` remains the
+    single-shot entry point for fulfilment-only intents (a recorded no-op).
+    """
 
     def __init__(self, ctx: Context) -> None:
         self._ctx = ctx
@@ -288,55 +316,107 @@ class EffectApplicator:
         identity: Identity,
         control_session: Any,
     ) -> EffectResult:
-        """Dispatch on (resource_type, action) to create the appropriate artifacts.
+        """Apply a non-admin effect inline (fulfilment-only intents).
 
-        The ``control_session`` is the caller's existing control-DB session so
-        that credential-bind effects — and the toolkit-reference resolution —
-        participate in the same transaction/snapshot as the decision. Admin-DB
-        effects (toolkit bind, scope grant) write through their own transactions
-        but still resolve/authorize their target on ``control_session``.
-
-        ``identity`` is the deciding operator; its owner scope confines
-        ``toolkit:bind`` to toolkits the decider can actually see.
+        Admin-phase effects must go through :meth:`prepare`/:meth:`complete`
+        (write-ordering matters — see the class docstring); passing one here is
+        a programming error. Retired/unknown pairs fail loudly (Phase 3): the
+        old ``UNSUPPORTED`` silent skip would approve-and-grant-nothing — the
+        "hollow yes".
         """
-        decided_by = identity.sub
+        del identity, control_session  # dispatch parity with prepare/complete.
         phase = classify_effect(item.resource_type, item.action)
 
-        if phase is EffectPhase.CONTROL_SESSION:
-            return await self._apply_credential_bind(
-                item, decided_by=decided_by, session=control_session
-            )
-        if phase is EffectPhase.ADMIN:
-            key = (item.resource_type, item.action)
-            if key == ("toolkit", "bind"):
-                return await self._apply_toolkit_bind(
-                    item, identity=identity, control_session=control_session
-                )
-            return await self._apply_scope_grant(item, decided_by=decided_by)
-
         if phase is EffectPhase.FULFILMENT_ONLY:
-            # A provisioning-plan placeholder (toolkit:create / credential:provision).
-            # The applicator never mutates state for these — a human fulfils them
-            # via the existing create endpoints and writes the resulting ids onto
-            # the downstream bind items (amend). Record an explicit, non-null
-            # skipped effect so an approved intent is an audited no-op rather than
-            # a silent one.
+            # A provisioning-plan placeholder (credential:provision). The
+            # applicator never mutates state for these — a human fulfils them
+            # via the existing create endpoints and writes the resulting id onto
+            # the downstream bind item (amend). Record an explicit, non-null
+            # skipped effect so an approved intent is an audited no-op rather
+            # than a silent one.
             return SkippedEffect(
                 reason=(
                     f"fulfilment-only intent {item.resource_type}:{item.action} "
                     "is provisioned out-of-band; no effect applied"
                 ),
             )
+        if phase is EffectPhase.ADMIN:
+            raise ValueError(
+                f"admin effect {item.resource_type}:{item.action} must be applied "
+                f"via prepare()/complete(), item={item.id}"
+            )
 
+        # Retired/unknown pair: fail loudly (Phase 3) — approving it would be a
+        # recorded no-op the operator believes granted (the "hollow yes").
         logger.warning(
             "unsupported_effect_combination",
             resource_type=item.resource_type,
             action=item.action,
             item_id=item.id,
         )
-        return SkippedEffect(
-            reason=f"unsupported resource_type={item.resource_type} action={item.action}",
-        )
+        raise UnsupportedAccessRequestItemError(item.resource_type, item.action)
+
+    async def prepare(
+        self,
+        item: AccessRequestItem,
+        *,
+        identity: Identity,
+        control_session: Any,
+    ) -> PreparedEffect:
+        """Stage 1 of an admin effect: control-DB resolution + policy write.
+
+        Must run inside a control **transaction** the caller commits before
+        calling :meth:`complete` — for ``credential:bind`` this writes the
+        binding's inline permission rules (rules-first; an attached
+        ``rule_set_id`` needs no control write, the pointer rides on the
+        admin row). Idempotent on retry: the rules write is a full replace.
+        """
+        key = (item.resource_type, item.action)
+        if key == ("credential", "bind"):
+            credential_id = await self._resolve_credential_bind_target(
+                item, identity=identity, session=control_session
+            )
+            if not item.rules and not item.rule_set_id:
+                # validate() already guards this; keep the invariant on the
+                # reconcile path too so a rule-less bind can never be written.
+                raise RulesRequiredForBindError()
+            rules_applied = 0
+            if item.rule_set_id is None and item.rules:
+                await AgentPermissionRuleRepository.replace_user_rules(
+                    control_session,
+                    item.actor_id,
+                    credential_id,
+                    item.rules,
+                    created_by=identity.sub,
+                )
+                rules_applied = len(item.rules)
+            return PreparedEffect(credential_id=credential_id, rules_applied=rules_applied)
+        if key == ("scope", "grant"):
+            assert_grantable_scope(item.resource_id)
+            return PreparedEffect()
+        raise UnsupportedAccessRequestItemError(item.resource_type, item.action)
+
+    async def complete(
+        self,
+        item: AccessRequestItem,
+        *,
+        identity: Identity,
+        prepared: PreparedEffect,
+    ) -> EffectResult:
+        """Stage 2 of an admin effect: the admin-DB write, in its own transaction.
+
+        Only safe to call after the :meth:`prepare` transaction committed —
+        the write order (rules durable before the bind exists) is the whole
+        point. Idempotent via ON CONFLICT DO NOTHING.
+        """
+        key = (item.resource_type, item.action)
+        if key == ("credential", "bind"):
+            return await self._complete_credential_bind(
+                item, decided_by=identity.sub, prepared=prepared
+            )
+        if key == ("scope", "grant"):
+            return await self._apply_scope_grant(item, decided_by=identity.sub)
+        raise UnsupportedAccessRequestItemError(item.resource_type, item.action)
 
     async def validate(
         self,
@@ -351,125 +431,166 @@ class EffectApplicator:
         Run for every approved item *before* the first effect is applied so that
         a resolution/visibility/scope failure aborts the whole decision before
         any admin-DB write commits. This is the guard against cross-DB partial
-        commits: admin-DB effects (toolkit bind, scope grant) commit in their own
-        transactions and cannot be rolled back by the control-DB transaction, so
-        the only safe place to fail is up front.
+        commits: admin-DB effects (credential bind, scope grant) commit in their
+        own transactions and cannot be rolled back by the control-DB transaction,
+        so the only safe place to fail is up front.
 
         ``plan_governance`` is computed by ``decide()`` from the request's live
-        fulfilment intents (see :func:`plan_governance_for_items`). Governed
-        bind items can only be satisfied by the ids the wizard stamps
-        (``to_id`` / ``resource_id``); a plain approval of one is denied with
-        an actionable, plan-aware reason that names the intent id(s) still
-        awaiting fulfilment rather than the cryptic "to_id missing" / "no
-        toolkit serves API" a plain approval would otherwise surface.
-        Default (``UNGOVERNED_PLAN``) means "plain contract" — non-plan items and
-        non-plan requests never construct a governance value at all.
+        fulfilment intents (see :func:`plan_governance_for_items`). A governed
+        bind item can only be satisfied by the credential id the wizard stamps
+        (``resource_id``); a plain approval of one is denied with an
+        actionable, plan-aware reason that names the intent id(s) still
+        awaiting fulfilment rather than the cryptic "no credential covers API"
+        a plain approval would otherwise surface. Default (``UNGOVERNED_PLAN``)
+        means "plain contract" — non-plan items and non-plan requests never
+        construct a governance value at all.
         """
         key = (item.resource_type, item.action)
         if key == ("credential", "bind"):
-            if plan_governance.is_governed and not (item.to_id and item.resource_id):
-                raise ProvisioningPlanNotFulfilledError(
-                    item.resource_type,
-                    item.action,
-                    governing_intent_ids=plan_governance.governing_intent_ids,
-                )
-            # credential:bind writes only to the shared control-session and so
-            # rolls back cleanly with the decision. We still pre-validate that the
-            # named credential exists and is visible to the decider, so a bad
-            # ``resource_id`` fails here as a 422 rather than slipping through to
-            # _apply_credential_bind's bare ValueError / a downstream FK fault (a
-            # 500). See issue #649.
-            await self._validate_credential_bind_target(
-                item, identity=identity, session=control_session
-            )
-        elif key == ("toolkit", "bind"):
-            # Rules can't be enforced on an agent↔toolkit binding (no credential
-            # key); fail up front rather than dropping them on apply. See
-            # _apply_toolkit_bind for the full rationale.
-            if item.rules:
-                raise RulesNotSupportedForBindError(item.resource_type, item.action)
-            if plan_governance.is_governed and not (item.resource_id or item.to_id):
-                # In a plan the agent binding must resolve by the concrete toolkit
-                # id the wizard creates (the credential→toolkit binding it depends
-                # on isn't visible to the reference join until the credential:bind
-                # applies later in the same decision). An unfulfilled reference-only
-                # toolkit:bind can't be satisfied by a plain approval.
+            if plan_governance.is_governed and not item.resource_id:
                 raise ProvisioningPlanNotFulfilledError(
                     item.resource_type,
                     item.action,
                     governing_intent_ids=plan_governance.governing_intent_ids,
                     governing_api=plan_governance.governing_api,
                 )
-            await self._resolve_toolkit_bind_target(
+            # A rules-less bind would be a live default-deny the operator
+            # believes granted — the "hollow yes" as the default path (hard
+            # problem 6). Filing substitutes a read-only default, so this
+            # fires only for stored legacy items or amendments that stripped
+            # the policy. Raise (rather than DENY) so the request stays
+            # pending while the operator amends rules back on.
+            if not item.rules and not item.rule_set_id:
+                raise RulesRequiredForBindError()
+            if item.rule_set_id is not None:
+                rule_set = await PermissionRuleSetRepository.get_by_id(
+                    control_session, item.rule_set_id
+                )
+                if rule_set is None:
+                    raise RuleSetNotFoundForBindError(item.rule_set_id)
+            await self._resolve_credential_bind_target(
                 item, identity=identity, session=control_session
             )
         elif key == ("scope", "grant"):
             # Mirror _apply_scope_grant's guard so a bad scope-grant item fails
             # here (422) rather than mid-apply with a bare ValueError (500).
             assert_grantable_scope(item.resource_id)
-        elif (
-            classify_effect(item.resource_type, item.action) is EffectPhase.FULFILMENT_ONLY
-            and item.rules
-        ):
-            # Fulfilment-only intents (toolkit:create, credential:provision) are
-            # inert placeholders — the applicator never mutates state for them.
+        elif classify_effect(item.resource_type, item.action) is EffectPhase.FULFILMENT_ONLY:
+            # Fulfilment-only intents (credential:provision) are inert
+            # placeholders — the applicator never mutates state for them.
             # They still cannot carry enforceable rules (there is no binding key
             # to attach them to), so reject rules up front, consistent with the
             # file/amend-time guard. Everything else validates cleanly.
-            raise RulesNotSupportedForBindError(item.resource_type, item.action)
+            if item.rules:
+                raise RulesNotSupportedForBindError(item.resource_type, item.action)
+        else:
+            # Retired vocabulary (toolkit:create / toolkit:bind) or an unknown
+            # pair on a stored item: hard-fail the decision (422) — never the
+            # old UNSUPPORTED silent skip. See UnsupportedAccessRequestItemError.
+            raise UnsupportedAccessRequestItemError(item.resource_type, item.action)
 
-    async def _validate_credential_bind_target(
+    async def _resolve_credential_bind_target(
         self, item: AccessRequestItem, *, identity: Identity, session: Any
-    ) -> None:
-        """Pre-validate a credential:bind item without writing.
+    ) -> str:
+        """Resolve (and authorize) the credential id a ``credential:bind`` targets.
 
-        Confirms the item carries the required ids and that ``resource_id``
-        resolves to a credential visible to the decider, raising the appropriate
-        422 domain error otherwise. The visibility filters mirror
-        :func:`build_access_filters` for ``Credential`` so this read sees exactly
-        what the apply step's write would (same control session). See issue #649.
+        Shared by ``validate()`` (which discards the id, using this only as the
+        side-effect-free visibility/resolution guard) and ``prepare()`` (which
+        writes rules against — and binds to — the returned id) so the two stay
+        in lock-step.
+
+        An explicit ``resource_id`` must resolve to a credential visible to the
+        decider — the visibility filters mirror :func:`build_access_filters`
+        for ``Credential`` so this read sees exactly what the apply step's
+        write would (issue #649). A ``resource_reference`` resolves through
+        :meth:`EffectsRepository.resolve_credentials_for_api` under the
+        decider's owner axis (hard problem 8): credentials the decider owns,
+        plus credentials bound to agents the decider owns (the id list pushed
+        down from the admin DB by :meth:`_binding_widened_credential_ids`).
+        Raises ``CredentialReferenceUnresolvedError`` when no visible
+        credential covers the API and ``CredentialReferenceAmbiguousError``
+        when several do.
         """
-        # ``to_id`` is the toolkit (bind target); ``resource_id`` is the
-        # credential. Attribute a missing id to the right side so the 422 names
-        # the actual problem instead of always blaming the credential.
-        if not item.to_id:
-            raise RequiredFieldMissingError(
-                "to_id", context="credential:bind requires a target toolkit"
+        if item.resource_id:
+            filters = build_access_filters(identity, Credential)
+            credential = await CredentialRepository.get_by_id(
+                session, item.resource_id, filters=filters
             )
-        if not item.resource_id:
-            raise RequiredFieldMissingError(
-                "resource_id", context="credential:bind requires a credential"
-            )
-        filters = build_access_filters(identity, Credential)
-        credential = await CredentialRepository.get_by_id(
-            session, item.resource_id, filters=filters
-        )
-        if credential is None:
-            raise CredentialNotFoundForBindError(item.resource_id)
+            if credential is None:
+                raise CredentialNotFoundForBindError(item.resource_id)
+            return item.resource_id
 
-    async def _apply_credential_bind(
-        self, item: AccessRequestItem, *, decided_by: str, session: Any
+        reference = item.resource_reference or {}
+        vendor = reference.get("vendor")
+        if not vendor:
+            raise RequiredFieldMissingError(
+                "resource_id",
+                context=(
+                    "credential:bind requires a credential id or a resource_reference with a vendor"
+                ),
+            )
+
+        owner_ids = credential_owner_scope(identity)
+        bound_ids = await self._binding_widened_credential_ids(owner_ids)
+        # Normalize vendor/name to the registry's slug form (dots -> dashes) so
+        # the reference matches the credential's stored, normalized api_vendor.
+        # Agents file references from discovered vendor/name that may be raw
+        # domains (e.g. httpbin.org); credentials store the slug (httpbin-org),
+        # so an un-normalized match would find no credential and deny a
+        # satisfiable bind. See issue #656.
+        raw_name = reference.get("name")
+        raw_version = reference.get("version")
+        candidates = await EffectsRepository.resolve_credentials_for_api(
+            session,
+            vendor=slugify_api_field(str(vendor)),
+            name=slugify_api_field(str(raw_name)) if raw_name else None,
+            version=str(raw_version) if raw_version else None,
+            owner_ids=owner_ids,
+            bound_credential_ids=bound_ids,
+        )
+        if not candidates:
+            raise CredentialReferenceUnresolvedError(reference)
+        if len(candidates) > 1:
+            raise CredentialReferenceAmbiguousError(reference, candidates)
+        return candidates[0]
+
+    async def _binding_widened_credential_ids(
+        self, owner_ids: list[str] | None
+    ) -> list[str] | None:
+        """Admin-DB push-down for the hard-problem-8 owner axis.
+
+        Returns the ids of credentials bound to agents owned by ``owner_ids``,
+        resolved in a short admin session (the control query never references
+        an admin table — hard problem 9). ``None`` for an ``org:admin`` decider
+        (no restriction, so no widening needed).
+        """
+        if owner_ids is None:
+            return None
+        async with self._ctx.admin_db.session() as session:
+            return await EffectsRepository.list_bound_credential_ids_for_owned_agents(
+                session, owner_ids=owner_ids
+            )
+
+    async def _complete_credential_bind(
+        self, item: AccessRequestItem, *, decided_by: str, prepared: PreparedEffect
     ) -> CredentialBindEffect:
-        """Bind a credential to a toolkit and set permission rules."""
-        if not item.to_id:
-            raise ValueError(f"credential-bind effect requires to_id, item={item.id}")
-        if not item.resource_id:
-            raise ValueError(f"credential-bind effect requires resource_id, item={item.id}")
+        """Admin-DB half of a ``credential:bind``: the binding row + audit.
 
-        binding_id, already_bound = await self._bind_credential_with_race_guard(
-            item, decided_by=decided_by, session=session
-        )
+        Runs only after :meth:`prepare`'s control transaction (rules) has
+        committed — see the class docstring for the ordering rationale.
+        """
+        assert prepared.credential_id is not None  # stamped by prepare().
+        credential_id = prepared.credential_id
+        rules_applied = prepared.rules_applied
 
-        rules_applied = 0
-        if item.rules:
-            await ToolkitPermissionRepository.replace_user_rules(
+        async with self._ctx.admin_db.transaction() as session:
+            binding_id, already_bound = await EffectsRepository.bind_agent_to_credential(
                 session,
-                item.to_id,
-                item.resource_id,
-                item.rules,
+                agent_id=item.actor_id,
+                credential_id=credential_id,
+                rule_set_id=item.rule_set_id,
                 created_by=decided_by,
             )
-            rules_applied = len(item.rules)
 
         await record_audit_best_effort(
             self._ctx,
@@ -483,152 +604,11 @@ class EffectApplicator:
 
         return CredentialBindEffect(
             binding_id=binding_id,
+            credential_id=credential_id,
             rules_applied=rules_applied,
+            rule_set_id=item.rule_set_id,
             already_bound=already_bound,
         )
-
-    async def _bind_credential_with_race_guard(
-        self, item: AccessRequestItem, *, decided_by: str, session: Any
-    ) -> tuple[str, bool]:
-        """Bind the credential, translating a lost TOCTOU race into a 422.
-
-        Pre-validation (`_validate_credential_bind_target`) already confirmed the
-        credential was visible, but either FK target could be deleted between that
-        read and this write (a same-/cross-transaction race). The binding has two
-        foreign keys (toolkit and credential); the repo detects the lost race,
-        attributes it to whichever target vanished, and raises a neutral
-        ``BindTargetMissingError`` (keeping ``sqlalchemy.exc`` out of this service
-        layer). We map that to the matching 422 domain error rather than letting a
-        bare FK fault surface as a 500. See issue #649.
-        """
-        assert item.to_id is not None  # guarded by _apply_credential_bind above.
-        assert item.resource_id is not None
-        try:
-            return await EffectsRepository.bind_credential_to_toolkit(
-                session,
-                toolkit_id=item.to_id,
-                credential_id=item.resource_id,
-                created_by=decided_by,
-            )
-        except BindTargetMissingError as exc:
-            if exc.target == "toolkit":
-                raise ToolkitNotVisibleError(exc.target_id) from exc
-            raise CredentialNotFoundForBindError(exc.target_id) from exc
-
-    async def _apply_toolkit_bind(
-        self, item: AccessRequestItem, *, identity: Identity, control_session: Any
-    ) -> ToolkitBindEffect:
-        """Bind an agent to a toolkit.
-
-        The toolkit is named either directly (``resource_id``/``to_id`` carrying a
-        ``tk_…`` id) or by reference (``resource_reference`` carrying
-        ``{vendor, name[, version]}``). Agents file by reference because they
-        discover APIs by their vendor/name via ``search`` and cannot see toolkit
-        ids; the reference is resolved here, at decide time, where the approver
-        has the privilege the agent lacks.
-
-        Resolution and the explicit-id visibility check run on the shared
-        ``control_session`` (the decision's transaction/snapshot) and are scoped
-        to the deciding operator's owner visibility, so an approver can only bind
-        an agent to a toolkit they themselves can see. This closes the
-        cross-owner escalation a *public* ``vendor/name`` reference would
-        otherwise allow.
-        """
-        # Defense-in-depth: broker rules are keyed per (toolkit_id, credential_id)
-        # (see broker/repos/rule_evaluator.py); an agent↔toolkit binding has no
-        # credential key, so rules here can't be enforced. The service rejects them
-        # at file/amend time, but a legacy/pre-existing stored item must fail loudly
-        # rather than silently approve into an unrestricted binding.
-        if item.rules:
-            raise RulesNotSupportedForBindError(item.resource_type, item.action)
-        decided_by = identity.sub
-        toolkit_id = await self._resolve_toolkit_bind_target(
-            item, identity=identity, session=control_session
-        )
-
-        async with self._ctx.admin_db.transaction() as session:
-            binding_id, already_bound = await EffectsRepository.bind_agent_to_toolkit(
-                session,
-                agent_id=item.actor_id,
-                toolkit_id=toolkit_id,
-                created_by=decided_by,
-            )
-
-        await record_audit_best_effort(
-            self._ctx,
-            action=AuditAction.GRANT,
-            target_type=AuditTargetType.TOOLKIT,
-            target_id=toolkit_id,
-            actor_type=actor_type_from_id(decided_by),
-            actor_id=decided_by,
-            origin=None,
-        )
-
-        return ToolkitBindEffect(binding_id=binding_id, already_bound=already_bound)
-
-    async def _resolve_toolkit_bind_target(
-        self, item: AccessRequestItem, *, identity: Identity, session: Any
-    ) -> str:
-        """Resolve (and authorize) the toolkit id a ``toolkit:bind`` item targets.
-
-        Shared by ``validate()`` (which discards the id, using this only as the
-        side-effect-free visibility/resolution guard) and ``_apply_toolkit_bind``
-        (which binds to the returned id) so the two stay in lock-step. Scoped to
-        the deciding operator's owner visibility: an approver can only bind an
-        agent to a toolkit they themselves can see. Raises ``ToolkitNotVisibleError``
-        for an explicit id the decider can't see, and the resolution errors for a
-        ``resource_reference`` that resolves to zero or many visible toolkits.
-        """
-        owner_ids = toolkit_owner_scope(identity)
-        explicit_id = item.resource_id or item.to_id
-        if explicit_id:
-            visible = await EffectsRepository.toolkit_visible_to_owners(
-                session, toolkit_id=explicit_id, owner_ids=owner_ids
-            )
-            if not visible:
-                raise ToolkitNotVisibleError(explicit_id)
-            return explicit_id
-        return await self._resolve_toolkit_reference(item, session=session, owner_ids=owner_ids)
-
-    async def _resolve_toolkit_reference(
-        self, item: AccessRequestItem, *, session: Any, owner_ids: list[str] | None
-    ) -> str:
-        """Resolve a ``toolkit:bind`` ``resource_reference`` to a single toolkit id.
-
-        Resolves on the decision's ``session`` (shared snapshot) and within the
-        decider's ``owner_ids`` scope. Raises ``ValueError`` when neither a direct
-        id nor a usable reference is present, ``ToolkitReferenceUnresolvedError``
-        when no *visible* toolkit serves the API, and
-        ``ToolkitReferenceAmbiguousError`` when several do.
-        """
-        reference = item.resource_reference or {}
-        vendor = reference.get("vendor")
-        if not vendor:
-            raise ValueError(
-                "toolkit-bind effect requires resource_id, to_id, or a "
-                f"resource_reference with a vendor, item={item.id}"
-            )
-
-        # Normalize vendor/name to the registry's slug form (dots -> dashes) so
-        # the reference matches the credential's stored, normalized api_vendor.
-        # Agents file references from discovered vendor/name that may be raw
-        # domains (e.g. httpbin.org); credentials store the slug (httpbin-org),
-        # so an un-normalized join would find no toolkit and deny a satisfiable
-        # bind. See issue #656 (same mismatch the credential store fixes).
-        raw_name = reference.get("name")
-        candidates = await EffectsRepository.resolve_toolkits_for_api(
-            session,
-            vendor=slugify_api_field(str(vendor)),
-            name=slugify_api_field(str(raw_name)) if raw_name else raw_name,
-            version=reference.get("version"),
-            owner_ids=owner_ids,
-        )
-
-        if not candidates:
-            raise ToolkitReferenceUnresolvedError(reference)
-        if len(candidates) > 1:
-            raise ToolkitReferenceAmbiguousError(reference, candidates)
-        return candidates[0]
 
     async def _apply_scope_grant(
         self, item: AccessRequestItem, *, decided_by: str

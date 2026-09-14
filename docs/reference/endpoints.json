@@ -80,8 +80,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -100,8 +99,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -120,8 +118,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -140,8 +137,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -160,8 +156,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -186,8 +181,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -206,8 +200,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -230,8 +223,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -254,8 +246,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -278,8 +269,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -319,8 +309,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -343,8 +332,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -369,8 +357,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -387,7 +374,7 @@
       "required_scopes": [
         "oauth-clients:write"
       ],
-      "summary": "Deactivate OAuth client",
+      "summary": "Disable OAuth client",
       "surface": "admin",
       "typical_caller": "any"
     },
@@ -395,8 +382,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -419,8 +405,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -445,8 +430,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -471,8 +455,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -497,8 +480,32 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "oauth-clients:write": [
+          "oauth-clients:read"
+        ]
+      },
+      "method": "POST",
+      "operation_id": "deleteOauthClient",
+      "path": "/admin/oauth-clients/{id}:delete",
+      "public": false,
+      "required_scopes": [
+        "oauth-clients:write"
+      ],
+      "summary": "Delete OAuth client",
+      "surface": "admin",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -523,8 +530,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -547,8 +553,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -571,8 +576,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -597,8 +601,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -623,8 +626,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -643,8 +645,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -669,8 +670,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -693,8 +693,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -717,8 +716,101 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {},
+      "method": "GET",
+      "operation_id": "listAgentCredentials",
+      "path": "/agents/{agent_id}/credentials",
+      "public": false,
+      "required_scopes": [],
+      "summary": "List Credentials",
+      "surface": "agents",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Operator-facing (typically a human operator / admin)",
+      "implied_scopes": {
+        "agents:write": [
+          "agents:read"
+        ]
+      },
+      "method": "POST",
+      "operation_id": "bindAgentCredential",
+      "path": "/agents/{agent_id}/credentials",
+      "public": false,
+      "required_scopes": [
+        "agents:write"
+      ],
+      "summary": "Bind Credential",
+      "surface": "agents",
+      "typical_caller": "operator"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Operator-facing (typically a human operator / admin)",
+      "implied_scopes": {
+        "agents:write": [
+          "agents:read"
+        ]
+      },
+      "method": "DELETE",
+      "operation_id": "unbindAgentCredential",
+      "path": "/agents/{agent_id}/credentials/{credential_id}",
+      "public": false,
+      "required_scopes": [
+        "agents:write"
+      ],
+      "summary": "Unbind Credential",
+      "surface": "agents",
+      "typical_caller": "operator"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Operator-facing (typically a human operator / admin)",
+      "implied_scopes": {
+        "agents:write": [
+          "agents:read"
+        ]
+      },
+      "method": "POST",
+      "operation_id": "resumeAgentCredentialBinding",
+      "path": "/agents/{agent_id}/credentials/{credential_id}:resume",
+      "public": false,
+      "required_scopes": [
+        "agents:write"
+      ],
+      "summary": "Resume Credential Binding",
+      "surface": "agents",
+      "typical_caller": "operator"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -743,8 +835,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -763,8 +854,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -787,8 +877,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -813,80 +902,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
-      ],
-      "auth_note": null,
-      "authenticated": true,
-      "group": "Any authenticated actor",
-      "implied_scopes": {},
-      "method": "GET",
-      "operation_id": "listAgentToolkits",
-      "path": "/agents/{agent_id}/toolkits",
-      "public": false,
-      "required_scopes": [],
-      "summary": "List Toolkits",
-      "surface": "agents",
-      "typical_caller": "any"
-    },
-    {
-      "actor_types": [
-        "user",
-        "agent",
-        "service_account",
-        "toolkit"
-      ],
-      "auth_note": null,
-      "authenticated": true,
-      "group": "Operator-facing (typically a human operator / admin)",
-      "implied_scopes": {
-        "agents:write": [
-          "agents:read"
-        ]
-      },
-      "method": "POST",
-      "operation_id": "bindToolkit",
-      "path": "/agents/{agent_id}/toolkits",
-      "public": false,
-      "required_scopes": [
-        "agents:write"
-      ],
-      "summary": "Bind Toolkit",
-      "surface": "agents",
-      "typical_caller": "operator"
-    },
-    {
-      "actor_types": [
-        "user",
-        "agent",
-        "service_account",
-        "toolkit"
-      ],
-      "auth_note": null,
-      "authenticated": true,
-      "group": "Operator-facing (typically a human operator / admin)",
-      "implied_scopes": {
-        "agents:write": [
-          "agents:read"
-        ]
-      },
-      "method": "DELETE",
-      "operation_id": "unbindToolkit",
-      "path": "/agents/{agent_id}/toolkits/{toolkit_id}",
-      "public": false,
-      "required_scopes": [
-        "agents:write"
-      ],
-      "summary": "Unbind Toolkit",
-      "surface": "agents",
-      "typical_caller": "operator"
-    },
-    {
-      "actor_types": [
-        "user",
-        "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -928,8 +944,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -954,8 +969,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -980,8 +994,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -1006,8 +1019,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -1032,8 +1044,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -1058,12 +1069,11 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account / toolkit)",
+      "group": "Agent-facing (typically agent / service-account)",
       "implied_scopes": {
         "apis:read": []
       },
@@ -1082,8 +1092,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -1109,8 +1118,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -1136,12 +1144,11 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account / toolkit)",
+      "group": "Agent-facing (typically agent / service-account)",
       "implied_scopes": {
         "apis:read": []
       },
@@ -1160,8 +1167,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -1187,12 +1193,11 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account / toolkit)",
+      "group": "Agent-facing (typically agent / service-account)",
       "implied_scopes": {
         "apis:read": []
       },
@@ -1211,12 +1216,11 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account / toolkit)",
+      "group": "Agent-facing (typically agent / service-account)",
       "implied_scopes": {
         "apis:read": []
       },
@@ -1235,12 +1239,11 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account / toolkit)",
+      "group": "Agent-facing (typically agent / service-account)",
       "implied_scopes": {
         "apis:read": []
       },
@@ -1259,8 +1262,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -1286,8 +1288,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -1313,12 +1314,11 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account / toolkit)",
+      "group": "Agent-facing (typically agent / service-account)",
       "implied_scopes": {
         "apis:read": []
       },
@@ -1337,8 +1337,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -1364,8 +1363,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -1390,8 +1388,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -1416,12 +1413,11 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account / toolkit)",
+      "group": "Agent-facing (typically agent / service-account)",
       "implied_scopes": {
         "apis:read": []
       },
@@ -1440,8 +1436,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -1467,12 +1462,11 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account / toolkit)",
+      "group": "Agent-facing (typically agent / service-account)",
       "implied_scopes": {
         "apis:read": []
       },
@@ -1491,12 +1485,11 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account / toolkit)",
+      "group": "Agent-facing (typically agent / service-account)",
       "implied_scopes": {
         "apis:read": []
       },
@@ -1515,12 +1508,11 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account / toolkit)",
+      "group": "Agent-facing (typically agent / service-account)",
       "implied_scopes": {
         "apis:read": []
       },
@@ -1539,8 +1531,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -1566,8 +1557,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -1593,12 +1583,11 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account / toolkit)",
+      "group": "Agent-facing (typically agent / service-account)",
       "implied_scopes": {
         "apis:read": []
       },
@@ -1617,8 +1606,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -1641,8 +1629,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -1742,12 +1729,11 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account / toolkit)",
+      "group": "Agent-facing (typically agent / service-account)",
       "implied_scopes": {
         "capabilities:read": []
       },
@@ -1766,12 +1752,11 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account / toolkit)",
+      "group": "Agent-facing (typically agent / service-account)",
       "implied_scopes": {
         "capabilities:read": []
       },
@@ -1790,12 +1775,11 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account / toolkit)",
+      "group": "Agent-facing (typically agent / service-account)",
       "implied_scopes": {
         "capabilities:read": []
       },
@@ -1814,12 +1798,11 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account / toolkit)",
+      "group": "Agent-facing (typically agent / service-account)",
       "implied_scopes": {
         "catalog:import": [
           "apis:read"
@@ -1840,8 +1823,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -1866,8 +1848,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -1892,8 +1873,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -1922,8 +1902,6 @@
           "overlays:confirm",
           "service-accounts:read",
           "service-accounts:write",
-          "toolkits:read",
-          "toolkits:write",
           "users:read",
           "users:write"
         ]
@@ -1958,8 +1936,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -1984,8 +1961,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -2025,8 +2001,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -2051,8 +2026,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -2077,8 +2051,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -2103,8 +2076,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -2129,8 +2101,182 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "credentials:read": [],
+        "owner:credentials:read": []
+      },
+      "method": "GET",
+      "operation_id": "listCredentialAgents",
+      "path": "/credentials/{credential_id}/agents",
+      "public": false,
+      "required_scopes": [
+        "credentials:read",
+        "owner:credentials:read"
+      ],
+      "summary": "List agents bound to credential",
+      "surface": "credentials",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "credentials:read": [],
+        "owner:credentials:read": []
+      },
+      "method": "GET",
+      "operation_id": "listAgentCredentialPermissions",
+      "path": "/credentials/{credential_id}/agents/{agent_id}/permissions",
+      "public": false,
+      "required_scopes": [
+        "credentials:read",
+        "owner:credentials:read"
+      ],
+      "summary": "List binding permission rules",
+      "surface": "credentials",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "credentials:write": [
+          "credentials:read"
+        ]
+      },
+      "method": "PATCH",
+      "operation_id": "patchAgentCredentialPermissions",
+      "path": "/credentials/{credential_id}/agents/{agent_id}/permissions",
+      "public": false,
+      "required_scopes": [
+        "credentials:write"
+      ],
+      "summary": "Patch binding permission rules",
+      "surface": "credentials",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "credentials:write": [
+          "credentials:read"
+        ]
+      },
+      "method": "PUT",
+      "operation_id": "replaceAgentCredentialPermissions",
+      "path": "/credentials/{credential_id}/agents/{agent_id}/permissions",
+      "public": false,
+      "required_scopes": [
+        "credentials:write"
+      ],
+      "summary": "Replace binding permission rules",
+      "surface": "credentials",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "credentials:read": [],
+        "owner:credentials:read": []
+      },
+      "method": "POST",
+      "operation_id": "testAgentCredentialPermissions",
+      "path": "/credentials/{credential_id}/agents/{agent_id}/permissions:test",
+      "public": false,
+      "required_scopes": [
+        "credentials:read",
+        "owner:credentials:read"
+      ],
+      "summary": "Dry-run permission evaluation",
+      "surface": "credentials",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "credentials:write": [
+          "credentials:read"
+        ]
+      },
+      "method": "DELETE",
+      "operation_id": "detachAgentCredentialRuleSet",
+      "path": "/credentials/{credential_id}/agents/{agent_id}/rule-set",
+      "public": false,
+      "required_scopes": [
+        "credentials:write"
+      ],
+      "summary": "Detach rule set from binding",
+      "surface": "credentials",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "credentials:write": [
+          "credentials:read"
+        ]
+      },
+      "method": "PUT",
+      "operation_id": "attachAgentCredentialRuleSet",
+      "path": "/credentials/{credential_id}/agents/{agent_id}/rule-set",
+      "public": false,
+      "required_scopes": [
+        "credentials:write"
+      ],
+      "summary": "Attach rule set to binding",
+      "surface": "credentials",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -2170,12 +2316,11 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account / toolkit)",
+      "group": "Agent-facing (typically agent / service-account)",
       "implied_scopes": {
         "events:read": []
       },
@@ -2194,12 +2339,11 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account / toolkit)",
+      "group": "Agent-facing (typically agent / service-account)",
       "implied_scopes": {
         "events:read": []
       },
@@ -2218,12 +2362,11 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account / toolkit)",
+      "group": "Agent-facing (typically agent / service-account)",
       "implied_scopes": {
         "events:read": []
       },
@@ -2242,8 +2385,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -2268,12 +2410,11 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account / toolkit)",
+      "group": "Agent-facing (typically agent / service-account)",
       "implied_scopes": {
         "executions:read": []
       },
@@ -2292,12 +2433,11 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account / toolkit)",
+      "group": "Agent-facing (typically agent / service-account)",
       "implied_scopes": {
         "executions:read": []
       },
@@ -2316,23 +2456,22 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
       "group": "Any authenticated actor",
       "implied_scopes": {
-        "owner:toolkits:read": [],
-        "toolkits:read": []
+        "credentials:read": [],
+        "owner:credentials:read": []
       },
       "method": "GET",
       "operation_id": "getGovernedHosts",
       "path": "/governed-hosts",
       "public": false,
       "required_scopes": [
-        "toolkits:read",
-        "owner:toolkits:read"
+        "credentials:read",
+        "owner:credentials:read"
       ],
       "summary": "Get Governed Hosts",
       "surface": "governed-hosts",
@@ -2357,12 +2496,11 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account / toolkit)",
+      "group": "Agent-facing (typically agent / service-account)",
       "implied_scopes": {
         "apis:read": []
       },
@@ -2396,12 +2534,11 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account / toolkit)",
+      "group": "Agent-facing (typically agent / service-account)",
       "implied_scopes": {
         "jobs:read": []
       },
@@ -2420,12 +2557,11 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account / toolkit)",
+      "group": "Agent-facing (typically agent / service-account)",
       "implied_scopes": {
         "jobs:read": []
       },
@@ -2444,12 +2580,11 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account / toolkit)",
+      "group": "Agent-facing (typically agent / service-account)",
       "implied_scopes": {
         "jobs:read": []
       },
@@ -2468,8 +2603,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -2524,8 +2658,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -2544,8 +2677,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -2564,8 +2696,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -2594,8 +2725,6 @@
           "overlays:confirm",
           "service-accounts:read",
           "service-accounts:write",
-          "toolkits:read",
-          "toolkits:write",
           "users:read",
           "users:write"
         ]
@@ -2615,8 +2744,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -2645,8 +2773,6 @@
           "overlays:confirm",
           "service-accounts:read",
           "service-accounts:write",
-          "toolkits:read",
-          "toolkits:write",
           "users:read",
           "users:write"
         ]
@@ -2666,8 +2792,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -2686,8 +2811,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -2706,8 +2830,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -2726,8 +2849,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -2746,8 +2868,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -2781,8 +2902,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -2801,8 +2921,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -2884,11 +3003,40 @@
       "typical_caller": null
     },
     {
+      "actor_types": [],
+      "auth_note": null,
+      "authenticated": false,
+      "group": "Public (unauthenticated)",
+      "implied_scopes": {},
+      "method": "POST",
+      "operation_id": "consentAgentCreate",
+      "path": "/oauth/consent/agent",
+      "public": true,
+      "required_scopes": [],
+      "summary": "Create the consenting user's first agent inline (consent page)",
+      "surface": "oauth",
+      "typical_caller": null
+    },
+    {
+      "actor_types": [],
+      "auth_note": null,
+      "authenticated": false,
+      "group": "Public (unauthenticated)",
+      "implied_scopes": {},
+      "method": "GET",
+      "operation_id": "consentAgentStatus",
+      "path": "/oauth/consent/agent/status",
+      "public": true,
+      "required_scopes": [],
+      "summary": "Poll pending-agent approval status (consent awaiting page)",
+      "surface": "oauth",
+      "typical_caller": null
+    },
+    {
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -2909,7 +3057,7 @@
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account / toolkit)",
+      "group": "Agent-facing (typically agent / service-account)",
       "implied_scopes": {},
       "method": "POST",
       "operation_id": "mintEndpoint",
@@ -2924,8 +3072,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": "Dual-arm (RFC 7009): form-encoded requests authenticate by OAuth client_id lineage binding (public clients, auth method 'none' — the token is revoked only if it was issued to the supplied client_id); JSON requests keep the platform bearer-token contract.",
       "authenticated": true,
@@ -2976,8 +3123,157 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "credentials:read": [],
+        "owner:credentials:read": []
+      },
+      "method": "GET",
+      "operation_id": "listPermissionRuleSets",
+      "path": "/permission-rule-sets",
+      "public": false,
+      "required_scopes": [
+        "credentials:read",
+        "owner:credentials:read"
+      ],
+      "summary": "List permission rule sets",
+      "surface": "permission-rule-sets",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "credentials:write": [
+          "credentials:read"
+        ]
+      },
+      "method": "POST",
+      "operation_id": "createPermissionRuleSet",
+      "path": "/permission-rule-sets",
+      "public": false,
+      "required_scopes": [
+        "credentials:write"
+      ],
+      "summary": "Create permission rule set",
+      "surface": "permission-rule-sets",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "credentials:write": [
+          "credentials:read"
+        ]
+      },
+      "method": "DELETE",
+      "operation_id": "deletePermissionRuleSet",
+      "path": "/permission-rule-sets/{rule_set_id}",
+      "public": false,
+      "required_scopes": [
+        "credentials:write"
+      ],
+      "summary": "Delete permission rule set",
+      "surface": "permission-rule-sets",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "credentials:read": [],
+        "owner:credentials:read": []
+      },
+      "method": "GET",
+      "operation_id": "getPermissionRuleSet",
+      "path": "/permission-rule-sets/{rule_set_id}",
+      "public": false,
+      "required_scopes": [
+        "credentials:read",
+        "owner:credentials:read"
+      ],
+      "summary": "Get permission rule set",
+      "surface": "permission-rule-sets",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "credentials:write": [
+          "credentials:read"
+        ]
+      },
+      "method": "PATCH",
+      "operation_id": "updatePermissionRuleSet",
+      "path": "/permission-rule-sets/{rule_set_id}",
+      "public": false,
+      "required_scopes": [
+        "credentials:write"
+      ],
+      "summary": "Update permission rule set",
+      "surface": "permission-rule-sets",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "credentials:write": [
+          "credentials:read"
+        ]
+      },
+      "method": "PUT",
+      "operation_id": "replacePermissionRuleSetRules",
+      "path": "/permission-rule-sets/{rule_set_id}/rules",
+      "public": false,
+      "required_scopes": [
+        "credentials:write"
+      ],
+      "summary": "Replace rule set rules",
+      "surface": "permission-rule-sets",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3026,8 +3322,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3046,8 +3341,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": "Authenticated with the Registration-Access-Token issued at registration (RFC 7592), not a platform bearer token.",
       "authenticated": true,
@@ -3066,8 +3360,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3101,12 +3394,11 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account / toolkit)",
+      "group": "Agent-facing (typically agent / service-account)",
       "implied_scopes": {
         "apis:read": []
       },
@@ -3125,8 +3417,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3149,8 +3440,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3175,8 +3465,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3201,8 +3490,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3221,8 +3509,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3245,8 +3532,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3271,8 +3557,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3297,8 +3582,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3323,8 +3607,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3349,8 +3632,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3375,8 +3657,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3401,8 +3682,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3421,450 +3701,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
-      ],
-      "auth_note": null,
-      "authenticated": true,
-      "group": "Any authenticated actor",
-      "implied_scopes": {
-        "owner:toolkits:read": [],
-        "toolkits:read": []
-      },
-      "method": "GET",
-      "operation_id": "listToolkits",
-      "path": "/toolkits",
-      "public": false,
-      "required_scopes": [
-        "toolkits:read",
-        "owner:toolkits:read"
-      ],
-      "summary": "List toolkits",
-      "surface": "toolkits",
-      "typical_caller": "any"
-    },
-    {
-      "actor_types": [
-        "user",
-        "agent",
-        "service_account",
-        "toolkit"
-      ],
-      "auth_note": null,
-      "authenticated": true,
-      "group": "Any authenticated actor",
-      "implied_scopes": {
-        "toolkits:write": [
-          "toolkits:read"
-        ]
-      },
-      "method": "POST",
-      "operation_id": "createToolkit",
-      "path": "/toolkits",
-      "public": false,
-      "required_scopes": [
-        "toolkits:write"
-      ],
-      "summary": "Create toolkit",
-      "surface": "toolkits",
-      "typical_caller": "any"
-    },
-    {
-      "actor_types": [
-        "user",
-        "agent",
-        "service_account",
-        "toolkit"
-      ],
-      "auth_note": null,
-      "authenticated": true,
-      "group": "Any authenticated actor",
-      "implied_scopes": {
-        "toolkits:write": [
-          "toolkits:read"
-        ]
-      },
-      "method": "DELETE",
-      "operation_id": "deleteToolkit",
-      "path": "/toolkits/{toolkit_id}",
-      "public": false,
-      "required_scopes": [
-        "toolkits:write"
-      ],
-      "summary": "Delete toolkit",
-      "surface": "toolkits",
-      "typical_caller": "any"
-    },
-    {
-      "actor_types": [
-        "user",
-        "agent",
-        "service_account",
-        "toolkit"
-      ],
-      "auth_note": null,
-      "authenticated": true,
-      "group": "Any authenticated actor",
-      "implied_scopes": {
-        "owner:toolkits:read": [],
-        "toolkits:read": []
-      },
-      "method": "GET",
-      "operation_id": "getToolkit",
-      "path": "/toolkits/{toolkit_id}",
-      "public": false,
-      "required_scopes": [
-        "toolkits:read",
-        "owner:toolkits:read"
-      ],
-      "summary": "Get toolkit",
-      "surface": "toolkits",
-      "typical_caller": "any"
-    },
-    {
-      "actor_types": [
-        "user",
-        "agent",
-        "service_account",
-        "toolkit"
-      ],
-      "auth_note": null,
-      "authenticated": true,
-      "group": "Any authenticated actor",
-      "implied_scopes": {
-        "toolkits:write": [
-          "toolkits:read"
-        ]
-      },
-      "method": "PATCH",
-      "operation_id": "updateToolkit",
-      "path": "/toolkits/{toolkit_id}",
-      "public": false,
-      "required_scopes": [
-        "toolkits:write"
-      ],
-      "summary": "Update toolkit",
-      "surface": "toolkits",
-      "typical_caller": "any"
-    },
-    {
-      "actor_types": [
-        "user",
-        "agent",
-        "service_account",
-        "toolkit"
-      ],
-      "auth_note": null,
-      "authenticated": true,
-      "group": "Any authenticated actor",
-      "implied_scopes": {
-        "owner:toolkits:read": [],
-        "toolkits:read": []
-      },
-      "method": "GET",
-      "operation_id": "listToolkitAgents",
-      "path": "/toolkits/{toolkit_id}/agents",
-      "public": false,
-      "required_scopes": [
-        "toolkits:read",
-        "owner:toolkits:read"
-      ],
-      "summary": "List agents bound to toolkit",
-      "surface": "toolkits",
-      "typical_caller": "any"
-    },
-    {
-      "actor_types": [
-        "user",
-        "agent",
-        "service_account",
-        "toolkit"
-      ],
-      "auth_note": null,
-      "authenticated": true,
-      "group": "Any authenticated actor",
-      "implied_scopes": {
-        "owner:toolkits:read": [],
-        "toolkits:read": []
-      },
-      "method": "GET",
-      "operation_id": "listBindings",
-      "path": "/toolkits/{toolkit_id}/credentials",
-      "public": false,
-      "required_scopes": [
-        "toolkits:read",
-        "owner:toolkits:read"
-      ],
-      "summary": "List toolkit credential bindings",
-      "surface": "toolkits",
-      "typical_caller": "any"
-    },
-    {
-      "actor_types": [
-        "user",
-        "agent",
-        "service_account",
-        "toolkit"
-      ],
-      "auth_note": null,
-      "authenticated": true,
-      "group": "Any authenticated actor",
-      "implied_scopes": {
-        "toolkits:write": [
-          "toolkits:read"
-        ]
-      },
-      "method": "POST",
-      "operation_id": "bindCredential",
-      "path": "/toolkits/{toolkit_id}/credentials",
-      "public": false,
-      "required_scopes": [
-        "toolkits:write"
-      ],
-      "summary": "Bind credential to toolkit",
-      "surface": "toolkits",
-      "typical_caller": "any"
-    },
-    {
-      "actor_types": [
-        "user",
-        "agent",
-        "service_account",
-        "toolkit"
-      ],
-      "auth_note": null,
-      "authenticated": true,
-      "group": "Any authenticated actor",
-      "implied_scopes": {
-        "toolkits:write": [
-          "toolkits:read"
-        ]
-      },
-      "method": "DELETE",
-      "operation_id": "unbindCredential",
-      "path": "/toolkits/{toolkit_id}/credentials/{credential_id}",
-      "public": false,
-      "required_scopes": [
-        "toolkits:write"
-      ],
-      "summary": "Unbind credential from toolkit",
-      "surface": "toolkits",
-      "typical_caller": "any"
-    },
-    {
-      "actor_types": [
-        "user",
-        "agent",
-        "service_account",
-        "toolkit"
-      ],
-      "auth_note": null,
-      "authenticated": true,
-      "group": "Any authenticated actor",
-      "implied_scopes": {
-        "owner:toolkits:read": [],
-        "toolkits:read": []
-      },
-      "method": "GET",
-      "operation_id": "listToolkitPermissions",
-      "path": "/toolkits/{toolkit_id}/credentials/{credential_id}/permissions",
-      "public": false,
-      "required_scopes": [
-        "toolkits:read",
-        "owner:toolkits:read"
-      ],
-      "summary": "List binding permission rules",
-      "surface": "toolkits",
-      "typical_caller": "any"
-    },
-    {
-      "actor_types": [
-        "user",
-        "agent",
-        "service_account",
-        "toolkit"
-      ],
-      "auth_note": null,
-      "authenticated": true,
-      "group": "Any authenticated actor",
-      "implied_scopes": {
-        "toolkits:write": [
-          "toolkits:read"
-        ]
-      },
-      "method": "PATCH",
-      "operation_id": "patchPermissions",
-      "path": "/toolkits/{toolkit_id}/credentials/{credential_id}/permissions",
-      "public": false,
-      "required_scopes": [
-        "toolkits:write"
-      ],
-      "summary": "Patch binding permission rules",
-      "surface": "toolkits",
-      "typical_caller": "any"
-    },
-    {
-      "actor_types": [
-        "user",
-        "agent",
-        "service_account",
-        "toolkit"
-      ],
-      "auth_note": null,
-      "authenticated": true,
-      "group": "Any authenticated actor",
-      "implied_scopes": {
-        "toolkits:write": [
-          "toolkits:read"
-        ]
-      },
-      "method": "PUT",
-      "operation_id": "replacePermissions",
-      "path": "/toolkits/{toolkit_id}/credentials/{credential_id}/permissions",
-      "public": false,
-      "required_scopes": [
-        "toolkits:write"
-      ],
-      "summary": "Replace binding permission rules",
-      "surface": "toolkits",
-      "typical_caller": "any"
-    },
-    {
-      "actor_types": [
-        "user",
-        "agent",
-        "service_account",
-        "toolkit"
-      ],
-      "auth_note": null,
-      "authenticated": true,
-      "group": "Any authenticated actor",
-      "implied_scopes": {
-        "owner:toolkits:read": [],
-        "toolkits:read": []
-      },
-      "method": "POST",
-      "operation_id": "testToolkitPermissions",
-      "path": "/toolkits/{toolkit_id}/credentials/{credential_id}/permissions:test",
-      "public": false,
-      "required_scopes": [
-        "toolkits:read",
-        "owner:toolkits:read"
-      ],
-      "summary": "Dry-run permission evaluation",
-      "surface": "toolkits",
-      "typical_caller": "any"
-    },
-    {
-      "actor_types": [
-        "user",
-        "agent",
-        "service_account",
-        "toolkit"
-      ],
-      "auth_note": null,
-      "authenticated": true,
-      "group": "Any authenticated actor",
-      "implied_scopes": {
-        "owner:toolkits:read": [],
-        "toolkits:read": []
-      },
-      "method": "GET",
-      "operation_id": "listKeys",
-      "path": "/toolkits/{toolkit_id}/keys",
-      "public": false,
-      "required_scopes": [
-        "toolkits:read",
-        "owner:toolkits:read"
-      ],
-      "summary": "List toolkit keys",
-      "surface": "toolkits",
-      "typical_caller": "any"
-    },
-    {
-      "actor_types": [
-        "user",
-        "agent",
-        "service_account",
-        "toolkit"
-      ],
-      "auth_note": null,
-      "authenticated": true,
-      "group": "Any authenticated actor",
-      "implied_scopes": {
-        "toolkits:write": [
-          "toolkits:read"
-        ]
-      },
-      "method": "POST",
-      "operation_id": "createKey",
-      "path": "/toolkits/{toolkit_id}/keys",
-      "public": false,
-      "required_scopes": [
-        "toolkits:write"
-      ],
-      "summary": "Issue toolkit key",
-      "surface": "toolkits",
-      "typical_caller": "any"
-    },
-    {
-      "actor_types": [
-        "user",
-        "agent",
-        "service_account",
-        "toolkit"
-      ],
-      "auth_note": null,
-      "authenticated": true,
-      "group": "Any authenticated actor",
-      "implied_scopes": {
-        "toolkits:write": [
-          "toolkits:read"
-        ]
-      },
-      "method": "DELETE",
-      "operation_id": "deleteKey",
-      "path": "/toolkits/{toolkit_id}/keys/{key_id}",
-      "public": false,
-      "required_scopes": [
-        "toolkits:write"
-      ],
-      "summary": "Revoke toolkit key",
-      "surface": "toolkits",
-      "typical_caller": "any"
-    },
-    {
-      "actor_types": [
-        "user",
-        "agent",
-        "service_account",
-        "toolkit"
-      ],
-      "auth_note": null,
-      "authenticated": true,
-      "group": "Any authenticated actor",
-      "implied_scopes": {
-        "toolkits:write": [
-          "toolkits:read"
-        ]
-      },
-      "method": "PATCH",
-      "operation_id": "updateKey",
-      "path": "/toolkits/{toolkit_id}/keys/{key_id}",
-      "public": false,
-      "required_scopes": [
-        "toolkits:write"
-      ],
-      "summary": "Update toolkit key",
-      "surface": "toolkits",
-      "typical_caller": "any"
-    },
-    {
-      "actor_types": [
-        "user",
-        "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3887,8 +3724,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3913,8 +3749,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3933,8 +3768,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3953,8 +3787,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3979,8 +3812,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -4003,8 +3835,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -4029,8 +3860,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -4055,8 +3885,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -4081,8 +3910,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -4107,8 +3935,7 @@
       "actor_types": [
         "user",
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -4162,12 +3989,11 @@
     {
       "actor_types": [
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account / toolkit)",
+      "group": "Agent-facing (typically agent / service-account)",
       "implied_scopes": {
         "capabilities:execute": [
           "apis:read",
@@ -4189,12 +4015,11 @@
     {
       "actor_types": [
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account / toolkit)",
+      "group": "Agent-facing (typically agent / service-account)",
       "implied_scopes": {
         "capabilities:execute": [
           "apis:read",
@@ -4216,12 +4041,11 @@
     {
       "actor_types": [
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account / toolkit)",
+      "group": "Agent-facing (typically agent / service-account)",
       "implied_scopes": {
         "capabilities:execute": [
           "apis:read",
@@ -4243,12 +4067,11 @@
     {
       "actor_types": [
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account / toolkit)",
+      "group": "Agent-facing (typically agent / service-account)",
       "implied_scopes": {
         "capabilities:execute": [
           "apis:read",
@@ -4270,12 +4093,11 @@
     {
       "actor_types": [
         "agent",
-        "service_account",
-        "toolkit"
+        "service_account"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account / toolkit)",
+      "group": "Agent-facing (typically agent / service-account)",
       "implied_scopes": {
         "capabilities:execute": [
           "apis:read",
@@ -4296,7 +4118,7 @@
     }
   ],
   "groups": [
-    "Agent-facing (typically agent / service-account / toolkit)",
+    "Agent-facing (typically agent / service-account)",
     "Operator-facing (typically a human operator / admin)",
     "Any authenticated actor",
     "Public (unauthenticated)"
@@ -4336,8 +4158,6 @@
               "overlays:confirm",
               "service-accounts:read",
               "service-accounts:write",
-              "toolkits:read",
-              "toolkits:write",
               "users:read",
               "users:write"
             ],
@@ -4364,8 +4184,6 @@
               "overlays:confirm",
               "service-accounts:read",
               "service-accounts:write",
-              "toolkits:read",
-              "toolkits:write",
               "users:read",
               "users:write"
             ],
@@ -4398,41 +4216,12 @@
           },
           {
             "action": "read",
-            "description": "Read capability and toolkit metadata",
+            "description": "Read capability metadata",
             "family": "capabilities",
             "implies": [],
             "implies_transitive": [],
             "is_superuser": false,
             "name": "capabilities:read"
-          }
-        ]
-      },
-      {
-        "blurb": "Toolkit configuration and lifecycle.",
-        "label": "Toolkits",
-        "name": "toolkits",
-        "scopes": [
-          {
-            "action": "read",
-            "description": "Read toolkit configuration and status",
-            "family": "toolkits",
-            "implies": [],
-            "implies_transitive": [],
-            "is_superuser": false,
-            "name": "toolkits:read"
-          },
-          {
-            "action": "write",
-            "description": "Create, update, and delete toolkits",
-            "family": "toolkits",
-            "implies": [
-              "toolkits:read"
-            ],
-            "implies_transitive": [
-              "toolkits:read"
-            ],
-            "is_superuser": false,
-            "name": "toolkits:write"
           }
         ]
       },
@@ -4751,13 +4540,11 @@
             "family": "owner",
             "implies": [
               "owner:agents:read",
-              "owner:credentials:read",
-              "owner:toolkits:read"
+              "owner:credentials:read"
             ],
             "implies_transitive": [
               "owner:agents:read",
-              "owner:credentials:read",
-              "owner:toolkits:read"
+              "owner:credentials:read"
             ],
             "is_superuser": false,
             "name": "owner:resources:read"
@@ -4770,15 +4557,6 @@
             "implies_transitive": [],
             "is_superuser": false,
             "name": "owner:service-accounts:read"
-          },
-          {
-            "action": "read",
-            "description": "Read toolkits owned by the agent's creator",
-            "family": "owner",
-            "implies": [],
-            "implies_transitive": [],
-            "is_superuser": false,
-            "name": "owner:toolkits:read"
           }
         ]
       },
@@ -4827,7 +4605,7 @@
           },
           {
             "action": "write",
-            "description": "Create, update, deactivate, and rotate secrets of OAuth clients",
+            "description": "Create, update, disable, and rotate secrets of OAuth clients",
             "family": "oauth-clients",
             "implies": [
               "oauth-clients:read"
@@ -4917,7 +4695,7 @@
       },
       {
         "action": "read",
-        "description": "Read capability and toolkit metadata",
+        "description": "Read capability metadata",
         "family": "capabilities",
         "implies": [],
         "implies_transitive": [],
@@ -5045,7 +4823,7 @@
       },
       {
         "action": "write",
-        "description": "Create, update, deactivate, and rotate secrets of OAuth clients",
+        "description": "Create, update, disable, and rotate secrets of OAuth clients",
         "family": "oauth-clients",
         "implies": [
           "oauth-clients:read"
@@ -5083,8 +4861,6 @@
           "overlays:confirm",
           "service-accounts:read",
           "service-accounts:write",
-          "toolkits:read",
-          "toolkits:write",
           "users:read",
           "users:write"
         ],
@@ -5111,8 +4887,6 @@
           "overlays:confirm",
           "service-accounts:read",
           "service-accounts:write",
-          "toolkits:read",
-          "toolkits:write",
           "users:read",
           "users:write"
         ],
@@ -5165,13 +4939,11 @@
         "family": "owner",
         "implies": [
           "owner:agents:read",
-          "owner:credentials:read",
-          "owner:toolkits:read"
+          "owner:credentials:read"
         ],
         "implies_transitive": [
           "owner:agents:read",
-          "owner:credentials:read",
-          "owner:toolkits:read"
+          "owner:credentials:read"
         ],
         "is_superuser": false,
         "name": "owner:resources:read"
@@ -5184,15 +4956,6 @@
         "implies_transitive": [],
         "is_superuser": false,
         "name": "owner:service-accounts:read"
-      },
-      {
-        "action": "read",
-        "description": "Read toolkits owned by the agent's creator",
-        "family": "owner",
-        "implies": [],
-        "implies_transitive": [],
-        "is_superuser": false,
-        "name": "owner:toolkits:read"
       },
       {
         "action": "read",
@@ -5218,28 +4981,6 @@
       },
       {
         "action": "read",
-        "description": "Read toolkit configuration and status",
-        "family": "toolkits",
-        "implies": [],
-        "implies_transitive": [],
-        "is_superuser": false,
-        "name": "toolkits:read"
-      },
-      {
-        "action": "write",
-        "description": "Create, update, and delete toolkits",
-        "family": "toolkits",
-        "implies": [
-          "toolkits:read"
-        ],
-        "implies_transitive": [
-          "toolkits:read"
-        ],
-        "is_superuser": false,
-        "name": "toolkits:write"
-      },
-      {
-        "action": "read",
         "description": "Read user profiles and permissions",
         "family": "users",
         "implies": [],
@@ -5261,7 +5002,7 @@
         "name": "users:write"
       }
     ],
-    "total": 33
+    "total": 30
   },
   "total": 184
 }

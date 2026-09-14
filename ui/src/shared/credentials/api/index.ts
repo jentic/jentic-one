@@ -9,6 +9,7 @@ import {
 	deleteCredential,
 	getCredential,
 	getProviders,
+	listCredentialAgents,
 	listCredentials,
 	type ListCredentialsParams,
 } from './client';
@@ -16,6 +17,7 @@ import type { ProviderDiscoveryResponse } from '@/shared/api';
 import type {
 	ConnectChallengeResponse,
 	ConnectRequestBody,
+	CredentialAgentListResponse,
 	CredentialCreateRequest,
 	CredentialCreateResponse,
 	CredentialListResponse,
@@ -29,6 +31,14 @@ export const credentialKeys = {
 	all: ['credentials'] as const,
 	list: (params: ListCredentialsParams = {}) => ['credentials', 'list', params] as const,
 	detail: (id: string) => ['credentials', 'detail', id] as const,
+	/**
+	 * Agents directly bound to one credential (`GET /credentials/{id}/agents`,
+	 * theme 5 phase 1's reverse lookup). The agents module's bind / unbind /
+	 * resume mutations invalidate this slice (importing this factory — the
+	 * sanctioned shared channel) so the credential-side "Bound agents" view
+	 * never shows a binding the agent side just changed.
+	 */
+	agents: (id: string) => ['credentials', 'agents', id] as const,
 };
 
 /**
@@ -65,6 +75,24 @@ export function useCredential(id: string | undefined): UseQueryResult<Credential
 		queryKey: credentialKeys.detail(id ?? '__none__'),
 		queryFn: () => getCredential(id as string),
 		enabled: !!id,
+	});
+}
+
+/**
+ * Agents directly bound to a credential (`GET /credentials/{id}/agents`) —
+ * the read-mostly "Bound agents" section on the credential edit sheet.
+ * First page only (default 50): the section is a glanceable summary that
+ * links out to each agent's own console for anything deeper. `enabled`
+ * gates the read to when the host sheet is actually open.
+ */
+export function useCredentialAgents(
+	id: string | undefined,
+	opts: { enabled?: boolean } = {},
+): UseQueryResult<CredentialAgentListResponse> {
+	return useQuery({
+		queryKey: credentialKeys.agents(id ?? '__none__'),
+		queryFn: () => listCredentialAgents(id as string),
+		enabled: (opts.enabled ?? true) && !!id,
 	});
 }
 

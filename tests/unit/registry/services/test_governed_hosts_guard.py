@@ -20,7 +20,7 @@ from jentic_one.shared.config import AppConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import ActorType
 
-_IDENTITY = Identity(sub="agt_test", actor_type=ActorType.AGENT, permissions=["toolkits:read"])
+_IDENTITY = Identity(sub="agt_test", actor_type=ActorType.AGENT, permissions=["credentials:read"])
 
 
 @pytest.mark.parametrize("missing", ["admin", "control"])

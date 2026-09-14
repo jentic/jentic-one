@@ -12,10 +12,11 @@ class GovernedHostsResponse(BaseModel):
     (divert lists, host filters), so it carries the minimum knowledge — API
     detail stays behind the existing authenticated reads (``GET /apis``).
 
-    Deliberately **unpaginated**: the set is bounded by the caller's own toolkit
-    bindings (tens of hosts, not thousands) and the digest must cover the whole
-    set atomically — a paginated digest would be meaningless. This is a
-    documented deviation from the list-endpoint pagination convention.
+    Deliberately **unpaginated**: the set is bounded by the caller's own
+    credential bindings (tens of hosts, not thousands) and the digest must
+    cover the whole set atomically — a paginated digest would be meaningless.
+    This is a documented deviation from the list-endpoint pagination
+    convention.
     """
 
     data: list[str] = Field(
@@ -23,7 +24,8 @@ class GovernedHostsResponse(BaseModel):
             "Governed host entries, normalised (lowercased, FQDN root dot "
             "stripped, internationalised names IDNA/punycode-encoded), "
             "deduplicated, and sorted — the literal URL-index hosts the "
-            "broker's discovery matches for the caller's toolkit-bound APIs. "
+            "broker's discovery matches for the APIs the caller's bound "
+            "credentials cover. "
             "An entry is a hostname, a bare IP literal, or either followed by "
             "a non-default port (`host[:port]` — default ports are already "
             "stripped). Compare case-insensitively (lowercase the incoming "

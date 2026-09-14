@@ -55,7 +55,7 @@ class ExecutionService:
         if has_more:
             records = records[:limit]
 
-        toolkit_ids = list({r.toolkit_id for r in records})
+        toolkit_ids = list({r.toolkit_id for r in records if r.toolkit_id})
         names_map: dict[str, str] = {}
         if toolkit_ids:
             async with self._ctx.control_db.session() as session:
@@ -74,8 +74,10 @@ class ExecutionService:
         if record is None:
             raise ExecutionNotFoundError(execution_id)
 
-        async with self._ctx.control_db.session() as session:
-            names_map = await resolve_toolkit_names(session, [record.toolkit_id])
+        names_map: dict[str, str] = {}
+        if record.toolkit_id:
+            async with self._ctx.control_db.session() as session:
+                names_map = await resolve_toolkit_names(session, [record.toolkit_id])
 
         return self._to_view(record, names_map=names_map)
 

@@ -1,8 +1,8 @@
 """Web tests for ``GET /governed-hosts`` (#1278) against real databases.
 
-Exercises the full three-database derivation (admin bindings → control
-credential scopes → registry URL-index host resolution), the scope gate, the
-toolkit-key short-circuit, and the ETag change-poll round trip.
+Exercises the full three-database derivation (admin credential bindings →
+control credential scopes → registry URL-index host resolution), the scope
+gate, and the ETag change-poll round trip.
 
 The registry seed mirrors the ingest pipeline's ``URLIndexStage``: hosts are
 read from ``operation_url_indexes`` (what the broker's discovery matches), so
@@ -18,11 +18,9 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import delete, select, update
 
-from jentic_one.admin.core.schema.agent_toolkit_bindings import AgentToolkitBinding
+from jentic_one.admin.core.schema.agent_credential_bindings import AgentCredentialBinding
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.control.core.schema.credentials import Credential
-from jentic_one.control.core.schema.toolkit_credential_bindings import ToolkitCredentialBinding
-from jentic_one.control.core.schema.toolkits import Toolkit
 from jentic_one.registry.core.schema.api_revisions import ApiRevision
 from jentic_one.registry.core.schema.apis import Api
 from jentic_one.registry.core.schema.operation_url_index import OperationURLIndex
@@ -57,12 +55,10 @@ async def clean_tables(web_context: Context) -> AsyncGenerator[None, None]:
                 await session.execute(delete(Api).where(Api.vendor == vendor))
             await session.commit()
         async with web_context.control_db.session() as session:
-            await session.execute(delete(ToolkitCredentialBinding))
             await session.execute(delete(Credential).where(Credential.api_vendor.like("gvh-%")))
-            await session.execute(delete(Toolkit).where(Toolkit.name.like("tk-gvh-%")))
             await session.commit()
         async with web_context.admin_db.session() as session:
-            await session.execute(delete(AgentToolkitBinding))
+            await session.execute(delete(AgentCredentialBinding))
             await session.execute(delete(Agent).where(Agent.name.like("gvh-%")))
             await session.commit()
 
@@ -112,42 +108,46 @@ async def _seed_api(
         await session.commit()
 
 
-async def _seed_toolkit_credential(
+async def _seed_credential(
     ctx: Context,
     *,
-    toolkit_name: str,
+    label: str,
     api_vendor: str,
     api_name: str | None,
     api_version: str | None,
     active: bool = True,
 ) -> str:
-    """Seed a toolkit + bound credential scope; return the toolkit id."""
+    """Seed a stored credential scope (control DB); return the credential id."""
     async with ctx.control_db.session() as session:
-        toolkit = Toolkit(name=toolkit_name)
         credential = Credential(
             type="token_value",
-            name=f"cred-{toolkit_name}-{api_name or 'wildcard'}",
+            name=f"cred-{label}",
             api_vendor=api_vendor,
             api_name=api_name,
             api_version=api_version,
             active=active,
         )
-        session.add_all([toolkit, credential])
+        session.add(credential)
         await session.flush()
-        session.add(ToolkitCredentialBinding(toolkit_id=toolkit.id, credential_id=credential.id))
-        toolkit_id = toolkit.id
+        credential_id = credential.id
         await session.commit()
-    return toolkit_id
+    return credential_id
 
 
-async def _seed_agent_binding(ctx: Context, *, agent_name: str, toolkit_ids: list[str]) -> str:
-    """Seed an agent bound to the toolkits; return the agent id."""
+async def _seed_agent_binding(
+    ctx: Context, *, agent_name: str, credential_ids: list[str], suspended: bool = False
+) -> str:
+    """Seed an agent bound to the credentials; return the agent id."""
     async with ctx.admin_db.session() as session:
         agent = Agent(name=agent_name, registered_by="usr_gvh_test")
         session.add(agent)
         await session.flush()
-        for toolkit_id in toolkit_ids:
-            session.add(AgentToolkitBinding(agent_id=agent.id, toolkit_id=toolkit_id))
+        for credential_id in credential_ids:
+            session.add(
+                AgentCredentialBinding(
+                    agent_id=agent.id, credential_id=credential_id, suspended=suspended
+                )
+            )
         agent_id = agent.id
         await session.commit()
     return agent_id
@@ -158,15 +158,7 @@ async def _seed_agent_binding(ctx: Context, *, agent_name: str, toolkit_ids: lis
 
 def _agent_client(web_context: Context, sub: str) -> TestClient:
     """A delegated agent holding only the owner-scoped leaf (DEFAULT_AGENT_SCOPES member)."""
-    identity = Identity(sub=sub, actor_type=ActorType.AGENT, permissions=["owner:toolkits:read"])
-    return TestClient(
-        _build_app_as(web_context, identity), headers={"Authorization": "Bearer test-token"}
-    )
-
-
-def _toolkit_key_client(web_context: Context, toolkit_id: str) -> TestClient:
-    """A toolkit-key actor — its ``sub`` *is* the toolkit id."""
-    identity = Identity(sub=toolkit_id, actor_type=ActorType.TOOLKIT, permissions=["toolkits:read"])
+    identity = Identity(sub=sub, actor_type=ActorType.AGENT, permissions=["owner:credentials:read"])
     return TestClient(
         _build_app_as(web_context, identity), headers={"Authorization": "Bearer test-token"}
     )
@@ -176,21 +168,21 @@ def _toolkit_key_client(web_context: Context, toolkit_id: str) -> TestClient:
 
 
 @pytest.mark.usefixtures("clean_tables")
-async def test_two_toolkits_union_of_hosts(web_context: Context) -> None:
+async def test_two_bindings_union_of_hosts(web_context: Context) -> None:
     await _seed_api(
         web_context, vendor=_VENDOR, name="alpha", version="v1", urls="https://alpha.gvh.test/v1"
     )
     await _seed_api(
         web_context, vendor=_VENDOR, name="beta", version="v1", urls="https://beta.gvh.test/v1"
     )
-    tk1 = await _seed_toolkit_credential(
-        web_context, toolkit_name="tk-gvh-a", api_vendor=_VENDOR, api_name="alpha", api_version="v1"
+    cred1 = await _seed_credential(
+        web_context, label="gvh-a", api_vendor=_VENDOR, api_name="alpha", api_version="v1"
     )
-    tk2 = await _seed_toolkit_credential(
-        web_context, toolkit_name="tk-gvh-b", api_vendor=_VENDOR, api_name="beta", api_version="v1"
+    cred2 = await _seed_credential(
+        web_context, label="gvh-b", api_vendor=_VENDOR, api_name="beta", api_version="v1"
     )
     agent_id = await _seed_agent_binding(
-        web_context, agent_name="gvh-agent", toolkit_ids=[tk1, tk2]
+        web_context, agent_name="gvh-agent", credential_ids=[cred1, cred2]
     )
 
     with _agent_client(web_context, agent_id) as client:
@@ -211,14 +203,16 @@ async def test_multi_server_api_contributes_every_host(web_context: Context) -> 
         version="v1",
         urls=["https://alpha.gvh.test/v1", "https://alpha-eu.gvh.test/v1"],
     )
-    tk = await _seed_toolkit_credential(
+    cred = await _seed_credential(
         web_context,
-        toolkit_name="tk-gvh-ms",
+        label="gvh-ms",
         api_vendor=_VENDOR,
         api_name="alpha",
         api_version="v1",
     )
-    agent_id = await _seed_agent_binding(web_context, agent_name="gvh-agent-ms", toolkit_ids=[tk])
+    agent_id = await _seed_agent_binding(
+        web_context, agent_name="gvh-agent-ms", credential_ids=[cred]
+    )
 
     with _agent_client(web_context, agent_id) as client:
         resp = client.get("/governed-hosts")
@@ -239,14 +233,16 @@ async def test_templated_host_is_excluded(web_context: Context) -> None:
         version="v1",
         urls=["https://{region}.alpha.gvh.test/v1", "https://static.alpha.gvh.test/v1"],
     )
-    tk = await _seed_toolkit_credential(
+    cred = await _seed_credential(
         web_context,
-        toolkit_name="tk-gvh-tpl",
+        label="gvh-tpl",
         api_vendor=_VENDOR,
         api_name="alpha",
         api_version="v1",
     )
-    agent_id = await _seed_agent_binding(web_context, agent_name="gvh-agent-tpl", toolkit_ids=[tk])
+    agent_id = await _seed_agent_binding(
+        web_context, agent_name="gvh-agent-tpl", credential_ids=[cred]
+    )
 
     with _agent_client(web_context, agent_id) as client:
         resp = client.get("/governed-hosts")
@@ -265,10 +261,12 @@ async def test_wildcard_credential_expands_to_all_covered_apis(web_context: Cont
     await _seed_api(
         web_context, vendor=_OTHER_VENDOR, name="gamma", version="v1", urls="https://gamma.gvh.test"
     )
-    tk = await _seed_toolkit_credential(
-        web_context, toolkit_name="tk-gvh-wild", api_vendor=_VENDOR, api_name=None, api_version=None
+    cred = await _seed_credential(
+        web_context, label="gvh-wild", api_vendor=_VENDOR, api_name=None, api_version=None
     )
-    agent_id = await _seed_agent_binding(web_context, agent_name="gvh-agent-wild", toolkit_ids=[tk])
+    agent_id = await _seed_agent_binding(
+        web_context, agent_name="gvh-agent-wild", credential_ids=[cred]
+    )
 
     with _agent_client(web_context, agent_id) as client:
         resp = client.get("/governed-hosts")
@@ -279,24 +277,24 @@ async def test_wildcard_credential_expands_to_all_covered_apis(web_context: Cont
 
 @pytest.mark.usefixtures("clean_tables")
 async def test_inactive_credential_is_still_governed(web_context: Context) -> None:
-    """An inactive credential's hosts stay in the governed set: the broker's
-    discovery/derivation matcher (``credential_coverage_where()``, used bare by
-    ``toolkit_binding_resolver``) carries no ``active`` clause, so that traffic
-    is still intercepted — it fails at credential injection, not at discovery.
-    Omitting the host would send the traffic direct to the upstream,
-    unbrokered."""
+    """An inactive credential's hosts stay in the governed set: deactivation
+    must not divert its traffic around the broker — the call must still arrive
+    and be refused loudly (fail closed). Omitting the host would send the
+    traffic direct to the upstream, unbrokered."""
     await _seed_api(
         web_context, vendor=_VENDOR, name="alpha", version="v1", urls="https://alpha.gvh.test"
     )
-    tk = await _seed_toolkit_credential(
+    cred = await _seed_credential(
         web_context,
-        toolkit_name="tk-gvh-inactive",
+        label="gvh-inactive",
         api_vendor=_VENDOR,
         api_name="alpha",
         api_version="v1",
         active=False,
     )
-    agent_id = await _seed_agent_binding(web_context, agent_name="gvh-agent-ina", toolkit_ids=[tk])
+    agent_id = await _seed_agent_binding(
+        web_context, agent_name="gvh-agent-ina", credential_ids=[cred]
+    )
 
     with _agent_client(web_context, agent_id) as client:
         resp = client.get("/governed-hosts")
@@ -317,26 +315,30 @@ async def test_two_agents_see_disjoint_host_sets(web_context: Context) -> None:
     await _seed_api(
         web_context, vendor=_VENDOR, name="beta", version="v1", urls="https://beta.gvh.test"
     )
-    # Leg-2/3 tripwire: a toolkit + credential (covering gamma) bound to NO
-    # agent — its host must appear for neither actor.
+    # Leg-2/3 tripwire: a credential (covering gamma) bound to NO agent — its
+    # host must appear for neither actor.
     await _seed_api(
         web_context, vendor=_OTHER_VENDOR, name="gamma", version="v1", urls="https://gamma.gvh.test"
     )
-    tk_a = await _seed_toolkit_credential(
-        web_context, toolkit_name="tk-gvh-a", api_vendor=_VENDOR, api_name="alpha", api_version="v1"
+    cred_a = await _seed_credential(
+        web_context, label="gvh-a", api_vendor=_VENDOR, api_name="alpha", api_version="v1"
     )
-    tk_b = await _seed_toolkit_credential(
-        web_context, toolkit_name="tk-gvh-b", api_vendor=_VENDOR, api_name="beta", api_version="v1"
+    cred_b = await _seed_credential(
+        web_context, label="gvh-b", api_vendor=_VENDOR, api_name="beta", api_version="v1"
     )
-    await _seed_toolkit_credential(
+    await _seed_credential(
         web_context,
-        toolkit_name="tk-gvh-unbound",
+        label="gvh-unbound",
         api_vendor=_OTHER_VENDOR,
         api_name="gamma",
         api_version="v1",
     )
-    agent_a = await _seed_agent_binding(web_context, agent_name="gvh-agent-a", toolkit_ids=[tk_a])
-    agent_b = await _seed_agent_binding(web_context, agent_name="gvh-agent-b", toolkit_ids=[tk_b])
+    agent_a = await _seed_agent_binding(
+        web_context, agent_name="gvh-agent-a", credential_ids=[cred_a]
+    )
+    agent_b = await _seed_agent_binding(
+        web_context, agent_name="gvh-agent-b", credential_ids=[cred_b]
+    )
 
     with _agent_client(web_context, agent_a) as client:
         resp_a = client.get("/governed-hosts")
@@ -360,14 +362,16 @@ async def test_archived_revision_hosts_still_governed(web_context: Context) -> N
     await _seed_api(
         web_context, vendor=_VENDOR, name="alpha", version="v1", urls="https://alpha.gvh.test"
     )
-    tk = await _seed_toolkit_credential(
+    cred = await _seed_credential(
         web_context,
-        toolkit_name="tk-gvh-arch",
+        label="gvh-arch",
         api_vendor=_VENDOR,
         api_name="alpha",
         api_version="v1",
     )
-    agent_id = await _seed_agent_binding(web_context, agent_name="gvh-agent-arch", toolkit_ids=[tk])
+    agent_id = await _seed_agent_binding(
+        web_context, agent_name="gvh-agent-arch", credential_ids=[cred]
+    )
 
     # Mirror RevisionService.archive: state → archived, live pointer cleared.
     # The index rows stay (only re-indexing deletes them).
@@ -389,30 +393,27 @@ async def test_archived_revision_hosts_still_governed(web_context: Context) -> N
 
 
 @pytest.mark.usefixtures("clean_tables")
-async def test_toolkit_key_actor_short_circuits_to_own_toolkit(web_context: Context) -> None:
+async def test_suspended_binding_is_still_governed(web_context: Context) -> None:
+    """A suspended binding's hosts stay in the governed set: suspension is the
+    reversible cut-off, and it is only *enforced* if the traffic still diverts
+    to the broker to be refused. Dropping the host would send the cut-off
+    agent's traffic direct to the upstream — suspension would widen its
+    effective egress instead of closing it."""
     await _seed_api(
         web_context, vendor=_VENDOR, name="alpha", version="v1", urls="https://alpha.gvh.test"
     )
-    await _seed_api(
-        web_context, vendor=_VENDOR, name="beta", version="v1", urls="https://beta.gvh.test"
-    )
-    tk_mine = await _seed_toolkit_credential(
+    cred = await _seed_credential(
         web_context,
-        toolkit_name="tk-gvh-mine",
+        label="gvh-susp",
         api_vendor=_VENDOR,
         api_name="alpha",
         api_version="v1",
     )
-    # A second toolkit that must NOT leak into the toolkit key's view.
-    await _seed_toolkit_credential(
-        web_context,
-        toolkit_name="tk-gvh-theirs",
-        api_vendor=_VENDOR,
-        api_name="beta",
-        api_version="v1",
+    agent_id = await _seed_agent_binding(
+        web_context, agent_name="gvh-agent-susp", credential_ids=[cred], suspended=True
     )
 
-    with _toolkit_key_client(web_context, tk_mine) as client:
+    with _agent_client(web_context, agent_id) as client:
         resp = client.get("/governed-hosts")
     assert resp.status_code == 200
     assert resp.json()["data"] == ["alpha.gvh.test"]
@@ -420,7 +421,9 @@ async def test_toolkit_key_actor_short_circuits_to_own_toolkit(web_context: Cont
 
 @pytest.mark.usefixtures("clean_tables")
 async def test_empty_bindings_yield_empty_data_and_stable_digest(web_context: Context) -> None:
-    agent_id = await _seed_agent_binding(web_context, agent_name="gvh-agent-empty", toolkit_ids=[])
+    agent_id = await _seed_agent_binding(
+        web_context, agent_name="gvh-agent-empty", credential_ids=[]
+    )
 
     with _agent_client(web_context, agent_id) as client:
         first = client.get("/governed-hosts")
@@ -438,15 +441,15 @@ async def test_etag_round_trip(web_context: Context) -> None:
     await _seed_api(
         web_context, vendor=_VENDOR, name="beta", version="v1", urls="https://beta.gvh.test"
     )
-    tk1 = await _seed_toolkit_credential(
+    cred1 = await _seed_credential(
         web_context,
-        toolkit_name="tk-gvh-etag",
+        label="gvh-etag",
         api_vendor=_VENDOR,
         api_name="alpha",
         api_version="v1",
     )
     agent_id = await _seed_agent_binding(
-        web_context, agent_name="gvh-agent-etag", toolkit_ids=[tk1]
+        web_context, agent_name="gvh-agent-etag", credential_ids=[cred1]
     )
 
     with _agent_client(web_context, agent_id) as client:
@@ -459,16 +462,16 @@ async def test_etag_round_trip(web_context: Context) -> None:
         assert unchanged.content == b""
         assert unchanged.headers["ETag"] == etag
 
-        # Bind a second toolkit → the host set (and so the digest) changes.
-        tk2 = await _seed_toolkit_credential(
+        # Bind a second credential → the host set (and so the digest) changes.
+        cred2 = await _seed_credential(
             web_context,
-            toolkit_name="tk-gvh-etag2",
+            label="gvh-etag2",
             api_vendor=_VENDOR,
             api_name="beta",
             api_version="v1",
         )
         async with web_context.admin_db.session() as session:
-            session.add(AgentToolkitBinding(agent_id=agent_id, toolkit_id=tk2))
+            session.add(AgentCredentialBinding(agent_id=agent_id, credential_id=cred2))
             await session.commit()
 
         changed = client.get("/governed-hosts", headers={"If-None-Match": etag})
@@ -485,15 +488,15 @@ async def test_same_host_growth_keeps_etag_valid(web_context: Context) -> None:
     await _seed_api(
         web_context, vendor=_VENDOR, name="alpha", version="v1", urls="https://alpha.gvh.test/v1"
     )
-    tk1 = await _seed_toolkit_credential(
+    cred1 = await _seed_credential(
         web_context,
-        toolkit_name="tk-gvh-same",
+        label="gvh-same",
         api_vendor=_VENDOR,
         api_name="alpha",
         api_version="v1",
     )
     agent_id = await _seed_agent_binding(
-        web_context, agent_name="gvh-agent-same", toolkit_ids=[tk1]
+        web_context, agent_name="gvh-agent-same", credential_ids=[cred1]
     )
 
     with _agent_client(web_context, agent_id) as client:
@@ -508,15 +511,15 @@ async def test_same_host_growth_keeps_etag_valid(web_context: Context) -> None:
             version="v1",
             urls="https://alpha.gvh.test/admin",
         )
-        tk2 = await _seed_toolkit_credential(
+        cred2 = await _seed_credential(
             web_context,
-            toolkit_name="tk-gvh-same2",
+            label="gvh-same2",
             api_vendor=_VENDOR,
             api_name="alpha-admin",
             api_version="v1",
         )
         async with web_context.admin_db.session() as session:
-            session.add(AgentToolkitBinding(agent_id=agent_id, toolkit_id=tk2))
+            session.add(AgentCredentialBinding(agent_id=agent_id, credential_id=cred2))
             await session.commit()
 
         second = client.get("/governed-hosts", headers={"If-None-Match": etag})
@@ -528,11 +531,11 @@ async def test_same_host_growth_keeps_etag_valid(web_context: Context) -> None:
 
 
 @pytest.mark.usefixtures("clean_tables")
-async def test_requires_toolkits_read_scope(web_context: Context) -> None:
+async def test_requires_credentials_read_scope(web_context: Context) -> None:
     identity = Identity(
         sub="usr_gvh_wrong_scope",
         email="gvh-wrong@test.local",
-        permissions=["apis:read"],  # neither toolkits:read nor owner:toolkits:read
+        permissions=["apis:read"],  # neither credentials:read nor owner:credentials:read
     )
     with TestClient(
         _build_app_as(web_context, identity), headers={"Authorization": "Bearer test-token"}

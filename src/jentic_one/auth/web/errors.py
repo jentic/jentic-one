@@ -13,6 +13,9 @@ from jentic_one.auth.services.errors import (
     AgentAlreadyOwnedError,
     ClaimActorNotAllowedError,
     ClaimTokenInvalidError,
+    CredentialBindingConflictError,
+    CredentialBindingNotFoundError,
+    CredentialNotVisibleError,
     InvalidClientMetadataError,
     InvalidGrantError,
     InvalidOwnerError,
@@ -24,8 +27,6 @@ from jentic_one.auth.services.errors import (
     OperationNotSupportedError,
     RateLimitExceededError,
     RegistrationAccessDeniedError,
-    ToolkitBindingConflictError,
-    ToolkitBindingNotFoundError,
 )
 from jentic_one.shared.db.errors import DatabaseUnavailableError
 from jentic_one.shared.metrics import get_meter
@@ -52,8 +53,9 @@ _ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     NoApiKeyError: (409, "no_api_key"),
     OAuthGrantAccessDeniedError: (403, "oauth_grant_access_denied"),
     OAuthGrantNotFoundError: (404, "oauth_grant_not_found"),
-    ToolkitBindingConflictError: (409, "toolkit_binding_conflict"),
-    ToolkitBindingNotFoundError: (404, "toolkit_binding_not_found"),
+    CredentialBindingConflictError: (409, "credential_binding_conflict"),
+    CredentialBindingNotFoundError: (404, "credential_binding_not_found"),
+    CredentialNotVisibleError: (404, "credential_not_found"),
     RateLimitExceededError: (429, "rate_limit_exceeded"),
     RegistrationAccessDeniedError: (401, "registration_access_denied"),
     OperationNotSupportedError: (403, "operation_not_supported"),

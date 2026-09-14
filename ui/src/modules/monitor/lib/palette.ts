@@ -18,7 +18,7 @@ export const API_PALETTE = [
 	'#ec4899',
 ];
 
-export const TOOLKIT_PALETTE = [
+export const CREDENTIAL_PALETTE = [
 	'#6366f1',
 	'#8b5cf6',
 	'#0ea5e9',
@@ -31,11 +31,11 @@ export const TOOLKIT_PALETTE = [
 
 export const AGENT_PALETTE = ['#0891b2', '#7c3aed', '#db2777', '#16a34a', '#ea580c', '#475569'];
 
-export type UsageLens = 'apis' | 'toolkits' | 'agents';
+export type UsageLens = 'apis' | 'credentials' | 'agents';
 
 export function lensPalette(lens: UsageLens): string[] {
 	if (lens === 'agents') return AGENT_PALETTE;
-	if (lens === 'toolkits') return TOOLKIT_PALETTE;
+	if (lens === 'credentials') return CREDENTIAL_PALETTE;
 	return API_PALETTE;
 }
 

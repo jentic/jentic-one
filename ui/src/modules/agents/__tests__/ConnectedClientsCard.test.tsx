@@ -69,6 +69,33 @@ describe('ConnectedClientsCard', () => {
 		expect(screen.getByText('Old Integration')).toBeInTheDocument();
 	});
 
+	it('marks a grant dormant when its agent is disabled (#1345), leaving working rows unmarked', async () => {
+		// The API annotates each grant with the bound agent's lifecycle
+		// status; a disabled agent leaves the grant ACTIVE but dormant — the
+		// row must say so instead of reading as a working connection.
+		seedOauthGrants([
+			{ id: 'ocg_dormant_1', client_name: 'Dormant Client', agent_status: 'disabled' },
+		]);
+		renderCard({ agentId: 'agnt_active_1', agentName: 'support-agent' });
+
+		const dormantRow = (await screen.findByText('Dormant Client')).closest('li');
+		expect(dormantRow).not.toBeNull();
+		// Disable/Enable vocabulary, with the way back named in the tooltip.
+		expect(within(dormantRow as HTMLElement).getByText('Agent disabled')).toBeInTheDocument();
+		expect(
+			within(dormantRow as HTMLElement).getByText(
+				/Enable the agent to restore the connection/,
+			),
+		).toBeInTheDocument();
+
+		// The working connection (Cursor → an active agent) carries no chip.
+		const workingRow = (await screen.findByText('Cursor')).closest('li');
+		expect(workingRow).not.toBeNull();
+		expect(
+			within(workingRow as HTMLElement).queryByText(/Agent disabled/),
+		).not.toBeInTheDocument();
+	});
+
 	it('revokes a grant through the confirm dialog and drops the row', async () => {
 		const user = userEvent.setup();
 		renderCard({ agentId: 'agnt_active_1', agentName: 'support-agent' });

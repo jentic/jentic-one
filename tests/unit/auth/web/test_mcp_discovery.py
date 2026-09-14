@@ -53,6 +53,7 @@ _ROOT_AS_GOLDEN = (
     b'"token_endpoint":"https://auth.example.com/oauth/token",'
     b'"registration_endpoint":"https://auth.example.com/register",'
     b'"revocation_endpoint":"https://auth.example.com/oauth/revoke",'
+    b'"revocation_endpoint_auth_methods_supported":["none"],'
     b'"introspection_endpoint":"https://auth.example.com/oauth/introspect",'
     b'"jwks_uri":"https://auth.example.com/.well-known/jwks.json",'
     b'"grant_types_supported":["authorization_code",'
@@ -382,3 +383,18 @@ def test_root_as_document_is_byte_identical_golden(oauth_enabled: bool) -> None:
 def test_root_as_document_still_advertises_agent_register(enabled_client: TestClient) -> None:
     data = enabled_client.get("/.well-known/oauth-authorization-server").json()
     assert data["registration_endpoint"] == f"{_BASE}/register"
+
+
+def test_root_and_mcp_docs_agree_on_revocation_auth_methods(enabled_client: TestClient) -> None:
+    """#1244: both RFC 8414 documents describe the same /oauth/revoke public
+    arm, so their auth-methods members must agree — the root doc used to omit
+    it, letting the spec's implicit client_secret_basic default mis-describe
+    an endpoint whose public arm is auth method "none"."""
+    root = enabled_client.get("/.well-known/oauth-authorization-server").json()
+    scoped = enabled_client.get("/.well-known/oauth-authorization-server/mcp").json()
+    assert root["revocation_endpoint"] == scoped["revocation_endpoint"]
+    assert (
+        root["revocation_endpoint_auth_methods_supported"]
+        == scoped["revocation_endpoint_auth_methods_supported"]
+        == ["none"]
+    )

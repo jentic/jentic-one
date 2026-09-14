@@ -327,7 +327,7 @@ class TokenService:
                     # The D7 approval gate fails closed here too: deny flips
                     # active off, but a pending row force-set active must
                     # still never mint tokens.
-                    raise InvalidGrantError("issuing OAuth client has been deactivated")
+                    raise InvalidGrantError("issuing OAuth client is not active")
                 if oauth_client.allowed_scopes is not None:
                     client_ceiling = frozenset(oauth_client.allowed_scopes)
                 if client_id is None:

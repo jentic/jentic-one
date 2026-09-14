@@ -1,9 +1,10 @@
 """Cross-database derivation of an identity's governed host set (#1278).
 
-The pipeline mirrors the broker's runtime toolkit derivation
-(``broker/repos/toolkit_binding_resolver.py``), run in the opposite direction:
-instead of "which toolkits serve *this* API", it derives "which APIs (and so
-which hosts) do *this identity's* toolkits cover".
+The pipeline mirrors the broker's runtime credential derivation
+(``broker/repos/credential_binding_resolver.py``), run in the opposite
+direction: instead of "which bound credentials cover *this* API", it derives
+"which APIs (and so which hosts) do *this identity's* bound credentials
+cover".
 
 Registry and the admin/control planes are **separate databases** with no
 cross-schema referential integrity, and the registry module may import neither
@@ -41,62 +42,69 @@ from jentic_one.registry.core.schema.apis import Api
 from jentic_one.registry.core.schema.operation_url_index import OperationURLIndex
 from jentic_one.shared.models.api_identity import CredentialScope, canonical_credential_scope
 
-# admin DB — the toolkits the identity is bound to (same statement as the
-# broker's runtime resolver; agents and other bound actors share the table).
-_AGENT_TOOLKITS = text("SELECT toolkit_id FROM agent_toolkit_bindings WHERE agent_id = :agent_id")
+# admin DB — the credentials the identity is bound to. Deliberately NOT
+# filtered on ``suspended`` (unlike the broker's runtime resolver, which
+# refuses to *authorize* through a suspended binding): suspension is the
+# reversible per-consumer cut-off, and a cut-off is only enforced if the
+# traffic still reaches the broker to be refused. Dropping a suspended
+# binding's hosts here would tell an integrator's gate to send that traffic
+# direct to the upstream, unbrokered — the suspension would *widen* the
+# agent's effective egress instead of closing it.
+_BOUND_CREDENTIALS = text(
+    "SELECT credential_id FROM agent_credential_bindings WHERE agent_id = :agent_id"
+)
 
-# control DB — the distinct stored credential scopes bound to a set of toolkits.
-# Deliberately NOT filtered on ``c.active``: the broker's discovery/derivation
-# matcher (``credential_coverage_where()``, used bare by
-# ``toolkit_binding_resolver.py``) carries no ``active`` clause, so traffic
-# covered by an inactive credential is still intercepted — it fails later, at
-# credential injection. Its hosts are therefore still governed; dropping them
-# here would tell an integrator's gate to send that traffic direct to the
-# upstream, unbrokered. ORDER BY keeps result sets stable for debugging, but
-# NULL placement is backend-dependent — deterministic ordering is imposed in
-# Python by the caller.
-_CREDENTIAL_SCOPES_FOR_TOOLKITS = text(
+# control DB — the distinct stored credential scopes of a set of credentials.
+# Deliberately NOT filtered on ``c.active``, for the same fail-closed reason
+# as the suspension filter above: deactivating a credential must not divert
+# its traffic around the broker — the call must still arrive and be refused
+# loudly. ORDER BY keeps result sets stable for debugging, but NULL placement
+# is backend-dependent — deterministic ordering is imposed in Python by the
+# caller.
+_CREDENTIAL_SCOPES = text(
     "SELECT DISTINCT c.api_vendor, c.api_name, c.api_version "
-    "FROM toolkit_credential_bindings tcb "
-    "JOIN credentials c ON c.id = tcb.credential_id "
-    "WHERE tcb.toolkit_id IN :toolkit_ids "
+    "FROM credentials c "
+    "WHERE c.id IN :credential_ids "
     "ORDER BY c.api_vendor, c.api_name, c.api_version"
-).bindparams(bindparam("toolkit_ids", expanding=True))
+).bindparams(bindparam("credential_ids", expanding=True))
 
 
 class GovernedHostsRepository:
-    """Derives the identity's toolkit → credential-scope → host chain.
+    """Derives the identity's binding → credential-scope → host chain.
 
     Each method runs against the session for **one** database; the caller
     (``GovernedHostsService``) sequences the three legs — the databases are
     separate sessions, so the joins are computed in Python, exactly as the
-    broker's ``ToolkitBindingResolver`` does.
+    broker's ``CredentialBindingResolver`` does.
     """
 
     @staticmethod
-    async def toolkit_ids_for_identity(session: AsyncSession, *, sub: str) -> set[str]:
-        """Toolkit ids bound to the identity (**admin** DB session)."""
-        rows = (await session.execute(_AGENT_TOOLKITS, {"agent_id": sub})).all()
+    async def credential_ids_for_identity(session: AsyncSession, *, sub: str) -> set[str]:
+        """Credential ids bound to the identity (**admin** DB session).
+
+        Suspended bindings are included — their hosts must stay governed so
+        the suspension is enforced at the broker (see the note on
+        ``_BOUND_CREDENTIALS``).
+        """
+        rows = (await session.execute(_BOUND_CREDENTIALS, {"agent_id": sub})).all()
         return {row[0] for row in rows}
 
     @staticmethod
-    async def credential_scopes_for_toolkits(
-        session: AsyncSession, *, toolkit_ids: set[str]
+    async def credential_scopes_for_ids(
+        session: AsyncSession, *, credential_ids: set[str]
     ) -> list[CredentialScope]:
-        """Distinct credential scopes bound to the toolkits (**control** DB session).
+        """Distinct stored scopes of the credentials (**control** DB session).
 
-        Includes inactive credentials — the broker still intercepts their
-        traffic (see the note on ``_CREDENTIAL_SCOPES_FOR_TOOLKITS``). Scopes
+        Includes inactive credentials — their traffic must still divert to the
+        broker to be refused (see the note on ``_CREDENTIAL_SCOPES``). Scopes
         are re-canonicalised on read (slugified vendor/name, empty→``None``)
         so a legacy non-canonical stored row expands against the registry on the
         same footing as the broker's coverage matchers.
         """
-        if not toolkit_ids:
+        if not credential_ids:
             return []
         rows = (
-            await session.execute(
-                _CREDENTIAL_SCOPES_FOR_TOOLKITS, {"toolkit_ids": sorted(toolkit_ids)}
-            )
+            await session.execute(_CREDENTIAL_SCOPES, {"credential_ids": sorted(credential_ids)})
         ).all()
         # Canonicalisation can collapse two stored rows into one scope, and the
         # SQL ORDER BY's NULL placement is backend-dependent — dedupe and

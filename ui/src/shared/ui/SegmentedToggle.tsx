@@ -74,7 +74,10 @@ export function SegmentedToggle<T extends string = string>({
 
 	// Measure the active button's box relative to the container after layout,
 	// and re-measure on resize. `useLayoutEffect` so the pill is positioned
-	// before paint (no first-frame flash at 0,0).
+	// before paint (no first-frame flash at 0,0). Both the container AND the
+	// active button are observed: a segment can resize without the container
+	// telling the whole story (e.g. a count in its label ticking over),
+	// which would otherwise leave the pill on a stale rect.
 	useLayoutEffect(() => {
 		function measure() {
 			const container = containerRef.current;
@@ -85,6 +88,8 @@ export function SegmentedToggle<T extends string = string>({
 		measure();
 		const ro = new ResizeObserver(measure);
 		if (containerRef.current) ro.observe(containerRef.current);
+		const activeBtn = btnRefs.current.get(value);
+		if (activeBtn) ro.observe(activeBtn);
 		return () => ro.disconnect();
 	}, [value, options]);
 
@@ -114,7 +119,11 @@ export function SegmentedToggle<T extends string = string>({
 			role={isTabs ? 'tablist' : ariaLabel ? 'group' : undefined}
 			aria-label={ariaLabel}
 			className={cn(
-				'border-border bg-muted/50 relative flex rounded-lg border p-0.5',
+				// Structural backstop for the invariant above: even if a stale
+				// rect ever slipped through, overflow past the control's border
+				// never becomes visible or scrollable. The pill is inset
+				// (top-0.5/bottom-0.5, within p-0.5), so nothing is cut at rest.
+				'border-border bg-muted/50 relative flex overflow-x-clip rounded-lg border p-0.5',
 				className,
 			)}
 		>
@@ -124,7 +133,20 @@ export function SegmentedToggle<T extends string = string>({
 					className="bg-foreground/10 ring-border/50 pointer-events-none absolute top-0.5 bottom-0.5 rounded-md shadow-sm ring-1"
 					initial={false}
 					animate={{ left: pill.left, width: pill.width }}
-					transition={{ type: 'spring', stiffness: 500, damping: 35 }}
+					// INVARIANT: the pill must never extend past the control's own
+					// bounds. At rest the measurement guarantees it (offsetLeft/
+					// offsetWidth are relative to the same padding box the pill
+					// positions against); mid-animation it holds because this
+					// spring is critically damped (damping ≥ 2·√stiffness ≈ 44.7):
+					// `left` and `width` approach their targets monotonically, so
+					// `left + width` stays inside the endpoints' envelope. The
+					// underdamped original (damping 35) overshot proportionally to
+					// the jump size, which inside an `overflow-x-auto` wrapper
+					// (phone toolbars) could poke the pill's right edge past the
+					// content width and blip a horizontal scrollbar. The root's
+					// overflow-x-clip is the structural backstop for the same
+					// invariant. Pinned by the bounds test in SegmentedToggle.test.
+					transition={{ type: 'spring', stiffness: 500, damping: 45 }}
 				/>
 			)}
 			{options.map((option) => {

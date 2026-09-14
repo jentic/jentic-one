@@ -18,12 +18,12 @@ if TYPE_CHECKING:
 
 
 # The only (resource_type, action) combinations whose permission `rules` are
-# actually enforced. Broker rules are keyed per (toolkit_id, credential_id)
-# (see broker/repos/rule_evaluator.py), so only a credential:bind has a key to
-# apply them to. Rules on any other item type would silently produce an
-# unrestricted binding — granted scope ≠ enforced scope. Both the default-rule
-# substitution (repo) and the file/amend rejection (service) gate on this set,
-# so future rule-bearing item types are opt-in in exactly one place.
+# actually enforced. Broker rules are keyed per (agent_id, credential_id)
+# binding (see broker/repos/agent_rule_evaluator.py), so only a credential:bind
+# has a key to apply them to. Rules on any other item type would silently
+# produce an unrestricted binding — granted scope ≠ enforced scope. Both the
+# default-rule substitution (repo) and the file/amend rejection (service) gate
+# on this set, so future rule-bearing item types are opt-in in exactly one place.
 RULE_BEARING_COMBINATIONS: frozenset[tuple[str, str]] = frozenset({("credential", "bind")})
 
 
@@ -67,6 +67,11 @@ class AccessRequestItem(AuditableMixin, ControlBase):
     to_type: Mapped[str | None] = mapped_column(String(30), nullable=True)
     to_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     rules: Mapped[list[dict[str, Any]] | None] = mapped_column(json_variant(), nullable=True)
+    # Optional pointer at a shared ``permission_rule_sets`` row (control DB,
+    # FK-less by convention with the admin binding's pointer) — the alternative
+    # policy carrier for a ``credential:bind`` item (theme-5 Phase 3, hard
+    # problem 6: every bind must carry ``rules`` or a ``rule_set_id``).
+    rule_set_id: Mapped[str | None] = mapped_column(String(30), nullable=True)
     status: Mapped[str] = mapped_column(String(30), nullable=False)
     applied_effects: Mapped[dict[str, Any] | None] = mapped_column(json_variant(), nullable=True)
     decided_by: Mapped[str | None] = mapped_column(String(255), nullable=True)

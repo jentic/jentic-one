@@ -53,6 +53,7 @@ func TestResolveMCPBindPosture(t *testing.T) {
 		{"loopback without token refuses", mcpHTTPOptions{listen: "127.0.0.1:9999"}, "--token-file"},
 		{"loopback with token serves", mcpHTTPOptions{listen: "127.0.0.1:9999", tokenFile: token}, ""},
 		{"loopback opt-out serves tokenless", mcpHTTPOptions{listen: "localhost:9999", allowUnauthenticated: true}, ""},
+		{"loopback token + opt-out is a refused contradiction", mcpHTTPOptions{listen: "127.0.0.1:9999", tokenFile: token, allowUnauthenticated: true}, "contradictory"},
 		{"non-loopback never serves unauthenticated", mcpHTTPOptions{listen: "10.0.0.5:9999", allowNonLoopback: true, tlsCert: "c.pem", tlsKey: "k.pem", tokenFile: token, allowUnauthenticated: true}, "loopback-only"},
 		{"half a TLS pair refuses", mcpHTTPOptions{listen: "127.0.0.1:9999", tokenFile: token, tlsCert: "c.pem"}, "together"},
 		{"unix socket serves credential-less", mcpHTTPOptions{socket: "/tmp/x.sock"}, ""},
@@ -453,20 +454,7 @@ func TestCheckMCPModeFlags(t *testing.T) {
 	}
 }
 
-// TestListenerFromFD proves inherited-fd adoption against a real socket.
-func TestListenerFromFD(t *testing.T) {
-	ln, err := net.Listen("unix", shortSocketPath(t))
-	if err != nil {
-		t.Fatalf("bind: %v", err)
-	}
-	t.Cleanup(func() { _ = ln.Close() })
-	f, err := ln.(*net.UnixListener).File()
-	if err != nil {
-		t.Fatalf("File: %v", err)
-	}
-	adopted, err := listenerFromFD(f.Fd(), "test socket")
-	if err != nil {
-		t.Fatalf("listenerFromFD: %v", err)
-	}
-	_ = adopted.Close()
-}
+// TestListenerFromFD lives in mcp_activation_unix_test.go: donating a raw
+// fd is a unix-only affair (systemd/launchd), and the donation must be a
+// dedicated dup that listenerFromFD exclusively owns — see the fd-ownership
+// contract on listenerFromFD.

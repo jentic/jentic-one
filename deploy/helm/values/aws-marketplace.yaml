@@ -44,7 +44,7 @@ global:
   # *.password values (explicit passwords always win over generated ones)
   # and disable the bundled DB (see the postgresql blocks). Buyers managing
   # secrets themselves: set global.appSecrets.existingSecret instead. See
-  # deploy/README.md.
+  # docs/installation/helm.md "Secrets".
   appSecrets:
     generate: true
 
@@ -62,7 +62,7 @@ global:
 # app and broker run the same jentic-one-app image, differentiated by the
 # JENTIC__APPS env. The image bakes the app roles
 # (registry,admin,control,auth), so the broker block below MUST override it —
-# the subcharts themselves don't (deploy/README.md "Helm consumption" note).
+# the subcharts themselves don't (deploy/helm/README.md "Known gaps").
 # If the Marketplace portal provisions a single ECR repository for the
 # product, keep the explicit repository values below identical; if it
 # provisions one repo per name, drop the overrides and let
