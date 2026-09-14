@@ -153,12 +153,16 @@ function VendorSelfConnectFlow({
 
 	useEffect(() => {
 		if (phase !== 'awaiting') return;
-		// A 404 on /status means the backend deleted the session
-		// (unhappy terminal: the credential + its session were cleaned
-		// up rather than left as dangling ``failed`` rows). Treat as
-		// terminal-failed and stop polling.
+		// A 403 on /status means the backend deleted the session
+		// (unhappy terminal — ``_mark_terminal`` cascades the credential
+		// + session rather than leaving dangling ``failed`` rows). The
+		// service raises ``InvalidPollTokenError`` uniformly for both
+		// "session missing" and "poll_token mismatch" to close the
+		// session-id enumeration oracle; we know the poll_token is
+		// correct at this point (we made it through ``:confirm``), so
+		// a 403 here is unambiguously "session gone → terminal".
 		const err = polling.error as { status?: number } | undefined;
-		if (err?.status === 404) {
+		if (err?.status === 403) {
 			phaseRef.current = 'terminal';
 			setPhase('terminal');
 			return;
@@ -424,11 +428,14 @@ function VendorApproveFlow({
 
 	useEffect(() => {
 		if (phase !== 'awaiting') return;
-		// See ``VendorSelfConnectFlow`` for the 404-as-terminal rationale
-		// (backend deletes the session on unhappy terminal outcomes so
-		// no dangling ``failed`` credential lingers in the UI).
+		// See ``VendorSelfConnectFlow`` for the 403-as-terminal rationale
+		// (backend cascades the session on unhappy terminal, and the
+		// service raises ``InvalidPollTokenError`` for missing sessions
+		// to close the enumeration oracle — but we know our poll_token
+		// is correct at this point, so a 403 here is unambiguously
+		// "session gone → terminal").
 		const err = polling.error as { status?: number } | undefined;
-		if (err?.status === 404) {
+		if (err?.status === 403) {
 			phaseRef.current = 'terminal';
 			setPhase('terminal');
 			return;
@@ -519,7 +526,6 @@ function VendorApproveFlow({
 				connectedAs={polling.data?.connected_as ?? null}
 				errorCode={polling.data?.error_code ?? null}
 				onDone={onDone}
-				onRetry={onDone}
 			/>
 		);
 	}
@@ -946,7 +952,10 @@ function TerminalStep({
 	connectedAs: string | null;
 	errorCode: string | null;
 	onDone: () => void;
-	onRetry: () => void;
+	// Approve-mode has no meaningful "retry" — once the session hits
+	// terminal, the agent must initiate a new one. Callers in that mode
+	// omit ``onRetry`` and the button is hidden.
+	onRetry?: () => void;
 }) {
 	const success = status === 'connected';
 	return (
@@ -979,7 +988,7 @@ function TerminalStep({
 			</div>
 
 			<div className="border-border bg-muted/20 -mx-5 -mb-4 flex items-center justify-end gap-2 border-t px-5 py-3">
-				{!success && (
+				{!success && onRetry && (
 					<Button type="button" variant="secondary" onClick={onRetry}>
 						Try again
 					</Button>
