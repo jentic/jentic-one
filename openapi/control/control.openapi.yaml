@@ -13407,9 +13407,15 @@ paths:
         Gated by the same ``poll_token`` capability as ``/status`` — the
         SPA already holds it, so we don't force the caller to bring a
         heavier scope than the poller endpoint they're already using.
-        Idempotent: an already-terminal (or already-cleaned-up) session is
-        a 204 no-op so a "Cancel" click during a race with the poll scanner
-        doesn't error.
+
+        A still-existing but already-terminal session is a 204 no-op — a
+        "Cancel" click racing the poll scanner doesn't error. A session
+        that has already been cascade-deleted (unhappy-terminal path in
+        ``_mark_terminal``) surfaces as 403, matching ``/status`` — the
+        caller can't distinguish "gone" from "your poll_token is wrong",
+        which is the enumeration-oracle guard. The SPA's cancel-on-unmount
+        is fire-and-forget and ``.catch``es the 403, so this doesn't leak
+        into the UX.
       operationId: cancelConnectSession
       parameters:
       - in: path
