@@ -960,6 +960,24 @@ class VendorAuthConfig(BaseModel):
     scopes: list[VendorScopeConfig] = Field(default_factory=list)
     identity_probe: VendorIdentityProbeConfig
 
+    @field_validator("vendor")
+    @classmethod
+    def _vendor_is_domain_slash_name(cls, v: str) -> str:
+        """Require a ``{domain}/{name}`` shape (e.g. ``github.com/api.github.com``).
+
+        Without this check a bare ``vendor`` string (missing the ``/``) silently
+        collapses through ``entry.vendor.split("/", 1)[0]`` and produces a
+        credential ``api_vendor`` that mismatches the broker's per-operation
+        identity check — the mismatch only surfaces on the first connect and is
+        hard to diagnose from the field. Failing loud at config-load is cheaper.
+        """
+        if "/" not in v or v.startswith("/") or v.endswith("/"):
+            raise ValueError(
+                f"vendor {v!r} must be of the form '<domain>/<sub>' "
+                "(e.g. 'github.com/api.github.com')"
+            )
+        return v
+
 
 class VendorRegistryConfig(BaseModel):
     """Top-level vendor auth registry."""
