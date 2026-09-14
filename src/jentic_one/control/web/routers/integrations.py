@@ -287,9 +287,11 @@ async def poll_connect_session_status(
 ) -> StatusResponse | JSONResponse:
     try:
         result = await svc.get_status(session_id, poll_token=poll_token)
-    except SessionNotFoundError:
-        return JSONResponse(status_code=404, content={"detail": "session not found"})
     except InvalidPollTokenError:
+        # ``get_status`` uniformly raises this for both "session missing"
+        # and "poll_token mismatch" — see ``connect_session_service.get_status``.
+        # The uniform 403 is what closes the session-id enumeration oracle;
+        # a 404 branch here would silently reintroduce the split.
         return JSONResponse(status_code=403, content={"detail": "invalid poll_token"})
 
     return StatusResponse(
@@ -325,9 +327,15 @@ async def cancel_connect_session(
     Gated by the same ``poll_token`` capability as ``/status`` — the
     SPA already holds it, so we don't force the caller to bring a
     heavier scope than the poller endpoint they're already using.
-    Idempotent: an already-terminal (or already-cleaned-up) session is
-    a 204 no-op so a "Cancel" click during a race with the poll scanner
-    doesn't error.
+
+    A still-existing but already-terminal session is a 204 no-op — a
+    "Cancel" click racing the poll scanner doesn't error. A session
+    that has already been cascade-deleted (unhappy-terminal path in
+    ``_mark_terminal``) surfaces as 403, matching ``/status`` — the
+    caller can't distinguish "gone" from "your poll_token is wrong",
+    which is the enumeration-oracle guard. The SPA's cancel-on-unmount
+    is fire-and-forget and ``.catch``es the 403, so this doesn't leak
+    into the UX.
     """
     try:
         await svc.cancel_session(session_id, poll_token=poll_token)

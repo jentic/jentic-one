@@ -15,7 +15,6 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import AsyncMock
 
-import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -366,20 +365,17 @@ def test_status_maps_invalid_poll_token_to_403() -> None:
     assert resp.status_code == 403
 
 
-@pytest.mark.parametrize(
-    "raiser,expected_status",
-    [
-        (SessionNotFoundError("sess_gone"), 404),
-        (InvalidPollTokenError("mismatch"), 403),
-    ],
-)
-def test_status_error_taxonomy(raiser: Exception, expected_status: int) -> None:
+def test_status_maps_invalid_poll_token_uniformly_to_403() -> None:
+    # ``get_status`` is designed to raise ``InvalidPollTokenError`` for both
+    # "session missing" and "poll_token mismatch" (the enumeration-oracle
+    # guard). Router must map it to 403 — a 404 branch here would silently
+    # reintroduce the leak.
     svc = AsyncMock(spec=ConnectSessionService)
-    svc.get_status = AsyncMock(side_effect=raiser)
+    svc.get_status = AsyncMock(side_effect=InvalidPollTokenError("mismatch"))
     app = _build_app(svc=svc, identity=_USER_IDENTITY)
     with TestClient(app) as client:
         resp = client.get("/connect-sessions/sess_x/status", params={"poll_token": "t"})
-    assert resp.status_code == expected_status
+    assert resp.status_code == 403
 
 
 # ---------------------------------------------------------------------------
