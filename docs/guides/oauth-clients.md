@@ -1,4 +1,4 @@
-# OAuth clients
+# Register an OAuth client
 
 An OAuth client represents a third-party application that authenticates users
 through Jentic One using the Authorization Code flow with PKCE (S256). Clients
@@ -9,7 +9,7 @@ when exchanging at `/oauth/token`.
 ## Creating a client via the UI
 
 1. Open **Settings** in the operator UI (`/app`).
-2. Click **Add OAuth client**.
+2. Click **Add client**.
 3. Fill in:
    - **Name** — identifies the client in the list (e.g. `my-app-production`).
    - **Redirect URIs** — one per line. Include every environment the app

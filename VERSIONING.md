@@ -8,18 +8,22 @@ charts and Go CLI are stamped to match at release time).
 
 ## Pre-1.0 policy (public beta)
 
-While Jentic One is in the `0.x` line it is in **public beta**, as stated in the
-[README](README.md):
-
-> APIs, database schemas, and CLI commands are subject to breaking changes
-> without a major version bump.
+While Jentic One is in the `0.x` line it is in **public beta** (see the note
+in the [README](README.md)): schemas, APIs, and CLI commands can change
+between `0.x` releases without a major version bump — pin a version if you
+need stability.
 
 Concretely, on the `0.MINOR.PATCH` line:
 
 - **MINOR** (`0.13 → 0.14`) — may include breaking changes (API, DB schema, CLI
-  flags, config) as well as features. Read the release notes before upgrading
-  (an `UPGRADING.md` with rollback recipes is a planned follow-up).
+  flags, config) as well as features. Read the release notes before
+  upgrading; the upgrade contract and rollback recipes are in
+  [`docs/operations/upgrades.md`](docs/operations/upgrades.md).
 - **PATCH** (`0.13.2 → 0.13.3`) — bug fixes and non-breaking changes only.
+
+**Support window:** during the beta, fixes land on the latest release only —
+there are no maintained release branches and no backports. If you need a fix,
+upgrade to the release that carries it.
 
 We will not cut `1.0.0` until the public API, database schema, and CLI surface
 are stable enough to promise the usual SemVer backward-compatibility guarantee.
@@ -48,9 +52,11 @@ a standing **Release PR** (`chore(main): release X.Y.Z`) accumulates
 Conventional-Commit changes into a proposed version bump + `CHANGELOG.md`.
 **Merging that PR is the release** — it tags `vX.Y.Z`, creates the GitHub
 Release, and triggers the tag pipeline (build/migrate/`/health` gate →
-signed CLI binaries). See [`docs/releasing.md`](docs/releasing.md) for the full
-procedure; release-please generates `CHANGELOG.md` on the first release.
+signed CLI binaries). See [`docs/development/releasing.md`](docs/development/releasing.md) for the full
+procedure.
 
-The baseline is the restored `v0.1.0`…`v0.13.2` tag line; the next release is
-`v0.14.0`. We continue the `0.x` line rather than reset — the tags and GitHub
-Releases are real and publicly visible, so continuing is the honest choice.
+The `0.x` line continues the restored `v0.1.0`…`v0.13.2` tag baseline —
+automated releases picked up at `v0.14.0` rather than resetting, because the
+earlier tags and GitHub Releases are real and publicly visible.
+[`CHANGELOG.md`](CHANGELOG.md) covers `v0.14.0` onward; the earlier tags
+carry GitHub Releases only.

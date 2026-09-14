@@ -164,10 +164,13 @@ step 5.
 - `jenticctl status` / `jenticctl start` — health-check and restart the
   local deployment; check this first when a local target refuses
   connections.
-- Add `--json` to force machine-readable output on a terminal (works on
-  `search`, `execute`, `inspect`, `apis`, `access`, `doctor`).
-  `context view` has no `--json` flag — it emits JSON automatically in
-  agent/non-TTY mode.
+- Add `--json` to force machine-readable output on a terminal. It exists on
+  **leaf** commands (`search`, `execute`, `inspect`, `apis list`,
+  `access list`, `doctor`); the bare group commands reject it. Non-TTY
+  output is not automatically JSON: `register` persists `mode: human`,
+  which wins over TTY detection — set `JENTIC_MODE=agent` (or pass
+  `--json`) when you need parseable output. (`context view` has no
+  `--json` flag at all — it follows the same mode rules.)
 - Correlation & retries: export `JENTIC_SESSION_ID=<your session id>` so
   every request carries `X-Jentic-Session-Id`; pass `--idempotency-key
   <uuid>` when retrying a mutating `execute`.

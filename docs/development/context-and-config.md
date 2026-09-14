@@ -1,8 +1,8 @@
-# Context & Configuration
+# Context and configuration
 
-## Overview
-
-The `jentic_one.shared` package provides the foundational configuration and context system. All modules (broker, control) consume these shared components.
+How a deployment's configuration is loaded and how it reaches code: the
+`jentic_one.shared` package owns both the config model and the `Context`
+object every surface consumes.
 
 ## Configuration
 
@@ -12,6 +12,10 @@ Configuration is loaded via `load_config()` which merges two sources in priority
 2. **Environment variables** — convention: `JENTIC__SECTION__KEY=value` (double-underscore separated, uppercased)
 
 Environment variables override file values. Types are coerced automatically by pydantic (booleans, ints, floats).
+
+The full key-by-key reference — every section, type, default, and env var — is
+generated at [docs/reference/config.md](../reference/config.md)
+(`make config-reference`, drift-guarded in CI).
 
 ### Minimal config file
 
@@ -25,7 +29,9 @@ databases:
     name: control_db
 ```
 
-All other fields have sensible defaults (localhost:5432, pool sizes, etc.).
+All other fields default to a local single-host shape (`localhost:5432`, pool
+sizes, etc.) — the generated [config reference](../reference/config.md) lists
+every default.
 
 ### Secret handling
 
@@ -66,11 +72,13 @@ Each property returns a `DatabaseSession` instance with:
 
 ## Database Layer
 
-The database layer uses **SQLAlchemy async** (with `asyncpg` as the underlying driver), following the same pattern as `jentic/core`:
+The database layer uses **SQLAlchemy async**, with a pluggable backend per
+database: PostgreSQL via `asyncpg` or SQLite via `aiosqlite` (selected by each
+database's `backend` config key):
 
-- `Base` — declarative base class for all ORM models (import from `jentic_one.shared.db`)
+- `RegistryBase` / `ControlBase` / `AdminBase` — per-database declarative base classes for ORM models (import from `jentic_one.shared.db`)
 - `DatabaseSession` — manages an async engine and session factory per database
-- `get_database_url(config)` — builds a `sqlalchemy.engine.URL` for `postgresql+asyncpg` from a `DatabaseConfig`
+- `get_database_url(config)` — builds the async `sqlalchemy.engine.URL` for the configured backend from a `DatabaseConfig`
 
 ### ORM Models
 
@@ -115,7 +123,7 @@ Autogenerate compares the target database's base metadata (e.g. `RegistryBase.me
 ### Configuration
 
 - `alembic.ini` — multi-database config with `[registry]`, `[control]`, `[admin]` sections
-- `src/jentic_one/migrations/env.py` — shared async env that resolves the active section to the correct database URL and metadata
+- [`src/jentic_one/migrations/env.py`](../../src/jentic_one/migrations/env.py) — shared async env that resolves the active section to the correct database URL and metadata
 - `src/jentic_one/migrations/{registry,control,admin}/versions/` — per-database migration scripts
 
 ## Runtime configuration
@@ -133,8 +141,8 @@ local install and a remote one are both reachable it is easy for two clients to
 disagree: e.g. an MCP server still bound to a remote backend while the CLI talks
 to a fresh local install. The two backends have independent registries and
 credentials, so a tool call answered by the *other* backend looks like data loss
-("APIs disappeared", "credentials vanished", ID-format mismatches) when the
-systems are simply different.
+("APIs disappeared", "credentials vanished", ID-format mismatches) when nothing
+was lost — the two clients are talking to different backends.
 
 ### The `GET /instance` identity probe
 
@@ -160,7 +168,7 @@ curl -s http://127.0.0.1:8000/instance
   hosted install run elsewhere. It is a hint for humans/agents, not an
   authorization signal.
 - `canonical_base_url` / `host` come from `auth.canonical_base_url` (set in
-  `config/local.yaml` to `http://127.0.0.1:8000` for local runs; a hosted
+  [`config/local.yaml`](../../config/local.yaml) to `http://127.0.0.1:8000` for local runs; a hosted
   platform sets its own). This is the instance describing *itself*, so it is
   the value to trust over any client-side assumption. Any userinfo embedded in
   the configured URL is stripped before echoing.
@@ -176,9 +184,8 @@ at the wrong backend.
 ### Repointing an MCP server (or any client) at a local install
 
 The per-response `backend` field is stamped by the MCP server — the local
-`jentic mcp` server (available in the `jentic` CLI from the next release)
-reads it from the `/instance` endpoint above, which is the `jentic-one` side
-of the contract. To move an MCP server (or the CLI) from a remote backend to
+`jentic mcp` server reads it from the `/instance` endpoint above, which is
+the `jentic-one` side of the contract. To move an MCP server (or the CLI) from a remote backend to
 a local install, update *that client's* backend base URL to your local
 `canonical_base_url` (e.g. `http://127.0.0.1:8000`) and re-check with
 `GET /instance`. For `jentic mcp` the backend comes from the context's

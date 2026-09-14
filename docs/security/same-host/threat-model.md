@@ -1,9 +1,10 @@
-# Analysis: the credential boundary for locally-run agents
+# The same-host threat model
 
-> **Status:** analysis / design exploration. Not yet a committed plan. This
-> captures the *problem* — the state before the local-agent isolation work. The
-> design that responds to it lives in the sibling docs (see the
-> [directory README](README.md)).
+> **Status:** the canonical problem statement. This captures the *problem* —
+> the state before any isolation work — and the attack-path codes (AP-1…AP-4)
+> the design docs cite. The shipped design that responds to it lives in the
+> sibling docs (see the [directory README](README.md)), and the menu of other
+> mitigations is indexed there too.
 
 ## The problem in one sentence
 
@@ -38,11 +39,17 @@ the operator's tab."
 There are two structurally different moves, and they are **not** equally powerful:
 
 - **Isolate the *agent*** (own OS user or container) — the agent can't reach
-  `~/.jentic`, the DB, *or* the operator's browser profile. Closes **every** gap,
-  AP-1 through AP-4. This is the real fix.
+  `~/.jentic`, the DB, *or* the operator's browser profile. Closes AP-1
+  through AP-3 outright; AP-4 (the agent's *own* token reused off-host) is
+  neutralized not by the uid boundary but by the token contract — short-lived
+  opaque tokens, redeemable only at this loopback-bound instance, are
+  worthless off the network (see the
+  [residual risks](local-agent-isolation.md#what-this-model-does-not-protect--residual-risks)). This is the
+  real fix.
 - **Isolate *Jentic One*** (own user / separate host) — closes AP-1/AP-2, but the
-  operator's browser still runs next to the agent, so **AP-3 stays open** (pair it
-  with WebAuthn step-up on dangerous mutations to close that).
+  operator's browser still runs next to the agent, so **AP-3 stays open** (a
+  WebAuthn step-up on dangerous mutations could close that, but no such step-up
+  exists in the product today — pair with operator-browser hygiene instead).
 
 So **agent isolation ⊃ Jentic-One isolation.** The classic "put it on a VPC"
 advice is the weaker of the two: necessary for teams, but on a single dev machine
@@ -50,11 +57,14 @@ it leaves the browser gap. The only reason to prefer it is that it needs nothing
 of the agent client — and the hard constraint here is that **we do not own the
 agent client**, so any agent-side ask must be near-zero-effort.
 
-The rest of this analysis is defense-in-depth (key out of config, subset-bound
-scopes, short least-privilege tokens, DPoP, posture banner, reveal-never arch
-test). All worth doing; none closes a structural gap on its own.
+The rest of this analysis is defense-in-depth. Part of it is shipped: the
+encryption keyset can be injected via environment rather than a file, agent
+tokens are short-lived, least-privilege, and subset-bound in scope. The rest is
+possible future hardening that does **not** exist in the product today: DPoP,
+a WebAuthn step-up, a same-host posture banner, a reveal-never arch test. All
+worth doing; none closes a structural gap on its own.
 
 The concrete design that responds to this analysis —
 [`local-agent-isolation.md`](local-agent-isolation.md) and
 [`filesystem-access-model.md`](filesystem-access-model.md) — lives alongside this
-file; the [directory README](README.md) indexes all three.
+file; the [directory README](README.md) indexes every option.
