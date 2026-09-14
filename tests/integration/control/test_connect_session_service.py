@@ -533,6 +533,22 @@ async def test_advance_polling_credential_advances_a_re_connect_of_a_connected_c
 # ---------------------------------------------------------------------------
 
 
+def _state_from_authorize_url(authorize_url: str) -> str:
+    """Extract the signed ``state`` query param from an authorize URL.
+
+    Auth-code confirm returns the same URL the SPA would push into
+    ``window.location`` — the state JWT that the vendor will echo back
+    to ``/credentials/oauth/callback`` is a query param on it. Tests
+    that need to drive ``complete_from_callback`` post-confirm read the
+    real signed state from here rather than manufacturing a JWT.
+    """
+    from urllib.parse import parse_qs, urlsplit
+
+    parts = urlsplit(authorize_url)
+    q = parse_qs(parts.query)
+    return q["state"][0]
+
+
 async def test_complete_from_callback_vaults_token_and_marks_connected(
     integration_context: Context,
     seed_test_vendors: None,
@@ -548,13 +564,17 @@ async def test_complete_from_callback_vaults_token_and_marks_connected(
     created = await svc.create_session(
         vendor_key="testauth", agent_id=_AGENT_ID, initiator_actor_id=_USER_ID
     )
-    await svc.confirm(
+    confirmed = await svc.confirm(
         created.session_id,
         confirmed_scopes=["scope-a"],
         permission_rules=[],
         caller_actor_id=_USER_ID,
         caller_actor_type="USER",
     )
+    # auth-code confirm returns an ``authorize_url`` carrying the
+    # signed state the vendor will echo back on the callback.
+    assert isinstance(confirmed, AuthCodeConfirmResult)
+    raw_state = _state_from_authorize_url(confirmed.authorize_url)
 
     token_response = __import__("httpx").Response(
         200,
@@ -581,7 +601,7 @@ async def test_complete_from_callback_vaults_token_and_marks_connected(
         patch("httpx.AsyncClient", return_value=_FakeClient()),
         patch.object(identity_echo, "echo_identity", new=AsyncMock(return_value=identity)),
     ):
-        result = await svc.complete_from_callback(session_id=created.session_id, code="the-code")
+        result = await svc.complete_from_callback(raw_state=raw_state, code="the-code")
 
     assert result.status == "connected"
     assert result.connected_as == "alice"
@@ -597,6 +617,76 @@ async def test_complete_from_callback_vaults_token_and_marks_connected(
         # will actually inject tokens for it. Missing this = silently
         # broken execution.
         assert credential.state == "connected"
+
+
+async def test_complete_from_callback_refuses_state_replay(
+    integration_context: Context,
+    seed_test_vendors: None,
+    clean_session_tables: None,
+) -> None:
+    # A replayed callback URL (attacker captures + resubmits, or a
+    # browser back-navigation lands ``?state=&code=`` twice) MUST NOT
+    # double-fire the token exchange. The nonce is consumed
+    # atomically in the shared ``consume_callback_state`` prologue;
+    # the second call raises ``StateReplayedError`` before the vendor
+    # HTTP is even opened. This test pins that the router's raw-state
+    # → service path enforces one-shot semantics on the session flow
+    # too — the same guarantee ``ConnectService.complete`` has always
+    # given the standalone flow.
+    from jentic_one.control.services.credentials.state import StateReplayedError
+
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    created = await svc.create_session(
+        vendor_key="testauth", agent_id=_AGENT_ID, initiator_actor_id=_USER_ID
+    )
+    confirmed = await svc.confirm(
+        created.session_id,
+        confirmed_scopes=["scope-a"],
+        permission_rules=[],
+        caller_actor_id=_USER_ID,
+        caller_actor_type="USER",
+    )
+    assert isinstance(confirmed, AuthCodeConfirmResult)
+    raw_state = _state_from_authorize_url(confirmed.authorize_url)
+
+    # Count vendor token-endpoint hits — a replay that reaches
+    # ``handler.complete_from_callback`` would bump this a second time.
+    post_calls = 0
+
+    class _FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, *args, **kwargs):
+            nonlocal post_calls
+            post_calls += 1
+            return __import__("httpx").Response(
+                200,
+                json={
+                    "access_token": "at_ok",
+                    "refresh_token": "rt_ok",
+                    "expires_in": 3600,
+                    "scope": "scope-a",
+                },
+            )
+
+    identity = identity_echo.IdentityEchoResult(display="alice", raw={"username": "alice"})
+    with (
+        patch("httpx.AsyncClient", return_value=_FakeClient()),
+        patch.object(identity_echo, "echo_identity", new=AsyncMock(return_value=identity)),
+    ):
+        result = await svc.complete_from_callback(raw_state=raw_state, code="the-code")
+        assert result.status == "connected"
+        with pytest.raises(StateReplayedError):
+            await svc.complete_from_callback(raw_state=raw_state, code="the-code")
+
+    # Vendor token endpoint MUST have been hit exactly once — the
+    # second attempt failed the nonce-consume gate before any HTTP.
+    assert post_calls == 1
 
 
 # ---------------------------------------------------------------------------

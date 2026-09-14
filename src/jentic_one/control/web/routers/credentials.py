@@ -314,7 +314,19 @@ async def oauth_callback(
             await session_svc.mark_terminal_from_callback(session_id, error or "no_code_returned")
             return _oauth_callback_error()
         try:
-            await session_svc.complete_from_callback(session_id=session_id, code=code)
+            # Pass the raw state so ``complete_from_callback`` runs the
+            # shared ``consume_callback_state`` prologue (signature
+            # verify + one-shot nonce consume) — never trust the sid
+            # we peeked at above as a bypass around replay protection.
+            await session_svc.complete_from_callback(raw_state=state, code=code)
+        except StateError as exc:
+            _logger.warning(
+                "oauth_callback.connect_session.state_invalid",
+                session_id=session_id,
+                error=str(exc),
+                error_type=type(exc).__name__,
+            )
+            return _oauth_callback_error()
         except Exception as exc:
             _logger.warning(
                 "oauth_callback.connect_session_error", session_id=session_id, error=str(exc)

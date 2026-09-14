@@ -24,6 +24,7 @@ from jentic_one.control.repos.agent_credential_permission_repo import (
     AgentCredentialPermissionRepository,
 )
 from jentic_one.control.repos.connect_session_repo import ConnectSessionRepository
+from jentic_one.control.services.credentials.state import consume_callback_state
 from jentic_one.control.services.integrations import identity_echo
 from jentic_one.control.services.integrations.errors import (
     ConfirmationForbiddenError,
@@ -885,23 +886,34 @@ class ConnectSessionService:
     async def complete_from_callback(
         self,
         *,
-        session_id: str,
+        raw_state: str,
         code: str,
     ) -> StatusResult:
         """Complete a connect session from an OAuth callback landing.
 
-        The callback route decodes + verifies the state JWT and consumes its
-        nonce; it then hands us the session id + authorization code. We
-        resolve the handler, exchange the code, and run the shared finalise.
+        Takes the raw signed state JWT (rather than a pre-decoded
+        session_id) so the shared ``consume_callback_state`` prologue
+        gates BOTH callback paths — replay protection can't be silently
+        skipped by a future new entrypoint. The helper raises
+        ``StateError`` subclasses on decode / actor / replay failures;
+        we let those propagate to the router (it maps them to the
+        canonical error redirect and logs the specific reason).
 
-        Raises ``NoOpForFlowError`` if the session's resolved flow doesn't
-        support a callback path (device flow) — a defensive guard the router
-        should never trip, since only auth-code state JWTs carry a ``sid``.
+        Raises ``NoOpForFlowError`` if the session's resolved flow
+        doesn't support a callback path (device flow) — a defensive
+        guard the router should never trip, since only auth-code state
+        JWTs carry a ``sid``.
         """
+        state = await consume_callback_state(self._ctx, raw_state)
+        if state.session_id is None:
+            # State without ``sid`` doesn't belong on this path — router
+            # dispatches to the standalone-credential handler for those.
+            raise NoOpForFlowError("callback state missing session id")
+
         async with self._ctx.control_db.session() as read_session:
-            row = await ConnectSessionRepository.get_by_id(read_session, session_id)
+            row = await ConnectSessionRepository.get_by_id(read_session, state.session_id)
             if row is None:
-                raise SessionNotFoundError(session_id)
+                raise SessionNotFoundError(state.session_id)
 
         # Callback-only handler concretely by construction — the state JWT
         # that carries ``sid`` is signed by the auth-code path, so any
