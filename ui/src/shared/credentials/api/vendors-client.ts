@@ -102,6 +102,25 @@ export function cancelConnectSession(sessionId: string, pollToken: string): Prom
 	return request(url, { method: 'POST' });
 }
 
+/**
+ * Fire-and-forget cancel via ``navigator.sendBeacon``. Used on tab-close
+ * (``beforeunload``) where an in-flight ``fetch`` would be aborted by the
+ * browser but ``sendBeacon`` is guaranteed to deliver. Returns whether the
+ * browser accepted the beacon; callers should keep firing the regular
+ * ``cancelConnectSession`` on in-page dismiss (dialog close, unmount) since
+ * ``sendBeacon`` can't set custom headers or observe the response.
+ */
+export function cancelConnectSessionBeacon(sessionId: string, pollToken: string): boolean {
+	if (typeof navigator === 'undefined' || typeof navigator.sendBeacon !== 'function') {
+		return false;
+	}
+	const url = `/connect-sessions/${encodeURIComponent(sessionId)}:cancel?poll_token=${encodeURIComponent(pollToken)}`;
+	// The body isn't used (poll_token rides on the query string); an empty
+	// Blob keeps the browser's beacon path happy without conjuring a
+	// Content-Type the backend has to ignore.
+	return navigator.sendBeacon(url, new Blob([], { type: 'application/octet-stream' }));
+}
+
 export function listVendors(): Promise<VendorListResponse> {
 	return request('/vendors');
 }
