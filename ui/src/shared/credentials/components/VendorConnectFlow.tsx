@@ -556,6 +556,7 @@ function VendorApproveFlow({
 			<AgentRequestCard
 				agent={agent}
 				actorId={session.requested_by_actor_id}
+				reason={session.reason}
 				loading={agents.isLoading}
 			/>
 
@@ -613,10 +614,16 @@ function VendorHeader({ display, subtitle }: { display: VendorDisplay; subtitle:
 function AgentRequestCard({
 	agent,
 	actorId,
+	reason,
 	loading,
 }: {
 	agent: { id: string; name: string; description?: string | null } | undefined;
 	actorId: string;
+	// Free-text ``reason`` the agent supplied on ``POST /integrations:connect``
+	// — the single piece of context that justifies the whole review page.
+	// Rendered as a distinct block below the agent identity so the human sees
+	// *why* alongside *who*.
+	reason: string | null;
 	loading: boolean;
 }) {
 	return (
@@ -641,6 +648,14 @@ function AgentRequestCard({
 					</p>
 				</div>
 			</div>
+			{reason && (
+				<div className="bg-muted/20 border-border rounded-lg border px-3 py-2">
+					<p className="text-muted-foreground text-[10px] font-medium tracking-wide uppercase">
+						Reason
+					</p>
+					<p className="text-foreground mt-1 text-sm whitespace-pre-wrap">{reason}</p>
+				</div>
+			)}
 		</div>
 	);
 }
