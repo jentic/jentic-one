@@ -38,6 +38,7 @@ from jentic_one.control.services.credentials.schemas.provision import (
 )
 from jentic_one.shared.context import Context
 from jentic_one.shared.models.credentials import CredentialType
+from jentic_one.shared.url_validation import validate_upstream_url
 
 
 class InvalidGrantError(ProviderError):
@@ -105,9 +106,18 @@ class OAuth2Provider(ABC):
         that isn't JSON) becomes ``TokenExchangeError`` carrying the raw
         HTTP status for logging.
         """
+        # Defense-in-depth SSRF guard: ``token_url`` comes from the DB
+        # (``oauth_client_credentials`` row created at credential-create time,
+        # user-supplied). A tampered / misconfigured row must not be able to
+        # aim this call at a private / metadata target.
+        try:
+            safe_url = validate_upstream_url(token_url)
+        except ValueError as exc:
+            raise TokenExchangeError(0, f"unsafe upstream URL: {exc}") from exc
+
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
-                token_url,
+                safe_url,
                 data=payload,
                 headers={"Accept": "application/json"},
             )

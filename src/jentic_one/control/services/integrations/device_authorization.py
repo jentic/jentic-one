@@ -19,6 +19,8 @@ from typing import Literal
 import httpx
 import structlog
 
+from jentic_one.shared.url_validation import validate_upstream_url
+
 _logger = structlog.get_logger(__name__)
 
 
@@ -84,9 +86,18 @@ async def begin_device_authorization(
     if scopes:
         payload["scope"] = " ".join(scopes)
 
+    # Defense-in-depth SSRF guard: the ``authorization_endpoint`` originates from
+    # operator config, but a config error or compromised entry could point at a
+    # private / metadata target. Strict-default policy (``egress=None``) — OAuth
+    # device authorization endpoints are always public HTTPS in practice.
+    try:
+        safe_url = validate_upstream_url(authorization_endpoint)
+    except ValueError as exc:
+        raise DeviceAuthorizationUpstreamError(0, f"unsafe upstream URL: {exc}") from exc
+
     async with httpx.AsyncClient(timeout=timeout_seconds) as client:
         response = await client.post(
-            authorization_endpoint,
+            safe_url,
             data=payload,
             headers={"Accept": "application/json"},
         )
@@ -145,9 +156,18 @@ async def poll_device_authorization(
         "device_code": device_code,
         "client_id": client_id,
     }
+    # Defense-in-depth SSRF guard — mirror of ``begin_device_authorization``.
+    # The token endpoint is stored on ``device_authorization_credentials`` at
+    # ``prepare`` time from operator config; validate every poll in case
+    # the DB row is tampered with post-vault.
+    try:
+        safe_url = validate_upstream_url(token_endpoint)
+    except ValueError as exc:
+        raise DeviceAuthorizationUpstreamError(0, f"unsafe upstream URL: {exc}") from exc
+
     async with httpx.AsyncClient(timeout=timeout_seconds) as client:
         response = await client.post(
-            token_endpoint,
+            safe_url,
             data=payload,
             headers={"Accept": "application/json"},
         )

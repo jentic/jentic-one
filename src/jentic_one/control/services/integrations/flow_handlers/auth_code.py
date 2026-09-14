@@ -37,6 +37,7 @@ from jentic_one.shared.config import VendorAuthorizationCodeFlowConfig, VendorFl
 from jentic_one.shared.context import Context
 from jentic_one.shared.models.actors import actor_type_from_id
 from jentic_one.shared.models.credentials import StoredCredentialType
+from jentic_one.shared.url_validation import validate_upstream_url
 
 
 class AuthCodeExchangeError(ConnectSessionServiceError):
@@ -165,9 +166,17 @@ class AuthCodeFlowHandler:
             "client_secret": client_secret,
             "redirect_uri": redirect_uri,
         }
+        # Defense-in-depth SSRF guard: ``occ.token_url`` was persisted at
+        # ``prepare`` time from operator config, but a tampered row must not
+        # be able to exfiltrate the ``client_secret`` we're about to POST.
+        try:
+            safe_url = validate_upstream_url(occ.token_url)
+        except ValueError as exc:
+            raise AuthCodeExchangeError(f"unsafe upstream URL: {exc}") from exc
+
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
-                occ.token_url,
+                safe_url,
                 data=payload,
                 headers={"Accept": "application/json"},
             )
