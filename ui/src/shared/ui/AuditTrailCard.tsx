@@ -9,7 +9,7 @@ import { formatTimestamp, timeAgo } from '@/shared/lib/utils';
 
 /**
  * AuditTrailCard — the "Recent changes" card shared by the detail consoles
- * (toolkit, agent, service account): a read-only, entity-scoped slice of the
+ * (agent, service account): a read-only, entity-scoped slice of the
  * org-wide audit log. One component so "Recent changes" reads identically
  * everywhere; callers own the data fetch (per-module hooks) and map their
  * wire rows into {@link AuditTrailEntry}.
@@ -17,7 +17,7 @@ import { formatTimestamp, timeAgo } from '@/shared/lib/utils';
 
 export interface AuditTrailEntry {
 	id: string;
-	/** The audit verb, rendered as a badge ("toolkit.suspend", "agent.approve"). */
+	/** The audit verb, rendered as a badge ("agent.approve", "binding.suspend"). */
 	action: string;
 	/** The PERFORMING principal (resolved via ActorLabel); null for system events. */
 	actorId?: string | null;
@@ -59,7 +59,7 @@ export interface AuditTrailCardProps {
 	entries: AuditTrailEntry[];
 	isLoading?: boolean;
 	isError?: boolean;
-	/** Quiet right-slot caption, e.g. "Toolkit-level events · admin only". */
+	/** Quiet right-slot caption, e.g. "Agent-level events · admin only". */
 	caption?: string;
 	/** Dashed empty-state copy when there are no entries. */
 	emptyMessage: ReactNode;

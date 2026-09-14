@@ -44,7 +44,7 @@ describe('ServiceAccountDetailPage', () => {
 		// Pin the status to the header's badge — a bare text query could match
 		// any other "Active" on the page and mask a wrong-status bug.
 		expect(screen.getByTestId('detail-status-badge')).toHaveTextContent('Active');
-		// The raw id lives on Settings (toolkit-console grammar), not the chrome.
+		// The raw id lives on Settings (detail-console grammar), not the chrome.
 		expect(screen.queryByText('sva_active_1')).not.toBeInTheDocument();
 		await user.click(screen.getByRole('tab', { name: 'Settings' }));
 		expect(await screen.findByText('Account ID')).toBeInTheDocument();
@@ -100,7 +100,7 @@ describe('ServiceAccountDetailPage', () => {
 	it('shows the actor-scoped "Recent changes" audit slice on Overview', async () => {
 		renderDetail('sva_active_1');
 		await screen.findByRole('heading', { name: 'metrics-exporter' });
-		// Same audit grammar as the agent + toolkit consoles.
+		// Same audit grammar as the agent console.
 		expect(await screen.findByText('Recent changes')).toBeInTheDocument();
 		expect(await screen.findByText('create')).toBeInTheDocument();
 		expect(screen.getByText('approve')).toBeInTheDocument();
@@ -118,8 +118,8 @@ describe('ServiceAccountDetailPage', () => {
 			const [count] = within(strip).getAllByText(/^[\d,]+$/);
 			expect(Number(count.textContent!.replace(/,/g, ''))).toBeGreaterThan(0);
 		});
-		// SAs have no toolkit bindings → no "Bound toolkits" KPI.
-		expect(within(strip).queryByText('Bound toolkits')).not.toBeInTheDocument();
+		// SAs have no credential bindings → no "Bound credentials" KPI.
+		expect(within(strip).queryByText('Bound credentials')).not.toBeInTheDocument();
 	});
 
 	it('feeds per-SA executions on the Activity tab with a Monitor deep-link', async () => {

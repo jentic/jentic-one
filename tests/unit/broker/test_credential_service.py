@@ -71,6 +71,24 @@ def _resolved() -> ResolvedCredential:
     )
 
 
+def _resolved_oauth2() -> ResolvedCredential:
+    return ResolvedCredential(
+        credential_id="cred_oauth",
+        name="oauth",
+        wire_type=CredentialType.OAUTH2,
+        stored_type=StoredCredentialType.OAUTH2_AUTHORIZATION_CODE,
+        provider="stripe",
+        encrypted_access_token="enc",  # pragma: allowlist secret
+    )
+
+
+def _patch_refresher(monkeypatch: pytest.MonkeyPatch, exc: Exception) -> None:
+    monkeypatch.setattr(
+        "jentic_one.broker.services.credentials.orchestrator.TokenRefresher",
+        lambda ctx: MagicMock(ensure_fresh=AsyncMock(side_effect=exc)),
+    )
+
+
 def _patch_resolved(monkeypatch: pytest.MonkeyPatch, resolved: ResolvedCredential) -> None:
     monkeypatch.setattr(
         "jentic_one.broker.services.credentials.orchestrator.CredentialResolver",
@@ -155,7 +173,10 @@ async def test_ambiguous_maps_to_409(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.asyncio
 async def test_invalid_grant_maps_to_401_reconnect(monkeypatch: pytest.MonkeyPatch) -> None:
-    _patch_resolver(monkeypatch, RefreshInvalidGrantError("cred_1"))
+    # The refresh error originates in TokenRefresher (post-resolve) — model that
+    # here: resolve succeeds with an OAuth2 credential, the refresh raises.
+    _patch_resolved(monkeypatch, _resolved_oauth2())
+    _patch_refresher(monkeypatch, RefreshInvalidGrantError("cred_1"))
 
     with pytest.raises(CredentialNeedsReconnectError) as exc:
         await CredentialService(_ctx()).inject(
@@ -168,7 +189,8 @@ async def test_invalid_grant_maps_to_401_reconnect(monkeypatch: pytest.MonkeyPat
 
 @pytest.mark.asyncio
 async def test_refresh_transient_maps_to_502_upstream(monkeypatch: pytest.MonkeyPatch) -> None:
-    _patch_resolver(monkeypatch, RefreshTransientError("cred_1", "502 from idp"))
+    _patch_resolved(monkeypatch, _resolved_oauth2())
+    _patch_refresher(monkeypatch, RefreshTransientError("cred_1", "502 from idp"))
 
     with pytest.raises(CredentialRefreshTransientError) as exc:
         await CredentialService(_ctx()).inject(

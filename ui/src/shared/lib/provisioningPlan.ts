@@ -4,16 +4,20 @@
  * An agent can file a *provisioning plan*: an access request whose items describe
  * the whole path to first execution rather than a single last-mile binding:
  *
- *   toolkit:create        — a placeholder: create a toolkit that serves the API
  *   credential:provision  — a placeholder: create a credential for the API
- *   credential:bind       — bind the (new) credential to the (new) toolkit + rules
- *   toolkit:bind          — bind the agent to the (new) toolkit
+ *   credential:bind       — bind the AGENT directly to the (new) credential,
+ *                           with the permission rules (or a shared rule set)
+ *                           that govern the pair
  *
- * The two `*:create` / `*:provision` items are inert on the backend (the effect
- * applicator never executes them). A human fulfils them here by calling the
- * existing create endpoints, writes the resulting ids back onto the downstream
- * bind items via `:amend`, then approves the whole request. The existing
- * `credential:bind` / `toolkit:bind` effects do the real wiring on approval.
+ * The `credential:provision` item is inert on the backend (the effect applicator
+ * never executes it). A human fulfils it here by calling the existing credential
+ * create endpoints, writes the resulting id back onto the downstream
+ * `credential:bind` item via `:amend` (`resource_id`), then approves the whole
+ * request. The `credential:bind` effect does the real wiring on approval.
+ *
+ * (Historical note: plans used to be 4-item chains that also created and bound a
+ * toolkit — `toolkit:create` / `toolkit:bind` are retired verbs the server now
+ * rejects. Decided historical rows may still carry them; render, never file.)
  *
  * This module is the pure classification/shape layer; the React wizard drives
  * the actual create/amend/decide calls step by step.
@@ -21,7 +25,7 @@
 import type { AccessRequest, AccessRequestItem } from '@/shared/lib/accessRequests';
 
 /** A provisioning-plan item type the wizard fulfils out-of-band (not a real effect). */
-export const FULFILMENT_ITEM_TYPES = new Set(['toolkit:create', 'credential:provision']);
+export const FULFILMENT_ITEM_TYPES = new Set(['credential:provision']);
 
 /** `resource_type:action` key for an item. */
 export function itemKey(item: AccessRequestItem): string {
@@ -30,10 +34,10 @@ export function itemKey(item: AccessRequestItem): string {
 
 /**
  * True when a request is a provisioning plan — it carries at least one
- * fulfilment-only intent (`toolkit:create` or `credential:provision`). These
- * requests must be decided through the fulfilment wizard (create → amend →
- * approve), not the plain approve/deny dialog, which would approve the inert
- * placeholders into a recorded no-op and leave the bind items unfulfilled.
+ * fulfilment-only intent (`credential:provision`). These requests must be
+ * decided through the fulfilment wizard (create → amend → approve), not the
+ * plain approve/deny dialog, which would approve the inert placeholder into a
+ * recorded no-op and leave the bind item unfulfilled.
  */
 export function isProvisioningPlan(request: AccessRequest): boolean {
 	return request.items.some((it) => FULFILMENT_ITEM_TYPES.has(itemKey(it)));
@@ -75,23 +79,27 @@ export function slugifyApiField(value: string): string {
 }
 
 /**
- * Extract the API reference the plan is about, preferring the toolkit:create
- * item (always present) and falling back to any item carrying a reference.
+ * Extract the API reference the plan is about, preferring the
+ * `credential:provision` carrier (present on every plan) and falling back to
+ * the `credential:bind` item's reference.
  */
 export function planApiReference(request: AccessRequest): PlanApiReference | null {
-	const carrier =
-		findItem(request, 'toolkit', 'create') ??
-		findItem(request, 'credential', 'provision') ??
-		findItem(request, 'toolkit', 'bind');
-	const ref = carrier?.resource_reference;
-	if (!ref) return null;
-	const vendor = typeof ref.vendor === 'string' ? ref.vendor : undefined;
-	if (!vendor) return null;
-	return {
-		vendor,
-		name: typeof ref.name === 'string' ? ref.name : undefined,
-		version: typeof ref.version === 'string' ? ref.version : undefined,
-	};
+	const carriers = [
+		findItem(request, 'credential', 'provision'),
+		findItem(request, 'credential', 'bind'),
+	];
+	for (const carrier of carriers) {
+		const ref = carrier?.resource_reference;
+		if (!ref) continue;
+		const vendor = typeof ref.vendor === 'string' ? ref.vendor : undefined;
+		if (!vendor) continue;
+		return {
+			vendor,
+			name: typeof ref.name === 'string' ? ref.name : undefined,
+			version: typeof ref.version === 'string' ? ref.version : undefined,
+		};
+	}
+	return null;
 }
 
 /**
@@ -112,7 +120,7 @@ export function planAuthType(request: AccessRequest): string | null {
  * (the API is called without authentication). In both cases the wizard skips
  * the manual credential step; for a no-auth plan it auto-creates a NO_AUTH
  * credential at approval so the `credential:bind` effect still has a credential
- * to attach the toolkit binding + rules to.
+ * to attach the agent binding + rules to.
  */
 export function planIsNoAuth(request: AccessRequest): boolean {
 	const prov = findItem(request, 'credential', 'provision');
@@ -123,36 +131,34 @@ export function planIsNoAuth(request: AccessRequest): boolean {
 
 /**
  * The ordered fulfilment steps a wizard walks for a plan. Each step maps to one
- * concrete operator action; `credentialProvision` is omitted for a no-auth plan.
+ * concrete operator action; `credentialProvision` (create the credential) is
+ * omitted for a no-auth plan whose credential is auto-created at approval.
+ * `credentialBind` is where the operator confirms the binding's permission
+ * rules before the final review.
  */
-export type PlanStep =
-	'toolkitCreate' | 'credentialProvision' | 'credentialBind' | 'toolkitBind' | 'review';
+export type PlanStep = 'credentialProvision' | 'credentialBind' | 'review';
 
 export function planSteps(request: AccessRequest): PlanStep[] {
-	const steps: PlanStep[] = ['toolkitCreate'];
+	const steps: PlanStep[] = [];
 	if (!planIsNoAuth(request)) steps.push('credentialProvision');
-	steps.push('credentialBind', 'toolkitBind', 'review');
+	steps.push('credentialBind', 'review');
 	return steps;
 }
 
 /**
- * The bind items that actually WIRE access for a plan: `credential:bind` (binds
- * the credential to the toolkit + rules) and `toolkit:bind` (binds the agent to
- * the toolkit). Both must be approved for the agent to be able to call the API.
+ * The bind items that actually WIRE access for a plan: each `credential:bind`
+ * binds the agent directly to a credential (+ rules). All must be approved for
+ * the agent to be able to call the API(s).
  */
 function planBindItems(request: AccessRequest): AccessRequestItem[] {
-	return request.items.filter(
-		(it) =>
-			(it.resource_type === 'credential' && it.action === 'bind') ||
-			(it.resource_type === 'toolkit' && it.action === 'bind'),
-	);
+	return request.items.filter((it) => it.resource_type === 'credential' && it.action === 'bind');
 }
 
 /**
  * True only when a plan reached a genuinely executable state: every access-wiring
- * bind item is approved. The request-level `partially_approved` is NOT success —
- * if one bind is denied the agent still can't call the API (a denied `toolkit:bind`
- * with an approved `credential:bind`, or vice-versa). Guards against reporting a
+ * `credential:bind` item is approved. The request-level `partially_approved` is
+ * NOT success — a denied bind means the agent still can't call that API even if
+ * the inert provision placeholder was approved. Guards against reporting a
  * misleading "Access granted".
  */
 export function isPlanGranted(request: AccessRequest): boolean {
@@ -172,27 +178,26 @@ export function planDenialReason(request: AccessRequest): string | null {
 // ── Multi-chain composites ────────────────────────────────────────────────────
 //
 // A composite request can carry SEVERAL provisioning chains (one per
-// `--provision` API) plus plain items (reference binds to existing toolkits,
-// scope grants). Items are grouped into chains by the API reference they carry
-// — never by position, which the server does not guarantee.
+// `--provision` API) plus plain items (reference binds to existing
+// credentials, scope grants). Items are grouped into chains by the API
+// reference they carry — never by position, which the server does not
+// guarantee.
 
-/** One provisioning chain: the four intents/binds for a single API. */
+/** One provisioning chain: the provision intent + agent↔credential bind for a single API. */
 export interface PlanChain {
 	/** Canonical `vendor/name[/version]` key the chain's items share. */
 	key: string;
 	apiRef: PlanApiReference;
-	create?: AccessRequestItem;
 	provision?: AccessRequestItem;
 	credentialBind?: AccessRequestItem;
-	toolkitBind?: AccessRequestItem;
 }
 
 /** A composite request split into its provisioning chains and everything else. */
 export interface PlanShape {
 	chains: PlanChain[];
-	/** Items outside any chain: plain binds to existing toolkits, scope grants…
-	 * The wizard surfaces them on the review step and decides them with the
-	 * chains, so one composite request is decided in one sitting. */
+	/** Items outside any chain: plain binds to existing credentials, scope
+	 * grants… The wizard surfaces them on the review step and decides them with
+	 * the chains, so one composite request is decided in one sitting. */
 	extras: AccessRequestItem[];
 }
 
@@ -227,15 +232,14 @@ export function planChains(request: AccessRequest): PlanShape {
 	const extras: AccessRequestItem[] = [];
 	const unmatchedCredentialBinds: AccessRequestItem[] = [];
 
-	// Pass 1: fulfilment intents define the chains (in item order).
+	// Pass 1: `credential:provision` intents define the chains (in item order).
 	for (const it of request.items) {
 		if (!FULFILMENT_ITEM_TYPES.has(itemKey(it))) continue;
 		const ref = itemApiRef(it);
 		if (!ref) continue;
 		const key = refKeyOf(ref);
 		const chain = chains.get(key) ?? { key, apiRef: ref };
-		if (it.resource_type === 'toolkit') chain.create ??= it;
-		else chain.provision ??= it;
+		chain.provision ??= it;
 		chains.set(key, chain);
 	}
 
@@ -250,8 +254,6 @@ export function planChains(request: AccessRequest): PlanShape {
 		const chain = ref ? chains.get(refKeyOf(ref)) : undefined;
 		if (chain && key === 'credential:bind' && chain.credentialBind === undefined) {
 			chain.credentialBind = it;
-		} else if (chain && key === 'toolkit:bind' && chain.toolkitBind === undefined) {
-			chain.toolkitBind = it;
 		} else if (key === 'credential:bind' && !ref) {
 			unmatchedCredentialBinds.push(it);
 		} else {
@@ -287,7 +289,7 @@ export function chainIsNoAuth(chain: PlanChain): boolean {
 
 /** All items belonging to a chain (for building per-chain decisions). */
 export function chainItems(chain: PlanChain): AccessRequestItem[] {
-	return [chain.create, chain.provision, chain.credentialBind, chain.toolkitBind].filter(
+	return [chain.provision, chain.credentialBind].filter(
 		(it): it is AccessRequestItem => it !== undefined,
 	);
 }

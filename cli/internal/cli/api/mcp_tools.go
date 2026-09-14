@@ -101,7 +101,7 @@ const (
 		"restart it with `jenticctl start` (then `jenticctl status` to confirm), and retry. " +
 		"This server never starts or stops the instance."
 	instructionReady = "You're set up. Call the `whoami` tool to see your identity, status, scopes, " +
-		"and toolkit bindings. Request access before executing anything new; discovery and " +
+		"and credential bindings. Request access before executing anything new; discovery and " +
 		"execution follow the search → inspect → execute flow."
 )
 

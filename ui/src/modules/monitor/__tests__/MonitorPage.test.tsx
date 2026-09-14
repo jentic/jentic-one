@@ -75,25 +75,6 @@ describe('MonitorPage', () => {
 		expect(screen.getAllByText('Failed').length).toBeGreaterThanOrEqual(1);
 	});
 
-	it('scopes Executions to a toolkit via the ?toolkit_id deep-link and clears it from the chip', async () => {
-		const user = userEvent.setup();
-		// The deep-link the toolkit detail's "Open in Monitor" writes.
-		renderMonitor('/app/monitor?tab=executions&toolkit_id=tk_payments');
-
-		// Only the tk_payments rows render (tk_dev's github row is filtered out).
-		expect(await screen.findByText('POST /v1/charges')).toBeInTheDocument();
-		expect(screen.queryByText('GET /repos/{owner}/{repo}')).not.toBeInTheDocument();
-
-		// The scope is visible as a removable chip in the filter bar (the rows
-		// also print the toolkit id, so assert on multiple occurrences).
-		expect(screen.getAllByText('tk_payments').length).toBeGreaterThanOrEqual(2);
-		await user.click(screen.getByRole('button', { name: 'Clear toolkit filter' }));
-
-		// Cleared: the full log returns and the param leaves the URL.
-		expect(await screen.findByText('GET /repos/{owner}/{repo}')).toBeInTheDocument();
-		expect(screen.getByTestId('location-search').textContent).not.toContain('toolkit_id');
-	});
-
 	it('filters Executions by terminal status (backend accepts only completed/failed)', async () => {
 		const user = userEvent.setup();
 		renderMonitor();
@@ -146,8 +127,8 @@ describe('MonitorPage', () => {
 		expect(await screen.findByText('POST /v1/refunds')).toBeInTheDocument();
 		expect(screen.queryByText('POST /v1/charges')).not.toBeInTheDocument();
 
-		// No other lens supports origin, so a lens switch clears it (same rule
-		// as toolkit_id) — and the picker only renders on Executions.
+		// No other lens supports origin, so a lens switch clears it — and the
+		// picker only renders on Executions.
 		await user.click(screen.getByRole('tab', { name: 'Events' }));
 		await waitFor(() => {
 			expect(screen.getByTestId('location-search').textContent).not.toContain('origin');
@@ -155,6 +136,28 @@ describe('MonitorPage', () => {
 		expect(
 			screen.queryByRole('combobox', { name: 'Filter by origin' }),
 		).not.toBeInTheDocument();
+	});
+
+	// --- theme-5 5d: retired ?toolkit_id= deep links (scrub is deletable in 6b)
+
+	it('ignores a retired ?toolkit_id= deep link and scrubs it from the URL', async () => {
+		// Pre-5b deep links could carry `?toolkit_id=…`; the filter vocabulary
+		// dropped it when toolkits were retired. The lens must render unfiltered
+		// (no crash, no filter-state corruption) and the dead param must leave
+		// the URL on arrival while the live params survive.
+		renderMonitor('/app/monitor?tab=executions&toolkit_id=tk_0123456789abcdef&days=7');
+
+		// The full unfiltered trace log renders — the param filtered nothing.
+		expect(await screen.findByText('POST /v1/charges')).toBeInTheDocument();
+		expect(screen.getByText('GET /repos/{owner}/{repo}')).toBeInTheDocument();
+
+		await waitFor(() => {
+			expect(screen.getByTestId('location-search').textContent).not.toContain('toolkit_id');
+		});
+		// The surviving filter vocabulary is untouched by the scrub.
+		const search = screen.getByTestId('location-search').textContent;
+		expect(search).toContain('tab=executions');
+		expect(search).toContain('days=7');
 	});
 
 	it('goes live on the Events tab without crashing on heartbeat frames', async () => {
@@ -201,7 +204,7 @@ describe('MonitorPage', () => {
 		renderMonitor('/app/monitor');
 		await screen.findByText('Breakdown');
 
-		// Both the bubble chart and the Breakdown carry an APIs/Toolkits/Agents
+		// Both the bubble chart and the Breakdown carry an APIs/Credentials/Agents
 		// toggle; flip the Breakdown's (the last one). The agent grouping was
 		// prefetched, so rows swap without a spinner. Backend agent keys are
 		// mechanical "actor_type/actor_id" strings — the UI strips the type

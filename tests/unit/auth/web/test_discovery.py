@@ -62,6 +62,16 @@ def test_discovery_contains_grant_types_and_auth_methods(client: TestClient) -> 
     assert "private_key_jwt" in data["token_endpoint_auth_methods_supported"]
 
 
+def test_discovery_revocation_auth_methods_describe_the_public_arm(client: TestClient) -> None:
+    """#1244: without the member, RFC 8414's implicit default
+    (client_secret_basic) mis-described /oauth/revoke's public arm — the
+    root doc must advertise auth method "none" explicitly, like the
+    /mcp-scoped document."""
+    resp = client.get("/.well-known/oauth-authorization-server")
+    data = resp.json()
+    assert data["revocation_endpoint_auth_methods_supported"] == ["none"]
+
+
 def test_discovery_response_types_supported_includes_code(client: TestClient) -> None:
     resp = client.get("/.well-known/oauth-authorization-server")
     data = resp.json()

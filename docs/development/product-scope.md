@@ -40,10 +40,10 @@ conversation, **not** a product issue (`README.md` Enterprise section, `SUPPORT.
 ## What's in scope (the product is about this)
 
 The five runtime surfaces — **broker** (credential-injecting data plane),
-**registry** (API catalog), **control** (credentials, toolkits, access
-requests), **admin** (operators, jobs, audit, UI), and **auth** (agent
-registration and tokens). What each one owns, and how they fit together, is
-documented in [docs/architecture/](../architecture/README.md).
+**registry** (API catalog), **control** (credentials, agent-credential
+bindings, access requests), **admin** (operators, jobs, audit, UI), and
+**auth** (agent registration and tokens). What each one owns, and how they fit
+together, is documented in [docs/architecture/](../architecture/README.md).
 
 Plus the supporting surfaces that make the above usable: **shared** infra, the
 **CLI** (`jenticctl` lifecycle + `jentic` agent/catalog/execute), **install /
@@ -108,7 +108,7 @@ Ordered by how strongly the public docs emphasize each.
    size.
 2. **Secure & auditable by default.** Default-deny permissions (a rule-less binding
    blocks everything); append-only audit log; operator-supplied encryption keyset
-   required (`SECURITY.md`, [`control/web/schemas/toolkits.py`](../../src/jentic_one/control/web/schemas/toolkits.py)).
+   required (`SECURITY.md`, [`control/web/schemas/permission_rules.py`](../../src/jentic_one/control/web/schemas/permission_rules.py)).
 3. **Self-hostable & operable by a small team.** One-command install; tiered
    self-serve hardening path (`README.md`, [`docs/security/README.md`](../security/README.md)).
 4. **Telemetry opt-in / off by default / closed-schema; observability self-hosted.**

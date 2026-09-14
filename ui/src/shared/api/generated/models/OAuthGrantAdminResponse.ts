@@ -11,6 +11,10 @@ export type OAuthGrantAdminResponse = {
      */
     agent_id: string;
     /**
+     * Lifecycle state of the bound agent (`active`, `disabled`, `archived`, …). A grant on a non-active agent is dormant: the row stays `active` (disable is reversible — re-enable restores the standing consent without a new consent round) but no token resolves while the agent is non-active. Lets listings tell a working connection from a dormant one (#1233).
+     */
+    agent_status?: (string | null);
+    /**
      * Whether the CALLER may revoke this grant (the consenting user, or an admin holding the revoke permission set). May be false even for callers who can list — e.g. a read-only admin.
      */
     can_revoke: boolean;

@@ -37,6 +37,9 @@ class AccessRequestItemView(BaseModel):
     toolkit_name: str | None = None
     credential_name: str | None = None
     rules: list[dict[str, Any]] | None
+    # Shared rule-set pointer — the alternative policy carrier for a
+    # credential:bind (theme-5 Phase 3, hard problem 6).
+    rule_set_id: str | None = None
     status: str
     applied_effects: dict[str, Any] | None
     decided_by: str | None
@@ -48,8 +51,8 @@ class AccessRequestItemView(BaseModel):
     # not, None when not computed (decided items, indeterminate or ambiguous
     # targets, list endpoints, fulfilment-only intents).
     already_satisfied: bool | None = None
-    # For a satisfied toolkit:bind, the toolkit id that satisfies it — lets
-    # consumers point the operator at the exact object. None otherwise.
+    # For a satisfied credential:bind, the credential id that satisfies it —
+    # lets consumers point the operator at the exact object. None otherwise.
     already_satisfied_by: str | None = None
 
 

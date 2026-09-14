@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
 from jentic_one.control.core.schema.toolkit_keys import ToolkitKey
+from jentic_one.control.core.schema.toolkits import Toolkit
 
 
 class ToolkitKeyRepository:
@@ -43,6 +44,24 @@ class ToolkitKeyRepository:
     @staticmethod
     async def get_by_id(session: AsyncSession, key_id: str) -> ToolkitKey | None:
         return await session.get(ToolkitKey, key_id)
+
+    @staticmethod
+    async def list_all_with_toolkits(session: AsyncSession) -> list[tuple[ToolkitKey, Toolkit]]:
+        """Every key joined to its toolkit, id-ordered — the retirement job's inventory."""
+        result = await session.execute(
+            select(ToolkitKey, Toolkit)
+            .join(Toolkit, Toolkit.id == ToolkitKey.toolkit_id)
+            .order_by(ToolkitKey.id)
+        )
+        return [(key, toolkit) for key, toolkit in result.tuples().all()]
+
+    @staticmethod
+    async def stamp_migrated_actor(session: AsyncSession, key_id: str, actor_id: str) -> None:
+        """Record the service account a key retired to (theme-5 Phase 4)."""
+        key = await session.get(ToolkitKey, key_id)
+        assert key is not None, f"toolkit key {key_id} vanished mid-retirement"
+        key.migrated_actor_id = actor_id
+        await session.flush()
 
     @staticmethod
     async def list_by_toolkit(

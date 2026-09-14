@@ -51,6 +51,18 @@ _source_adapter: TypeAdapter[IngestSource] = TypeAdapter(IngestSource)
 _DIGEST_CONSTRAINT = "uq_api_revisions_api_id_spec_digest"
 _ONE_ACTIVE_CONSTRAINT = "ix_api_revisions_one_active"
 
+# The job-error wrapper an all-sources-failed import rides (``IngestJobError``):
+# ``ALL_SOURCES_FAILED_PREFIX_TEMPLATE`` heads the whole message and
+# ``SOURCE_FAILURE_PREFIX_TEMPLATE`` heads each per-source entry. Named (rather
+# than inline f-strings) because the rendering is a cross-module contract: the
+# /mcp mount's duplicate-content detection (``jentic_one.mcp.tools``) keys on
+# the single-source rendering surviving the worker's 128-char ``job.error``
+# truncation, and its tests build fixtures from these exact templates. Keep the
+# rendering byte-identical when touching them — a wrapper that grows can push
+# the duplicate fragment past the truncation point in production.
+SOURCE_FAILURE_PREFIX_TEMPLATE = "source[{index}]: "
+ALL_SOURCES_FAILED_PREFIX_TEMPLATE = "all {count} import source(s) failed: "
+
 
 def _readable_source_error(exc: Exception) -> str:
     """Map a source-level ingest failure to a message safe to show a user.
@@ -137,7 +149,10 @@ class ImportHandler:
                     )
                 except Exception as exc:
                     logger.exception("import_source_failed", source_index=idx, job_id=job_id)
-                    failures.append(f"source[{idx}]: {_readable_source_error(exc)}")
+                    failures.append(
+                        SOURCE_FAILURE_PREFIX_TEMPLATE.format(index=idx)
+                        + _readable_source_error(exc)
+                    )
 
             logger.info(
                 "import_handler_complete",
@@ -248,7 +263,8 @@ class ImportHandler:
                 and not recovered_supersede
             ):
                 raise IngestJobError(
-                    f"all {len(sources)} import source(s) failed: " + "; ".join(failures)
+                    ALL_SOURCES_FAILED_PREFIX_TEMPLATE.format(count=len(sources))
+                    + "; ".join(failures)
                 )
 
             return JobResultPayload(

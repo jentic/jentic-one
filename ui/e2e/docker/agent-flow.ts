@@ -150,7 +150,7 @@ export async function fileAccessRequestAsAgent(
 			reason: opts.reason ?? 'e2e agent-filed access request',
 			items: [
 				{
-					resource_type: opts.resourceType ?? 'toolkit',
+					resource_type: opts.resourceType ?? 'credential',
 					action: opts.action ?? 'bind',
 					resource_id: opts.resourceId ?? `e2e-res-${uniqueSuffix()}`,
 				},

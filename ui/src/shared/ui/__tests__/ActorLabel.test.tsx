@@ -67,12 +67,13 @@ describe('ActorLabel', () => {
 	});
 
 	// Toolkits are never in the actor directory (the backend UNION excludes them),
-	// but they DO surface as the actor of broker-path executions/audit entries with
-	// `actor_type === "toolkit"`. The id never resolves, so it must fall back to the
-	// raw `tk_…` token while still labelling it as a toolkit.
+	// but they DO surface as the actor of HISTORICAL executions/audit entries with
+	// `actor_type === "toolkit"` — a retired actor type persisted as a raw string,
+	// no longer in the `ActorType` enum. The id never resolves, so it must fall
+	// back to the raw `tk_…` token while still labelling it as a toolkit.
 	it('labels a toolkit actor and keeps its raw id (directory never holds toolkits)', async () => {
 		seedActors();
-		render(<ActorLabel actorId="tk_acme" actorType={ActorType.TOOLKIT} />, { wrapper });
+		render(<ActorLabel actorId="tk_acme" actorType="toolkit" />, { wrapper });
 		const raw = await screen.findByText('tk_acme');
 		expect(raw).toBeInTheDocument();
 		expect(raw.className).toContain('font-mono');

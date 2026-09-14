@@ -1,7 +1,7 @@
 # How credential resolution works
 
 How Jentic One keeps API secrets away from agents: what an agent actually
-sends, how the single active credential for an API is resolved and injected
+sends, how a bound credential for an API is resolved and injected
 server-side, how secrets are encrypted at rest, how credentials get into the
 system through providers, and what every use leaves in the audit trail.
 Storing a credential and granting an agent access are walked through in
@@ -30,7 +30,7 @@ sequenceDiagram
 
     A->>B: METHOD /{full upstream URL} + Jentic bearer
     Note over A,B: the request carries no API secret —<br/>only the agent's platform token
-    B->>C: resolve the single active credential for the API tuple
+    B->>C: resolve one bound, covering credential for the API tuple
     C-->>B: encrypted blob (key-id-prefixed AES-256-GCM)
     B->>B: decrypt in-process, inject header / query / cookie / SigV4 signing
     B->>U: forward with auth attached
@@ -51,59 +51,88 @@ What can leave the platform is bounded:
 - **Records carry identifiers.** Execution records and audit events
   reference the credential by id and name only.
 
-The full execution pipeline — toolkit derivation, default-deny permission
+The full execution pipeline — binding derivation, default-deny permission
 rules, SSRF gates, the runner stack — is documented in
 [Broker execution](../architecture/broker-execution.md). This guide owns the
 credential-centric view.
 
 ## The model
 
-- A **credential** stores the secret for one API, keyed by the API identity
-  `(api_vendor, api_name, api_version)` (control DB, `credentials`).
-- A **toolkit** groups the credentials an agent may use. A
-  **toolkit-credential binding** (`toolkit_credential_bindings`) associates a
-  toolkit with a credential.
-- At execution time the Broker resolves the **single active** credential for
-  the requested API and injects its secret — the secret never reaches the
-  agent.
+- A **credential** stores the secret for one API identity, keyed by the tuple
+  `(api_vendor, api_name, api_version)` (control DB, `credentials`). The
+  `name` and `version` axes may be unset — an unset axis is a wildcard, so a
+  vendor-wide credential covers every API under that vendor.
+- An **agent-credential binding** (admin DB, `agent_credential_bindings`)
+  grants one agent (or service account) the use of one credential. A binding
+  optionally points at a shared **rule set** (`rule_set_id` → control DB
+  `permission_rule_sets`); with no rule set, the binding's policy is its own
+  inline permission rules. Either way access is **default-deny**: a binding
+  with zero rules blocks everything
+  ([`control/web/schemas/permission_rules.py`](../../src/jentic_one/control/web/schemas/permission_rules.py)).
+- At execution time the Broker resolves the agent's **bound** credentials,
+  filters them to the ones whose identity covers the requested API, picks the
+  single winner, and injects its secret — the secret never reaches the agent.
 
-Registry (the `apis` table) and Control (`credentials`,
-`toolkit_credential_bindings`) are **separate databases** with no foreign key
-between them; the link is the API identity tuple carried on the credential.
+An agent may hold bindings to several credentials of the same API
+(multi-account); a credential may be bound to several agents. Neither
+direction is artificially unique — disambiguation happens at resolution time,
+below.
 
-## Resolution invariants
+Registry (the `apis` table), Control (`credentials`,
+`permission_rule_sets`), and Admin (`agent_credential_bindings`) are
+**separate databases** with no foreign keys between them; the registry↔control
+link is the API identity tuple carried on the credential, and the
+admin↔control link is the plain `credential_id` string on the binding, both
+resolved at the application layer.
 
-### One active credential per API within a toolkit
+## How the Broker picks a credential
 
-Within a single toolkit there is **at most one active credential per API
-identity**. Two active credentials for the same API in the same toolkit make
-resolution ambiguous — the Broker cannot tell which secret to inject, so it
-refuses with `409 ambiguous_credential`. The platform prevents that state at
-bind time: binding a second active credential for an API a toolkit already
-covers is rejected with `409 conflicting_api_binding`. Unbind the existing
-credential first to replace it.
+For each execute request the Broker derives the caller's bindings and resolves
+in this order ([`broker/services/credentials/resolver.py`](../../src/jentic_one/broker/services/credentials/resolver.py)):
 
-A **single credential may be bound to many toolkits** — the guard blocks a
-second *distinct* credential for an API a toolkit already covers, not reuse.
-Note the runtime resolver searches by vendor, not by toolkit: two different
-active credentials for the same API identity collide with
-`409 ambiguous_credential` on any call that does not disambiguate (by
-specificity or by name, below), even when they live in different toolkits.
+1. **Binding boundary.** Only credentials the caller is bound to are ever
+   considered — an unbound credential cannot resolve, appear in an error body,
+   or leak its existence, even if it covers the API.
+2. **Coverage.** Restrict to active credentials whose stored identity covers
+   the discovered operation (each axis unset-or-equal).
+3. **`Jentic-Credential-Id`** (request header) — the authoritative signal: an
+   exact id names one bound credential. A supplied id that is not among the
+   covering candidates is refused with `400 credential_id_not_found`, listing
+   the valid candidates.
+4. **`Jentic-Credential-Name`** (request header) — restrict to that name
+   across all covering candidates. An unknown name is refused with
+   `400 credential_name_not_found`, listing the candidates.
+5. **Most-specific-wins.** A `vendor/name/version` pin beats `vendor/name`,
+   which beats a bare vendor wildcard — so a vendor-wide credential coexisting
+   with a pinned one resolves cleanly instead of forcing a spurious conflict.
 
-### Most specific wins; an explicit name wins over that
+The outcomes:
 
-A credential's identity tuple may leave `api_name`/`api_version` unset
-(wildcard). When several active credentials cover the same call, the most
-specific one is chosen — a full `vendor.name.version` pin beats a
-vendor-wide credential — so a wildcard coexisting with a pin does not force
-a spurious 409. A caller can also disambiguate explicitly with the
-`Jentic-Credential-Name` header, which selects by name across all covering
-credentials; a name that matches nothing is a
-`400 credential_name_not_found` listing the candidates.
+- **0 bound credentials for the API → `403 no_credential_binding`.** The
+  problem body carries an agent directive: file
+  `jentic access request --api <vendor/name>` when a credential already serves
+  the API, or `--provision` when nothing serves it yet. When a *bound*
+  credential is a near-miss (its identity does not cover this operation), the
+  refusal is `403 credential_identity_mismatch` instead — fix the credential,
+  don't file a request.
+- **1 winner → use it.** The execution record attributes the credential used
+  by id and name.
+- **A genuine same-specificity tie → `409 ambiguous_credential_binding`.**
+  The body lists the candidates so the caller can resend with
+  `Jentic-Credential-Name` or `Jentic-Credential-Id`. Each candidate carries
+  `id`, `name`, `last4` (the tail of the non-secret credential id — never the
+  secret), and `created_at`, so two similarly-named credentials remain
+  distinguishable.
 
-### No match is a loud 424
+There is no bind-time uniqueness rule to trip over: binding a second
+credential for an API the agent already reaches is allowed, and resolution
+disambiguates per request. Ambiguity is only ever surfaced as the loud,
+recoverable 409 above.
 
-If no active credential covers the API, the broker answers
+### A missing secret is a loud 424
+
+A binding covers the API but no usable secret is connected — the credential
+was never connected, or its account link lapsed — the broker answers
 `424 credential_not_provisioned` with a `prompt_human` directive (and a
 provisioning URL when one is configured) so the agent hands off to a human
 instead of retrying. Every credential failure is also emitted as a typed
@@ -111,21 +140,14 @@ event (see [What's audited](#whats-audited)).
 
 ### Deleting an API deactivates its credentials
 
-Because the two databases share no referential integrity, deleting an API
-from the registry does not delete the control-plane credentials that
-reference it. To avoid stranding them — a later re-import plus a new
-credential would collide with `409 ambiguous_credential` — the API delete
-**deactivates** the matching credentials (`active = false`). The rows are
-preserved (the operator can still see and rotate them) but no longer
-participate in resolution, so a re-import starts clean.
-
-### When ambiguity is genuinely surfaced
-
-If two equally specific active credentials are ever resolved (the loud,
-correct refusal), the `409 ambiguous_credential` body lists the candidates
-so the caller can pick which to remove. Each candidate carries `id`, `name`,
-`last4` (the tail of the non-secret credential id — never the secret), and
-`created_at`, so two similarly-named credentials remain distinguishable.
+Because the databases share no referential integrity, deleting an API from the
+registry does not delete the control-plane credentials that reference it. To
+avoid stranding them — a later re-import plus a new credential would collide
+in resolution — the API delete **deactivates** the matching credentials
+(`active = false`; [`registry/repos/control_credential_boundary_repo.py`](../../src/jentic_one/registry/repos/control_credential_boundary_repo.py)). The
+rows are preserved (the operator can still see and rotate them) and their
+bindings survive, but a deactivated credential no longer participates in
+resolution, so a re-import starts clean.
 
 ## Where secrets live
 
@@ -224,7 +246,7 @@ Two append-only records in the admin DB, browsable in the UI and API — see
 
 - **`audit_entries`** — who changed what: `CREATE` on store, `UPDATE` on a
   completed connect, `ENABLE`/`DISABLE`/`DELETE` on lifecycle changes, and
-  `GRANT`/`REVOKE` on every toolkit bind/unbind, each with actor and
+  `GRANT`/`REVOKE` on every agent-credential bind/unbind, each with actor and
   target (and origin, where the acting surface records one).
 - **Events** — every resolve → decrypt → inject emits exactly one
   `credential.accessed` event carrying actor, credential id, provider, wire

@@ -235,6 +235,33 @@ h1 {
 .session-panel .alt:hover { text-decoration: underline; }
 .status-line { text-align: center; font-size: 13px; color: hsl(var(--fg-muted)); }
 
+/* ---- awaiting-agent-approval page (P4 hybrid): panel copy + link row ---- */
+
+.panel p {
+	color: hsl(var(--fg-label));
+	font-size: 13px;
+	line-height: 1.5;
+	margin-bottom: 10px;
+}
+.copy-row { display: flex; gap: 8px; }
+.copy-row input {
+	flex: 1;
+	min-width: 0;
+	padding: 8px 10px;
+	border: 1px solid hsl(var(--input-border));
+	border-radius: 6px;
+	font-family: 'Nunito Sans', sans-serif;
+	font-size: 12px;
+	color: hsl(var(--fg-muted));
+	background: hsl(var(--input-bg));
+}
+button.copy {
+	background: hsl(var(--btn-secondary-bg));
+	color: hsl(var(--btn-secondary-fg));
+	border: 1px solid hsl(var(--btn-secondary-border));
+}
+button.copy:hover { background: hsl(var(--btn-secondary-bg-hover)); }
+
 /* ---- permissions list (user consent) ---- */
 
 .permissions {
@@ -347,7 +374,7 @@ h1 {
 	letter-spacing: 0.5px;
 	margin-bottom: 6px;
 }
-input[type="email"], input[type="password"] {
+input[type="email"], input[type="password"], input[type="text"] {
 	width: 100%;
 	padding: 12px 14px;
 	background: hsl(var(--input-bg));

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.admin.core.schema.oauth_clients import OAuthClient
@@ -286,6 +286,22 @@ class OAuthClientRepository:
     async def deactivate(session: AsyncSession, id: str) -> bool:
         """Soft-delete by setting active=False. Returns True if updated."""
         stmt = update(OAuthClient).where(OAuthClient.id == id).values(active=False)
+        result = await session.execute(stmt)
+        await session.flush()
+        return int(result.rowcount) > 0  # type: ignore[attr-defined]
+
+    @staticmethod
+    async def delete(session: AsyncSession, id: str) -> bool:
+        """Hard-delete the row. Returns True if a row was removed.
+
+        Terminal — unlike :meth:`deactivate` (the reversible kill switch) the
+        row is gone: the D8/G13 DCR dedupe can never re-attach to it, so a
+        later re-registration mints a fresh ``pending`` row. Callers own the
+        pre-delete sweeps (grants, tokens) and the terminal audit entry —
+        grant/token/audit rows reference the client by plain id strings (no
+        FKs), so nothing cascades here by construction.
+        """
+        stmt = delete(OAuthClient).where(OAuthClient.id == id)
         result = await session.execute(stmt)
         await session.flush()
         return int(result.rowcount) > 0  # type: ignore[attr-defined]

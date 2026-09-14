@@ -74,6 +74,7 @@ export type StreamKind =
 /** Tokens lifted from `EventResponse` (`trace_id` + the free-form `data` map). */
 export type StreamTokens = {
 	trace_id?: string;
+	/** Historical events only — new events carry `credential_id` instead. */
 	toolkit_id?: string;
 	operation_id?: string;
 	credential_id?: string;
@@ -235,8 +236,9 @@ export function idFromLink(link: string | null | undefined): string | undefined 
 function buildGroupKey(t: Pick<StreamEvent, 'kind' | 'type' | 'tokens'>): string {
 	const token =
 		t.tokens.operation_id ??
-		t.tokens.toolkit_id ??
 		t.tokens.credential_id ??
+		// Historical events may only carry the retired toolkit attribution.
+		t.tokens.toolkit_id ??
 		// The request id must outrank the agent id: real `access_request.*`
 		// events carry BOTH (the requesting agent is the top-level actor), and
 		// keying on the agent would collapse two requests filed by the same
@@ -472,7 +474,7 @@ export function AgentStreamProvider({
 		// aggressively (5-min staleTime) as reference data, and a CLI agent
 		// files its provisioning request seconds after registering. Without
 		// this, every `actor_id` resolution for the new agent (rail rows, the
-		// setup wizard's badge and agent-named toolkit suggestion) misses and
+		// setup wizard's header badge) misses and
 		// falls back to the raw `agnt_…` id until the cache expires.
 		void queryClient.invalidateQueries({ queryKey: sharedQueryKeys.actorDirectoryRoot });
 	}, [queryClient]);

@@ -2,9 +2,9 @@
 
 The items use ``scope:grant`` for ``apis:write`` — the one scope that is in
 ``GRANTABLE_SCOPES`` but deliberately not in ``DEFAULT_AGENT_SCOPES``, so it is
-exactly what a real agent would file for and needs no toolkit/credential
-prerequisites (a ``credential:bind`` item with a ``to_id`` requires the agent
-to already be bound to that toolkit).
+exactly what a real agent would file for and needs no credential
+prerequisites (a ``credential:bind`` item names a credential the decider must
+be able to see).
 """
 
 from __future__ import annotations
