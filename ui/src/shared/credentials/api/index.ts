@@ -27,6 +27,11 @@ import type {
 	DeviceAuthorizationChallengeResponse,
 } from './types';
 import { updateCredential } from './client';
+import {
+	isHttpsVendorUrl,
+	openVendorUrl,
+	assignVendorUrl,
+} from '@/shared/credentials/lib/safe-navigation';
 
 /** Namespaced query keys for the credentials cache slice. */
 export const credentialKeys = {
@@ -175,7 +180,11 @@ export type ConnectOutcome =
 	| { status: 'redirected' }
 	| { status: 'cancelled' }
 	| { status: 'timeout' }
-	| { status: 'unsupported_challenge' };
+	| { status: 'unsupported_challenge' }
+	// The vendor's OAuth response carried a non-https URL (e.g. ``javascript:``
+	// or ``data:``) — refused before we opened / redirected. See
+	// ``lib/safe-navigation.ts`` for the guard rules.
+	| { status: 'unsafe_challenge_url' };
 
 /**
  * Run the full OAuth connect round-trip for a credential.
@@ -304,18 +313,27 @@ export async function runConnectFlow(
 
 		const authCode: AuthCodeChallengeResponse = challenge;
 
+		// The vendor supplied ``authorize_url`` in the challenge JSON; refuse
+		// to open or redirect anywhere that isn't https. Any of the three
+		// navigation paths below (redirect mode, popup, popup-blocked
+		// fallback to full redirect) reaches into the vendor URL, so gate
+		// once up front.
+		if (!isHttpsVendorUrl(authCode.authorize_url)) {
+			return { status: 'unsafe_challenge_url' };
+		}
+
 		if (mode === 'redirect') {
-			window.location.assign(authCode.authorize_url);
+			assignVendorUrl(authCode.authorize_url);
 			return { status: 'redirected' };
 		}
 
-		popup = window.open(
+		popup = openVendorUrl(
 			authCode.authorize_url,
 			'jentic-oauth-connect',
 			'popup,width=520,height=720',
 		);
 		if (!popup) {
-			window.location.assign(authCode.authorize_url);
+			assignVendorUrl(authCode.authorize_url);
 			return { status: 'redirected' };
 		}
 		const activePopup = popup;

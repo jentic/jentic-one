@@ -1,6 +1,7 @@
-import { ExternalLink, Loader2 } from 'lucide-react';
+import { ExternalLink, Loader2, ShieldAlert } from 'lucide-react';
 import { Button, CopyButton, Dialog } from '@/shared/ui';
 import type { DeviceAuthorizationChallengeResponse } from '@/shared/credentials/api/types';
+import { isHttpsVendorUrl, openVendorUrl } from '@/shared/credentials/lib/safe-navigation';
 
 /**
  * Renders the RFC 8628 device-code human step for a credential's
@@ -20,6 +21,10 @@ export function DeviceCodeConnectDialog({
 }) {
 	if (!challenge) return null;
 	const openUrl = challenge.verification_uri_complete ?? challenge.verification_uri;
+	// The vendor's device-authorization JSON supplied this URL; refuse to open
+	// anything that isn't https (a malicious/misconfigured vendor could return
+	// ``javascript:`` or ``data:`` — see lib/safe-navigation.ts).
+	const openUrlIsSafe = isHttpsVendorUrl(openUrl);
 	return (
 		<Dialog
 			open={open}
@@ -47,17 +52,27 @@ export function DeviceCodeConnectDialog({
 					</div>
 				</div>
 
-				<Button
-					type="button"
-					variant="primary"
-					className="w-full"
-					onClick={(): void => {
-						window.open(openUrl, '_blank', 'noopener,noreferrer');
-					}}
-				>
-					<ExternalLink className="h-4 w-4" />
-					Open vendor sign-in
-				</Button>
+				{openUrlIsSafe ? (
+					<Button
+						type="button"
+						variant="primary"
+						className="w-full"
+						onClick={(): void => {
+							openVendorUrl(openUrl, '_blank', 'noopener,noreferrer');
+						}}
+					>
+						<ExternalLink className="h-4 w-4" />
+						Open vendor sign-in
+					</Button>
+				) : (
+					<div className="border-destructive/40 bg-destructive/10 text-destructive flex items-start gap-2 rounded-lg border px-3 py-2.5 text-xs">
+						<ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
+						<p>
+							The vendor returned a sign-in link that isn't a secure HTTPS URL. For
+							safety we won't open it — cancel and try again.
+						</p>
+					</div>
+				)}
 
 				<div className="border-border bg-muted/20 flex items-center gap-2.5 rounded-lg border px-3 py-2.5">
 					<Loader2 className="text-muted-foreground h-4 w-4 shrink-0 animate-spin" />

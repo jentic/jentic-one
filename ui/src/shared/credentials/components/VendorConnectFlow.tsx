@@ -1,6 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Bot, CheckCircle2, ExternalLink, Loader2, XCircle } from 'lucide-react';
+import {
+	ArrowLeft,
+	Bot,
+	CheckCircle2,
+	ExternalLink,
+	Loader2,
+	ShieldAlert,
+	XCircle,
+} from 'lucide-react';
 import {
 	AgentBadge,
 	Badge,
@@ -23,6 +31,7 @@ import {
 	useVendorAuthCapabilities,
 } from '@/shared/credentials/api/vendors-hooks';
 import { cancelConnectSession } from '@/shared/credentials/api/vendors-client';
+import { isHttpsVendorUrl, openVendorUrl } from '@/shared/credentials/lib/safe-navigation';
 import type {
 	AuthCodeConfirmResponse,
 	ConfirmResponse,
@@ -226,8 +235,14 @@ function VendorSelfConnectFlow({
 			// human's next click is at the vendor, not back on this dialog.
 			// Device flows: no auto-open — the user needs to copy the
 			// user_code first, then click Open Vendor.
-			if (result.challenge.kind === 'authorization_code') {
-				window.open(result.challenge.authorize_url, '_blank', 'noopener,noreferrer');
+			// The URL is vendor-supplied — refuse to auto-navigate anything
+			// that isn't https. On refusal, ``RedirectAwaitingStep`` renders
+			// an ``UnsafeVendorUrlNotice`` in place of the open button.
+			if (
+				result.challenge.kind === 'authorization_code' &&
+				isHttpsVendorUrl(result.challenge.authorize_url)
+			) {
+				openVendorUrl(result.challenge.authorize_url, '_blank', 'noopener,noreferrer');
 			}
 		} catch {
 			// surfaced via ErrorAlert below.
@@ -425,8 +440,9 @@ function VendorApproveFlow({
 			setChallenge(result);
 			phaseRef.current = 'awaiting';
 			setPhase('awaiting');
-			if (result.kind === 'authorization_code') {
-				window.open(result.authorize_url, '_blank', 'noopener,noreferrer');
+			// Vendor-supplied URL — https-only guard mirrors ``startFlow``.
+			if (result.kind === 'authorization_code' && isHttpsVendorUrl(result.authorize_url)) {
+				openVendorUrl(result.authorize_url, '_blank', 'noopener,noreferrer');
 			}
 		} catch {
 			// surfaced via ErrorAlert below.
@@ -777,19 +793,22 @@ function DeviceCodeAwaitingStep({
 				</div>
 			)}
 
-			{openUrl && (
-				<Button
-					type="button"
-					variant="primary"
-					className="w-full"
-					onClick={(): void => {
-						window.open(openUrl, '_blank', 'noopener,noreferrer');
-					}}
-				>
-					<ExternalLink className="h-4 w-4" />
-					Open {display.displayName}
-				</Button>
-			)}
+			{openUrl &&
+				(isHttpsVendorUrl(openUrl) ? (
+					<Button
+						type="button"
+						variant="primary"
+						className="w-full"
+						onClick={(): void => {
+							openVendorUrl(openUrl, '_blank', 'noopener,noreferrer');
+						}}
+					>
+						<ExternalLink className="h-4 w-4" />
+						Open {display.displayName}
+					</Button>
+				) : (
+					<UnsafeVendorUrlNotice />
+				))}
 
 			<PollingStatusLine display={display} status={status} />
 			<CancelBar onCancel={onCancel} />
@@ -822,20 +841,40 @@ function RedirectAwaitingStep({
 				</div>
 			</div>
 
-			<Button
-				type="button"
-				variant="primary"
-				className="w-full"
-				onClick={(): void => {
-					window.open(challenge.authorize_url, '_blank', 'noopener,noreferrer');
-				}}
-			>
-				<ExternalLink className="h-4 w-4" />
-				Re-open {display.displayName}
-			</Button>
+			{isHttpsVendorUrl(challenge.authorize_url) ? (
+				<Button
+					type="button"
+					variant="primary"
+					className="w-full"
+					onClick={(): void => {
+						openVendorUrl(challenge.authorize_url, '_blank', 'noopener,noreferrer');
+					}}
+				>
+					<ExternalLink className="h-4 w-4" />
+					Re-open {display.displayName}
+				</Button>
+			) : (
+				<UnsafeVendorUrlNotice />
+			)}
 
 			<PollingStatusLine display={display} status={status} />
 			<CancelBar onCancel={onCancel} />
+		</div>
+	);
+}
+
+/**
+ * Shown in place of the "Open <vendor>" button when the vendor's OAuth response
+ * carried a non-https URL. See ``lib/safe-navigation.ts`` for the guard rules.
+ */
+function UnsafeVendorUrlNotice() {
+	return (
+		<div className="border-destructive/40 bg-destructive/10 text-destructive flex items-start gap-2 rounded-lg border px-3 py-2.5 text-xs">
+			<ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
+			<p>
+				The vendor returned a sign-in link that isn't a secure HTTPS URL. For safety we
+				won't open it — cancel and try again.
+			</p>
 		</div>
 	);
 }
