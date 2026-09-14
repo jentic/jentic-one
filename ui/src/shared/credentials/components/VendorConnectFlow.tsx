@@ -30,7 +30,10 @@ import {
 	useStartAndConfirmVendorConnect,
 	useVendorAuthCapabilities,
 } from '@/shared/credentials/api/vendors-hooks';
-import { cancelConnectSession } from '@/shared/credentials/api/vendors-client';
+import {
+	cancelConnectSession,
+	cancelConnectSessionBeacon,
+} from '@/shared/credentials/api/vendors-client';
 import { isHttpsVendorUrl, openVendorUrl } from '@/shared/credentials/lib/safe-navigation';
 import type {
 	AuthCodeConfirmResponse,
@@ -194,6 +197,23 @@ function VendorSelfConnectFlow({
 			// doesn't crash the parent tree.
 			void cancelConnectSession(s.id, s.pollToken).catch(() => {});
 		};
+	}, []);
+
+	// Tab-close variant: ``fetch`` fired from unmount is aborted by the
+	// browser when the page itself is being torn down, so the pending
+	// credential + session would otherwise linger until the session TTL
+	// scanner reaps them. ``sendBeacon`` is guaranteed to deliver on
+	// unload; we keep the ``fetch`` above for the in-page dismiss case
+	// (dialog close, navigation) since it can observe the response.
+	useEffect(() => {
+		const onBeforeUnload = (): void => {
+			if (phaseRef.current !== 'awaiting') return;
+			const s = sessionRef.current;
+			if (!s) return;
+			cancelConnectSessionBeacon(s.id, s.pollToken);
+		};
+		window.addEventListener('beforeunload', onBeforeUnload);
+		return () => window.removeEventListener('beforeunload', onBeforeUnload);
 	}, []);
 
 	const handleCancel = (): void => {
@@ -366,6 +386,17 @@ function VendorApproveFlow({
 			if (phaseRef.current !== 'awaiting') return;
 			void cancelConnectSession(sessionId, pollToken).catch(() => {});
 		};
+	}, [sessionId, pollToken]);
+
+	// Tab-close variant — see the sibling ``VendorSelfConnectFlow`` effect
+	// for the rationale (fetch aborts on unload; sendBeacon delivers).
+	useEffect(() => {
+		const onBeforeUnload = (): void => {
+			if (phaseRef.current !== 'awaiting') return;
+			cancelConnectSessionBeacon(sessionId, pollToken);
+		};
+		window.addEventListener('beforeunload', onBeforeUnload);
+		return () => window.removeEventListener('beforeunload', onBeforeUnload);
 	}, [sessionId, pollToken]);
 
 	const handleCancel = (): void => {
