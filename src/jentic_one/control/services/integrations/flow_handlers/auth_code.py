@@ -20,6 +20,7 @@ from typing import Any, ClassVar
 from urllib.parse import urlencode
 
 import httpx
+import structlog
 
 from jentic_one.control.core.schema.connect_sessions import ConnectSession
 from jentic_one.control.repos.oauth_client_credential_repo import (
@@ -38,6 +39,8 @@ from jentic_one.shared.context import Context
 from jentic_one.shared.models.actors import actor_type_from_id
 from jentic_one.shared.models.credentials import StoredCredentialType
 from jentic_one.shared.url_validation import validate_upstream_url
+
+_logger = structlog.get_logger(__name__)
 
 
 class AuthCodeExchangeError(ConnectSessionServiceError):
@@ -181,9 +184,18 @@ class AuthCodeFlowHandler:
                 headers={"Accept": "application/json"},
             )
         if response.status_code != 200:
-            raise AuthCodeExchangeError(
-                f"token exchange failed: HTTP {response.status_code} {response.text[:200]}"
+            # Keep the raw body out of ``str(exc)`` — this string lands
+            # verbatim in ``terminal_detail`` on the session row (persisted)
+            # AND in the structured log. The body is arbitrary vendor JSON;
+            # it's noise in the DB and hasn't been reviewed against the
+            # redaction rules. Log the snippet at ``warning`` for debugging
+            # (transient, sampled) but only carry the HTTP status forward.
+            _logger.warning(
+                "auth_code.token_exchange_failed",
+                status=response.status_code,
+                body_snippet=response.text[:200],
             )
+            raise AuthCodeExchangeError(f"token exchange failed: HTTP {response.status_code}")
         try:
             data: dict[str, str] = response.json()
         except ValueError as exc:

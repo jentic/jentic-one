@@ -102,7 +102,9 @@ class VendorRegistryService:
         if not entry.flows:
             raise VendorNotConfiguredError(vendor_key, "any", "no flows configured")
         if preferred is None:
-            return entry.flows[0]
+            flow = entry.flows[0]
+            self._require_flow_ready(vendor_key, flow)
+            return flow
         for flow in entry.flows:
             if flow.kind == preferred:
                 self._require_flow_ready(vendor_key, flow)
