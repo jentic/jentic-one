@@ -53,6 +53,9 @@ def _mock_request(
         item.to_type = None
         item.to_id = None
         item.rules = None
+        # A bare MagicMock attribute would fail the view's `str | None`
+        # validation (and read as a policy carrier); pin the Phase-3 column.
+        item.rule_set_id = None
         item.status = "pending"
         item.applied_effects = None
         item.decided_by = None

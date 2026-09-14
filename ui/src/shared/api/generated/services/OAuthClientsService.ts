@@ -78,10 +78,12 @@ export class OAuthClientsService {
         });
     }
     /**
-     * Deactivate OAuth client
-     * Soft-delete an OAuth client by setting active=False.
+     * Disable OAuth client
+     * Disable an OAuth client — the reversible kill switch (sets active=false).
      *
-     * Deactivated clients can no longer initiate authorization flows.
+     * Disabled clients can no longer initiate authorization flows and their
+     * outstanding tokens stop resolving. Re-enable by patching ``active: true``.
+     * The row is kept; this is not a delete.
      * @returns void
      * @throws ApiError
      */
@@ -229,6 +231,42 @@ export class OAuthClientsService {
         });
     }
     /**
+     * Delete OAuth client
+     * Permanently delete an OAuth client. This cannot be undone.
+     *
+     * Terminal, unlike the reversible kill switch (``DELETE`` on this
+     * resource, which only sets ``active=false``): every active grant is
+     * revoked, every token carrying the client's lineage is revoked, and the
+     * registration row is removed — connected applications are fully
+     * disconnected. The audit trail survives. A client that later re-registers
+     * via dynamic client registration is a NEW registration and re-enters the
+     * approval queue as pending; it is never re-attached to the deleted one.
+     * @returns void
+     * @throws ApiError
+     */
+    public static deleteOauthClient({
+        id,
+    }: {
+        id: string,
+    }): CancelablePromise<void> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/admin/oauth-clients/{id}:delete',
+            path: {
+                'id': id,
+            },
+            errors: {
+                400: `Bad Request`,
+                401: `Unauthorized`,
+                403: `Forbidden`,
+                404: `Not Found`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
      * Deny OAuth client
      * Deny an OAuth client — sets approval_status=denied and active=false.
      *
@@ -267,8 +305,14 @@ export class OAuthClientsService {
      * Register a public OAuth client anonymously (RFC 7591 subset).
      *
      * Returns 201 with the new ``client_id``, or 200 with the **existing** row's
-     * ``client_id`` on an exact (``software_id`` + redirect-URI set) dedupe match
-     * (D8). No client_secret is ever issued here and no registration_access_token
+     * ``client_id`` on an exact dedupe match (D8, extended per G13/#1251):
+     * (``software_id`` + redirect-URI set), falling back to (``client_name`` +
+     * redirect-URI set) for registrations without a ``software_id`` — so a
+     * pending client's awaiting-approval retry loop re-attaches instead of
+     * minting duplicate rows. Re-registering a client an administrator has
+     * deactivated re-enters the approval queue: the registration re-attaches
+     * (200) and the client awaits a fresh admin decision (#1312). No
+     * client_secret is ever issued here and no registration_access_token
      * is returned (D12). New rows await admin approval unless the deployment
      * auto-approves registrations (D9). The ``server.mcp.oauth.enabled`` gate
      * lives on the route class — a disabled door 404s before this handler,

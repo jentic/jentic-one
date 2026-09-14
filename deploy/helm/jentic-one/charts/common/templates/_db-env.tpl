@@ -15,7 +15,7 @@ Password source, in order of precedence:
      REQUIRED-AT-INSTALL placeholder).
 
 Host/port/name/schema are not secrets and stay plain values.
-See deploy/README.md "Production secrets".
+See docs/installation/helm.md "Secrets".
 */ -}}
 {{- define "common.db-env" -}}
 {{- $pgHost := printf "%s-postgresql" .Release.Name -}}

@@ -1,7 +1,7 @@
 """Toolkit permission-rule path matching (single source of truth).
 
-Rules are authored on two surfaces — the toolkit-bindings API
-(``control/web/schemas/toolkits.py``) and the access-request API
+Rules are authored on two surfaces — the credentials API
+(``control/web/schemas/permission_rules.py``) and the access-request API
 (``control/web/schemas/access_requests.py``) — and enforced on a third
 (``broker/repos/rule_evaluator.py``). This module is the one place that
 knows how a ``(path, match_mode)`` pair is validated at save time and how

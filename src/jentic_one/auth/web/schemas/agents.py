@@ -7,6 +7,7 @@ from typing import Annotated, Any
 
 from pydantic import BaseModel, Field
 
+from jentic_one.shared.schemas import ServedApiRef
 from jentic_one.shared.web.sensitive import SENSITIVE
 
 ScopeStr = Annotated[str, Field(min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_:./-]+$")]
@@ -52,19 +53,25 @@ class ClaimRequest(BaseModel):
     token: str = Field(min_length=1, max_length=512, json_schema_extra=SENSITIVE)
 
 
-class ToolkitBindingResponse(BaseModel):
-    """Toolkit binding representation in API responses."""
+class CredentialBindingResponse(BaseModel):
+    """Direct agent↔credential binding representation in API responses."""
 
     id: str
     agent_id: str
-    toolkit_id: str
+    credential_id: str
+    # Human-readable credential name (control DB); None when unresolvable.
+    name: str | None = None
     bound_at: datetime
+    suspended: bool
+    # Shared permission rule set the binding points at (None = inline rules).
+    rule_set_id: str | None = None
+    serves: list[ServedApiRef] = []
 
 
-class ToolkitBindingListResponse(BaseModel):
-    """List of toolkit bindings."""
+class CredentialBindingListResponse(BaseModel):
+    """List of direct credential bindings."""
 
-    data: list[ToolkitBindingResponse]
+    data: list[CredentialBindingResponse]
 
 
 class AgentPatchRequest(BaseModel):
@@ -127,10 +134,10 @@ class ApiKeyHistoryResponse(BaseModel):
     data: list[ApiKeyHistoryEntryResponse]
 
 
-class ToolkitBindRequest(BaseModel):
-    """Request body for binding a toolkit."""
+class CredentialBindRequest(BaseModel):
+    """Request body for directly binding a credential to an agent."""
 
-    toolkit_id: str = Field(min_length=1, max_length=255)
+    credential_id: str = Field(min_length=1, max_length=255)
 
 
 class JwksUpdateRequest(BaseModel):

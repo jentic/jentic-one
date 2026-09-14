@@ -7,7 +7,7 @@ import re
 
 from argon2 import PasswordHasher
 
-from jentic_one.control.services.toolkits.key_gen import generate_toolkit_key, verify_toolkit_key
+from jentic_one.control.repos.toolkit_key_gen import generate_toolkit_key, verify_toolkit_key
 
 
 def test_plaintext_format() -> None:

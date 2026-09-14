@@ -27,10 +27,38 @@ func (a *app) printMe(ctx context.Context, me *control.MeAgent) {
 		fmt.Fprintln(a.Out, "  "+st.Dim.Render("run `jentic access refresh` to pick them up"))
 	}
 
-	fmt.Fprintln(a.Out, st.Heading.Render("Toolkit bindings"))
-	if len(me.ToolkitBindings) == 0 {
-		fmt.Fprintln(a.Out, "  "+st.Dim.Render("none — you cannot execute yet; run `jentic access request --toolkit <vendor/name>`"))
+	fmt.Fprintln(a.Out, st.Heading.Render("Credential bindings"))
+	var credBindings []control.CredentialBindingEntry
+	if me.CredentialBindings != nil {
+		credBindings = *me.CredentialBindings
+	}
+	if len(credBindings) == 0 {
+		fmt.Fprintln(a.Out, "  "+st.Dim.Render("none — you cannot execute yet; run `jentic access request --api <vendor/name>`"))
 	} else {
+		for i := range credBindings {
+			b := &credBindings[i]
+			line := "  "
+			if name := deref(b.Name); name != "" {
+				line += st.Command.Render(name) + "  " + st.Dim.Render(b.CredentialId)
+			} else {
+				line += st.Command.Render(b.CredentialId)
+			}
+			if b.Suspended != nil && *b.Suspended {
+				line += "  " + st.Warn.Render("suspended")
+			}
+			fmt.Fprintln(a.Out, line)
+			if serves := servedAPIs(b.Serves); serves != "" {
+				fmt.Fprintln(a.Out, "    "+st.Dim.Render("serves: "+serves))
+			}
+		}
+	}
+
+	// Legacy toolkit bindings: a pre-retirement server may still report them
+	// (the toolkit tables retire in theme-5 phase 6b). Render only when
+	// non-empty, clearly labelled — credential bindings above are the
+	// authoritative "what can I execute" view.
+	if len(me.ToolkitBindings) > 0 {
+		fmt.Fprintln(a.Out, st.Heading.Render("Toolkit bindings (legacy)"))
 		for _, b := range me.ToolkitBindings {
 			if name := deref(b.Name); name != "" {
 				fmt.Fprintln(a.Out, "  "+st.Command.Render(name)+"  "+st.Dim.Render(b.ToolkitId))
@@ -40,12 +68,32 @@ func (a *app) printMe(ctx context.Context, me *control.MeAgent) {
 		}
 	}
 
-	// whoami is the control-plane view of "what can I do?" (scopes + toolkit
+	// whoami is the control-plane view of "what can I do?" (scopes + credential
 	// bindings above). There is no per-directory access surface for a plain
 	// agent — `context view` shows only environment/identity/mode — so point at
 	// doctor for local-setup health rather than a command that surfaces nothing.
 	fmt.Fprintln(a.Out)
-	fmt.Fprintln(a.Out, st.Dim.Render("Toolkit bindings above are your control-plane access. Run `jentic doctor` to check your local setup."))
+	fmt.Fprintln(a.Out, st.Dim.Render("Credential bindings above are your control-plane access. Run `jentic doctor` to check your local setup."))
+}
+
+// servedAPIs renders a binding's served-API references as a comma-separated
+// vendor/name[/version] list ("" when the server reported none).
+func servedAPIs(serves *[]control.ServedApiRef) string {
+	if serves == nil || len(*serves) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(*serves))
+	for _, s := range *serves {
+		ref := s.ApiVendor
+		if name := deref(s.ApiName); name != "" {
+			ref += "/" + name
+		}
+		if version := deref(s.ApiVersion); version != "" {
+			ref += "/" + version
+		}
+		parts = append(parts, ref)
+	}
+	return strings.Join(parts, ", ")
 }
 
 func (a *app) printRequestList(ctx context.Context, reqs []control.AccessRequestResponse, hasMore bool) {
@@ -79,7 +127,7 @@ func (a *app) printRequest(ctx context.Context, r *control.AccessRequestResponse
 		it := &r.Items[i]
 		fmt.Fprintln(a.Out, "  "+st.Dim.Render(itemSummary(it))+"  "+statusStyle(st, it.Status))
 		// A denied item carries the reason it couldn't be granted (e.g. "No
-		// toolkit serves API …; provision and bind a credential for it first").
+		// credential serves API …; provision and bind one for it first").
 		// Surface it so the agent/operator learns what to fix; JSON output
 		// already includes decision_reason.
 		if reason := deref(it.DecisionReason); reason != "" {

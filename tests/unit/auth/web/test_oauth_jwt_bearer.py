@@ -36,7 +36,7 @@ def test_jwt_bearer_grant_success(
 ) -> None:
     mock_assertion_instance = MagicMock()
     mock_assertion_instance.verify_and_exchange = AsyncMock(
-        return_value=("at_new_token", "rt_new_token")
+        return_value=("at_new_token", "rt_new_token", ["apis:read", "apis:write"])
     )
     mock_assertion_cls.return_value = mock_assertion_instance
 
@@ -57,6 +57,7 @@ def test_jwt_bearer_grant_success(
     assert data["refresh_token"] == "rt_new_token"
     assert data["token_type"] == "bearer"
     assert data["expires_in"] == 3600
+    assert data["scope"] == "apis:read apis:write"
 
 
 @patch("jentic_one.auth.web.routers.oauth.AssertionService")
@@ -76,7 +77,9 @@ def test_jwt_bearer_grant_missing_assertion(
     )
     assert resp.status_code == 400
     data = resp.json()
-    assert data["type"] == "invalid_grant"
+    # §5.2: a missing parameter is invalid_request (reshaped by _TokenRoute)
+    # — not invalid_grant, and never Problem Details.
+    assert data["error"] == "invalid_request"
 
 
 @patch("jentic_one.auth.web.routers.oauth.AssertionService")
@@ -103,7 +106,8 @@ def test_jwt_bearer_grant_invalid_assertion(
     )
     assert resp.status_code == 400
     data = resp.json()
-    assert data["type"] == "invalid_grant"
+    assert data["error"] == "invalid_grant"
+    assert data["error_description"] == "Assertion is invalid"
 
 
 @patch("jentic_one.auth.web.routers.oauth.AssertionService")
@@ -121,4 +125,6 @@ def test_unsupported_grant_type_returns_400(
     )
     assert resp.status_code == 400
     data = resp.json()
-    assert data["type"] == "invalid_grant"
+    # Missing credentials on a SUPPORTED grant type is a §5.2 invalid_request
+    # (missing required parameter), not unsupported_grant_type.
+    assert data["error"] == "invalid_request"

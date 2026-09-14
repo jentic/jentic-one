@@ -68,17 +68,16 @@ components:
         A single line-item in a file request.
 
         **Permission rules:** Rules control which upstream API operations the broker
-        allows through a credential binding. They are enforced per (toolkit_id,
-        credential_id) pair, so they can only be attached to credential:bind items —
-        not toolkit:bind or scope:grant. You do not need toolkits:write scope to set
-        rules; include them directly on the credential:bind item when filing the
-        access request, and the approver's decision persists them on the binding.
+        allows through a direct agent↔credential binding. They are enforced per
+        (agent, credential) pair, so they can only be attached to credential:bind
+        items — not scope:grant. Include them (or a shared ``rule_set_id``)
+        directly on the credential:bind item when filing the access request, and
+        the approver's decision persists them on the binding.
       properties:
         action:
           enum:
           - bind
           - grant
-          - create
           - provision
           title: Action
           type: string
@@ -96,10 +95,15 @@ components:
         resource_type:
           enum:
           - credential
-          - toolkit
           - scope
           title: Resource Type
           type: string
+        rule_set_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Shared permission rule set for the binding (credential:bind only), as an alternative to inline rules. While attached, the set's ordered list is the binding's effective policy.
+          title: Rule Set Id
         rules:
           anyOf:
           - items:
@@ -108,16 +112,6 @@ components:
           - type: 'null'
           description: 'Permission rules for the binding (credential:bind only). Rules are evaluated first-match-wins by the broker; if no rule matches, the request is denied. Example: [{"effect": "allow", "path": ".*"}].'
           title: Rules
-        to_id:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: To Id
-        to_type:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: To Type
       required:
       - resource_type
       - action
@@ -133,13 +127,13 @@ components:
           anyOf:
           - type: boolean
           - type: 'null'
-          description: Whether this item's outcome is already in effect (the binding or grant it asks for already exists), letting a reviewer approve manually-fulfilled work instead of re-doing it in the wizard. Populated on single-request GETs for pending credential:bind, toolkit:bind, and scope:grant items; null when not computed (list endpoints, decided items, fulfilment-only intents, an item whose target cannot be determined, an ambiguous toolkit reference — which approval would refuse as filed — or a credential:bind whose credential is not visible to the caller). Toolkit REFERENCES are resolved under the caller's visibility, mirroring decide-time resolution, so False can also mean 'satisfied by a toolkit this caller cannot see'; explicit-id targets are probed directly.
+          description: Whether this item's outcome is already in effect (the binding or grant it asks for already exists), letting a reviewer approve manually-fulfilled work instead of re-doing it in the wizard. Populated on single-request GETs for pending credential:bind and scope:grant items; null when not computed (list endpoints, decided items, fulfilment-only intents, an item whose target cannot be determined, an ambiguous credential reference — which approval would refuse as filed — or a credential:bind whose credential is not visible to the caller). API REFERENCES are resolved under the caller's visibility, mirroring decide-time resolution, so False can also mean 'satisfied by a credential this caller cannot see'; explicit-id targets are probed directly.
           title: Already Satisfied
         already_satisfied_by:
           anyOf:
           - type: string
           - type: 'null'
-          description: For a satisfied toolkit:bind, the id of the toolkit the agent is already bound to — names the exact object so consumers can point the operator at it. Null for other item types and whenever already_satisfied is not true.
+          description: For a satisfied credential:bind, the id of the credential the agent is already bound to — names the exact object so consumers can point the operator at it. Null for other item types and whenever already_satisfied is not true.
           title: Already Satisfied By
         applied_effects:
           anyOf:
@@ -185,6 +179,12 @@ components:
         resource_type:
           title: Resource Type
           type: string
+        rule_set_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Shared permission rule set attached to a credential:bind item, as an alternative policy carrier to inline rules.
+          title: Rule Set Id
         rules:
           anyOf:
           - items:
@@ -380,12 +380,19 @@ components:
       title: ActorSummaryResponse
       type: object
     ActorType:
-      description: Type of authenticated actor.
+      description: |-
+        Type of authenticated actor.
+
+        ``toolkit`` is retired (theme-5 Phase 4): toolkit keys resolve as the
+        service accounts the key-retirement job created, so no code path mints a
+        toolkit identity. Persisted ``actor_type='toolkit'`` strings survive in
+        historical rows (events, audit entries, execution records) until the
+        Phase-6b scope-data sweep; read paths must tolerate the string without
+        round-tripping it through this enum.
       enum:
       - user
       - agent
       - service_account
-      - toolkit
       title: ActorType
       type: string
     AgentCreateRequest:
@@ -569,6 +576,11 @@ components:
           - type: string
           - type: 'null'
           title: Resource Id
+        rule_set_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Rule Set Id
         rules:
           anyOf:
           - items:
@@ -576,11 +588,6 @@ components:
             type: array
           - type: 'null'
           title: Rules
-        to_id:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: To Id
       required:
       - item_id
       title: AmendItemSchema
@@ -1256,6 +1263,7 @@ components:
       - access_request
       - toolkit_key
       - credential_binding
+      - permission_rule_set
       - session
       - provider_config
       - oauth_client
@@ -1423,27 +1431,24 @@ components:
       - type
       title: BearerTokenUpdateRequest
       type: object
-    BindingWarningSchema:
-      description: A non-fatal signal about a bind (or create-time inline bind).
+    Body_consentAgentCreate:
       properties:
-        code:
-          description: Stable machine-readable warning code.
-          title: Code
+        agent_name:
+          title: Agent Name
           type: string
-        credential_id:
-          anyOf:
-          - type: string
-          - type: 'null'
-          description: Credential the warning applies to; null when the whole binding is meant.
-          title: Credential Id
-        message:
-          description: Human-readable explanation with a recovery pointer.
-          title: Message
+        consent_token:
+          title: Consent Token
           type: string
+          x-sensitive: true
+        create_state:
+          title: Create State
+          type: string
+          x-sensitive: true
       required:
-      - code
-      - message
-      title: BindingWarningSchema
+      - consent_token
+      - create_state
+      - agent_name
+      title: Body_consentAgentCreate
       type: object
     Body_consentSubmit:
       properties:
@@ -1463,6 +1468,29 @@ components:
       - consent_token
       - action
       title: Body_consentSubmit
+      type: object
+    Body_loginSubmit:
+      properties:
+        csrf:
+          title: Csrf
+          type: string
+          x-sensitive: true
+        email:
+          title: Email
+          type: string
+        ls:
+          title: Ls
+          type: string
+        password:
+          title: Password
+          type: string
+          x-sensitive: true
+      required:
+      - email
+      - password
+      - ls
+      - csrf
+      title: Body_loginSubmit
       type: object
     CatalogEntryLinksResponse:
       description: Hypermedia links for a catalog entry.
@@ -1701,6 +1729,28 @@ components:
           type: array
       title: ConnectRequestBody
       type: object
+    ConsentAgentStatusResponse:
+      description: |-
+        Minimal tri-state for the consent page's pending-agent awaiting page (P4).
+
+        Deliberately carries nothing else — no agent name, owner, or scopes — so
+        the anonymous poll endpoint cannot be used to read agent details. The
+        poll is keyed by a signed ``agent-status`` blob bound to one agent id,
+        never a bare id, and non-terminal lifecycle states (disabled, archived, a
+        vanished row) all read as ``pending`` so the endpoint is not a lifecycle
+        oracle either.
+      properties:
+        status:
+          enum:
+          - pending
+          - approved
+          - denied
+          title: Status
+          type: string
+      required:
+      - status
+      title: ConsentAgentStatusResponse
+      type: object
     CreateAdminRequest:
       description: Payload for first-run admin creation (one-time setup).
       properties:
@@ -1731,6 +1781,163 @@ components:
       - email
       - password
       title: CreateAdminRequest
+      type: object
+    CredentialAgentListResponse:
+      description: Paginated list of agents directly bound to a credential.
+      properties:
+        data:
+          items:
+            $ref: '#/components/schemas/CredentialAgentResponse'
+          title: Data
+          type: array
+        has_more:
+          title: Has More
+          type: boolean
+        next_cursor:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Next Cursor
+      required:
+      - data
+      - has_more
+      title: CredentialAgentListResponse
+      type: object
+    CredentialAgentResponse:
+      description: Agent directly bound to a credential (theme 5 phase 1).
+      properties:
+        agent_id:
+          title: Agent Id
+          type: string
+        agent_name:
+          title: Agent Name
+          type: string
+        bound_at:
+          format: date-time
+          title: Bound At
+          type: string
+        rule_set_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Shared permission rule set this binding points at, if any. While attached, the set's ordered list is the binding's effective policy; null means the binding's inline rules apply.
+          title: Rule Set Id
+        status:
+          title: Status
+          type: string
+        suspended:
+          description: 'True when the binding is soft-suspended (reversible cut-off): the binding and its rules survive, but the agent cannot execute through this credential until resumed.'
+          title: Suspended
+          type: boolean
+      required:
+      - agent_id
+      - agent_name
+      - status
+      - bound_at
+      - suspended
+      title: CredentialAgentResponse
+      type: object
+    CredentialBindRequest:
+      description: Request body for directly binding a credential to an agent.
+      properties:
+        credential_id:
+          maxLength: 255
+          minLength: 1
+          title: Credential Id
+          type: string
+      required:
+      - credential_id
+      title: CredentialBindRequest
+      type: object
+    CredentialBindingEntry:
+      description: Direct agent↔credential binding summary for the /me response (theme 5 phase 1).
+      properties:
+        bound_at:
+          format: date-time
+          title: Bound At
+          type: string
+        credential_id:
+          title: Credential Id
+          type: string
+        name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Name
+        rule_set_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Rule Set Id
+        serves:
+          default: []
+          items:
+            $ref: '#/components/schemas/ServedApiRef'
+          title: Serves
+          type: array
+        suspended:
+          default: false
+          title: Suspended
+          type: boolean
+      required:
+      - credential_id
+      - bound_at
+      title: CredentialBindingEntry
+      type: object
+    CredentialBindingListResponse:
+      description: List of direct credential bindings.
+      properties:
+        data:
+          items:
+            $ref: '#/components/schemas/CredentialBindingResponse'
+          title: Data
+          type: array
+      required:
+      - data
+      title: CredentialBindingListResponse
+      type: object
+    CredentialBindingResponse:
+      description: Direct agent↔credential binding representation in API responses.
+      properties:
+        agent_id:
+          title: Agent Id
+          type: string
+        bound_at:
+          format: date-time
+          title: Bound At
+          type: string
+        credential_id:
+          title: Credential Id
+          type: string
+        id:
+          title: Id
+          type: string
+        name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Name
+        rule_set_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Rule Set Id
+        serves:
+          default: []
+          items:
+            $ref: '#/components/schemas/ServedApiRef'
+          title: Serves
+          type: array
+        suspended:
+          title: Suspended
+          type: boolean
+      required:
+      - id
+      - agent_id
+      - credential_id
+      - bound_at
+      - suspended
+      title: CredentialBindingResponse
       type: object
     CredentialCreateResponse:
       description: 'Create response: redacted + secret shown once.'
@@ -2435,8 +2642,10 @@ components:
           title: Status
           type: string
         toolkit_id:
+          anyOf:
+          - type: string
+          - type: 'null'
           title: Toolkit Id
-          type: string
         toolkit_name:
           anyOf:
           - type: string
@@ -2447,7 +2656,6 @@ components:
           type: string
       required:
       - execution_id
-      - toolkit_id
       - trace_id
       - started_at
       - status
@@ -2484,10 +2692,17 @@ components:
       title: ExecutionStatsResponse
       type: object
     GroupBy:
-      description: Grouping dimension for usage statistics.
+      description: |-
+        Grouping dimension for usage statistics.
+
+        ``TOOLKIT`` is deprecated (theme-5 Phase 5b) and will be removed one
+        release later, with the toolkit tables (Phase 6b): execution records
+        carry a ``credential_id`` since Phase 2 and the direct-binding path
+        writes no ``toolkit_id``, so ``CREDENTIAL`` is the replacement axis.
       enum:
       - api
       - toolkit
+      - credential
       - agent
       title: GroupBy
       type: string
@@ -2529,6 +2744,12 @@ components:
           - remote
           title: Backend
           type: string
+        broker_url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: 'The broker (data plane) base URL a client should send `execute` traffic to, as configured by the operator (server.mcp.broker_url), with any userinfo stripped. Null when the platform cannot honestly advertise one: on a ''remote'' backend a loopback-host value (the config default) describes the control plane''s own machine, not an address any client can dial, so it is withheld rather than published as misleading guidance. Deployment metadata, not a secret — the broker URL is handed to every client expected to call it (issue #1249).'
+          title: Broker Url
         canonical_base_url:
           description: The instance's own canonical base URL (auth.canonical_base_url), with any userinfo stripped; '' if unset.
           title: Canonical Base Url
@@ -2817,6 +3038,12 @@ components:
           - type: string
           - type: 'null'
           title: Approved By
+        credential_bindings:
+          default: []
+          items:
+            $ref: '#/components/schemas/CredentialBindingEntry'
+          title: Credential Bindings
+          type: array
         id:
           title: Id
           type: string
@@ -3272,6 +3499,56 @@ components:
       required:
       - type
       title: OAuth2UpdateRequest
+      type: object
+    OAuthApprovalDecisionRequest:
+      description: |-
+        Inline admin approve/deny posted from the approval-pending page.
+
+        ``state`` is the signed approval-state blob minted by ``/authorize`` for
+        this exact authorize request — the decision endpoint never accepts a bare
+        ``client_id``.
+
+        ``state`` is deliberately NOT marked x-sensitive: the CLI's GEN-21
+        redaction backstop unions every sensitive field's BARE name globally, and
+        "state" is generic enough to redact unrelated CLI output (e.g. the MCP
+        session-diagnosis ``state`` field). The blob is not a lasting bearer
+        credential — it is HMAC-signed, purpose-discriminated, TTL'd (600 s), and
+        the decision endpoint additionally requires an authenticated admin with
+        ``oauth-clients:write`` — so global redaction buys nothing worth that
+        collision.
+      properties:
+        action:
+          enum:
+          - approve
+          - deny
+          title: Action
+          type: string
+        state:
+          title: State
+          type: string
+      required:
+      - state
+      - action
+      title: OAuthApprovalDecisionRequest
+      type: object
+    OAuthApprovalStatusResponse:
+      description: |-
+        Minimal tri-state approval status for a pending-client authorize request.
+
+        Deliberately carries nothing else — no client name, redirect URIs, or
+        metadata — so the anonymous poll endpoint cannot be used to read client
+        details out of the registry.
+      properties:
+        status:
+          enum:
+          - pending
+          - approved
+          - denied
+          title: Status
+          type: string
+      required:
+      - status
+      title: OAuthApprovalStatusResponse
       type: object
     OAuthClientCreateRequest:
       description: Request body for creating an OAuth client.
@@ -3820,6 +4097,12 @@ components:
           description: The agent this grant binds the client to.
           title: Agent Id
           type: string
+        agent_status:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: 'Lifecycle state of the bound agent (`active`, `disabled`, `archived`, …). A grant on a non-active agent is dormant: the row stays `active` (disable is reversible — re-enable restores the standing consent without a new consent round) but no token resolves while the agent is non-active. Lets listings tell a working connection from a dormant one (#1233).'
+          title: Agent Status
         can_revoke:
           description: Whether the CALLER may revoke this grant (the consenting user, or an admin holding the revoke permission set). May be false even for callers who can list — e.g. a read-only admin.
           title: Can Revoke
@@ -3918,6 +4201,12 @@ components:
           description: The agent this grant binds the client to.
           title: Agent Id
           type: string
+        agent_status:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: 'Lifecycle state of the bound agent (`active`, `disabled`, `archived`, …). A grant on a non-active agent is dormant: the row stays `active` (disable is reversible — re-enable restores the standing consent without a new consent round) but no token resolves while the agent is non-active. Lets listings tell a working connection from a dormant one (#1233).'
+          title: Agent Status
         can_revoke:
           description: Whether the CALLER may revoke this grant (the consenting user, or an admin holding the revoke permission set). May be false even for callers who can list — e.g. the agent's new owner after an ownership transfer, or a read-only admin.
           title: Can Revoke
@@ -3987,6 +4276,46 @@ components:
       - last_used_at
       - can_revoke
       title: OAuthGrantResponse
+      type: object
+    OAuthSessionContinueRequest:
+      description: |-
+        Front-channel session-continue exchange posted from the login page.
+
+        ``state`` is the signed ``login``-purpose carry-through token (``ls``)
+        minted by rung 3 of ``flow.resolve_identity_gate`` for this exact
+        authorize request — the exchange never accepts bare flow parameters, so a
+        caller cannot probe arbitrary client ids through it.
+
+        ``state`` is deliberately NOT marked x-sensitive, for the same reason as
+        ``OAuthApprovalDecisionRequest.state``: the CLI's redaction backstop
+        unions bare field names globally, and the blob is not a lasting bearer
+        credential (HMAC-signed, purpose-discriminated, TTL'd; the endpoint
+        additionally requires an authenticated platform user).
+      properties:
+        state:
+          title: State
+          type: string
+      required:
+      - state
+      title: OAuthSessionContinueRequest
+      type: object
+    OAuthSessionContinueResponse:
+      description: |-
+        The resume leg for a successful session-continue exchange.
+
+        ``redirect_url`` is a same-origin, relative ``/authorize`` URL re-running
+        the ORIGINAL authorize request plus the short-TTL ``session``-purpose
+        continuation blob (``sc``) pinning the platform user at exchange time.
+        Relative by design (mirrors the approval-pending page's resume URL): the
+        page script navigates within its own origin, never to a caller-influenced
+        absolute URL.
+      properties:
+        redirect_url:
+          title: Redirect Url
+          type: string
+      required:
+      - redirect_url
+      title: OAuthSessionContinueResponse
       type: object
     OperationPreviewListResponse:
       description: |-
@@ -4460,7 +4789,7 @@ components:
       type: object
     PermissionTestRequest:
       additionalProperties: false
-      description: Request body for :test — dry-run a request shape against pooled rules.
+      description: Request body for :test — dry-run a request shape against the binding's rules.
       properties:
         method:
           description: HTTP method of the hypothetical request (case-insensitive).
@@ -4485,14 +4814,14 @@ components:
       description: Dry-run result matching :class:`PermissionTestResult`.
       properties:
         allowed:
-          description: Whether the broker would allow this request under the pooled rules.
+          description: Whether the broker would allow this request under the binding's rules.
           title: Allowed
           type: boolean
         credential_id:
           anyOf:
           - type: string
           - type: 'null'
-          description: Which binding contributed the matching rule — vendor pooling means this may not equal the credential in the request URL.
+          description: The binding whose rule list contributed the matching rule.
           title: Credential Id
         effect:
           anyOf:
@@ -4514,7 +4843,7 @@ components:
           anyOf:
           - type: integer
           - type: 'null'
-          description: Zero-based index in the vendor-pooled rule list; null when no match.
+          description: Zero-based index in the binding's ordered rule list; null when no match.
           title: Rule Index
       required:
       - allowed
@@ -4545,7 +4874,7 @@ components:
         add:
           anyOf:
           - items:
-              $ref: '#/components/schemas/jentic_one__control__web__schemas__toolkits__PermissionRuleSchema'
+              $ref: '#/components/schemas/jentic_one__control__web__schemas__permission_rules__PermissionRuleSchema'
             type: array
           - type: 'null'
           title: Add
@@ -4929,6 +5258,13 @@ components:
           title: Grant Types
         jwks:
           additionalProperties: true
+          description: A JSON Web Key Set containing at least one Ed25519 public key (kty=OKP, crv=Ed25519). RSA and other key types are not accepted.
+          example:
+            keys:
+            - crv: Ed25519
+              kid: agent-key-1
+              kty: OKP
+              x: 11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo
           title: Jwks
           type: object
         scope:
@@ -5040,6 +5376,153 @@ components:
       required:
       - token
       title: RevokeRequest
+      type: object
+    RuleSetAttachRequest:
+      description: Point a direct agent↔credential binding at a shared rule set.
+      properties:
+        rule_set_id:
+          description: Id (`prs_…`) of the rule set to attach.
+          title: Rule Set Id
+          type: string
+      required:
+      - rule_set_id
+      title: RuleSetAttachRequest
+      type: object
+    RuleSetCreateRequest:
+      description: Create a shared permission rule set (theme 5 phase 1, Q-04).
+      properties:
+        description:
+          anyOf:
+          - maxLength: 1000
+            type: string
+          - type: 'null'
+          title: Description
+        name:
+          description: Unique human-readable name.
+          maxLength: 255
+          title: Name
+          type: string
+        rules:
+          description: Initial ordered rule list (first-match-wins, default-deny).
+          items:
+            $ref: '#/components/schemas/jentic_one__control__web__schemas__permission_rules__PermissionRuleSchema'
+          maxItems: 100
+          title: Rules
+          type: array
+      required:
+      - name
+      title: RuleSetCreateRequest
+      type: object
+    RuleSetListResponse:
+      description: Paginated list of rule sets.
+      properties:
+        data:
+          items:
+            $ref: '#/components/schemas/RuleSetSummaryResponse'
+          title: Data
+          type: array
+        has_more:
+          title: Has More
+          type: boolean
+        next_cursor:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Next Cursor
+      required:
+      - data
+      - has_more
+      title: RuleSetListResponse
+      type: object
+    RuleSetResponse:
+      description: Rule set detail — the ordered rules plus its referencing-binding count.
+      properties:
+        binding_count:
+          description: How many agent-credential bindings currently point at this set.
+          title: Binding Count
+          type: integer
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        created_by:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Created By
+        description:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Description
+        name:
+          title: Name
+          type: string
+        rule_set_id:
+          title: Rule Set Id
+          type: string
+        rules:
+          items:
+            $ref: '#/components/schemas/PermissionRuleReadSchema'
+          title: Rules
+          type: array
+      required:
+      - rule_set_id
+      - name
+      - rules
+      - binding_count
+      - created_at
+      title: RuleSetResponse
+      type: object
+    RuleSetSummaryResponse:
+      description: Rule set list entry.
+      properties:
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        created_by:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Created By
+        description:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Description
+        name:
+          title: Name
+          type: string
+        rule_count:
+          title: Rule Count
+          type: integer
+        rule_set_id:
+          title: Rule Set Id
+          type: string
+      required:
+      - rule_set_id
+      - name
+      - rule_count
+      - created_at
+      title: RuleSetSummaryResponse
+      type: object
+    RuleSetUpdateRequest:
+      description: Rename or re-describe a rule set.
+      properties:
+        description:
+          anyOf:
+          - maxLength: 1000
+            type: string
+          - type: 'null'
+          title: Description
+        name:
+          anyOf:
+          - maxLength: 255
+            type: string
+          - type: 'null'
+          title: Name
+      title: RuleSetUpdateRequest
       type: object
     RuntimeConfig:
       description: Optional per-upstream-call overrides.
@@ -5547,6 +6030,12 @@ components:
           - type: 'null'
           title: Refresh Token
           x-sensitive: true
+        scope:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Space-delimited effective scopes of the minted access token (RFC 6749 §3.3), computed the way the platform's resolvers enforce them (live scope grants ∩ client ceiling ∩ consent-grant scopes for agent and service-account tokens), so the granted set may be narrower than requested and clients must not assume they got what they asked for. Present on every response whose token carries at least one scope; OMITTED (never the ABNF-invalid empty string) only when the effective set is empty — reachable solely on legs where the client requested no scopes at the token endpoint (the token request carries no scope parameter, and consent fails closed on an empty intersection).
+          title: Scope
         token_type:
           default: bearer
           title: Token Type
@@ -5555,62 +6044,6 @@ components:
       - access_token
       - expires_in
       title: TokenResponse
-      type: object
-    ToolkitAgentListResponse:
-      description: Paginated list of agents bound to a toolkit.
-      properties:
-        data:
-          items:
-            $ref: '#/components/schemas/ToolkitAgentResponse'
-          title: Data
-          type: array
-        has_more:
-          title: Has More
-          type: boolean
-        next_cursor:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Next Cursor
-      required:
-      - data
-      - has_more
-      title: ToolkitAgentListResponse
-      type: object
-    ToolkitAgentResponse:
-      description: Agent bound to a toolkit.
-      properties:
-        agent_id:
-          title: Agent Id
-          type: string
-        agent_name:
-          title: Agent Name
-          type: string
-        bound_at:
-          format: date-time
-          title: Bound At
-          type: string
-        status:
-          title: Status
-          type: string
-      required:
-      - agent_id
-      - agent_name
-      - status
-      - bound_at
-      title: ToolkitAgentResponse
-      type: object
-    ToolkitBindRequest:
-      description: Request body for binding a toolkit.
-      properties:
-        toolkit_id:
-          maxLength: 255
-          minLength: 1
-          title: Toolkit Id
-          type: string
-      required:
-      - toolkit_id
-      title: ToolkitBindRequest
       type: object
     ToolkitBindingEntry:
       description: Toolkit binding summary for the /me response.
@@ -5637,402 +6070,6 @@ components:
       - toolkit_id
       - bound_at
       title: ToolkitBindingEntry
-      type: object
-    ToolkitBindingListResponse:
-      description: List of toolkit bindings.
-      properties:
-        data:
-          items:
-            $ref: '#/components/schemas/ToolkitBindingResponse'
-          title: Data
-          type: array
-      required:
-      - data
-      title: ToolkitBindingListResponse
-      type: object
-    ToolkitBindingResponse:
-      description: Toolkit binding representation in API responses.
-      properties:
-        agent_id:
-          title: Agent Id
-          type: string
-        bound_at:
-          format: date-time
-          title: Bound At
-          type: string
-        id:
-          title: Id
-          type: string
-        toolkit_id:
-          title: Toolkit Id
-          type: string
-      required:
-      - id
-      - agent_id
-      - toolkit_id
-      - bound_at
-      title: ToolkitBindingResponse
-      type: object
-    ToolkitCreateRequest:
-      description: Create a new toolkit.
-      properties:
-        active:
-          default: true
-          title: Active
-          type: boolean
-        credential_ids:
-          anyOf:
-          - items:
-              type: string
-            type: array
-          - type: 'null'
-          title: Credential Ids
-        description:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Description
-        name:
-          maxLength: 255
-          title: Name
-          type: string
-      required:
-      - name
-      title: ToolkitCreateRequest
-      type: object
-    ToolkitCreateResponse:
-      description: 'Create response: toolkit + api_key shown once.'
-      properties:
-        api_key:
-          title: Api Key
-          type: string
-          x-sensitive: true
-        toolkit:
-          $ref: '#/components/schemas/ToolkitResponse'
-        warnings:
-          description: Non-fatal signals about the create — e.g. inline-bound credentials that landed with zero permission rules (broker denies by default).
-          items:
-            $ref: '#/components/schemas/BindingWarningSchema'
-          title: Warnings
-          type: array
-      required:
-      - toolkit
-      - api_key
-      title: ToolkitCreateResponse
-      type: object
-    ToolkitCredentialBindRequest:
-      additionalProperties: false
-      description: Bind a credential to a toolkit.
-      properties:
-        allow_all:
-          default: false
-          description: 'Convenience flag: bind with a single `allow` rule that matches every request for this binding''s vendor. Mutually exclusive with `permissions`.'
-          title: Allow All
-          type: boolean
-        credential_id:
-          title: Credential Id
-          type: string
-        permissions:
-          anyOf:
-          - items:
-              $ref: '#/components/schemas/jentic_one__control__web__schemas__toolkits__PermissionRuleSchema'
-            type: array
-          - type: 'null'
-          title: Permissions
-      required:
-      - credential_id
-      title: ToolkitCredentialBindRequest
-      type: object
-    ToolkitCredentialBindingResponse:
-      description: Credential binding response.
-      properties:
-        api_name:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Api Name
-        api_vendor:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Api Vendor
-        bound_at:
-          format: date-time
-          title: Bound At
-          type: string
-        catalog_api_id:
-          anyOf:
-          - type: string
-          - type: 'null'
-          description: Catalog identity slug of the bound credential's target API (`domain[/sub-api]`), when recorded. Display-only.
-          title: Catalog Api Id
-        credential_id:
-          title: Credential Id
-          type: string
-        credential_type:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Credential Type
-        label:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Label
-        permissions:
-          items:
-            $ref: '#/components/schemas/PermissionRuleReadSchema'
-          title: Permissions
-          type: array
-        toolkit_id:
-          title: Toolkit Id
-          type: string
-        warnings:
-          description: Non-fatal bind-time signals — e.g. a binding that landed with zero permission rules (broker denies by default until rules are added).
-          items:
-            $ref: '#/components/schemas/BindingWarningSchema'
-          title: Warnings
-          type: array
-      required:
-      - toolkit_id
-      - credential_id
-      - bound_at
-      title: ToolkitCredentialBindingResponse
-      type: object
-    ToolkitCredentialListResponse:
-      description: Paginated list of credential bindings.
-      properties:
-        data:
-          items:
-            $ref: '#/components/schemas/ToolkitCredentialBindingResponse'
-          title: Data
-          type: array
-        has_more:
-          title: Has More
-          type: boolean
-        next_cursor:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Next Cursor
-      required:
-      - data
-      - has_more
-      title: ToolkitCredentialListResponse
-      type: object
-    ToolkitKeyCreateRequest:
-      description: Create a new key for a toolkit.
-      properties:
-        allowed_ips:
-          anyOf:
-          - items:
-              type: string
-            type: array
-          - type: 'null'
-          title: Allowed Ips
-        label:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Label
-      title: ToolkitKeyCreateRequest
-      type: object
-    ToolkitKeyCreateResponse:
-      description: 'Create response: key + plaintext shown once.'
-      properties:
-        api_key:
-          title: Api Key
-          type: string
-          x-sensitive: true
-        key:
-          $ref: '#/components/schemas/ToolkitKeyResponse'
-      required:
-      - key
-      - api_key
-      title: ToolkitKeyCreateResponse
-      type: object
-    ToolkitKeyListResponse:
-      description: Paginated list of toolkit keys.
-      properties:
-        data:
-          items:
-            $ref: '#/components/schemas/ToolkitKeyResponse'
-          title: Data
-          type: array
-        has_more:
-          title: Has More
-          type: boolean
-        next_cursor:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Next Cursor
-      required:
-      - data
-      - has_more
-      title: ToolkitKeyListResponse
-      type: object
-    ToolkitKeyResponse:
-      description: Toolkit key response.
-      properties:
-        allowed_ips:
-          anyOf:
-          - items:
-              type: string
-            type: array
-          - type: 'null'
-          title: Allowed Ips
-        created_at:
-          format: date-time
-          title: Created At
-          type: string
-        key_id:
-          title: Key Id
-          type: string
-        key_preview:
-          title: Key Preview
-          type: string
-        label:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Label
-        last_used_at:
-          anyOf:
-          - format: date-time
-            type: string
-          - type: 'null'
-          title: Last Used At
-        revoked:
-          title: Revoked
-          type: boolean
-        toolkit_id:
-          title: Toolkit Id
-          type: string
-      required:
-      - key_id
-      - toolkit_id
-      - revoked
-      - created_at
-      - key_preview
-      title: ToolkitKeyResponse
-      type: object
-    ToolkitKeyUpdateRequest:
-      description: Update a toolkit key.
-      properties:
-        allowed_ips:
-          anyOf:
-          - items:
-              type: string
-            type: array
-          - type: 'null'
-          title: Allowed Ips
-        label:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Label
-        revoked:
-          anyOf:
-          - type: boolean
-          - type: 'null'
-          title: Revoked
-      title: ToolkitKeyUpdateRequest
-      type: object
-    ToolkitListResponse:
-      description: Paginated list of toolkits.
-      properties:
-        data:
-          items:
-            $ref: '#/components/schemas/ToolkitResponse'
-          title: Data
-          type: array
-        has_more:
-          title: Has More
-          type: boolean
-        next_cursor:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Next Cursor
-      required:
-      - data
-      - has_more
-      title: ToolkitListResponse
-      type: object
-    ToolkitResponse:
-      description: Toolkit response.
-      properties:
-        active:
-          title: Active
-          type: boolean
-        apis:
-          description: Distinct APIs served by this toolkit's credential bindings that are visible to the caller, sorted by vendor/name/version. NULL api_name/api_version mean the credential covers all names/versions for the vendor. Empty when no visible credentials are bound.
-          items:
-            $ref: '#/components/schemas/ServedApiRef'
-          title: Apis
-          type: array
-        created_at:
-          format: date-time
-          title: Created At
-          type: string
-        created_by:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Created By
-        credential_count:
-          title: Credential Count
-          type: integer
-        description:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Description
-        key_count:
-          title: Key Count
-          type: integer
-        name:
-          title: Name
-          type: string
-        toolkit_id:
-          title: Toolkit Id
-          type: string
-        updated_at:
-          anyOf:
-          - format: date-time
-            type: string
-          - type: 'null'
-          title: Updated At
-      required:
-      - toolkit_id
-      - name
-      - active
-      - key_count
-      - credential_count
-      - created_at
-      title: ToolkitResponse
-      type: object
-    ToolkitUpdateRequest:
-      description: Update a toolkit.
-      properties:
-        active:
-          anyOf:
-          - type: boolean
-          - type: 'null'
-          title: Active
-        description:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Description
-        name:
-          anyOf:
-          - maxLength: 255
-            type: string
-          - type: 'null'
-          title: Name
-      title: ToolkitUpdateRequest
       type: object
     TopOperation:
       description: Aggregated execution counts for a single operation.
@@ -6450,10 +6487,10 @@ components:
       - effect
       title: PermissionRuleSchema
       type: object
-    jentic_one__control__web__schemas__toolkits__PermissionRuleSchema:
+    jentic_one__control__web__schemas__permission_rules__PermissionRuleSchema:
       additionalProperties: false
       description: |-
-        Permission rule for a toolkit-credential binding.
+        Permission rule for an agent↔credential binding.
 
         Rules are evaluated first-match-wins. If no rule matches, the request is
         denied (default-deny). A binding with zero rules therefore blocks all
@@ -6536,8 +6573,9 @@ info:
 
     ## Components ##
     High-level components for the control plane API.
-    - **[Core / Access](#tag/Credentials)** — credentials, toolkits,
-      and PBAC grants and runtime params. Owns *who can call what, with which secret*.
+    - **[Core / Access](#tag/Credentials)** — credentials, direct
+      agent↔credential bindings, and PBAC grants and runtime params. Owns *who can
+      call what, with which secret*.
     - **[Registry](#tag/APIs)** — registered APIs, immutable
       revisions, operations, search, lookup. Owns *what APIs are
       registered for this deployment and what they look like at any
@@ -6661,8 +6699,8 @@ info:
 
       | Prefix | Resource | Notes |
       |---|---|---|
-      | `tk_` | Toolkit ID | Public; appears in URLs and logs. **Not** the toolkit secret. |
-      | `ck_` | Toolkit-key record | One toolkit can hold many keys; each `ck_…` is a key record (label, IP allowlist, revoked flag). The plaintext key value is `jntc_live_…`. |
+      | `tk_` | Toolkit ID | Retired (theme-5 Phase 5b): the toolkit management surface is gone. Ids still appear in stored records (bindings, audit) until the tables retire in Phase 6b. |
+      | `ck_` | Toolkit-key record | Retired (theme-5 Phase 4): no new keys are issued and the key-management routes are gone (Phase 5b). Each surviving plaintext authenticates as the service account it was migrated to. |
       | `cred_` | Credential ID | |
       | `exec_` | Execution record | Returned in the `Jentic-Execution-Id` response header on every brokered call. |
       | `job_` | Async job | UUIDs also accepted on inputs for backward compatibility. |
@@ -6671,19 +6709,19 @@ info:
       | `rev_` | API revision | ULID-shaped. |
       | `usr_` | User | Org member. Resolves via `GET /users/{user_id}`. Used in `acknowledged_by`, `decided_by`, and similar audit references. |
       | `inv_` | Invite token | One-time token issued at user creation. Plaintext value shown **once** at issue / re-issue; `:redeem-invite` consumes it. |
-      | `areq_` | Access request | Per-toolkit human-approval ticket; lives on the `Access Requests` sub-tag of `Toolkits`. |
+      | `areq_` | Access request | Human-approval ticket for scope grants and credential bindings; see the `Access Requests` tag. |
       | `note_` | Note | ULID-shaped. Free-form annotation attached to a registry resource — see the `Notes` tag. |
       | `ovr_` | Overlay | ULID-shaped. OpenAPI Overlay 1.0 document attached to an `Api` aggregate — see the `Overlays` tag. |
-      | `jntc_live_` | Plaintext toolkit API key value | The secret. Returned **once** at toolkit creation / key issue. |
+      | `jntc_live_` | Plaintext toolkit API key value (retired) | Never issued anymore (issuance died in Phase 4, the management routes in Phase 5b). A surviving value keeps authenticating — as its migrated service account — for the deprecation window; rotate holders to `sak_` keys. |
 
       Surfaces still being designed (agent identity, OAuth brokers)
       will add their own prefixes when they land.
   license:
     identifier: Apache-2.0
     name: Apache-2.0
-  summary: HTTP surface of the Jentic platform's control plane — Core / Access (credentials, toolkits), Registry (registered APIs, operations, search), and Admin / Audit (execution telemetry, async jobs).
+  summary: HTTP surface of the Jentic platform's control plane — Core / Access (credentials, direct agent bindings), Registry (registered APIs, operations, search), and Admin / Audit (execution telemetry, async jobs).
   title: Jentic Control Plane API
-  version: 0.38.0
+  version: 0.39.0
 openapi: 3.1.0
 paths:
   /.well-known/jwks.json:
@@ -7926,9 +7964,11 @@ paths:
   /admin/oauth-clients/{id}:
     delete:
       description: |-
-        Soft-delete an OAuth client by setting active=False.
+        Disable an OAuth client — the reversible kill switch (sets active=false).
 
-        Deactivated clients can no longer initiate authorization flows.
+        Disabled clients can no longer initiate authorization flows and their
+        outstanding tokens stop resolving. Re-enable by patching ``active: true``.
+        The row is kept; this is not a delete.
       operationId: deactivateOauthClient
       parameters:
       - in: path
@@ -7991,7 +8031,7 @@ paths:
           description: Service Unavailable
       security:
       - BearerAuth: []
-      summary: Deactivate OAuth client
+      summary: Disable OAuth client
       tags:
       - OAuth Clients
     get:
@@ -8291,6 +8331,83 @@ paths:
       security:
       - BearerAuth: []
       summary: Approve OAuth client
+      tags:
+      - OAuth Clients
+  /admin/oauth-clients/{id}:delete:
+    post:
+      description: |-
+        Permanently delete an OAuth client. This cannot be undone.
+
+        Terminal, unlike the reversible kill switch (``DELETE`` on this
+        resource, which only sets ``active=false``): every active grant is
+        revoked, every token carrying the client's lineage is revoked, and the
+        registration row is removed — connected applications are fully
+        disconnected. The audit trail survives. A client that later re-registers
+        via dynamic client registration is a NEW registration and re-enters the
+        approval queue as pending; it is never re-attached to the deleted one.
+      operationId: deleteOauthClient
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          title: Id
+          type: string
+      responses:
+        '204':
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '404':
+          content:
+            application/problem+json:
+              example: *id007
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Not Found
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: Delete OAuth client
       tags:
       - OAuth Clients
   /admin/oauth-clients/{id}:deny:
@@ -8651,7 +8768,13 @@ paths:
       - Agents
   /agents/{agent_id}:
     delete:
-      description: Soft-archive an agent — revokes scope grants and toolkit bindings.
+      description: |-
+        Archive an agent — terminal-but-kept.
+
+        The row is retained for history, but the action is not reversible and
+        the agent's authority is swept: scope grants, credential bindings, and
+        OAuth consent grants are revoked. For the reversible kill switch use
+        ``:disable`` / ``:enable`` instead.
       operationId: archiveAgent
       parameters:
       - in: path
@@ -8977,6 +9100,292 @@ paths:
       summary: Get Agent Api Key History
       tags:
       - Agents
+  /agents/{agent_id}/credentials:
+    get:
+      description: List direct credential bindings for an agent — requires agents:read or self.
+      operationId: listAgentCredentials
+      parameters:
+      - in: path
+        name: agent_id
+        required: true
+        schema:
+          title: Agent Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CredentialBindingListResponse'
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: List Credentials
+      tags:
+      - Agents
+    post:
+      description: |-
+        Directly bind a credential to an agent (theme 5 phase 1).
+
+        The caller must be able to see the target credential; a credential that
+        does not exist or is outside the caller's visibility returns 404.
+      operationId: bindAgentCredential
+      parameters:
+      - in: path
+        name: agent_id
+        required: true
+        schema:
+          title: Agent Id
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CredentialBindRequest'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CredentialBindingResponse'
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: Bind Credential
+      tags:
+      - Agents
+  /agents/{agent_id}/credentials/{credential_id}:
+    delete:
+      description: Unbind a credential from an agent — suspend by default, purge on request.
+      operationId: unbindAgentCredential
+      parameters:
+      - in: path
+        name: agent_id
+        required: true
+        schema:
+          title: Agent Id
+          type: string
+      - in: path
+        name: credential_id
+        required: true
+        schema:
+          title: Credential Id
+          type: string
+      - description: 'Default false: the binding is suspended (reversible; its permission rules survive and :resume restores access). true deletes the binding row outright.'
+        in: query
+        name: purge
+        required: false
+        schema:
+          default: false
+          description: 'Default false: the binding is suspended (reversible; its permission rules survive and :resume restores access). true deletes the binding row outright.'
+          title: Purge
+          type: boolean
+      responses:
+        '204':
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: Unbind Credential
+      tags:
+      - Agents
+  /agents/{agent_id}/credentials/{credential_id}:resume:
+    post:
+      description: Lift a suspended credential binding — the reverse of the default unbind.
+      operationId: resumeAgentCredentialBinding
+      parameters:
+      - in: path
+        name: agent_id
+        required: true
+        schema:
+          title: Agent Id
+          type: string
+      - in: path
+        name: credential_id
+        required: true
+        schema:
+          title: Credential Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CredentialBindingResponse'
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: Resume Credential Binding
+      tags:
+      - Agents
   /agents/{agent_id}/jwks:
     put:
       description: |-
@@ -9297,208 +9706,6 @@ paths:
       summary: Replace Agent Scopes
       tags:
       - Agents
-  /agents/{agent_id}/toolkits:
-    get:
-      description: List toolkit bindings for an agent — requires agents:read or self.
-      operationId: listAgentToolkits
-      parameters:
-      - in: path
-        name: agent_id
-        required: true
-        schema:
-          title: Agent Id
-          type: string
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ToolkitBindingListResponse'
-          description: Successful Response
-        '400':
-          content:
-            application/problem+json:
-              example: *id001
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Bad Request
-        '401':
-          content:
-            application/problem+json:
-              example: *id005
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unauthorized
-        '403':
-          content:
-            application/problem+json:
-              example: *id006
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Forbidden
-        '422':
-          content:
-            application/problem+json:
-              example: *id002
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unprocessable Entity
-        '500':
-          content:
-            application/problem+json:
-              example: *id003
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Internal Server Error
-        '503':
-          content:
-            application/problem+json:
-              example: *id004
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Service Unavailable
-      security:
-      - BearerAuth: []
-      summary: List Toolkits
-      tags:
-      - Agents
-    post:
-      description: Bind a toolkit to an agent.
-      operationId: bindToolkit
-      parameters:
-      - in: path
-        name: agent_id
-        required: true
-        schema:
-          title: Agent Id
-          type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ToolkitBindRequest'
-        required: true
-      responses:
-        '201':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ToolkitBindingResponse'
-          description: Successful Response
-        '400':
-          content:
-            application/problem+json:
-              example: *id001
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Bad Request
-        '401':
-          content:
-            application/problem+json:
-              example: *id005
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unauthorized
-        '403':
-          content:
-            application/problem+json:
-              example: *id006
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Forbidden
-        '422':
-          content:
-            application/problem+json:
-              example: *id002
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unprocessable Entity
-        '500':
-          content:
-            application/problem+json:
-              example: *id003
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Internal Server Error
-        '503':
-          content:
-            application/problem+json:
-              example: *id004
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Service Unavailable
-      security:
-      - BearerAuth: []
-      summary: Bind Toolkit
-      tags:
-      - Agents
-  /agents/{agent_id}/toolkits/{toolkit_id}:
-    delete:
-      description: Unbind a toolkit from an agent.
-      operationId: unbindToolkit
-      parameters:
-      - in: path
-        name: agent_id
-        required: true
-        schema:
-          title: Agent Id
-          type: string
-      - in: path
-        name: toolkit_id
-        required: true
-        schema:
-          title: Toolkit Id
-          type: string
-      responses:
-        '204':
-          description: Successful Response
-        '400':
-          content:
-            application/problem+json:
-              example: *id001
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Bad Request
-        '401':
-          content:
-            application/problem+json:
-              example: *id005
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unauthorized
-        '403':
-          content:
-            application/problem+json:
-              example: *id006
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Forbidden
-        '422':
-          content:
-            application/problem+json:
-              example: *id002
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unprocessable Entity
-        '500':
-          content:
-            application/problem+json:
-              example: *id003
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Internal Server Error
-        '503':
-          content:
-            application/problem+json:
-              example: *id004
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Service Unavailable
-      security:
-      - BearerAuth: []
-      summary: Unbind Toolkit
-      tags:
-      - Agents
   /agents/{agent_id}:approve:
     post:
       description: Approve a pending agent.
@@ -9576,7 +9783,7 @@ paths:
 
         Restricted to ``USER`` actors: ``Agent.owner_id`` is a FK to ``users.id``, so
         only a human can own an agent. The ``require_actor_type`` gate rejects a
-        non-user actor (agent/service-account/toolkit) at the boundary with a 403;
+        non-user actor (agent/service-account) at the boundary with a 403;
         ``AgentService.claim`` re-checks the same invariant as defense-in-depth.
 
         ``allow_expired_password=True`` is intentional (matching ``GET /agents/{id}``):
@@ -12329,6 +12536,16 @@ paths:
           - type: string
           - type: 'null'
           title: Nonce
+      - description: Signed session-continuation blob minted by POST /oauth/session/continue (identity-ladder rung 1). Optional; an invalid or absent value leaves the flow byte-identical to before.
+        in: query
+        name: sc
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Signed session-continuation blob minted by POST /oauth/session/continue (identity-ladder rung 1). Optional; an invalid or absent value leaves the flow byte-identical to before.
+          title: Sc
       responses:
         '200':
           content:
@@ -13509,6 +13726,598 @@ paths:
       security:
       - BearerAuth: []
       summary: Update or rotate credential
+      tags:
+      - Credentials
+  /credentials/{credential_id}/agents:
+    get:
+      description: |-
+        List agents directly bound to a credential with cursor-based pagination.
+
+        The reverse lookup for the credential-detail "Agents" view (theme 5
+        phase 1) — the direct-binding mirror of ``GET /toolkits/{id}/agents``.
+        Suspended bindings are included with their flag set.
+      operationId: listCredentialAgents
+      parameters:
+      - in: path
+        name: credential_id
+        required: true
+        schema:
+          title: Credential Id
+          type: string
+      - in: query
+        name: cursor
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Cursor
+      - in: query
+        name: limit
+        required: false
+        schema:
+          default: 50
+          maximum: 200
+          minimum: 1
+          title: Limit
+          type: integer
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CredentialAgentListResponse'
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '404':
+          content:
+            application/problem+json:
+              example: *id007
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Not Found
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: List agents bound to credential
+      tags:
+      - Credentials
+  /credentials/{credential_id}/agents/{agent_id}/permissions:
+    get:
+      description: List the ordered PBAC rules for a direct `(agent, credential)` binding.
+      operationId: listAgentCredentialPermissions
+      parameters:
+      - in: path
+        name: credential_id
+        required: true
+        schema:
+          title: Credential Id
+          type: string
+      - in: path
+        name: agent_id
+        required: true
+        schema:
+          title: Agent Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PermissionRuleListResponse'
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '404':
+          content:
+            application/problem+json:
+              example: *id007
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Not Found
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: List binding permission rules
+      tags:
+      - Credentials
+    patch:
+      description: Additively add and/or remove permission rules on a binding.
+      operationId: patchAgentCredentialPermissions
+      parameters:
+      - in: path
+        name: credential_id
+        required: true
+        schema:
+          title: Credential Id
+          type: string
+      - in: path
+        name: agent_id
+        required: true
+        schema:
+          title: Agent Id
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PermissionsPatchRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PermissionRuleListResponse'
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '404':
+          content:
+            application/problem+json:
+              example: *id007
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Not Found
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: Patch binding permission rules
+      tags:
+      - Credentials
+    put:
+      description: Replace the full set of permission rules for a binding (idempotent PUT).
+      operationId: replaceAgentCredentialPermissions
+      parameters:
+      - in: path
+        name: credential_id
+        required: true
+        schema:
+          title: Credential Id
+          type: string
+      - in: path
+        name: agent_id
+        required: true
+        schema:
+          title: Agent Id
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              items:
+                $ref: '#/components/schemas/jentic_one__control__web__schemas__permission_rules__PermissionRuleSchema'
+              maxItems: 100
+              title: Body
+              type: array
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PermissionRuleListResponse'
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '404':
+          content:
+            application/problem+json:
+              example: *id007
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Not Found
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: Replace binding permission rules
+      tags:
+      - Credentials
+  /credentials/{credential_id}/agents/{agent_id}/permissions:test:
+    post:
+      description: |-
+        Answer "what would the broker do for this request?" without calling upstream.
+
+        Unlike the toolkit `:test` there is **no vendor pooling**: the direct
+        binding's rules are one ordered first-match-wins list, so the result is
+        exactly this binding's policy. Default-deny when nothing matches.
+      operationId: testAgentCredentialPermissions
+      parameters:
+      - in: path
+        name: credential_id
+        required: true
+        schema:
+          title: Credential Id
+          type: string
+      - in: path
+        name: agent_id
+        required: true
+        schema:
+          title: Agent Id
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PermissionTestRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PermissionTestResponse'
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '404':
+          content:
+            application/problem+json:
+              example: *id007
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Not Found
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: Dry-run permission evaluation
+      tags:
+      - Credentials
+  /credentials/{credential_id}/agents/{agent_id}/rule-set:
+    delete:
+      description: |-
+        Detach the binding's shared rule set — its inline rules apply again.
+
+        Idempotent: detaching a binding already on inline rules is a no-op 204.
+      operationId: detachAgentCredentialRuleSet
+      parameters:
+      - in: path
+        name: credential_id
+        required: true
+        schema:
+          title: Credential Id
+          type: string
+      - in: path
+        name: agent_id
+        required: true
+        schema:
+          title: Agent Id
+          type: string
+      responses:
+        '204':
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '404':
+          content:
+            application/problem+json:
+              example: *id007
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Not Found
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: Detach rule set from binding
+      tags:
+      - Credentials
+    put:
+      description: |-
+        Point the binding at a shared rule set (idempotent PUT).
+
+        While attached, the set's ordered list is the binding's effective policy
+        and its inline rules are dormant — `permissions:test` evaluates the set.
+        The set must exist (404 `rule_set_not_found`).
+      operationId: attachAgentCredentialRuleSet
+      parameters:
+      - in: path
+        name: credential_id
+        required: true
+        schema:
+          title: Credential Id
+          type: string
+      - in: path
+        name: agent_id
+        required: true
+        schema:
+          title: Agent Id
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RuleSetAttachRequest'
+        required: true
+      responses:
+        '204':
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '404':
+          content:
+            application/problem+json:
+              example: *id007
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Not Found
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: Attach rule set to binding
       tags:
       - Credentials
   /credentials/{credential_id}/connect:
@@ -14717,6 +15526,134 @@ paths:
       summary: Cancel Job
       tags:
       - Jobs
+  /login:
+    get:
+      description: |-
+        Render the local-account login form for an in-flight ``/authorize`` request.
+
+        Verifies the ``ls`` signature/TTL/purpose **before** rendering — an
+        expired, forged, or wrong-purpose token never gets a form — re-checks the
+        D7 client gate (a client denied or deactivated while the user holds the
+        ``ls`` must not be asked for a password), rejects an already-spent ``ls``,
+        and embeds ``ls`` plus a fresh single-use CSRF nonce bound to it.
+      operationId: loginPage
+      parameters:
+      - description: Signed authorization-flow state (carry-through token)
+        in: query
+        name: ls
+        required: true
+        schema:
+          description: Signed authorization-flow state (carry-through token)
+          title: Ls
+          type: string
+      responses:
+        '200':
+          content:
+            text/html:
+              schema:
+                type: string
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+            text/html:
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '404':
+          description: 'Local-account login is unavailable (`auth.local_login.enabled=false`, or an external IdP is configured — `auth.idp.enabled=true` — which always wins): the route answers the framework''s plain route-not-found 404, so the gate state is unobservable.'
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+            text/html:
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+            text/html:
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+            text/html:
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security: []
+      summary: Local-account login form (authorization flow)
+      tags:
+      - OAuth
+    post:
+      description: |-
+        Authenticate the local account and rejoin the authorization flow.
+
+        Success never mints a JWT — it flows straight into code issuance (platform
+        client) or the consent handle (registered third-party client), exactly
+        where the IdP callback rejoins, and burns the single-use ``ls``.
+        Credential failures re-render the form with one generic message: lockout
+        state, unknown email, and wrong password are indistinguishable (no
+        user-enumeration response oracle), while the shared
+        ``AuthService.authenticate`` core still increments the failed-login count
+        and applies the lockout threshold. An account flagged
+        ``must_change_password`` authenticates but is told to rotate via the UI
+        first — the OAuth plane must not hand a fully-scoped token to a
+        temporary-password principal the UI would have boxed into
+        change-password-only.
+      operationId: loginSubmit
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/Body_loginSubmit'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: {}
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '404':
+          description: 'Local-account login is unavailable (`auth.local_login.enabled=false`, or an external IdP is configured — `auth.idp.enabled=true` — which always wins): the route answers the framework''s plain route-not-found 404, so the gate state is unobservable.'
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security: []
+      summary: Local-account login submit (authorization flow)
+      tags:
+      - OAuth
   /mcp/config-registrations:
     post:
       description: |-
@@ -15451,8 +16388,14 @@ paths:
         Register a public OAuth client anonymously (RFC 7591 subset).
 
         Returns 201 with the new ``client_id``, or 200 with the **existing** row's
-        ``client_id`` on an exact (``software_id`` + redirect-URI set) dedupe match
-        (D8). No client_secret is ever issued here and no registration_access_token
+        ``client_id`` on an exact dedupe match (D8, extended per G13/#1251):
+        (``software_id`` + redirect-URI set), falling back to (``client_name`` +
+        redirect-URI set) for registrations without a ``software_id`` — so a
+        pending client's awaiting-approval retry loop re-attaches instead of
+        minting duplicate rows. Re-registering a client an administrator has
+        deactivated re-enters the approval queue: the registration re-attaches
+        (200) and the client awaits a fresh admin decision (#1312). No
+        client_secret is ever issued here and no registration_access_token
         is returned (D12). New rows await admin approval unless the deployment
         auto-approves registrations (D9). The ``server.mcp.oauth.enabled`` gate
         lives on the route class — a disabled door 404s before this handler,
@@ -15564,6 +16507,130 @@ paths:
       security:
       - BearerAuth: []
       summary: Revoke OAuth grant
+      tags:
+      - OAuth
+  /oauth/approval/decision:
+    post:
+      description: |-
+        Thin wrapper over the admin approval path for the approval-pending page.
+
+        Authorization is byte-identical to ``POST /admin/oauth-clients/{id}:approve``
+        / ``:deny`` (``oauth-clients:write``, org:admin implies it) and the
+        decision itself is the SAME ``OAuthClientService.approve``/``deny`` calls —
+        same audit records, same D7 active/approval_status coupling; this endpoint
+        only translates the signed state blob into the client row. CSRF posture
+        matches the consent POST: no ambient credential is honored — the browser
+        must explicitly present the SPA bearer token, which a cross-site form
+        cannot do.
+      operationId: approvalDecisionEndpoint
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OAuthApprovalDecisionRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthApprovalStatusResponse'
+          description: Successful Response
+        '400':
+          description: Malformed, tampered, or expired approval-state blob.
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: Approve or deny a pending client inline (approval-pending page)
+      tags:
+      - OAuth
+  /oauth/approval/status:
+    get:
+      description: |-
+        Minimal tri-state poll for the approval-pending page.
+
+        Anonymous but keyed by the signed approval-state blob — never a bare
+        client_id, so the endpoint cannot be used to enumerate registrations. Any
+        verification failure (bad signature, wrong purpose, expired ``iat``,
+        malformed blob) is a 400 ``invalid_grant``; the page reacts to a 400 by
+        re-running /authorize, which mints a fresh blob. The response carries ONLY
+        the tri-state — no names, redirect URIs, or metadata.
+      operationId: approvalStatusEndpoint
+      parameters:
+      - description: Signed approval-state blob minted by /authorize
+        in: query
+        name: st
+        required: true
+        schema:
+          description: Signed approval-state blob minted by /authorize
+          title: St
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthApprovalStatusResponse'
+          description: Successful Response
+        '400':
+          description: Malformed, tampered, or expired approval-state blob.
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security: []
+      summary: Poll client approval status (approval-pending page)
       tags:
       - OAuth
   /oauth/callback:
@@ -15733,6 +16800,147 @@ paths:
           description: Service Unavailable
       security: []
       summary: Consent Submit
+      tags:
+      - OAuth
+  /oauth/consent/agent:
+    post:
+      description: |-
+        Create the consenting user's first agent from the zero-agents consent page (P4).
+
+        The form is rendered only when the consenting user owns zero agents in
+        any status (the G12(b) first-run dead-end). This submit verifies the signed
+        single-use ``agent-create`` blob (bound to the consent handle AND the
+        authenticated subject — no ambient credential is honored, so a cross-site
+        form cannot drive it: it would need both the unguessable handle and a
+        blob minted for that very handle), re-validates the handle and the D7
+        client gate, provisions the user row if deferred provisioning left none
+        (an affirmative user action, unlike rendering), re-checks the zero-agents
+        predicate (an agent appearing in between skips creation — idempotent),
+        creates the agent through the same ``AgentService.create`` path as the
+        SPA (owner = the consenting user, default agent scopes, same audit +
+        event), and 303-redirects back into ``GET /oauth/consent`` where the new
+        agent renders pre-selected.
+
+        Failure arms: expired/tampered/replayed blob and expired handle → the
+        consent flow's standard ``invalid_consent`` error redirect; a gated
+        client → ``access_denied``; an invalid agent name → the form re-rendered
+        with the error inline and a fresh blob.
+
+        Creation posture (security review — the hybrid): the arm is decided
+        server-side AFTER the subject is resolved/provisioned, against the same
+        effective-permission math as POST /agents' ``agents:write`` gate. A
+        permissioned user gets the original behaviour (ACTIVE + 303 re-entry); an
+        unpermissioned one gets a PENDING agent (the POST /register posture) and
+        the awaiting-approval page. A per-subject ``set_if_absent`` slot claim
+        makes N parallel submits (N distinct blobs from N renders) create exactly
+        one agent — losers re-enter consent, which renders the picker or the
+        awaiting page as appropriate.
+      operationId: consentAgentCreate
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/Body_consentAgentCreate'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: {}
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security: []
+      summary: Create the consenting user's first agent inline (consent page)
+      tags:
+      - OAuth
+  /oauth/consent/agent/status:
+    get:
+      description: |-
+        Minimal tri-state poll for the pending-agent awaiting page (P4 hybrid).
+
+        Anonymous but keyed by the signed ``agent-status`` blob — never a bare
+        agent id, so the endpoint cannot be used to enumerate or probe agents:
+        the id it reports on is the one SIGNED into the blob, which only the
+        consent flow mints, and only for an agent it verified belongs to the
+        handle's subject. The response carries ONLY the tri-state — no name,
+        owner, or scopes — and non-terminal lifecycle states (disabled, archived,
+        a vanished row) all read as ``pending``, so possession of a blob is not a
+        lifecycle oracle either. Any verification failure (bad signature, wrong
+        purpose, expired ``iat``, malformed blob) is a 400 ``invalid_grant``; the
+        page treats a 400 as terminal ("retry the connection") because the blob
+        shares the consent handle's lifetime — a retry re-enters the flow, which
+        re-parks on a fresh awaiting page while the agent stays pending. Shares
+        the approval-status poll's own per-IP rate bucket (same cadence, same
+        caller shape).
+      operationId: consentAgentStatus
+      parameters:
+      - description: Signed agent-status blob minted by the consent flow's pending arm
+        in: query
+        name: st
+        required: true
+        schema:
+          description: Signed agent-status blob minted by the consent flow's pending arm
+          title: St
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConsentAgentStatusResponse'
+          description: Successful Response
+        '400':
+          description: Malformed, tampered, or expired agent-status blob.
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security: []
+      summary: Poll pending-agent approval status (consent awaiting page)
       tags:
       - OAuth
   /oauth/introspect:
@@ -15954,9 +17162,99 @@ paths:
       summary: Revoke Endpoint
       tags:
       - OAuth
+  /oauth/session/continue:
+    post:
+      description: |-
+        Rung 1 of the /authorize identity ladder: reuse the platform session.
+
+        The login page's script posts the pending authorize state (the ``ls``
+        carry-through token) with the SPA's bearer token in the Authorization
+        header — no cookies, no ambient credentials, so a cross-site form cannot
+        drive it (same CSRF posture as the consent POST and the inline approval
+        decision). The platform token is validated by the standard auth
+        dependency (users only), and the ``active`` / ``must_change_password``
+        fences are re-checked with a LIVE user-row read — not the token's baked
+        claims — matching rung 3's ``password_rotation_required`` posture, so an
+        admin-forced reset fences the exchange immediately even while pre-reset
+        SPA tokens are still in flight. The D7 client gate is re-checked, and on
+        success the response carries a relative ``/authorize`` resume URL bearing
+        a short-TTL, ``session``-purpose continuation blob that pins THIS
+        caller's ``user_id`` — the identity is fixed at exchange time, before the
+        consent page renders it with its "Not you?" escape.
+
+        Every failure after authentication is the same generic 400: an invalid
+        blob must not let the caller learn anything about the client or the flow.
+      operationId: sessionContinueEndpoint
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OAuthSessionContinueRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthSessionContinueResponse'
+          description: Successful Response
+        '400':
+          description: Malformed, tampered, expired, or otherwise unusable authorize state — one generic rejection, never a reason.
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '404':
+          description: 'Local-account login is unavailable (`auth.local_login.enabled=false`, or an external IdP is configured — `auth.idp.enabled=true` — which always wins): the route answers the framework''s plain route-not-found 404, so the gate state is unobservable.'
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: Exchange a live platform session for an authorize continuation
+      tags:
+      - OAuth
   /oauth/token:
     post:
-      description: Exchange a refresh token, JWT assertion, authorization code, or client creds for tokens.
+      description: |-
+        Exchange a refresh token, JWT assertion, authorization code, or client creds for tokens.
+
+        Error responses speak the RFC 6749 §5.2 dialect (top-level ``error`` +
+        ``error_description``), NOT platform Problem Details — reshaped by
+        ``_TokenRoute``. Malformed/missing parameters answer ``invalid_request``;
+        failed client authentication answers ``invalid_client`` (status 401 with a
+        ``WWW-Authenticate: Basic`` challenge when the client attempted HTTP Basic,
+        400 otherwise). On the refresh arm, a revoked consent grant answers
+        ``invalid_grant`` with ``error_description: "consent grant has been
+        revoked"`` — terminal; restart the authorization flow.
       operationId: tokenEndpoint
       requestBody:
         content:
@@ -16067,12 +17365,77 @@ paths:
                 $ref: '#/components/schemas/TokenResponse'
           description: Successful Response
         '400':
+          description: 'RFC 6749 §5.2 error dialect (NOT platform Problem Details — this is a spec-facing endpoint real OAuth/MCP clients parse): `{"error": "invalid_request" | "invalid_grant" | "invalid_client" | "unsupported_grant_type", "error_description": "..."}`. `invalid_request` covers malformed/missing parameters; a revoked consent grant surfaces on the refresh arm as `invalid_grant` with `error_description: "consent grant has been revoked"` — clients should treat it as terminal and restart the authorization flow. A client whose authentication fails after attempting HTTP Basic (`Authorization` header, RFC 6749 §2.3.1) gets the same `invalid_client` dialect body with status 401 and a `WWW-Authenticate: Basic` challenge, per §5.2.'
+        '429':
+          description: Per-client+IP rate limit exceeded (`Retry-After` header set; RFC 6749 §5.2 dialect body, `error=slow_down` per RFC 8628 §3.5).
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security: []
+      summary: Token Endpoint
+      tags:
+      - OAuth
+  /permission-rule-sets:
+    get:
+      description: List shared rule sets with per-set rule counts (cursor-paginated).
+      operationId: listPermissionRuleSets
+      parameters:
+      - in: query
+        name: cursor
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Cursor
+      - in: query
+        name: limit
+        required: false
+        schema:
+          default: 50
+          maximum: 200
+          minimum: 1
+          title: Limit
+          type: integer
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuleSetListResponse'
+          description: Successful Response
+        '400':
           content:
             application/problem+json:
               example: *id001
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
         '422':
           content:
             application/problem+json:
@@ -16094,10 +17457,394 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Service Unavailable
-      security: []
-      summary: Token Endpoint
+      security:
+      - BearerAuth: []
+      summary: List permission rule sets
       tags:
-      - OAuth
+      - Permission Rule Sets
+    post:
+      description: |-
+        Create a named, shareable ordered rule list (theme 5 rule grouping).
+
+        N agent-credential bindings can point at one set, so `permissions:test`
+        and "revoke this operation everywhere" stay single-place edits.
+      operationId: createPermissionRuleSet
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RuleSetCreateRequest'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuleSetResponse'
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '409':
+          content:
+            application/problem+json:
+              example: *id008
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Conflict
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: Create permission rule set
+      tags:
+      - Permission Rule Sets
+  /permission-rule-sets/{rule_set_id}:
+    delete:
+      description: Delete a rule set nothing references (409 `rule_set_in_use` otherwise).
+      operationId: deletePermissionRuleSet
+      parameters:
+      - in: path
+        name: rule_set_id
+        required: true
+        schema:
+          title: Rule Set Id
+          type: string
+      responses:
+        '204':
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '404':
+          content:
+            application/problem+json:
+              example: *id007
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Not Found
+        '409':
+          content:
+            application/problem+json:
+              example: *id008
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Conflict
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: Delete permission rule set
+      tags:
+      - Permission Rule Sets
+    get:
+      description: Get a rule set with its ordered rules and referencing-binding count.
+      operationId: getPermissionRuleSet
+      parameters:
+      - in: path
+        name: rule_set_id
+        required: true
+        schema:
+          title: Rule Set Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuleSetResponse'
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '404':
+          content:
+            application/problem+json:
+              example: *id007
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Not Found
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: Get permission rule set
+      tags:
+      - Permission Rule Sets
+    patch:
+      description: Rename or re-describe a rule set (creator or org admin).
+      operationId: updatePermissionRuleSet
+      parameters:
+      - in: path
+        name: rule_set_id
+        required: true
+        schema:
+          title: Rule Set Id
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RuleSetUpdateRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuleSetResponse'
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '404':
+          content:
+            application/problem+json:
+              example: *id007
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Not Found
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: Update permission rule set
+      tags:
+      - Permission Rule Sets
+  /permission-rule-sets/{rule_set_id}/rules:
+    put:
+      description: |-
+        Replace the set's full ordered rule list (idempotent PUT).
+
+        Every binding pointing at the set picks the new list up at once — the
+        single-place edit rule grouping exists for.
+      operationId: replacePermissionRuleSetRules
+      parameters:
+      - in: path
+        name: rule_set_id
+        required: true
+        schema:
+          title: Rule Set Id
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              items:
+                $ref: '#/components/schemas/jentic_one__control__web__schemas__permission_rules__PermissionRuleSchema'
+              maxItems: 100
+              title: Body
+              type: array
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PermissionRuleListResponse'
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '404':
+          content:
+            application/problem+json:
+              example: *id007
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Not Found
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: Replace rule set rules
+      tags:
+      - Permission Rule Sets
   /permissions:
     get:
       description: List the permission catalogue visible to the caller.
@@ -16652,7 +18399,12 @@ paths:
       - Service Accounts
   /service-accounts/{service_account_id}:
     delete:
-      description: Soft-archive a service account — revokes scope grants.
+      description: |-
+        Archive a service account — terminal-but-kept.
+
+        The row is retained for history, but the action is not reversible and
+        the account's scope grants are revoked. For the reversible kill switch
+        use ``:disable`` / ``:enable`` instead.
       operationId: archiveServiceAccount
       parameters:
       - in: path
@@ -17256,1368 +19008,6 @@ paths:
       summary: Running and latest-available app version
       tags:
       - System
-  /toolkits:
-    get:
-      description: List toolkits with cursor-based pagination.
-      operationId: listToolkits
-      parameters:
-      - in: query
-        name: cursor
-        required: false
-        schema:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Cursor
-      - in: query
-        name: limit
-        required: false
-        schema:
-          default: 50
-          maximum: 200
-          minimum: 1
-          title: Limit
-          type: integer
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ToolkitListResponse'
-          description: Successful Response
-        '400':
-          content:
-            application/problem+json:
-              example: *id001
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Bad Request
-        '401':
-          content:
-            application/problem+json:
-              example: *id005
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unauthorized
-        '403':
-          content:
-            application/problem+json:
-              example: *id006
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Forbidden
-        '422':
-          content:
-            application/problem+json:
-              example: *id002
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unprocessable Entity
-        '500':
-          content:
-            application/problem+json:
-              example: *id003
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Internal Server Error
-        '503':
-          content:
-            application/problem+json:
-              example: *id004
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Service Unavailable
-      security:
-      - BearerAuth: []
-      summary: List toolkits
-      tags:
-      - Toolkits
-    post:
-      description: |-
-        Create a toolkit and issue its first API key.
-
-        The plaintext key (`jntc_live_…`) is returned **once** in `api_key` and is
-        never retrievable again. Optional `credential_ids` bind existing credentials
-        at creation time; each inline bind emits a ``no_permission_rules`` warning
-        because the broker denies by default until rules are added.
-      operationId: createToolkit
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ToolkitCreateRequest'
-        required: true
-      responses:
-        '201':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ToolkitCreateResponse'
-          description: Successful Response
-        '400':
-          content:
-            application/problem+json:
-              example: *id001
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Bad Request
-        '401':
-          content:
-            application/problem+json:
-              example: *id005
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unauthorized
-        '403':
-          content:
-            application/problem+json:
-              example: *id006
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Forbidden
-        '422':
-          content:
-            application/problem+json:
-              example: *id002
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unprocessable Entity
-        '500':
-          content:
-            application/problem+json:
-              example: *id003
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Internal Server Error
-        '503':
-          content:
-            application/problem+json:
-              example: *id004
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Service Unavailable
-      security:
-      - BearerAuth: []
-      summary: Create toolkit
-      tags:
-      - Toolkits
-  /toolkits/{toolkit_id}:
-    delete:
-      description: Permanently delete a toolkit and cascade-remove its keys, bindings, and permission rules.
-      operationId: deleteToolkit
-      parameters:
-      - in: path
-        name: toolkit_id
-        required: true
-        schema:
-          title: Toolkit Id
-          type: string
-      responses:
-        '204':
-          description: Successful Response
-        '400':
-          content:
-            application/problem+json:
-              example: *id001
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Bad Request
-        '401':
-          content:
-            application/problem+json:
-              example: *id005
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unauthorized
-        '403':
-          content:
-            application/problem+json:
-              example: *id006
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Forbidden
-        '404':
-          content:
-            application/problem+json:
-              example: *id007
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Not Found
-        '422':
-          content:
-            application/problem+json:
-              example: *id002
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unprocessable Entity
-        '500':
-          content:
-            application/problem+json:
-              example: *id003
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Internal Server Error
-        '503':
-          content:
-            application/problem+json:
-              example: *id004
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Service Unavailable
-      security:
-      - BearerAuth: []
-      summary: Delete toolkit
-      tags:
-      - Toolkits
-    get:
-      description: Get a single toolkit by its `tk_…` ID.
-      operationId: getToolkit
-      parameters:
-      - in: path
-        name: toolkit_id
-        required: true
-        schema:
-          title: Toolkit Id
-          type: string
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ToolkitResponse'
-          description: Successful Response
-        '400':
-          content:
-            application/problem+json:
-              example: *id001
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Bad Request
-        '401':
-          content:
-            application/problem+json:
-              example: *id005
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unauthorized
-        '403':
-          content:
-            application/problem+json:
-              example: *id006
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Forbidden
-        '404':
-          content:
-            application/problem+json:
-              example: *id007
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Not Found
-        '422':
-          content:
-            application/problem+json:
-              example: *id002
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unprocessable Entity
-        '500':
-          content:
-            application/problem+json:
-              example: *id003
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Internal Server Error
-        '503':
-          content:
-            application/problem+json:
-              example: *id004
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Service Unavailable
-      security:
-      - BearerAuth: []
-      summary: Get toolkit
-      tags:
-      - Toolkits
-    patch:
-      description: Update a toolkit's name, description, or active flag.
-      operationId: updateToolkit
-      parameters:
-      - in: path
-        name: toolkit_id
-        required: true
-        schema:
-          title: Toolkit Id
-          type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ToolkitUpdateRequest'
-        required: true
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ToolkitResponse'
-          description: Successful Response
-        '400':
-          content:
-            application/problem+json:
-              example: *id001
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Bad Request
-        '401':
-          content:
-            application/problem+json:
-              example: *id005
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unauthorized
-        '403':
-          content:
-            application/problem+json:
-              example: *id006
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Forbidden
-        '404':
-          content:
-            application/problem+json:
-              example: *id007
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Not Found
-        '422':
-          content:
-            application/problem+json:
-              example: *id002
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unprocessable Entity
-        '500':
-          content:
-            application/problem+json:
-              example: *id003
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Internal Server Error
-        '503':
-          content:
-            application/problem+json:
-              example: *id004
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Service Unavailable
-      security:
-      - BearerAuth: []
-      summary: Update toolkit
-      tags:
-      - Toolkits
-  /toolkits/{toolkit_id}/agents:
-    get:
-      description: List agents bound to a toolkit with cursor-based pagination.
-      operationId: listToolkitAgents
-      parameters:
-      - in: path
-        name: toolkit_id
-        required: true
-        schema:
-          title: Toolkit Id
-          type: string
-      - in: query
-        name: cursor
-        required: false
-        schema:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Cursor
-      - in: query
-        name: limit
-        required: false
-        schema:
-          default: 50
-          maximum: 200
-          minimum: 1
-          title: Limit
-          type: integer
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ToolkitAgentListResponse'
-          description: Successful Response
-        '400':
-          content:
-            application/problem+json:
-              example: *id001
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Bad Request
-        '401':
-          content:
-            application/problem+json:
-              example: *id005
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unauthorized
-        '403':
-          content:
-            application/problem+json:
-              example: *id006
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Forbidden
-        '404':
-          content:
-            application/problem+json:
-              example: *id007
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Not Found
-        '422':
-          content:
-            application/problem+json:
-              example: *id002
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unprocessable Entity
-        '500':
-          content:
-            application/problem+json:
-              example: *id003
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Internal Server Error
-        '503':
-          content:
-            application/problem+json:
-              example: *id004
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Service Unavailable
-      security:
-      - BearerAuth: []
-      summary: List agents bound to toolkit
-      tags:
-      - Toolkits
-  /toolkits/{toolkit_id}/credentials:
-    get:
-      description: List the credentials bound to a toolkit with cursor-based pagination.
-      operationId: listBindings
-      parameters:
-      - in: path
-        name: toolkit_id
-        required: true
-        schema:
-          title: Toolkit Id
-          type: string
-      - in: query
-        name: cursor
-        required: false
-        schema:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Cursor
-      - in: query
-        name: limit
-        required: false
-        schema:
-          default: 50
-          maximum: 200
-          minimum: 1
-          title: Limit
-          type: integer
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ToolkitCredentialListResponse'
-          description: Successful Response
-        '400':
-          content:
-            application/problem+json:
-              example: *id001
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Bad Request
-        '401':
-          content:
-            application/problem+json:
-              example: *id005
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unauthorized
-        '403':
-          content:
-            application/problem+json:
-              example: *id006
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Forbidden
-        '404':
-          content:
-            application/problem+json:
-              example: *id007
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Not Found
-        '422':
-          content:
-            application/problem+json:
-              example: *id002
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unprocessable Entity
-        '500':
-          content:
-            application/problem+json:
-              example: *id003
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Internal Server Error
-        '503':
-          content:
-            application/problem+json:
-              example: *id004
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Service Unavailable
-      security:
-      - BearerAuth: []
-      summary: List toolkit credential bindings
-      tags:
-      - Toolkit Credentials
-    post:
-      description: Bind an existing credential to a toolkit, optionally with inline permission rules.
-      operationId: bindCredential
-      parameters:
-      - in: path
-        name: toolkit_id
-        required: true
-        schema:
-          title: Toolkit Id
-          type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ToolkitCredentialBindRequest'
-        required: true
-      responses:
-        '201':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ToolkitCredentialBindingResponse'
-          description: Successful Response
-        '400':
-          content:
-            application/problem+json:
-              example: *id001
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Bad Request
-        '401':
-          content:
-            application/problem+json:
-              example: *id005
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unauthorized
-        '403':
-          content:
-            application/problem+json:
-              example: *id006
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Forbidden
-        '404':
-          content:
-            application/problem+json:
-              example: *id007
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Not Found
-        '409':
-          content:
-            application/problem+json:
-              example: *id008
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Credential already bound
-        '422':
-          content:
-            application/problem+json:
-              example: *id002
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unprocessable Entity
-        '500':
-          content:
-            application/problem+json:
-              example: *id003
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Internal Server Error
-        '503':
-          content:
-            application/problem+json:
-              example: *id004
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Service Unavailable
-      security:
-      - BearerAuth: []
-      summary: Bind credential to toolkit
-      tags:
-      - Toolkit Credentials
-  /toolkits/{toolkit_id}/credentials/{credential_id}:
-    delete:
-      description: Remove a credential binding from a toolkit (the credential itself is untouched).
-      operationId: unbindCredential
-      parameters:
-      - in: path
-        name: toolkit_id
-        required: true
-        schema:
-          title: Toolkit Id
-          type: string
-      - in: path
-        name: credential_id
-        required: true
-        schema:
-          title: Credential Id
-          type: string
-      responses:
-        '204':
-          description: Successful Response
-        '400':
-          content:
-            application/problem+json:
-              example: *id001
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Bad Request
-        '401':
-          content:
-            application/problem+json:
-              example: *id005
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unauthorized
-        '403':
-          content:
-            application/problem+json:
-              example: *id006
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Forbidden
-        '404':
-          content:
-            application/problem+json:
-              example: *id007
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Not Found
-        '422':
-          content:
-            application/problem+json:
-              example: *id002
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unprocessable Entity
-        '500':
-          content:
-            application/problem+json:
-              example: *id003
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Internal Server Error
-        '503':
-          content:
-            application/problem+json:
-              example: *id004
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Service Unavailable
-      security:
-      - BearerAuth: []
-      summary: Unbind credential from toolkit
-      tags:
-      - Toolkit Credentials
-  /toolkits/{toolkit_id}/credentials/{credential_id}/permissions:
-    get:
-      description: List the fine-grained PBAC rules for a `(toolkit, credential)` binding.
-      operationId: listToolkitPermissions
-      parameters:
-      - in: path
-        name: toolkit_id
-        required: true
-        schema:
-          title: Toolkit Id
-          type: string
-      - in: path
-        name: credential_id
-        required: true
-        schema:
-          title: Credential Id
-          type: string
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PermissionRuleListResponse'
-          description: Successful Response
-        '400':
-          content:
-            application/problem+json:
-              example: *id001
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Bad Request
-        '401':
-          content:
-            application/problem+json:
-              example: *id005
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unauthorized
-        '403':
-          content:
-            application/problem+json:
-              example: *id006
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Forbidden
-        '404':
-          content:
-            application/problem+json:
-              example: *id007
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Not Found
-        '422':
-          content:
-            application/problem+json:
-              example: *id002
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unprocessable Entity
-        '500':
-          content:
-            application/problem+json:
-              example: *id003
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Internal Server Error
-        '503':
-          content:
-            application/problem+json:
-              example: *id004
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Service Unavailable
-      security:
-      - BearerAuth: []
-      summary: List binding permission rules
-      tags:
-      - Toolkit Permissions
-    patch:
-      description: Additively add and/or remove permission rules on a binding.
-      operationId: patchPermissions
-      parameters:
-      - in: path
-        name: toolkit_id
-        required: true
-        schema:
-          title: Toolkit Id
-          type: string
-      - in: path
-        name: credential_id
-        required: true
-        schema:
-          title: Credential Id
-          type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/PermissionsPatchRequest'
-        required: true
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PermissionRuleListResponse'
-          description: Successful Response
-        '400':
-          content:
-            application/problem+json:
-              example: *id001
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Bad Request
-        '401':
-          content:
-            application/problem+json:
-              example: *id005
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unauthorized
-        '403':
-          content:
-            application/problem+json:
-              example: *id006
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Forbidden
-        '404':
-          content:
-            application/problem+json:
-              example: *id007
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Not Found
-        '422':
-          content:
-            application/problem+json:
-              example: *id002
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unprocessable Entity
-        '500':
-          content:
-            application/problem+json:
-              example: *id003
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Internal Server Error
-        '503':
-          content:
-            application/problem+json:
-              example: *id004
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Service Unavailable
-      security:
-      - BearerAuth: []
-      summary: Patch binding permission rules
-      tags:
-      - Toolkit Permissions
-    put:
-      description: Replace the full set of permission rules for a binding (idempotent PUT).
-      operationId: replacePermissions
-      parameters:
-      - in: path
-        name: toolkit_id
-        required: true
-        schema:
-          title: Toolkit Id
-          type: string
-      - in: path
-        name: credential_id
-        required: true
-        schema:
-          title: Credential Id
-          type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              items:
-                $ref: '#/components/schemas/jentic_one__control__web__schemas__toolkits__PermissionRuleSchema'
-              maxItems: 100
-              title: Body
-              type: array
-        required: true
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PermissionRuleListResponse'
-          description: Successful Response
-        '400':
-          content:
-            application/problem+json:
-              example: *id001
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Bad Request
-        '401':
-          content:
-            application/problem+json:
-              example: *id005
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unauthorized
-        '403':
-          content:
-            application/problem+json:
-              example: *id006
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Forbidden
-        '404':
-          content:
-            application/problem+json:
-              example: *id007
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Not Found
-        '422':
-          content:
-            application/problem+json:
-              example: *id002
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unprocessable Entity
-        '500':
-          content:
-            application/problem+json:
-              example: *id003
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Internal Server Error
-        '503':
-          content:
-            application/problem+json:
-              example: *id004
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Service Unavailable
-      security:
-      - BearerAuth: []
-      summary: Replace binding permission rules
-      tags:
-      - Toolkit Permissions
-  /toolkits/{toolkit_id}/credentials/{credential_id}/permissions:test:
-    post:
-      description: |-
-        Answer "what would the broker do for this request?" without calling upstream.
-
-        Evaluates the same **vendor-pooled** rule set the broker sees at request
-        time — rules from all same-vendor bindings on this toolkit compete in one
-        ordered list. The response names which binding contributed the matching
-        rule, which is not obvious from the toolkit id alone under pooling.
-      operationId: testToolkitPermissions
-      parameters:
-      - in: path
-        name: toolkit_id
-        required: true
-        schema:
-          title: Toolkit Id
-          type: string
-      - in: path
-        name: credential_id
-        required: true
-        schema:
-          title: Credential Id
-          type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/PermissionTestRequest'
-        required: true
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PermissionTestResponse'
-          description: Successful Response
-        '400':
-          content:
-            application/problem+json:
-              example: *id001
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Bad Request
-        '401':
-          content:
-            application/problem+json:
-              example: *id005
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unauthorized
-        '403':
-          content:
-            application/problem+json:
-              example: *id006
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Forbidden
-        '404':
-          content:
-            application/problem+json:
-              example: *id007
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Not Found
-        '422':
-          content:
-            application/problem+json:
-              example: *id002
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unprocessable Entity
-        '500':
-          content:
-            application/problem+json:
-              example: *id003
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Internal Server Error
-        '503':
-          content:
-            application/problem+json:
-              example: *id004
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Service Unavailable
-      security:
-      - BearerAuth: []
-      summary: Dry-run permission evaluation
-      tags:
-      - Toolkit Permissions
-  /toolkits/{toolkit_id}/keys:
-    get:
-      description: List a toolkit's API keys (redacted; only `key_preview` is shown).
-      operationId: listKeys
-      parameters:
-      - in: path
-        name: toolkit_id
-        required: true
-        schema:
-          title: Toolkit Id
-          type: string
-      - in: query
-        name: cursor
-        required: false
-        schema:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Cursor
-      - in: query
-        name: limit
-        required: false
-        schema:
-          default: 50
-          maximum: 200
-          minimum: 1
-          title: Limit
-          type: integer
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ToolkitKeyListResponse'
-          description: Successful Response
-        '400':
-          content:
-            application/problem+json:
-              example: *id001
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Bad Request
-        '401':
-          content:
-            application/problem+json:
-              example: *id005
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unauthorized
-        '403':
-          content:
-            application/problem+json:
-              example: *id006
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Forbidden
-        '404':
-          content:
-            application/problem+json:
-              example: *id007
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Not Found
-        '422':
-          content:
-            application/problem+json:
-              example: *id002
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unprocessable Entity
-        '500':
-          content:
-            application/problem+json:
-              example: *id003
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Internal Server Error
-        '503':
-          content:
-            application/problem+json:
-              example: *id004
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Service Unavailable
-      security:
-      - BearerAuth: []
-      summary: List toolkit keys
-      tags:
-      - Toolkit Keys
-    post:
-      description: |-
-        Issue a new API key for a toolkit.
-
-        The plaintext value (`jntc_live_…`) is returned **once** in `api_key`. Issue
-        a fresh key, switch callers, then revoke the old one (do-and-then-revoke).
-      operationId: createKey
-      parameters:
-      - in: path
-        name: toolkit_id
-        required: true
-        schema:
-          title: Toolkit Id
-          type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ToolkitKeyCreateRequest'
-        required: true
-      responses:
-        '201':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ToolkitKeyCreateResponse'
-          description: Successful Response
-        '400':
-          content:
-            application/problem+json:
-              example: *id001
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Bad Request
-        '401':
-          content:
-            application/problem+json:
-              example: *id005
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unauthorized
-        '403':
-          content:
-            application/problem+json:
-              example: *id006
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Forbidden
-        '404':
-          content:
-            application/problem+json:
-              example: *id007
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Not Found
-        '422':
-          content:
-            application/problem+json:
-              example: *id002
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unprocessable Entity
-        '500':
-          content:
-            application/problem+json:
-              example: *id003
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Internal Server Error
-        '503':
-          content:
-            application/problem+json:
-              example: *id004
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Service Unavailable
-      security:
-      - BearerAuth: []
-      summary: Issue toolkit key
-      tags:
-      - Toolkit Keys
-  /toolkits/{toolkit_id}/keys/{key_id}:
-    delete:
-      description: Revoke (delete) a toolkit API key. Callers using it are rejected immediately.
-      operationId: deleteKey
-      parameters:
-      - in: path
-        name: toolkit_id
-        required: true
-        schema:
-          title: Toolkit Id
-          type: string
-      - in: path
-        name: key_id
-        required: true
-        schema:
-          title: Key Id
-          type: string
-      responses:
-        '204':
-          description: Successful Response
-        '400':
-          content:
-            application/problem+json:
-              example: *id001
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Bad Request
-        '401':
-          content:
-            application/problem+json:
-              example: *id005
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unauthorized
-        '403':
-          content:
-            application/problem+json:
-              example: *id006
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Forbidden
-        '404':
-          content:
-            application/problem+json:
-              example: *id007
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Not Found
-        '422':
-          content:
-            application/problem+json:
-              example: *id002
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unprocessable Entity
-        '500':
-          content:
-            application/problem+json:
-              example: *id003
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Internal Server Error
-        '503':
-          content:
-            application/problem+json:
-              example: *id004
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Service Unavailable
-      security:
-      - BearerAuth: []
-      summary: Revoke toolkit key
-      tags:
-      - Toolkit Keys
-    patch:
-      description: Update a key's label, IP allowlist, or revoked flag.
-      operationId: updateKey
-      parameters:
-      - in: path
-        name: toolkit_id
-        required: true
-        schema:
-          title: Toolkit Id
-          type: string
-      - in: path
-        name: key_id
-        required: true
-        schema:
-          title: Key Id
-          type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ToolkitKeyUpdateRequest'
-        required: true
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ToolkitKeyResponse'
-          description: Successful Response
-        '400':
-          content:
-            application/problem+json:
-              example: *id001
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Bad Request
-        '401':
-          content:
-            application/problem+json:
-              example: *id005
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unauthorized
-        '403':
-          content:
-            application/problem+json:
-              example: *id006
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Forbidden
-        '404':
-          content:
-            application/problem+json:
-              example: *id007
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Not Found
-        '422':
-          content:
-            application/problem+json:
-              example: *id002
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unprocessable Entity
-        '500':
-          content:
-            application/problem+json:
-              example: *id003
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Internal Server Error
-        '503':
-          content:
-            application/problem+json:
-              example: *id004
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Service Unavailable
-      security:
-      - BearerAuth: []
-      summary: Update toolkit key
-      tags:
-      - Toolkit Keys
   /users:
     get:
       description: List all users with cursor-based pagination.
@@ -18894,7 +19284,13 @@ paths:
       - Users
   /users/{user_id}:
     delete:
-      description: Soft-delete a user.
+      description: |-
+        Delete a user account (terminal-but-kept).
+
+        The row is retained — the account is anonymized (tombstone email) and
+        deactivated so history and audit references stay resolvable — but the
+        action is terminal: there is no re-enable arm. For the reversible kill
+        switch use ``:disable`` / ``:enable`` instead.
       operationId: deleteUser
       parameters:
       - in: path
@@ -19468,26 +19864,8 @@ servers:
 tags:
 - description: Part of the **Core / Access** bounded context — the authoritative record of "who can call what, with which secret". A `Credential` is the auth secret + header configuration the Broker injects on the way out to an upstream API. Credentials reference registry content via the loose `(vendor, name, version)` identity tuple (see `APIReference`) — there is no foreign key between Core and Registry, by design. Cleartext secret material is returned **exactly once** at creation (and on rotation via `PATCH`). Read paths return a redacted projection — last-N characters, hints, never the secret itself.
   name: Credentials
-- description: |-
-    Part of the **Core / Access** bounded context — a `Toolkit` is a scoped bundle of credentials and permissions issued to an agent or service. This tag covers **toolkit lifecycle**: list, create, read, update, delete. Sub-resources (keys, credential bindings, per-binding permission rules) live under the sibling tags `Toolkit Keys`, `Toolkit Credentials`, and `Toolkit Permissions`.
-
-    Two distinct values are involved: the **toolkit ID** is `tk_…` (public; appears in URLs, logs, and `Jentic-Toolkit-Id` headers), and the **toolkit secret** is `jntc_live_…` (private; the plaintext API key shown exactly once at toolkit creation or when a new key is issued).
-  name: Toolkits
-- description: |-
-    Sub-resource of **Toolkits** (Core / Access bounded context). A toolkit can hold many API keys at once — different agents, machines, or environments typically each get their own. Each key record (`ck_…`) carries a label, optional CIDR allowlist, and a revoked flag. The plaintext value (`jntc_live_…`) is shown exactly once at creation and never returned afterwards (only `key_preview` exposes the last few characters).
-
-    Rotation is do-and-then-revoke: issue a fresh key, switch callers, then `DELETE` the old key. There is no in-place rotate operation — multi-key rotation is always do-and-then-revoke so live callers never see a window where every key is invalid.
-  name: Toolkit Keys
-- description: |-
-    Sub-resource of **Toolkits** (Core / Access bounded context). A toolkit doesn't own credentials directly — it **binds** to credentials that already exist in `/credentials`. The binding is the link record that authorises the Broker to inject a specific credential on calls made under this toolkit. The same credential can be bound to many toolkits.
-
-    Bindings can carry initial fine-grained permission rules inline via `ToolkitCredentialBindRequest.permissions[]`; subsequent changes go through the `Toolkit Permissions` sub-resource.
-  name: Toolkit Credentials
-- description: |-
-    Sub-resource of **Toolkits** (Core / Access bounded context). The fine-grained PBAC tier — per-`(toolkit, credential)` allow / deny / require-approval rules evaluated server-side. Rules use a priority model: `deny` > `require-approval` > `allow` — the strictest matching rule wins. Absence of a matching rule is an implicit deny. System rules (`_system: true`) participate in the same priority pool as user rules.
-
-    Toolkits have no separate scope tier of their own: a toolkit API key is minted with the fixed broker-execute scope (`capabilities:execute`), and every gated operation is decided by these per-binding rules.
-  name: Toolkit Permissions
+- description: Part of the **Core / Access** bounded context — a `PermissionRuleSet` is a named, shareable ordered rule list (first-match-wins, default-deny) that many direct agent↔credential bindings can point at via their `rule_set_id`, so a policy edit or `permissions:test` stays a single-place operation. A binding with no `rule_set_id` uses its own inline rules instead. Rule sets carry policy, not secrets; deleting one that bindings still reference is refused (409 `rule_set_in_use`).
+  name: Permission Rule Sets
 - description: |-
     Actor-agnostic, multi-item access-request surface (Core / Access bounded context). When an agent's brokered call is rejected by a permission rule — or the agent needs access it doesn't yet have — the agent files an `AccessRequest` containing one or more line items (`AccessRequestItem`). The request enters `pending` state and surfaces an `approve_url` that the agent presents to a human reviewer.
 
@@ -19583,13 +19961,13 @@ tags:
 
     One reserved superpower short-circuits individual checks in code: `org:admin` (full deployment-wide access, granted via direct DB action). It is not enumerated to non-holders by `GET /permissions`, and is rejected by `PUT /users/{user_id}/permissions` from any caller who doesn't already hold it.
 
-    The same vocabulary is used for `User.permissions` — coarse JWT-embedded scopes — so the catalogue below covers user assignment. Toolkits have no separate scope tier of their own: a toolkit API key is minted with the fixed broker-execute scope, and the per-binding fine-grained `PermissionRule[]` (the inner PBAC tier) lives separately under the `Toolkit Permissions` tag.
+    The same vocabulary is used for `User.permissions` — coarse JWT-embedded scopes — so the catalogue below covers user assignment. The per-binding fine-grained `PermissionRule[]` (the inner PBAC tier) lives separately on the direct agent↔credential bindings under the `Credentials` tag.
   name: Permissions
 - description: Operational endpoints for service health and platform tooling. Not part of any bounded context — surfaced here so orchestrators and load balancers have a stable probe target.
   name: System
 - description: Identity introspection for the calling principal (human, agent, or service account) — `GET /me` returns the resolved subject, scopes, and permissions behind the presented token.
   name: Identity
-- description: Agent actors — autonomous principals that call the Broker. Covers the agent lifecycle (list, read, approve / deny, enable / disable, archive) and the toolkits bound to each agent.
+- description: Agent actors — autonomous principals that call the Broker. Covers the agent lifecycle (list, read, approve / deny, enable / disable, archive) and the credentials directly bound to each agent.
   name: Agents
 - description: Machine principals for non-interactive integrations — lifecycle (create, list, read, approve / deny, enable / disable, archive) mirroring the agent surface.
   name: Service Accounts
@@ -19607,7 +19985,7 @@ tags:
   name: Monitoring
 - description: Runtime, DB-backed platform configuration. Lets an operator set, read, and list configuration that previously required hand-editing backend YAML and restarting the server — starting with credential provider configs (e.g. Pipedream). A successful write rebuilds the in-process provider registry so the change takes effect without a restart. Secret fields (e.g. `client_secret`) are encrypted at rest and redacted on read. **Topology note:** in the combined (single-process) deployment a write takes effect immediately for all surfaces. In a multi-process deployment the control/broker processes pick up the new config at their next boot, not the instant the admin write lands; cross-process propagation is a tracked follow-up.
   name: Configuration
-- description: Admin-managed registry of third-party OAuth clients (confidential, secret-bearing). Registered clients integrate with Jentic One via the standard Authorization Code + PKCE flow. Admins can create, list, update, rotate secrets, and deactivate clients. Deactivating a client immediately invalidates all tokens issued through it.
+- description: Admin-managed registry of third-party OAuth clients (confidential, secret-bearing). Registered clients integrate with Jentic One via the standard Authorization Code + PKCE flow. Admins can create, list, update, rotate secrets, and disable clients. Disabling a client immediately invalidates all tokens issued through it.
   name: OAuth Clients
 - description: MCP (Model Context Protocol) transport reporting. The `jentic mcp` stdio server terminates all MCP protocol traffic locally; the control plane only sees plain HTTP. This tag covers the small reporting surface behind it — today, the config-registration report `jentic setup`/`jentic skill init` send after writing an MCP server entry for a detected agent runtime, which feeds the config-written → first-session → first-execute adoption funnel.
   name: MCP
@@ -19615,10 +19993,7 @@ x-tagGroups:
 - name: Core / Access
   tags:
   - Credentials
-  - Toolkits
-  - Toolkit Keys
-  - Toolkit Credentials
-  - Toolkit Permissions
+  - Permission Rule Sets
   - Access Requests
 - name: Registry
   tags:

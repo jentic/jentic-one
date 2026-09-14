@@ -40,7 +40,13 @@ class ExecutionRecord(AuditableMixin, AdminBase):
         default=lambda: generate_ksuid("exec"),
         server_default=func.generate_ksuid("exec"),
     )
-    toolkit_id: Mapped[str] = mapped_column(String(30), nullable=False)
+    # Nullable-legacy (theme-5 Phase 2): the toolkit that mediated the execution
+    # on the legacy path. NULL for direct-binding executions — their consumer
+    # attribution is ``credential_id`` — and permanently NULL once toolkits are
+    # retired (Phase 4+). All five toolkit-keyed surfaces (this column, the
+    # idempotency fingerprint, tracestate, repeated-failure keying, lifecycle
+    # events) move to the credential axis together.
+    toolkit_id: Mapped[str | None] = mapped_column(String(30), nullable=True)
     trace_id: Mapped[str] = mapped_column(String(32), nullable=False)
     started_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
     duration_ms: Mapped[int | None] = mapped_column(BigInteger, nullable=True)

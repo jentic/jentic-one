@@ -136,6 +136,12 @@ type ReadinessResponseStatus string
 // IdempotencyKey Examples: 5f9c8b2e-7a4d-4e1f-9c3a-1b2d3e4f5a6b
 type IdempotencyKey = string
 
+// JenticCredentialId Examples: cred_abc123
+type JenticCredentialId = string
+
+// JenticCredentialName Examples: Stripe prod key
+type JenticCredentialName = string
+
 // JenticRevision Examples: ["stripe:payments:2023-10-16=rev_01HMY1Q0AB"], ["stripe:payments:2023-10-16=rev_01HMY1Q0AB","shopify:admin:2024-01=rev_01HMY7B3QN"]
 type JenticRevision = []string
 
@@ -662,6 +668,28 @@ type ExecuteDeleteParams struct {
 	// are recorded on the resulting `ExecutionRecord`
 	// (`pinned_revisions` field on the control plane).
 	JenticRevision *JenticRevision `json:"Jentic-Revision,omitempty"`
+
+	// JenticCredentialName Disambiguate credential resolution by the credential's
+	// human-readable name. When several bound credentials cover the
+	// target API at the same specificity (a multi-account setup), the
+	// broker refuses with `409 ambiguous_credential_binding` and lists
+	// the candidates; resend with this header naming the one to use. A
+	// name that matches no covering candidate is rejected with
+	// `400 credential_name_not_found` (candidates listed). Consumed by
+	// the broker — never forwarded upstream. The same header name is
+	// also emitted on responses to attribute the credential used.
+	JenticCredentialName *JenticCredentialName `json:"Jentic-Credential-Name,omitempty"`
+
+	// JenticCredentialId Disambiguate credential resolution by exact credential id — the
+	// authoritative signal, applied before the name filter and
+	// specificity narrowing. Ids are stable and non-secret
+	// (`cred_`-prefixed); the `409 ambiguous_credential_binding`
+	// candidate list carries them. An id that matches no covering,
+	// bound candidate is rejected with `400 credential_id_not_found`
+	// (candidates listed). Consumed by the broker — never forwarded
+	// upstream. The same header name is also emitted on responses to
+	// attribute the credential used.
+	JenticCredentialId *JenticCredentialId `json:"Jentic-Credential-Id,omitempty"`
 }
 
 // ExecuteGetParams defines parameters for ExecuteGet.
@@ -702,6 +730,28 @@ type ExecuteGetParams struct {
 	// are recorded on the resulting `ExecutionRecord`
 	// (`pinned_revisions` field on the control plane).
 	JenticRevision *JenticRevision `json:"Jentic-Revision,omitempty"`
+
+	// JenticCredentialName Disambiguate credential resolution by the credential's
+	// human-readable name. When several bound credentials cover the
+	// target API at the same specificity (a multi-account setup), the
+	// broker refuses with `409 ambiguous_credential_binding` and lists
+	// the candidates; resend with this header naming the one to use. A
+	// name that matches no covering candidate is rejected with
+	// `400 credential_name_not_found` (candidates listed). Consumed by
+	// the broker — never forwarded upstream. The same header name is
+	// also emitted on responses to attribute the credential used.
+	JenticCredentialName *JenticCredentialName `json:"Jentic-Credential-Name,omitempty"`
+
+	// JenticCredentialId Disambiguate credential resolution by exact credential id — the
+	// authoritative signal, applied before the name filter and
+	// specificity narrowing. Ids are stable and non-secret
+	// (`cred_`-prefixed); the `409 ambiguous_credential_binding`
+	// candidate list carries them. An id that matches no covering,
+	// bound candidate is rejected with `400 credential_id_not_found`
+	// (candidates listed). Consumed by the broker — never forwarded
+	// upstream. The same header name is also emitted on responses to
+	// attribute the credential used.
+	JenticCredentialId *JenticCredentialId `json:"Jentic-Credential-Id,omitempty"`
 }
 
 // ExecuteHeadParams defines parameters for ExecuteHead.
@@ -742,6 +792,28 @@ type ExecuteHeadParams struct {
 	// are recorded on the resulting `ExecutionRecord`
 	// (`pinned_revisions` field on the control plane).
 	JenticRevision *JenticRevision `json:"Jentic-Revision,omitempty"`
+
+	// JenticCredentialName Disambiguate credential resolution by the credential's
+	// human-readable name. When several bound credentials cover the
+	// target API at the same specificity (a multi-account setup), the
+	// broker refuses with `409 ambiguous_credential_binding` and lists
+	// the candidates; resend with this header naming the one to use. A
+	// name that matches no covering candidate is rejected with
+	// `400 credential_name_not_found` (candidates listed). Consumed by
+	// the broker — never forwarded upstream. The same header name is
+	// also emitted on responses to attribute the credential used.
+	JenticCredentialName *JenticCredentialName `json:"Jentic-Credential-Name,omitempty"`
+
+	// JenticCredentialId Disambiguate credential resolution by exact credential id — the
+	// authoritative signal, applied before the name filter and
+	// specificity narrowing. Ids are stable and non-secret
+	// (`cred_`-prefixed); the `409 ambiguous_credential_binding`
+	// candidate list carries them. An id that matches no covering,
+	// bound candidate is rejected with `400 credential_id_not_found`
+	// (candidates listed). Consumed by the broker — never forwarded
+	// upstream. The same header name is also emitted on responses to
+	// attribute the credential used.
+	JenticCredentialId *JenticCredentialId `json:"Jentic-Credential-Id,omitempty"`
 }
 
 // ExecuteOptionsParams defines parameters for ExecuteOptions.
@@ -782,6 +854,28 @@ type ExecuteOptionsParams struct {
 	// are recorded on the resulting `ExecutionRecord`
 	// (`pinned_revisions` field on the control plane).
 	JenticRevision *JenticRevision `json:"Jentic-Revision,omitempty"`
+
+	// JenticCredentialName Disambiguate credential resolution by the credential's
+	// human-readable name. When several bound credentials cover the
+	// target API at the same specificity (a multi-account setup), the
+	// broker refuses with `409 ambiguous_credential_binding` and lists
+	// the candidates; resend with this header naming the one to use. A
+	// name that matches no covering candidate is rejected with
+	// `400 credential_name_not_found` (candidates listed). Consumed by
+	// the broker — never forwarded upstream. The same header name is
+	// also emitted on responses to attribute the credential used.
+	JenticCredentialName *JenticCredentialName `json:"Jentic-Credential-Name,omitempty"`
+
+	// JenticCredentialId Disambiguate credential resolution by exact credential id — the
+	// authoritative signal, applied before the name filter and
+	// specificity narrowing. Ids are stable and non-secret
+	// (`cred_`-prefixed); the `409 ambiguous_credential_binding`
+	// candidate list carries them. An id that matches no covering,
+	// bound candidate is rejected with `400 credential_id_not_found`
+	// (candidates listed). Consumed by the broker — never forwarded
+	// upstream. The same header name is also emitted on responses to
+	// attribute the credential used.
+	JenticCredentialId *JenticCredentialId `json:"Jentic-Credential-Id,omitempty"`
 }
 
 // ExecutePatchParams defines parameters for ExecutePatch.
@@ -822,6 +916,28 @@ type ExecutePatchParams struct {
 	// are recorded on the resulting `ExecutionRecord`
 	// (`pinned_revisions` field on the control plane).
 	JenticRevision *JenticRevision `json:"Jentic-Revision,omitempty"`
+
+	// JenticCredentialName Disambiguate credential resolution by the credential's
+	// human-readable name. When several bound credentials cover the
+	// target API at the same specificity (a multi-account setup), the
+	// broker refuses with `409 ambiguous_credential_binding` and lists
+	// the candidates; resend with this header naming the one to use. A
+	// name that matches no covering candidate is rejected with
+	// `400 credential_name_not_found` (candidates listed). Consumed by
+	// the broker — never forwarded upstream. The same header name is
+	// also emitted on responses to attribute the credential used.
+	JenticCredentialName *JenticCredentialName `json:"Jentic-Credential-Name,omitempty"`
+
+	// JenticCredentialId Disambiguate credential resolution by exact credential id — the
+	// authoritative signal, applied before the name filter and
+	// specificity narrowing. Ids are stable and non-secret
+	// (`cred_`-prefixed); the `409 ambiguous_credential_binding`
+	// candidate list carries them. An id that matches no covering,
+	// bound candidate is rejected with `400 credential_id_not_found`
+	// (candidates listed). Consumed by the broker — never forwarded
+	// upstream. The same header name is also emitted on responses to
+	// attribute the credential used.
+	JenticCredentialId *JenticCredentialId `json:"Jentic-Credential-Id,omitempty"`
 }
 
 // ExecutePostParams defines parameters for ExecutePost.
@@ -862,6 +978,28 @@ type ExecutePostParams struct {
 	// are recorded on the resulting `ExecutionRecord`
 	// (`pinned_revisions` field on the control plane).
 	JenticRevision *JenticRevision `json:"Jentic-Revision,omitempty"`
+
+	// JenticCredentialName Disambiguate credential resolution by the credential's
+	// human-readable name. When several bound credentials cover the
+	// target API at the same specificity (a multi-account setup), the
+	// broker refuses with `409 ambiguous_credential_binding` and lists
+	// the candidates; resend with this header naming the one to use. A
+	// name that matches no covering candidate is rejected with
+	// `400 credential_name_not_found` (candidates listed). Consumed by
+	// the broker — never forwarded upstream. The same header name is
+	// also emitted on responses to attribute the credential used.
+	JenticCredentialName *JenticCredentialName `json:"Jentic-Credential-Name,omitempty"`
+
+	// JenticCredentialId Disambiguate credential resolution by exact credential id — the
+	// authoritative signal, applied before the name filter and
+	// specificity narrowing. Ids are stable and non-secret
+	// (`cred_`-prefixed); the `409 ambiguous_credential_binding`
+	// candidate list carries them. An id that matches no covering,
+	// bound candidate is rejected with `400 credential_id_not_found`
+	// (candidates listed). Consumed by the broker — never forwarded
+	// upstream. The same header name is also emitted on responses to
+	// attribute the credential used.
+	JenticCredentialId *JenticCredentialId `json:"Jentic-Credential-Id,omitempty"`
 }
 
 // ExecutePutParams defines parameters for ExecutePut.
@@ -902,6 +1040,28 @@ type ExecutePutParams struct {
 	// are recorded on the resulting `ExecutionRecord`
 	// (`pinned_revisions` field on the control plane).
 	JenticRevision *JenticRevision `json:"Jentic-Revision,omitempty"`
+
+	// JenticCredentialName Disambiguate credential resolution by the credential's
+	// human-readable name. When several bound credentials cover the
+	// target API at the same specificity (a multi-account setup), the
+	// broker refuses with `409 ambiguous_credential_binding` and lists
+	// the candidates; resend with this header naming the one to use. A
+	// name that matches no covering candidate is rejected with
+	// `400 credential_name_not_found` (candidates listed). Consumed by
+	// the broker — never forwarded upstream. The same header name is
+	// also emitted on responses to attribute the credential used.
+	JenticCredentialName *JenticCredentialName `json:"Jentic-Credential-Name,omitempty"`
+
+	// JenticCredentialId Disambiguate credential resolution by exact credential id — the
+	// authoritative signal, applied before the name filter and
+	// specificity narrowing. Ids are stable and non-secret
+	// (`cred_`-prefixed); the `409 ambiguous_credential_binding`
+	// candidate list carries them. An id that matches no covering,
+	// bound candidate is rejected with `400 credential_id_not_found`
+	// (candidates listed). Consumed by the broker — never forwarded
+	// upstream. The same header name is also emitted on responses to
+	// attribute the credential used.
+	JenticCredentialId *JenticCredentialId `json:"Jentic-Credential-Id,omitempty"`
 }
 
 // RequestEditorFn is the function signature for the RequestEditor callback function
@@ -1385,6 +1545,28 @@ func NewExecuteDeleteRequestWithBody(server string, upstreamUrl UpstreamUrl, par
 			req.Header.Set("Jentic-Revision", headerParam2)
 		}
 
+		if params.JenticCredentialName != nil {
+			var headerParam3 string
+
+			headerParam3, err = runtime.StyleParamWithOptions("simple", false, "Jentic-Credential-Name", *params.JenticCredentialName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("Jentic-Credential-Name", headerParam3)
+		}
+
+		if params.JenticCredentialId != nil {
+			var headerParam4 string
+
+			headerParam4, err = runtime.StyleParamWithOptions("simple", false, "Jentic-Credential-Id", *params.JenticCredentialId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("Jentic-Credential-Id", headerParam4)
+		}
+
 	}
 
 	return req, nil
@@ -1454,6 +1636,28 @@ func NewExecuteGetRequest(server string, upstreamUrl UpstreamUrl, params *Execut
 			}
 
 			req.Header.Set("Jentic-Revision", headerParam2)
+		}
+
+		if params.JenticCredentialName != nil {
+			var headerParam3 string
+
+			headerParam3, err = runtime.StyleParamWithOptions("simple", false, "Jentic-Credential-Name", *params.JenticCredentialName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("Jentic-Credential-Name", headerParam3)
+		}
+
+		if params.JenticCredentialId != nil {
+			var headerParam4 string
+
+			headerParam4, err = runtime.StyleParamWithOptions("simple", false, "Jentic-Credential-Id", *params.JenticCredentialId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("Jentic-Credential-Id", headerParam4)
 		}
 
 	}
@@ -1527,6 +1731,28 @@ func NewExecuteHeadRequest(server string, upstreamUrl UpstreamUrl, params *Execu
 			req.Header.Set("Jentic-Revision", headerParam2)
 		}
 
+		if params.JenticCredentialName != nil {
+			var headerParam3 string
+
+			headerParam3, err = runtime.StyleParamWithOptions("simple", false, "Jentic-Credential-Name", *params.JenticCredentialName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("Jentic-Credential-Name", headerParam3)
+		}
+
+		if params.JenticCredentialId != nil {
+			var headerParam4 string
+
+			headerParam4, err = runtime.StyleParamWithOptions("simple", false, "Jentic-Credential-Id", *params.JenticCredentialId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("Jentic-Credential-Id", headerParam4)
+		}
+
 	}
 
 	return req, nil
@@ -1596,6 +1822,28 @@ func NewExecuteOptionsRequest(server string, upstreamUrl UpstreamUrl, params *Ex
 			}
 
 			req.Header.Set("Jentic-Revision", headerParam2)
+		}
+
+		if params.JenticCredentialName != nil {
+			var headerParam3 string
+
+			headerParam3, err = runtime.StyleParamWithOptions("simple", false, "Jentic-Credential-Name", *params.JenticCredentialName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("Jentic-Credential-Name", headerParam3)
+		}
+
+		if params.JenticCredentialId != nil {
+			var headerParam4 string
+
+			headerParam4, err = runtime.StyleParamWithOptions("simple", false, "Jentic-Credential-Id", *params.JenticCredentialId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("Jentic-Credential-Id", headerParam4)
 		}
 
 	}
@@ -1671,6 +1919,28 @@ func NewExecutePatchRequestWithBody(server string, upstreamUrl UpstreamUrl, para
 			req.Header.Set("Jentic-Revision", headerParam2)
 		}
 
+		if params.JenticCredentialName != nil {
+			var headerParam3 string
+
+			headerParam3, err = runtime.StyleParamWithOptions("simple", false, "Jentic-Credential-Name", *params.JenticCredentialName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("Jentic-Credential-Name", headerParam3)
+		}
+
+		if params.JenticCredentialId != nil {
+			var headerParam4 string
+
+			headerParam4, err = runtime.StyleParamWithOptions("simple", false, "Jentic-Credential-Id", *params.JenticCredentialId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("Jentic-Credential-Id", headerParam4)
+		}
+
 	}
 
 	return req, nil
@@ -1744,6 +2014,28 @@ func NewExecutePostRequestWithBody(server string, upstreamUrl UpstreamUrl, param
 			req.Header.Set("Jentic-Revision", headerParam2)
 		}
 
+		if params.JenticCredentialName != nil {
+			var headerParam3 string
+
+			headerParam3, err = runtime.StyleParamWithOptions("simple", false, "Jentic-Credential-Name", *params.JenticCredentialName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("Jentic-Credential-Name", headerParam3)
+		}
+
+		if params.JenticCredentialId != nil {
+			var headerParam4 string
+
+			headerParam4, err = runtime.StyleParamWithOptions("simple", false, "Jentic-Credential-Id", *params.JenticCredentialId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("Jentic-Credential-Id", headerParam4)
+		}
+
 	}
 
 	return req, nil
@@ -1815,6 +2107,28 @@ func NewExecutePutRequestWithBody(server string, upstreamUrl UpstreamUrl, params
 			}
 
 			req.Header.Set("Jentic-Revision", headerParam2)
+		}
+
+		if params.JenticCredentialName != nil {
+			var headerParam3 string
+
+			headerParam3, err = runtime.StyleParamWithOptions("simple", false, "Jentic-Credential-Name", *params.JenticCredentialName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("Jentic-Credential-Name", headerParam3)
+		}
+
+		if params.JenticCredentialId != nil {
+			var headerParam4 string
+
+			headerParam4, err = runtime.StyleParamWithOptions("simple", false, "Jentic-Credential-Id", *params.JenticCredentialId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("Jentic-Credential-Id", headerParam4)
 		}
 
 	}
@@ -2129,6 +2443,7 @@ type ExecuteDeleteHTTPResp200Headers struct {
 	JenticCredentialName *string
 	JenticExecutionId    *string
 	JenticOperation      *string
+	// Deprecated: this header has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	JenticToolkitId      *string
 	JenticUpstreamStatus *int
 	PreferenceApplied    *string
@@ -2142,10 +2457,11 @@ type ExecuteDeleteHTTPResp202Headers struct {
 	JenticApiVendor    *string
 	JenticExecutionId  *string
 	JenticOperation    *string
-	JenticToolkitId    *string
-	PreferenceApplied  *string
-	Traceparent        *string
-	Tracestate         *string
+	// Deprecated: this header has been marked as deprecated upstream, but no `x-deprecated-reason` was set
+	JenticToolkitId   *string
+	PreferenceApplied *string
+	Traceparent       *string
+	Tracestate        *string
 }
 
 // ExecuteDeleteHTTPResp429Headers the declared response headers of an HTTP 429 response for ExecuteDelete
@@ -2301,6 +2617,7 @@ type ExecuteGetHTTPResp200Headers struct {
 	JenticCredentialName *string
 	JenticExecutionId    *string
 	JenticOperation      *string
+	// Deprecated: this header has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	JenticToolkitId      *string
 	JenticUpstreamStatus *int
 	PreferenceApplied    *string
@@ -2314,10 +2631,11 @@ type ExecuteGetHTTPResp202Headers struct {
 	JenticApiVendor    *string
 	JenticExecutionId  *string
 	JenticOperation    *string
-	JenticToolkitId    *string
-	PreferenceApplied  *string
-	Traceparent        *string
-	Tracestate         *string
+	// Deprecated: this header has been marked as deprecated upstream, but no `x-deprecated-reason` was set
+	JenticToolkitId   *string
+	PreferenceApplied *string
+	Traceparent       *string
+	Tracestate        *string
 }
 
 // ExecuteGetHTTPResp429Headers the declared response headers of an HTTP 429 response for ExecuteGet
@@ -2473,6 +2791,7 @@ type ExecuteHeadHTTPResp200Headers struct {
 	JenticCredentialName *string
 	JenticExecutionId    *string
 	JenticOperation      *string
+	// Deprecated: this header has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	JenticToolkitId      *string
 	JenticUpstreamStatus *int
 	PreferenceApplied    *string
@@ -2486,10 +2805,11 @@ type ExecuteHeadHTTPResp202Headers struct {
 	JenticApiVendor    *string
 	JenticExecutionId  *string
 	JenticOperation    *string
-	JenticToolkitId    *string
-	PreferenceApplied  *string
-	Traceparent        *string
-	Tracestate         *string
+	// Deprecated: this header has been marked as deprecated upstream, but no `x-deprecated-reason` was set
+	JenticToolkitId   *string
+	PreferenceApplied *string
+	Traceparent       *string
+	Tracestate        *string
 }
 
 // ExecuteHeadHTTPResp429Headers the declared response headers of an HTTP 429 response for ExecuteHead
@@ -2645,6 +2965,7 @@ type ExecuteOptionsHTTPResp200Headers struct {
 	JenticCredentialName *string
 	JenticExecutionId    *string
 	JenticOperation      *string
+	// Deprecated: this header has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	JenticToolkitId      *string
 	JenticUpstreamStatus *int
 	PreferenceApplied    *string
@@ -2658,10 +2979,11 @@ type ExecuteOptionsHTTPResp202Headers struct {
 	JenticApiVendor    *string
 	JenticExecutionId  *string
 	JenticOperation    *string
-	JenticToolkitId    *string
-	PreferenceApplied  *string
-	Traceparent        *string
-	Tracestate         *string
+	// Deprecated: this header has been marked as deprecated upstream, but no `x-deprecated-reason` was set
+	JenticToolkitId   *string
+	PreferenceApplied *string
+	Traceparent       *string
+	Tracestate        *string
 }
 
 // ExecuteOptionsHTTPResp429Headers the declared response headers of an HTTP 429 response for ExecuteOptions
@@ -2817,6 +3139,7 @@ type ExecutePatchHTTPResp200Headers struct {
 	JenticCredentialName *string
 	JenticExecutionId    *string
 	JenticOperation      *string
+	// Deprecated: this header has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	JenticToolkitId      *string
 	JenticUpstreamStatus *int
 	PreferenceApplied    *string
@@ -2830,10 +3153,11 @@ type ExecutePatchHTTPResp202Headers struct {
 	JenticApiVendor    *string
 	JenticExecutionId  *string
 	JenticOperation    *string
-	JenticToolkitId    *string
-	PreferenceApplied  *string
-	Traceparent        *string
-	Tracestate         *string
+	// Deprecated: this header has been marked as deprecated upstream, but no `x-deprecated-reason` was set
+	JenticToolkitId   *string
+	PreferenceApplied *string
+	Traceparent       *string
+	Tracestate        *string
 }
 
 // ExecutePatchHTTPResp429Headers the declared response headers of an HTTP 429 response for ExecutePatch
@@ -2989,6 +3313,7 @@ type ExecutePostHTTPResp200Headers struct {
 	JenticCredentialName *string
 	JenticExecutionId    *string
 	JenticOperation      *string
+	// Deprecated: this header has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	JenticToolkitId      *string
 	JenticUpstreamStatus *int
 	PreferenceApplied    *string
@@ -3002,10 +3327,11 @@ type ExecutePostHTTPResp202Headers struct {
 	JenticApiVendor    *string
 	JenticExecutionId  *string
 	JenticOperation    *string
-	JenticToolkitId    *string
-	PreferenceApplied  *string
-	Traceparent        *string
-	Tracestate         *string
+	// Deprecated: this header has been marked as deprecated upstream, but no `x-deprecated-reason` was set
+	JenticToolkitId   *string
+	PreferenceApplied *string
+	Traceparent       *string
+	Tracestate        *string
 }
 
 // ExecutePostHTTPResp429Headers the declared response headers of an HTTP 429 response for ExecutePost
@@ -3161,6 +3487,7 @@ type ExecutePutHTTPResp200Headers struct {
 	JenticCredentialName *string
 	JenticExecutionId    *string
 	JenticOperation      *string
+	// Deprecated: this header has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	JenticToolkitId      *string
 	JenticUpstreamStatus *int
 	PreferenceApplied    *string
@@ -3174,10 +3501,11 @@ type ExecutePutHTTPResp202Headers struct {
 	JenticApiVendor    *string
 	JenticExecutionId  *string
 	JenticOperation    *string
-	JenticToolkitId    *string
-	PreferenceApplied  *string
-	Traceparent        *string
-	Tracestate         *string
+	// Deprecated: this header has been marked as deprecated upstream, but no `x-deprecated-reason` was set
+	JenticToolkitId   *string
+	PreferenceApplied *string
+	Traceparent       *string
+	Tracestate        *string
 }
 
 // ExecutePutHTTPResp429Headers the declared response headers of an HTTP 429 response for ExecutePut

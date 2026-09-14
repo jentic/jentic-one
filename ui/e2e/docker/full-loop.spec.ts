@@ -1,9 +1,8 @@
 import { test, expect } from '@playwright/test';
 import {
 	authHeaders,
-	bindToolkitToAgent,
+	bindCredentialToAgent,
 	createApiKeyCredential,
-	createToolkit,
 	importInlineApi,
 	replaceAgentScopes,
 	uniqueSuffix,
@@ -15,7 +14,7 @@ import { provisionAdminOwnedAgent, fileAccessRequestAsAgent } from './agent-flow
  *
  * The end-to-end "agent gets to actually call an upstream" journey is:
  *
- *   import API → create toolkit → create credential → bind toolkit to agent
+ *   import API → create credential → bind credential to agent
  *     → grant capabilities:execute → file access request (as agent)
  *     → admin approves → mint agent token → broker GET → read execution back
  *
@@ -29,7 +28,7 @@ import { provisionAdminOwnedAgent, fileAccessRequestAsAgent } from './agent-flow
  *   - #526 (F-9): a standalone broker never installs the registry resolver, so
  *     every /execute 500s until that boot-ordering bug is fixed.
  *   - #527 (F-10): a vendor-only credential persists api_name='' (not NULL), so
- *     the broker's IS NULL wildcard never matches → no_toolkit_binding. The
+ *     the broker's IS NULL wildcard never matches → no matching binding. The
  *     credential here pins the exact API identity to sidestep it, but the fix
  *     belongs upstream.
  *   - #539 (F-11): a successful broker execution did not surface in
@@ -38,7 +37,7 @@ import { provisionAdminOwnedAgent, fileAccessRequestAsAgent } from './agent-flow
  * When #526/#527/#539 land, the fixme tail can be un-fixme'd and asserted live.
  */
 
-test('full loop prefix: import → toolkit → credential → bind → grant → file → approve', async ({
+test('full loop prefix: import → credential → bind → grant → file → approve', async ({
 	page,
 	request,
 }) => {
@@ -53,39 +52,37 @@ test('full loop prefix: import → toolkit → credential → bind → grant →
 	// 1. Import an API into the local registry (async job; helper polls it).
 	await importInlineApi(request, { vendor, apiName, title: `e2e full-loop ${sfx}` });
 
-	// 2. Create a toolkit the agent will be bound to.
-	const toolkitId = await createToolkit(request, `e2e-loop-tk-${sfx}`);
-
-	// 3. Create a credential. Pin the EXACT resolved API identity (not a bare
+	// 2. Create a credential. Pin the EXACT resolved API identity (not a bare
 	//    vendor) to sidestep #527 (F-10) so this stays a faithful happy-path.
-	await createApiKeyCredential(request, {
+	const credentialId = await createApiKeyCredential(request, {
 		name: `e2e-loop-cred-${sfx}`,
 		vendor,
 		apiName,
 		apiVersion: '1.0.0',
 	});
 
-	// 4. Provision an admin-owned agent (register → approve → own).
+	// 3. Provision an admin-owned agent (register → approve → own).
 	const agent = await provisionAdminOwnedAgent(request, { name: `e2e-loop-agent-${sfx}` });
 
-	// 5. Bind the toolkit + grant capabilities:execute via the PUBLIC API
-	//    (the scope endpoints that landed with #517 / closed F-7).
-	await bindToolkitToAgent(request, agent.clientId, toolkitId);
+	// 4. Bind the credential directly + grant capabilities:execute via the
+	//    PUBLIC API (the scope endpoints that landed with #517 / closed F-7).
+	await bindCredentialToAgent(request, agent.clientId, credentialId);
 	const scopes = await replaceAgentScopes(request, agent.clientId, ['capabilities:execute']);
 	expect(scopes).toContain('capabilities:execute');
 
-	// 6. File an access request AS the agent and approve it from the UI — the
+	// 5. File an access request AS the agent and approve it from the UI — the
 	//    real human-in-the-loop gate. Because the agent is admin-owned, the
 	//    admin satisfies owns_filer and the decision is authorised. We file a
-	//    toolkit:bind for the REAL toolkit created above (by its id) so the
-	//    approved decision applies a genuine, resolvable effect. The row is
+	//    credential:bind for the REAL credential created above (by its id) so
+	//    the approved decision applies a genuine, resolvable effect (filing
+	//    stamps a read-only default rule set — theme-5 phase 3). The row is
 	//    matched in the queue by filer name (the queue resolves the agent id to
 	//    its directory name via <ActorLabel>).
 	await fileAccessRequestAsAgent(request, agent, {
 		reason: `e2e full-loop ${sfx}`,
-		resourceType: 'toolkit',
+		resourceType: 'credential',
 		action: 'bind',
-		resourceId: toolkitId,
+		resourceId: credentialId,
 	});
 
 	await page.goto('/app/access-requests');

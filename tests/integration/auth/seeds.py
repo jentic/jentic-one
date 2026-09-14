@@ -15,8 +15,11 @@ from jentic_one.admin.repos import (
     ActorScopeGrantRepository,
     AgentRepository,
     OAuthClientRepository,
+    UserPermissionGrantRepository,
     UserRepository,
+    UserSecretRepository,
 )
+from jentic_one.admin.services._support.passwords import hash_password
 from jentic_one.auth.services.authorize_service import AuthorizeService
 from jentic_one.auth.services.oauth_grant_service import OAuthGrantService
 from jentic_one.shared.context import Context
@@ -48,6 +51,25 @@ async def seed_user(ctx: Context, user_id: str) -> str:
         return user.id
 
 
+#: Password used by every seeded local-login account (see seed_password_user).
+SEED_PASSWORD = "correct horse battery staple"
+
+
+async def seed_password_user(ctx: Context, user_id: str) -> tuple[str, str]:
+    """Seed a user with a password (SEED_PASSWORD); returns (user_id, email).
+
+    Shared by the local-login and session-continue web suites — both walk the
+    /authorize flow against a first-party password account.
+    """
+    uid = await seed_user(ctx, user_id)
+    async with ctx.admin_db.session() as session:
+        await UserSecretRepository.set_password_hash(
+            session, uid, password_hash=hash_password(SEED_PASSWORD), created_by=SEED_MARKER
+        )
+        await session.commit()
+    return uid, f"{uid}@grants.test"
+
+
 async def seed_agent(
     ctx: Context,
     *,
@@ -76,6 +98,25 @@ async def seed_agent(
             )
         await session.commit()
         return agent.id
+
+
+async def seed_permissions(ctx: Context, user_id: str, permissions: list[str]) -> None:
+    """Grant assigned permissions to a seeded user (P4 hybrid arm control).
+
+    The inline consent creation splits on the user's effective permissions
+    (``agents:write`` → ACTIVE, else PENDING), so web tests that expect the
+    original ACTIVE arm must hold the grant the SPA door would demand.
+    Stamped ``created_by=SEED_MARKER`` for the shared cleanup.
+    """
+    async with ctx.admin_db.session() as session:
+        await UserPermissionGrantRepository.set_permissions(
+            session,
+            user_id,
+            permissions=set(permissions),
+            granted_by=None,
+            created_by=SEED_MARKER,
+        )
+        await session.commit()
 
 
 async def seed_client(
@@ -132,7 +173,7 @@ async def mint_grant_channel_tokens(
         scopes=" ".join(grant_scopes),
         grant_id=grant_id,
     )
-    access, refresh, id_token = await authorize_svc.exchange_code(
+    access, refresh, id_token, _scopes = await authorize_svc.exchange_code(
         code=code,
         code_verifier=CODE_VERIFIER,
         redirect_uri=REDIRECT_URI,

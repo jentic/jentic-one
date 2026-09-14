@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { http, HttpResponse } from 'msw';
-import { page } from '@vitest/browser/context';
+import { page } from 'vitest/browser';
 import { Routes, Route } from 'react-router';
 import {
 	renderWithProviders,
@@ -274,7 +274,7 @@ describe('AgentsPage — agents lifecycle', () => {
 	it('pages through the cursor list with Load more', async () => {
 		const user = userEvent.setup();
 		// Named to avoid shadowing the `page` viewport helper imported from
-		// @vitest/browser/context above.
+		// vitest/browser above.
 		const agentRow = (id: string, name: string) => ({
 			id,
 			name,

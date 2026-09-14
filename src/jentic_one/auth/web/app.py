@@ -20,6 +20,7 @@ from jentic_one.auth.web.routers import (
     authorize,
     discovery,
     identity,
+    local_login,
     oauth,
     oauth_client_registration,
     oauth_grants,
@@ -59,6 +60,9 @@ def get_routers() -> list[tuple[APIRouter, str, list[str]]]:
         # gated by server.mcp.oauth.enabled (404 when off).
         (discovery.mcp_router, "", []),
         (authorize.router, "", []),
+        # Local-account login form on the /authorize flow. Gated by
+        # auth.local_login.enabled (404 when off).
+        (local_login.router, "", []),
         (identity.router, "", []),
         (agents.router, "", []),
         (service_accounts.router, "", []),

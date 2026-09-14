@@ -22,8 +22,8 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from jentic_one.admin.services.schemas.oauth_clients import OAuthClientView
+from jentic_one.auth.web.flow import derive_key, sign_payload
 from jentic_one.auth.web.routers import authorize
-from jentic_one.auth.web.routers.authorize import _derive_key, _sign_payload
 from jentic_one.shared.config import AuthConfig
 from jentic_one.shared.state.backend import MemoryStateBackend
 
@@ -72,7 +72,7 @@ def _make_app() -> tuple[TestClient, MemoryStateBackend]:
 
 
 def _signed_state() -> str:
-    return _sign_payload(
+    return sign_payload(
         {
             "client_id": _CLIENT_ID,
             "redirect_uri": _REDIRECT_URI,
@@ -82,7 +82,7 @@ def _signed_state() -> str:
             "original_state": None,
             "iat": str(int(time.time())),
         },
-        _derive_key(_JWT_SECRET, "state"),
+        derive_key(_JWT_SECRET, "state"),
         purpose="state",
     )
 
@@ -126,7 +126,7 @@ def _seed_consent_handle(backend: MemoryStateBackend, handle: str = _HANDLE) -> 
     ],
 )
 @patch("jentic_one.auth.web.routers.authorize.AuthorizeService")
-@patch("jentic_one.auth.web.routers.authorize.OAuthClientService")
+@patch("jentic_one.auth.web.flow.OAuthClientService")
 def test_callback_rejects_client_gated_mid_flow(
     mock_client_svc_cls: MagicMock,
     mock_authorize_cls: MagicMock,
@@ -169,7 +169,7 @@ def test_callback_rejects_client_gated_mid_flow(
     ],
 )
 @patch("jentic_one.auth.web.routers.authorize.AuthorizeService")
-@patch("jentic_one.auth.web.routers.authorize.OAuthClientService")
+@patch("jentic_one.auth.web.flow.OAuthClientService")
 def test_consent_submit_rejects_client_gated_mid_flow(
     mock_client_svc_cls: MagicMock,
     mock_authorize_cls: MagicMock,
@@ -202,7 +202,7 @@ def test_consent_submit_rejects_client_gated_mid_flow(
 
 
 @patch("jentic_one.auth.web.routers.authorize.AuthorizeService")
-@patch("jentic_one.auth.web.routers.authorize.OAuthClientService")
+@patch("jentic_one.auth.web.flow.OAuthClientService")
 def test_consent_submit_approved_client_still_mints_code(
     mock_client_svc_cls: MagicMock,
     mock_authorize_cls: MagicMock,

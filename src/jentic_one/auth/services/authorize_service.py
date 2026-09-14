@@ -12,7 +12,11 @@ from datetime import UTC, datetime, timedelta
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from jentic_one.admin.core.permissions import ALL_PERMISSIONS
+from jentic_one.admin.core.permissions import (
+    AGENTS_WRITE,
+    ALL_PERMISSIONS,
+    compute_effective,
+)
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.repos import (
     ActorScopeGrantRepository,
@@ -34,7 +38,7 @@ from jentic_one.auth.core.idp import (
     get_default_idp_grants,
 )
 from jentic_one.auth.services.errors import InvalidGrantError, UserNotAdmittedError
-from jentic_one.auth.services.token_service import TokenService
+from jentic_one.auth.services.token_service import TokenService, resolve_effective_scopes
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
 from jentic_one.shared.config import AuthConfig
 from jentic_one.shared.context import Context
@@ -88,6 +92,19 @@ class AgentConsentOption:
     id: str
     name: str
     scopes: frozenset[str]
+
+
+@dataclass(frozen=True, slots=True)
+class PendingAgentRef:
+    """The newest PENDING agent owned by the consenting user (P4 hybrid).
+
+    Carries only what the awaiting-approval page needs — the id the status
+    blob is bound to and the display name. Deliberately no scopes: a pending
+    agent has no live grants until an admin approves it.
+    """
+
+    id: str
+    name: str
 
 
 class AuthorizeService:
@@ -282,6 +299,70 @@ class AuthorizeService:
                 for agent in agents
             ]
 
+    async def owner_has_any_agents(self, user_id: str) -> bool:
+        """Whether the user owns ANY agent row, in any status.
+
+        The inline create-agent arm (P4) keys on this, NOT on the active-only
+        picker predicate above: a user whose agents were all disabled or
+        archived by an admin has zero *consentable* agents but is not a
+        first-run user — offering the create form there would let the owner
+        mint a fresh ACTIVE agent mid-flow and sidestep the admin's action.
+        "First run" means zero agent rows, ever.
+        """
+        async with self._ctx.admin_db.session() as session:
+            agents = await AgentRepository.list_by_owner(session, user_id, limit=1)
+            return bool(agents)
+
+    async def user_can_create_active_agent(self, user_id: str) -> bool:
+        """Whether the consenting user would pass POST /agents' ``agents:write`` gate.
+
+        The inline consent creation must not out-privilege the SPA door
+        (security review on P4): every authenticated agent-creation surface
+        requires ``agents:write``, so the mid-flow arm split keys on the SAME
+        math the web gate applies — the user's assigned permission grants
+        expanded through the static implication map (``org:admin`` implies
+        ``agents:write`` there, exactly as ``get_current_identity``'s
+        ``compute_effective`` + org:admin check would admit that caller).
+        Evaluated server-side against the consent handle's subject; the
+        browser asserts nothing.
+        """
+        async with self._ctx.admin_db.session() as session:
+            grants = await UserPermissionGrantRepository.get_grants_for_user(session, user_id)
+        effective = compute_effective({g.permission for g in grants})
+        return AGENTS_WRITE in effective
+
+    async def newest_pending_agent(self, user_id: str) -> PendingAgentRef | None:
+        """The user's newest ``status='pending'`` agent, or None.
+
+        The consent page's awaiting-approval arm (P4 hybrid) keys on this: a
+        user whose only agents sit in PENDING is mid-approval (the inline
+        create's pending arm, or the ``/register`` queue), so re-entering the
+        flow parks them on the awaiting page for the newest one instead of a
+        dead end. Newest-first mirrors the picker's ordering.
+        """
+        async with self._ctx.admin_db.session() as session:
+            agents = await AgentRepository.list_by_owner(
+                session,
+                user_id,
+                limit=1,
+                filters=[Agent.status == ActorStatus.PENDING.value],
+            )
+        if not agents:
+            return None
+        return PendingAgentRef(id=agents[0].id, name=agents[0].name)
+
+    async def get_agent_status(self, agent_id: str) -> str | None:
+        """The raw lifecycle status of an agent row, or None when absent.
+
+        Read path for the anonymous pending-agent status poll: the caller
+        (web layer) collapses it into the tri-state and never exposes more —
+        the blob gating the poll is bound to one agent id, so this can only
+        ever be asked about the agent the flow itself parked on.
+        """
+        async with self._ctx.admin_db.session() as session:
+            agent = await AgentRepository.get_by_id(session, agent_id)
+        return None if agent is None else agent.status
+
     async def issue_authorization_code(
         self,
         *,
@@ -417,19 +498,26 @@ class AuthorizeService:
         redirect_uri: str,
         client_id: str,
         oauth_client_id: str | None = None,
-    ) -> tuple[str, str, str | None]:
+    ) -> tuple[str, str, str | None, list[str]]:
         """Exchange auth code + PKCE verifier for tokens.
 
-        Returns (access_token, refresh_token, id_token). Grant-bearing codes
-        mint actor=AGENT tokens bound to the consent grant and
-        return ``id_token=None`` (D11 — no OIDC identity on the agent
-        channel); plain codes keep the act-as-user path with an id_token.
+        Returns (access_token, refresh_token, id_token, scopes). ``scopes`` is
+        the effective set the minted access token will actually enforce,
+        reported per RFC 6749 §5.1: for grant-bearing (agent-channel) codes it
+        is recomputed at exchange time the way the live resolvers enforce it
+        (agent live grants ∩ client ceiling ∩ consent-grant scopes, via
+        :func:`resolve_effective_scopes`); for plain codes it is the
+        authorize-time snapshot. Grant-bearing codes mint actor=AGENT tokens
+        bound to the consent grant and return ``id_token=None`` (D11 — no OIDC
+        identity on the agent channel); plain codes keep the act-as-user path
+        with an id_token.
         """
         code_hash = _hash_code(code)
         now = datetime.now(UTC)
         grant_id: str | None = None
         grant_agent_id: str | None = None
         grant_scopes: list[str] = []
+        grant_effective_scopes: list[str] = []
 
         async with self._ctx.admin_db.transaction() as session:
             auth_code = await AuthorizationCodeRepository.get_by_hash(
@@ -487,6 +575,25 @@ class AuthorizeService:
                 grant_id = grant.id
                 grant_agent_id = grant.agent_id
                 grant_scopes = list(grant.scopes)
+                # Reported set (RFC 6749 §5.1) — the resolvers ignore the
+                # snapshot for agent tokens and enforce live grants ∩ client
+                # ceiling ∩ grant scopes from the token's first use, so the
+                # consent-time D2 set alone would over-report a scope revoked
+                # inside the code TTL (the consent-time snapshot is not
+                # trusted across the TTL — same posture as the gates above).
+                grant_effective_scopes = await resolve_effective_scopes(
+                    session,
+                    actor_id=grant.agent_id,
+                    actor_type=ActorType.AGENT,
+                    snapshot_scopes=grant_scopes,
+                    is_ephemeral=False,
+                    client_ceiling=(
+                        frozenset(oauth_client.allowed_scopes)
+                        if oauth_client.allowed_scopes is not None
+                        else None
+                    ),
+                    grant_ceiling=frozenset(grant.scopes),
+                )
 
             user = await UserRepository.get_by_id(session, auth_code.user_id)
 
@@ -524,7 +631,7 @@ class AuthorizeService:
                 oauth_client_id=oauth_client_id,
                 oauth_grant_id=grant_id,
             )
-            return access_token, refresh_token, None
+            return access_token, refresh_token, None, grant_effective_scopes
 
         scopes = auth_code.scopes.split() if auth_code.scopes else ["openid"]
         access_token, refresh_token = await self._token_svc.issue_pair(
@@ -539,7 +646,14 @@ class AuthorizeService:
             nonce=auth_code.nonce,
         )
 
-        return access_token, refresh_token, id_token
+        # Reported (§5.1) as granted at authorize time, deliberately: the user
+        # channel's set may include OIDC passthrough scopes (openid/email/…)
+        # that are consumed by the id_token and never enforced as platform
+        # permissions, and enforcement additionally intersects the *live*
+        # client ceiling at resolve time. Standard OIDC posture — the scope
+        # member tells the client what its authorization covers (including
+        # the identity scopes), not the platform-permission subset.
+        return access_token, refresh_token, id_token, scopes
 
     async def _resolve_or_create_user(self, claims: IdpClaims) -> str:
         """Resolve external identity to existing user or create a new one.

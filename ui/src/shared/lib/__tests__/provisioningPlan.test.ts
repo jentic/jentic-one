@@ -21,13 +21,13 @@ import type { AccessRequest, AccessRequestItem } from '@/shared/lib/accessReques
 function item(partial: Partial<AccessRequestItem>): AccessRequestItem {
 	return {
 		id: partial.id ?? 'arqi_x',
-		resource_type: partial.resource_type ?? 'toolkit',
-		action: partial.action ?? 'create',
+		resource_type: partial.resource_type ?? 'credential',
+		action: partial.action ?? 'provision',
 		status: partial.status ?? 'pending',
 		resource_reference: partial.resource_reference ?? null,
 		resource_id: partial.resource_id ?? null,
-		to_id: partial.to_id ?? null,
 		rules: partial.rules ?? null,
+		rule_set_id: partial.rule_set_id ?? null,
 		decision_reason: partial.decision_reason ?? null,
 	};
 }
@@ -48,34 +48,50 @@ function plan(items: AccessRequestItem[]): AccessRequest {
 
 const REF = { vendor: 'posthog.com', name: 'posthog-api', version: '1.0.0' };
 
+/** The canonical 2-item plan: a provision intent + the agent↔credential bind. */
 function fullPlan(): AccessRequest {
 	return plan([
-		item({ id: 'i1', resource_type: 'toolkit', action: 'create', resource_reference: REF }),
 		item({
-			id: 'i2',
+			id: 'i1',
 			resource_type: 'credential',
 			action: 'provision',
 			resource_reference: { ...REF, security_scheme: 'bearer' },
 		}),
-		item({ id: 'i3', resource_type: 'credential', action: 'bind' }),
-		item({ id: 'i4', resource_type: 'toolkit', action: 'bind', resource_reference: REF }),
+		item({ id: 'i2', resource_type: 'credential', action: 'bind' }),
 	]);
 }
 
 describe('provisioningPlan', () => {
-	it('recognizes a provisioning plan by its fulfilment intents', () => {
+	it('recognizes a provisioning plan by its credential:provision intent', () => {
 		expect(isProvisioningPlan(fullPlan())).toBe(true);
 	});
 
-	it('does not treat a plain toolkit:bind request as a plan', () => {
+	it('does not treat a plain credential:bind request as a plan', () => {
 		const req = plan([
-			item({ resource_type: 'toolkit', action: 'bind', resource_reference: REF }),
+			item({ resource_type: 'credential', action: 'bind', resource_reference: REF }),
 		]);
 		expect(isProvisioningPlan(req)).toBe(false);
 	});
 
-	it('extracts the API reference from the toolkit:create item', () => {
+	it('extracts the API reference from the credential:provision item', () => {
 		expect(planApiReference(fullPlan())).toEqual({
+			vendor: 'posthog.com',
+			name: 'posthog-api',
+			version: '1.0.0',
+		});
+	});
+
+	it('falls back to the credential:bind reference when the provision item lacks one', () => {
+		const req = plan([
+			item({ id: 'i1', resource_type: 'credential', action: 'provision' }),
+			item({
+				id: 'i2',
+				resource_type: 'credential',
+				action: 'bind',
+				resource_reference: REF,
+			}),
+		]);
+		expect(planApiReference(req)).toEqual({
 			vendor: 'posthog.com',
 			name: 'posthog-api',
 			version: '1.0.0',
@@ -87,104 +103,99 @@ describe('provisioningPlan', () => {
 	});
 
 	it('detects a no-auth plan (no credential:provision item)', () => {
-		const noAuth = plan([
-			item({ resource_type: 'toolkit', action: 'create', resource_reference: REF }),
-			item({ resource_type: 'credential', action: 'bind' }),
-			item({ resource_type: 'toolkit', action: 'bind', resource_reference: REF }),
-		]);
+		const noAuth = plan([item({ resource_type: 'credential', action: 'bind' })]);
 		expect(planIsNoAuth(noAuth)).toBe(true);
 		expect(planAuthType(noAuth)).toBeNull();
 	});
 
 	it('detects a no-auth plan by security_scheme=no_auth on the provision item', () => {
 		const noAuth = plan([
-			item({ resource_type: 'toolkit', action: 'create', resource_reference: REF }),
 			item({
 				resource_type: 'credential',
 				action: 'provision',
 				resource_reference: { ...REF, security_scheme: 'no_auth' },
 			}),
 			item({ resource_type: 'credential', action: 'bind' }),
-			item({ resource_type: 'toolkit', action: 'bind', resource_reference: REF }),
 		]);
 		expect(planIsNoAuth(noAuth)).toBe(true);
 		expect(planAuthType(noAuth)).toBe('no_auth');
 	});
 
 	it('orders steps, omitting credentialProvision for a no-auth plan', () => {
-		expect(planSteps(fullPlan())).toEqual([
-			'toolkitCreate',
-			'credentialProvision',
-			'credentialBind',
-			'toolkitBind',
-			'review',
-		]);
+		expect(planSteps(fullPlan())).toEqual(['credentialProvision', 'credentialBind', 'review']);
 		const noAuth = plan([
-			item({ resource_type: 'toolkit', action: 'create', resource_reference: REF }),
+			item({
+				resource_type: 'credential',
+				action: 'provision',
+				resource_reference: { ...REF, security_scheme: 'no_auth' },
+			}),
 			item({ resource_type: 'credential', action: 'bind' }),
-			item({ resource_type: 'toolkit', action: 'bind', resource_reference: REF }),
 		]);
-		expect(planSteps(noAuth)).toEqual([
-			'toolkitCreate',
-			'credentialBind',
-			'toolkitBind',
-			'review',
-		]);
+		expect(planSteps(noAuth)).toEqual(['credentialBind', 'review']);
 	});
 
 	it('finds items by resource_type/action', () => {
-		expect(findItem(fullPlan(), 'credential', 'bind')?.id).toBe('i3');
+		expect(findItem(fullPlan(), 'credential', 'bind')?.id).toBe('i2');
 		expect(findItem(fullPlan(), 'scope', 'grant')).toBeUndefined();
 	});
 
-	it('exposes item keys and the fulfilment set', () => {
-		expect(itemKey(item({ resource_type: 'toolkit', action: 'create' }))).toBe(
-			'toolkit:create',
+	it('exposes item keys and the fulfilment set (retired verbs excluded)', () => {
+		expect(itemKey(item({ resource_type: 'credential', action: 'provision' }))).toBe(
+			'credential:provision',
 		);
 		expect(FULFILMENT_ITEM_TYPES.has('credential:provision')).toBe(true);
 		expect(FULFILMENT_ITEM_TYPES.has('credential:bind')).toBe(false);
+		// `toolkit:create` is a RETIRED verb — never a fulfilment intent again.
+		expect(FULFILMENT_ITEM_TYPES.has('toolkit:create')).toBe(false);
+		expect(FULFILMENT_ITEM_TYPES.size).toBe(1);
 	});
 
 	describe('isPlanGranted / planDenialReason', () => {
-		const bind = (status: string, reason?: string): AccessRequestItem[] => [
-			item({ id: 'i1', resource_type: 'toolkit', action: 'create', status: 'approved' }),
-			item({ id: 'i3', resource_type: 'credential', action: 'bind', status }),
-			item({
-				id: 'i4',
-				resource_type: 'toolkit',
-				action: 'bind',
-				status,
-				decision_reason: reason ?? null,
-			}),
-		];
-
-		it('is granted only when BOTH bind items are approved', () => {
-			const req = plan(bind('approved'));
+		it('is granted only when the credential:bind item is approved', () => {
+			const req = plan([
+				item({
+					id: 'i1',
+					resource_type: 'credential',
+					action: 'provision',
+					status: 'approved',
+				}),
+				item({
+					id: 'i2',
+					resource_type: 'credential',
+					action: 'bind',
+					status: 'approved',
+				}),
+			]);
 			req.status = 'approved';
 			expect(isPlanGranted(req)).toBe(true);
 		});
 
-		it('is NOT granted when a bind is denied even if aggregate is partially_approved', () => {
-			// credential:bind approved, toolkit:bind denied → agent still can't call.
+		it('is NOT granted when the bind is denied even if aggregate is partially_approved', () => {
+			// provision approved (inert no-op), credential:bind denied → the
+			// agent still can't call the API.
 			const req = plan([
-				item({ id: 'i1', resource_type: 'toolkit', action: 'create', status: 'approved' }),
-				item({ id: 'i3', resource_type: 'credential', action: 'bind', status: 'approved' }),
 				item({
-					id: 'i4',
-					resource_type: 'toolkit',
+					id: 'i1',
+					resource_type: 'credential',
+					action: 'provision',
+					status: 'approved',
+				}),
+				item({
+					id: 'i2',
+					resource_type: 'credential',
 					action: 'bind',
 					status: 'denied',
-					decision_reason: 'no toolkit serves it',
+					decision_reason: 'no credential provisioned for it',
 				}),
 			]);
 			req.status = 'partially_approved';
 			expect(isPlanGranted(req)).toBe(false);
-			expect(planDenialReason(req)).toBe('no toolkit serves it');
+			expect(planDenialReason(req)).toBe('no credential provisioned for it');
 		});
 
 		it('is not granted when there are no bind items', () => {
 			const req = plan([
-				item({ resource_type: 'toolkit', action: 'create', status: 'approved' }),
+				item({ resource_type: 'credential', action: 'provision', status: 'approved' }),
 			]);
 			expect(isPlanGranted(req)).toBe(false);
 		});
@@ -200,25 +211,13 @@ describe('provisioningPlan', () => {
 		): AccessRequestItem[] => [
 			item({
 				id: `${p}1`,
-				resource_type: 'toolkit',
-				action: 'create',
-				resource_reference: ref,
-			}),
-			item({
-				id: `${p}2`,
 				resource_type: 'credential',
 				action: 'provision',
 				resource_reference: { ...ref, security_scheme: p === 'a' ? 'api_key' : 'no_auth' },
 			}),
 			item({
-				id: `${p}3`,
+				id: `${p}2`,
 				resource_type: 'credential',
-				action: 'bind',
-				resource_reference: ref,
-			}),
-			item({
-				id: `${p}4`,
-				resource_type: 'toolkit',
 				action: 'bind',
 				resource_reference: ref,
 			}),
@@ -230,7 +229,7 @@ describe('provisioningPlan', () => {
 				...chainFor(REF_A, 'a'),
 				item({
 					id: 'x1',
-					resource_type: 'toolkit',
+					resource_type: 'credential',
 					action: 'bind',
 					resource_reference: { vendor: 'github.com', name: 'api' },
 				}),
@@ -248,13 +247,13 @@ describe('provisioningPlan', () => {
 				'googleapis.com',
 			]);
 			const [a, b] = shape.chains;
-			expect(a.credentialBind?.id).toBe('a3');
-			expect(a.toolkitBind?.id).toBe('a4');
-			expect(b.credentialBind?.id).toBe('b3');
+			expect(a.provision?.id).toBe('a1');
+			expect(a.credentialBind?.id).toBe('a2');
+			expect(b.credentialBind?.id).toBe('b2');
 			expect(chainAuthType(a)).toBe('api_key');
 			expect(chainIsNoAuth(a)).toBe(false);
 			expect(chainIsNoAuth(b)).toBe(true);
-			expect(chainItems(a).map((it) => it.id)).toEqual(['a1', 'a2', 'a3', 'a4']);
+			expect(chainItems(a).map((it) => it.id)).toEqual(['a1', 'a2']);
 			// The plain bind to a non-chain API and the scope grant stay extras.
 			expect(shape.extras.map((it) => it.id)).toEqual(['x1', 'x2']);
 		});
@@ -265,34 +264,22 @@ describe('provisioningPlan', () => {
 			const req = plan([
 				item({
 					id: 'l1',
-					resource_type: 'toolkit',
-					action: 'create',
-					resource_reference: REF_A,
-				}),
-				item({
-					id: 'l2',
 					resource_type: 'credential',
 					action: 'provision',
 					resource_reference: { ...REF_A, security_scheme: 'bearer' },
 				}),
-				item({ id: 'l3', resource_type: 'credential', action: 'bind' }),
-				item({
-					id: 'l4',
-					resource_type: 'toolkit',
-					action: 'bind',
-					resource_reference: REF_A,
-				}),
+				item({ id: 'l2', resource_type: 'credential', action: 'bind' }),
 			]);
 			const shape = planChains(req);
 			expect(shape.chains).toHaveLength(1);
-			expect(shape.chains[0].credentialBind?.id).toBe('l3');
+			expect(shape.chains[0].credentialBind?.id).toBe('l2');
 			expect(shape.extras).toEqual([]);
 		});
 
 		it('never guesses which chain owns a reference-less bind when there are several', () => {
 			const req = plan([
-				...chainFor(REF_A, 'a').filter((it) => it.id !== 'a3'),
-				...chainFor(REF_B, 'b').filter((it) => it.id !== 'b3'),
+				...chainFor(REF_A, 'a').filter((it) => it.id !== 'a2'),
+				...chainFor(REF_B, 'b').filter((it) => it.id !== 'b2'),
 				item({ id: 'orphan', resource_type: 'credential', action: 'bind' }),
 			]);
 			const shape = planChains(req);
@@ -303,7 +290,7 @@ describe('provisioningPlan', () => {
 
 		it('yields no chains for a plain (non-plan) request', () => {
 			const req = plan([
-				item({ resource_type: 'toolkit', action: 'bind', resource_reference: REF_A }),
+				item({ resource_type: 'credential', action: 'bind', resource_reference: REF_A }),
 			]);
 			const shape = planChains(req);
 			expect(shape.chains).toEqual([]);

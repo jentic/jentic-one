@@ -111,25 +111,36 @@ class ServiceAccountAuthService:
 
     async def authenticate_client_credentials(
         self, client_id: str, client_secret: str
-    ) -> tuple[str, str]:
+    ) -> tuple[str, str, list[str]]:
         """Verify client_id + client_secret, issue an access+refresh pair.
 
-        Returns (access_token, refresh_token).
-        Raises InvalidGrantError on authentication failure.
+        Returns (access_token, refresh_token, scopes). ``scopes`` is the
+        service account's live ``actor_scope_grants`` set stamped on the
+        minted pair, returned so the token endpoint can report the effective
+        scope per RFC 6749 §5.1.
+        Raises InvalidGrantError (§5.2 code ``invalid_client`` — one
+        indistinguishable message for unknown/non-active/secret-less/wrong-secret,
+        no oracle for probing client ids) on authentication failure.
         """
         async with self._ctx.admin_db.session() as session:
             sa = await ServiceAccountRepository.get_by_id(session, client_id)
             if sa is None or sa.status != ActorStatus.ACTIVE:
-                raise InvalidGrantError("invalid_client")
+                raise InvalidGrantError(
+                    "client authentication failed", oauth_error_code="invalid_client"
+                )
 
             cred = await ServiceAccountCredentialRepository.get_by_service_account_id(
                 session, client_id
             )
             if cred is None or cred.client_secret_hash is None:
-                raise InvalidGrantError("invalid_client")
+                raise InvalidGrantError(
+                    "client authentication failed", oauth_error_code="invalid_client"
+                )
 
             if not hmac.compare_digest(hash_secret(client_secret), cred.client_secret_hash):
-                raise InvalidGrantError("invalid_client")
+                raise InvalidGrantError(
+                    "client authentication failed", oauth_error_code="invalid_client"
+                )
 
             grants = await ActorScopeGrantRepository.list_for_actor(
                 session, client_id, actor_type=ActorType.SERVICE_ACCOUNT
@@ -147,7 +158,10 @@ class ServiceAccountAuthService:
             origin=None,
         )
 
-        return await self._token_svc.issue_pair(client_id, ActorType.SERVICE_ACCOUNT, scopes)
+        access_token, refresh_token = await self._token_svc.issue_pair(
+            client_id, ActorType.SERVICE_ACCOUNT, scopes
+        )
+        return access_token, refresh_token, scopes
 
     async def mint_task_token(
         self,

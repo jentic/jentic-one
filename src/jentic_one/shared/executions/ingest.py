@@ -15,7 +15,7 @@ async def record_execution(
     session: AsyncSession,
     *,
     execution_id: str,
-    toolkit_id: str,
+    toolkit_id: str | None,
     trace_id: str,
     started_at: datetime,
     status: ExecutionStatus,
@@ -34,13 +34,18 @@ async def record_execution(
     credential_id: str | None = None,
     credential_name: str | None = None,
 ) -> str:
-    """Persist a terminal execution record. Returns the record ID."""
+    """Persist a terminal execution record. Returns the record ID.
+
+    ``toolkit_id`` is nullable-legacy (theme-5 Phase 2): the legacy toolkit
+    path records its mediating toolkit; direct-binding executions pass ``None``
+    (their consumer attribution is ``credential_id``).
+    """
     if status not in tuple(ExecutionStatus):
         raise ValueError(f"Only terminal statuses allowed, got: {status!r}")
 
     record = ExecutionRecord(
         id=execution_id,
-        toolkit_id=toolkit_id,
+        toolkit_id=toolkit_id or None,
         trace_id=trace_id,
         started_at=started_at,
         status=status,
