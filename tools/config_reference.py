@@ -126,7 +126,18 @@ def _render_type(node: dict[str, Any], defs: dict[str, Any]) -> str:
         return " \\| ".join(json.dumps(v) for v in node["enum"])
     if "anyOf" in node or "oneOf" in node:
         variants = node.get("anyOf") or node.get("oneOf") or []
-        return " \\| ".join(_render_type(v, defs) for v in variants)
+        # A branch with no type information (e.g. a bare {"required": [...]}
+        # from a model's json_schema_extra, like EncryptionKey's
+        # exactly-one-source rule) is a validation constraint, not a type
+        # union member — skip it and fall through to the node's own type.
+        typed = [
+            v
+            for v in variants
+            if isinstance(v, dict)
+            and ({"$ref", "type", "enum", "const", "anyOf", "oneOf", "properties"} & v.keys())
+        ]
+        if typed:
+            return " \\| ".join(_render_type(v, defs) for v in typed)
     schema_type = node.get("type")
     if schema_type == "array":
         items = node.get("items")
