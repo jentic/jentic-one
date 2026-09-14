@@ -19,6 +19,7 @@ import httpx
 import structlog
 
 from jentic_one.shared.config import VendorIdentityProbeConfig
+from jentic_one.shared.url_validation import validate_upstream_url
 
 _logger = structlog.get_logger(__name__)
 
@@ -50,10 +51,18 @@ async def echo_identity(
     timeout_seconds: float = 15.0,
 ) -> IdentityEchoResult:
     """Run the identity probe and return the extracted identity."""
+    # Defense-in-depth SSRF guard: ``probe.endpoint`` is operator config, but
+    # a misconfigured entry could aim this call at a private / metadata target
+    # with the freshly minted bearer token — refuse to send it.
+    try:
+        safe_url = validate_upstream_url(probe.endpoint)
+    except ValueError as exc:
+        raise IdentityEchoError(f"unsafe upstream URL: {exc}") from exc
+
     async with httpx.AsyncClient(timeout=timeout_seconds) as client:
         response = await client.request(
             probe.method,
-            probe.endpoint,
+            safe_url,
             headers={
                 "Authorization": f"Bearer {access_token}",
                 "Accept": "application/json",
