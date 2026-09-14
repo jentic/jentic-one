@@ -189,6 +189,7 @@ describe('VendorConnectFlow — approve mode', () => {
 					description: 'Full control of private repositories',
 				},
 			],
+			reason: 'Need repo push access to open a follow-up PR on issue #42.',
 		};
 		worker.use(
 			http.get('/connect-sessions/sess_9', () => HttpResponse.json(session)),
@@ -228,6 +229,12 @@ describe('VendorConnectFlow — approve mode', () => {
 		// vendor defaults.
 		expect(await screen.findByText('repo')).toBeInTheDocument();
 		expect(await screen.findByText('requested')).toBeInTheDocument();
+		// The agent-supplied ``reason`` is the review page's single piece
+		// of "why" context — a regression that dropped it would strip the
+		// approver of the justification the whole review UX exists for.
+		expect(
+			await screen.findByText('Need repo push access to open a follow-up PR on issue #42.'),
+		).toBeInTheDocument();
 	});
 
 	it('renders an error alert when the approval link is invalid', async () => {

@@ -25,6 +25,13 @@ export interface ReviewSession {
 	resolved_flow: string;
 	requested_by_actor_id: string;
 	scopes: ReviewScope[];
+	/**
+	 * Optional free-text supplied by the initiating agent at ``:connect`` time
+	 * (``POST /integrations:connect``'s ``reason`` field). Renders under the
+	 * agent-request card on the review page so the human approver can see
+	 * *why* the agent wants this credential.
+	 */
+	reason: string | null;
 }
 
 export interface PermissionRule {
