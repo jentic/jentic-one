@@ -24,9 +24,11 @@ references are plain values:
   registry. `NULL` acts as a wildcard (a vendor-wide credential leaves
   `api_name`/`api_version` `NULL`), which is what makes most-specific-wins
   [credential resolution](../guides/credentials-and-toolkits.md) possible.
-- **Agent and toolkit ids** are carried by value where the admin DB records
-  which toolkit an agent is bound to (`agent_toolkit_bindings`), and
-  resolved back against the control DB when a name is needed.
+- **Agent and credential ids** are carried by value where the admin DB
+  records which credential an agent is bound to
+  (`agent_credential_bindings`), and resolved back against the control DB
+  when a name is needed. A binding's optional `rule_set_id` points the same
+  way at a shared `permission_rule_sets` row in the control DB.
 
 ## The headline entities
 
@@ -40,22 +42,24 @@ flowchart TB
     end
 
     subgraph cdb [control]
-        Toolkit --> ToolkitPermissionRule
-        Toolkit --> ToolkitCredentialBinding
-        Credential --> ToolkitCredentialBinding
+        Credential
+        RuleSet["PermissionRuleSet"] --> RuleSetRule["PermissionRuleSetRule"]
+        AgentPermissionRule
         AccessRequest --> AccessRequestItem
     end
 
     subgraph adb [admin]
         User --> Agent
-        Agent --> AgentToolkitBinding
+        Agent --> AgentCredentialBinding
         Job --> JobResult
         ExecutionRecord
         Events["Event / Audit"]
     end
 
     Credential -. "api-identity tuple" .-> Api
-    AgentToolkitBinding -. "toolkit id (by value)" .-> Toolkit
+    AgentCredentialBinding -. "credential id (by value)" .-> Credential
+    AgentCredentialBinding -. "rule_set_id (by value)" .-> RuleSet
+    AgentPermissionRule -. "(agent, credential) ids (by value)" .-> AgentCredentialBinding
     ExecutionRecord -. "operation / api ids (by value)" .-> Operation
 ```
 
@@ -82,11 +86,16 @@ spec files. `Overlay` rows record catalog edits; `CatalogSnapshot` and
 
 `Credential` is the polymorphic core row (typed detail tables carry
 API-key/basic/OAuth/SigV4 material, encrypted at rest via the
-[`shared/crypto/encryption.py`](../../src/jentic_one/shared/crypto/encryption.py) facade). A `Toolkit` groups permission rules
-(`ToolkitPermissionRule` — the default-deny allowlist the broker evaluates)
-with credential bindings. `AccessRequest`/`AccessRequestItem` implement the
-approval flow; `ToolkitKey` and `CustomerAPIKey` are bearer-key rows for
-[toolkit-scoped access](../guides/credentials-and-toolkits.md).
+[`shared/crypto/encryption.py`](../../src/jentic_one/shared/crypto/encryption.py) facade). Permission policy — the
+default-deny allowlist the broker evaluates — lives either inline per
+binding (`AgentPermissionRule`, keyed by the `(agent, credential)` pair) or
+in a shared, ordered `PermissionRuleSet` that several bindings can point at.
+`AccessRequest`/`AccessRequestItem` implement the approval flow;
+`CustomerAPIKey` is the bearer-key row for API-key access. The retired
+toolkit tables (`toolkits`, `toolkit_permission_rules`,
+`toolkit_credential_bindings`, `toolkit_keys`) remain until the phase-6b
+drops, gated on the `toolkit_flattening_acks` sentinel — see the
+[release runbook](../development/releasing.md).
 
 ### Admin — identity and operations
 

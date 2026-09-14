@@ -30,7 +30,7 @@ flowchart LR
 
     subgraph app [App process — JENTIC__APPS=registry,admin,control,auth]
         REG["registry/<br/>API catalog: import, search,<br/>inspect, overlays"]
-        CON["control/<br/>credentials, toolkits,<br/>access requests (+ /mcp mount)"]
+        CON["control/<br/>credentials, permission rules,<br/>access requests (+ /mcp mount)"]
         ADM["admin/<br/>users, agents, jobs, events,<br/>audit, monitoring, SPA"]
         AUTH["auth/<br/>registration (RFC 7591/7592),<br/>token exchange (RFC 7523), JWKS"]
     end
@@ -80,7 +80,7 @@ Five things the diagram compresses:
   admin DB to verify callers (API keys, permissions), a control process
   serving the `/mcp` mount reaches the registry DB for in-process
   search/inspect, and auth reads the control DB only to resolve
-  toolkit-binding names for the `/me` response.
+  credential-binding names for the `/me` response.
 - **The surface set is chosen at runtime.** One container image runs either
   role; `JENTIC__APPS` picks the surfaces, and the entrypoint refuses to
   bundle the broker with anything else
@@ -90,9 +90,9 @@ Five things the diagram compresses:
   [`src/jentic_one/auth/`](../../src/jentic_one/auth/), not inside admin
   ([identity and authorization](identity-and-authorization.md)).
 - **The broker holds all three database connections but a narrow job**: resolve
-  the operation (registry), select the toolkit and credential (the agent's
-  toolkit bindings live in admin, the toolkit's credential bindings in
-  control — a single cross-DB lookup), and record the execution (admin). It
+  the operation (registry), select the credential (the agent's credential
+  bindings live in admin, the credentials they point at in control — a
+  single cross-DB lookup), and record the execution (admin). It
   exposes essentially one route — a
   catch-all forward proxy ([broker execution](broker-execution.md)).
 - **The databases share no foreign keys.** Registry, control, and admin are
@@ -104,7 +104,7 @@ Five things the diagram compresses:
 | Surface | Owns | Package |
 | ------- | ---- | ------- |
 | Registry | The API catalog: imported OpenAPI descriptions as immutable revisions, search, inspection, overlays, catalog-update tracking | [`src/jentic_one/registry/`](../../src/jentic_one/registry/) |
-| Control | Credentials, toolkits, toolkit-credential bindings, permission rules, access requests; carries the optional `/mcp` mount | [`src/jentic_one/control/`](../../src/jentic_one/control/) |
+| Control | Credentials, permission rules and shared rule sets, access requests; carries the optional `/mcp` mount | [`src/jentic_one/control/`](../../src/jentic_one/control/) |
 | Admin | Operators (users), agents' admin records, jobs, events, executions monitor, audit log, instance config; serves the SPA | [`src/jentic_one/admin/`](../../src/jentic_one/admin/) |
 | Auth | Agent/OAuth-client registration and approval, Ed25519 assertion exchange, opaque tokens, API keys, JWKS and OAuth discovery | [`src/jentic_one/auth/`](../../src/jentic_one/auth/) |
 | Broker | The execution data plane: one credential-injecting forward proxy | [`src/jentic_one/broker/`](../../src/jentic_one/broker/) |

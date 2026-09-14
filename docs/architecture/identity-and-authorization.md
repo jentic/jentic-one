@@ -18,7 +18,12 @@ doesn't name one:
 | `user` | A human operator, signed in through the SPA or `jenticctl`. | Session token (JWT), or a password login exchanged for one. |
 | `agent` | An AI agent owned by a user. Registered first, approved by a human before it can act. | Ed25519-signed assertion → opaque access token, or a `jak_` API key. |
 | `service_account` | A headless integration. | `sak_` API key. |
-| `toolkit` | The toolkit itself, on the broker data plane only. | `jntc_live_` toolkit key. |
+
+The former `toolkit` actor is retired: a startup migration turns each
+`jntc_live_` toolkit key into a `sak_` service account, and a retired
+plaintext keeps authenticating as its migrated service account through the
+deprecation window (see the
+[release runbook](../development/releasing.md)).
 
 An agent's `Identity` carries its owner (`parent_actor_id`) and the owner's
 effective permissions (`parent_permissions`): an agent can never out-rank
@@ -101,7 +106,7 @@ Scopes shared across surfaces are canonical constants in
 - **`DEFAULT_AGENT_SCOPES`** is the safe agent baseline: execute, reads
   (`apis:read`, `executions:read`, `jobs:read`, `events:read`,
   `capabilities:read`), `catalog:import`, and the `owner:*:read` delegation
-  scopes for resources, toolkits, agents, credentials, and access requests
+  scopes for resources, agents, credentials, and access requests
   (not `owner:service-accounts:read`).
 - **Self-service elevation is bounded.** An agent may file a `scope:grant`
   access request only for `GRANTABLE_SCOPES` (the baseline plus
@@ -109,7 +114,7 @@ Scopes shared across surfaces are canonical constants in
   `overlays:confirm` — are deliberately excluded, so neither an agent nor a
   merely agent-owning operator can escalate through the request path.
 - **`owner:<resource>:read`** scopes power delegation: an operator holding
-  them sees their agents' rows (credentials, toolkits, access requests)
+  them sees their agents' rows (credentials, access requests)
   without being org admin. The `scoping/filters.py` modules translate these
   into row-level filters (see
   [surfaces and layering](surfaces-and-layering.md#the-scoping-packages)).
@@ -130,13 +135,14 @@ different questions:
    filters into repos, so a list endpoint only ever queries the rows the
    caller may see.
 3. **Execution permission** (broker): a brokered call must additionally
-   match a toolkit permission rule. This is **default-deny** — an agent
-   with `capabilities:execute` and a valid credential still cannot call an
-   API unless a human-approved toolkit binding explicitly allows that
-   vendor/API/operation (see [broker execution](broker-execution.md)).
+   match a permission rule on the agent's credential binding. This is
+   **default-deny** — an agent with `capabilities:execute` and a valid
+   credential still cannot call an API unless a human-approved
+   agent-credential binding explicitly allows that vendor/API/operation
+   (see [broker execution](broker-execution.md)).
 
 The chain for an agent's first real call is therefore: registration
-approval (human) → toolkit binding via an access request (human) → scope
+approval (human) → credential binding via an access request (human) → scope
 check (route) → permission rule (call). Each step is auditable, and none is
 implied by the previous one.
 

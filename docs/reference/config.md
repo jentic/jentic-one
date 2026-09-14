@@ -206,6 +206,8 @@ Broker surface configuration.
 | `broker.resolve_cache_ttl_seconds` | number | `3.0` | `JENTIC__BROKER__RESOLVE_CACHE_TTL_SECONDS` |  |
 | `broker.toolkit_cache_ttl_s` | number | `3.0` | `JENTIC__BROKER__TOOLKIT_CACHE_TTL_S` |  |
 | `broker.rule_cache_ttl_s` | number | `3.0` | `JENTIC__BROKER__RULE_CACHE_TTL_S` |  |
+| `broker.rule_cache_max_entries` | integer | `5000` | `JENTIC__BROKER__RULE_CACHE_MAX_ENTRIES` |  |
+| `broker.direct_bindings_enabled` | boolean | `true` | `JENTIC__BROKER__DIRECT_BINDINGS_ENABLED` |  |
 | `broker.jobs_api_base_url` | string \| null | `null` | `JENTIC__BROKER__JOBS_API_BASE_URL` |  |
 | `broker.jwt_secret` | string (secret) \| null | `null` | `JENTIC__BROKER__JWT_SECRET` |  |
 | `broker.jwt_verification.audience` | string \| null | `null` | `JENTIC__BROKER__JWT_VERIFICATION__AUDIENCE` |  |

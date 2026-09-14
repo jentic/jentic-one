@@ -70,17 +70,17 @@ imported description without editing the original, use [Overlays](overlays.md).
 httpbin needs none — skip to step 5. For an API that does authenticate, the
 operator stores what it needs (API key, bearer, basic, or an OAuth2 flow) in
 the UI. It is encrypted at rest and never returned to a caller — it is
-decrypted only inside the broker, at execution time. How credentials attach to
-toolkits and their one-active-credential-per-API rule:
-[Credentials and toolkits](credentials-and-toolkits.md).
+decrypted only inside the broker, at execution time. How a stored credential
+covers an API and how the broker picks one at execution time:
+[How credential resolution works](credentials-and-toolkits.md).
 
 ## 5. Grant access
 
 Access is **default-deny**: an approved agent is bound to nothing until an
 operator grants it. Asking is a reviewable request, not a silent widening. A
-freshly imported API has no **toolkit** yet (the grant bundle agents are
-bound to and credentials attach to), so ask for the whole path to first
-execution as one provisioning plan:
+freshly imported API has no **credential** stored for it yet, so ask for the
+whole path to first execution — provision a credential *and* bind this agent
+to it — as one provisioning plan:
 
 ```bash
 jentic access request --provision httpbin.org/httpbin --auth none   # returns a request id (and an approve_url)
@@ -97,8 +97,8 @@ route, not a browser page.
 `--auth none` declares that httpbin takes no credential. For an authenticated
 API, declare its type instead (`bearer`, `api_key`, `basic`, `oauth2`) — the
 operator enters the secret while approving; it never rides in your request.
-Once a toolkit already serves an API,
-`jentic access request --toolkit httpbin.org/httpbin` asks for just the
+Once a credential already serves an API,
+`jentic access request --api httpbin.org/httpbin` asks for just the
 binding.
 
 ## 6. Make the call

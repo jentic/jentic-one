@@ -31,7 +31,7 @@ Key behaviours (details and full flag syntax in the skill):
   `{"data": []}` means nothing is imported, not that you lack access.
 - **Denials teach you.** A denied `execute` exits 2 and prints an
   `agent_directive` on stderr with the exact recovery
-  (`no_toolkit_binding`, `credential_not_provisioned`, …). Follow its
+  (`no_credential_binding`, `credential_not_provisioned`, …). Follow its
   `suggested_command`; never re-send the same call.
 - The broker is a **forward proxy**: an execute target is always the
   operation's method plus its **full upstream URL** (`METHOD:https://…` —
@@ -45,13 +45,13 @@ Key behaviours (details and full flag syntax in the skill):
    like `catalog --update` or `import` do not exist. Before the first use of
    any command, run `jentic <command> --help`; every failure also prints the
    exact next command on stderr, so read the error before trying anything else.
-2. **A freshly imported API has no toolkit.** Your **first** access request
+2. **A freshly imported API has no credential.** Your **first** access request
    for it must be `--provision <vendor/name>` (which describes the whole path:
-   toolkit, credential, rules, binding). A bare `--toolkit <vendor/name>`
+   credential, rules, binding). A bare `--api <vendor/name>`
    request will be denied — nothing serves the API yet.
 3. **Withdraw mistakes before re-filing.** A new access request for the same
    target can be merged into your still-pending earlier request — so a
-   `--provision` filed after a doomed `--toolkit` can inherit its denial. If
+   `--provision` filed after a doomed `--api` can inherit its denial. If
    you filed a bad request, run `jentic access withdraw <request_id>` first,
    then file the correct one fresh.
 4. **One composite request per job**, always with `--reason` — never thrash
@@ -70,7 +70,7 @@ jentic access whoami
 jentic catalog search "crypto prices"
 jentic catalog import coincap-io/coincap-io
 
-# 3. First access request for a just-imported API: --provision, never --toolkit
+# 3. First access request for a just-imported API: --provision, never --api
 jentic access request --provision coincap-io/coincap-io \
   --auth api_key \
   --rules-json '[{"effect":"allow","methods":["GET"],"path":".*"}]' \
@@ -133,8 +133,8 @@ recovery — follow its `suggested_command` instead of retrying the same call.
 ## Going deeper
 
 - [First brokered call](../guides/first-call.md) — worked end-to-end example
-- [Credentials and toolkits](../guides/credentials-and-toolkits.md) — how a
-  stored credential maps onto APIs
+- [How credential resolution works](../guides/credentials-and-toolkits.md) —
+  how a stored credential maps onto APIs
 - [Overlays](../guides/overlays.md) — fixing an imported spec without editing it
 - A running instance serves its own agent map at `/llms.txt` and interactive
   references at `/app/docs` — prefer those for anything runtime-specific.

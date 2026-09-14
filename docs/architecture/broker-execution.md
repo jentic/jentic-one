@@ -20,13 +20,13 @@ sequenceDiagram
     participant D as Admin DB
 
     A->>B: METHOD /{full upstream URL} + bearer
-    B->>B: authenticate (token/API key/toolkit key), require capabilities:execute
+    B->>B: authenticate (token/API key), require capabilities:execute
     B->>B: reconstruct + validate URL (SSRF gate)
     B->>R: resolve operation (api_vendor, api_name, api_version)
-    B->>D: derive toolkits (agent→toolkit bindings)
-    B->>C: intersect with toolkit→credential bindings (0 → 403, >1 → 409)
-    B->>B: evaluate permission rules (default-deny)
-    B->>C: resolve credential (most specific wins, tie → 409)
+    B->>D: derive bound credentials (agent→credential bindings)
+    B->>C: intersect with credentials covering the API (0 → 403)
+    B->>C: select one credential (header pin → most specific; tie → 409)
+    B->>B: evaluate the binding's permission rules (default-deny)
     B->>B: inject secret (header/query/cookie), re-validate URL
     B->>P: dispatch: Deadline → Retry → CircuitBreaker → SigV4 → HTTP
     P->>U: forward request (hop-by-hop + spoofable headers stripped)
@@ -139,9 +139,11 @@ one place a secret meets a request:
 
 1. **Resolve** against the control DB by the API identity tuple
    (`api_vendor`, `api_name`, `api_version`; `NULL` = wildcard,
-   most-specific match wins). No match → `424` with a *provision this
-   credential* pointer; more than one → `409 ambiguous_credential` listing
-   the candidates. See [How credential resolution works](../guides/credentials-and-toolkits.md).
+   most-specific match wins), restricted to the caller's bound credentials
+   and honouring the `Jentic-Credential-Id`/`-Name` header pins. No usable
+   secret → `424` with a *provision this credential* pointer; a genuine tie
+   → `409 ambiguous_credential_binding` listing the candidates. See
+   [How credential resolution works](../guides/credentials-and-toolkits.md).
 2. **Refresh** OAuth tokens when expired (transient failures and
    needs-reconnect are distinct errors).
 3. **Inject** per credential type ([`broker/core/injection.py`](../../src/jentic_one/broker/core/injection.py)): bearer or
@@ -150,15 +152,19 @@ one place a secret meets a request:
    secret back.
 4. **Audit** — every resolve/decrypt emits a `CREDENTIAL_ACCESSED` event.
 
-Before any of that, the toolkit resolver
-([`broker/repos/toolkit_binding_resolver.py`](../../src/jentic_one/broker/repos/toolkit_binding_resolver.py), wrapped by the
-short-TTL cache in [`caching_toolkit_deriver.py`](../../src/jentic_one/broker/repos/caching_toolkit_deriver.py)) works out which toolkit serves
-the call — a single cross-DB lookup intersecting the agent's toolkit
-bindings (admin DB) with the toolkit→credential bindings (control DB); none
-→ `403`, several → `409` asking for
-`Jentic-Toolkit-Id` — and the toolkit's permission rules are evaluated
-**default-deny**: no matching rule, no call
-([`broker/repos/rule_evaluator.py`](../../src/jentic_one/broker/repos/rule_evaluator.py)).
+Before any of that, the binding deriver
+([`broker/repos/credential_binding_resolver.py`](../../src/jentic_one/broker/repos/credential_binding_resolver.py), wrapped by the
+short-TTL cache in [`caching_credential_deriver.py`](../../src/jentic_one/broker/repos/caching_credential_deriver.py)) works out which
+credentials the caller may use for the call — a single cross-DB lookup
+intersecting the agent's credential bindings (admin DB) with the active
+credentials covering the API (control DB); none → `403
+no_credential_binding` (or `403 credential_identity_mismatch` when a bound
+credential is a near-miss), several → resolution disambiguates (or asks for
+`Jentic-Credential-Id` with a `409`) — and the winning binding's permission
+rules are evaluated **default-deny**: no matching rule, no call
+([`broker/repos/agent_rule_evaluator.py`](../../src/jentic_one/broker/repos/agent_rule_evaluator.py)).
+The retired toolkit path remains behind `broker.direct_bindings_enabled`
+(default on) as an emergency fallback until the phase-6b table drops.
 
 ## What gets recorded
 

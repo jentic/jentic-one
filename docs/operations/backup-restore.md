@@ -1,7 +1,7 @@
 # Backup & restore
 
 A restorable backup is **data + key, together**. The databases restore
-without the keyset — catalog, agents, toolkits, audit trail, and execution
+without the keyset — catalog, agents, bindings, audit trail, and execution
 history all come back — but every stored credential secret is then
 permanently unreadable, and re-entering credentials is usually the painful
 part of a rebuild.
@@ -10,7 +10,7 @@ part of a rebuild.
 
 | Piece | Where it lives | Why |
 | ----- | -------------- | --- |
-| **The three databases** (registry, control, admin) | SQLite files on the data volume, or schemas in your Postgres instance | The catalog, credentials (encrypted), agents, toolkits, audit trail, execution history |
+| **The three databases** (registry, control, admin) | SQLite files on the data volume, or schemas in your Postgres instance | The catalog, credentials (encrypted), agents, bindings, audit trail, execution history |
 | **The credential-encryption keyset** | Your config — `credentials.encryption` in the config file, or the equivalent env var / Kubernetes Secret | Stored credential **secret material** is AES-encrypted at rest; without the keyset those secrets — and only those — are permanently unreadable. Everything else restores fine, but the credentials all have to be re-entered |
 | The rest of the config (`jentic-one.yaml` / env file / Helm values) | Wherever you configured the install | Not secret-critical, but a restore is much faster when you don't have to reconstruct it |
 

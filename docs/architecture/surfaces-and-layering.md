@@ -55,7 +55,7 @@ cross-surface needs are met three ways:
   the in-process seams (for example `InProcessRegistryResolver`, which lets
   the broker resolve operations without importing `jentic_one.registry`).
 - **Raw SQL at a named seam** — when the control plane must write an
-  admin-DB row (approving an access request binds a toolkit to an agent),
+  admin-DB row (approving an access request binds a credential to an agent),
   [`control/repos/effects_repo.py`](../../src/jentic_one/control/repos/effects_repo.py) uses raw SQL rather than importing admin's
   ORM models. The [worked example below](#a-request-layer-by-layer) traces
   this seam in action.
@@ -113,12 +113,12 @@ seam:
    detail.
 2. **`services/`** — `decide()` builds the identity's access filters, opens
    `control_db.transaction()`, and applies the decision plus the
-   control-side effects (credential→toolkit binds) **atomically** in that
-   one transaction.
+   control-side effects (the binding's permission rules) **atomically** in
+   that one transaction.
 3. **`repos/`** — `AccessRequestRepository.get(session, id, filters=…)`
    applies the filters it was handed. It never sees the `Identity` that
    produced them.
-4. **The cross-database seam** — an approved toolkit bind or scope grant
+4. **The cross-database seam** — an approved credential bind or scope grant
    must land in the *admin* DB, which the control transaction cannot span.
    So `decide()` commits phase 1, then drives the admin-DB writes through
    `EffectsRepository` (raw SQL, idempotent `ON CONFLICT`), and acks them
