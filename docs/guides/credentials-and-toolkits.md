@@ -115,8 +115,10 @@ The outcomes:
   credential is a near-miss (its identity does not cover this operation), the
   refusal is `403 credential_identity_mismatch` instead — fix the credential,
   don't file a request.
-- **1 winner → use it.** The execution record attributes the credential used
-  by id and name.
+- **1 winner → use it.** The response carries `Jentic-Credential-Id` and
+  `Jentic-Credential-Name` (absent when no stored credential was used), and
+  the execution record carries the same attribution — every execution names
+  the credential used, never the secret.
 - **A genuine same-specificity tie → `409 ambiguous_credential_binding`.**
   The body lists the candidates so the caller can resend with
   `Jentic-Credential-Name` or `Jentic-Credential-Id`. Each candidate carries

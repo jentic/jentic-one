@@ -25,7 +25,7 @@ sequenceDiagram
     B->>R: resolve operation (api_vendor, api_name, api_version)
     B->>D: derive bound credentials (agent→credential bindings)
     B->>C: intersect with credentials covering the API (0 → 403)
-    B->>C: select one credential (header pin → most specific; tie → 409)
+    B->>C: select one credential (header pin → most specific, tie → 409)
     B->>B: evaluate the binding's permission rules (default-deny)
     B->>B: inject secret (header/query/cookie), re-validate URL
     B->>P: dispatch: Deadline → Retry → CircuitBreaker → SigV4 → HTTP
