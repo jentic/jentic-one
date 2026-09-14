@@ -43,7 +43,6 @@ from jentic_one.control.services.integrations.connect_session_service import (
 from jentic_one.control.services.integrations.errors import (
     ConfirmationForbiddenError,
     InvalidPollTokenError,
-    SessionNotFoundError,
 )
 from jentic_one.control.services.integrations.flow_handlers.base import StatusReport
 from jentic_one.control.services.integrations.flow_handlers.device_authorization import (
@@ -690,11 +689,15 @@ async def test_complete_from_callback_refuses_state_replay(
 # ---------------------------------------------------------------------------
 
 
-async def test_get_status_raises_when_session_missing(
+async def test_get_status_refuses_missing_session_as_403(
     integration_context: Context,
     clean_session_tables: None,
 ) -> None:
+    # ``get_status`` must not distinguish "session doesn't exist" (404)
+    # from "session exists but poll_token is wrong" (403): the split
+    # would give an unauth'd caller a session-id enumeration oracle.
+    # Both branches surface as ``InvalidPollTokenError`` → 403.
     ctx = integration_context
     svc = ConnectSessionService(ctx)
-    with pytest.raises(SessionNotFoundError):
+    with pytest.raises(InvalidPollTokenError):
         await svc.get_status("sess_does_not_exist", poll_token="whatever")

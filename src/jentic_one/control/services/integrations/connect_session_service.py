@@ -28,6 +28,7 @@ from jentic_one.control.services.credentials.state import consume_callback_state
 from jentic_one.control.services.integrations import identity_echo
 from jentic_one.control.services.integrations.errors import (
     ConfirmationForbiddenError,
+    CredentialMissingCreatorError,
     InvalidPollTokenError,
     InvalidStateTransitionError,
     NoOpForFlowError,
@@ -407,6 +408,19 @@ class ConnectSessionService:
                     rules=permission_rules,
                     created_by=caller_actor_id,
                 )
+            elif permission_rules:
+                # Operators reading this log line can spot pre-migration
+                # configs that assumed the rules landed. Once
+                # ``agent_id`` becomes mandatory (agent-credential
+                # bindings replace toolkit membership) this branch goes
+                # away entirely.
+                _logger.info(
+                    "connect_session.permission_rules_dropped",
+                    session_id=row.id,
+                    vendor=row.vendor,
+                    rules_count=len(permission_rules),
+                    reason="no agent_id on session",
+                )
             await ConnectSessionRepository.update_fields(session, row.id, state="polling")
 
         _logger.info(
@@ -444,8 +458,14 @@ class ConnectSessionService:
         """
         async with self._ctx.control_db.session() as read_session:
             row = await ConnectSessionRepository.get_by_id(read_session, session_id)
+            # Uniformly surface "missing session" as ``InvalidPollTokenError``
+            # (403) rather than ``SessionNotFoundError`` (404). Anything else
+            # would give an unauth'd caller a session-id enumeration oracle:
+            # the ``credentials:connect`` scope guards the endpoint, but the
+            # ``poll_token`` is the real capability — without it, 403 for
+            # every id (missing or existing) is the only non-leaky answer.
             if row is None:
-                raise SessionNotFoundError(session_id)
+                raise InvalidPollTokenError("invalid poll_token")
             _verify_poll_token(row, poll_token)
 
         # Terminal states are immutable. bound_scopes comes off
@@ -684,12 +704,12 @@ class ConnectSessionService:
         # ``credentials:write``, so ``created_by`` is always populated by
         # the time a connect finalise runs against it — no need for a
         # ``"system"`` fallback (which would violate the no-system-actor
-        # invariant enforced by tests/arch).
+        # invariant enforced by tests/arch). Typed error rather than a
+        # bare ``RuntimeError`` so the router's
+        # ``ConnectSessionServiceError`` handler renders a structured
+        # 500 with ``error_code`` instead of an opaque exception.
         if credential.created_by is None:
-            raise RuntimeError(
-                f"credential {credential.id!r} has no created_by — "
-                "cannot finalise a connect flow without an initiator identity"
-            )
+            raise CredentialMissingCreatorError(credential.id)
         await self._write_finalise(
             credential_id=credential.id,
             handler=handler,
@@ -876,8 +896,13 @@ class ConnectSessionService:
         """
         async with self._ctx.control_db.session() as read_session:
             row = await ConnectSessionRepository.get_by_id(read_session, session_id)
+        # ``get_status`` parity: no session-existence oracle. An attacker
+        # without a valid ``poll_token`` gets 403 whether the session
+        # exists or not; a legitimate caller with a poll_token that
+        # predates cleanup also gets 403, which is harmless for the
+        # fire-and-forget unmount cancel (the caller ``.catch``es it).
         if row is None:
-            return
+            raise InvalidPollTokenError("invalid poll_token")
         _verify_poll_token(row, poll_token)
         if row.state in ("connected", "failed", "expired"):
             return
