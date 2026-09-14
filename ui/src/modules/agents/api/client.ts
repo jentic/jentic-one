@@ -1032,6 +1032,10 @@ export async function fetchInstanceIdentity(): Promise<InstanceIdentityEntity> {
 			// Older backends predate the field; absent means the endpoint
 			// doesn't exist there either, so hiding the HTTP variant is right.
 			mcpEnabled: res.mcp_enabled ?? false,
+			// Absent (older backend) and null (backend withholds a loopback
+			// broker on a remote install) both mean "unknown" — the snippet
+			// keeps its placeholder either way.
+			brokerUrl: res.broker_url ?? null,
 		};
 	} catch (error) {
 		throw toAgentsError(error, 'Failed to load the instance identity.');
@@ -1050,6 +1054,7 @@ function grantToEntity(r: OAuthGrantResponse): OAuthGrantEntity {
 		clientOrigin: r.client_origin ?? null,
 		userId: r.user_id,
 		agentId: r.agent_id,
+		agentStatus: r.agent_status ?? null,
 		scopes: r.scopes,
 		status: r.status,
 		createdAt: r.created_at,

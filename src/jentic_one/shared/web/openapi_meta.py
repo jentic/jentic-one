@@ -617,8 +617,8 @@ OPENAPI_TAGS: list[dict[str, str]] = [
         "description": (
             "Admin-managed registry of third-party OAuth clients (confidential, secret-bearing). "
             "Registered clients integrate with Jentic One via the standard Authorization Code + "
-            "PKCE flow. Admins can create, list, update, rotate secrets, and deactivate clients. "
-            "Deactivating a client immediately invalidates all tokens issued through it."
+            "PKCE flow. Admins can create, list, update, rotate secrets, and disable clients. "
+            "Disabling a client immediately invalidates all tokens issued through it."
         ),
     },
     {
@@ -759,6 +759,18 @@ PUBLIC_OPERATION_IDS: frozenset[str] = frozenset(
         # OAuth consent screen (presented after IdP login, before issuing the code).
         "consentPage",
         "consentSubmit",
+        # Inline first-agent creation on the zero-agents consent page (P4):
+        # same browser-mid-flow caller as the consent submit (no platform
+        # token yet); bound by the consent handle + a signed single-use
+        # agent-create blob, rate limited like the other consent endpoints.
+        "consentAgentCreate",
+        # Pending-agent status poll (P4 hybrid awaiting page): anonymous by
+        # design like approvalStatusEndpoint — the polling browser has no
+        # platform token — and keyed by the signed agent-status blob the
+        # consent flow minted for one specific agent, never a bare agent id.
+        # Returns only the pending/approved/denied tri-state; rate limited in
+        # the approval-status bucket instead.
+        "consentAgentStatus",
         # Local-account login form on the /authorize flow: the caller is a
         # browser mid-authorization with no token yet. Config-gated
         # (auth.local_login.enabled → 404) and rate limited instead.
@@ -808,13 +820,18 @@ NON_BEARER_AUTH_OPERATION_IDS: frozenset[str] = frozenset(
 
 
 #: Operations whose request-validation failures are reshaped at the router into
-#: RFC 7591 §3.2.2 ``400 {"error": "invalid_client_metadata"}`` responses (see
-#: ``_Rfc7591Route`` in ``auth/web/routers/oauth_client_registration.py``).
-#: They never emit the FastAPI 422, so the auto-generated 422 response is
-#: dropped from the spec (the 400 is documented on the route decorator).
-RFC7591_ERROR_OPERATION_IDS: frozenset[str] = frozenset(
+#: their governing spec's error dialect, so the FastAPI 422 can never be
+#: returned and the auto-generated 422 response is dropped from the spec:
+#: the DCR door's RFC 7591 §3.2.2 ``400 {"error": "invalid_client_metadata"}``
+#: (``_Rfc7591Route`` in ``auth/web/routers/oauth_client_registration.py``) and
+#: the token endpoint's RFC 6749 §5.2 dialect (``_TokenRoute`` in
+#: ``auth/web/routers/oauth.py`` — body parsing runs entirely inside
+#: ``_parse_token_request``, which answers §5.2 ``invalid_request``). The
+#: route-specific error responses are documented on the route decorators.
+ROUTER_RESHAPED_422_OPERATION_IDS: frozenset[str] = frozenset(
     {
         "registerOauthClientEndpoint",
+        "tokenEndpoint",
     }
 )
 
@@ -1036,9 +1053,10 @@ def install_openapi_metadata(app: FastAPI) -> None:
                     operation.get("responses", {}).pop("403", None)
                 else:
                     _stamp_scope_metadata(method, path, operation, operation_auth)
-                if op_id in RFC7591_ERROR_OPERATION_IDS:
-                    # Validation failures are reshaped to the RFC 7591 400 at
-                    # the router; the framework 422 can never be returned.
+                if op_id in ROUTER_RESHAPED_422_OPERATION_IDS:
+                    # Validation failures are reshaped to the governing spec's
+                    # dialect at the router; the framework 422 can never be
+                    # returned.
                     operation.get("responses", {}).pop("422", None)
                 _normalise_error_responses(operation.get("responses", {}))
 

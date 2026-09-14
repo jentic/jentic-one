@@ -64,7 +64,7 @@ func TestMCPExecute_SuccessEnvelopeWithStamp(t *testing.T) {
 		t.Fatalf("handleExecute: %v", err)
 	}
 	if res.IsError {
-		t.Fatalf("unexpected soft error: %v", res.Content)
+		t.Fatalf("unexpected soft error: %s", toolResultText(res))
 	}
 
 	// The wire request: path param substituted, the leftover input as query,
@@ -231,7 +231,7 @@ func TestMCPExecute_UpstreamErrorIsNormalResult(t *testing.T) {
 		t.Fatalf("handleExecute: %v", err)
 	}
 	if res.IsError {
-		t.Fatalf("an upstream 4xx is a normal result, got soft error: %v", res.Content)
+		t.Fatalf("an upstream 4xx is a normal result, got soft error: %s", toolResultText(res))
 	}
 	payload := decodeToolJSON(t, res)
 	if payload["status"] != float64(http.StatusForbidden) {
@@ -258,7 +258,7 @@ func TestMCPExecute_HeldEnvelopePassesThrough(t *testing.T) {
 		t.Fatalf("handleExecute: %v", err)
 	}
 	if res.IsError {
-		t.Fatalf("a held (202) envelope is a normal result, got soft error: %v", res.Content)
+		t.Fatalf("a held (202) envelope is a normal result, got soft error: %s", toolResultText(res))
 	}
 	payload := decodeToolJSON(t, res)
 	if payload["status"] != float64(http.StatusAccepted) || payload["execution_id"] != "exec_held" {
@@ -498,7 +498,7 @@ func TestMCPExecute_TruncatesOversizedBody(t *testing.T) {
 		t.Fatalf("handleExecute: %v", err)
 	}
 	if res.IsError {
-		t.Fatalf("truncation is not an error: %v", res.Content)
+		t.Fatalf("truncation is not an error: %s", toolResultText(res))
 	}
 	payload := decodeToolJSON(t, res)
 	if payload["truncated"] != true {
@@ -606,7 +606,7 @@ func TestMCPExecute_CapsOversizedResponseHeaders(t *testing.T) {
 		t.Fatalf("handleExecute: %v", err)
 	}
 	if res.IsError {
-		t.Fatalf("header truncation is not an error: %v", res.Content)
+		t.Fatalf("header truncation is not an error: %s", toolResultText(res))
 	}
 	payload := decodeToolJSON(t, res)
 	if payload["headers_truncated"] != true {
@@ -671,7 +671,7 @@ func TestMCPExecute_NeverReadsStdin(t *testing.T) {
 		t.Fatalf("handleExecute: %v", err)
 	}
 	if res.IsError {
-		t.Fatalf("unexpected soft error: %v", res.Content)
+		t.Fatalf("unexpected soft error: %s", toolResultText(res))
 	}
 	if hadBody {
 		t.Errorf("broker received a body (%q); a bodyless tool call must send none", gotBody)
@@ -733,7 +733,7 @@ func TestMCPExecuteRead_AcceptsLowercaseRegistryMethod(t *testing.T) {
 		t.Fatalf("a lowercase registry method must not fail the GET/HEAD gate: %v", err)
 	}
 	if res.IsError {
-		t.Fatalf("unexpected soft error: %v", res.Content)
+		t.Fatalf("unexpected soft error: %s", toolResultText(res))
 	}
 	if gotMethod != http.MethodGet {
 		t.Errorf("method on the wire = %q, want the canonical GET", gotMethod)
@@ -766,7 +766,7 @@ func TestMCPExecuteRead_GetRoundTrip(t *testing.T) {
 		t.Fatalf("handleExecuteRead: %v", err)
 	}
 	if res.IsError {
-		t.Fatalf("unexpected soft error: %v", res.Content)
+		t.Fatalf("unexpected soft error: %s", toolResultText(res))
 	}
 	payload := decodeToolJSON(t, res)
 	if payload["status"] != float64(http.StatusOK) {
@@ -812,7 +812,7 @@ func TestMCPExecute_BrokerLegHonorsCAPinAndHook(t *testing.T) {
 		t.Fatalf("handleExecute: %v", err)
 	}
 	if res.IsError {
-		t.Fatalf("CA-pinned broker call must succeed against the pinned cert: %v", res.Content)
+		t.Fatalf("CA-pinned broker call must succeed against the pinned cert: %s", toolResultText(res))
 	}
 	if !strings.HasPrefix(gotUA, "jentic-mcp/") {
 		t.Errorf("broker User-Agent = %q, want the attribution hook composed onto the broker leg", gotUA)
@@ -859,7 +859,7 @@ func TestMCPGetExecutionResult_LiveRoutesRoundTrip(t *testing.T) {
 		t.Fatalf("handleGetExecutionResult: %v", err)
 	}
 	if res.IsError {
-		t.Fatalf("unexpected soft error: %v", res.Content)
+		t.Fatalf("unexpected soft error: %s", toolResultText(res))
 	}
 	payload := decodeToolJSON(t, res)
 	if payload["job_id"] != "job_9" || payload["status"] != "completed" || payload["execution_id"] != "exec_9" {
@@ -893,7 +893,7 @@ func TestMCPGetExecutionResult_PendingJobHasNoResult(t *testing.T) {
 		t.Fatalf("handleGetExecutionResult: %v", err)
 	}
 	if res.IsError {
-		t.Fatalf("a pending job is a normal result the model polls again: %v", res.Content)
+		t.Fatalf("a pending job is a normal result the model polls again: %s", toolResultText(res))
 	}
 	payload := decodeToolJSON(t, res)
 	if payload["status"] != "pending" {

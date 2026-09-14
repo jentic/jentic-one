@@ -199,7 +199,13 @@ async def archive_agent(
     identity: Identity = get_current_identity(required_permissions=["agents:write"]),
     agent_svc: AgentService = Depends(get_agent_service),
 ) -> Response:
-    """Soft-archive an agent — revokes scope grants and bindings."""
+    """Archive an agent — terminal-but-kept.
+
+    The row is retained for history, but the action is not reversible and
+    the agent's authority is swept: scope grants, credential bindings, and
+    OAuth consent grants are revoked. For the reversible kill switch use
+    ``:disable`` / ``:enable`` instead.
+    """
     await agent_svc.archive(agent_id, identity=identity)
     return Response(status_code=204)
 

@@ -306,6 +306,15 @@ export interface InstanceIdentityEntity {
 	 * variant so the UI never advertises a transport that 404s.
 	 */
 	mcpEnabled: boolean;
+	/**
+	 * The broker (data plane) base URL the backend advertises
+	 * (`server.mcp.broker_url` via `GET /instance`, #1249). Null when the
+	 * backend cannot honestly report one — older backends predate the field,
+	 * and a remote install whose configured broker is loopback withholds it —
+	 * in which case the register snippet keeps its `<broker-url>` placeholder
+	 * and the "ask your operator" help text.
+	 */
+	brokerUrl: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -331,6 +340,12 @@ export interface OAuthGrantEntity {
 	clientOrigin: string | null;
 	userId: string;
 	agentId: string;
+	/**
+	 * Lifecycle state of the bound agent (#1345): a grant on a non-active
+	 * agent stays `active` but is DORMANT — no token resolves until the agent
+	 * is enabled again. Null when the API omitted the annotation.
+	 */
+	agentStatus: string | null;
 	scopes: string[];
 	status: string;
 	createdAt: string;

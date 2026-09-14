@@ -31,7 +31,10 @@ from jentic_one.auth.services.errors import (
     InvalidOwnerError,
     InvalidTransitionError,
 )
-from jentic_one.auth.services.oauth_grant_service import revoke_active_grants_for_agent
+from jentic_one.auth.services.oauth_grant_service import (
+    AGENT_ARCHIVE_REVOCATION_REASON,
+    revoke_active_grants_for_agent,
+)
 from jentic_one.auth.services.registration_service import validate_jwks
 from jentic_one.auth.services.schemas.agents import (
     AgentCreatePayload,
@@ -67,8 +70,28 @@ class AgentService:
         self._ctx = ctx
 
     async def create(
-        self, payload: AgentCreatePayload, *, owner_id: str, identity: Identity
+        self,
+        payload: AgentCreatePayload,
+        *,
+        owner_id: str,
+        identity: Identity,
+        status: ActorStatus = ActorStatus.ACTIVE,
     ) -> AgentView:
+        """Create an agent for ``owner_id``; default posture is immediately ACTIVE.
+
+        ``status=ActorStatus.PENDING`` is the consent-page hybrid arm (P4
+        security review): a consenting user WITHOUT ``agents:write`` may still
+        mint their first agent mid-flow, but it lands in the same
+        awaiting-approval posture as the anonymous ``POST /register`` door —
+        status ``pending``, NO scope grants (``approve()`` grants
+        ``DEFAULT_AGENT_SCOPES`` on the PENDING→ACTIVE transition, exactly as
+        it does for self-registrations), plus the ``agent.self_registered``
+        requires-action event so the registration lands in the admins' approval
+        queue and ``approve()``/``deny()`` settle the alert. Any status other
+        than ACTIVE/PENDING is a programming error.
+        """
+        if status not in (ActorStatus.ACTIVE, ActorStatus.PENDING):
+            raise ValueError(f"agents are created active or pending, not {status}")
         async with self._ctx.admin_db.transaction() as session:
             agent = await AgentRepository.create(
                 session,
@@ -77,22 +100,23 @@ class AgentService:
                 registered_by=identity.sub,
                 description=payload.description,
                 created_by=identity.sub,
-                status=ActorStatus.ACTIVE,
+                status=status,
             )
-            scopes_to_grant = (
-                list(dict.fromkeys(payload.scopes))
-                if payload.scopes
-                else list(DEFAULT_AGENT_SCOPES)
-            )
-            for scope in scopes_to_grant:
-                await ActorScopeGrantRepository.grant(
-                    session,
-                    actor_id=agent.id,
-                    actor_type=ActorType.AGENT,
-                    scope=scope,
-                    granted_by=identity.sub,
-                    created_by=identity.sub,
+            if status is ActorStatus.ACTIVE:
+                scopes_to_grant = (
+                    list(dict.fromkeys(payload.scopes))
+                    if payload.scopes
+                    else list(DEFAULT_AGENT_SCOPES)
                 )
+                for scope in scopes_to_grant:
+                    await ActorScopeGrantRepository.grant(
+                        session,
+                        actor_id=agent.id,
+                        actor_type=ActorType.AGENT,
+                        scope=scope,
+                        granted_by=identity.sub,
+                        created_by=identity.sub,
+                    )
             await record_audit(
                 session,
                 action=AuditAction.REGISTER,
@@ -100,7 +124,7 @@ class AgentService:
                 target_id=agent.id,
                 actor_type=identity.actor_type,
                 actor_id=identity.sub,
-                after={"name": payload.name, "owner_id": owner_id},
+                after={"name": payload.name, "owner_id": owner_id, "status": status.value},
                 origin=identity.origin.value,
             )
             await emit_event_best_effort(
@@ -112,6 +136,24 @@ class AgentService:
                 actor_id=identity.sub,
                 actor_type=identity.actor_type.value,
             )
+            if status is ActorStatus.PENDING:
+                # Same actionable event as the /register door (actor = the
+                # AGENT, so approve()/deny()'s _settle_registration_alerts
+                # finds and acknowledges it) — without this the registration
+                # would never surface in the admins' queue and the awaiting
+                # page would poll forever.
+                await emit_event_best_effort(
+                    session,
+                    type=EventType.AGENT_SELF_REGISTERED,
+                    severity=EventSeverity.INFO,
+                    summary=f"Agent '{payload.name}' created on the consent page and "
+                    "awaits approval",
+                    requires_action=True,
+                    data={"agent_id": agent.id, "agent_name": payload.name},
+                    created_by=identity.sub,
+                    actor_id=agent.id,
+                    actor_type=ActorType.AGENT.value,
+                )
         return AgentView.model_validate(agent)
 
     async def list_agents(
@@ -350,6 +392,14 @@ class AgentService:
         return AgentView.model_validate(agent)
 
     async def disable(self, agent_id: str, *, identity: Identity) -> None:
+        # #1233 (disable arm, DECIDED): disable does NOT sweep oauth_client_grants.
+        # Disable is a reversible kill-switch — the enforcement layer already
+        # fail-closes everything while disabled (resolvers gate on status,
+        # refresh re-checks per rotation), so the grants stay DORMANT and
+        # re-enable restores the standing consent without a new consent round
+        # (the GitHub app-suspension model). The honesty half of #1233 is
+        # fixed at the listing layer instead: counts exclude and listings
+        # annotate grants whose agent is non-active.
         async with self._ctx.admin_db.transaction() as session:
             await self._check_transition(session, agent_id, ActorVerb.DISABLE)
             await AgentRepository.update_status(session, agent_id, ActorStatus.DISABLED)
@@ -388,6 +438,23 @@ class AgentService:
             await ActorScopeGrantRepository.revoke_all(session, agent_id)
             await AgentToolkitBindingRepository.delete_for_agent(session, agent_id)
             await AgentCredentialBindingRepository.delete_for_agent(session, agent_id)
+            # #1233 (archive arm): archive is terminal — the status enum has
+            # no exit — so any consent grant left `active` would misreport
+            # every "active grants" listing/count on a dead agent forever.
+            # Sweep them in the archive's own transaction, reusing the G10
+            # per-agent revocation body (row flip + token sweep + audit +
+            # event) with an archive stamp. `disable` deliberately does NOT
+            # sweep (#1233, decided): it is reversible, grants stay dormant
+            # and re-enable restores the standing consent — see disable().
+            await revoke_active_grants_for_agent(
+                session,
+                agent_id,
+                identity=identity,
+                audit_reason="oauth grant revoked: agent archived",
+                event_reason=AGENT_ARCHIVE_REVOCATION_REASON,
+                summary_cause="was archived",
+                log_event="oauth_grants_revoked_on_agent_archive",
+            )
             await record_audit(
                 session,
                 action=AuditAction.ARCHIVE,

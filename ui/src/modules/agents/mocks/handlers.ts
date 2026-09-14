@@ -105,6 +105,8 @@ interface OAuthGrantRow {
 	client_origin: string | null;
 	user_id: string;
 	agent_id: string;
+	/** Lifecycle state of the bound agent (#1345) — non-active means dormant. */
+	agent_status: string;
 	scopes: string[];
 	status: 'active' | 'revoked';
 	created_at: string;
@@ -428,6 +430,7 @@ export function resetAgentsStore(): void {
 			client_origin: 'http://localhost:33418',
 			user_id: 'usr_admin_1',
 			agent_id: 'agnt_active_1',
+			agent_status: 'active',
 			scopes: ['apis:read', 'capabilities:execute'],
 			status: 'active',
 			created_at: now(-45),
@@ -442,6 +445,7 @@ export function resetAgentsStore(): void {
 			client_origin: 'https://old.example.com',
 			user_id: 'usr_departed_owner',
 			agent_id: 'agnt_active_1',
+			agent_status: 'active',
 			scopes: ['apis:read'],
 			status: 'revoked',
 			created_at: now(-600),
@@ -487,6 +491,7 @@ export function seedOauthGrants(rows: Array<Partial<OAuthGrantRow> & { id: strin
 			client_origin: 'https://seeded.example.com',
 			user_id: 'usr_admin_1',
 			agent_id: 'agnt_active_1',
+			agent_status: 'active',
 			scopes: ['apis:read'],
 			status: 'active',
 			created_at: now(-45),
@@ -1337,7 +1342,9 @@ export const agentsHandlers = [
 	}),
 	http.post('/oauth-grants/:id\\:revoke', ({ params }) => {
 		const grant = oauthGrants.find((g) => g.id === params.id);
-		if (!grant) return new HttpResponse(null, { status: 404 });
+		// Not one of OURS — fall through (the settings module registers the
+		// same kill-switch path for its admin-cross-view grants store).
+		if (!grant) return undefined;
 		// Idempotent, like the backend: re-revoking is a 204 no-op.
 		if (grant.status === 'active') {
 			grant.status = 'revoked';

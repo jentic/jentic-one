@@ -115,7 +115,7 @@ func TestMCPHTTP_GoldenTranscriptsOverStreamableHTTP(t *testing.T) {
 				t.Fatalf("execute over http: %v", err)
 			}
 			if res.IsError {
-				t.Fatalf("execute soft-errored: %v", res.Content)
+				t.Fatalf("execute soft-errored: %s", toolResultText(res))
 			}
 			got := envelopeWithoutStamp(t, decodeToolJSON(t, res))
 			want := sharedGoldenStdout(t, tc.name)

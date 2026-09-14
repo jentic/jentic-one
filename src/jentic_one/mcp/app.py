@@ -44,8 +44,10 @@ that owns everything the platform — not the SDK — must decide:
   a garbage one) keeps the challenge contract on every method.
 - **The pre-auth whitelist**: ``tools/list``, the SDK's legacy ``initialize``
   fallback (+ ``notifications/initialized``), ``ping``, and the public
-  resource listings are served without a credential — a client can always
-  discover the tool surface before authenticating. Everything else
+  ``skill://`` resource surface (listings AND reads — the same documents
+  ``GET /skills/*`` serves without a credential) are served without a
+  credential — a client can always discover the tool surface and read the
+  skill set before authenticating. Everything else
   requires a resolved identity.
 - **Session telemetry**: each authenticated POST feeds the
   windowed ``mcp.session_started`` emit — key = (agent identity x ``_meta``
@@ -75,6 +77,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.types import Receive, Scope, Send
 
+from jentic_one.mcp.resources import read_skill_resource, skill_resources
 from jentic_one.mcp.spec import served_tools
 from jentic_one.mcp.tools import CallEnv, dispatch_tool_call
 from jentic_one.shared.auth.identity import Identity
@@ -93,11 +96,38 @@ MCP_PRM_PATH = "/.well-known/oauth-protected-resource/mcp"
 
 #: JSON-RPC methods served WITHOUT a credential: discovery of the tool
 #: surface, the spec's ping, the legacy-``initialize`` fallback pair, and the
-#: public resource listings. ``resources/read`` is deliberately NOT here: no
-#: resources are served yet, so pre-declaring it would hand a future resource
-#: registration a pre-auth ride nobody re-reviewed — when the public skill
-#: resources land, add it back alongside a pin that the readable set
-#: stays public-only.
+#: public skill-resource surface (listings + reads). ``resources/read`` is
+#: pre-auth because the readable set is the public skill set and NOTHING
+#: else — the same documents ``GET /skills/*`` already serves without a
+#: credential, so the pre-auth read adds zero new exposure. Three layers of
+#: defense hold that property (``tests/unit/mcp/test_resources.py``):
+#:
+#: 1. **Resolver characterization (the proof)** — ``read_skill_resource`` is
+#:    unit-characterized as three-armed by construction: every URI outside
+#:    ``skill://<shipped name>`` + ``skill://<shipped name>/references/<file>``
+#:    (lane-filtered: never a ``CLI_ONLY_REFERENCES`` file) + ``skill://index``
+#:    raises -32002, and no branch of it can see a credential (it never reads
+#:    identity), so its behavior is structurally identical pre- and post-auth.
+#: 2. **Delegation pin (the structural lock)** — ``on_read_resource`` below
+#:    is pinned to be a bare delegation to ``read_skill_resource``, so this
+#:    module cannot grow a bypass arm without failing a test.
+#: 3. **Probe battery (the tripwire)** — a mount-level battery of hostile
+#:    URIs answers -32002 twice, credential-less and with a valid bearer.
+#:
+#: In SDK 2.1.1 every ``resources/read`` dispatches to the ONE handler
+#: (there is no per-resource routing), so a future non-public resource would
+#: need a NEW handler arm — no finite probe battery can prove such an arm
+#: doesn't exist, so a new arm is exactly what code review plus this comment
+#: must catch: if you are adding one, take ``resources/read`` back OFF this
+#: whitelist first and re-review the pre-auth door. The arm has THREE doors,
+#: not one: here in ``build_mcp_server`` (the delegation pin catches that),
+#: inside ``read_skill_resource`` itself (``resources.py`` — a third resolver
+#: arm passes both the pin and every probe, so review must watch that module
+#: with the same eyes), or via the SDK's
+#: ``Server.add_request_handler("resources/read", …)``, which replaces the
+#: registered handler after ``build_mcp_server`` returns and bypasses this
+#: module entirely (``tests/arch/test_mcp_handler_registration.py`` pins that
+#: nothing under ``src/`` calls it).
 PRE_AUTH_METHODS = frozenset(
     {
         "initialize",
@@ -105,6 +135,7 @@ PRE_AUTH_METHODS = frozenset(
         "ping",
         "tools/list",
         "resources/list",
+        "resources/read",
         "resources/templates/list",
     }
 )
@@ -311,13 +342,34 @@ def _auth_required_error() -> Exception:
     return MCPError(-32001, "authentication required")
 
 
+def _request_base_url(ctx: Context, sctx: ServerRequestContext[Any, Any]) -> str:
+    """The deployment base URL for one handler's request, auth or not.
+
+    The base-URL seam for the pre-auth index read: ``_stash_call_state`` only
+    runs on the authenticated branch, so a pre-auth request has no
+    ``mcp_base_url`` in ``scope["state"]``. Computed at the source instead —
+    ``deployment_base_url`` over the SDK-attached Starlette request — the same
+    function, same config inputs as the HTTP route's manifest, so the two
+    manifests stamp identical URLs for identical requests. A request-less
+    call is structurally unreachable on the mount; fall back to ``""``-based
+    relative URLs rather than raising (the ``CallEnv.base_url`` default).
+    """
+    request = sctx.request
+    if request is None:  # pragma: no cover - the transport always attaches it
+        return ""
+    return deployment_base_url(ctx.config.auth, request)
+
+
 def build_mcp_server(ctx: Context) -> Server[Any]:
     """Assemble the low-level SDK server for this deployment.
 
     Tools come from the pinned tool-surface spec (``jentic_one.mcp.spec``);
     ``tools/list`` is connection-independent (stateless — the same list for
-    every caller). Resource listings are served empty until the
-    skill-resources slice lands.
+    every caller). Resources are the public ``skill://`` surface
+    (``jentic_one.mcp.resources``): the shipped skill set, its lane-filtered
+    references, and the index, listed and read identically for every caller —
+    ``on_read_resource`` is a bare delegation to the three-armed resolver
+    (pinned; see the ``PRE_AUTH_METHODS`` comment for the layered defense).
     """
 
     async def on_list_tools(
@@ -337,12 +389,25 @@ def build_mcp_server(ctx: Context) -> Server[Any]:
         sctx: ServerRequestContext[Any, Any],
         params: mcp_types.PaginatedRequestParams | None,
     ) -> mcp_types.ListResourcesResult:
-        return mcp_types.ListResourcesResult(resources=[])
+        # Pagination: none — params are accepted and ignored, no nextCursor is
+        # ever emitted (the served set is the shipped skills plus the index).
+        return mcp_types.ListResourcesResult(resources=skill_resources())
+
+    async def on_read_resource(
+        sctx: ServerRequestContext[Any, Any],
+        params: mcp_types.ReadResourceRequestParams,
+    ) -> mcp_types.ReadResourceResult:
+        # A BARE delegation to the three-armed resolver — pinned structurally
+        # (test_resources.py) so no bypass arm can appear here unnoticed.
+        return read_skill_resource(params.uri, _request_base_url(ctx, sctx))
 
     async def on_list_resource_templates(
         sctx: ServerRequestContext[Any, Any],
         params: mcp_types.PaginatedRequestParams | None,
     ) -> mcp_types.ListResourceTemplatesResult:
+        # Deliberately empty: ``skill://<name>`` is a closed, enumerable set
+        # fully described by resources/list — a URI template would advertise
+        # an open namespace this server deliberately does not have.
         return mcp_types.ListResourceTemplatesResult(resource_templates=[])
 
     version = _package_version()
@@ -356,11 +421,16 @@ def build_mcp_server(ctx: Context) -> Server[Any]:
             "requesting access or executing operations. Every tool result carries a "
             "top-level `instance` key identifying the Jentic One instance it came "
             "from. The flow is whoami → search_apis → inspect_operation → execute; "
-            "never execute an operation just to probe whether you have access."
+            "never execute an operation just to probe whether you have access. "
+            "The skill://jentic resource is the canonical guide to the whole flow "
+            "(skill://index lists every skill document, and "
+            "skill://jentic/references/mcp.md carries the MCP-lane detail); "
+            "read it when unsure how the pieces fit together."
         ),
         on_list_tools=on_list_tools,
         on_call_tool=on_call_tool,
         on_list_resources=on_list_resources,
+        on_read_resource=on_read_resource,
         on_list_resource_templates=on_list_resource_templates,
     )
 
