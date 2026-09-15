@@ -18,45 +18,6 @@ import (
 	"github.com/oapi-codegen/runtime"
 )
 
-// Defines values for AccessRequestItemRequestAction.
-const (
-	Bind      AccessRequestItemRequestAction = "bind"
-	Grant     AccessRequestItemRequestAction = "grant"
-	Provision AccessRequestItemRequestAction = "provision"
-)
-
-// Valid indicates whether the value is a known member of the AccessRequestItemRequestAction enum.
-func (e AccessRequestItemRequestAction) Valid() bool {
-	switch e {
-	case Bind:
-		return true
-	case Grant:
-		return true
-	case Provision:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for AccessRequestItemRequestResourceType.
-const (
-	AccessRequestItemRequestResourceTypeCredential AccessRequestItemRequestResourceType = "credential"
-	AccessRequestItemRequestResourceTypeScope      AccessRequestItemRequestResourceType = "scope"
-)
-
-// Valid indicates whether the value is a known member of the AccessRequestItemRequestResourceType enum.
-func (e AccessRequestItemRequestResourceType) Valid() bool {
-	switch e {
-	case AccessRequestItemRequestResourceTypeCredential:
-		return true
-	case AccessRequestItemRequestResourceTypeScope:
-		return true
-	default:
-		return false
-	}
-}
-
 // Defines values for ActorType.
 const (
 	ActorTypeAgent          ActorType = "agent"
@@ -348,24 +309,6 @@ func (e CredentialType) Valid() bool {
 	case CredentialTypeOauth2:
 		return true
 	case CredentialTypeSigv4:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for DecideItemSchemaDecision.
-const (
-	DecideItemSchemaDecisionApproved DecideItemSchemaDecision = "approved"
-	DecideItemSchemaDecisionDenied   DecideItemSchemaDecision = "denied"
-)
-
-// Valid indicates whether the value is a known member of the DecideItemSchemaDecision enum.
-func (e DecideItemSchemaDecision) Valid() bool {
-	switch e {
-	case DecideItemSchemaDecisionApproved:
-		return true
-	case DecideItemSchemaDecisionDenied:
 		return true
 	default:
 		return false
@@ -774,6 +717,45 @@ func (e PermissionRuleReadSchemaMatchMode) Valid() bool {
 	}
 }
 
+// Defines values for PermissionRuleSchemaEffect.
+const (
+	PermissionRuleSchemaEffectAllow PermissionRuleSchemaEffect = "allow"
+	PermissionRuleSchemaEffectDeny  PermissionRuleSchemaEffect = "deny"
+)
+
+// Valid indicates whether the value is a known member of the PermissionRuleSchemaEffect enum.
+func (e PermissionRuleSchemaEffect) Valid() bool {
+	switch e {
+	case PermissionRuleSchemaEffectAllow:
+		return true
+	case PermissionRuleSchemaEffectDeny:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for PermissionRuleSchemaMatchMode.
+const (
+	PermissionRuleSchemaMatchModeExact  PermissionRuleSchemaMatchMode = "exact"
+	PermissionRuleSchemaMatchModePrefix PermissionRuleSchemaMatchMode = "prefix"
+	PermissionRuleSchemaMatchModeRegex  PermissionRuleSchemaMatchMode = "regex"
+)
+
+// Valid indicates whether the value is a known member of the PermissionRuleSchemaMatchMode enum.
+func (e PermissionRuleSchemaMatchMode) Valid() bool {
+	switch e {
+	case PermissionRuleSchemaMatchModeExact:
+		return true
+	case PermissionRuleSchemaMatchModePrefix:
+		return true
+	case PermissionRuleSchemaMatchModeRegex:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for Sigv4CreateRequestType.
 const (
 	Sigv4CreateRequestTypeSigv4 Sigv4CreateRequestType = "sigv4"
@@ -798,87 +780,6 @@ const (
 func (e Sigv4UpdateRequestType) Valid() bool {
 	switch e {
 	case Sigv4UpdateRequestTypeSigv4:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for JenticOneControlWebSchemasAccessRequestsPermissionRuleSchemaEffect.
-const (
-	JenticOneControlWebSchemasAccessRequestsPermissionRuleSchemaEffectAllow           JenticOneControlWebSchemasAccessRequestsPermissionRuleSchemaEffect = "allow"
-	JenticOneControlWebSchemasAccessRequestsPermissionRuleSchemaEffectDeny            JenticOneControlWebSchemasAccessRequestsPermissionRuleSchemaEffect = "deny"
-	JenticOneControlWebSchemasAccessRequestsPermissionRuleSchemaEffectRequireApproval JenticOneControlWebSchemasAccessRequestsPermissionRuleSchemaEffect = "require-approval"
-)
-
-// Valid indicates whether the value is a known member of the JenticOneControlWebSchemasAccessRequestsPermissionRuleSchemaEffect enum.
-func (e JenticOneControlWebSchemasAccessRequestsPermissionRuleSchemaEffect) Valid() bool {
-	switch e {
-	case JenticOneControlWebSchemasAccessRequestsPermissionRuleSchemaEffectAllow:
-		return true
-	case JenticOneControlWebSchemasAccessRequestsPermissionRuleSchemaEffectDeny:
-		return true
-	case JenticOneControlWebSchemasAccessRequestsPermissionRuleSchemaEffectRequireApproval:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for JenticOneControlWebSchemasAccessRequestsPermissionRuleSchemaMatchMode.
-const (
-	JenticOneControlWebSchemasAccessRequestsPermissionRuleSchemaMatchModeExact  JenticOneControlWebSchemasAccessRequestsPermissionRuleSchemaMatchMode = "exact"
-	JenticOneControlWebSchemasAccessRequestsPermissionRuleSchemaMatchModePrefix JenticOneControlWebSchemasAccessRequestsPermissionRuleSchemaMatchMode = "prefix"
-	JenticOneControlWebSchemasAccessRequestsPermissionRuleSchemaMatchModeRegex  JenticOneControlWebSchemasAccessRequestsPermissionRuleSchemaMatchMode = "regex"
-)
-
-// Valid indicates whether the value is a known member of the JenticOneControlWebSchemasAccessRequestsPermissionRuleSchemaMatchMode enum.
-func (e JenticOneControlWebSchemasAccessRequestsPermissionRuleSchemaMatchMode) Valid() bool {
-	switch e {
-	case JenticOneControlWebSchemasAccessRequestsPermissionRuleSchemaMatchModeExact:
-		return true
-	case JenticOneControlWebSchemasAccessRequestsPermissionRuleSchemaMatchModePrefix:
-		return true
-	case JenticOneControlWebSchemasAccessRequestsPermissionRuleSchemaMatchModeRegex:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for JenticOneControlWebSchemasPermissionRulesPermissionRuleSchemaEffect.
-const (
-	JenticOneControlWebSchemasPermissionRulesPermissionRuleSchemaEffectAllow JenticOneControlWebSchemasPermissionRulesPermissionRuleSchemaEffect = "allow"
-	JenticOneControlWebSchemasPermissionRulesPermissionRuleSchemaEffectDeny  JenticOneControlWebSchemasPermissionRulesPermissionRuleSchemaEffect = "deny"
-)
-
-// Valid indicates whether the value is a known member of the JenticOneControlWebSchemasPermissionRulesPermissionRuleSchemaEffect enum.
-func (e JenticOneControlWebSchemasPermissionRulesPermissionRuleSchemaEffect) Valid() bool {
-	switch e {
-	case JenticOneControlWebSchemasPermissionRulesPermissionRuleSchemaEffectAllow:
-		return true
-	case JenticOneControlWebSchemasPermissionRulesPermissionRuleSchemaEffectDeny:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for JenticOneControlWebSchemasPermissionRulesPermissionRuleSchemaMatchMode.
-const (
-	JenticOneControlWebSchemasPermissionRulesPermissionRuleSchemaMatchModeExact  JenticOneControlWebSchemasPermissionRulesPermissionRuleSchemaMatchMode = "exact"
-	JenticOneControlWebSchemasPermissionRulesPermissionRuleSchemaMatchModePrefix JenticOneControlWebSchemasPermissionRulesPermissionRuleSchemaMatchMode = "prefix"
-	JenticOneControlWebSchemasPermissionRulesPermissionRuleSchemaMatchModeRegex  JenticOneControlWebSchemasPermissionRulesPermissionRuleSchemaMatchMode = "regex"
-)
-
-// Valid indicates whether the value is a known member of the JenticOneControlWebSchemasPermissionRulesPermissionRuleSchemaMatchMode enum.
-func (e JenticOneControlWebSchemasPermissionRulesPermissionRuleSchemaMatchMode) Valid() bool {
-	switch e {
-	case JenticOneControlWebSchemasPermissionRulesPermissionRuleSchemaMatchModeExact:
-		return true
-	case JenticOneControlWebSchemasPermissionRulesPermissionRuleSchemaMatchModePrefix:
-		return true
-	case JenticOneControlWebSchemasPermissionRulesPermissionRuleSchemaMatchModeRegex:
 		return true
 	default:
 		return false
@@ -954,109 +855,6 @@ type APIReferenceRequest struct {
 	Name         *string `json:"name,omitempty"`
 	Vendor       string  `json:"vendor"`
 	Version      *string `json:"version,omitempty"`
-}
-
-// AccessRequestFileRequest Request body for filing an access request.
-type AccessRequestFileRequest struct {
-	Items  []AccessRequestItemRequest `json:"items"`
-	Reason *string                    `json:"reason,omitempty"`
-}
-
-// AccessRequestItemRequest A single line-item in a file request.
-//
-// **Permission rules:** Rules control which upstream API operations the broker
-// allows through a direct agent↔credential binding. They are enforced per
-// (agent, credential) pair, so they can only be attached to credential:bind
-// items — not scope:grant. Include them (or a shared “rule_set_id“)
-// directly on the credential:bind item when filing the access request, and
-// the approver's decision persists them on the binding.
-type AccessRequestItemRequest struct {
-	Action            AccessRequestItemRequestAction       `json:"action"`
-	ResourceId        *string                              `json:"resource_id,omitempty"`
-	ResourceReference *map[string]interface{}              `json:"resource_reference,omitempty"`
-	ResourceType      AccessRequestItemRequestResourceType `json:"resource_type"`
-
-	// RuleSetId Shared permission rule set for the binding (credential:bind only), as an alternative to inline rules. While attached, the set's ordered list is the binding's effective policy.
-	RuleSetId *string `json:"rule_set_id,omitempty"`
-
-	// Rules Permission rules for the binding (credential:bind only). Rules are evaluated first-match-wins by the broker; if no rule matches, the request is denied. Example: [{"effect": "allow", "path": ".*"}].
-	Rules *[]JenticOneControlWebSchemasAccessRequestsPermissionRuleSchema `json:"rules,omitempty"`
-}
-
-// AccessRequestItemRequestAction defines model for AccessRequestItemRequest.Action.
-type AccessRequestItemRequestAction string
-
-// AccessRequestItemRequestResourceType defines model for AccessRequestItemRequest.ResourceType.
-type AccessRequestItemRequestResourceType string
-
-// AccessRequestItemResponse Response model for a single access-request line item.
-type AccessRequestItemResponse struct {
-	Action string `json:"action"`
-
-	// AlreadySatisfied Whether this item's outcome is already in effect (the binding or grant it asks for already exists), letting a reviewer approve manually-fulfilled work instead of re-doing it in the wizard. Populated on single-request GETs for pending credential:bind and scope:grant items; null when not computed (list endpoints, decided items, fulfilment-only intents, an item whose target cannot be determined, an ambiguous credential reference — which approval would refuse as filed — or a credential:bind whose credential is not visible to the caller). API REFERENCES are resolved under the caller's visibility, mirroring decide-time resolution, so False can also mean 'satisfied by a credential this caller cannot see'; explicit-id targets are probed directly.
-	AlreadySatisfied *bool `json:"already_satisfied,omitempty"`
-
-	// AlreadySatisfiedBy For a satisfied credential:bind, the id of the credential the agent is already bound to — names the exact object so consumers can point the operator at it. Null for other item types and whenever already_satisfied is not true.
-	AlreadySatisfiedBy *string                 `json:"already_satisfied_by,omitempty"`
-	AppliedEffects     *map[string]interface{} `json:"applied_effects,omitempty"`
-	CredentialName     *string                 `json:"credential_name,omitempty"`
-	DecidedAt          *time.Time              `json:"decided_at,omitempty"`
-	DecidedBy          *string                 `json:"decided_by,omitempty"`
-	DecisionReason     *string                 `json:"decision_reason,omitempty"`
-	Id                 string                  `json:"id"`
-	ResourceId         *string                 `json:"resource_id,omitempty"`
-	ResourceReference  *map[string]interface{} `json:"resource_reference,omitempty"`
-	ResourceType       string                  `json:"resource_type"`
-
-	// RuleSetId Shared permission rule set attached to a credential:bind item, as an alternative policy carrier to inline rules.
-	RuleSetId   *string                   `json:"rule_set_id,omitempty"`
-	Rules       *[]map[string]interface{} `json:"rules,omitempty"`
-	Status      string                    `json:"status"`
-	ToId        *string                   `json:"to_id,omitempty"`
-	ToType      *string                   `json:"to_type,omitempty"`
-	ToolkitName *string                   `json:"toolkit_name,omitempty"`
-}
-
-// AccessRequestListResponse Paginated list of access requests.
-type AccessRequestListResponse struct {
-	Data       []AccessRequestResponse `json:"data"`
-	HasMore    bool                    `json:"has_more"`
-	NextCursor *string                 `json:"next_cursor,omitempty"`
-}
-
-// AccessRequestOwnerResponse Display info for the filer's human owner (labelling only, not authorization).
-//
-// Server-resolved from “filer_owner_id“ (falling back to “created_by“
-// when the former is null, mirroring what consumers render) so they don't
-// need “users:read“ (or a roster fetch) just to label a row. Absent when
-// the id doesn't resolve to a user (service-account filers, purged rows) or
-// on mutation responses, which skip the enrichment.
-type AccessRequestOwnerResponse struct {
-	// DisplayName The owner's full name, when set on the profile.
-	DisplayName *string `json:"display_name,omitempty"`
-
-	// Email The owner's email address.
-	Email string `json:"email"`
-
-	// Id The resolved owner's user id (filer_owner_id, or created_by when null).
-	Id string `json:"id"`
-}
-
-// AccessRequestResponse Response model for an access request envelope.
-type AccessRequestResponse struct {
-	ActorId      string                      `json:"actor_id"`
-	ApproveUrl   string                      `json:"approve_url"`
-	CreatedBy    string                      `json:"created_by"`
-	Evaluation   *EvaluationResponse         `json:"evaluation,omitempty"`
-	ExpiresAt    time.Time                   `json:"expires_at"`
-	FiledAt      time.Time                   `json:"filed_at"`
-	FilerOwner   *AccessRequestOwnerResponse `json:"filer_owner,omitempty"`
-	FilerOwnerId *string                     `json:"filer_owner_id,omitempty"`
-	Id           string                      `json:"id"`
-	Items        []AccessRequestItemResponse `json:"items"`
-	Reason       *string                     `json:"reason,omitempty"`
-	RequestedBy  string                      `json:"requested_by"`
-	Status       string                      `json:"status"`
 }
 
 // ActorListResponse Paginated list of actors.
@@ -1140,19 +938,6 @@ type AgentScopesRequest struct {
 // AgentScopesResponse Response containing an agent's current scopes.
 type AgentScopesResponse struct {
 	Scopes []string `json:"scopes"`
-}
-
-// AmendItemSchema A single item amendment.
-type AmendItemSchema struct {
-	ItemId     string                                                          `json:"item_id"`
-	ResourceId *string                                                         `json:"resource_id,omitempty"`
-	RuleSetId  *string                                                         `json:"rule_set_id,omitempty"`
-	Rules      *[]JenticOneControlWebSchemasAccessRequestsPermissionRuleSchema `json:"rules,omitempty"`
-}
-
-// AmendRequest Request body for the :amend verb.
-type AmendRequest struct {
-	Items []AmendItemSchema `json:"items"`
 }
 
 // ApiImportLinksResponse Hypermedia links for an import response.
@@ -1568,9 +1353,9 @@ type ClaimRequest struct {
 
 // ConfirmSessionRequest defines model for ConfirmSessionRequest.
 type ConfirmSessionRequest struct {
-	AgentId         *string                                                          `json:"agent_id,omitempty"`
-	ConfirmedScopes []string                                                         `json:"confirmed_scopes"`
-	PermissionRules *[]JenticOneControlWebSchemasPermissionRulesPermissionRuleSchema `json:"permission_rules,omitempty"`
+	AgentId         *string                 `json:"agent_id,omitempty"`
+	ConfirmedScopes []string                `json:"confirmed_scopes"`
+	PermissionRules *[]PermissionRuleSchema `json:"permission_rules,omitempty"`
 }
 
 // ConnectRequestBody Request body for initiating a credential connect flow.
@@ -1742,78 +1527,6 @@ type DailyExecutionBucket struct {
 	Total   int    `json:"total"`
 }
 
-// DecideItemSchema A single item decision.
-type DecideItemSchema struct {
-	Decision       DecideItemSchemaDecision `json:"decision"`
-	DecisionReason *string                  `json:"decision_reason,omitempty"`
-	ItemId         string                   `json:"item_id"`
-}
-
-// DecideItemSchemaDecision defines model for DecideItemSchema.Decision.
-type DecideItemSchemaDecision string
-
-// DecideRequest Request body for the :decide verb.
-type DecideRequest struct {
-	Items []DecideItemSchema `json:"items"`
-}
-
-// DuplicatePendingProblem RFC 9457 Problem Details for a 409 on “POST /access-requests“.
-//
-// Filing a request whose target already has a pending request is refused with
-// a 409 whose body carries two extension members on top of the standard
-// Problem Details shape, so a client can attach to the existing request rather
-// than re-file. These are emitted at runtime by the access-request error hook
-// (“control/web/errors.py“); this model documents them in the OpenAPI spec so
-// the generated SDK exposes a typed 409
-// (“FileAccessRequestHTTPResp.ApplicationproblemJSON409“) instead of forcing
-// callers to parse the raw body (ARCH-21 Step 0).
-//
-// Examples: {"detail":"The request body is missing one or more required fields.","errors":[{"detail":"Field 'name' is required.","pointer":"#/name"}],"instance":"/v2/capability-sets","status":400,"title":"Bad Request","type":"about:blank"}
-type DuplicatePendingProblem struct {
-	// ApproveUrl Console URL to review/approve the existing pending request.
-	//
-	// Examples: https://app.jentic.com/access-requests/acr_01HXXY...
-	ApproveUrl string `json:"approve_url"`
-
-	// Code An optional provider-specific code for internal error taxonomy and observability correlation.
-	//
-	// Examples: JENTIC-4001
-	Code *string `json:"code,omitempty"`
-
-	// Detail A human-readable explanation specific to this occurrence of the problem. MUST be present. Provide actionable information where possible.
-	//
-	// Examples: The request body is missing required field 'name'.
-	Detail string `json:"detail"`
-
-	// Errors An array of granular error details. Use when multiple validation errors or field-level problems need to be surfaced in a single response.
-	Errors *[]ErrorItem `json:"errors,omitempty"`
-
-	// ExistingRequestId The id of the pending access request that already covers the conflicting target.
-	//
-	// Examples: acr_01HXXY...
-	ExistingRequestId string `json:"existing_request_id"`
-
-	// Instance A URI reference identifying the specific occurrence of the problem. Typically the request path.
-	//
-	// Examples: /v2/capability-sets
-	Instance *string `json:"instance,omitempty"`
-
-	// Status The HTTP status code for this occurrence of the problem.
-	//
-	// Examples: 400
-	Status *int `json:"status,omitempty"`
-
-	// Title A short, human-readable summary of the problem type. Should not change between occurrences except for localisation purposes.
-	//
-	// Examples: Bad Request
-	Title *string `json:"title,omitempty"`
-
-	// Type A URI reference identifying the problem type. When set to 'about:blank', the title SHOULD be the standard HTTP status phrase. Use an IANA-registered type URI where one applies.
-	//
-	// Examples: about:blank
-	Type *string `json:"type,omitempty"`
-}
-
 // EffectivePermission A single effective permission with provenance.
 type EffectivePermission struct {
 	ImpliedBy *string `json:"implied_by,omitempty"`
@@ -1848,19 +1561,6 @@ type ErrorItem struct {
 	//
 	// Examples: #/name
 	Pointer *string `json:"pointer,omitempty"`
-}
-
-// EvaluationCheckResponse A single evaluation check result.
-type EvaluationCheckResponse struct {
-	Blocker *string `json:"blocker,omitempty"`
-	Check   string  `json:"check"`
-	Passed  bool    `json:"passed"`
-}
-
-// EvaluationResponse Computed evaluation of whether the caller can fulfill a request.
-type EvaluationResponse struct {
-	CanFulfill bool                      `json:"can_fulfill"`
-	Checks     []EvaluationCheckResponse `json:"checks"`
 }
 
 // EventAcknowledgeRequest Request body for acknowledging an event.
@@ -2018,11 +1718,11 @@ type InstanceIdentityResponseBackend string
 
 // IntegrationsConnectRequest defines model for IntegrationsConnectRequest.
 type IntegrationsConnectRequest struct {
-	AgentId                  *string                                                          `json:"agent_id,omitempty"`
-	PreferredFlow            *string                                                          `json:"preferred_flow,omitempty"`
-	Reason                   *string                                                          `json:"reason,omitempty"`
-	RequestedPermissionRules *[]JenticOneControlWebSchemasPermissionRulesPermissionRuleSchema `json:"requested_permission_rules,omitempty"`
-	RequestedScopes          *[]string                                                        `json:"requested_scopes,omitempty"`
+	AgentId                  *string                 `json:"agent_id,omitempty"`
+	PreferredFlow            *string                 `json:"preferred_flow,omitempty"`
+	Reason                   *string                 `json:"reason,omitempty"`
+	RequestedPermissionRules *[]PermissionRuleSchema `json:"requested_permission_rules,omitempty"`
+	RequestedScopes          *[]string               `json:"requested_scopes,omitempty"`
 
 	// Vendor Vendor registry key (e.g. 'github')
 	Vendor string `json:"vendor"`
@@ -2816,6 +2516,34 @@ type PermissionRuleReadSchemaEffect string
 // PermissionRuleReadSchemaMatchMode defines model for PermissionRuleReadSchema.MatchMode.
 type PermissionRuleReadSchemaMatchMode string
 
+// PermissionRuleSchema Permission rule for an agent↔credential binding.
+//
+// Rules are evaluated first-match-wins. If no rule matches, the request is
+// denied (default-deny). A binding with zero rules therefore blocks all
+// operations — users must explicitly add at least one allow rule.
+type PermissionRuleSchema struct {
+	// Effect Whether this rule allows or denies the matched request.
+	Effect PermissionRuleSchemaEffect `json:"effect"`
+
+	// MatchMode How `path` is interpreted: `regex` (full-match), `prefix` (string prefix), or `exact` (equality). Defaults to `regex` for backwards compatibility.
+	MatchMode *PermissionRuleSchemaMatchMode `json:"match_mode,omitempty"`
+
+	// Methods HTTP methods to match (case-insensitive). None matches all.
+	Methods *[]string `json:"methods,omitempty"`
+
+	// Operations OpenAPI operation IDs to match. None matches all operations.
+	Operations *[]string `json:"operations,omitempty"`
+
+	// Path Path pattern to match. Interpreted per `match_mode`: `regex` uses full-match semantics (the pattern must describe the whole path); `prefix` and `exact` are literal. None matches all paths.
+	Path *string `json:"path,omitempty"`
+}
+
+// PermissionRuleSchemaEffect Whether this rule allows or denies the matched request.
+type PermissionRuleSchemaEffect string
+
+// PermissionRuleSchemaMatchMode How `path` is interpreted: `regex` (full-match), `prefix` (string prefix), or `exact` (equality). Defaults to `regex` for backwards compatibility.
+type PermissionRuleSchemaMatchMode string
+
 // PermissionTestRequest Request body for :test — dry-run a request shape against the binding's rules.
 type PermissionTestRequest struct {
 	// Method HTTP method of the hypothetical request (case-insensitive).
@@ -2857,8 +2585,8 @@ type Permissions struct {
 
 // PermissionsPatchRequest Patch permission rules — add and/or remove.
 type PermissionsPatchRequest struct {
-	Add    *[]JenticOneControlWebSchemasPermissionRulesPermissionRuleSchema `json:"add,omitempty"`
-	Remove *[]int                                                           `json:"remove,omitempty"`
+	Add    *[]PermissionRuleSchema `json:"add,omitempty"`
+	Remove *[]int                  `json:"remove,omitempty"`
 }
 
 // PreviewInfoResponse The `info` block fields surfaced in a preview.
@@ -3085,7 +2813,7 @@ type RuleSetCreateRequest struct {
 	Name string `json:"name"`
 
 	// Rules Initial ordered rule list (first-match-wins, default-deny).
-	Rules *[]JenticOneControlWebSchemasPermissionRulesPermissionRuleSchema `json:"rules,omitempty"`
+	Rules *[]PermissionRuleSchema `json:"rules,omitempty"`
 }
 
 // RuleSetListResponse Paginated list of rule sets.
@@ -3447,65 +3175,6 @@ type JenticOneAuthWebSchemasServiceAccountsDenyRequest struct {
 	Reason string `json:"reason"`
 }
 
-// JenticOneControlWebSchemasAccessRequestsPermissionRuleSchema Permission rule for an access request item.
-type JenticOneControlWebSchemasAccessRequestsPermissionRuleSchema struct {
-	Effect JenticOneControlWebSchemasAccessRequestsPermissionRuleSchemaEffect `json:"effect"`
-
-	// MatchMode How `path` is interpreted: `regex` (full-match), `prefix` (string prefix), or `exact` (equality). Defaults to `regex` for backwards compatibility.
-	MatchMode *JenticOneControlWebSchemasAccessRequestsPermissionRuleSchemaMatchMode `json:"match_mode,omitempty"`
-
-	// Methods HTTP methods to match (case-insensitive). None matches all.
-	Methods *[]string `json:"methods,omitempty"`
-
-	// Operations OpenAPI operation IDs to match. None matches all operations.
-	Operations *[]string `json:"operations,omitempty"`
-
-	// Path Path pattern to match. Interpreted per `match_mode`: `regex` uses full-match semantics (the pattern must describe the whole path); `prefix` and `exact` are literal. None matches all paths.
-	Path *string `json:"path,omitempty"`
-}
-
-// JenticOneControlWebSchemasAccessRequestsPermissionRuleSchemaEffect defines model for JenticOneControlWebSchemasAccessRequestsPermissionRuleSchema.Effect.
-type JenticOneControlWebSchemasAccessRequestsPermissionRuleSchemaEffect string
-
-// JenticOneControlWebSchemasAccessRequestsPermissionRuleSchemaMatchMode How `path` is interpreted: `regex` (full-match), `prefix` (string prefix), or `exact` (equality). Defaults to `regex` for backwards compatibility.
-type JenticOneControlWebSchemasAccessRequestsPermissionRuleSchemaMatchMode string
-
-// JenticOneControlWebSchemasPermissionRulesPermissionRuleSchema Permission rule for an agent↔credential binding.
-//
-// Rules are evaluated first-match-wins. If no rule matches, the request is
-// denied (default-deny). A binding with zero rules therefore blocks all
-// operations — users must explicitly add at least one allow rule.
-type JenticOneControlWebSchemasPermissionRulesPermissionRuleSchema struct {
-	// Effect Whether this rule allows or denies the matched request.
-	Effect JenticOneControlWebSchemasPermissionRulesPermissionRuleSchemaEffect `json:"effect"`
-
-	// MatchMode How `path` is interpreted: `regex` (full-match), `prefix` (string prefix), or `exact` (equality). Defaults to `regex` for backwards compatibility.
-	MatchMode *JenticOneControlWebSchemasPermissionRulesPermissionRuleSchemaMatchMode `json:"match_mode,omitempty"`
-
-	// Methods HTTP methods to match (case-insensitive). None matches all.
-	Methods *[]string `json:"methods,omitempty"`
-
-	// Operations OpenAPI operation IDs to match. None matches all operations.
-	Operations *[]string `json:"operations,omitempty"`
-
-	// Path Path pattern to match. Interpreted per `match_mode`: `regex` uses full-match semantics (the pattern must describe the whole path); `prefix` and `exact` are literal. None matches all paths.
-	Path *string `json:"path,omitempty"`
-}
-
-// JenticOneControlWebSchemasPermissionRulesPermissionRuleSchemaEffect Whether this rule allows or denies the matched request.
-type JenticOneControlWebSchemasPermissionRulesPermissionRuleSchemaEffect string
-
-// JenticOneControlWebSchemasPermissionRulesPermissionRuleSchemaMatchMode How `path` is interpreted: `regex` (full-match), `prefix` (string prefix), or `exact` (equality). Defaults to `regex` for backwards compatibility.
-type JenticOneControlWebSchemasPermissionRulesPermissionRuleSchemaMatchMode string
-
-// ListAccessRequestsParams defines parameters for ListAccessRequests.
-type ListAccessRequestsParams struct {
-	ActorId *string `form:"actor_id,omitempty" json:"actor_id,omitempty"`
-	Status  *string `form:"status,omitempty" json:"status,omitempty"`
-	Cursor  *string `form:"cursor,omitempty" json:"cursor,omitempty"`
-	Limit   *int    `form:"limit,omitempty" json:"limit,omitempty"`
-}
-
 // ListActorsParams defines parameters for ListActors.
 type ListActorsParams struct {
 	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
@@ -3714,7 +3383,7 @@ type ListCredentialAgentsParams struct {
 }
 
 // ReplaceAgentCredentialPermissionsJSONBody defines parameters for ReplaceAgentCredentialPermissions.
-type ReplaceAgentCredentialPermissionsJSONBody = []JenticOneControlWebSchemasPermissionRulesPermissionRuleSchema
+type ReplaceAgentCredentialPermissionsJSONBody = []PermissionRuleSchema
 
 // ErrorPageParams defines parameters for ErrorPage.
 type ErrorPageParams struct {
@@ -3899,7 +3568,7 @@ type ListPermissionRuleSetsParams struct {
 }
 
 // ReplacePermissionRuleSetRulesJSONBody defines parameters for ReplacePermissionRuleSetRules.
-type ReplacePermissionRuleSetRulesJSONBody = []JenticOneControlWebSchemasPermissionRulesPermissionRuleSchema
+type ReplacePermissionRuleSetRulesJSONBody = []PermissionRuleSchema
 
 // ListServiceAccountsParams defines parameters for ListServiceAccounts.
 type ListServiceAccountsParams struct {
@@ -3914,15 +3583,6 @@ type ListUsersParams struct {
 	Limit       *int         `form:"limit,omitempty" json:"limit,omitempty"`
 	InviteState *InviteState `form:"invite_state,omitempty" json:"invite_state,omitempty"`
 }
-
-// FileAccessRequestJSONRequestBody defines body for FileAccessRequest for application/json ContentType.
-type FileAccessRequestJSONRequestBody = AccessRequestFileRequest
-
-// AmendAccessRequestJSONRequestBody defines body for AmendAccessRequest for application/json ContentType.
-type AmendAccessRequestJSONRequestBody = AmendRequest
-
-// DecideAccessRequestJSONRequestBody defines body for DecideAccessRequest for application/json ContentType.
-type DecideAccessRequestJSONRequestBody = DecideRequest
 
 // SetProviderConfigJSONRequestBody defines body for SetProviderConfig for application/json ContentType.
 type SetProviderConfigJSONRequestBody = ProviderConfigSetRequest
@@ -4925,81 +4585,6 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /.well-known/oauth-protected-resource/mcp (the `McpOauthProtectedResource` operationId).
 	McpOauthProtectedResource(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ListAccessRequests List access requests
-	//
-	// List access requests with cursor-based pagination.
-	//
-	// Corresponds with GET /access-requests (the `ListAccessRequests` operationId).
-	ListAccessRequests(ctx context.Context, params *ListAccessRequestsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// FileAccessRequestWithBody File access request
-	//
-	// File a new access request.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /access-requests (the `FileAccessRequest` operationId).
-	FileAccessRequestWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// FileAccessRequest File access request
-	//
-	// File a new access request.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /access-requests (the `FileAccessRequest` operationId).
-	FileAccessRequest(ctx context.Context, body FileAccessRequestJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetAccessRequest Get access request
-	//
-	// Get a single access request by ID.
-	//
-	// Corresponds with GET /access-requests/{request_id} (the `GetAccessRequest` operationId).
-	GetAccessRequest(ctx context.Context, requestId string, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// AmendAccessRequestWithBody Amend access request
-	//
-	// Amend pending items on an access request.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /access-requests/{request_id}:amend (the `AmendAccessRequest` operationId).
-	AmendAccessRequestWithBody(ctx context.Context, requestId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// AmendAccessRequest Amend access request
-	//
-	// Amend pending items on an access request.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /access-requests/{request_id}:amend (the `AmendAccessRequest` operationId).
-	AmendAccessRequest(ctx context.Context, requestId string, body AmendAccessRequestJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// DecideAccessRequestWithBody Decide access request items
-	//
-	// Decide (approve/deny) items on an access request.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /access-requests/{request_id}:decide (the `DecideAccessRequest` operationId).
-	DecideAccessRequestWithBody(ctx context.Context, requestId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// DecideAccessRequest Decide access request items
-	//
-	// Decide (approve/deny) items on an access request.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /access-requests/{request_id}:decide (the `DecideAccessRequest` operationId).
-	DecideAccessRequest(ctx context.Context, requestId string, body DecideAccessRequestJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// WithdrawAccessRequest Withdraw access request
-	//
-	// Withdraw a pending access request.
-	//
-	// Corresponds with POST /access-requests/{request_id}:withdraw (the `WithdrawAccessRequest` operationId).
-	WithdrawAccessRequest(ctx context.Context, requestId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListActors List Actors
 	//
@@ -7671,171 +7256,6 @@ func (c *Client) McpOauthProtectedResourceRootAlias(ctx context.Context, reqEdit
 // Corresponds with GET /.well-known/oauth-protected-resource/mcp (the `McpOauthProtectedResource` operationId).
 func (c *Client) McpOauthProtectedResource(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewMcpOauthProtectedResourceRequest(c.Server)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// ListAccessRequests List access requests
-//
-// List access requests with cursor-based pagination.
-//
-// Corresponds with GET /access-requests (the `ListAccessRequests` operationId).
-func (c *Client) ListAccessRequests(ctx context.Context, params *ListAccessRequestsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListAccessRequestsRequest(c.Server, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// FileAccessRequestWithBody File access request
-//
-// File a new access request.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /access-requests (the `FileAccessRequest` operationId).
-func (c *Client) FileAccessRequestWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewFileAccessRequestRequestWithBody(c.Server, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// FileAccessRequest File access request
-//
-// File a new access request.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /access-requests (the `FileAccessRequest` operationId).
-func (c *Client) FileAccessRequest(ctx context.Context, body FileAccessRequestJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewFileAccessRequestRequest(c.Server, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// GetAccessRequest Get access request
-//
-// Get a single access request by ID.
-//
-// Corresponds with GET /access-requests/{request_id} (the `GetAccessRequest` operationId).
-func (c *Client) GetAccessRequest(ctx context.Context, requestId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetAccessRequestRequest(c.Server, requestId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// AmendAccessRequestWithBody Amend access request
-//
-// Amend pending items on an access request.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /access-requests/{request_id}:amend (the `AmendAccessRequest` operationId).
-func (c *Client) AmendAccessRequestWithBody(ctx context.Context, requestId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewAmendAccessRequestRequestWithBody(c.Server, requestId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// AmendAccessRequest Amend access request
-//
-// Amend pending items on an access request.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /access-requests/{request_id}:amend (the `AmendAccessRequest` operationId).
-func (c *Client) AmendAccessRequest(ctx context.Context, requestId string, body AmendAccessRequestJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewAmendAccessRequestRequest(c.Server, requestId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// DecideAccessRequestWithBody Decide access request items
-//
-// Decide (approve/deny) items on an access request.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /access-requests/{request_id}:decide (the `DecideAccessRequest` operationId).
-func (c *Client) DecideAccessRequestWithBody(ctx context.Context, requestId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewDecideAccessRequestRequestWithBody(c.Server, requestId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// DecideAccessRequest Decide access request items
-//
-// Decide (approve/deny) items on an access request.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /access-requests/{request_id}:decide (the `DecideAccessRequest` operationId).
-func (c *Client) DecideAccessRequest(ctx context.Context, requestId string, body DecideAccessRequestJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewDecideAccessRequestRequest(c.Server, requestId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// WithdrawAccessRequest Withdraw access request
-//
-// Withdraw a pending access request.
-//
-// Corresponds with POST /access-requests/{request_id}:withdraw (the `WithdrawAccessRequest` operationId).
-func (c *Client) WithdrawAccessRequest(ctx context.Context, requestId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewWithdrawAccessRequestRequest(c.Server, requestId)
 	if err != nil {
 		return nil, err
 	}
@@ -12848,298 +12268,6 @@ func NewMcpOauthProtectedResourceRequest(server string) (*http.Request, error) {
 	}
 
 	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewListAccessRequestsRequest constructs an http.Request for the ListAccessRequests method
-func NewListAccessRequestsRequest(server string, params *ListAccessRequestsParams) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/access-requests")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	if params != nil {
-		// queryValues collects non-styled parameters (passthrough, JSON)
-		// that are safe to round-trip through url.Values.Encode().
-		queryValues := queryURL.Query()
-		// rawQueryFragments collects pre-encoded query fragments from
-		// styled parameters, preserving literal commas as delimiters
-		// per the OpenAPI spec (e.g. "color=blue,black,brown").
-		var rawQueryFragments []string
-
-		if params.ActorId != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "actor_id", *params.ActorId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if params.Status != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "status", *params.Status, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if params.Cursor != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if params.Limit != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if encoded := queryValues.Encode(); encoded != "" {
-			rawQueryFragments = append(rawQueryFragments, encoded)
-		}
-		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewFileAccessRequestRequest calls the generic FileAccessRequest builder with application/json body
-func NewFileAccessRequestRequest(server string, body FileAccessRequestJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewFileAccessRequestRequestWithBody(server, "application/json", bodyReader)
-}
-
-// NewFileAccessRequestRequestWithBody constructs an http.Request for the FileAccessRequest method, with any body, and a specified content type
-func NewFileAccessRequestRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/access-requests")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewGetAccessRequestRequest constructs an http.Request for the GetAccessRequest method
-func NewGetAccessRequestRequest(server string, requestId string) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "request_id", requestId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/access-requests/%s", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewAmendAccessRequestRequest calls the generic AmendAccessRequest builder with application/json body
-func NewAmendAccessRequestRequest(server string, requestId string, body AmendAccessRequestJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewAmendAccessRequestRequestWithBody(server, requestId, "application/json", bodyReader)
-}
-
-// NewAmendAccessRequestRequestWithBody constructs an http.Request for the AmendAccessRequest method, with any body, and a specified content type
-func NewAmendAccessRequestRequestWithBody(server string, requestId string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "request_id", requestId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/access-requests/%s:amend", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewDecideAccessRequestRequest calls the generic DecideAccessRequest builder with application/json body
-func NewDecideAccessRequestRequest(server string, requestId string, body DecideAccessRequestJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewDecideAccessRequestRequestWithBody(server, requestId, "application/json", bodyReader)
-}
-
-// NewDecideAccessRequestRequestWithBody constructs an http.Request for the DecideAccessRequest method, with any body, and a specified content type
-func NewDecideAccessRequestRequestWithBody(server string, requestId string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "request_id", requestId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/access-requests/%s:decide", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewWithdrawAccessRequestRequest constructs an http.Request for the WithdrawAccessRequest method
-func NewWithdrawAccessRequestRequest(server string, requestId string) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "request_id", requestId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/access-requests/%s:withdraw", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -22161,87 +21289,6 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /.well-known/oauth-protected-resource/mcp (the `McpOauthProtectedResource` operationId).
 	McpOauthProtectedResourceWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*McpOauthProtectedResourceHTTPResp, error)
 
-	// ListAccessRequestsWithResponse List access requests
-	//
-	// List access requests with cursor-based pagination.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with GET /access-requests (the `ListAccessRequests` operationId).
-	ListAccessRequestsWithResponse(ctx context.Context, params *ListAccessRequestsParams, reqEditors ...RequestEditorFn) (*ListAccessRequestsHTTPResp, error)
-
-	// FileAccessRequestWithBodyWithResponse File access request
-	//
-	// File a new access request.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /access-requests (the `FileAccessRequest` operationId).
-	FileAccessRequestWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*FileAccessRequestHTTPResp, error)
-
-	// FileAccessRequestWithResponse File access request
-	//
-	// File a new access request.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /access-requests (the `FileAccessRequest` operationId).
-	FileAccessRequestWithResponse(ctx context.Context, body FileAccessRequestJSONRequestBody, reqEditors ...RequestEditorFn) (*FileAccessRequestHTTPResp, error)
-
-	// GetAccessRequestWithResponse Get access request
-	//
-	// Get a single access request by ID.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with GET /access-requests/{request_id} (the `GetAccessRequest` operationId).
-	GetAccessRequestWithResponse(ctx context.Context, requestId string, reqEditors ...RequestEditorFn) (*GetAccessRequestHTTPResp, error)
-
-	// AmendAccessRequestWithBodyWithResponse Amend access request
-	//
-	// Amend pending items on an access request.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /access-requests/{request_id}:amend (the `AmendAccessRequest` operationId).
-	AmendAccessRequestWithBodyWithResponse(ctx context.Context, requestId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AmendAccessRequestHTTPResp, error)
-
-	// AmendAccessRequestWithResponse Amend access request
-	//
-	// Amend pending items on an access request.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /access-requests/{request_id}:amend (the `AmendAccessRequest` operationId).
-	AmendAccessRequestWithResponse(ctx context.Context, requestId string, body AmendAccessRequestJSONRequestBody, reqEditors ...RequestEditorFn) (*AmendAccessRequestHTTPResp, error)
-
-	// DecideAccessRequestWithBodyWithResponse Decide access request items
-	//
-	// Decide (approve/deny) items on an access request.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /access-requests/{request_id}:decide (the `DecideAccessRequest` operationId).
-	DecideAccessRequestWithBodyWithResponse(ctx context.Context, requestId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DecideAccessRequestHTTPResp, error)
-
-	// DecideAccessRequestWithResponse Decide access request items
-	//
-	// Decide (approve/deny) items on an access request.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /access-requests/{request_id}:decide (the `DecideAccessRequest` operationId).
-	DecideAccessRequestWithResponse(ctx context.Context, requestId string, body DecideAccessRequestJSONRequestBody, reqEditors ...RequestEditorFn) (*DecideAccessRequestHTTPResp, error)
-
-	// WithdrawAccessRequestWithResponse Withdraw access request
-	//
-	// Withdraw a pending access request.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /access-requests/{request_id}:withdraw (the `WithdrawAccessRequest` operationId).
-	WithdrawAccessRequestWithResponse(ctx context.Context, requestId string, reqEditors ...RequestEditorFn) (*WithdrawAccessRequestHTTPResp, error)
-
 	// ListActorsWithResponse List Actors
 	//
 	// List all actors (users, agents, service accounts) for UI cache hydration.
@@ -25384,539 +24431,6 @@ func (r McpOauthProtectedResourceHTTPResp) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r McpOauthProtectedResourceHTTPResp) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type ListAccessRequestsHTTPResp struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *AccessRequestListResponse
-	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
-	ApplicationproblemJSON400 *ProblemDetail
-	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
-	ApplicationproblemJSON401 *ProblemDetail
-	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
-	ApplicationproblemJSON403 *ProblemDetail
-	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
-	ApplicationproblemJSON422 *ProblemDetail
-	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
-	ApplicationproblemJSON500 *ProblemDetail
-	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
-	ApplicationproblemJSON503 *ProblemDetail
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ListAccessRequestsHTTPResp) GetJSON200() *AccessRequestListResponse {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
-func (r ListAccessRequestsHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
-	return r.ApplicationproblemJSON400
-}
-
-// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
-func (r ListAccessRequestsHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
-	return r.ApplicationproblemJSON401
-}
-
-// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
-func (r ListAccessRequestsHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
-	return r.ApplicationproblemJSON403
-}
-
-// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
-func (r ListAccessRequestsHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
-	return r.ApplicationproblemJSON422
-}
-
-// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
-func (r ListAccessRequestsHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
-	return r.ApplicationproblemJSON500
-}
-
-// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
-func (r ListAccessRequestsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
-	return r.ApplicationproblemJSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r ListAccessRequestsHTTPResp) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r ListAccessRequestsHTTPResp) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ListAccessRequestsHTTPResp) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ListAccessRequestsHTTPResp) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type FileAccessRequestHTTPResp struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON202 the response for an HTTP 202 `application/json` response
-	JSON202 *AccessRequestResponse
-	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
-	ApplicationproblemJSON400 *ProblemDetail
-	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
-	ApplicationproblemJSON401 *ProblemDetail
-	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
-	ApplicationproblemJSON403 *ProblemDetail
-	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
-	ApplicationproblemJSON409 *DuplicatePendingProblem
-	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
-	ApplicationproblemJSON422 *ProblemDetail
-	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
-	ApplicationproblemJSON500 *ProblemDetail
-	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
-	ApplicationproblemJSON503 *ProblemDetail
-}
-
-// GetJSON202 returns the response for an HTTP 202 `application/json` response
-func (r FileAccessRequestHTTPResp) GetJSON202() *AccessRequestResponse {
-	return r.JSON202
-}
-
-// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
-func (r FileAccessRequestHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
-	return r.ApplicationproblemJSON400
-}
-
-// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
-func (r FileAccessRequestHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
-	return r.ApplicationproblemJSON401
-}
-
-// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
-func (r FileAccessRequestHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
-	return r.ApplicationproblemJSON403
-}
-
-// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
-func (r FileAccessRequestHTTPResp) GetApplicationproblemJSON409() *DuplicatePendingProblem {
-	return r.ApplicationproblemJSON409
-}
-
-// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
-func (r FileAccessRequestHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
-	return r.ApplicationproblemJSON422
-}
-
-// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
-func (r FileAccessRequestHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
-	return r.ApplicationproblemJSON500
-}
-
-// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
-func (r FileAccessRequestHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
-	return r.ApplicationproblemJSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r FileAccessRequestHTTPResp) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r FileAccessRequestHTTPResp) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r FileAccessRequestHTTPResp) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r FileAccessRequestHTTPResp) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type GetAccessRequestHTTPResp struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *AccessRequestResponse
-	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
-	ApplicationproblemJSON400 *ProblemDetail
-	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
-	ApplicationproblemJSON401 *ProblemDetail
-	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
-	ApplicationproblemJSON403 *ProblemDetail
-	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
-	ApplicationproblemJSON404 *ProblemDetail
-	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
-	ApplicationproblemJSON422 *ProblemDetail
-	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
-	ApplicationproblemJSON500 *ProblemDetail
-	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
-	ApplicationproblemJSON503 *ProblemDetail
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r GetAccessRequestHTTPResp) GetJSON200() *AccessRequestResponse {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
-func (r GetAccessRequestHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
-	return r.ApplicationproblemJSON400
-}
-
-// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
-func (r GetAccessRequestHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
-	return r.ApplicationproblemJSON401
-}
-
-// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
-func (r GetAccessRequestHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
-	return r.ApplicationproblemJSON403
-}
-
-// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
-func (r GetAccessRequestHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
-	return r.ApplicationproblemJSON404
-}
-
-// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
-func (r GetAccessRequestHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
-	return r.ApplicationproblemJSON422
-}
-
-// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
-func (r GetAccessRequestHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
-	return r.ApplicationproblemJSON500
-}
-
-// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
-func (r GetAccessRequestHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
-	return r.ApplicationproblemJSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r GetAccessRequestHTTPResp) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r GetAccessRequestHTTPResp) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r GetAccessRequestHTTPResp) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r GetAccessRequestHTTPResp) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type AmendAccessRequestHTTPResp struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *AccessRequestResponse
-	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
-	ApplicationproblemJSON400 *ProblemDetail
-	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
-	ApplicationproblemJSON401 *ProblemDetail
-	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
-	ApplicationproblemJSON403 *ProblemDetail
-	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
-	ApplicationproblemJSON404 *ProblemDetail
-	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
-	ApplicationproblemJSON422 *ProblemDetail
-	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
-	ApplicationproblemJSON500 *ProblemDetail
-	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
-	ApplicationproblemJSON503 *ProblemDetail
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r AmendAccessRequestHTTPResp) GetJSON200() *AccessRequestResponse {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
-func (r AmendAccessRequestHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
-	return r.ApplicationproblemJSON400
-}
-
-// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
-func (r AmendAccessRequestHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
-	return r.ApplicationproblemJSON401
-}
-
-// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
-func (r AmendAccessRequestHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
-	return r.ApplicationproblemJSON403
-}
-
-// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
-func (r AmendAccessRequestHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
-	return r.ApplicationproblemJSON404
-}
-
-// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
-func (r AmendAccessRequestHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
-	return r.ApplicationproblemJSON422
-}
-
-// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
-func (r AmendAccessRequestHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
-	return r.ApplicationproblemJSON500
-}
-
-// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
-func (r AmendAccessRequestHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
-	return r.ApplicationproblemJSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r AmendAccessRequestHTTPResp) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r AmendAccessRequestHTTPResp) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r AmendAccessRequestHTTPResp) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r AmendAccessRequestHTTPResp) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type DecideAccessRequestHTTPResp struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *AccessRequestResponse
-	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
-	ApplicationproblemJSON400 *ProblemDetail
-	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
-	ApplicationproblemJSON401 *ProblemDetail
-	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
-	ApplicationproblemJSON403 *ProblemDetail
-	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
-	ApplicationproblemJSON404 *ProblemDetail
-	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
-	ApplicationproblemJSON422 *ProblemDetail
-	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
-	ApplicationproblemJSON500 *ProblemDetail
-	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
-	ApplicationproblemJSON503 *ProblemDetail
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r DecideAccessRequestHTTPResp) GetJSON200() *AccessRequestResponse {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
-func (r DecideAccessRequestHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
-	return r.ApplicationproblemJSON400
-}
-
-// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
-func (r DecideAccessRequestHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
-	return r.ApplicationproblemJSON401
-}
-
-// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
-func (r DecideAccessRequestHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
-	return r.ApplicationproblemJSON403
-}
-
-// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
-func (r DecideAccessRequestHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
-	return r.ApplicationproblemJSON404
-}
-
-// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
-func (r DecideAccessRequestHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
-	return r.ApplicationproblemJSON422
-}
-
-// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
-func (r DecideAccessRequestHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
-	return r.ApplicationproblemJSON500
-}
-
-// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
-func (r DecideAccessRequestHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
-	return r.ApplicationproblemJSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r DecideAccessRequestHTTPResp) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r DecideAccessRequestHTTPResp) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r DecideAccessRequestHTTPResp) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r DecideAccessRequestHTTPResp) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type WithdrawAccessRequestHTTPResp struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *AccessRequestResponse
-	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
-	ApplicationproblemJSON400 *ProblemDetail
-	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
-	ApplicationproblemJSON401 *ProblemDetail
-	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
-	ApplicationproblemJSON403 *ProblemDetail
-	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
-	ApplicationproblemJSON404 *ProblemDetail
-	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
-	ApplicationproblemJSON422 *ProblemDetail
-	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
-	ApplicationproblemJSON500 *ProblemDetail
-	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
-	ApplicationproblemJSON503 *ProblemDetail
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r WithdrawAccessRequestHTTPResp) GetJSON200() *AccessRequestResponse {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
-func (r WithdrawAccessRequestHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
-	return r.ApplicationproblemJSON400
-}
-
-// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
-func (r WithdrawAccessRequestHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
-	return r.ApplicationproblemJSON401
-}
-
-// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
-func (r WithdrawAccessRequestHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
-	return r.ApplicationproblemJSON403
-}
-
-// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
-func (r WithdrawAccessRequestHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
-	return r.ApplicationproblemJSON404
-}
-
-// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
-func (r WithdrawAccessRequestHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
-	return r.ApplicationproblemJSON422
-}
-
-// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
-func (r WithdrawAccessRequestHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
-	return r.ApplicationproblemJSON500
-}
-
-// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
-func (r WithdrawAccessRequestHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
-	return r.ApplicationproblemJSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r WithdrawAccessRequestHTTPResp) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r WithdrawAccessRequestHTTPResp) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r WithdrawAccessRequestHTTPResp) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r WithdrawAccessRequestHTTPResp) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -39938,141 +38452,6 @@ func (c *ClientWithResponses) McpOauthProtectedResourceWithResponse(ctx context.
 	return ParseMcpOauthProtectedResourceHTTPResp(rsp)
 }
 
-// ListAccessRequestsWithResponse List access requests
-//
-// List access requests with cursor-based pagination.
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with GET /access-requests (the `ListAccessRequests` operationId).
-func (c *ClientWithResponses) ListAccessRequestsWithResponse(ctx context.Context, params *ListAccessRequestsParams, reqEditors ...RequestEditorFn) (*ListAccessRequestsHTTPResp, error) {
-	rsp, err := c.ListAccessRequests(ctx, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseListAccessRequestsHTTPResp(rsp)
-}
-
-// FileAccessRequestWithBodyWithResponse File access request
-//
-// File a new access request.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /access-requests (the `FileAccessRequest` operationId).
-func (c *ClientWithResponses) FileAccessRequestWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*FileAccessRequestHTTPResp, error) {
-	rsp, err := c.FileAccessRequestWithBody(ctx, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseFileAccessRequestHTTPResp(rsp)
-}
-
-// FileAccessRequestWithResponse File access request
-//
-// File a new access request.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /access-requests (the `FileAccessRequest` operationId).
-func (c *ClientWithResponses) FileAccessRequestWithResponse(ctx context.Context, body FileAccessRequestJSONRequestBody, reqEditors ...RequestEditorFn) (*FileAccessRequestHTTPResp, error) {
-	rsp, err := c.FileAccessRequest(ctx, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseFileAccessRequestHTTPResp(rsp)
-}
-
-// GetAccessRequestWithResponse Get access request
-//
-// Get a single access request by ID.
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with GET /access-requests/{request_id} (the `GetAccessRequest` operationId).
-func (c *ClientWithResponses) GetAccessRequestWithResponse(ctx context.Context, requestId string, reqEditors ...RequestEditorFn) (*GetAccessRequestHTTPResp, error) {
-	rsp, err := c.GetAccessRequest(ctx, requestId, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetAccessRequestHTTPResp(rsp)
-}
-
-// AmendAccessRequestWithBodyWithResponse Amend access request
-//
-// Amend pending items on an access request.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /access-requests/{request_id}:amend (the `AmendAccessRequest` operationId).
-func (c *ClientWithResponses) AmendAccessRequestWithBodyWithResponse(ctx context.Context, requestId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AmendAccessRequestHTTPResp, error) {
-	rsp, err := c.AmendAccessRequestWithBody(ctx, requestId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseAmendAccessRequestHTTPResp(rsp)
-}
-
-// AmendAccessRequestWithResponse Amend access request
-//
-// Amend pending items on an access request.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /access-requests/{request_id}:amend (the `AmendAccessRequest` operationId).
-func (c *ClientWithResponses) AmendAccessRequestWithResponse(ctx context.Context, requestId string, body AmendAccessRequestJSONRequestBody, reqEditors ...RequestEditorFn) (*AmendAccessRequestHTTPResp, error) {
-	rsp, err := c.AmendAccessRequest(ctx, requestId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseAmendAccessRequestHTTPResp(rsp)
-}
-
-// DecideAccessRequestWithBodyWithResponse Decide access request items
-//
-// Decide (approve/deny) items on an access request.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /access-requests/{request_id}:decide (the `DecideAccessRequest` operationId).
-func (c *ClientWithResponses) DecideAccessRequestWithBodyWithResponse(ctx context.Context, requestId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DecideAccessRequestHTTPResp, error) {
-	rsp, err := c.DecideAccessRequestWithBody(ctx, requestId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseDecideAccessRequestHTTPResp(rsp)
-}
-
-// DecideAccessRequestWithResponse Decide access request items
-//
-// Decide (approve/deny) items on an access request.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /access-requests/{request_id}:decide (the `DecideAccessRequest` operationId).
-func (c *ClientWithResponses) DecideAccessRequestWithResponse(ctx context.Context, requestId string, body DecideAccessRequestJSONRequestBody, reqEditors ...RequestEditorFn) (*DecideAccessRequestHTTPResp, error) {
-	rsp, err := c.DecideAccessRequest(ctx, requestId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseDecideAccessRequestHTTPResp(rsp)
-}
-
-// WithdrawAccessRequestWithResponse Withdraw access request
-//
-// Withdraw a pending access request.
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /access-requests/{request_id}:withdraw (the `WithdrawAccessRequest` operationId).
-func (c *ClientWithResponses) WithdrawAccessRequestWithResponse(ctx context.Context, requestId string, reqEditors ...RequestEditorFn) (*WithdrawAccessRequestHTTPResp, error) {
-	rsp, err := c.WithdrawAccessRequest(ctx, requestId, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseWithdrawAccessRequestHTTPResp(rsp)
-}
-
 // ListActorsWithResponse List Actors
 //
 // List all actors (users, agents, service accounts) for UI cache hydration.
@@ -44513,449 +42892,6 @@ func ParseMcpOauthProtectedResourceHTTPResp(rsp *http.Response) (*McpOauthProtec
 
 	case rsp.StatusCode == 404:
 		break // No content-type
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON422 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON503 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseListAccessRequestsHTTPResp parses an HTTP response from a ListAccessRequestsWithResponse call
-func ParseListAccessRequestsHTTPResp(rsp *http.Response) (*ListAccessRequestsHTTPResp, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ListAccessRequestsHTTPResp{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest AccessRequestListResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON422 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON503 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseFileAccessRequestHTTPResp parses an HTTP response from a FileAccessRequestWithResponse call
-func ParseFileAccessRequestHTTPResp(rsp *http.Response) (*FileAccessRequestHTTPResp, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &FileAccessRequestHTTPResp{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
-		var dest AccessRequestResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON202 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
-		var dest DuplicatePendingProblem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON409 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON422 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON503 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseGetAccessRequestHTTPResp parses an HTTP response from a GetAccessRequestWithResponse call
-func ParseGetAccessRequestHTTPResp(rsp *http.Response) (*GetAccessRequestHTTPResp, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &GetAccessRequestHTTPResp{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest AccessRequestResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON422 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON503 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseAmendAccessRequestHTTPResp parses an HTTP response from a AmendAccessRequestWithResponse call
-func ParseAmendAccessRequestHTTPResp(rsp *http.Response) (*AmendAccessRequestHTTPResp, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &AmendAccessRequestHTTPResp{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest AccessRequestResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON422 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON503 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseDecideAccessRequestHTTPResp parses an HTTP response from a DecideAccessRequestWithResponse call
-func ParseDecideAccessRequestHTTPResp(rsp *http.Response) (*DecideAccessRequestHTTPResp, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &DecideAccessRequestHTTPResp{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest AccessRequestResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON422 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON503 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseWithdrawAccessRequestHTTPResp parses an HTTP response from a WithdrawAccessRequestWithResponse call
-func ParseWithdrawAccessRequestHTTPResp(rsp *http.Response) (*WithdrawAccessRequestHTTPResp, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &WithdrawAccessRequestHTTPResp{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest AccessRequestResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON404 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest ProblemDetail

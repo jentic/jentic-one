@@ -27,7 +27,7 @@ Every API endpoint grouped by its **typical caller**, then by surface, annotated
 
 > The grouping and the _Typical caller_ column are an **advisory hint** at who usually calls a route, inferred from the scope family. They are **not** an enforced restriction: access is gated by the **scope**, not the actor kind, so any actor holding the required scope can call the endpoint.
 
-_Total endpoints: **191**._
+_Total endpoints: **185**._
 
 
 ## Agent-facing (typically agent / service-account) (33)
@@ -116,14 +116,8 @@ _Total endpoints: **191**._
 | GET | `/vendors` | `capabilities:read` | agent | List verified vendors |
 | GET | `/vendors/{vendor_key}/auth-capabilities` | `capabilities:read` | agent | Get a vendor's SSO capabilities |
 
-## Operator-facing (typically a human operator / admin) (52)
+## Operator-facing (typically a human operator / admin) (51)
 
-
-### `access-requests`
-
-| Method | Path | Scope(s) | Typical caller | Summary |
-|---|---|---|---|---|
-| POST | `/access-requests/{request_id}:decide` | `agents:write` | operator | Decide access request items |
 
 ### `actors`
 
@@ -236,18 +230,8 @@ _Total endpoints: **191**._
 | POST | `/users/{user_id}:enable` | `users:write` | operator | Enable User |
 | POST | `/users/{user_id}:reissue-invite` | `users:write` | operator | Reissue Invite |
 
-## Any authenticated actor (76)
+## Any authenticated actor (71)
 
-
-### `access-requests`
-
-| Method | Path | Scope(s) | Typical caller | Summary |
-|---|---|---|---|---|
-| GET | `/access-requests` | _any authenticated_ | any | List access requests |
-| POST | `/access-requests` | _any authenticated_ | any | File access request |
-| GET | `/access-requests/{request_id}` | _any authenticated_ | any | Get access request |
-| POST | `/access-requests/{request_id}:amend` | _any authenticated_ | any | Amend access request |
-| POST | `/access-requests/{request_id}:withdraw` | _any authenticated_ | any | Withdraw access request |
 
 ### `admin`
 
