@@ -212,20 +212,18 @@ def _synthesized_denial_hint(status: int) -> str:
     if status == 403:
         return (
             "This agent has no credential binding serving this API. Call whoami to see "
-            "your bindings, then ask your operator to grant access "
-            "(`jentic access request --api <vendor/name> --wait`)."
+            "your bindings, then ask your operator to connect a credential for the API "
+            "and bind you to it (dashboard)."
         )
     if status == 424:
         return (
-            "No credential is provisioned for this call. Ask your operator to provision "
-            "one (`jentic access request --provision <vendor/name> --wait`), "
-            "then retry."
+            "No credential is provisioned for this call. Ask your operator to connect "
+            "one for the API in the dashboard, then retry."
         )
     if status == 401:
         return (
             "The stored upstream credential needs reconnecting. Ask your operator to "
-            "re-provision it (`jentic access request --provision <vendor/name> "
-            "--wait`), then retry."
+            "re-provision it in the dashboard, then retry."
         )
     return (
         "The broker denied this call before it reached the upstream API. "

@@ -11,8 +11,8 @@ import (
 
 // agentConsoleURL builds the operator-facing UI link for approving an agent.
 // The SPA is mounted under /app, so the agent detail page (where the Approve
-// action lives) is {baseURL}/app/agents/{id}. This mirrors how access requests
-// surface a clickable approve_url instead of a raw API endpoint.
+// action lives) is {baseURL}/app/agents/{id}. A clickable console link beats
+// a raw API endpoint for the human doing the approving.
 func agentConsoleURL(baseURL, agentID string) string {
 	return config.AppURL(baseURL, "agents/"+agentID)
 }

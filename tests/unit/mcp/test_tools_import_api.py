@@ -246,25 +246,24 @@ def test_umbrella_api_id_with_literal_slash_stays_accepted() -> None:
     validate_api_id("googleapis.com/sheets")  # must not raise
 
 
-# ── scope gate (Go: 403PointsAtRequestAccessForScope) ────────────────────────
+# ── scope gate (Go: 403IsOperatorScopeGrant) ─────────────────────────────────
 
 
-async def test_missing_scope_is_broker_denied_with_the_pointer_served(
+async def test_missing_scope_is_broker_denied_routed_to_operator(
     services: None,
 ) -> None:
-    """The same gate as POST /catalog/{api_id}:import (catalog:import). The
-    handler raises the shared ``request_access`` pointer spelling (the
-    contract — the pinned description names it); with request_access now in
-    SERVED_TOOLS (PR B), #1254's lane-aware render filter lets it ride the
-    wire — the pointer resurfaced with no handler change, exactly as PR A
-    predicted."""
+    """The same gate as POST /catalog/{api_id}:import (catalog:import).
+    Access requests are retired: the scope grant is an operator action in the
+    dashboard, so the denial carries an ask-your-operator step and no tool
+    pointer."""
     result = await dispatch_tool_call(_env([]), "import_api", {"api_id": "googleapis.com/sheets"})
     assert result.is_error
     payload = _payload(result)
     assert payload["error_code"] == "BROKER_DENIED"
-    assert payload["next_tool"] == "request_access"  # served since PR B → rides (#1254)
+    assert "next_tool" not in payload
     assert "catalog:import" in payload["error"]
     assert "catalog:import" in payload["actionable_step"]
+    assert "operator" in payload["actionable_step"]
     assert _FakeCatalogService.filed == []
 
 

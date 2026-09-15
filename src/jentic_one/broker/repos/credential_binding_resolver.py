@@ -123,7 +123,7 @@ class CredentialBindingResolver:
 
         # Nearest-miss diagnostic only when nothing covers the API at all: if a
         # credential covers it (``covering_ids``), the recovery is "bind to it"
-        # (file an access request), not "fix your credential", so a mismatch
+        # (an operator grant), not "fix your credential", so a mismatch
         # would send the wrong signal. Requires the agent to be bound to
         # something (else it is a plain no-binding case).
         mismatch: IdentityMismatch | None = None

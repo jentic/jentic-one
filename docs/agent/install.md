@@ -494,7 +494,7 @@ jentic skill init    # optional: install the usage skill for your runtime
 
 ```bash
 jentic catalog list            # the API catalog answers (bare `jentic catalog` opens an interactive TUI on a terminal)
-jentic access whoami           # who you are and what you may call
+jentic api GET /me             # who you are and what you may call
 ```
 
 You are done installing. **Now read [use.md](use.md) before doing anything

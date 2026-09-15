@@ -213,12 +213,16 @@ func (a *App) printNextSteps(st theme.Styles) {
 	steps := []struct{ desc, cmd string }{
 		{"Browse the API catalog", "jentic catalog"},
 		{"Find an operation (each result prints a ready-to-paste inspect/execute target)", "jentic search \"send a slack message\""},
-		{"See what you can run right now", "jentic access whoami"},
-		{"A fresh agent is bound to no APIs — request access to one you found", "jentic access request --api <vendor/name> --wait"},
+		{"See what you can run right now", "jentic api GET /me"},
+		{"A fresh agent is bound to no APIs — ask your operator to connect one and bind you (dashboard)", ""},
 		{"Inspect that operation (paste the target search printed)", "jentic inspect <METHOD:url from search>"},
 		{"Run it (same target)", "jentic execute <METHOD:url from search> -d '{\"key\":\"value\"}'"},
 	}
 	for _, s := range steps {
+		if s.cmd == "" {
+			fmt.Fprintf(a.Out, "  %s\n", st.Dim.Render(s.desc))
+			continue
+		}
 		fmt.Fprintf(a.Out, "  %s\n    %s\n", st.Dim.Render(s.desc), st.Command.Render(s.cmd))
 	}
 	fmt.Fprintf(a.Out, "\n%s %s\n", st.Dim.Render("See all commands:"), st.Command.Render("jentic --help"))
