@@ -438,6 +438,16 @@ class ConnectSessionService:
 
         entry = self._vendors.get(row.vendor)
         resolved = self._vendors.merge_scopes(row.vendor, row.requested_scopes or [])
+        # The credential row's ``api_version`` is set at create-time to
+        # ``None`` — the imported OpenAPI decides its own version once the
+        # catalog import completes. Look it up live from the registry via
+        # the catalog-import DI seam so the SPA's rules-preview knows what
+        # version to hit ``/apis/.../operations`` against. Returns ``None``
+        # until the import lands; SPA polls the review-session endpoint
+        # while ``api_version`` is None.
+        api_version: str | None = None
+        if self._catalog_auto_importer is not None:
+            api_version = await self._catalog_auto_importer.current_version(api_id=entry.vendor)
         return ReviewData(
             session_id=row.id,
             state=row.state,
@@ -450,7 +460,7 @@ class ConnectSessionService:
             requested_permission_rules=row.requested_permission_rules or [],
             api_vendor=credential.api_vendor if credential else "",
             api_name=credential.api_name if credential else None,
-            api_version=credential.api_version if credential else None,
+            api_version=api_version,
         )
 
     # ---- confirm ----------------------------------------------------------

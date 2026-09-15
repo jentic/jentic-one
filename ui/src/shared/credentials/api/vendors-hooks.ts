@@ -72,6 +72,17 @@ export function useConnectSession(
 		queryFn: () => getConnectSession(sessionId as string),
 		enabled: Boolean(sessionId),
 		staleTime: 5_000,
+		// Poll while ``api_reference.version`` is null — the catalog import
+		// runs asynchronously, so the value flips from null to a version
+		// string once the import job completes. Once populated, stop
+		// polling so we don't hammer the endpoint for no reason. Callers
+		// that override the query behaviour can still pass their own
+		// ``refetchInterval`` via ``options``.
+		refetchInterval: (query) => {
+			const data = query.state.data;
+			if (data?.api_reference?.version) return false;
+			return 2_000;
+		},
 		...options,
 	});
 }

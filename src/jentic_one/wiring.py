@@ -134,6 +134,33 @@ class InProcessCatalogAutoImporter:
             _logger.warning("catalog_auto_import.failed", api_id=api_id, exc_info=True)
             return None
 
+    async def current_version(self, *, api_id: str) -> str | None:
+        """Return the imported api's current-revision version, or None.
+
+        Direct lookup on the registry ``apis`` table by ``catalog_api_id``,
+        gated on ``current_revision_id`` being set — otherwise the row
+        exists but hasn't finished importing. Returns None on any error /
+        no-match; the SPA polls until this becomes non-null.
+        """
+        try:
+            from sqlalchemy import select
+
+            from jentic_one.registry.core.schema.apis import Api
+
+            async with self._ctx.registry_db.session() as session:
+                stmt = (
+                    select(Api.version)
+                    .where(Api.catalog_api_id == api_id)
+                    .where(Api.current_revision_id.is_not(None))
+                    .limit(1)
+                )
+                result = await session.execute(stmt)
+                row = result.scalar_one_or_none()
+                return row if row else None
+        except Exception:
+            _logger.warning("catalog_current_version.failed", api_id=api_id, exc_info=True)
+            return None
+
 
 def install_control_catalog_auto_importer(app: FastAPI, ctx: Context) -> None:
     """Inject the catalog auto-importer onto the combined/control app state.

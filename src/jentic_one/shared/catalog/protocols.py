@@ -25,3 +25,15 @@ class CatalogAutoImportProtocol(Protocol):
     """
 
     async def ensure_imported(self, *, api_id: str, initiator_actor_id: str) -> str | None: ...
+
+    async def current_version(self, *, api_id: str) -> str | None:
+        """Return the imported api's current-revision version, or None if not imported yet.
+
+        Used by ``ConnectSessionService.get_review_data`` to fill in the
+        ``api_reference.version`` the SPA needs to hit
+        ``/apis/{vendor}/{name}/{version}/operations``. The catalog import runs
+        asynchronously, so the SPA polls the review-session endpoint while
+        this returns ``None``; once the import lands, the returned version
+        becomes non-null and the SPA's ops query can enable.
+        """
+        ...
