@@ -29,8 +29,8 @@ From the terminal instead: `jenticctl setup` creates the account;
 
 ## 2. Register the agent *(agent machine)*
 
-Nearly every step from here runs the `jentic` CLI — the exception is step 4,
-which happens in the dashboard — and every `jentic` command (even
+Nearly every step from here runs the `jentic` CLI — the exceptions are steps 4
+and 5, which happen (mostly) in the dashboard — and every `jentic` command (even
 browsing the catalog) needs a registered agent. From the machine that will
 run the agent:
 
@@ -76,30 +76,24 @@ covers an API and how the broker picks one at execution time:
 
 ## 5. Grant access
 
-Access is **default-deny**: an approved agent is bound to nothing until an
-operator grants it. Asking is a reviewable request, not a silent widening. A
-freshly imported API has no **credential** stored for it yet, so ask for the
-whole path to first execution — provision a credential *and* bind this agent
-to it — as one provisioning plan:
+Access is **default-deny**: an approved agent is bound to nothing until a
+human grants it, and granting is always a human decision — never something
+the agent does to itself. Two paths:
 
-```bash
-jentic access request --provision httpbin.org/httpbin --auth none   # returns a request id (and an approve_url)
-jentic access status <request-id>                                   # has it been granted?
-```
+- **Operator bind (works for every API).** In the dashboard, open the agent
+  and bind it to the stored credential, adding the `allow` rules that
+  describe what it may call — a rule-less binding still blocks everything.
+  For a no-auth API like httpbin, store a no-auth credential for
+  `httpbin.org/httpbin` first, then bind it the same way.
+- **Agent-driven connect flow (OAuth vendors).** When the deployment's vendor
+  registry covers the API, the agent starts the flow itself —
+  `jentic connect <vendor>`, over `POST /integrations:connect` — and you
+  consent inside the OAuth flow. The API is imported automatically, and the
+  credential, the agent binding, and its permissions land together; the
+  secret still never reaches the agent.
 
-A note on the hand-off: the operator approves in the dashboard at
-**`<app URL>/app/access-requests`** — send them there with the request id.
-Don't hand them the `approve_url` value itself: it is built from
-`control.access_requests.canonical_base_url`, which defaults to empty (no
-install guide sets it), and the path it forms is the authenticated JSON API
-route, not a browser page.
-
-`--auth none` declares that httpbin takes no credential. For an authenticated
-API, declare its type instead (`bearer`, `api_key`, `basic`, `oauth2`) — the
-operator enters the secret while approving; it never rides in your request.
-Once a credential already serves an API,
-`jentic access request --api httpbin.org/httpbin` asks for just the
-binding.
+Either way, an agent denied at execution gets a typed directive naming which
+of the two paths recovers it.
 
 ## 6. Make the call
 

@@ -33,10 +33,10 @@ actual operations is a separate, also-approved step
    [Serve MCP over HTTP](mcp-http-endpoint.md).
 4. **Raw HTTP** — for runtimes with none of the above, every deployment
    self-describes at `GET /llms.txt`: dynamic client registration, token
-   exchange, discovery, access requests, and brokered execution.
+   exchange, discovery, connect flows, and brokered execution.
 
 If a session has both the CLI and MCP tools, prefer the MCP tools and use the
-CLI for `setup`/`access` recovery and anything not exposed over MCP — both
+CLI for `setup`/`connect` recovery and anything not exposed over MCP — both
 talk to the same instance (check `backend`/`host` in the identity stamp).
 
 **One probe result that misleads:** on a default install, probing the control

@@ -39,12 +39,13 @@ allow. See `docs/security/README.md` before using real credentials.
 3. Import an API from https://github.com/jentic/jentic-public-apis (e.g. `httpbin.org`, used in
    step 6), or register a private OpenAPI description of the user's own service.
 4. Store a credential for that API, once. It is encrypted at rest and is never returned.
-5. Request access: `jentic access request --api <vendor/name>` files a reviewable request;
-   granting is always a human action. The operator binds the agent to a stored credential —
-   access is default-deny, and a rule-less binding still blocks everything. A freshly imported
-   API has no credential stored for it yet, so a bare `--api` request for it is denied — file
-   `jentic access request --provision <vendor/name>` instead, which describes the whole path
-   (credential, rules, binding) for the operator to fulfil.
+5. Get access: granting is always a human action. Access is default-deny — the operator binds
+   the agent to a stored credential in the console, and a rule-less binding still blocks
+   everything. For OAuth vendors in the deployment's vendor registry the agent can start the
+   flow itself with `jentic connect <vendor>` (`POST /integrations:connect`): a human consents
+   inside the OAuth flow, the API is imported automatically, and the credential, binding, and
+   per-agent permissions land together. For anything else, hand off to the operator — they
+   store the credential and bind the agent in the console.
 6. `jentic execute GET:https://httpbin.org/get --json` runs a call through the Broker with the
    credential injected. Give `execute` the operation's full upstream URL (as returned by
    `jentic search`/`jentic inspect`) or its operation_id — the Broker is a forward proxy, not a

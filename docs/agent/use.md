@@ -12,21 +12,24 @@ is the map, not the territory.
 Every task against an external API follows the same audited loop:
 
 ```bash
-jentic access whoami                   # 1. what your bindings already SERVE
-jentic catalog search "<capability>"   # 2. find an importable API (public catalog)
+jentic catalog search "<capability>"   # 1. find an importable API (public catalog)
 jentic catalog import <vendor/name>    #    import it into the local registry
-jentic search "<what you want to do>"  # 3. find the operation — each hit gives its METHOD and URL
-jentic inspect GET:https://api.example.com/v1/things/{id}     # 4. params, schemas, auth
-jentic execute GET:https://api.example.com/v1/things/{id} --path id=abc   # 5. call it through the broker
+jentic search "<what you want to do>"  # 2. find the operation — each hit gives its METHOD and URL
+jentic inspect GET:https://api.example.com/v1/things/{id}     # 3. params, schemas, auth
+jentic execute GET:https://api.example.com/v1/things/{id} --path id=abc   # 4. call it through the broker
 ```
 
 Key behaviours (details and full flag syntax in the skill):
 
-- **Decide access from `whoami`, don't probe with `execute`.** If nothing you
-  are bound to serves the API, file **one composite**
-  `jentic access request --provision <vendor/name> --auth … --rules-json …
-  --reason … --wait` covering the whole job. A human approves; you never
-  approve yourself, and you never see the credential secret.
+- **Get credentials through the connect flow, never by asking for the
+  secret.** When no bound credential serves the API, a denied `execute`
+  names the recovery: `jentic connect <vendor>` starts an agent-driven
+  OAuth flow (`POST /integrations:connect`) against the deployment's
+  vendor registry — a human consents inside the flow, and the credential,
+  agent binding, and permissions land together. You never approve
+  yourself, and you never see the credential secret. For APIs the vendor
+  registry doesn't cover, hand off to a human: the operator stores the
+  credential and binds your agent in the console.
 - **Import before search.** A fresh registry is empty; `search` returning
   `{"data": []}` means nothing is imported, not that you lack access.
 - **Denials teach you.** A denied `execute` exits 2 and prints an
@@ -45,67 +48,54 @@ Key behaviours (details and full flag syntax in the skill):
    like `catalog --update` or `import` do not exist. Before the first use of
    any command, run `jentic <command> --help`; every failure also prints the
    exact next command on stderr, so read the error before trying anything else.
-2. **A freshly imported API has no credential.** Your **first** access request
-   for it must be `--provision <vendor/name>` (which describes the whole path:
-   credential, rules, binding). A bare `--api <vendor/name>`
-   request will be denied — nothing serves the API yet.
-3. **Withdraw mistakes before re-filing.** A new access request for the same
-   target can be merged into your still-pending earlier request — so a
-   `--provision` filed after a doomed `--api` can inherit its denial. If
-   you filed a bad request, run `jentic access withdraw <request_id>` first,
-   then file the correct one fresh.
-4. **One composite request per job**, always with `--reason` — never thrash
-   with per-operation or duplicate requests.
+2. **A freshly imported API has no credential.** Importing puts the API in
+   the registry; it does not connect an account. The connect flow is the only
+   agent-side way to get a credential — and for vendors the registry covers,
+   `jentic connect <vendor>` imports the API for you as well.
+3. **Hand off when told to.** A `prompt_human` directive (missing secret,
+   vendor not in the registry, lapsed account link) means a human must act
+   in the console — report it to the operator and wait; never re-send the
+   same call hoping for a different answer.
 
 ## How to do an action (worked example)
 
 Task: *"get the current Bitcoin price"* on a fresh instance — nothing
-imported, no access yet.
+imported, no credential bound yet.
 
 ```bash
-# 1. What can I already call? (nothing yet, on a fresh install)
-jentic access whoami
-
-# 2. Find and import the API from the public catalog
+# 1. Find and import the API from the public catalog
 jentic catalog search "crypto prices"
 jentic catalog import coincap-io/coincap-io
 
-# 3. First access request for a just-imported API: --provision, never --api
-jentic access request --provision coincap-io/coincap-io \
-  --auth api_key \
-  --rules-json '[{"effect":"allow","methods":["GET"],"path":".*"}]' \
-  --reason "read current crypto prices for the user" \
-  --wait
-# → a human fulfils and approves this in the dashboard; --wait blocks until they do.
-#   Filed something wrong first? `jentic access withdraw <request_id>`, then re-file.
-
-# 4. Find the operation — the hit gives you its METHOD and URL
+# 2. Find the operation — the hit gives you its METHOD and URL
 jentic search "get current asset price"
 
-# 5. Inspect, then execute with that exact METHOD + URL
+# 3. Inspect, then execute with that exact METHOD + URL
 jentic inspect GET:https://rest.coincap.io/v3/assets/{id}
 jentic execute GET:https://rest.coincap.io/v3/assets/{id} --path id=bitcoin
 ```
 
-If step 5 is denied (exit 2), the `agent_directive` on stderr names the exact
-recovery — follow its `suggested_command` instead of retrying the same call.
+If step 3 is denied (exit 2), the `agent_directive` on stderr names the exact
+recovery: `jentic connect <vendor>` when the deployment's vendor registry can
+mint the credential (an OAuth flow a human consents to), or a hand-off to the
+operator — they store the credential and bind your agent in the console —
+when it cannot. Follow the directive instead of retrying the same call.
 
 ## Machine-friendly behaviour
 
 - Add `--json` for machine-readable output. It exists on the **leaf**
-  commands (`search`, `execute`, `inspect`, `doctor`, `apis list`,
-  `access status`, …) — the bare group commands (`jentic apis`,
-  `jentic access`) reject it. Do not rely on "non-TTY output is JSON
+  commands (`search`, `execute`, `inspect`, `doctor`, `apis list`, …) —
+  the bare group commands (e.g. `jentic apis`) reject it. Do not rely on
+  "non-TTY output is JSON
   automatically": `jentic register` persists `mode: human` in the context it
   creates, and an explicit mode short-circuits the TTY check, so piped
   output is prose on most installs. For a fully machine posture set
   `JENTIC_MODE=agent` — note it also deadlines most commands at 60 s
-  (pass `--timeout` on long waits such as `register` and
-  `access request --wait`).
+  (pass `--timeout` on long waits such as `register`).
 - Exit codes are a coarse contract: **0** ok, **1** transport/unexpected,
   **2** "cannot succeed as asked" (denial, resolve failure, missing context —
-  do not blind-retry), **3** timed out still pending (retry later),
-  **4** partially approved. Two caveats: `execute` exits **0 for any
+  do not blind-retry), **3** timed out still pending (retry later). Two
+  caveats: `execute` exits **0 for any
   non-denial broker response**, including 429 rate-limits, 503 shed/circuit
   responses and 504 timeouts — always check the HTTP status in the JSON
   envelope, never the exit code alone. Exit 1 is also broader than
@@ -126,7 +116,8 @@ recovery — follow its `suggested_command` instead of retrying the same call.
 | Action | Where the human does it |
 | ------ | ----------------------- |
 | Approve a new agent | `/app/agents` in the console |
-| Approve/fulfil access requests, enter credential secrets | `/app/access-requests` in the console — hand them the request **id**, not the `approve_url` value (that URL is an API route, and its base is unset on most installs) |
+| Consent to a vendor connect flow | inside the OAuth flow itself — the denial directive (or `jentic connect <vendor>`) surfaces the link to hand them |
+| Store credentials the connect flow can't mint, bind agents | the console (`/app`) — the agent detail page's **Access** tab |
 | Create/manage users | `/app` admin UI |
 | Re-import an updated API spec (`jentic catalog outdated`) | Their call — suggest it, never run it silently |
 
