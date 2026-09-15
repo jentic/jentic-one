@@ -351,10 +351,11 @@ def _empty_derivation_denial(
     "not bound to toolkit" detail):
 
     - Bound + a bound credential is a near-miss for the API → the credential's
-      identity does not cover the operation (#747/#748). Fix the *credential*,
-      never file an access request (that auto-denies).
-    - Otherwise → ``no_toolkit_binding``, whose recovery (file a bind request vs.
-      provision a credential first) is chosen by ``no_toolkit_binding_directive``
+      identity does not cover the operation (#747/#748). Fix the *credential* —
+      an operator action; no new binding would help.
+    - Otherwise → ``no_toolkit_binding``, whose recovery ask (bind to the
+      serving credential vs. provision one first) is chosen by
+      ``no_toolkit_binding_directive``
       from whether any toolkit serves the API at all (#683).
     """
     serves = bool(d.api_served_toolkits)
@@ -380,7 +381,8 @@ def _is_unserved_no_toolkit_binding(exc: ActionDeniedError) -> bool:
 
     Splits the two ``no_toolkit_binding`` flavours ``_empty_derivation_denial``
     emits: ``serves=True`` (a toolkit exists, the caller just isn't bound) is
-    agent-recoverable via an access request and does not warrant an operator
+    a routine bind the operator grants on the agent's ask and does not warrant
+    an operator
     event; ``serves=False`` (nothing serves this API yet — a credential must be
     provisioned first) is the operator-attention case, mirroring the 424
     ``CREDENTIAL_NOT_PROVISIONED`` event on the post-binding side.

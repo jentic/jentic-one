@@ -87,21 +87,21 @@ def test_directive_factories_emit_known_strategies() -> None:
 
 
 def test_no_credential_binding_directive_names_surviving_commands() -> None:
-    """The default-path missing-binding directive carries a runnable command.
+    """The default-path missing-binding directive routes to the operator.
 
-    U-03 (phase 5c): every directive names a surviving flag/command. Served →
-    a bind request by API reference (`--api`); unserved → the provisioning
-    plan (`--provision`). Neither variant may reference the retired toolkit
-    vocabulary.
+    Access requests are retired: neither variant may emit a
+    ``suggested_command`` naming the removed ``jentic access`` group. Served →
+    ask the operator to bind to the serving credential; unserved → ask the
+    operator to connect/provision one first. Neither variant may reference the
+    retired toolkit vocabulary.
     """
     served = no_credential_binding_directive(
         vendor="acme", name="widgets", version="1.0.0", api_served=True
     )
     assert served.strategy == "prompt_human"
     assert served.parameters["api_served"] is True
-    assert served.parameters["suggested_command"] == (
-        "jentic access request --api acme/widgets --wait"
-    )
+    assert "suggested_command" not in served.parameters
+    assert "operator" in served.human_readable_instruction
     assert "toolkit" not in served.human_readable_instruction.lower()
 
     unserved = no_credential_binding_directive(
@@ -109,12 +109,10 @@ def test_no_credential_binding_directive_names_surviving_commands() -> None:
     )
     assert unserved.strategy == "prompt_human"
     assert unserved.parameters["api_served"] is False
-    assert unserved.parameters["suggested_command"] == (
-        'jentic access request --provision acme/widgets --reason "<why you need this>" --wait'
-    )
+    assert "suggested_command" not in unserved.parameters
     instruction = unserved.human_readable_instruction
-    assert "--auth" in instruction
-    assert "--rules-json" in instruction
+    assert "operator" in instruction
+    assert "provision" in instruction
     assert "toolkit" not in instruction.lower()
 
 
