@@ -106,10 +106,11 @@ describe('VendorConnectFlow — self mode', () => {
 		expect(screen.queryByLabelText(/which agent uses this/i)).toBeNull();
 	});
 
-	it('start-and-confirm transitions to the awaiting step with a device_code challenge', async () => {
-		// Stub the two-call cycle the useStartAndConfirmVendorConnect
-		// mutation makes: :connect first, then :confirm. The confirm
-		// response's ``kind`` drives the awaiting UI branch.
+	it('connect-on-mount, then confirm on rules-continue, lands on awaiting', async () => {
+		// Post-refactor: ``:connect`` fires at mount (so the session +
+		// import exist before the user reaches the rules page), and
+		// ``:confirm`` fires when the user continues off the rules page.
+		// Self and approve flows now share the same shape from mount onward.
 		worker.use(
 			http.post('/integrations:connect', () =>
 				HttpResponse.json(
@@ -122,6 +123,22 @@ describe('VendorConnectFlow — self mode', () => {
 					},
 					{ status: 201 },
 				),
+			),
+			// ``:connect`` returning triggers a ``GET /connect-sessions/{id}``
+			// (useConnectSession) so the rules page can read ``api_reference``.
+			http.get('/connect-sessions/sess_1', () =>
+				HttpResponse.json({
+					session_id: 'sess_1',
+					state: 'created',
+					vendor_key: 'github',
+					vendor_display_name: 'GitHub',
+					resolved_flow: 'device_authorization',
+					reason: null,
+					requested_by_actor_id: 'usr_alice',
+					scopes: [],
+					requested_permission_rules: [],
+					api_reference: { vendor: 'github-com', name: 'github-com', version: null },
+				}),
 			),
 			http.post('/connect-sessions/sess_1\\:confirm', () =>
 				HttpResponse.json({
@@ -148,18 +165,15 @@ describe('VendorConnectFlow — self mode', () => {
 		);
 		const user = userEvent.setup();
 
-		// Wait for capabilities to hydrate — the button reads
-		// disabled=(selectedScopes.size === 0), and selectedScopes is
-		// seeded from the default scopes on ``capabilities.data``.
-		// Clicking before those land leaves it disabled and the
-		// mutation never fires. Awaiting a scope row proves the seed
-		// has run.
+		// Wait for both capabilities + session-id (Continue is gated on
+		// both). ``read:user`` proves the scope catalog hydrated; then we
+		// wait for the button to un-disable, which means ``:connect``
+		// returned.
 		await screen.findByText('read:user');
-		// Continue on the scopes page moves to the rules page (client-side
-		// transition, no backend call). Second Continue on the rules page
-		// fires the combined ``:connect`` + ``:confirm`` mutation and lands
-		// us on the awaiting step.
-		await user.click(await screen.findByRole('button', { name: /^continue$/i }));
+		await waitFor(() =>
+			expect(screen.getByRole('button', { name: /^continue$/i })).not.toBeDisabled(),
+		);
+		await user.click(screen.getByRole('button', { name: /^continue$/i }));
 		expect(await screen.findByText(/permission rules/i)).toBeInTheDocument();
 		await user.click(
 			await screen.findByRole('button', { name: /(skip.*continue|^continue$)/i }),

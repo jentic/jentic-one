@@ -31,7 +31,7 @@ import {
 	useConfirmConnectSession,
 	useConnectSession,
 	usePollConnectSessionStatus,
-	useStartAndConfirmVendorConnect,
+	useStartIntegrationConnect,
 	useVendorAuthCapabilities,
 	useVendorOperations,
 } from '@/shared/credentials/api/vendors-hooks';
@@ -137,8 +137,14 @@ function VendorSelfConnectFlow({
 	const [session, setSession] = useState<{ id: string; pollToken: string } | null>(null);
 	const [challenge, setChallenge] = useState<ConfirmResponse | null>(null);
 
-	const startMutation = useStartAndConfirmVendorConnect();
+	const startMutation = useStartIntegrationConnect();
+	const confirmMutation = useConfirmConnectSession(session?.id ?? '');
 	const cancelMutation = useCancelConnectSession();
+	// Post-``:connect`` we can hydrate ``ReviewSession`` (specifically
+	// ``api_reference``) to feed the rules-page operation-impact preview.
+	// Gated on the session id existing so we don't fire before ``:connect``
+	// returns.
+	const reviewSession = useConnectSession(session?.id, { enabled: !!session?.id });
 
 	// Cancellation is fire-and-forget on the unmount cleanup path (the
 	// user closed the dialog or navigated away mid-flow); if we go
@@ -148,6 +154,30 @@ function VendorSelfConnectFlow({
 	// hit the raw client without depending on the mutation lifecycle.
 	const sessionRef = useRef<{ id: string; pollToken: string } | null>(null);
 	const phaseRef = useRef<Phase>('configure');
+	// StrictMode dev-time mounts effects twice. Without this guard the
+	// ``:connect`` fires twice and we get two orphaned sessions per open.
+	const connectFiredRef = useRef(false);
+
+	// Fire ``:connect`` on mount so the session/credential/import all
+	// exist by the time the user reaches the rules page — the same
+	// shape the approve flow lands in when the human hits the URL.
+	useEffect(() => {
+		if (connectFiredRef.current) return;
+		connectFiredRef.current = true;
+		void (async () => {
+			try {
+				const result = await startMutation.mutateAsync({ vendor: vendor.key });
+				sessionRef.current = { id: result.session_id, pollToken: result.poll_token };
+				setSession({ id: result.session_id, pollToken: result.poll_token });
+			} catch {
+				// surfaced via ErrorAlert on the configure page.
+			}
+		})();
+		// startMutation is stable across renders (react-query hook); vendor.key
+		// only changes when the parent remounts the flow, at which point the
+		// ref resets naturally.
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [vendor.key]);
 
 	const scopes = useMemo<VendorScopeCatalog[]>(
 		() => capabilities.data?.scopes ?? [],
@@ -211,7 +241,12 @@ function VendorSelfConnectFlow({
 	// (e.g. Cancel button click that also triggers unmount) is a 204.
 	useEffect(() => {
 		return () => {
-			if (phaseRef.current !== 'awaiting') return;
+			// Any pre-terminal phase — ``:connect`` fires at mount, so a
+			// session exists from ``configure`` onward. Without cancelling
+			// on unmount from those earlier phases too, a user who opens
+			// the dialog and immediately closes it leaves a pending
+			// credential + session until the TTL scanner reaps them.
+			if (phaseRef.current === 'terminal') return;
 			const s = sessionRef.current;
 			if (!s) return;
 			// Best-effort: swallow errors so a network blip on close
@@ -228,7 +263,7 @@ function VendorSelfConnectFlow({
 	// (dialog close, navigation) since it can observe the response.
 	useEffect(() => {
 		const onBeforeUnload = (): void => {
-			if (phaseRef.current !== 'awaiting') return;
+			if (phaseRef.current === 'terminal') return;
 			const s = sessionRef.current;
 			if (!s) return;
 			cancelConnectSessionBeacon(s.id, s.pollToken);
@@ -238,8 +273,12 @@ function VendorSelfConnectFlow({
 	}, []);
 
 	const handleCancel = (): void => {
+		// Session exists from ``configure`` onward (``:connect`` fires at
+		// mount). Any pre-terminal cancel must clean up server-side —
+		// otherwise the pending credential/session sit until TTL. Same
+		// reasoning as ``VendorApproveFlow.handleCancel``.
 		const s = sessionRef.current;
-		if (s && phase === 'awaiting') {
+		if (s && phase !== 'terminal') {
 			cancelMutation.mutate({ sessionId: s.id, pollToken: s.pollToken });
 			phaseRef.current = 'terminal';
 		}
@@ -263,35 +302,24 @@ function VendorSelfConnectFlow({
 		setPhase('rules');
 	};
 
-	// Continue on the rules page — fires ``:connect`` + ``:confirm`` back-to-back
-	// with the user's finalised rules.
-	const startFlow = async (finalRules: PermissionRule[]) => {
+	// Continue on the rules page — session already exists (``:connect``
+	// fired at mount). Just POST ``:confirm`` with the human-approved
+	// scopes + rules and transition to ``awaiting``.
+	const confirmFlow = async (finalRules: PermissionRule[]) => {
+		if (!session) return;
 		try {
-			const result = await startMutation.mutateAsync({
-				vendor: vendor.key,
-				// agent_id intentionally omitted for now (self-driven flow — the
-				// user IS the initiator). Bound to the current user's implicit
-				// agent by the eventual agent-credential-binding migration.
-				requested_scopes: Array.from(selectedScopes),
+			const result = await confirmMutation.mutateAsync({
+				confirmed_scopes: Array.from(selectedScopes),
 				permission_rules: finalRules,
 			});
-			sessionRef.current = { id: result.session_id, pollToken: result.poll_token };
 			phaseRef.current = 'awaiting';
-			setSession({ id: result.session_id, pollToken: result.poll_token });
-			setChallenge(result.challenge);
+			setChallenge(result);
 			setPhase('awaiting');
-			// Auth-code flows: pop the authorize URL open right away so the
-			// human's next click is at the vendor, not back on this dialog.
-			// Device flows: no auto-open — the user needs to copy the
-			// user_code first, then click Open Vendor.
 			// The URL is vendor-supplied — refuse to auto-navigate anything
 			// that isn't https. On refusal, ``RedirectAwaitingStep`` renders
 			// an ``UnsafeVendorUrlNotice`` in place of the open button.
-			if (
-				result.challenge.kind === 'authorization_code' &&
-				isHttpsVendorUrl(result.challenge.authorize_url)
-			) {
-				openVendorUrl(result.challenge.authorize_url, '_blank', 'noopener,noreferrer');
+			if (result.kind === 'authorization_code' && isHttpsVendorUrl(result.authorize_url)) {
+				openVendorUrl(result.authorize_url, '_blank', 'noopener,noreferrer');
 			}
 		} catch {
 			// surfaced via ErrorAlert below.
@@ -302,7 +330,10 @@ function VendorSelfConnectFlow({
 		displayName: vendor.display_name,
 		iconKey: vendor.vendor,
 	};
-	const startError = startMutation.error as Error | undefined;
+	// Errors from either the on-mount ``:connect`` or the rules-page
+	// ``:confirm`` — surfaced on whichever page the user is looking at.
+	const flowError =
+		(startMutation.error as Error | null) ?? (confirmMutation.error as Error | null);
 
 	if (phase === 'terminal') {
 		return (
@@ -341,15 +372,14 @@ function VendorSelfConnectFlow({
 				currentRules={rules ?? []}
 				onChange={setRules}
 				onBack={(): void => setPhase('configure')}
-				onContinue={(finalRules: PermissionRule[]) => void startFlow(finalRules)}
-				submitting={startMutation.isPending}
-				error={startError ?? null}
-				// Self flow: session/credential don't exist yet. The preview
-				// will skeleton on "importing…" until the user Continues
-				// (which fires ``:connect`` + ``:confirm`` + the catalog
-				// import). Acceptable — the value of the preview lands in
-				// the approve mode.
-				apiReference={null}
+				onContinue={(finalRules: PermissionRule[]) => void confirmFlow(finalRules)}
+				submitting={confirmMutation.isPending}
+				error={flowError}
+				// Session exists from mount — ``api_reference`` comes back
+				// on the review-session read once ``:connect`` completes,
+				// so by the time the rules page mounts the ops-list fetch
+				// has real coords to work with.
+				apiReference={reviewSession.data?.api_reference ?? null}
 			/>
 		);
 	}
@@ -369,14 +399,10 @@ function VendorSelfConnectFlow({
 				onToggle={toggleScope}
 			/>
 
+			{flowError && <ErrorAlert message={flowError} />}
+
 			<div className="border-border bg-muted/20 -mx-5 -mb-4 flex items-center justify-between border-t px-5 py-3">
-				<Button
-					type="button"
-					variant="ghost"
-					size="sm"
-					onClick={onBack}
-					disabled={startMutation.isPending}
-				>
+				<Button type="button" variant="ghost" size="sm" onClick={handleCancel}>
 					<ArrowLeft className="h-4 w-4" />
 					Back
 				</Button>
@@ -384,7 +410,11 @@ function VendorSelfConnectFlow({
 					type="button"
 					variant="primary"
 					onClick={goToRules}
-					disabled={selectedScopes.size === 0}
+					// ``:connect`` fires at mount — wait for the session id
+					// before letting the user advance so the rules page has
+					// something to attach to when it renders.
+					disabled={selectedScopes.size === 0 || !session}
+					loading={startMutation.isPending && !session}
 				>
 					Continue
 				</Button>
