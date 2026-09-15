@@ -327,7 +327,7 @@ forward proxy, not a hidden MCP server."""
 > it.
 
 Agents: read the onboarding skill at {base}{SKILL_PATH} first. It is the
-canonical guide to the identity → discover → request access → execute loop —
+canonical guide to the identity → discover → get access → execute loop —
 the same canonical guide the `jentic` CLI renders into agent runtimes — and
 its `references/` files (listed in the skills index) carry the per-surface
 detail.
@@ -364,8 +364,8 @@ sequence is:
 4. Discover: `POST {base}/search` to search operations across APIs;
    `GET {base}/apis` to list registered APIs;
    `GET {base}/reference/endpoints.json` for the full endpoint + scope map.
-5. Request access: `POST {base}/access-requests` for the API you need,
-   then wait for a human to approve.
+5. Get access: ask your human operator to connect a credential for the API
+   you need and bind it to this agent in the dashboard.
 6. Execute by sending the request through the broker's forward proxy with the
    full upstream URL (the broker runs on its own host/port — see the skill's
    execute section). The CLI's `jentic execute` is the equivalent audited

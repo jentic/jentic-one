@@ -227,7 +227,6 @@ def test_llms_txt_served_with_request_base_url(client: TestClient) -> None:
         "/.well-known/oauth-authorization-server",
         "/register",
         "/oauth/token",
-        "/access-requests",
     ):
         assert f"http://testserver{path}" in body, f"llms.txt missing link to {path}"
 

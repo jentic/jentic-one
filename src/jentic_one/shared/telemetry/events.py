@@ -42,10 +42,6 @@ class TelemetryEventName(StrEnum):
     AGENT_REGISTRATION_DENIED = "agent_registration_denied"
     TOOLKIT_BOUND_TO_AGENT = "toolkit_bound_to_agent"
     TOOLKIT_UNBOUND_FROM_AGENT = "toolkit_unbound_from_agent"
-    # Access-request flow
-    ACCESS_REQUEST_FILED = "access_request_filed"
-    ACCESS_REQUEST_APPROVED = "access_request_approved"
-    ACCESS_REQUEST_DENIED = "access_request_denied"
     # Usage / activation moment
     BROKER_EXECUTION = "broker_execution"
     # Health / friction
@@ -86,9 +82,6 @@ TELEMETRY_EVENTS: dict[str, TelemetryEventName] = {
     EventType.AGENT_SELF_REGISTERED: TelemetryEventName.AGENT_SELF_REGISTERED,
     EventType.AGENT_REGISTRATION_APPROVED: TelemetryEventName.AGENT_REGISTRATION_APPROVED,
     EventType.AGENT_REGISTRATION_DENIED: TelemetryEventName.AGENT_REGISTRATION_DENIED,
-    EventType.ACCESS_REQUEST_FILED: TelemetryEventName.ACCESS_REQUEST_FILED,
-    EventType.ACCESS_REQUEST_APPROVED: TelemetryEventName.ACCESS_REQUEST_APPROVED,
-    EventType.ACCESS_REQUEST_DENIED: TelemetryEventName.ACCESS_REQUEST_DENIED,
     EventType.EXECUTION_COMPLETED: TelemetryEventName.BROKER_EXECUTION,
     EventType.EXECUTION_FAILED: TelemetryEventName.BROKER_EXECUTION_FAILED,
     EventType.PBAC_DENIED: TelemetryEventName.PBAC_DENIED,

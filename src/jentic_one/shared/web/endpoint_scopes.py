@@ -49,7 +49,7 @@ from fastapi.routing import APIRoute
 
 from jentic_one.shared.auth.permission_catalog import compute_implies_transitive
 from jentic_one.shared.models.actors import ActorType
-from jentic_one.shared.scopes import AGENTS_WRITE, DEFAULT_AGENT_SCOPES
+from jentic_one.shared.scopes import DEFAULT_AGENT_SCOPES
 
 _log = structlog.get_logger(__name__)
 
@@ -122,7 +122,7 @@ _OPERATOR_SCOPES: frozenset[str] = frozenset(
         "audit:read",
         "events:write",
         # Confirming an overlay rewrites the served spec — a human operator action,
-        # never an agent default (excluded from GRANTABLE_SCOPES/DEFAULT_AGENT_SCOPES).
+        # never an agent default (excluded from DEFAULT_AGENT_SCOPES).
         "overlays:confirm",
     }
 )
@@ -161,18 +161,9 @@ def _typical_caller(scopes: list[str], actor_types: list[str]) -> str:
 #: Example (uncomment / adapt)::
 #:
 #:     PATH_SCOPE_OVERRIDES = {
-#:         ("POST", "/access-requests"): ["agents:write"],
+#:         ("POST", "/widgets/{widget_id}:freeze"): ["widgets:write"],
 #:     }
-PATH_SCOPE_OVERRIDES: dict[tuple[str, str], list[str]] = {
-    # Access requests: only the *decide* (fulfil) path enforces a scope —
-    # AccessRequestService._compute_evaluation requires ``agents:write`` (or
-    # ``org:admin``, which implies it) before a request can be approved. Filing,
-    # listing, getting, amending and withdrawing are *not* scope-gated; they are
-    # authorised by ownership/binding checks in the service layer, so they stay
-    # bare-authenticated here (no scope override). See
-    # control/services/access_requests/service.py.
-    ("POST", "/access-requests/{request_id}:decide"): [AGENTS_WRITE],
-}
+PATH_SCOPE_OVERRIDES: dict[tuple[str, str], list[str]] = {}
 
 #: ``(method, path) -> [actor_type, ...]`` to override the inferred actor types.
 ACTOR_TYPE_OVERRIDES: dict[tuple[str, str], list[str]] = {

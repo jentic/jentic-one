@@ -202,7 +202,7 @@ JWKS, then RFC 7523 JWT-bearer assertions exchanged at
   | `rev_` | API revision | ULID-shaped. |
   | `usr_` | User | Org member. Resolves via `GET /users/{user_id}`. Used in `acknowledged_by`, `decided_by`, and similar audit references. |
   | `inv_` | Invite token | One-time token issued at user creation. Plaintext value shown **once** at issue / re-issue; `:redeem-invite` consumes it. |
-  | `areq_` | Access request | Human-approval ticket for scope grants and credential bindings; see the `Access Requests` tag. |
+  | `areq_` | Access request (retired) | Retired (theme 7): the access-request flow is gone. Ids still appear in stored audit/event records. |
   | `note_` | Note | ULID-shaped. Free-form annotation attached to a registry resource — see the `Notes` tag. |
   | `ovr_` | Overlay | ULID-shaped. OpenAPI Overlay 1.0 document attached to an `Api` aggregate — see the `Overlays` tag. |
   | `jntc_live_` | Plaintext toolkit API key value (retired) | Never issued anymore (issuance died in Phase 4, the management routes in Phase 5b). A surviving value keeps authenticating — as its migrated service account — for the deprecation window; rotate holders to `sak_` keys. |
@@ -237,29 +237,6 @@ OPENAPI_TAGS: list[dict[str, str]] = [
             "with no `rule_set_id` uses its own inline rules instead. Rule sets carry "
             "policy, not secrets; deleting one that bindings still reference is refused "
             "(409 `rule_set_in_use`)."
-        ),
-    },
-    {
-        "name": "Access Requests",
-        "description": (
-            "Actor-agnostic, multi-item access-request surface (Core / Access bounded "
-            "context). When an agent's brokered call is rejected by a permission rule — or "
-            "the agent needs access it doesn't yet have — the agent files an `AccessRequest` "
-            "containing one or more line items (`AccessRequestItem`). The request enters "
-            "`pending` state and surfaces an `approve_url` that the agent presents to a human "
-            "reviewer.\n\n"
-            "Reviewers `:decide` individual items (approve or deny each); filers can `:amend` "
-            "pending items (adjust rules or target) or `:withdraw` the entire request. Each "
-            "item transitions independently; the envelope status reflects the aggregate "
-            "(`pending` while any item is pending, `partially_approved` when some items are "
-            "decided but others remain, terminal once all items resolve).\n\n"
-            "Pending requests carry a TTL (default 7 days, configurable). Envelope lifecycle: "
-            "`pending → partially_approved → approved | denied | withdrawn | expired`.\n\n"
-            "**Identity scoping.** List and get operations are identity-scoped: filers see "
-            "their own requests, reviewers see their inbox, `org:admin` sees all. Non-owners "
-            "receive `404` (not `403`) to avoid leaking existence.\n\n"
-            "**Security.** Mutating operations (`POST`, `:decide`, `:amend`, `:withdraw`) "
-            "require `agents:write`; read operations require `agents:read`."
         ),
     },
     {
@@ -642,7 +619,6 @@ X_TAG_GROUPS: list[dict[str, Any]] = [
         "tags": [
             "Credentials",
             "Permission Rule Sets",
-            "Access Requests",
         ],
     },
     {
@@ -848,7 +824,6 @@ _TAG_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^/admin/config"), "Configuration"),
     (re.compile(r"^/credentials"), "Credentials"),
     (re.compile(r"^/permission-rule-sets"), "Permission Rule Sets"),
-    (re.compile(r"^/access-requests"), "Access Requests"),
     (re.compile(r"^/apis/.+/overlays"), "Overlays"),
     (re.compile(r"^/apis/.+/operations$"), "API Operations"),
     (re.compile(r"^/apis/.+/openapi$"), "API Spec"),

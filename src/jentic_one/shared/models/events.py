@@ -26,10 +26,11 @@ class EventType:
     CREDENTIAL_EXPIRING_SOON = "credential.expiring_soon"
     CREDENTIAL_EXPIRED = "credential.expired"
     CREDENTIAL_ACCESSED = "credential.accessed"
-    ACCESS_REQUEST_FILED = "access_request.filed"
-    ACCESS_REQUEST_APPROVED = "access_request.approved"
-    ACCESS_REQUEST_DENIED = "access_request.denied"
-    ACCESS_REQUEST_WITHDRAWN = "access_request.withdrawn"
+    # The four ``access_request.*`` kinds were retired in theme 7 (the
+    # access-request flow is gone). Stored event rows still carry those kind
+    # strings — the events table is append-only history — so read paths
+    # (``admin/web/routers/events.py``, the UI stream) must tolerate them;
+    # only emission stopped.
     UPSTREAM_CIRCUIT_OPEN = "upstream.circuit_open"
     JOB_FAILED_PERMANENTLY = "job.failed_permanently"
     UNAUTHORIZED_ACCESS_ATTEMPT = "security.unauthorized_access_attempt"
@@ -149,10 +150,6 @@ class EventType:
             CREDENTIAL_EXPIRING_SOON,
             CREDENTIAL_EXPIRED,
             CREDENTIAL_ACCESSED,
-            ACCESS_REQUEST_FILED,
-            ACCESS_REQUEST_APPROVED,
-            ACCESS_REQUEST_DENIED,
-            ACCESS_REQUEST_WITHDRAWN,
             UPSTREAM_CIRCUIT_OPEN,
             JOB_FAILED_PERMANENTLY,
             UNAUTHORIZED_ACCESS_ATTEMPT,
