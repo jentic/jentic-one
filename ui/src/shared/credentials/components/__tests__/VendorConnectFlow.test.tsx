@@ -301,6 +301,68 @@ describe('VendorConnectFlow — approve mode', () => {
 		expect(await screen.findByText('requested by agent')).toBeInTheDocument();
 	});
 
+	it('lets the user add a custom rule via the inline form and rejects condition-less allows', async () => {
+		// The rules-editor form mirrors ``PermissionRuleSchema._reject_condition_less_allow``
+		// client-side: an ``allow`` rule with no methods and no path is
+		// refused inline rather than 422'd by the server. Once we
+		// constrain something, Save succeeds.
+		const session: ReviewSession = {
+			session_id: 'sess_edit',
+			state: 'created',
+			vendor_key: 'github',
+			vendor_display_name: 'GitHub',
+			resolved_flow: 'device_authorization',
+			requested_by_actor_id: 'agnt_1',
+			scopes: [
+				{
+					name: 'repo',
+					classification: 'write',
+					default: false,
+					requested: true,
+					description: 'Full control',
+				},
+			],
+			reason: null,
+			requested_permission_rules: [],
+		};
+		worker.use(
+			http.get('/connect-sessions/sess_edit', () => HttpResponse.json(session)),
+			http.get('/agents', () =>
+				HttpResponse.json({ data: [], has_more: false, next_cursor: null }),
+			),
+		);
+		renderWithProviders(
+			<VendorConnectFlow
+				mode="approve"
+				sessionId="sess_edit"
+				pollToken="tok_e"
+				onBack={vi.fn()}
+				onDone={vi.fn()}
+			/>,
+		);
+		const user = userEvent.setup();
+		expect(await screen.findByText('repo')).toBeInTheDocument();
+		await waitFor(() =>
+			expect(screen.getByRole('button', { name: /^continue$/i })).not.toBeDisabled(),
+		);
+		await user.click(screen.getByRole('button', { name: /^continue$/i }));
+		expect(await screen.findByText('Permission rules')).toBeInTheDocument();
+		// Open the add-rule form.
+		await user.click(screen.getByRole('button', { name: /add rule/i }));
+		// Click Save with no methods + no path — client-side validator refuses.
+		await user.click(screen.getByRole('button', { name: /^add$/i }));
+		expect(
+			await screen.findByText(/must constrain at least one of methods or path/i),
+		).toBeInTheDocument();
+		// Constrain the rule with a path — Save succeeds and the row appears.
+		const pathInput = screen.getByPlaceholderText('/repos');
+		await user.type(pathInput, '/issues');
+		await user.click(screen.getByRole('button', { name: /^add$/i }));
+		// The rendered row prints ``<path> (<match_mode>)`` — match on the
+		// combined text so we're robust against exact whitespace.
+		expect(await screen.findByText(/\/issues\s*\(prefix\)/i)).toBeInTheDocument();
+	});
+
 	it('renders an error alert when the approval link is invalid', async () => {
 		worker.use(
 			http.get('/connect-sessions/sess_bad', () =>

@@ -1,12 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
+	ArrowDown,
 	ArrowLeft,
+	ArrowUp,
 	Bot,
 	CheckCircle2,
 	ExternalLink,
 	Loader2,
+	Plus,
 	ShieldAlert,
+	X,
 	XCircle,
 } from 'lucide-react';
 import {
@@ -729,10 +733,25 @@ function RulesStep({
 							rule={rule}
 							isDefault={isEmpty}
 							isRequested={requestedKeys.has(JSON.stringify(rule))}
+							onDelete={
+								isEmpty
+									? undefined
+									: (): void => onChange(currentRules.filter((_, j) => j !== i))
+							}
+							onMoveUp={
+								isEmpty || i === 0
+									? undefined
+									: (): void => onChange(swap(currentRules, i, i - 1))
+							}
+							onMoveDown={
+								isEmpty || i === currentRules.length - 1
+									? undefined
+									: (): void => onChange(swap(currentRules, i, i + 1))
+							}
 						/>
 					))}
 				</div>
-				{/* Editor UI lands in step 5. */}
+				<AddRuleForm onAdd={(rule) => onChange([...currentRules, rule])} />
 			</div>
 
 			{error && <ErrorAlert message={error} />}
@@ -762,17 +781,24 @@ function RulesStep({
 }
 
 /**
- * Read-only display of a single ``PermissionRule``. Shape:
- * ``Allow GET  /repos/**   [requested]``. Editor mode lands in step 5.
+ * One row in the rules editor. Read-only view of the rule + optional
+ * delete + up/down controls when the row is editable (i.e. it's a real
+ * user-authored rule, not the greyed-out default preset).
  */
 function RulePreviewRow({
 	rule,
 	isDefault,
 	isRequested,
+	onDelete,
+	onMoveUp,
+	onMoveDown,
 }: {
 	rule: PermissionRule;
 	isDefault: boolean;
 	isRequested: boolean;
+	onDelete?: () => void;
+	onMoveUp?: () => void;
+	onMoveDown?: () => void;
 }) {
 	const effectClass =
 		rule.effect === 'allow'
@@ -804,6 +830,197 @@ function RulePreviewRow({
 			{isDefault && !isRequested && (
 				<span className="text-muted-foreground ml-auto text-[10px] italic">default</span>
 			)}
+			{(onMoveUp || onMoveDown || onDelete) && (
+				<div className="ml-auto flex items-center gap-0.5">
+					{onMoveUp && (
+						<button
+							type="button"
+							className="text-muted-foreground hover:text-foreground p-0.5"
+							aria-label="Move rule up"
+							onClick={onMoveUp}
+						>
+							<ArrowUp className="h-3.5 w-3.5" />
+						</button>
+					)}
+					{onMoveDown && (
+						<button
+							type="button"
+							className="text-muted-foreground hover:text-foreground p-0.5"
+							aria-label="Move rule down"
+							onClick={onMoveDown}
+						>
+							<ArrowDown className="h-3.5 w-3.5" />
+						</button>
+					)}
+					{onDelete && (
+						<button
+							type="button"
+							className="text-muted-foreground hover:text-danger p-0.5"
+							aria-label="Delete rule"
+							onClick={onDelete}
+						>
+							<X className="h-3.5 w-3.5" />
+						</button>
+					)}
+				</div>
+			)}
+		</div>
+	);
+}
+
+// Swap two elements in an array immutably — used for move-up / move-down.
+function swap<T>(items: T[], i: number, j: number): T[] {
+	const next = [...items];
+	[next[i], next[j]] = [next[j], next[i]];
+	return next;
+}
+
+/**
+ * Compact inline form for authoring a new ``PermissionRule``. Mirrors
+ * the backend ``PermissionRuleSchema`` field-by-field + reimplements
+ * ``_reject_condition_less_allow`` client-side so the user gets an
+ * inline error instead of a 422 from the server on Continue.
+ */
+function AddRuleForm({ onAdd }: { onAdd: (rule: PermissionRule) => void }) {
+	const [open, setOpen] = useState(false);
+	const [effect, setEffect] = useState<'allow' | 'deny'>('allow');
+	const [methods, setMethods] = useState<Set<string>>(new Set());
+	const [path, setPath] = useState('');
+	const [matchMode, setMatchMode] = useState<'regex' | 'prefix' | 'exact'>('prefix');
+	const [error, setError] = useState<string | null>(null);
+
+	const reset = (): void => {
+		setEffect('allow');
+		setMethods(new Set());
+		setPath('');
+		setMatchMode('prefix');
+		setError(null);
+	};
+
+	const toggleMethod = (method: string): void => {
+		setMethods((prev) => {
+			const next = new Set(prev);
+			if (next.has(method)) next.delete(method);
+			else next.add(method);
+			return next;
+		});
+	};
+
+	const handleSave = (): void => {
+		const hasMethods = methods.size > 0;
+		const hasPath = path.trim().length > 0;
+		if (effect === 'allow' && !hasMethods && !hasPath) {
+			setError('An "allow" rule must constrain at least one of methods or path.');
+			return;
+		}
+		const rule: PermissionRule = {
+			effect,
+			methods: hasMethods ? Array.from(methods) : null,
+			path: hasPath ? path.trim() : null,
+			match_mode: matchMode,
+		};
+		onAdd(rule);
+		setOpen(false);
+		reset();
+	};
+
+	if (!open) {
+		return (
+			<Button
+				type="button"
+				variant="ghost"
+				size="sm"
+				className="w-full justify-start"
+				onClick={(): void => setOpen(true)}
+			>
+				<Plus className="h-3.5 w-3.5" />
+				Add rule
+			</Button>
+		);
+	}
+
+	return (
+		<div className="border-border bg-background space-y-2 rounded-lg border p-3">
+			<div className="flex items-center gap-2">
+				<Label className="text-[11px]">Effect</Label>
+				<div className="flex gap-1">
+					{(['allow', 'deny'] as const).map((e) => (
+						<button
+							key={e}
+							type="button"
+							onClick={(): void => setEffect(e)}
+							className={`rounded-md border px-2 py-0.5 font-mono text-[10px] uppercase ${
+								effect === e
+									? e === 'allow'
+										? 'bg-success/15 text-success border-success/50'
+										: 'bg-danger/15 text-danger border-danger/50'
+									: 'text-muted-foreground border-border'
+							}`}
+						>
+							{e}
+						</button>
+					))}
+				</div>
+			</div>
+
+			<div className="flex flex-wrap items-center gap-2">
+				<Label className="text-[11px]">Methods</Label>
+				<div className="flex flex-wrap gap-1">
+					{['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].map((m) => (
+						<button
+							key={m}
+							type="button"
+							onClick={(): void => toggleMethod(m)}
+							className={`rounded-md border px-1.5 py-0.5 font-mono text-[10px] ${
+								methods.has(m)
+									? 'bg-primary/15 text-primary border-primary/40'
+									: 'text-muted-foreground border-border'
+							}`}
+						>
+							{m}
+						</button>
+					))}
+				</div>
+			</div>
+
+			<div className="flex items-center gap-2">
+				<Label className="text-[11px]">Path</Label>
+				<input
+					type="text"
+					value={path}
+					onChange={(e): void => setPath(e.target.value)}
+					placeholder="/repos"
+					className="border-border bg-background flex-1 rounded-md border px-2 py-1 font-mono text-[11px]"
+				/>
+				<select
+					value={matchMode}
+					onChange={(e): void => setMatchMode(e.target.value as typeof matchMode)}
+					className="border-border bg-background rounded-md border px-2 py-1 font-mono text-[10px]"
+				>
+					<option value="prefix">prefix</option>
+					<option value="exact">exact</option>
+					<option value="regex">regex</option>
+				</select>
+			</div>
+
+			{error && <p className="text-danger text-[11px]">{error}</p>}
+
+			<div className="flex items-center justify-end gap-2 pt-1">
+				<Button
+					type="button"
+					variant="ghost"
+					size="sm"
+					onClick={(): void => {
+						setOpen(false);
+						reset();
+					}}
+				>
+					Cancel
+				</Button>
+				<Button type="button" variant="primary" size="sm" onClick={handleSave}>
+					Add
+				</Button>
+			</div>
 		</div>
 	);
 }
