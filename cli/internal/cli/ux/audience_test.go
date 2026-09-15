@@ -84,7 +84,7 @@ func TestAgentError_EnvelopeShape(t *testing.T) {
 	coded := &CodedError{
 		Code:       CodeBrokerDenied,
 		Msg:        "broker denied: missing scope",
-		Actionable: "jentic access request --scope write:issues",
+		Actionable: "Ask your operator to grant the write:issues scope",
 		Details:    map[string]any{"http_status": 403, "api_key": "leaked-secret"},
 	}
 	ae := AgentError{

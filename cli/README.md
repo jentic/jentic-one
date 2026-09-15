@@ -223,7 +223,7 @@ The `jentic` and `jenticctl` binaries are pure-Go and build/run on **Linux**,
 **macOS** (Intel + Apple Silicon), and **Windows** (x86-64). Each release is
 smoke-tested end-to-end on all three (`ubuntu-24.04`, `macos-latest`,
 `windows-latest`) via the CI `e2e-install` matrix, which runs the built binaries'
-`--version` / `jentic doctor` / `jentic access whoami --json` / `jenticctl doctor`
+`--version` / `jentic doctor` / `jentic search --json` / `jenticctl doctor`
 contract on every OS.
 
 | Platform | `install.sh` | `jenticctl install` (server) | `jentic` agent CLI | `jentic run` isolation |
@@ -250,8 +250,8 @@ jentic register                                       # local install (defaults 
 # …or, for a remote server:
 jentic register --url https://jentic.example.com --broker-url https://broker.jentic.example.com
 jentic catalog
-jentic access whoami                                  # a fresh agent is bound to no APIs
-jentic access request --api <vendor/name> --wait  # ask a human to grant access
+jentic api GET /me                                    # a fresh agent is bound to no APIs
+# ask your operator to connect a credential and bind this agent (dashboard)
 jentic execute <operation>
 ```
 
@@ -320,8 +320,8 @@ jentic register --url http://127.0.0.1:8000
 # Approve the agent in the console, then:
 jentic doctor                 # identity + reachability + clock-skew report
 jentic catalog                # browse APIs
-jentic access whoami          # a fresh agent starts bound to no APIs
-jentic access request --api <vendor/name> --wait  # ask a human to grant access
+jentic api GET /me            # a fresh agent starts bound to no APIs
+# ask your operator to connect a credential and bind this agent (dashboard)
 jentic execute listPets       # routed through http://127.0.0.1:8100 automatically
 ```
 

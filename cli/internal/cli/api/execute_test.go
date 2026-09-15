@@ -165,8 +165,8 @@ func TestExecuteCmdDeniedSurfacesDirectiveAndExits2(t *testing.T) {
 			"error_origin": "broker",
 			"agent_directive": {
 				"strategy": "prompt_human",
-				"parameters": {"suggested_command": "jentic access request --api api.example.com --wait"},
-				"human_readable_instruction": "You have no credential binding for this API."
+				"parameters": {"api": "api.example.com"},
+				"human_readable_instruction": "You have no credential binding for this API. Ask your operator to connect a credential for api.example.com and bind this agent to it."
 			}
 		}`))
 	}))
@@ -194,9 +194,10 @@ func TestExecuteCmdDeniedSurfacesDirectiveAndExits2(t *testing.T) {
 	if !errors.As(err, &ec) || ec.ExitCode() != 2 {
 		t.Fatalf("expected exit code 2 on denial, got err=%v", err)
 	}
-	// The recovery directive must be surfaced on stderr, including the command.
-	if !strings.Contains(errBuf.String(), "jentic access request --api api.example.com --wait") {
-		t.Errorf("stderr missing suggested_command; got: %s", errBuf.String())
+	// The recovery directive must be surfaced on stderr, including the
+	// operator instruction.
+	if !strings.Contains(errBuf.String(), "Ask your operator to connect a credential for api.example.com") {
+		t.Errorf("stderr missing the operator instruction; got: %s", errBuf.String())
 	}
 	if !strings.Contains(errBuf.String(), "no credential binding") {
 		t.Errorf("stderr missing instruction; got: %s", errBuf.String())
@@ -292,10 +293,10 @@ func TestExecuteCmdDirectivelessDenialExits2(t *testing.T) {
 		t.Fatalf("expected exit code 2 on directive-less denial, got err=%v", err)
 	}
 	// UX7: a directive-less denial must still hand the user a synthesized
-	// next-step keyed off the 403 (whoami + access request), not a dead end.
-	// UX9: it also points at the read-only self-check.
+	// next-step keyed off the 403 (identity check + ask-your-operator), not a
+	// dead end. UX9: it also points at the read-only self-check.
 	errOut := app.Err.(*bytes.Buffer).String()
-	for _, want := range []string{"jentic access whoami", "jentic access request", "jentic doctor"} {
+	for _, want := range []string{"jentic api GET /me", "operator", "jentic doctor"} {
 		if !strings.Contains(errOut, want) {
 			t.Errorf("synthesized 403 recovery missing %q; stderr:\n%s", want, errOut)
 		}

@@ -82,7 +82,6 @@ func newAPIRootCmd(core *cmdcore.App) *cobra.Command {
 	cmdcore.AddGrouped(root, "agent", newSearchCmd(app))
 	cmdcore.AddGrouped(root, "agent", newInspectCmd(app))
 	cmdcore.AddGrouped(root, "agent", newExecuteCmd(app))
-	cmdcore.AddGrouped(root, "agent", newAccessCmd(app))
 	// Execution history + live events over the SDK (Phase 5 items 3-4).
 	cmdcore.AddGrouped(root, "agent", newHistoryCmd(app))
 	cmdcore.AddGrouped(root, "agent", newEventsCmd(app))
