@@ -56,6 +56,11 @@ class AuditTargetType(StrEnum):
     OVERLAY = "overlay"
     NOTE = "note"
     API = "api"
+    # Retired (theme 7): the access-request flow is gone, so nothing writes
+    # this target type any more. The member stays because historical audit
+    # rows carry it and the admin ``/audit`` list endpoint parses its
+    # ``target_type`` query filter through this enum — removing it would make
+    # those rows unfilterable and the stored value unparseable.
     ACCESS_REQUEST = "access_request"
     TOOLKIT_KEY = "toolkit_key"
     CREDENTIAL_BINDING = "credential_binding"

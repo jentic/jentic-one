@@ -28,7 +28,6 @@ from tools.endpoint_tree import (
 )
 
 from jentic_one.shared.models.actors import ActorType
-from jentic_one.shared.scopes import GRANTABLE_SCOPES
 from jentic_one.shared.web.deps import get_current_identity
 from jentic_one.shared.web.endpoint_reference import (
     GROUP_AGENT,
@@ -420,18 +419,17 @@ def test_overlays_confirm_classified_operator() -> None:
 
 @pytest.mark.arch
 def test_operator_only_scopes_are_classified_operator() -> None:
-    """Any scope withheld from self-service AND agent defaults must classify as operator.
+    """Any scope withheld from agent defaults must classify as operator.
 
     The _typical_caller operator list is hand-maintained, which is exactly how
     overlays:confirm silently drifted to "any". This ties the classifier to the
-    authorization model: a scope that is neither self-service-grantable nor an agent
-    default (and isn't the org:admin superuser or an owner-scoped read) is, by
-    definition, operator-held — so it must be in _OPERATOR_SCOPES or the reference
-    will mislabel its endpoints.
+    authorization model: a scope that is not an agent default (and isn't the
+    org:admin superuser or an owner-scoped read) is, by definition,
+    operator-held — so it must be in _OPERATOR_SCOPES or the reference will
+    mislabel its endpoints. (Theme 7 removed the scope self-service tier, so
+    "self-service-grantable" no longer subtracts anything here.)
     """
-    operator_only = {
-        s for s in _OPERATOR_SCOPES if s not in GRANTABLE_SCOPES and s not in _AGENT_DEFAULT_SCOPES
-    }
+    operator_only = {s for s in _OPERATOR_SCOPES if s not in _AGENT_DEFAULT_SCOPES}
     # Sanity: the set is non-trivial (guards against a vacuous pass).
     assert "overlays:confirm" in operator_only
     # Every such scope classifies as operator on its own.

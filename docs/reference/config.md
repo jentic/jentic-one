@@ -261,12 +261,10 @@ Broker surface configuration.
 
 ## `control`
 
-Control surface configuration.
+Control surface configuration. Empty since theme 7 removed the access-request subsystem (its `access_requests.ttl_days`/`canonical_base_url` knobs). The section stays so a `control:` key in existing YAML keeps validating and future control-surface knobs have a home; unknown subkeys are ignored.
 
 | Key | Type | Default | Env var | Description |
 | --- | ---- | ------- | ------- | ----------- |
-| `control.access_requests.ttl_days` | integer | `7` | `JENTIC__CONTROL__ACCESS_REQUESTS__TTL_DAYS` |  |
-| `control.access_requests.canonical_base_url` | string | `""` | `JENTIC__CONTROL__ACCESS_REQUESTS__CANONICAL_BASE_URL` |  |
 
 ## `ingest`
 

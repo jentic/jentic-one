@@ -22,7 +22,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from jentic_one.shared.scopes import (
-    OWNER_ACCESS_REQUESTS_READ,
     OWNER_AGENTS_READ,
     OWNER_CREDENTIALS_READ,
     OWNER_RESOURCES_READ,
@@ -233,10 +232,6 @@ ALL_PERMISSIONS: dict[str, Permission] = {
     OWNER_AGENTS_READ: Permission(
         name=OWNER_AGENTS_READ,
         description="Read agents owned by the agent's creator",
-    ),
-    OWNER_ACCESS_REQUESTS_READ: Permission(
-        name=OWNER_ACCESS_REQUESTS_READ,
-        description="Read access requests filed by or for the agent's creator",
     ),
     OWNER_SERVICE_ACCOUNTS_READ: Permission(
         name=OWNER_SERVICE_ACCOUNTS_READ,

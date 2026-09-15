@@ -1,22 +1,5 @@
 {
   "$defs": {
-    "AccessRequestsConfig": {
-      "description": "Access requests subsystem configuration.",
-      "properties": {
-        "canonical_base_url": {
-          "default": "",
-          "title": "Canonical Base Url",
-          "type": "string"
-        },
-        "ttl_days": {
-          "default": 7,
-          "title": "Ttl Days",
-          "type": "integer"
-        }
-      },
-      "title": "AccessRequestsConfig",
-      "type": "object"
-    },
     "AdminAuthConfig": {
       "description": "Admin authentication settings.",
       "properties": {
@@ -406,12 +389,8 @@
       "type": "object"
     },
     "ControlSurfaceConfig": {
-      "description": "Control surface configuration.",
-      "properties": {
-        "access_requests": {
-          "$ref": "#/$defs/AccessRequestsConfig"
-        }
-      },
+      "description": "Control surface configuration.\n\nEmpty since theme 7 removed the access-request subsystem (its\n``access_requests.ttl_days``/``canonical_base_url`` knobs). The section\nstays so a ``control:`` key in existing YAML keeps validating and future\ncontrol-surface knobs have a home; unknown subkeys are ignored.",
+      "properties": {},
       "title": "ControlSurfaceConfig",
       "type": "object"
     },
