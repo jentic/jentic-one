@@ -224,66 +224,9 @@ func (a *app) executeE(cmd *cobra.Command, opts *executeOptions, target string) 
 
 	// Resolve request body (cobra-side by design: the stdin fallback must never
 	// move into agentops — under stdio MCP, stdin is the JSON-RPC wire).
-	//
-	// Two body modes are mutually exclusive: a raw byte body (--data/--data-file/
-	// stdin, defaulting to Content-Type application/json in agentops.BuildRequest)
-	// and a multipart/form-data body assembled here from --form/--form-file. When
-	// multipart is requested we build the body and carry its boundary Content-Type
-	// forward as a header KV, which suppresses the JSON default via BuildRequest's
-	// caller-header precedence (#1316).
-	usingMultipart := len(opts.form) > 0 || len(opts.formFile) > 0
-	var body io.Reader
-	var multipartContentType string
-	switch {
-	case usingMultipart:
-		// --form/--form-file cannot be combined with a raw byte body. Reject the
-		// explicit raw-body flags; the stdin auto-fallback is only taken when no
-		// body flag is set, so it cannot collide here.
-		if opts.data != "" || opts.dataFile != "" {
-			return &ux.CodedError{
-				Code:       ux.CodeMissingArgument,
-				Msg:        "--form/--form-file cannot be combined with --data/--data-file",
-				Actionable: "Send either a multipart body (--form/--form-file) or a raw body (--data/--data-file), not both.",
-			}
-		}
-		mpBody, ct, mpErr := buildMultipartBody(opts.form, opts.formFile)
-		if mpErr != nil {
-			return mpErr
-		}
-		body = mpBody
-		multipartContentType = ct
-	case opts.data == "-":
-		// Explicit stdin body (`-d -`): the caller opted in, so block until EOF.
-		data, readErr := io.ReadAll(os.Stdin)
-		if readErr != nil {
-			return fmt.Errorf("read stdin: %w", readErr)
-		}
-		if len(data) > 0 {
-			body = bytes.NewReader(data)
-		}
-	case opts.data == "" && opts.dataFile == "" && stdinHasPipedBody(os.Stdin):
-		// #1354: implicit stdin fallback (no body flag). Only taken when stdin is a
-		// pipe or regular file that actually carries data — a real `echo … |
-		// execute`. A non-TTY stdin that is merely INHERITED and idle (a
-		// backgrounded process, or an interactive agent/harness whose stdin is a
-		// socket/pty with no EOF) must NOT be read: io.ReadAll would block forever
-		// there, hanging every body-less execute. That was the bug — the old
-		// heuristic keyed on !IsTerminal alone, which is true for those idle fds.
-		data, readErr := io.ReadAll(os.Stdin)
-		if readErr != nil {
-			return fmt.Errorf("read stdin: %w", readErr)
-		}
-		if len(data) > 0 {
-			body = bytes.NewReader(data)
-		}
-	case opts.dataFile != "":
-		data, readErr := os.ReadFile(opts.dataFile)
-		if readErr != nil {
-			return fmt.Errorf("read %s: %w", opts.dataFile, readErr)
-		}
-		body = bytes.NewReader(data)
-	case opts.data != "":
-		body = strings.NewReader(opts.data)
+	body, multipartContentType, err := resolveExecuteBody(opts)
+	if err != nil {
+		return err
 	}
 
 	headers, err := agentops.ParseKVs(opts.headers, func(v string) error { return badFlagKV("--header", v) })
@@ -359,35 +302,60 @@ func (a *app) executeE(cmd *cobra.Command, opts *executeOptions, target string) 
 	return a.executeOutput(cmd, opts, result)
 }
 
-// stdinHasPipedBody reports whether stdin carries a real request body the
-// implicit fallback should read (#1354). It is true only for the two shapes a
-// deliberate `echo … | execute` / `execute < file` produces:
-//
-//   - a named pipe (ModeNamedPipe) — the shell pipe case; and
-//   - a regular file with non-zero size — the redirection case.
-//
-// Everything else is left alone so io.ReadAll can never block: a TTY
-// (interactive, no piped body), a character device, or — the bug this fixes —
-// an inherited non-TTY fd (a backgrounded process, or an interactive
-// agent/harness whose stdin is a socket/pty that never sends EOF). Stat errors
-// fail closed to false: if we cannot prove a body is present, we do not block
-// on the read. An explicit `-d -` bypasses this and blocks by design.
-func stdinHasPipedBody(f *os.File) bool {
-	if f == nil {
-		return false
+// resolveExecuteBody resolves the request body for execute. Two body modes are
+// mutually exclusive: a raw byte body (--data / --data-file / stdin, defaulting
+// to Content-Type application/json in agentops.BuildRequest) and a
+// multipart/form-data body assembled from --form/--form-file. When multipart is
+// requested, the returned contentType carries the generated boundary, which
+// suppresses the JSON default via BuildRequest's caller-header precedence
+// (#1316).
+func resolveExecuteBody(opts *executeOptions) (body io.Reader, multipartContentType string, err error) {
+	switch {
+	case len(opts.form) > 0 || len(opts.formFile) > 0:
+		// --form/--form-file cannot be combined with a raw byte body. Reject the
+		// explicit raw-body flags; the stdin auto-fallback is only taken when no
+		// body flag is set, so it cannot collide here.
+		if opts.data != "" || opts.dataFile != "" {
+			return nil, "", &ux.CodedError{
+				Code:       ux.CodeMissingArgument,
+				Msg:        "--form/--form-file cannot be combined with --data/--data-file",
+				Actionable: "Send either a multipart body (--form/--form-file) or a raw body (--data/--data-file), not both.",
+			}
+		}
+		mpBody, ct, mpErr := buildMultipartBody(opts.form, opts.formFile)
+		if mpErr != nil {
+			return nil, "", mpErr
+		}
+		return mpBody, ct, nil
+	case opts.data == "-":
+		// Explicit stdin body (`-d -`): the caller opted in, so block until EOF.
+		r, readErr := readStdinBody()
+		if readErr != nil {
+			return nil, "", readErr
+		}
+		return r, "", nil
+	case opts.data == "" && opts.dataFile == "" && stdinHasPipedBody(os.Stdin):
+		// Implicit stdin fallback (no body flag): taken only when stdin is a pipe
+		// or a non-empty regular file — a real `echo … | execute` or
+		// `execute < file`. A non-TTY stdin that is merely inherited and idle (a
+		// backgrounded process, or an agent/harness whose stdin is a socket/pty
+		// that never sends EOF) must not be read — draining it would block
+		// forever and hang every body-less execute (#1354).
+		r, readErr := readStdinBody()
+		if readErr != nil {
+			return nil, "", readErr
+		}
+		return r, "", nil
+	case opts.dataFile != "":
+		data, readErr := os.ReadFile(opts.dataFile)
+		if readErr != nil {
+			return nil, "", fmt.Errorf("read %s: %w", opts.dataFile, readErr)
+		}
+		return bytes.NewReader(data), "", nil
+	case opts.data != "":
+		return strings.NewReader(opts.data), "", nil
 	}
-	info, err := f.Stat()
-	if err != nil {
-		return false
-	}
-	mode := info.Mode()
-	if mode&os.ModeNamedPipe != 0 {
-		return true
-	}
-	if mode.IsRegular() && info.Size() > 0 {
-		return true
-	}
-	return false
+	return nil, "", nil
 }
 
 // badFlagKV builds the coded error for a malformed key=value flag (ARCH-4). A

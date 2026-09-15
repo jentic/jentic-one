@@ -172,29 +172,15 @@ func resolveAPIBody(opts *apiOptions) (io.Reader, error) {
 	switch {
 	case opts.data == "-":
 		// Explicit stdin body (`-d -`): the caller opted in, so block until EOF.
-		data, err := io.ReadAll(os.Stdin)
-		if err != nil {
-			return nil, fmt.Errorf("reading stdin: %w", err)
-		}
-		if len(data) == 0 {
-			return nil, nil
-		}
-		return bytes.NewReader(data), nil
+		return readStdinBody()
 	case opts.data == "" && opts.dataFile == "" && stdinHasPipedBody(os.Stdin):
-		// #1354: implicit stdin fallback (no body flag), same contract as execute.
-		// Only read when stdin is a pipe or non-empty regular file (a real
-		// `echo … | jentic api`). An idle, inherited non-TTY fd (backgrounded
-		// process, or an agent/harness whose stdin is a socket/pty with no EOF)
-		// must NOT be read: io.ReadAll would block forever, hanging every
-		// body-less `jentic api`. The old !IsTerminal heuristic read those too.
-		data, err := io.ReadAll(os.Stdin)
-		if err != nil {
-			return nil, fmt.Errorf("reading stdin: %w", err)
-		}
-		if len(data) == 0 {
-			return nil, nil
-		}
-		return bytes.NewReader(data), nil
+		// Implicit stdin fallback (no body flag), same contract as execute: read
+		// only a pipe or a non-empty regular file (a real `echo … | jentic api`).
+		// An idle, inherited non-TTY fd (a backgrounded process, or an
+		// agent/harness whose stdin is a socket/pty that never sends EOF) must
+		// not be read — draining it would block forever and hang every body-less
+		// `jentic api` (#1354).
+		return readStdinBody()
 	case opts.dataFile != "":
 		data, err := os.ReadFile(opts.dataFile)
 		if err != nil {
