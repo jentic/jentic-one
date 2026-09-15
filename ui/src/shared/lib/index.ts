@@ -4,62 +4,21 @@
  * rule forbids deep `@/shared/lib/*` imports from `src/modules/**`, so anything
  * a module needs is surfaced here.
  *
- * Kept intentionally narrow — only the access-request repository (the durable
- * approval queue the Dashboard's "Pending requests" card reads) is exposed.
- * Do NOT re-export the rail's React providers/components here; those are app
- * shell concerns, not module-consumable repositories.
+ * Kept intentionally narrow. Do NOT re-export the rail's React
+ * providers/components here; those are app shell concerns, not
+ * module-consumable repositories.
  */
+
+// Permission-rule display primitives — the typed broker-rule shape and the
+// shared humanising summary used by the binding permissions editor/tester and
+// the rail's operations surfaces.
 export {
-	listAccessRequests,
-	getAccessRequest,
-	decideAccessRequest,
-	decideAllPending,
-	amendAccessRequest,
-	itemTargetLabel,
-	isSpecificResource,
-	isScopeGrant,
-	itemActionSummary,
-	scopeLabel,
-	summarizeAccessRequest,
-	ACCESS_REQUEST_STATUS_VARIANT,
-	rulesAreEnforceable,
-	parseItemRules,
 	ruleSummary,
 	isUnrestrictedAllow,
-	type AccessRequest,
-	type AccessRequestOwner,
-	type AccessRequestItem,
-	type AccessRequestEvaluation,
-	type AccessRequestEvaluationCheck,
-	type AccessRequestPage,
-	type ListAccessRequestsParams,
-	type ItemDecision,
-	type ItemAmendment,
 	type PermissionRule,
 	type PermissionRuleEffect,
 	type PermissionRuleMatchMode,
-} from '@/shared/lib/accessRequests';
-
-// Provisioning-plan classification/shape helpers — used by the fulfilment
-// wizard that decides `--provision` requests (create → amend → approve).
-export {
-	isProvisioningPlan,
-	planApiReference,
-	planAuthType,
-	planIsNoAuth,
-	planSteps,
-	planChains,
-	chainAuthType,
-	chainIsNoAuth,
-	chainItems,
-	findItem,
-	itemKey,
-	FULFILMENT_ITEM_TYPES,
-	type PlanApiReference,
-	type PlanStep,
-	type PlanChain,
-	type PlanShape,
-} from '@/shared/lib/provisioningPlan';
+} from '@/shared/lib/permissionRules';
 
 // Source-agnostic scope primitives — shared by the credentials OAuth2 scope
 // picker and the actor (agent/service-account) platform-permission picker.

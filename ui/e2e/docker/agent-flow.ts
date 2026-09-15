@@ -4,26 +4,25 @@ import { authHeaders, getAdminUserId, uniqueSuffix } from './helpers';
 import { setAgentOwner } from './db';
 
 /**
- * Real agent lifecycle for the access-request approve flow.
+ * Real agent lifecycle helpers.
  *
- * The access-request `:decide` (approve) verb is gated so the reviewer must own
- * the FILING agent. To exercise that for real we need a request filed by an
- * agent the admin owns — which means walking the genuine agent path end to end:
+ * Several specs (agents, broker-authz) need an ACTIVE, admin-owned agent that
+ * holds a genuine access token — which means walking the genuine agent path
+ * end to end:
  *
  *   1. POST /register        — Dynamic Client Registration with a self-generated
  *                              Ed25519 public JWKS (no private material leaves
  *                              the test). Agent starts `pending`.
  *   2. POST /agents/{id}:approve (admin)  — flips the agent to `active`.
  *   3. setAgentOwner(...)     — the ONE non-API seam: assign owner_id = admin so
- *                              the admin satisfies the `owns_filer` rule. See db.ts.
+ *                              owner-gated backend rules resolve for the admin
+ *                              reviewer. See db.ts.
  *   4. POST /oauth/token (jwt-bearer)     — the agent signs a JWT assertion with
  *                              its Ed25519 key and exchanges it for an access
  *                              token (EdDSA, `aud` = the canonical token endpoint
  *                              from discovery).
- *   5. POST /access-requests (agent token) — files as the agent, so
- *                              created_by = agent and filer_owner_id = admin.
  *
- * All five steps were captured live against :8000 on a clean fixtures DB.
+ * All four steps were captured live against :8000 on a clean fixtures DB.
  */
 
 const JWT_BEARER_GRANT = 'urn:ietf:params:oauth:grant-type:jwt-bearer';
@@ -128,36 +127,4 @@ export async function provisionAdminOwnedAgent(
 	const accessToken = (await tokenRes.json()).access_token as string;
 
 	return { clientId, accessToken, name: clientName };
-}
-
-/**
- * File an access request AS the given agent (its own Bearer token). Returns the
- * request id and the first item id (needed for the :decide call). Because the
- * agent is admin-owned, the resulting request's filer_owner_id == admin, so the
- * admin can later approve it.
- */
-export async function fileAccessRequestAsAgent(
-	request: APIRequestContext,
-	agent: AgentIdentity,
-	opts: { reason?: string; resourceType?: string; action?: string; resourceId?: string } = {},
-): Promise<{ requestId: string; itemId: string }> {
-	const res = await request.post('/access-requests', {
-		headers: {
-			authorization: `Bearer ${agent.accessToken}`,
-			'content-type': 'application/json',
-		},
-		data: {
-			reason: opts.reason ?? 'e2e agent-filed access request',
-			items: [
-				{
-					resource_type: opts.resourceType ?? 'credential',
-					action: opts.action ?? 'bind',
-					resource_id: opts.resourceId ?? `e2e-res-${uniqueSuffix()}`,
-				},
-			],
-		},
-	});
-	expect(res.status(), `fileAccessRequestAsAgent failed: ${await res.text()}`).toBe(202);
-	const body = await res.json();
-	return { requestId: body.id, itemId: body.items[0].id };
 }

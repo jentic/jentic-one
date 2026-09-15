@@ -9,7 +9,6 @@
  * makes it unit-testable in isolation and keeps the layers thin.
  */
 import type { AgentResponse, EventResponse, ExecutionResponse, UsageResponse } from '@/shared/api';
-import type { AccessRequest } from '@/shared/lib';
 
 /**
  * A count that may be a floor rather than an exact total. The list endpoints
@@ -34,13 +33,6 @@ export interface PendingAgentsOverview {
 export interface AlertsOverview {
 	count: ApproxCount;
 	events: EventResponse[];
-}
-
-/** Pending access-requests overview slice (the durable approval queue). */
-export interface PendingAccessRequestsOverview {
-	count: ApproxCount;
-	/** A few representative requests to preview in the card. */
-	requests: AccessRequest[];
 }
 
 /** Recent-executions overview slice, with a derived success rate. */

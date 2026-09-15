@@ -46,7 +46,7 @@ const EFFECT_STYLES: Record<
 		label: 'Needs approval',
 		chip: 'bg-accent-orange/10 text-accent-orange',
 		Icon: ShieldAlert,
-		desc: 'The agent may attempt these, but each call is held and files a new access request for a human to approve before it runs.',
+		desc: 'The agent may attempt these, but each call is held for a human to approve before it runs.',
 	},
 };
 

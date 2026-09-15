@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import { sharedQueryKeys } from '@/shared/api';
 import { workspaceKeys } from '@/modules/workspace/api/hooks';
 import { dashboardKeys } from '@/modules/dashboard/api';
-import { pendingAccessRequestCountKey } from '@/shared/hooks/usePendingAccessRequestCount';
 import { pendingAgentsCountKey } from '@/shared/hooks/usePendingAgentsCount';
 import { actorDirectoryKey } from '@/shared/hooks/useActorDirectory';
 import { agentsKeysForTest } from '@/modules/agents/api/hooks';
@@ -32,15 +31,6 @@ describe('cross-module query-key registry', () => {
 		expect([...dashboardKeys.all]).toEqual([...sharedQueryKeys.dashboardRoot]);
 	});
 
-	it('pendingAccessRequestCountKey sits under sharedQueryKeys.accessRequestsRoot', () => {
-		// Every decision path invalidates `accessRequestsRoot` (a prefix). The
-		// nav badge must live UNDER that prefix or it would never refresh — this
-		// pins the badge key to the shared root so a prefix invalidation always
-		// catches it (the original stale-badge failure mode).
-		const root = sharedQueryKeys.accessRequestsRoot;
-		expect([...pendingAccessRequestCountKey].slice(0, root.length)).toEqual([...root]);
-	});
-
 	it('agentsKeys.all derives from sharedQueryKeys.agentsRoot', () => {
 		// The agents approve/deny/create mutations invalidate
 		// `sharedQueryKeys.agentsRoot` to refresh the pending-agents nav badge.
@@ -59,9 +49,9 @@ describe('cross-module query-key registry', () => {
 	it('actorDirectoryKey derives from sharedQueryKeys.actorDirectoryRoot', () => {
 		// The SSE→query bridge invalidates `actorDirectoryRoot` when an agent
 		// registers, so surfaces resolving the new agent's `actor_id` (rail
-		// rows, the provisioning wizard's header badge)
-		// refetch instead of rendering the raw `agnt_…` id until the 5-minute
-		// staleTime expires. A forked key would silently miss that refresh.
+		// rows) refetch instead of rendering the raw `agnt_…` id until the
+		// 5-minute staleTime expires. A forked key would silently miss that
+		// refresh.
 		expect([...actorDirectoryKey]).toEqual([...sharedQueryKeys.actorDirectoryRoot]);
 	});
 });

@@ -12,8 +12,7 @@ import type { PermissionRuleSchema } from '@/shared/api';
  * rule tester's verdict references.
  *
  * Lives in `shared/ui` (not a feature module) so every surface that authors
- * binding rules can reuse it — the agent console's rule editor and the
- * provisioning-plan fulfilment wizard both compose it.
+ * binding rules can reuse it — e.g. the agent console's rule editor.
  */
 
 /** Write shape for a permission rule (allow/deny + methods/path/operations). */

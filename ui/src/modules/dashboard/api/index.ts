@@ -7,8 +7,6 @@
  */
 export {
 	usePendingAgents,
-	usePendingAccessRequests,
-	useAccessRequestsQueue,
 	useActionableEvents,
 	useRecentExecutions,
 	useCatalogSize,
@@ -34,7 +32,6 @@ export {
 export type {
 	ApproxCount,
 	PendingAgentsOverview,
-	PendingAccessRequestsOverview,
 	AlertsOverview,
 	RecentExecutionsOverview,
 	CatalogOverview,
@@ -49,7 +46,3 @@ export type {
 // @/shared/api facade directly (which the layering ESLint rule forbids).
 export type { AgentResponse, EventResponse, ExecutionResponse, UsageResponse } from '@/shared/api';
 export { EventSeverity, GroupBy } from '@/shared/api';
-
-// The access-request row type the Pending-requests card renders, surfaced via
-// the module barrel so the view doesn't deep-import `@/shared/lib`.
-export type { AccessRequest, AccessRequestPage } from '@/shared/lib';

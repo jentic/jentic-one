@@ -396,33 +396,3 @@ export async function importInlineApi(
 		)
 		.toMatch(/succeeded|completed|done/);
 }
-
-/**
- * POST /access-requests → 202 (status: pending). Returns the request id.
- *
- * The backend dedups pending requests on (actor, resource_type, action,
- * resource_id), so concurrent specs that file the same resource_type+action
- * collide with 409 access_request_duplicate_pending. We default resource_id to
- * a unique value per call so each spec owns an independent pending request
- * (hermetic, no cross-spec coupling); callers can pin it for assertions.
- */
-export async function fileAccessRequest(
-	request: APIRequestContext,
-	opts: { reason?: string; resourceType?: string; action?: string; resourceId?: string } = {},
-): Promise<string> {
-	const res = await request.post('/access-requests', {
-		headers: authHeaders(),
-		data: {
-			reason: opts.reason ?? 'e2e access request',
-			items: [
-				{
-					resource_type: opts.resourceType ?? 'credential',
-					action: opts.action ?? 'bind',
-					resource_id: opts.resourceId ?? `e2e-res-${uniqueSuffix()}`,
-				},
-			],
-		},
-	});
-	expect(res.status(), `fileAccessRequest failed: ${await res.text()}`).toBe(202);
-	return (await res.json()).id;
-}

@@ -2,7 +2,7 @@
  * Actor directory — repository tier for the unified actor lookup endpoint
  * (`GET /actors`, PR #483, closes #478).
  *
- * Executions, audit entries, the events feed, and access requests carry an
+ * Executions, audit entries, and the events feed carry an
  * opaque `actor_id` (a KSUID like `agnt_6a3d3c62…`). This wrapper hydrates the
  * full actor directory so any surface can map those ids to friendly names
  * instead of rendering the raw token.
