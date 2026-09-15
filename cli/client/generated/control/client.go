@@ -1557,7 +1557,7 @@ type CapabilitiesResponse struct {
 	// CapabilitiesVersion Shape version of this document, bumped only when a field is removed, renamed, or retyped. New keys appear without a bump — ignore unknown keys; hard-fail only on a version you do not understand.
 	CapabilitiesVersion int `json:"capabilities_version"`
 
-	// Features Deployment feature flags. OSS ships 'mcp'; downstream packages may contribute additional boolean flags (additive — never overriding built-ins).
+	// Features Deployment feature flags. OSS ships 'mcp' (server.mcp.enabled) and 'governed_hosts' (true iff the registry surface — which serves GET /governed-hosts — is mounted on this process); downstream packages may contribute additional boolean flags (additive — never overriding built-ins).
 	Features map[string]bool `json:"features"`
 
 	// Instance Identity slice of the document (the full probe stays ``GET /instance``).

@@ -1567,7 +1567,7 @@ components:
         features:
           additionalProperties:
             type: boolean
-          description: Deployment feature flags. OSS ships 'mcp'; downstream packages may contribute additional boolean flags (additive — never overriding built-ins).
+          description: Deployment feature flags. OSS ships 'mcp' (server.mcp.enabled) and 'governed_hosts' (true iff the registry surface — which serves GET /governed-hosts — is mounted on this process); downstream packages may contribute additional boolean flags (additive — never overriding built-ins).
           title: Features
           type: object
         instance:
