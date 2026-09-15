@@ -1,6 +1,5 @@
 """Shared domain models and enums."""
 
-from jentic_one.shared.models.access_requests import AccessRequestItemStatus, AccessRequestStatus
 from jentic_one.shared.models.actors import (
     ActorStatus,
     ActorType,
@@ -48,8 +47,6 @@ __all__ = [
     "API_FIELD_MAX_LENGTH",
     "ORIGIN_CATALOG",
     "ORIGIN_OVERLAY",
-    "AccessRequestItemStatus",
-    "AccessRequestStatus",
     "ActorStatus",
     "ActorType",
     "ActorVerb",

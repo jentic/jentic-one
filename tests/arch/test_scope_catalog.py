@@ -13,7 +13,6 @@ import pytest
 from jentic_one.admin.core.permissions import ALL_PERMISSIONS, compute_implies_transitive
 from jentic_one.shared.scopes import (
     DEFAULT_AGENT_SCOPES,
-    OWNER_ACCESS_REQUESTS_READ,
     OWNER_AGENTS_READ,
     OWNER_CREDENTIALS_READ,
     OWNER_RESOURCES_READ,
@@ -135,7 +134,6 @@ def test_owner_shared_constants_are_catalogued() -> None:
     """Every OWNER_* shared scope constant must be a key in ALL_PERMISSIONS."""
     owner_constants = {
         OWNER_CREDENTIALS_READ,
-        OWNER_ACCESS_REQUESTS_READ,
         OWNER_AGENTS_READ,
         OWNER_RESOURCES_READ,
         OWNER_SERVICE_ACCOUNTS_READ,
@@ -146,11 +144,11 @@ def test_owner_shared_constants_are_catalogued() -> None:
 
 @pytest.mark.arch
 def test_retired_scopes_stay_out_of_the_catalogue() -> None:
-    """Retired toolkit scopes (theme-5 Phase 5b) never reappear in the catalogue.
+    """Retired scopes (theme-5 toolkits, theme-7 access requests) never reappear.
 
     They are tolerated on stored-grant re-validation (``RETIRED_SCOPES``) but
     must not be grantable, defaulted, or implied — reintroducing one here would
-    silently resurrect the deleted toolkit surface's authorization tier.
+    silently resurrect a deleted surface's authorization tier.
     """
     assert not RETIRED_SCOPES & set(ALL_PERMISSIONS)
     assert not RETIRED_SCOPES & set(DEFAULT_AGENT_SCOPES)

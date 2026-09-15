@@ -7,11 +7,9 @@ from collections.abc import AsyncGenerator, Iterator
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import delete, text
+from sqlalchemy import text
 
 from jentic_one.admin.core.permissions import compute_effective
-from jentic_one.control.core.schema.access_request_items import AccessRequestItem
-from jentic_one.control.core.schema.access_requests import AccessRequest
 from jentic_one.control.web.app import create_app
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
@@ -36,35 +34,6 @@ def _effective(*permissions: str) -> list[str]:
 
 FILER_SUB = "agnt_webtest_filer"
 OWNER_SUB = "usr_webtest_owner"
-REVIEWER_SUB = "usr_webtest_reviewer"
-UNRELATED_SUB = "usr_webtest_unrelated"
-ADMIN_SUB = "usr_webtest_admin"
-
-FILER_IDENTITY = Identity(
-    sub=FILER_SUB,
-    email="filer@test.local",
-    permissions=[],
-    actor_type=ActorType.AGENT,
-    parent_actor_id=OWNER_SUB,
-)
-
-OWNER_IDENTITY = Identity(
-    sub=OWNER_SUB,
-    email="owner@test.local",
-    permissions=["agents:write"],
-)
-
-UNRELATED_IDENTITY = Identity(
-    sub=UNRELATED_SUB,
-    email="unrelated@test.local",
-    permissions=["agents:write"],
-)
-
-ADMIN_IDENTITY = Identity(
-    sub=ADMIN_SUB,
-    email="admin@test.local",
-    permissions=["org:admin"],
-)
 
 
 def _build_app(ctx: Context, identity: Identity) -> FastAPI:
@@ -80,13 +49,8 @@ def _build_app(ctx: Context, identity: Identity) -> FastAPI:
 
 @pytest.fixture()
 async def seed_binding(web_context: Context) -> AsyncGenerator[None, None]:
-    """Seed an agent + binding so prerequisite checks pass.
-
-    Also seeds the control-side toolkit + credential referenced by the
-    ``credential:bind`` items the tests file, so that approving such an item
-    records a real binding (the FKs on ``toolkit_credential_bindings`` require
-    both rows to exist).
-    """
+    """Seed an agent + binding plus the control-side toolkit and credential
+    the binding-visibility tests reference."""
     async with web_context.admin_db.session() as session:
         await session.execute(
             text(
@@ -147,19 +111,6 @@ async def seed_binding(web_context: Context) -> AsyncGenerator[None, None]:
         await session.commit()
 
 
-@pytest.fixture()
-async def clean_access_requests(web_context: Context) -> AsyncGenerator[None, None]:
-    async with web_context.control_db.session() as session:
-        await session.execute(delete(AccessRequestItem))
-        await session.execute(delete(AccessRequest))
-        await session.commit()
-    yield
-    async with web_context.control_db.session() as session:
-        await session.execute(delete(AccessRequestItem))
-        await session.execute(delete(AccessRequest))
-        await session.commit()
-
-
 # A bound but orphaned agent (issues #665/#682): it owns nothing (parent_actor_id
 # None, like the jentic-cli-default bootstrap agent). It carries the default agent
 # owner-read scope so it passes the route gate; any credential visibility must
@@ -174,56 +125,9 @@ BOUND_ORPHAN_IDENTITY = Identity(
 
 
 @pytest.fixture()
-def bound_orphan_client(
-    web_context: Context, seed_binding: None, clean_access_requests: None
-) -> Iterator[TestClient]:
+def bound_orphan_client(web_context: Context, seed_binding: None) -> Iterator[TestClient]:
     """TestClient as a bound-but-orphaned agent (owns nothing, bound to tk_target)."""
     app = _build_app(web_context, BOUND_ORPHAN_IDENTITY)
-    with TestClient(app) as tc:
-        yield tc
-
-
-@pytest.fixture()
-def filer_client(
-    web_context: Context, seed_binding: None, clean_access_requests: None
-) -> Iterator[TestClient]:
-    app = _build_app(web_context, FILER_IDENTITY)
-    with TestClient(app) as tc:
-        yield tc
-
-
-@pytest.fixture()
-def owner_client(
-    web_context: Context, seed_binding: None, clean_access_requests: None
-) -> Iterator[TestClient]:
-    app = _build_app(web_context, OWNER_IDENTITY)
-    with TestClient(app) as tc:
-        yield tc
-
-
-@pytest.fixture()
-def unrelated_client(
-    web_context: Context, seed_binding: None, clean_access_requests: None
-) -> Iterator[TestClient]:
-    app = _build_app(web_context, UNRELATED_IDENTITY)
-    with TestClient(app) as tc:
-        yield tc
-
-
-@pytest.fixture()
-def admin_client(
-    web_context: Context, seed_binding: None, clean_access_requests: None
-) -> Iterator[TestClient]:
-    app = _build_app(web_context, ADMIN_IDENTITY)
-    with TestClient(app) as tc:
-        yield tc
-
-
-@pytest.fixture()
-def unauthed_client(web_context: Context, clean_access_requests: None) -> Iterator[TestClient]:
-    """TestClient with no identity override — exercises real auth path (no token → 401)."""
-    app = create_app(web_context)
-    app.router.lifespan_context = noop_lifespan
     with TestClient(app) as tc:
         yield tc
 
@@ -266,7 +170,7 @@ def wrong_scope_client(web_context: Context) -> Iterator[TestClient]:
         yield tc
 
 
-# --- Credential-focused client (credential CRUD, no access-request seeding) ---
+# --- Credential-focused client (credential CRUD) ---
 
 CRED_WRITER_IDENTITY = Identity(
     sub="usr_webtest_cred_writer",

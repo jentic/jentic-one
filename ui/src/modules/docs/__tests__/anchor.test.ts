@@ -74,7 +74,7 @@ describe('operationAnchorId / modelAnchorId uniqueness', () => {
 	});
 
 	it('produces no duplicate model ids for distinct model names', () => {
-		const names = ['Credential', 'CredentialList', 'Gadget', 'Gadget_Binding', 'AccessRequest'];
+		const names = ['Credential', 'CredentialList', 'Gadget', 'Gadget_Binding', 'RuleSet'];
 		const ids = names.map(modelAnchorId);
 		expect(new Set(ids).size).toBe(ids.length);
 	});

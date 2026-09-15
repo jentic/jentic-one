@@ -40,8 +40,8 @@ def _derive_invite_state(stored: str, user_id: str, active_invite_user_ids: set[
     invite — surface it as ``expired`` so admins know to regenerate. Only
     ``pending`` is overlaid; every other stored state (``redeemed`` and
     ``accepted`` — the latter is persisted for external-auth users) passes
-    through unchanged. Mirrors the AccessRequest EXPIRED derivation: the DB keeps
-    ``pending`` and the token's ``expires_at`` is the source of truth.
+    through unchanged. The DB keeps ``pending`` and the token's ``expires_at``
+    is the source of truth for the overlay.
     """
     if stored == InviteState.PENDING and user_id not in active_invite_user_ids:
         return InviteState.EXPIRED
@@ -96,9 +96,8 @@ class UserService:
         # NOTE: the `invite_state` filter matches the STORED column, so it can't
         # filter by the derived EXPIRED state (never persisted) — `EXPIRED`
         # returns nothing and `PENDING` may return rows that render as expired.
-        # This mirrors AccessRequestService.list_all, which filters on stored
-        # status and derives EXPIRED only in the view. If filtering by expired is
-        # ever needed, translate it to `PENDING AND user_id NOT IN (active)` here.
+        # If filtering by expired is ever needed, translate it to
+        # `PENDING AND user_id NOT IN (active)` here.
         cursor_dt = None
         if cursor is not None:
             cursor_dt, _ = decode_cursor(cursor)
@@ -116,8 +115,8 @@ class UserService:
         perm_service = PermissionService(self._ctx)
         perms_map = await perm_service.project_for_users(user_ids)
 
-        # Derive the EXPIRED invite state at read time (never persisted, mirroring
-        # AccessRequest's EXPIRED overlay): a still-pending user with no unredeemed,
+        # Derive the EXPIRED invite state at read time (never persisted): a
+        # still-pending user with no unredeemed,
         # unexpired token has a lapsed invite. One batch query — no N+1.
         pending_ids = [u.id for u in users if u.invite_state == InviteState.PENDING]
         active_invite_ids: set[str] = set()

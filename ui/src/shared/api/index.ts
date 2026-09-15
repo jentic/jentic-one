@@ -31,11 +31,11 @@ export { ServiceAccountsService } from '@/shared/api/generated/services/ServiceA
 export { AgentRegistrationService } from '@/shared/api/generated/services/AgentRegistrationService';
 export type { PermissionRuleReadSchema } from '@/shared/api/generated/models/PermissionRuleReadSchema';
 // The toolkit-era codegen retag namespaced `PermissionRuleSchema` per web
-// module; with the toolkit routers deleted (theme-5 phase 5b) it now lives in
-// the shared `permission_rules` schema module. Re-exported under the stable
-// public name so downstream consumers stay unchanged.
-export type { jentic_one__control__web__schemas__permission_rules__PermissionRuleSchema as PermissionRuleSchema } from '@/shared/api/generated/models/jentic_one__control__web__schemas__permission_rules__PermissionRuleSchema';
-export { jentic_one__control__web__schemas__permission_rules__PermissionRuleSchema as PermissionRuleSchemaNS } from '@/shared/api/generated/models/jentic_one__control__web__schemas__permission_rules__PermissionRuleSchema';
+// module; with the access-request schemas deleted (theme 7) the name no
+// longer collides, so the generator emits it un-namespaced. Re-exported under
+// the same stable public name so downstream consumers stay unchanged.
+export type { PermissionRuleSchema } from '@/shared/api/generated/models/PermissionRuleSchema';
+export { PermissionRuleSchema as PermissionRuleSchemaNS } from '@/shared/api/generated/models/PermissionRuleSchema';
 export type { PermissionRuleListResponse } from '@/shared/api/generated/models/PermissionRuleListResponse';
 export type { PermissionsPatchRequest } from '@/shared/api/generated/models/PermissionsPatchRequest';
 export type { PermissionTestRequest } from '@/shared/api/generated/models/PermissionTestRequest';

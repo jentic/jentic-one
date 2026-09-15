@@ -7,36 +7,6 @@ import "fmt"
 import "reflect"
 import "regexp"
 
-// Access requests subsystem configuration.
-type AccessRequestsConfig struct {
-	// CanonicalBaseUrl corresponds to the JSON schema field "canonical_base_url".
-	CanonicalBaseUrl string `json:"canonical_base_url,omitempty,omitzero" yaml:"canonical_base_url,omitempty" mapstructure:"canonical_base_url,omitempty"`
-
-	// TtlDays corresponds to the JSON schema field "ttl_days".
-	TtlDays int `json:"ttl_days,omitempty,omitzero" yaml:"ttl_days,omitempty" mapstructure:"ttl_days,omitempty"`
-}
-
-// UnmarshalJSON implements json.Unmarshaler.
-func (j *AccessRequestsConfig) UnmarshalJSON(value []byte) error {
-	var raw map[string]interface{}
-	if err := json.Unmarshal(value, &raw); err != nil {
-		return err
-	}
-	type Plain AccessRequestsConfig
-	var plain Plain
-	if err := json.Unmarshal(value, &plain); err != nil {
-		return err
-	}
-	if v, ok := raw["canonical_base_url"]; !ok || v == nil {
-		plain.CanonicalBaseUrl = ""
-	}
-	if v, ok := raw["ttl_days"]; !ok || v == nil {
-		plain.TtlDays = 7
-	}
-	*j = AccessRequestsConfig(plain)
-	return nil
-}
-
 // Admin authentication settings.
 type AdminAuthConfig struct {
 	// How long a locked admin account stays locked before logins are accepted again.
@@ -583,7 +553,7 @@ type ConfigSchemaJson struct {
 	Catalog *CatalogConfig `json:"catalog,omitempty,omitzero" yaml:"catalog,omitempty" mapstructure:"catalog,omitempty"`
 
 	// Control corresponds to the JSON schema field "control".
-	Control *ControlSurfaceConfig `json:"control,omitempty,omitzero" yaml:"control,omitempty" mapstructure:"control,omitempty"`
+	Control ControlSurfaceConfig `json:"control,omitempty,omitzero" yaml:"control,omitempty" mapstructure:"control,omitempty"`
 
 	// Credentials corresponds to the JSON schema field "credentials".
 	Credentials *CredentialsConfig `json:"credentials,omitempty,omitzero" yaml:"credentials,omitempty" mapstructure:"credentials,omitempty"`
@@ -677,10 +647,12 @@ func (j *ConnectConfig) UnmarshalJSON(value []byte) error {
 }
 
 // Control surface configuration.
-type ControlSurfaceConfig struct {
-	// AccessRequests corresponds to the JSON schema field "access_requests".
-	AccessRequests *AccessRequestsConfig `json:"access_requests,omitempty,omitzero" yaml:"access_requests,omitempty" mapstructure:"access_requests,omitempty"`
-}
+//
+// Empty since theme 7 removed the access-request subsystem (its
+// “access_requests.ttl_days“/“canonical_base_url“ knobs). The section
+// stays so a “control:“ key in existing YAML keeps validating and future
+// control-surface knobs have a home; unknown subkeys are ignored.
+type ControlSurfaceConfig map[string]interface{}
 
 // Credentials subsystem configuration.
 type CredentialsConfig struct {

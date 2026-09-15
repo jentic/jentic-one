@@ -1,4 +1,4 @@
-"""Unit tests for _event_response, action link resolution, and Last-Event-ID handling."""
+"""Unit tests for _event_response projection and Last-Event-ID handling."""
 
 from __future__ import annotations
 
@@ -16,11 +16,10 @@ from jentic_one.admin.services.schemas.events import EventView, Heartbeat
 from jentic_one.admin.web.deps import get_event_stream_service
 from jentic_one.admin.web.routers.events import (
     _event_response,
-    _resolve_action_link,
     router,
 )
 from jentic_one.shared.auth.identity import Identity
-from jentic_one.shared.models.events import EventSeverity, EventType
+from jentic_one.shared.models.events import EventSeverity
 from jentic_one.shared.web.deps import resolve_identity
 from jentic_one.shared.web.errors import make_service_error_handler
 
@@ -41,7 +40,7 @@ def _make_event_view(
         type=event_type,
         severity=EventSeverity.INFO,
         summary="test event",
-        requires_action=event_type == EventType.ACCESS_REQUEST_FILED,
+        requires_action=False,
         acknowledged=False,
         created_at=datetime(2026, 6, 1, tzinfo=UTC),
         data=data or {},
@@ -55,15 +54,33 @@ async def _fake_identity() -> Identity:
     )
 
 
-def test_action_link_populated_for_access_request_filed() -> None:
+@pytest.mark.parametrize(
+    "retired_kind",
+    [
+        "access_request.filed",
+        "access_request.approved",
+        "access_request.denied",
+        "access_request.withdrawn",
+    ],
+)
+def test_stored_retired_kind_still_projects(retired_kind: str) -> None:
+    """A stored row carrying a retired ``access_request.*`` kind renders fine.
+
+    The events table is append-only history: theme 7 retired the
+    ``access_request.*`` kinds from ``EventType``, but rows written before the
+    retirement keep their kind strings. Projection must pass the stored kind
+    through verbatim — never parse it against the closed enum — and must not
+    resolve an action link to the removed ``/access-requests`` surface.
+    """
     view = _make_event_view(
-        event_type=EventType.ACCESS_REQUEST_FILED,
+        event_type=retired_kind,
         data={"request_id": "req-123", "status": "pending"},
     )
     request = _make_request()
     resp = _event_response(view, request)
     data = resp.model_dump(by_alias=True)
-    assert data["_links"]["action"] == "http://testserver/access-requests/req-123:decide"
+    assert data["type"] == retired_kind
+    assert data["_links"]["action"] is None
 
 
 def test_action_link_none_for_non_actionable_event() -> None:
@@ -72,34 +89,6 @@ def test_action_link_none_for_non_actionable_event() -> None:
     resp = _event_response(view, request)
     data = resp.model_dump(by_alias=True)
     assert data["_links"]["action"] is None
-
-
-def test_action_link_none_when_request_id_missing() -> None:
-    view = _make_event_view(
-        event_type=EventType.ACCESS_REQUEST_FILED,
-        data={},
-    )
-    request = _make_request()
-    resp = _event_response(view, request)
-    data = resp.model_dump(by_alias=True)
-    assert data["_links"]["action"] is None
-
-
-def test_resolve_action_link_returns_correct_url() -> None:
-    view = _make_event_view(
-        event_type=EventType.ACCESS_REQUEST_FILED,
-        data={"request_id": "abc-def"},
-    )
-    request = _make_request()
-    result = _resolve_action_link(view, request)
-    assert result == "http://testserver/access-requests/abc-def:decide"
-
-
-def test_resolve_action_link_returns_none_for_other_types() -> None:
-    view = _make_event_view(event_type=EventType.ACCESS_REQUEST_APPROVED)
-    request = _make_request()
-    result = _resolve_action_link(view, request)
-    assert result is None
 
 
 def test_actor_fields_present_in_response() -> None:

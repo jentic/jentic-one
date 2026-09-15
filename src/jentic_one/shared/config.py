@@ -683,17 +683,14 @@ class CredentialsConfig(BaseModel):
     connect: ConnectConfig = Field(default_factory=ConnectConfig)
 
 
-class AccessRequestsConfig(BaseModel):
-    """Access requests subsystem configuration."""
-
-    ttl_days: int = 7
-    canonical_base_url: str = ""
-
-
 class ControlSurfaceConfig(BaseModel):
-    """Control surface configuration."""
+    """Control surface configuration.
 
-    access_requests: AccessRequestsConfig = Field(default_factory=AccessRequestsConfig)
+    Empty since theme 7 removed the access-request subsystem (its
+    ``access_requests.ttl_days``/``canonical_base_url`` knobs). The section
+    stays so a ``control:`` key in existing YAML keeps validating and future
+    control-surface knobs have a home; unknown subkeys are ignored.
+    """
 
 
 class UpstreamClientConfig(BaseModel):
