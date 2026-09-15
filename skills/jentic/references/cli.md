@@ -1,7 +1,7 @@
 # CLI lane — read this when your session has the `jentic` CLI on PATH
 
 This file carries the CLI-session mechanics for every step of the Jentic
-loop in `SKILL.md` (identity → discover → request access → execute): the
+loop in `SKILL.md` (identity → discover → check access → execute): the
 commands, flags, exit codes, environment variables, and failure diagnosis.
 If your session drives Jentic through MCP tools instead, close this file and
 read `references/mcp.md`.
@@ -45,75 +45,23 @@ context).
 ## Step 2 — access
 
 See your own identity, status, scopes, and credential bindings (with the
-APIs each one serves):
+APIs each one serves) via the authenticated `/me` passthrough:
 
 ```
-jentic access whoami
+jentic api GET /me
 ```
 
-Decide access from that view first (see `SKILL.md` step 2 for the doctrine),
-then file ONE composite request when something is missing:
-
-```
-jentic access request --provision <vendor/name> \
-  --auth <bearer|api_key|basic|oauth2|none> \
-  --rules-json '[{"effect":"allow","methods":["GET"],"path":".*"}]' \
-  --reason "why you need this — shown to the human who approves it" \
-  --wait
-```
-
-`--wait` blocks until a human fulfils and approves the plan in the
-dashboard; once approved, the credential binding is live immediately — just
-retry `execute`. Always pass `--reason` on **every** access request
-(`--provision`, `--api`, or `--scope`). You normally do **not** need
-`jentic access refresh` after a `--provision` plan: bindings take effect
-live, and a plan grants no new token scope. Only refresh after an approved
-`scope:grant` **and** only if `whoami` flags the scope as not yet on your
-token (see the stale-scope note it prints).
-
-A composite request repeats and combines every target flag, so a job needing
-several APIs is one command:
-
-```
-jentic access request \
-  --provision slack.com/api --auth slack.com/api=bearer \
-  --rules-json 'slack.com/api=[{"effect":"allow","methods":["POST"],"path":"/chat\\.postMessage"}]' \
-  --provision googleapis.com/sheets --auth googleapis.com/sheets=oauth2 \
-  --rules-json 'googleapis.com/sheets=[{"effect":"allow","methods":["GET"],"path":".*"}]' \
-  --api github.com/api \
-  --reason "one reason covering the whole job" \
-  --wait
-```
-
-Each `--provision` adds a full plan for that API — keep every plan complete
-(auth, rules, reason), exactly as you would for a single one;
-`--api`/`--scope` add single items. With more than one
-`--provision`, key `--auth` and `--rules-json` by the same
-`vendor/name[/version]` you passed to `--provision` (include the version in
-the key if you used one); the bare form applies when there is exactly one.
-If a composite collides with an older pending request for one of its
-targets, nothing is filed — drop that target or `jentic access withdraw` the
-old request, then re-file. `--wait` can end `partially_approved` (exit 4):
-check `jentic access status <id>` to see which items were granted before
-proceeding. Without `--wait` you get a request id and an `approve_url` to
-hand to your operator.
-
-Track and manage your requests:
-
-```
-jentic access list
-jentic access status <request_id>
-jentic access withdraw <request_id>
-```
-
-`--wait` blocks until a human decides and sets the CLI exit code: **0** =
-approved, **2** = denied — read the item's `decision_reason` (in the JSON,
-or shown under the item on a TTY) to learn *why* before giving up, **3** =
-still pending when `--timeout` elapsed (poll later with `jentic access
-status <id>`), **4** = partially approved. `--wait`'s `--timeout` is a
-duration **with a unit** — `--timeout 120s`, `2m`, `90s`. A bare number
-(`--timeout 120`) is rejected. Once a request is approved, retry the
-`execute` that was denied.
+Decide access from that view first (see `SKILL.md` step 2 for the
+doctrine). When something is missing, **report the gap to your operator in
+one complete summary** — the API (vendor/name), the auth type the spec
+declares, the operations you intend to call, your proposed permission
+rules, and why. The operator connects or provisions the credential and
+binds this agent to it in the Jentic One dashboard; granting is always a
+human action and there is no CLI command that files it for you. Bindings
+take effect live — once your operator confirms, just retry the `execute`
+that was blocked. Newly granted **scopes** bake into your token at mint
+time; tokens are short-lived and re-mint automatically, so a granted scope
+lands on the next fresh token.
 
 ### The reactive path: denial directives
 
@@ -122,30 +70,22 @@ denied it prints a recovery line on stderr (the `agent_directive`) and
 **exits 2**, so you can branch on the exit code instead of mistaking the 4xx
 body for success. The per-code MEANINGS (what each denial signifies, the
 `api_served` fork, `parameters.expected` vs `parameters.found`,
-which recoveries an access request can and cannot fix) are shared by both
-lanes and live in `references/recovery.md`; what follows is this lane's
-mechanics per code:
+which recoveries an operator must perform) are shared by both lanes and
+live in `references/recovery.md`; what follows is this lane's mechanics per
+code:
 
-- **`no_credential_binding` (403)** — with `api_served: false` the
-  directive's `suggested_command` points at a **provisioning plan**;
-  propose the auth type and permission rules you read from the API spec:
-
-```
-jentic access request --provision stripe.com/api \
-  --auth bearer \
-  --rules-json '[{"effect":"allow","methods":["GET"],"path":".*"}]' \
-  --reason "why you need this — shown to the human who approves it" \
-  --wait
-```
-
-  With `api_served: true` the directive instead suggests
-  `jentic access request --api <vendor/name> --wait`. File the suggested
-  form and wait for approval.
+- **`no_credential_binding` (403)** — with `api_served: false` no credential
+  is provisioned for the API at all: ask your operator to connect or
+  provision one in the dashboard and bind you to it; propose the auth type
+  and permission rules you read from the API spec (see `SKILL.md` step 2).
+  With `api_served: true` a credential already serves the API and you just
+  aren't bound: ask your operator to bind you to it (dashboard, or
+  `POST /agents/{agent_id}/credentials`). Then retry.
 - **`credential_not_provisioned` (424)** — the directive carries a
   `provisioning_url`: hand it to your operator to connect the account, then
-  retry. Do not file an access request for it.
+  retry.
 - **`credential_undecryptable` (424)** — ask your operator to remove and
-  re-add the credential, then retry; nothing you can file fixes it.
+  re-add the credential, then retry; this is not agent-recoverable.
 - **`credential_identity_mismatch` (403)** — read the directive's
   `parameters.expected` vs `parameters.found` and ask your operator to fix
   or re-provision the credential so it targets `expected`, then retry.
@@ -155,9 +95,9 @@ jentic access request --provision stripe.com/api \
   exact header; `--header Jentic-Credential-Name=<name>` also works when
   credential names are unique).
 
-Always follow the `agent_directive`'s `suggested_command` /
-`provisioning_url` rather than assuming which recovery applies. You can also
-request access proactively before you're denied. To propose rules from the
+Always follow the `agent_directive`'s instruction / `provisioning_url`
+rather than assuming which recovery applies. You can also report access
+gaps proactively before you're denied. To propose rules from the
 spec, read the operation surface first: `jentic apis operations
 <vendor/name/version>` and `jentic inspect <operation_id>` show methods,
 paths, and the declared auth.
@@ -180,12 +120,12 @@ surface difference, not a state difference.)
 
 If `import` unexpectedly fails with `403 … requires one of: catalog:import`
 — e.g. you were approved before `catalog:import` became a default scope and
-weren't re-granted — request it, wait for a human to approve, refresh your
-token, then retry:
+weren't re-granted — ask your operator to grant the `catalog:import` scope
+to this agent in the dashboard, then retry once they confirm (granted
+scopes land on the next fresh token; tokens are short-lived and re-mint
+automatically):
 
 ```
-jentic access request --scope catalog:import --reason "import the Sheets API to read the user's spreadsheet" --wait
-jentic access refresh
 jentic catalog import googleapis.com/sheets
 ```
 
@@ -253,7 +193,8 @@ failure** — usually exit **1**, but exit **2** (`resolve … failed`) when the
 > Exit **2** broadly means "this request cannot succeed **as asked**" — a
 > broker denial, a failed operation resolve, or missing local context (e.g.
 > no active context configured). Don't blind-retry an exit 2: change the
-> ask, fix the config, or request access. Exit **3** (still pending) and the
+> ask, fix the config, or report the access gap to your operator. Exit **3**
+> (still pending) and the
 > transient transport failures are the retryable ones.
 
 - **Wrong target (DNS or TLS error).** The broker target resolves as
@@ -307,8 +248,8 @@ jentic execute <operation_id> --broker-scheme http --broker-host 127.0.0.1:8100
   committing side effects.
 - Add `--json` to force machine-readable output on a terminal. It exists on
   **leaf** commands (`search`, `execute`, `inspect`, `apis list`,
-  `access list`, `doctor`); the bare group commands (`jentic apis`,
-  `jentic access`) reject it. Don't rely on non-TTY output being JSON
+  `doctor`); the bare group commands (`jentic apis`,
+  `jentic catalog`) reject it. Don't rely on non-TTY output being JSON
   automatically: `register` persists `mode: human`, which wins over TTY
   detection — set `JENTIC_MODE=agent` (or pass `--json` explicitly) when you
   need parseable output. (`context view` has no `--json` flag at all — it

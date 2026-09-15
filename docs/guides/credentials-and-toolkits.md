@@ -109,12 +109,12 @@ in this order ([`broker/services/credentials/resolver.py`](../../src/jentic_one/
 The outcomes:
 
 - **0 bound credentials for the API → `403 no_credential_binding`.** The
-  problem body carries an agent directive: file
-  `jentic access request --api <vendor/name>` when a credential already serves
-  the API, or `--provision` when nothing serves it yet. When a *bound*
+  problem body carries an agent directive: ask your operator to bind you to
+  the credential serving the API, or — when nothing serves it yet — to
+  connect/provision one first. When a *bound*
   credential is a near-miss (its identity does not cover this operation), the
-  refusal is `403 credential_identity_mismatch` instead — fix the credential,
-  don't file a request.
+  refusal is `403 credential_identity_mismatch` instead — the operator fixes
+  the credential; a new binding would not help.
 - **1 winner → use it.** The response carries `Jentic-Credential-Id` and
   `Jentic-Credential-Name` (absent when no stored credential was used), and
   the execution record carries the same attribution — every execution names
