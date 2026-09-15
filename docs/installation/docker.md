@@ -48,15 +48,15 @@ the tarball across (see the [installation index](README.md#air-gapped-transfer))
 Save the non-secret config as `/etc/jentic/production.yaml` on the host. Start
 from [`config/production.yaml.example`](../../config/production.yaml.example);
 this is the worked shape. Secrets come from the environment, never this file —
-with one exception: the encryption keyset is list-shaped, so it must live in
-the file **unless** you inject it via the indexed env vars below. A keyset in
-the file makes the whole file a secret — but do **not** `chmod 600` it: the
-file is bind-mounted into a container that runs as a non-root user, and bind
-mounts preserve host numeric ownership, so a root-owned `600` file is
-unreadable in-container and every start dies on a `PermissionError`. Protect
-it with the directory instead — `chmod 644` on the file, `chmod 711` on
-root-owned `/etc/jentic` — or keep the file secret-free by using the indexed
-env vars:
+give each encryption-keyset entry a `material_file` pointing at a mounted
+secret (or a `material_env` naming an env var) and the file stays secret-free.
+Only an inline `material` makes the whole file a secret — if you go that way,
+do **not** `chmod 600` it: the file is bind-mounted into a container that runs
+as a non-root user, and bind mounts preserve host numeric ownership, so a
+root-owned `600` file is unreadable in-container and every start dies on a
+`PermissionError`. Protect it with the directory instead — `chmod 644` on the
+file, `chmod 711` on root-owned `/etc/jentic` — or keep the file secret-free
+by using `material_file`/`material_env`:
 
 ```yaml
 # /etc/jentic/production.yaml — non-secret shape; secrets via env (JENTIC__…).
@@ -95,14 +95,17 @@ auth:
   canonical_base_url: "https://jentic.example.com"
 
 # Credential-at-rest encryption keyset (AES-256-GCM). Required for credential
-# WRITES. The keyset is a LIST, so it can't come from a single JENTIC__… env
-# var — keep it in this file, or inject it via the indexed env vars below.
+# WRITES. Point each entry at a mounted secret file with `material_file` (or
+# name an environment variable with `material_env`); inline `material` also
+# works — then treat the whole file as a secret. Exactly one source per entry.
 credentials:
   encryption:
     active_id: v1
     entries:
       - id: v1
-        material: "REPLACE-WITH-BASE64-32-BYTES"   # pragma: allowlist secret
+        material_file: /run/secrets/jentic-encryption-key
+        # or:  material_env: JENTIC_ENCRYPTION_KEY_V1
+        # or:  material: "REPLACE-WITH-BASE64-32-BYTES"   # pragma: allowlist secret
 
 # Keep exporters off until you run a collector. With `otlp` and no
 # OTEL_EXPORTER_OTLP_ENDPOINT set, the SDK dials localhost:4317 inside the
@@ -148,20 +151,24 @@ keyset) with:
 python -c "import os,base64;print(base64.b64encode(os.urandom(32)).decode())"
 ```
 
-**Keeping the keyset out of the file** — the
-[security guide](../security/README.md)'s "keys out of files on disk" rule
-has an escape hatch: list entries can be addressed by index, so the keyset
-can ride the env file instead of `production.yaml`
+**Keeping the key material out of the file** — mount the key as a secret file
+and point the entry at it with `material_file` (shown above): a read-only bind
+mount or compose `secrets:` entry, owned by the container's runtime user with
+mode `0600` (the server warns at boot when the key file is group/other-
+readable). Alternatively hand the whole entry through the environment — list
+entries can be addressed by index
 ([reference](../reference/config.md#credentials)):
 
 ```bash
 JENTIC__CREDENTIALS__ENCRYPTION__ACTIVE_ID=v1
 JENTIC__CREDENTIALS__ENCRYPTION__ENTRIES__0__ID=v1
-JENTIC__CREDENTIALS__ENCRYPTION__ENTRIES__0__MATERIAL=<base64-32-bytes>
+JENTIC__CREDENTIALS__ENCRYPTION__ENTRIES__0__MATERIAL_FILE=/run/secrets/jentic-encryption-key
+# or …__0__MATERIAL_ENV=<name of an env var holding the key>
+# or …__0__MATERIAL=<base64-32-bytes>
 ```
 
-With that in place, drop the `credentials.encryption` block from the yaml —
-the env file is then the single secret-bearing file.
+With the key material out of the yaml, drop any inline `material` from the
+`credentials.encryption` block — the config file then carries no secrets.
 
 **ID-token signing keys (`auth.id_signing`)** — required the moment any
 OAuth client requests the `openid` scope (browser/OIDC sign-in flows, MCP

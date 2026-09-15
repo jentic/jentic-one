@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
+import hashlib
 import ipaddress
 import os
 import re
 import secrets
+import stat
+import threading
 from pathlib import Path
 from typing import Annotated, Any, Literal, cast
 from urllib.parse import urlparse
@@ -589,12 +594,66 @@ class AuthConfig(BaseModel):
 
 _KEY_ID_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 
+# AES-256 key size, mirrored from shared/crypto/encryption.py (which imports
+# this module, so it cannot be imported here). Enforced at config load for
+# material_file so a wrong target fails without leaking its observed length.
+_ENCRYPTION_KEY_BYTES = 32
+# A base64-encoded 32-byte key is 44 characters; anything near this cap is not
+# a key, and the cap keeps an arbitrary-path read from pulling a large file
+# into memory.
+_MATERIAL_FILE_MAX_BYTES = 4096
+
 
 class EncryptionKey(BaseModel):
-    """A single named encryption key."""
+    """A single named encryption key.
+
+    Key material comes from exactly ONE source:
+
+    - ``material``      — inline in the config (local dev / vault-templated files),
+    - ``material_env``  — the name of an environment variable holding the key,
+    - ``material_file`` — a regular file to read the key from (docker/k8s secret
+      mounts, systemd ``LoadCredential`` paths). Pipes and ``/dev/fd`` sources
+      are rejected: config may be validated more than once per process, and a
+      source that cannot be re-read would hang or fail the second load.
+
+    ``material_env``/``material_file`` are resolved once, at config load, into
+    ``material`` — consumers keep reading ``resolved_material`` and never learn
+    where the bytes came from (the source field is cleared after resolution, so
+    a resolved key re-validates cleanly and never re-reads the environment or
+    the file). Resolution failures (unset variable, unreadable file, empty
+    value) fail validation loudly rather than booting a server that cannot
+    decrypt its own credentials.
+    """
+
+    # Exclusivity is enforced at runtime by _resolve_material; mirroring it in
+    # the exported JSON Schema lets schema-driven consumers (the generated Go
+    # installer struct, editors) reject an entry with zero or multiple sources.
+    model_config = ConfigDict(
+        json_schema_extra={
+            "oneOf": [
+                {"required": ["material"]},
+                {"required": ["material_env"]},
+                {"required": ["material_file"]},
+            ]
+        }
+    )
 
     id: str
-    material: SecretStr
+    material: SecretStr | None = Field(
+        default=None,
+        description="Base64-encoded key material, inline in the config.",
+    )
+    material_env: str | None = Field(
+        default=None,
+        description="Name of an environment variable holding the base64-encoded key material.",
+    )
+    material_file: str | None = Field(
+        default=None,
+        description=(
+            "Path to a regular file holding the base64-encoded key material "
+            "(docker/k8s secret mount, systemd LoadCredential path)."
+        ),
+    )
 
     @field_validator("id")
     @classmethod
@@ -602,6 +661,132 @@ class EncryptionKey(BaseModel):
         if not _KEY_ID_RE.match(v):
             raise ValueError("key id must match [a-zA-Z0-9_-]+")
         return v
+
+    @model_validator(mode="after")
+    def _resolve_material(self) -> EncryptionKey:
+        sources = [
+            name
+            for name, value in (
+                ("material", self.material),
+                ("material_env", self.material_env),
+                ("material_file", self.material_file),
+            )
+            if value is not None
+        ]
+        if len(sources) != 1:
+            raise ValueError(
+                "exactly one of material / material_env / material_file must be set"
+                + (f" (got: {', '.join(sources)})" if sources else "")
+            )
+        if self.material is not None:
+            inline = self.material.get_secret_value()
+            if not inline.strip():
+                raise ValueError("material is empty")
+            # Strip like the env/file sources do, so identical bytes produce
+            # identical keys regardless of which source carried them.
+            if inline != inline.strip():
+                self.material = SecretStr(inline.strip())
+            self._log_resolution(source="material")
+        elif self.material_env is not None:
+            value = os.environ.get(self.material_env)
+            if value is None or not value.strip():
+                raise ValueError(
+                    f"material_env {self.material_env!r} is not set (or empty) in the environment"
+                )
+            self.material = SecretStr(value.strip())
+            self._log_resolution(source="material_env", origin=self.material_env)
+            self.material_env = None
+        elif self.material_file is not None:
+            self.material = SecretStr(self._read_material_file(self.material_file))
+            self._log_resolution(source="material_file", origin=self.material_file)
+            self.material_file = None
+        return self
+
+    @staticmethod
+    def _read_material_file(path_str: str) -> str:
+        """Read and vet key material from a regular file.
+
+        Only regular files are accepted: config may be validated more than once
+        per process, and a pipe or ``/dev/fd`` source cannot be re-read — a
+        drained pipe fails the second load and a writer-less FIFO blocks boot
+        forever. The content is required to be a base64-encoded 32-byte key so
+        that pointing ``material_file`` at an arbitrary path (reachable with
+        env-write privilege via ``JENTIC__…MATERIAL_FILE``) fails without the
+        error message echoing the target's length or content.
+        """
+        path = Path(path_str)
+        try:
+            st = os.stat(path)
+        except OSError as exc:
+            raise ValueError(f"cannot read material_file {path_str!r}: {exc}") from exc
+        if not stat.S_ISREG(st.st_mode):
+            raise ValueError(
+                f"material_file {path_str!r} must be a regular file — pipes and "
+                "/dev/fd sources cannot be re-read and are not supported"
+            )
+        if stat.S_IMODE(st.st_mode) & 0o077:
+            # The file mode is this feature's security boundary: a
+            # group/other-readable key file silently hands the master key to
+            # every same-host account.
+            _logger.warning(
+                "encryption_material_file_permissive",
+                path=path_str,
+                mode=oct(stat.S_IMODE(st.st_mode)),
+                detail="material_file should be readable only by the server user (0600)",
+            )
+        if st.st_size > _MATERIAL_FILE_MAX_BYTES:
+            raise ValueError(f"material_file {path_str!r} does not contain a base64-encoded key")
+        try:
+            raw = path.read_bytes()
+        except OSError as exc:
+            raise ValueError(f"cannot read material_file {path_str!r}: {exc}") from exc
+        try:
+            text = raw.decode()
+        except UnicodeDecodeError:
+            raise ValueError(
+                f"material_file {path_str!r} does not contain a base64-encoded key"
+            ) from None
+        text = text.strip()
+        if not text:
+            raise ValueError(f"material_file {path_str!r} is empty")
+        # Vet the content here, where the message can deliberately omit the
+        # observed length — the generic decode error downstream would otherwise
+        # echo the exact byte length of whatever the path pointed at.
+        try:
+            decoded = base64.b64decode(text, validate=True)
+        except binascii.Error:
+            raise ValueError(
+                f"material_file {path_str!r} does not contain a base64-encoded key"
+            ) from None
+        if len(decoded) != _ENCRYPTION_KEY_BYTES:
+            raise ValueError(
+                f"material_file {path_str!r} does not contain a {_ENCRYPTION_KEY_BYTES}-byte key"
+            )
+        return text
+
+    def _log_resolution(self, source: str, origin: str | None = None) -> None:
+        """Record where this key's material came from — never the bytes.
+
+        The source fields are cleared after resolution, so this boot-time line
+        (key id, source kind, env-var name or path, and a short SHA-256
+        fingerprint) is the only trail an operator has to distinguish key
+        substitution from corruption, or to answer "which file fed this key".
+        """
+        material = self.material.get_secret_value() if self.material is not None else ""
+        _logger.info(
+            "encryption_key_material_resolved",
+            key_id=self.id,
+            source=source,
+            origin=origin,
+            fingerprint=hashlib.sha256(material.encode()).hexdigest()[:16],
+        )
+
+    @property
+    def resolved_material(self) -> SecretStr:
+        """The key material after source resolution (guaranteed by validation)."""
+        if self.material is None:  # pragma: no cover — _resolve_material guarantees it
+            raise ConfigError(f"encryption key {self.id!r} has no resolved material")
+        return self.material
 
 
 class EncryptionConfig(BaseModel):
@@ -1508,6 +1693,80 @@ def _env_overrides() -> dict[str, Any]:
     return cast("dict[str, Any]", _coerce_indexed_dicts_to_lists(result))
 
 
+# One-shot config sources (pipes / inherited fds) cached per process. A config
+# handed on a pipe — e.g. ``JENTIC_CONFIG_FILE=/dev/fd/3`` from a supervisor
+# that keeps secrets out of the filesystem, argv, and env — can only be read
+# once, but several consumers load config more than once per process (the
+# Alembic env loads it per database). The first read is cached so later loads
+# see the same document. Regular files keep re-reading from disk.
+#
+# The cache key is the source's fstat identity (device, inode) plus the path
+# string, never the path alone: fd numbers are recycled by the kernel, so two
+# different files can appear as the same ``/dev/fd/N`` within one process, and
+# a path-string key would silently serve the first file's contents for the
+# second. Keying on identity also keeps ``/dev/fd/N`` of a *regular* file
+# re-readable (rotation-safe) and covers ``/proc/self/fd/N`` spellings.
+_ONESHOT_CONFIG_CACHE: dict[tuple[int, int, str], str] = {}
+_ONESHOT_CACHE_LOCK = threading.Lock()
+
+# A forked child never received the one-shot document itself; drop the parent's
+# copy so it cannot linger in (or leak from) a process it was never handed to.
+os.register_at_fork(after_in_child=_ONESHOT_CONFIG_CACHE.clear)
+
+
+def oneshot_config_source_active() -> bool:
+    """True when this process's config came from a one-shot source (pipe, /dev/fd).
+
+    A one-shot source serves exactly one process: a child process (e.g. a
+    reload worker) cannot re-read it. Entry points that spawn config-loading
+    children consult this to fail or degrade loudly instead of hanging.
+    """
+    return bool(_ONESHOT_CONFIG_CACHE)
+
+
+def _read_config_text(path: Path) -> str:
+    """Read the config document, caching one-shot sources (pipes, /dev/fd)."""
+    # Cache lookup by stat identity happens before open(): opening a named FIFO
+    # whose writer has gone blocks forever, and a cache hit must not reopen it.
+    st = os.stat(path)
+    if stat.S_ISFIFO(st.st_mode) or stat.S_ISSOCK(st.st_mode):
+        key = (st.st_dev, st.st_ino, str(path))
+        with _ONESHOT_CACHE_LOCK:
+            if key in _ONESHOT_CONFIG_CACHE:
+                # "Why didn't my config change take effect" needs a trail: a
+                # one-shot source is served from the process cache, not re-read.
+                _logger.info("oneshot_config_cache_reused", source=str(path))
+                return _ONESHOT_CONFIG_CACHE[key]
+    with path.open() as f:
+        fst = os.fstat(f.fileno())
+        # Decide "one-shot" from the opened fd itself: FIFOs, sockets, and any
+        # non-seekable stream can be read exactly once. Seekable sources are
+        # regular files (wherever the path points) and are re-read every load.
+        if f.seekable() and not (stat.S_ISFIFO(fst.st_mode) or stat.S_ISSOCK(fst.st_mode)):
+            # /dev/fd/N re-opens share the underlying file offset on macOS (dup
+            # semantics), so rewind before reading.
+            f.seek(0)
+            return f.read()
+        key = (fst.st_dev, fst.st_ino, str(path))
+        # The drain-and-cache is a single critical section: a concurrent loader
+        # must wait and take the cached document, never race the pipe read.
+        with _ONESHOT_CACHE_LOCK:
+            if key in _ONESHOT_CONFIG_CACHE:
+                _logger.info("oneshot_config_cache_reused", source=str(path))
+                return _ONESHOT_CONFIG_CACHE[key]
+            text = f.read()
+            if not text.strip():
+                # Caching an empty read would pin the process to a broken
+                # config with no recovery; failing here names the real cause
+                # instead of a downstream "Field required" error.
+                raise ConfigError(
+                    f"one-shot config source {str(path)!r} yielded no content — it was "
+                    "already drained by another reader, or the supervisor closed it "
+                    "without writing"
+                )
+            return _ONESHOT_CONFIG_CACHE.setdefault(key, text)
+
+
 def load_config(path: Path | None = None) -> AppConfig:
     """Load and validate application configuration.
 
@@ -1532,10 +1791,9 @@ def load_config(path: Path | None = None) -> AppConfig:
     if config_path is not None:
         if not config_path.exists():
             raise ConfigError(f"Config file not found: {config_path}")
-        with open(config_path) as f:
-            loaded = yaml.safe_load(f)
-            if isinstance(loaded, dict):
-                file_data = loaded
+        loaded = yaml.safe_load(_read_config_text(config_path))
+        if isinstance(loaded, dict):
+            file_data = loaded
 
     env_data = _env_overrides()
     merged = _deep_merge(file_data, env_data)
