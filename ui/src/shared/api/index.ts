@@ -195,7 +195,7 @@ export type { UsageTopRow } from '@/shared/api/generated/models/UsageTopRow';
 // `ActorsService.listActors`) hydrates the actor picker shared across the
 // Executions/Events/Audit tabs. Also consumed by the shared actor-directory
 // hook (`useActorDirectory`) + `<ActorLabel>` to resolve raw `actor_id` values
-// into human-readable names across access-request and agent surfaces.
+// into human-readable names across monitor and agent surfaces.
 // `ActorType` is exported as a *value* (not just a type) because `<ActorLabel>`
 // reads the enum members for its subtle type prefix. Append-only.
 export { ActorsService } from '@/shared/api/generated/services/ActorsService';

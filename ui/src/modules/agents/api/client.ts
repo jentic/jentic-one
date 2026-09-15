@@ -51,7 +51,6 @@ import {
 	type PermissionCatalogEntry,
 	type ServiceAccountEntity,
 } from '@/modules/agents/api/types';
-import { listAccessRequests, type AccessRequest } from '@/shared/lib';
 
 /**
  * Sentinel error for Agents repository calls. Hooks/components branch on
@@ -844,30 +843,6 @@ export async function fetchActorExecutions(
 	} catch (error) {
 		if (error instanceof ApiError && error.status === 403) return null;
 		throw toAgentsError(error, 'Failed to load executions.');
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Access requests filed BY an actor (#619).
-//
-// An access request carries `actor_id` set to the filer's identity; for an
-// agent/service account that's the actor's own id. `GET /access-requests`
-// already filters by it, so the per-actor view is a thin read over the shared
-// access-request repository (`@/shared/lib`) — the same cross-cutting tier the
-// dashboard card and Agent Rail use. No new backend surface. The decide flow is
-// the shared `AccessRequestDialog`; this just lists what's still pending.
-// ---------------------------------------------------------------------------
-
-/** The access requests an actor has filed that are still in `status` (default pending). */
-export async function fetchActorAccessRequests(
-	actorId: string,
-	status: string | null = 'pending',
-): Promise<AccessRequest[]> {
-	try {
-		const page = await listAccessRequests({ actorId, status, limit: 50 });
-		return page.data;
-	} catch (error) {
-		throw toAgentsError(error, "Failed to load the actor's access requests.");
 	}
 }
 

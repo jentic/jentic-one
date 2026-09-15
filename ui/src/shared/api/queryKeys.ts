@@ -37,17 +37,6 @@ export const sharedQueryKeys = {
 	 */
 	dashboardRoot: ['dashboard'] as const,
 	/**
-	 * The access-request root (`GET /access-requests`). No single module owns it:
-	 * the durable approval queue (Dashboard's AccessRequestsPage), the dashboard
-	 * action inbox, and the persistent nav badge
-	 * (`usePendingAccessRequestCount`) all read slices off this prefix. Every
-	 * decision path — the Agent Rail dialog + its Deny fast-path, the dashboard
-	 * card, and the queue page — invalidates this root so all three surfaces stay
-	 * consistent. Defined once here so the contract is symmetric with
-	 * `dashboardRoot` and testable, instead of a bare literal repeated per file.
-	 */
-	accessRequestsRoot: ['access-requests'] as const,
-	/**
 	 * The agents root (`GET /agents`). Owned by the Agents module
 	 * (`agentsKeys.all` derives from this), but the persistent nav badge
 	 * (`usePendingAgentsCount`) reads a `pending`/`count` slice off this prefix
@@ -60,8 +49,8 @@ export const sharedQueryKeys = {
 	/**
 	 * The actor directory (`GET /actors`, `useActorDirectory`). Aggressively
 	 * cached reference data (5-minute staleTime), which goes stale at the worst
-	 * moment: a CLI agent registers and files a provisioning request within
-	 * seconds, and every surface resolving its `actor_id` (rail rows, the setup
+	 * moment: a CLI agent registers and starts emitting events within seconds,
+	 * and every surface resolving its `actor_id` (rail rows, the setup
 	 * wizard's header badge) misses and degrades to the raw `agnt_…` id until
 	 * the cache expires. Live agent
 	 * lifecycle events invalidate this root so the directory refetches the

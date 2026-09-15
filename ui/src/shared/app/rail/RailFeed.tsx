@@ -24,8 +24,7 @@ export type RailFeedFilters = {
 export type RailFeedProps = {
 	events: StreamEvent[];
 	filters: RailFeedFilters;
-	onAction?: (eventId: string, action: InlineActionSpec, reason?: string) => void;
-	onOpenRequest?: (requestId: string, eventId: string) => void;
+	onAction?: (eventId: string, action: InlineActionSpec) => void;
 	onNavigate?: (href: string) => void;
 };
 
@@ -138,7 +137,7 @@ function buildRows(events: StreamEvent[]): FeedRow[] {
 	return out;
 }
 
-export function RailFeed({ events, filters, onAction, onOpenRequest, onNavigate }: RailFeedProps) {
+export function RailFeed({ events, filters, onAction, onNavigate }: RailFeedProps) {
 	const filtered = useMemo(
 		() => events.filter((ev) => passesFilters(ev, filters)),
 		[events, filters],
@@ -194,7 +193,6 @@ export function RailFeed({ events, filters, onAction, onOpenRequest, onNavigate 
 							key={row.ev.id}
 							ev={row.ev}
 							onAction={onAction}
-							onOpenRequest={onOpenRequest}
 							onNavigate={onNavigate}
 						/>
 					);
@@ -208,7 +206,6 @@ export function RailFeed({ events, filters, onAction, onOpenRequest, onNavigate 
 							expanded={isOpen}
 							onToggleExpand={() => toggle(row.head.id)}
 							onAction={onAction}
-							onOpenRequest={onOpenRequest}
 							onNavigate={onNavigate}
 						/>
 						{isOpen && (
@@ -218,7 +215,6 @@ export function RailFeed({ events, filters, onAction, onOpenRequest, onNavigate 
 										key={member.id}
 										ev={member}
 										onAction={onAction}
-										onOpenRequest={onOpenRequest}
 										onNavigate={onNavigate}
 									/>
 								))}

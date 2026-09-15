@@ -69,7 +69,7 @@ interface CreateCredentialDialogProps {
 	onCreated: (info: CreatedCredentialInfo) => void;
 	/**
 	 * Pre-select this auth type when the dialog opens (the user can still change
-	 * it). Used by the provisioning wizard to honour the agent-declared
+	 * it). Lets a caller honour an agent-declared
 	 * `--auth` type (read from the API spec's securitySchemes) so the human
 	 * doesn't re-pick what the agent already determined. A spec-driven selection
 	 * (picking an API) still overrides it — the spec is more authoritative than

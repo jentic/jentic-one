@@ -11,7 +11,7 @@
  *   - Activity  → this agent's execution volume + recent executions
  *                 (GET /monitoring/usage?agent_id=…, GET /executions?actor_id=…)
  *                 with a pre-filtered "Open Monitor" deep-link
- *   - Access    → platform scopes (#615) + filed access requests (#619)
+ *   - Access    → platform scopes (#615)
  *   - Keys      → API-key metadata, generate/regenerate/revoke, rotation history
  *   - MCP       → per-agent MCP config card + session history (local-MCP 2-E2:
  *                 MCP is a transport of this agent, so the surface lives here)
@@ -68,7 +68,6 @@ import {
 } from '@/modules/agents/api';
 import { ActorStatusBadge } from '@/modules/agents/components/ActorStatusBadge';
 import { ScopesCard } from '@/modules/agents/components/ScopesCard';
-import { ActorAccessRequestsCard } from '@/modules/agents/components/ActorAccessRequestsCard';
 import { ConnectedClientsCard } from '@/modules/agents/components/detail/ConnectedClientsCard';
 import {
 	LifecycleDialogs,
@@ -407,8 +406,6 @@ export default function AgentDetailPage() {
 						<BoundCredentialsCard agentId={agent.id} agentStatus={agent.status} />
 						{/* Scopes — platform permissions granted to this agent (#615). */}
 						<ScopesCard actorKind="agent" actorId={agent.id} actorName={agent.name} />
-						{/* Pending access requests this agent has filed (#619). */}
-						<ActorAccessRequestsCard actorId={agent.id} actorName={agent.name} />
 						{/* OAuth clients holding a consent→agent grant. */}
 						<ConnectedClientsCard agentId={agent.id} agentName={agent.name} />
 					</>

@@ -1,6 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { captureConsoleErrors, uniqueSuffix } from './helpers';
-import { provisionAdminOwnedAgent, fileAccessRequestAsAgent } from './agent-flow';
+import { captureConsoleErrors } from './helpers';
 
 /**
  * Agent rail (real backend). The rail is the persistent `complementary` landmark
@@ -65,31 +64,4 @@ test('agent rail pauses and resumes the live feed', async ({ page }) => {
 	await resume.click();
 
 	await expect(rail.getByRole('button', { name: 'Pause live feed' })).toBeVisible();
-});
-
-test('a real filed access request surfaces in the rail live feed', async ({ page, request }) => {
-	// Seed a real event over the same /events feed the rail consumes: an
-	// admin-owned agent files an access request, which the backend records as an
-	// `access_request.filed` event summarised "Access request filed by {filer}".
-	// We key the assertion on THIS agent's id so it is independent of any other
-	// rows already in the (shared, non-pristine) feed.
-	const agent = await provisionAdminOwnedAgent(request, { name: `e2e-rail-${uniqueSuffix()}` });
-	await fileAccessRequestAsAgent(request, agent, {
-		reason: `e2e rail ${uniqueSuffix()}`,
-		resourceType: 'credential',
-		action: 'bind',
-		resourceId: `e2e-rail-${uniqueSuffix()}`,
-	});
-
-	await page.goto('/app');
-
-	const rail = page.getByRole('complementary', { name: 'Agent rail' });
-	await expect(rail).toBeVisible();
-
-	// The backlog page loads on mount; the just-filed event carries our filer id.
-	await expect(
-		rail.getByText(new RegExp(`Access request filed by ${agent.clientId}`)),
-	).toBeVisible({
-		timeout: 15_000,
-	});
 });
