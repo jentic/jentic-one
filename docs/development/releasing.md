@@ -103,7 +103,7 @@ the Deprecations table.
   --api <vendor/name>` was the verb (`--provision` when nothing served the
   API yet), with `--toolkit` surviving as a hidden, deprecated alias for
   `--api`. *(Superseded: the theme-7 release —
-  [epic #1372](https://github.com/jentic/jentic-one/issues/1372) — removes
+  [epic #1374](https://github.com/jentic/jentic-one/issues/1374) — removes
   the access-request flow and the `jentic access` group entirely; the
   agent-driven connect flow, `jentic connect <vendor>` over
   `POST /integrations:connect`, is the replacement.)*
