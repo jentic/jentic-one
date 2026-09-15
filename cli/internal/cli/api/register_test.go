@@ -167,10 +167,11 @@ func TestRegister_ClaimPending_AssertionInvalidIsNotFatal(t *testing.T) {
 			_, _ = w.Write([]byte(`{"client_id":"agnt_boot","status":"pending","claim_token":"` + claimTok + `"}`))
 		case "/oauth/token":
 			// Not-yet-claimed/approved agent: the backend's approval gate fires
-			// before signature/audience validation and returns this exact string.
+			// before signature/audience validation and returns this exact string
+			// (RFC 6749 §5.2 dialect — the shipped token endpoint shape, #1252).
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
-			_, _ = w.Write([]byte(`{"type":"invalid_grant","status":400,"detail":"Assertion is invalid","instance":"/oauth/token"}`))
+			_, _ = w.Write([]byte(`{"error":"invalid_grant","error_description":"Assertion is invalid"}`))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -373,7 +374,7 @@ func TestRegister_ContextCancelExitsPromptly(t *testing.T) {
 			polls.Add(1) // always pending → the loop never exits on its own
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
-			_, _ = w.Write([]byte(`{"type":"invalid_grant","status":400,"detail":"agent pending approval","instance":"/oauth/token"}`))
+			_, _ = w.Write([]byte(`{"error":"invalid_grant","error_description":"agent pending approval"}`))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -424,7 +425,7 @@ func TestRegister_AssertionInvalidNoClaimIsFatal(t *testing.T) {
 			polls.Add(1)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
-			_, _ = w.Write([]byte(`{"type":"invalid_grant","status":400,"detail":"Assertion is invalid","instance":"/oauth/token"}`))
+			_, _ = w.Write([]byte(`{"error":"invalid_grant","error_description":"Assertion is invalid"}`))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}

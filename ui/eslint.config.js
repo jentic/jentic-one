@@ -78,7 +78,6 @@ const NO_HARDCODED_APP_PATH = [
 const MODULE_QUERY_KEY_ROOTS = {
 	workspace: ['workspace'],
 	discover: ['discover'],
-	toolkits: ['toolkits'],
 	credentials: ['credentials'],
 	dashboard: ['dashboard'],
 	agents: ['agents', 'service-accounts'],

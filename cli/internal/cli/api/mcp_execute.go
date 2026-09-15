@@ -417,14 +417,18 @@ func (s *mcpServer) executeDenialError(ctx context.Context, denial *agentops.Den
 func synthesizedDenialHint(status int) string {
 	switch status {
 	case http.StatusForbidden:
-		return "This agent isn't bound to a toolkit serving this API. Call whoami to see your bindings, " +
-			"then ask your operator to grant access (`jentic access request --toolkit <vendor/name> --wait`)."
+		return "This agent has no credential binding covering this API. Call whoami to see your bindings, " +
+			"then ask your operator to grant access (`jentic access request --api <vendor/name> --wait`)."
+	case http.StatusConflict:
+		return "Multiple bound credentials cover this API. Resend the same call with the " +
+			"Jentic-Credential-Id header naming one of them (Jentic-Credential-Name also works " +
+			"when names are unique); whoami lists your bindings."
 	case http.StatusFailedDependency:
 		return "No credential is provisioned for this call. Ask your operator to provision one " +
-			"(`jentic access request --toolkit <vendor/name> --provision --wait`), then retry."
+			"(`jentic access request --provision <vendor/name> --wait`), then retry."
 	case http.StatusUnauthorized:
 		return "The stored upstream credential needs reconnecting. Ask your operator to re-provision it " +
-			"(`jentic access request --toolkit <vendor/name> --provision --wait`), then retry."
+			"(`jentic access request --provision <vendor/name> --wait`), then retry."
 	default:
 		return "The broker denied this call before it reached the upstream API. Call whoami to check what you can run."
 	}

@@ -128,7 +128,13 @@ async def delete_user(
     identity: Identity = get_current_identity(required_permissions=["users:write"]),
     user_svc: UserService = Depends(get_user_service),
 ) -> Response:
-    """Soft-delete a user."""
+    """Delete a user account (terminal-but-kept).
+
+    The row is retained — the account is anonymized (tombstone email) and
+    deactivated so history and audit references stay resolvable — but the
+    action is terminal: there is no re-enable arm. For the reversible kill
+    switch use ``:disable`` / ``:enable`` instead.
+    """
     await user_svc.delete(user_id, identity=identity)
     return Response(status_code=204)
 

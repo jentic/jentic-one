@@ -16,9 +16,10 @@
  * Denied slice.
  */
 import { useState } from 'react';
-import { toast } from '@/shared/ui';
+import { CascadeDeleteDialog, toast } from '@/shared/ui';
 import {
 	useDeactivateOAuthClient,
+	useDeleteOAuthClient,
 	useOAuthClients,
 	useReactivateOAuthClient,
 	useRotateOAuthClientSecret,
@@ -28,8 +29,9 @@ import { ClientsTable, type ClientAction } from '@/modules/settings/components/C
 import { ApprovalQueue, type QueueFilter } from '@/modules/settings/components/ApprovalQueue';
 import { ClientDetailSheet } from '@/modules/settings/components/ClientDetailSheet';
 import { ClientFormSheet } from '@/modules/settings/components/ClientFormSheet';
+import { McpConnectCard } from '@/modules/settings/components/McpConnectCard';
 import {
-	DeactivateConfirmDialog,
+	DisableConfirmDialog,
 	RotateConfirmDialog,
 	SecretDialog,
 } from '@/modules/settings/components/ClientLifecycleDialogs';
@@ -72,6 +74,7 @@ export function OAuthClientsSection({
 	const [detailTarget, setDetailTarget] = useState<OAuthClient | null>(null);
 	const [detailOpen, setDetailOpen] = useState(false);
 	const [deactivateTarget, setDeactivateTarget] = useState<OAuthClient | null>(null);
+	const [deleteTarget, setDeleteTarget] = useState<OAuthClient | null>(null);
 	const [rotateTarget, setRotateTarget] = useState<OAuthClient | null>(null);
 	const [revealedSecret, setRevealedSecret] = useState<string | null>(null);
 	const [secretDialogTitle, setSecretDialogTitle] = useState('Client Secret');
@@ -79,7 +82,8 @@ export function OAuthClientsSection({
 	const deactivateMutation = useDeactivateOAuthClient();
 	const reactivateMutation = useReactivateOAuthClient();
 	const rotateMutation = useRotateOAuthClientSecret();
-	const inFlight = [deactivateMutation, reactivateMutation, rotateMutation].find(
+	const deleteMutation = useDeleteOAuthClient();
+	const inFlight = [deactivateMutation, reactivateMutation, rotateMutation, deleteMutation].find(
 		(m) => m.isPending,
 	);
 	const pendingId = typeof inFlight?.variables === 'string' ? inFlight.variables : null;
@@ -100,10 +104,10 @@ export function OAuthClientsSection({
 	const handleReactivate = async (client: OAuthClient): Promise<void> => {
 		try {
 			await reactivateMutation.mutateAsync(client.id);
-			toast({ title: `${client.name} reactivated`, variant: 'success' });
+			toast({ title: `${client.name} enabled`, variant: 'success' });
 		} catch (err) {
 			toast({
-				title: 'Failed to reactivate client',
+				title: 'Failed to enable client',
 				description: err instanceof Error ? err.message : undefined,
 				variant: 'error',
 			});
@@ -126,6 +130,9 @@ export function OAuthClientsSection({
 				// a denied row's recovery is the queue's Approve verb instead.
 				void handleReactivate(client);
 				break;
+			case 'delete':
+				setDeleteTarget(client);
+				break;
 			case 'review-in-queue':
 				setQueueFilter('denied');
 				onTabChange('queue');
@@ -137,14 +144,30 @@ export function OAuthClientsSection({
 		if (!deactivateTarget) return;
 		try {
 			await deactivateMutation.mutateAsync(deactivateTarget.id);
-			toast({ title: 'OAuth client deactivated', variant: 'success' });
+			toast({ title: 'OAuth client disabled', variant: 'success' });
 			setDeactivateTarget(null);
 		} catch (err) {
 			toast({
-				title: 'Failed to deactivate client',
+				title: 'Failed to disable client',
 				description: err instanceof Error ? err.message : undefined,
 				variant: 'error',
 			});
+		}
+	};
+
+	const handleDelete = async (): Promise<void> => {
+		if (!deleteTarget) return;
+		try {
+			await deleteMutation.mutateAsync(deleteTarget.id);
+			toast({ title: `${deleteTarget.name} deleted`, variant: 'success' });
+			setDeleteTarget(null);
+			// The row is gone — a detail sheet still open on it would re-read
+			// into a 404. Close it (delete is reachable from inside the sheet).
+			if (detailTarget?.id === deleteTarget.id) setDetailOpen(false);
+		} catch {
+			// The CascadeDeleteDialog renders `deleteMutation.error` inline
+			// (post-attempt), so no toast here — one error surface, no double
+			// reporting, and the dialog stays open for a retry.
 		}
 	};
 
@@ -171,17 +194,22 @@ export function OAuthClientsSection({
 			)}
 
 			{activeTab === 'clients' && (
-				<ClientsTable
-					clients={clientsQuery.data}
-					isLoading={clientsQuery.isLoading}
-					isFetching={clientsQuery.isFetching}
-					error={clientsQuery.error}
-					onRefresh={(): void => void clientsQuery.refetch()}
-					onOpenDetail={openDetail}
-					onAction={handleAction}
-					onCreate={(): void => onCreateOpenChange(true)}
-					pendingId={pendingId}
-				/>
+				<div className="space-y-4">
+					{/* Deployment-level MCP pointer (#1249) — MCP clients using
+					    interactive OAuth register into exactly this roster. */}
+					<McpConnectCard />
+					<ClientsTable
+						clients={clientsQuery.data}
+						isLoading={clientsQuery.isLoading}
+						isFetching={clientsQuery.isFetching}
+						error={clientsQuery.error}
+						onRefresh={(): void => void clientsQuery.refetch()}
+						onOpenDetail={openDetail}
+						onAction={handleAction}
+						onCreate={(): void => onCreateOpenChange(true)}
+						pendingId={pendingId}
+					/>
+				</div>
 			)}
 
 			{/* Sheets are mounted persistently (dialog-state rule): a casual
@@ -207,17 +235,35 @@ export function OAuthClientsSection({
 				onRotate={setRotateTarget}
 				onDeactivate={setDeactivateTarget}
 				onReactivate={(client): void => void handleReactivate(client)}
+				onDelete={setDeleteTarget}
 			/>
 
 			{/* Stateless confirms — conditional mounting is fine here. */}
 			{deactivateTarget != null && (
-				<DeactivateConfirmDialog
+				<DisableConfirmDialog
 					open
 					onClose={(): void => setDeactivateTarget(null)}
 					onConfirm={(): void => void handleDeactivate()}
 					isPending={deactivateMutation.isPending}
 					clientName={deactivateTarget.name}
 					error={deactivateMutation.error}
+				/>
+			)}
+			{/* Permanent delete — the shared type-to-confirm friction gate.
+			    Reset the mutation on close so a failed attempt's error doesn't
+			    leak into the next client's dialog session. */}
+			{deleteTarget != null && (
+				<CascadeDeleteDialog
+					open
+					onClose={(): void => {
+						setDeleteTarget(null);
+						deleteMutation.reset();
+					}}
+					onConfirm={(): void => void handleDelete()}
+					entityType="oauth-client"
+					entityName={deleteTarget.name}
+					loading={deleteMutation.isPending}
+					error={deleteMutation.error}
 				/>
 			)}
 			{rotateTarget != null && (

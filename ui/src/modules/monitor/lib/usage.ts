@@ -23,7 +23,7 @@ export interface UsageOverview {
 	p95Ms: number | null;
 }
 
-/** One api / toolkit / agent row for the bubble chart + breakdown table. */
+/** One api / credential / agent row for the bubble chart + breakdown table. */
 export interface EntityUsageRow {
 	id: string;
 	label: string;
@@ -51,12 +51,10 @@ export function usageToOverview(usage: UsageResponse): UsageOverview {
 /**
  * Format a top-row key into a display label, per grouping dimension. The
  * backend composes keys/labels mechanically (see monitoring_repo.grouped_top):
- *   api     → "vendor/name" with NULL columns coalesced to "unknown"
- *   toolkit → the raw toolkit_id (NOT NULL column)
- *   agent   → "actor_type/actor_id" (both NOT NULL columns)
- * Keys are therefore never NULL on the wire today; the null branches below
- * are defensive display fallbacks (surfaced as "Unattributed") rather than a
- * backend contract.
+ *   api        → "vendor/name" with NULL columns coalesced to "unknown"
+ *   credential → the raw credential_id (NULL coalesced to "unknown")
+ *   agent      → "actor_type/actor_id" (both NOT NULL columns)
+ * Null/unknown keys are surfaced as an explicit "Unattributed" bucket.
  */
 function formatEntityLabel(groupBy: string, key: string | null | undefined): string {
 	if (!key) return 'Unattributed';
@@ -69,6 +67,9 @@ function formatEntityLabel(groupBy: string, key: string | null | undefined): str
 	if (groupBy === 'agent') {
 		const slash = key.indexOf('/');
 		return slash >= 0 ? key.slice(slash + 1) || 'Unattributed' : key;
+	}
+	if (groupBy === 'credential') {
+		return key === 'unknown' ? 'Unattributed' : key;
 	}
 	return key;
 }

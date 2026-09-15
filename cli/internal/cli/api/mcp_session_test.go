@@ -9,6 +9,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -70,7 +71,7 @@ func connectTestClientWithContext(serverCtx context.Context, t *testing.T, s *mc
 func decodeToolJSON(t *testing.T, res *mcp.CallToolResult) map[string]any {
 	t.Helper()
 	if len(res.Content) != 1 {
-		t.Fatalf("content items = %d, want 1", len(res.Content))
+		t.Fatalf("content items = %d, want 1: %s", len(res.Content), toolResultText(res))
 	}
 	text, ok := res.Content[0].(*mcp.TextContent)
 	if !ok {
@@ -81,6 +82,22 @@ func decodeToolJSON(t *testing.T, res *mcp.CallToolResult) map[string]any {
 		t.Fatalf("tool result is not JSON: %v\n%s", err, text.Text)
 	}
 	return payload
+}
+
+// toolResultText renders a tool result's content for failure messages.
+// %v on the content slice prints bare pointers ("[0xc008c1e280]") — exactly
+// what made the AccessLoop CI flake undiagnosable: the one artifact naming
+// the real error was formatted away.
+func toolResultText(res *mcp.CallToolResult) string {
+	parts := make([]string, 0, len(res.Content))
+	for _, c := range res.Content {
+		if tc, ok := c.(*mcp.TextContent); ok {
+			parts = append(parts, tc.Text)
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("%#v", c))
+	}
+	return strings.Join(parts, "\n")
 }
 
 func TestMCPSession_ToolsListWorksWithNoConfig(t *testing.T) {
@@ -220,7 +237,7 @@ func TestMCPSession_FullRoundTrip(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/me":
-			_, _ = w.Write([]byte(`{"type":"agent","id":"agent_1","name":"pets-agent","scopes":["execute"],"status":"active","token_scopes":["execute"],"toolkit_bindings":[]}`))
+			_, _ = w.Write([]byte(`{"type":"agent","id":"agent_1","name":"pets-agent","scopes":["execute"],"status":"active","token_scopes":["execute"],"toolkit_bindings":[],"credential_bindings":[]}`))
 		case "/search":
 			_, _ = w.Write([]byte(`{
 				"data": [{"type":"operation","api":{"vendor":"acme","name":"pets","version":"v1","host":"acme.com"},"operation_id":"op1","method":"GET","url":"/pets","name":"List Pets","relevance_score":0.9,"_links":{"inspect":"/inspect?id=GET%20/pets"}}],
@@ -251,7 +268,7 @@ func TestMCPSession_FullRoundTrip(t *testing.T) {
 		t.Fatalf("whoami: %v", err)
 	}
 	if res.IsError {
-		t.Fatalf("whoami soft-errored: %v", res.Content)
+		t.Fatalf("whoami soft-errored: %s", toolResultText(res))
 	}
 	payload := decodeToolJSON(t, res)
 	if payload["id"] != "agent_1" || payload["status"] != "active" {
@@ -267,7 +284,7 @@ func TestMCPSession_FullRoundTrip(t *testing.T) {
 		t.Fatalf("search_apis: %v", err)
 	}
 	if res.IsError {
-		t.Fatalf("search_apis soft-errored: %v", res.Content)
+		t.Fatalf("search_apis soft-errored: %s", toolResultText(res))
 	}
 	payload = decodeToolJSON(t, res)
 	hits, ok := payload["data"].([]any)
@@ -292,7 +309,7 @@ func TestMCPSession_FullRoundTrip(t *testing.T) {
 		t.Fatalf("inspect_operation: %v", err)
 	}
 	if res.IsError {
-		t.Fatalf("inspect_operation soft-errored: %v", res.Content)
+		t.Fatalf("inspect_operation soft-errored: %s", toolResultText(res))
 	}
 	payload = decodeToolJSON(t, res)
 	if payload["method"] != "GET" || payload["url"] != "https://acme.com/pets" {
@@ -308,7 +325,7 @@ func TestMCPSession_FullRoundTrip(t *testing.T) {
 		t.Fatalf("execute: %v", err)
 	}
 	if res.IsError {
-		t.Fatalf("execute soft-errored: %v", res.Content)
+		t.Fatalf("execute soft-errored: %s", toolResultText(res))
 	}
 	payload = decodeToolJSON(t, res)
 	if payload["status"] != float64(200) || payload["execution_id"] != "exec_42" {
@@ -448,6 +465,15 @@ func TestMCPSession_ResourcesWorkPreAuth(t *testing.T) {
 	wantURIs = append(wantURIs, skillIndexURI)
 	for _, name := range names {
 		wantURIs = append(wantURIs, skillURIScheme+name)
+		// Shipped references are listed too — EXCEPT the CLI-lane file
+		// (skillgen.CLIOnlyReference): this server is an MCP session, so the
+		// CLI lane is never listed here (it stays public over HTTP).
+		for _, ref := range skillgen.BundledReferences(name) {
+			if ref == skillgen.CLIOnlyReference {
+				continue
+			}
+			wantURIs = append(wantURIs, skillURIScheme+name+"/references/"+ref)
+		}
 	}
 	for _, want := range wantURIs {
 		r, ok := uris[want]
@@ -459,7 +485,18 @@ func TestMCPSession_ResourcesWorkPreAuth(t *testing.T) {
 		}
 	}
 	if len(uris) != len(wantURIs) {
-		t.Errorf("resources = %d, want exactly the bundled set + index (%d)", len(uris), len(wantURIs))
+		t.Errorf("resources = %d, want exactly the bundled set + index + lane-filtered references (%d)", len(uris), len(wantURIs))
+	}
+	// The jentic skill ships references, so the filter must be exercised for
+	// real: the MCP-lane and shared files are listed, the CLI-lane one is not.
+	if _, ok := uris["skill://jentic/references/mcp.md"]; !ok {
+		t.Errorf("resources/list must include the jentic MCP-lane reference")
+	}
+	if _, ok := uris["skill://jentic/references/recovery.md"]; !ok {
+		t.Errorf("resources/list must include the shared recovery reference")
+	}
+	if _, ok := uris["skill://jentic/references/cli.md"]; ok {
+		t.Errorf("resources/list must NOT include the CLI-lane cli.md reference")
 	}
 
 	res, err := cs.ReadResource(ctx, &mcp.ReadResourceParams{URI: "skill://jentic"})
@@ -488,6 +525,45 @@ func TestMCPSession_ResourcesWorkPreAuth(t *testing.T) {
 	// handler panic or a silent empty read.
 	if _, err := cs.ReadResource(ctx, &mcp.ReadResourceParams{URI: "skill://no-such-skill"}); err == nil {
 		t.Errorf("reading an unregistered skill URI must fail")
+	}
+
+	// A listed reference reads its embedded bytes verbatim, stamped
+	// source=bundled with the OWNING skill's content version.
+	ref, err := cs.ReadResource(ctx, &mcp.ReadResourceParams{URI: "skill://jentic/references/mcp.md"})
+	if err != nil {
+		t.Fatalf("reading a listed reference must work pre-auth: %v", err)
+	}
+	if len(ref.Contents) != 1 {
+		t.Fatalf("reference contents = %d, want 1", len(ref.Contents))
+	}
+	wantRef, err := skillgen.RawBundledReference("jentic", "mcp.md")
+	if err != nil {
+		t.Fatalf("RawBundledReference: %v", err)
+	}
+	if ref.Contents[0].Text != string(wantRef) {
+		t.Errorf("reference read must serve the bundled bytes verbatim (len %d vs %d)", len(ref.Contents[0].Text), len(wantRef))
+	}
+	if ref.Contents[0].Meta[skillMetaSource] != string(skillgen.SourceBundled) {
+		t.Errorf("reference meta source = %v, want bundled", ref.Contents[0].Meta[skillMetaSource])
+	}
+	wantVersion := skillgen.ParseDocMeta(want).Version
+	if ref.Contents[0].Meta[skillMetaVersion] != wantVersion {
+		t.Errorf("reference meta version = %v, want the owning skill's %q", ref.Contents[0].Meta[skillMetaVersion], wantVersion)
+	}
+
+	// The never-listed CLI-lane reference is refused at read time too (the
+	// lane filter is registration-time, and the SDK refuses what is not
+	// registered) — same for malformed reference-shaped URIs.
+	for _, uri := range []string{
+		"skill://jentic/references/cli.md",
+		"skill://jentic/references/../jentic.md",
+		"skill://jentic/references/nope.md",
+		"skill://jentic/references/",
+		"skill://no-such-skill/references/mcp.md",
+	} {
+		if _, err := cs.ReadResource(ctx, &mcp.ReadResourceParams{URI: uri}); err == nil {
+			t.Errorf("reading %q must fail (unlisted/malformed reference)", uri)
+		}
 	}
 }
 
@@ -558,7 +634,7 @@ func TestMCPSession_ContextValuesReachHandlersAndTransport(t *testing.T) {
 		t.Fatalf("get_started: %v", err)
 	}
 	if res.IsError {
-		t.Fatalf("get_started errored: %v", res.Content)
+		t.Fatalf("get_started errored: %s", toolResultText(res))
 	}
 	payload := decodeToolJSON(t, res)
 	// State "ready" is only reachable when the handler saw the session's
@@ -651,9 +727,9 @@ func TestMCPSession_AccessLoopDeniedToApprovedRetry(t *testing.T) {
 			w.Header().Set("Content-Type", "application/problem+json")
 			w.Header().Set("Jentic-Error-Origin", "broker")
 			w.WriteHeader(http.StatusForbidden)
-			_, _ = w.Write([]byte(`{"detail":"no toolkit binding","agent_directive":{"strategy":"prompt_human",` +
-				`"parameters":{"suggested_command":"jentic access request --toolkit acme/pets --wait"},` +
-				`"human_readable_instruction":"Ask your operator to bind this agent to acme/pets."}}`))
+			_, _ = w.Write([]byte(`{"detail":"no credential binding","agent_directive":{"strategy":"prompt_human",` +
+				`"parameters":{"suggested_command":"jentic access request --api acme/pets --wait"},` +
+				`"human_readable_instruction":"Ask your operator to bind this agent to a credential for acme/pets."}}`))
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -666,7 +742,7 @@ func TestMCPSession_AccessLoopDeniedToApprovedRetry(t *testing.T) {
 		return `{"id":"acr_1","status":"` + status + `","actor_id":"agent_1","created_by":"agent_1",` +
 			`"requested_by":"agent_1","approve_url":"/console/access-requests/acr_1",` +
 			`"filed_at":"2026-08-31T12:00:00Z","expires_at":"2026-09-07T12:00:00Z",` +
-			`"items":[{"id":"item_1","resource_type":"toolkit","action":"bind","status":"` + status + `"}]}`
+			`"items":[{"id":"item_1","resource_type":"credential","action":"bind","status":"` + status + `"}]}`
 	}
 	control := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -714,13 +790,13 @@ func TestMCPSession_AccessLoopDeniedToApprovedRetry(t *testing.T) {
 	// 2. request_access files the bind and returns approve_url + pending.
 	res, err = cs.CallTool(ctx, &mcp.CallToolParams{
 		Name:      "request_access",
-		Arguments: map[string]any{"toolkits": []string{"acme/pets"}, "reason": "list pets for the demo"},
+		Arguments: map[string]any{"apis": []string{"acme/pets"}, "reason": "list pets for the demo"},
 	})
 	if err != nil {
 		t.Fatalf("request_access: %v", err)
 	}
 	if res.IsError {
-		t.Fatalf("a pending filing is a normal result: %v", res.Content)
+		t.Fatalf("a pending filing is a normal result: %s", toolResultText(res))
 	}
 	payload = decodeToolJSON(t, res)
 	if payload["status"] != statusPending || payload["id"] != "acr_1" {
@@ -747,7 +823,7 @@ func TestMCPSession_AccessLoopDeniedToApprovedRetry(t *testing.T) {
 		t.Fatalf("request_access poll: %v", err)
 	}
 	if res.IsError {
-		t.Fatalf("approved poll soft-errored: %v", res.Content)
+		t.Fatalf("approved poll soft-errored: %s", toolResultText(res))
 	}
 	payload = decodeToolJSON(t, res)
 	if payload["status"] != statusApproved {
@@ -763,7 +839,7 @@ func TestMCPSession_AccessLoopDeniedToApprovedRetry(t *testing.T) {
 		t.Fatalf("execute retry: %v", err)
 	}
 	if res.IsError {
-		t.Fatalf("the retried execute must succeed after approval: %v", res.Content)
+		t.Fatalf("the retried execute must succeed after approval: %s", toolResultText(res))
 	}
 	payload = decodeToolJSON(t, res)
 	if payload["status"] != float64(200) || payload["execution_id"] != "exec_ok" {

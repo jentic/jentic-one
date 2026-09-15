@@ -58,6 +58,8 @@ class _StaticInjector:
         api_version: str,
         identity: Any,
         credential_name: str | None = None,
+        credential_id: str | None = None,
+        allowed_credential_ids: Any = None,
         trace_id: str | None = None,
     ) -> InjectedAuth:
         return self._injection

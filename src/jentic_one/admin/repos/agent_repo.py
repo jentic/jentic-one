@@ -59,6 +59,21 @@ class AgentRepository:
         return result.scalar_one_or_none()
 
     @staticmethod
+    async def get_status_by_ids(session: AsyncSession, agent_ids: Sequence[str]) -> dict[str, str]:
+        """Batch-fetch ``{agent_id: status}`` for the given ids.
+
+        One query for a page of rows that need agent-status annotation
+        (#1233: the grant listings surface the bound agent's lifecycle state
+        so a dormant grant on a disabled agent is never mistaken for a
+        working connection). Missing ids are simply absent from the result.
+        """
+        if not agent_ids:
+            return {}
+        stmt = select(Agent.id, Agent.status).where(Agent.id.in_(agent_ids))
+        result = await session.execute(stmt)
+        return {row[0]: row[1] for row in result.all()}
+
+    @staticmethod
     async def list_by_owner(
         session: AsyncSession,
         owner_id: str,

@@ -69,6 +69,15 @@ async def oauth_authorization_server(
         "token_endpoint": f"{issuer}/oauth/token",
         "registration_endpoint": f"{issuer}/register",
         "revocation_endpoint": f"{issuer}/oauth/revoke",
+        # RFC 8414 §2's implicit default for the auth-methods member is
+        # client_secret_basic, which mis-describes /oauth/revoke's public arm
+        # (RFC 7009 auth method "none", G11) — so the member must be explicit
+        # and agree with the /mcp-scoped document below (#1244). The member is
+        # deliberately gate-independent even though the "none" (form-encoded)
+        # arm 404s while server.mcp.oauth.enabled is off: this document is
+        # pinned byte-identical in both gate arms (gate unobservability), and
+        # no RFC 8414 value describes the ungated bearer-JSON arm anyway.
+        "revocation_endpoint_auth_methods_supported": ["none"],
         "introspection_endpoint": f"{issuer}/oauth/introspect",
         "jwks_uri": f"{issuer}/.well-known/jwks.json",
         "grant_types_supported": [

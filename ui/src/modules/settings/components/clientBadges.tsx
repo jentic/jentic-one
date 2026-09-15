@@ -14,7 +14,7 @@ import {
 } from '@/modules/settings/components/clientStatus';
 
 /**
- * Approval-status badge + the orthogonal "Inactive" chip. `showApproved`
+ * Approval-status badge + the orthogonal "Disabled" chip. `showApproved`
  * opts the happy state in (detail header wants the full picture; the queue
  * rows only ever carry pending/denied).
  */
@@ -35,7 +35,7 @@ export function ClientStatusBadges({
 			)}
 			{isInactiveChipVisible(client) && (
 				<span className="bg-muted text-muted-foreground rounded-full px-2 py-0.5 font-mono text-xs">
-					Inactive
+					Disabled
 				</span>
 			)}
 		</>

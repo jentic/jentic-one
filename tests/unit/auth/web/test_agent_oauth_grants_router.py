@@ -38,6 +38,7 @@ def _view(grant_id: str = "ocg_1", *, can_revoke: bool = True) -> OAuthGrantView
         client_origin="https://mcpapp.example.com",
         user_id="usr_consenter",
         agent_id="agt_1",
+        agent_status="active",
         scopes=["apis:read"],
         status="active",
         created_at=datetime(2026, 8, 1, tzinfo=UTC),

@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
+import hashlib
 import ipaddress
 import os
 import re
 import secrets
+import stat
+import threading
 from pathlib import Path
 from typing import Annotated, Any, Literal, cast
 from urllib.parse import urlparse
@@ -91,28 +96,59 @@ class DatabaseConfig(BaseModel):
       connection fields are ignored.
     """
 
-    backend: Literal["postgres", "sqlite"] = "postgres"
-    host: str = "localhost"
-    port: int = 5432
-    name: str = ""
-    user: str = "postgres"
-    password: SecretStr = SecretStr("")
-    pool_max: int = 10
-    # Interpolated into `CREATE SCHEMA IF NOT EXISTS "{schema_name}"` and
-    # search_path by the migration runner; the identifier pattern is
-    # defense-in-depth so a hostile config value cannot escape the quoted
-    # identifier (SEC-2).
-    schema_name: str = Field(default="public", pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")
-    # SQLite: filesystem path to the database file (":memory:" for in-memory).
-    path: str | None = None
-    # SQLite concurrency knobs (ignored for non-SQLite backends). ``journal_mode``
-    # is set per-connection but is persistent per database file — ``WAL`` lets a
-    # reader and a writer proceed concurrently instead of blocking each other.
-    # ``busy_timeout_ms`` is per-connection: when a write hits a held lock SQLite
-    # waits up to this long for the lock to clear instead of failing instantly
-    # with ``database is locked``.
-    busy_timeout_ms: int = 5000
-    journal_mode: str = "WAL"
+    backend: Literal["postgres", "sqlite"] = Field(
+        default="postgres",
+        description=(
+            "Database engine for this connection: ``postgres`` uses the server "
+            "connection fields; ``sqlite`` uses ``path`` and ignores them."
+        ),
+    )
+    host: str = Field(default="localhost", description="PostgreSQL server hostname.")
+    port: int = Field(default=5432, description="PostgreSQL server port.")
+    name: str = Field(
+        default="",
+        description="PostgreSQL database name. Required for the ``postgres`` backend.",
+    )
+    user: str = Field(default="postgres", description="PostgreSQL role to connect as.")
+    password: SecretStr = Field(
+        default=SecretStr(""), description="Password for the PostgreSQL role."
+    )
+    pool_max: int = Field(
+        default=10,
+        description="Maximum connections in the PostgreSQL connection pool (ignored for SQLite).",
+    )
+    # The identifier pattern is defense-in-depth so a hostile config value
+    # cannot escape the quoted identifier (SEC-2).
+    schema_name: str = Field(
+        default="public",
+        pattern=r"^[A-Za-z_][A-Za-z0-9_]*$",
+        description=(
+            "PostgreSQL schema for this connection: created if missing by the "
+            "migration runner (``CREATE SCHEMA IF NOT EXISTS``) and put first on "
+            "``search_path``, so several connections can share one database."
+        ),
+    )
+    path: str | None = Field(
+        default=None,
+        description=(
+            "SQLite: filesystem path to the database file (``:memory:`` for "
+            "in-memory). Required for the ``sqlite`` backend."
+        ),
+    )
+    busy_timeout_ms: int = Field(
+        default=5000,
+        description=(
+            "SQLite: per-connection wait for a held write lock, in milliseconds, "
+            "before failing with ``database is locked``."
+        ),
+    )
+    journal_mode: str = Field(
+        default="WAL",
+        description=(
+            "SQLite journal mode (persistent per database file). ``WAL`` lets a "
+            "writer and readers proceed concurrently instead of blocking each other."
+        ),
+    )
 
     @model_validator(mode="after")
     def _validate_backend(self) -> DatabaseConfig:
@@ -212,14 +248,42 @@ class ObservabilityConfig(BaseModel):
 class AdminAuthConfig(BaseModel):
     """Admin authentication settings."""
 
-    jwt_secret: SecretStr = SecretStr("")
-    jwt_ttl_seconds: int = Field(default=3600, gt=0)
-    # Absolute cap on a web session: `POST /auth/refresh` re-mints the login
-    # JWT (sliding session) only while `now - auth_time` stays inside this
-    # window, so a leaked token cannot be kept alive indefinitely.
-    session_ttl_seconds: int = Field(default=43200, gt=0)
-    failed_login_lockout_threshold: int = 5
-    failed_login_lockout_seconds: int = 900
+    jwt_secret: SecretStr = Field(
+        default=SecretStr(""),
+        description=(
+            "HMAC secret that signs admin login JWTs. Required in production "
+            "(empty or placeholder values are rejected at startup); in "
+            "development an ephemeral per-process secret is generated when empty."
+        ),
+    )
+    jwt_ttl_seconds: int = Field(
+        default=3600,
+        gt=0,
+        description=(
+            "Lifetime of one admin login JWT. ``POST /auth/refresh`` re-mints "
+            "the token, so this bounds a single token, not the session."
+        ),
+    )
+    session_ttl_seconds: int = Field(
+        default=43200,
+        gt=0,
+        description=(
+            "Absolute cap on a web session: refresh re-mints the login JWT only "
+            "while ``now - auth_time`` stays inside this window, so a leaked "
+            "token cannot be kept alive indefinitely. Must be >= "
+            "``jwt_ttl_seconds``."
+        ),
+    )
+    failed_login_lockout_threshold: int = Field(
+        default=5,
+        description=("Consecutive failed logins after which an admin account is locked."),
+    )
+    failed_login_lockout_seconds: int = Field(
+        default=900,
+        description=(
+            "How long a locked admin account stays locked before logins are accepted again."
+        ),
+    )
 
     @model_validator(mode="after")
     def _require_or_generate_secret_in_dev(self) -> AdminAuthConfig:
@@ -273,20 +337,76 @@ class SigningKeyConfig(BaseModel):
 class IdpConfig(BaseModel):
     """External OIDC identity provider configuration."""
 
-    enabled: bool = False
-    provider: str = "oidc"
-    issuer: str = ""
-    client_id: str = ""
-    client_secret: SecretStr = SecretStr("")
-    scopes: list[str] = Field(default_factory=lambda: ["openid", "email", "profile"])
-    authorization_endpoint: str | None = None
-    exchange_endpoint: str | None = None
-    userinfo_endpoint: str | None = None
-    # Google `hd` (hosted-domain) restriction. When set, only accounts whose
-    # userinfo carries a matching `hd` claim should be admitted. OSS surfaces the
-    # claim (see IdpClaims.hosted_domain); enforcement is left to the deployment's
-    # admission policy.
-    hosted_domain: str | None = None
+    enabled: bool = Field(
+        default=False,
+        description=(
+            "Enable login via an external OIDC identity provider. When false no "
+            "IdP adapter is built; /authorize stays routed and (unless "
+            "auth.local_login.enabled provides the password form) ends in an "
+            "OAuth server_error redirect because no sign-in path exists."
+        ),
+    )
+    provider: str = Field(
+        default="oidc",
+        description=(
+            "Adapter selector: ``google`` supplies Google's well-known endpoints "
+            "and ``hd`` claim handling; any other value uses the generic "
+            "standards-compliant OIDC adapter."
+        ),
+    )
+    issuer: str = Field(
+        default="",
+        description=(
+            "OIDC issuer base URL. Default authorization/token/userinfo "
+            "endpoints are derived from it when the explicit ``*_endpoint`` "
+            "keys are unset."
+        ),
+    )
+    client_id: str = Field(
+        default="",
+        description="OAuth client ID registered with the identity provider.",
+    )
+    client_secret: SecretStr = Field(
+        default=SecretStr(""),
+        description="OAuth client secret, sent on the authorization-code exchange.",
+    )
+    scopes: list[str] = Field(
+        default_factory=lambda: ["openid", "email", "profile"],
+        description="OAuth scopes requested on the IdP authorization redirect.",
+    )
+    authorization_endpoint: str | None = Field(
+        default=None,
+        description=(
+            "Explicit IdP authorization endpoint URL; overrides the "
+            "issuer-derived or provider well-known default."
+        ),
+    )
+    exchange_endpoint: str | None = Field(
+        default=None,
+        description=(
+            "Explicit IdP token (code-exchange) endpoint URL; overrides the "
+            "issuer-derived or provider well-known default."
+        ),
+    )
+    userinfo_endpoint: str | None = Field(
+        default=None,
+        description=(
+            "Explicit IdP userinfo endpoint URL; overrides the issuer-derived "
+            "or provider well-known default."
+        ),
+    )
+    hosted_domain: str | None = Field(
+        default=None,
+        description=(
+            "Google ``hd`` (hosted-domain) hint. **Not an access control in "
+            "the OSS build**: the claim is surfaced (see "
+            "IdpClaims.hosted_domain) but never compared — the default "
+            "admission policy admits every brand-new email (with zero "
+            "permissions until an operator grants some). Restricting sign-in "
+            "to a domain requires configuring it at the IdP or installing a "
+            "custom admission policy."
+        ),
+    )
 
 
 class PlatformClientConfig(BaseModel):
@@ -327,22 +447,70 @@ _LOCAL_DEV_KEY_KID = "local-dev-key"
 class OAuthRateLimitConfig(BaseModel):
     """Pre-auth rate limit tunables for OAuth endpoints."""
 
-    authorize_rpm: int = 30
-    authorize_burst: int = 30
-    exchange_rpm: int = 60
-    exchange_burst: int = 60
-    # Anonymous dynamic client registration (POST /oauth-clients).
-    registration_rpm: int = 10
-    registration_burst: int = 5
-    # Approval-pending status poll (GET /oauth/approval/status). One tab polls
-    # at 12 rpm, so 120/60 keeps ~10 concurrent pending tabs behind one NAT
-    # inside the bucket; the page also honors Retry-After with backoff, so
-    # saturation degrades to a slower cadence rather than a thundering retry.
-    # Lives in its own namespace so polling can never drain the /authorize
-    # (or registration) quota.
-    approval_status_rpm: int = 120
-    approval_status_burst: int = 60
-    trusted_proxies: list[str] = Field(default_factory=list)
+    authorize_rpm: int = Field(
+        default=30,
+        description=(
+            "Sustained requests/minute allowed on the unauthenticated "
+            "``/authorize`` endpoints, keyed per ``client_id``+IP — except "
+            "the local-login routes, which carry no query ``client_id`` and "
+            "fall back to a bare-IP key. Behind a proxy, set "
+            "``auth.oauth_rate_limit.trusted_proxies`` or every client "
+            "shares the proxy's IP bucket."
+        ),
+    )
+    authorize_burst: int = Field(
+        default=30,
+        description="Burst allowance on top of ``authorize_rpm``.",
+    )
+    exchange_rpm: int = Field(
+        default=60,
+        description=(
+            "Sustained requests/minute allowed per ``client_id``+IP on the "
+            "token endpoint (also reused per-IP for token revocation)."
+        ),
+    )
+    exchange_burst: int = Field(
+        default=60,
+        description="Burst allowance on top of ``exchange_rpm``.",
+    )
+    registration_rpm: int = Field(
+        default=10,
+        description=(
+            "Sustained requests/minute allowed per IP on anonymous dynamic "
+            "client registration (``POST /oauth-clients``)."
+        ),
+    )
+    registration_burst: int = Field(
+        default=5,
+        description="Burst allowance on top of ``registration_rpm``.",
+    )
+    trusted_proxies: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Socket IPs of reverse proxies whose ``X-Forwarded-For`` header is "
+            "honored when deriving the per-client rate-limit identity. Empty "
+            "(default) means the socket address is used as-is — behind a "
+            "reverse proxy every request then carries the proxy's IP and all "
+            "clients share one bucket, so list the proxy IPs when deploying "
+            "behind one."
+        ),
+    )
+    approval_status_rpm: int = Field(
+        default=120,
+        description=(
+            "Sustained requests/minute allowed on the approval-pending status "
+            "poll (``GET /oauth/approval/status``). Its own namespace, so "
+            "polling can never drain the ``/authorize`` or registration "
+            "quota: one pending tab polls at 12 rpm, so the default keeps "
+            "~10 concurrent pending tabs behind one NAT inside the bucket, "
+            "and the page honors ``Retry-After`` with backoff, so saturation "
+            "degrades to a slower cadence rather than a thundering retry."
+        ),
+    )
+    approval_status_burst: int = Field(
+        default=60,
+        description="Burst allowance on top of ``approval_status_rpm``.",
+    )
 
 
 class LocalLoginConfig(BaseModel):
@@ -358,7 +526,14 @@ class LocalLoginConfig(BaseModel):
     mode in v1).
     """
 
-    enabled: bool = False
+    enabled: bool = Field(
+        default=False,
+        description=(
+            "Offer a first-party password login form on the /authorize flow. "
+            "Off by default; when auth.idp.enabled is true the external IdP "
+            "always wins and the form is never offered."
+        ),
+    )
 
 
 class AuthConfig(BaseModel):
@@ -419,12 +594,66 @@ class AuthConfig(BaseModel):
 
 _KEY_ID_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 
+# AES-256 key size, mirrored from shared/crypto/encryption.py (which imports
+# this module, so it cannot be imported here). Enforced at config load for
+# material_file so a wrong target fails without leaking its observed length.
+_ENCRYPTION_KEY_BYTES = 32
+# A base64-encoded 32-byte key is 44 characters; anything near this cap is not
+# a key, and the cap keeps an arbitrary-path read from pulling a large file
+# into memory.
+_MATERIAL_FILE_MAX_BYTES = 4096
+
 
 class EncryptionKey(BaseModel):
-    """A single named encryption key."""
+    """A single named encryption key.
+
+    Key material comes from exactly ONE source:
+
+    - ``material``      — inline in the config (local dev / vault-templated files),
+    - ``material_env``  — the name of an environment variable holding the key,
+    - ``material_file`` — a regular file to read the key from (docker/k8s secret
+      mounts, systemd ``LoadCredential`` paths). Pipes and ``/dev/fd`` sources
+      are rejected: config may be validated more than once per process, and a
+      source that cannot be re-read would hang or fail the second load.
+
+    ``material_env``/``material_file`` are resolved once, at config load, into
+    ``material`` — consumers keep reading ``resolved_material`` and never learn
+    where the bytes came from (the source field is cleared after resolution, so
+    a resolved key re-validates cleanly and never re-reads the environment or
+    the file). Resolution failures (unset variable, unreadable file, empty
+    value) fail validation loudly rather than booting a server that cannot
+    decrypt its own credentials.
+    """
+
+    # Exclusivity is enforced at runtime by _resolve_material; mirroring it in
+    # the exported JSON Schema lets schema-driven consumers (the generated Go
+    # installer struct, editors) reject an entry with zero or multiple sources.
+    model_config = ConfigDict(
+        json_schema_extra={
+            "oneOf": [
+                {"required": ["material"]},
+                {"required": ["material_env"]},
+                {"required": ["material_file"]},
+            ]
+        }
+    )
 
     id: str
-    material: SecretStr
+    material: SecretStr | None = Field(
+        default=None,
+        description="Base64-encoded key material, inline in the config.",
+    )
+    material_env: str | None = Field(
+        default=None,
+        description="Name of an environment variable holding the base64-encoded key material.",
+    )
+    material_file: str | None = Field(
+        default=None,
+        description=(
+            "Path to a regular file holding the base64-encoded key material "
+            "(docker/k8s secret mount, systemd LoadCredential path)."
+        ),
+    )
 
     @field_validator("id")
     @classmethod
@@ -432,6 +661,132 @@ class EncryptionKey(BaseModel):
         if not _KEY_ID_RE.match(v):
             raise ValueError("key id must match [a-zA-Z0-9_-]+")
         return v
+
+    @model_validator(mode="after")
+    def _resolve_material(self) -> EncryptionKey:
+        sources = [
+            name
+            for name, value in (
+                ("material", self.material),
+                ("material_env", self.material_env),
+                ("material_file", self.material_file),
+            )
+            if value is not None
+        ]
+        if len(sources) != 1:
+            raise ValueError(
+                "exactly one of material / material_env / material_file must be set"
+                + (f" (got: {', '.join(sources)})" if sources else "")
+            )
+        if self.material is not None:
+            inline = self.material.get_secret_value()
+            if not inline.strip():
+                raise ValueError("material is empty")
+            # Strip like the env/file sources do, so identical bytes produce
+            # identical keys regardless of which source carried them.
+            if inline != inline.strip():
+                self.material = SecretStr(inline.strip())
+            self._log_resolution(source="material")
+        elif self.material_env is not None:
+            value = os.environ.get(self.material_env)
+            if value is None or not value.strip():
+                raise ValueError(
+                    f"material_env {self.material_env!r} is not set (or empty) in the environment"
+                )
+            self.material = SecretStr(value.strip())
+            self._log_resolution(source="material_env", origin=self.material_env)
+            self.material_env = None
+        elif self.material_file is not None:
+            self.material = SecretStr(self._read_material_file(self.material_file))
+            self._log_resolution(source="material_file", origin=self.material_file)
+            self.material_file = None
+        return self
+
+    @staticmethod
+    def _read_material_file(path_str: str) -> str:
+        """Read and vet key material from a regular file.
+
+        Only regular files are accepted: config may be validated more than once
+        per process, and a pipe or ``/dev/fd`` source cannot be re-read — a
+        drained pipe fails the second load and a writer-less FIFO blocks boot
+        forever. The content is required to be a base64-encoded 32-byte key so
+        that pointing ``material_file`` at an arbitrary path (reachable with
+        env-write privilege via ``JENTIC__…MATERIAL_FILE``) fails without the
+        error message echoing the target's length or content.
+        """
+        path = Path(path_str)
+        try:
+            st = os.stat(path)
+        except OSError as exc:
+            raise ValueError(f"cannot read material_file {path_str!r}: {exc}") from exc
+        if not stat.S_ISREG(st.st_mode):
+            raise ValueError(
+                f"material_file {path_str!r} must be a regular file — pipes and "
+                "/dev/fd sources cannot be re-read and are not supported"
+            )
+        if stat.S_IMODE(st.st_mode) & 0o077:
+            # The file mode is this feature's security boundary: a
+            # group/other-readable key file silently hands the master key to
+            # every same-host account.
+            _logger.warning(
+                "encryption_material_file_permissive",
+                path=path_str,
+                mode=oct(stat.S_IMODE(st.st_mode)),
+                detail="material_file should be readable only by the server user (0600)",
+            )
+        if st.st_size > _MATERIAL_FILE_MAX_BYTES:
+            raise ValueError(f"material_file {path_str!r} does not contain a base64-encoded key")
+        try:
+            raw = path.read_bytes()
+        except OSError as exc:
+            raise ValueError(f"cannot read material_file {path_str!r}: {exc}") from exc
+        try:
+            text = raw.decode()
+        except UnicodeDecodeError:
+            raise ValueError(
+                f"material_file {path_str!r} does not contain a base64-encoded key"
+            ) from None
+        text = text.strip()
+        if not text:
+            raise ValueError(f"material_file {path_str!r} is empty")
+        # Vet the content here, where the message can deliberately omit the
+        # observed length — the generic decode error downstream would otherwise
+        # echo the exact byte length of whatever the path pointed at.
+        try:
+            decoded = base64.b64decode(text, validate=True)
+        except binascii.Error:
+            raise ValueError(
+                f"material_file {path_str!r} does not contain a base64-encoded key"
+            ) from None
+        if len(decoded) != _ENCRYPTION_KEY_BYTES:
+            raise ValueError(
+                f"material_file {path_str!r} does not contain a {_ENCRYPTION_KEY_BYTES}-byte key"
+            )
+        return text
+
+    def _log_resolution(self, source: str, origin: str | None = None) -> None:
+        """Record where this key's material came from — never the bytes.
+
+        The source fields are cleared after resolution, so this boot-time line
+        (key id, source kind, env-var name or path, and a short SHA-256
+        fingerprint) is the only trail an operator has to distinguish key
+        substitution from corruption, or to answer "which file fed this key".
+        """
+        material = self.material.get_secret_value() if self.material is not None else ""
+        _logger.info(
+            "encryption_key_material_resolved",
+            key_id=self.id,
+            source=source,
+            origin=origin,
+            fingerprint=hashlib.sha256(material.encode()).hexdigest()[:16],
+        )
+
+    @property
+    def resolved_material(self) -> SecretStr:
+        """The key material after source resolution (guaranteed by validation)."""
+        if self.material is None:  # pragma: no cover — _resolve_material guarantees it
+            raise ConfigError(f"encryption key {self.id!r} has no resolved material")
+        return self.material
 
 
 class EncryptionConfig(BaseModel):
@@ -536,7 +891,16 @@ class UpstreamClientConfig(BaseModel):
     """
 
     connect_timeout_s: float = 5.0
-    read_timeout_s: float = 30.0
+    read_timeout_s: float = Field(
+        default=30.0,
+        description=(
+            "Per-read *between-bytes* gap timeout (seconds, httpx semantics) on "
+            "upstream responses — not a whole-stream cap. Pairs with "
+            "``broker.resilience.request_deadline_s``, which must be sized above "
+            "it so one healthy slow attempt isn't pre-empted by the envelope "
+            "deadline."
+        ),
+    )
     write_timeout_s: float = 30.0
     pool_timeout_s: float = 2.0
     # Negotiate HTTP/2 via ALPN, falling back to 1.1 when the upstream doesn't
@@ -661,21 +1025,32 @@ class EgressConfig(BaseModel):
     credential-stealing SSRF can never be allowlisted by accident.
     """
 
-    # CIDRs exempted from the private-IP block (e.g. ["10.50.0.0/16"]). The
-    # metadata IPs (169.254.169.254 / fd00:ec2::254) are never exempted even if a
-    # covering range is listed.
     allowed_private_subnets: Annotated[list[str], BeforeValidator(_csv_to_list)] = Field(
-        default_factory=list
+        default_factory=list,
+        description=(
+            "CIDRs exempted from the private-IP egress block (e.g. "
+            '``["10.50.0.0/16"]``). The cloud-metadata IPs (169.254.169.254 / '
+            "fd00:ec2::254) are never exempted, even when a listed range covers "
+            "them. Accepts a YAML list or a comma-separated string."
+        ),
     )
-    # Domain suffixes (e.g. [".svc.cluster.local"]) whose resolved private IP is
-    # permitted. The resolved IP must still fall in an allowed subnet.
     allowed_internal_domains: Annotated[list[str], BeforeValidator(_csv_to_list)] = Field(
-        default_factory=list
+        default_factory=list,
+        description=(
+            'Domain suffixes (e.g. ``[".svc.cluster.local"]``) whose resolved '
+            "private IP is permitted. The resolved IP must still fall in an "
+            "allowed subnet. Accepts a YAML list or a comma-separated string."
+        ),
     )
-    # Pin the outbound connection to the IP validated at connect time, closing the
-    # DNS-rebinding TOCTOU between pre-request validation and the runner's own
-    # resolution. On by default; disable only to debug egress issues.
-    dns_pinning_enabled: bool = True
+    dns_pinning_enabled: bool = Field(
+        default=True,
+        description=(
+            "Pin the outbound connection to the IP validated at connect time, "
+            "closing the DNS-rebinding TOCTOU between pre-request validation "
+            "and the runner's own resolution. Disable only to debug egress "
+            "issues."
+        ),
+    )
 
     @field_validator("allowed_private_subnets")
     @classmethod
@@ -696,19 +1071,43 @@ class BrokerResilienceConfig(BaseModel):
     backpressure / async-credential / retention knobs are future work.
     """
 
-    max_in_flight: int = 200
-    shed_retry_after_s: int = 5
-    # Overall wall-clock budget (seconds) for one upstream call, enforced by the
-    # always-on DeadlineRunner *outside* the circuit breaker (and, once it lands,
-    # the retry loop) — distinct from the per-attempt connect/read timeout on the
-    # transport client. Exceeding it returns 504 with a `wait` agent directive.
-    # 0 disables the budget (unbounded call). Size ABOVE upstream read timeouts so
-    # a single healthy slow attempt isn't pre-empted by the envelope deadline.
-    request_deadline_s: float = 30.0
-    # Fraction of ``max_in_flight`` at/above which ``/ready`` reports unready so
-    # the LB drains this instance *before* it hits the hard admission shed wall.
-    # Kept < 1.0 for that headroom.
-    readiness_saturation_threshold: float = Field(default=0.9, gt=0.0, le=1.0)
+    max_in_flight: int = Field(
+        default=200,
+        description=(
+            "Hard admission cap on concurrently executing brokered calls, "
+            "**per broker process** — replicas multiply it. At the cap, new "
+            "requests are shed with 429 + ``Retry-After: shed_retry_after_s``."
+        ),
+    )
+    shed_retry_after_s: int = Field(
+        default=5,
+        description=(
+            "``Retry-After`` (seconds) returned with the 429 when admission "
+            "sheds at ``max_in_flight``."
+        ),
+    )
+    request_deadline_s: float = Field(
+        default=30.0,
+        description=(
+            "Overall wall-clock budget (seconds) for one upstream call, "
+            "enforced by the always-on DeadlineRunner outside the circuit "
+            "breaker — distinct from the per-attempt connect/read timeout on "
+            "the transport client. Exceeding it returns 504 with a ``wait`` "
+            "agent directive; 0 disables the budget. Size ABOVE upstream "
+            "read timeouts so a single healthy slow attempt isn't pre-empted "
+            "by the envelope deadline."
+        ),
+    )
+    readiness_saturation_threshold: float = Field(
+        default=0.9,
+        gt=0.0,
+        le=1.0,
+        description=(
+            "Fraction of ``max_in_flight`` at/above which ``/ready`` reports "
+            "unready, so the LB drains this instance before it hits the hard "
+            "admission shed wall. Kept < 1.0 for that headroom."
+        ),
+    )
     upstream: UpstreamClientConfig = Field(default_factory=UpstreamClientConfig)
     backend: StateBackendConfig = Field(default_factory=StateBackendConfig)
     rate_limit: RateLimitConfig = Field(default_factory=RateLimitConfig)
@@ -824,7 +1223,15 @@ class SecurityConfig(BaseModel):
 class BrokerConfig(BaseModel):
     """Broker surface configuration."""
 
-    upstream_timeout_s: float = 30.0
+    upstream_timeout_s: float = Field(
+        default=30.0,
+        description=(
+            "Timeout (seconds) handed to the execution runner for one upstream "
+            "call on the buffered sync path and the async job worker. Distinct "
+            "from the transport-level ``broker.resilience.upstream`` timeouts "
+            "and the ``request_deadline_s`` envelope."
+        ),
+    )
     resolve_cache_ttl_seconds: float = 3.0
     # Short TTL (seconds) for the per-instance toolkit-derivation cache.
     # Wraps the cross-DB `derive_toolkits` lookup so the per-request Admin+Control
@@ -839,6 +1246,21 @@ class BrokerConfig(BaseModel):
     # Caches the ordered toolkit_permission_rules per toolkit_id. Same staleness
     # trade-off as toolkit_cache_ttl_s — a rule change propagates after the TTL.
     rule_cache_ttl_s: float = 3.0
+    # Upper bound on entries in each per-worker permission-rule LRU (toolkit and
+    # direct-binding evaluators alike). Size against agents x credentials for the
+    # direct path — each active (agent, credential) binding is one entry — and
+    # against toolkits x vendors for the toolkit path. Eviction is LRU by entry
+    # count (the TTL only bounds staleness, never memory).
+    rule_cache_max_entries: int = 5_000
+    # Theme-5 Phase 2 cutover flag, default-on since Phase 5b: callers are
+    # authorized through **direct agent→credential bindings**
+    # (agent_credential_bindings + agent_permission_rules /
+    # permission_rule_sets). Setting False is an emergency fallback onto the
+    # legacy toolkit-derivation path, which survives until Phase 6b removes it
+    # (and this flag with it). Service accounts migrated from jntc_live_
+    # toolkit keys (Phase 4) hold both binding forms, so they work under
+    # either setting.
+    direct_bindings_enabled: bool = True
     # Absolute public base URL of the admin jobs API, used to build the 202
     # `_links.self` pointer for async executions (e.g. "https://api.example.com").
     # None keeps the legacy broker-relative `/jobs/{id}` link.
@@ -902,8 +1324,15 @@ class IngestConfig(BaseModel):
 class CatalogConfig(BaseModel):
     """Public API catalog settings (manifest source + staleness)."""
 
-    manifest_url: str = (
-        "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/apis.json"
+    manifest_url: str = Field(
+        default=(
+            "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/apis.json"
+        ),
+        description=(
+            "Manifest source for the public API catalog. Full default: "
+            "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/"
+            "apis/openapi/apis.json"
+        ),
     )
     # Lazy refresh-on-read: a manifest older than this is refreshed on the next
     # list()/get(). Zero disables auto-refresh (manual :refresh only).
@@ -1003,16 +1432,16 @@ class ServerConfig(BaseModel):
 
 
 class TelemetryConfig(BaseModel):
-    """Anonymous product-telemetry settings (issue #446).
+    """Anonymous product-telemetry settings.
 
     Defaults to **OFF**: an instance whose config omits this block (non-onboarded
     or hand-rolled) sends nothing. The onboarding CLI writes ``enabled``
-    explicitly (a yes-default ``[Y]/n`` prompt) so the on-by-default UX lives in
-    the prompt, not the code default. ``instance_id`` seeds the durable admin-DB
-    identity row on first startup for opted-in instances. ``host_os`` is the
-    operator's OS family, stamped by the CLI at install time so a Docker-run
-    instance reports the host's OS rather than the container's; sent once per
-    boot, on the ``instance_booted`` event.
+    explicitly (a yes-default ``[Y]/n`` prompt), which is where the
+    on-by-default install experience comes from. ``instance_id`` seeds the
+    durable admin-DB identity row on first startup for opted-in instances.
+    ``host_os`` is the operator's OS family, stamped by the CLI at install
+    time so a Docker-run instance reports the host's OS rather than the
+    container's; sent once per boot, on the ``instance_booted`` event.
     """
 
     enabled: bool = False
@@ -1056,8 +1485,8 @@ class ReleaseCheckConfig(BaseModel):
     Powers ``GET /system/version``: the backend asks GitHub for the newest
     published release of ``repo`` and compares it against the running build so the
     web console can surface an "update available" banner (and the user menu can
-    always show the current version). This is about *jentic-one's own* release —
-    distinct from ``CatalogConfig``, which tracks the public *API catalog*.
+    always show the current version). This covers *jentic-one's own* release;
+    ``CatalogConfig`` tracks the public *API catalog* instead.
 
     Runs only on a ``local`` backend (a self-hosted install the operator can
     actually update); the hosted platform (``server.backend == "remote"``) skips
@@ -1081,11 +1510,11 @@ class EntitlementConfig(BaseModel):
     """AWS Marketplace license gate for the Marketplace-listed deployment.
 
     Powers the entitlement checker (``integrations/aws_marketplace``): on
-    startup — and every ``refresh_interval_seconds`` after — the process asks
+    startup, and every ``refresh_interval_seconds`` after, the process asks
     AWS whether this deployment's Marketplace subscription is still active, and
     locks the HTTP surface (503, health excepted) when it definitively is not.
-    Defaults to **OFF**: a non-Marketplace install that omits this block runs
-    exactly as before — nothing is wired, no AWS call is ever made.
+    Defaults to **OFF**: a non-Marketplace install that omits this block wires
+    nothing and never makes an AWS call.
 
     Failure posture: an *unreachable* or *erroring* AWS API is never grounds
     for lockout by itself — the last definitive verdict holds for
@@ -1271,6 +1700,80 @@ def _env_overrides() -> dict[str, Any]:
     return cast("dict[str, Any]", _coerce_indexed_dicts_to_lists(result))
 
 
+# One-shot config sources (pipes / inherited fds) cached per process. A config
+# handed on a pipe — e.g. ``JENTIC_CONFIG_FILE=/dev/fd/3`` from a supervisor
+# that keeps secrets out of the filesystem, argv, and env — can only be read
+# once, but several consumers load config more than once per process (the
+# Alembic env loads it per database). The first read is cached so later loads
+# see the same document. Regular files keep re-reading from disk.
+#
+# The cache key is the source's fstat identity (device, inode) plus the path
+# string, never the path alone: fd numbers are recycled by the kernel, so two
+# different files can appear as the same ``/dev/fd/N`` within one process, and
+# a path-string key would silently serve the first file's contents for the
+# second. Keying on identity also keeps ``/dev/fd/N`` of a *regular* file
+# re-readable (rotation-safe) and covers ``/proc/self/fd/N`` spellings.
+_ONESHOT_CONFIG_CACHE: dict[tuple[int, int, str], str] = {}
+_ONESHOT_CACHE_LOCK = threading.Lock()
+
+# A forked child never received the one-shot document itself; drop the parent's
+# copy so it cannot linger in (or leak from) a process it was never handed to.
+os.register_at_fork(after_in_child=_ONESHOT_CONFIG_CACHE.clear)
+
+
+def oneshot_config_source_active() -> bool:
+    """True when this process's config came from a one-shot source (pipe, /dev/fd).
+
+    A one-shot source serves exactly one process: a child process (e.g. a
+    reload worker) cannot re-read it. Entry points that spawn config-loading
+    children consult this to fail or degrade loudly instead of hanging.
+    """
+    return bool(_ONESHOT_CONFIG_CACHE)
+
+
+def _read_config_text(path: Path) -> str:
+    """Read the config document, caching one-shot sources (pipes, /dev/fd)."""
+    # Cache lookup by stat identity happens before open(): opening a named FIFO
+    # whose writer has gone blocks forever, and a cache hit must not reopen it.
+    st = os.stat(path)
+    if stat.S_ISFIFO(st.st_mode) or stat.S_ISSOCK(st.st_mode):
+        key = (st.st_dev, st.st_ino, str(path))
+        with _ONESHOT_CACHE_LOCK:
+            if key in _ONESHOT_CONFIG_CACHE:
+                # "Why didn't my config change take effect" needs a trail: a
+                # one-shot source is served from the process cache, not re-read.
+                _logger.info("oneshot_config_cache_reused", source=str(path))
+                return _ONESHOT_CONFIG_CACHE[key]
+    with path.open() as f:
+        fst = os.fstat(f.fileno())
+        # Decide "one-shot" from the opened fd itself: FIFOs, sockets, and any
+        # non-seekable stream can be read exactly once. Seekable sources are
+        # regular files (wherever the path points) and are re-read every load.
+        if f.seekable() and not (stat.S_ISFIFO(fst.st_mode) or stat.S_ISSOCK(fst.st_mode)):
+            # /dev/fd/N re-opens share the underlying file offset on macOS (dup
+            # semantics), so rewind before reading.
+            f.seek(0)
+            return f.read()
+        key = (fst.st_dev, fst.st_ino, str(path))
+        # The drain-and-cache is a single critical section: a concurrent loader
+        # must wait and take the cached document, never race the pipe read.
+        with _ONESHOT_CACHE_LOCK:
+            if key in _ONESHOT_CONFIG_CACHE:
+                _logger.info("oneshot_config_cache_reused", source=str(path))
+                return _ONESHOT_CONFIG_CACHE[key]
+            text = f.read()
+            if not text.strip():
+                # Caching an empty read would pin the process to a broken
+                # config with no recovery; failing here names the real cause
+                # instead of a downstream "Field required" error.
+                raise ConfigError(
+                    f"one-shot config source {str(path)!r} yielded no content — it was "
+                    "already drained by another reader, or the supervisor closed it "
+                    "without writing"
+                )
+            return _ONESHOT_CONFIG_CACHE.setdefault(key, text)
+
+
 def load_config(path: Path | None = None) -> AppConfig:
     """Load and validate application configuration.
 
@@ -1295,10 +1798,9 @@ def load_config(path: Path | None = None) -> AppConfig:
     if config_path is not None:
         if not config_path.exists():
             raise ConfigError(f"Config file not found: {config_path}")
-        with open(config_path) as f:
-            loaded = yaml.safe_load(f)
-            if isinstance(loaded, dict):
-                file_data = loaded
+        loaded = yaml.safe_load(_read_config_text(config_path))
+        if isinstance(loaded, dict):
+            file_data = loaded
 
     env_data = _env_overrides()
     merged = _deep_merge(file_data, env_data)

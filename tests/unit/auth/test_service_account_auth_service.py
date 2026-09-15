@@ -130,8 +130,10 @@ async def test_authenticate_client_credentials_invalid_secret(
         return_value=_make_credential_row(client_secret_hash="different_hash")
     )
 
-    with pytest.raises(InvalidGrantError, match="invalid_client"):
+    with pytest.raises(InvalidGrantError, match="client authentication failed") as exc_info:
         await svc.authenticate_client_credentials("sva_test123", "jcs_wrong_secret")
+    # §5.2 names failed client authentication invalid_client on the wire.
+    assert exc_info.value.oauth_error_code == "invalid_client"
 
 
 @pytest.mark.asyncio
@@ -144,8 +146,9 @@ async def test_authenticate_client_credentials_sa_not_found(
 
     mock_sa_repo.get_by_id = AsyncMock(return_value=None)
 
-    with pytest.raises(InvalidGrantError, match="invalid_client"):
+    with pytest.raises(InvalidGrantError, match="client authentication failed") as exc_info:
         await svc.authenticate_client_credentials("sva_nonexist", "jcs_anything")
+    assert exc_info.value.oauth_error_code == "invalid_client"
 
 
 @pytest.mark.asyncio
@@ -158,8 +161,9 @@ async def test_authenticate_client_credentials_sa_not_active(
 
     mock_sa_repo.get_by_id = AsyncMock(return_value=_make_sa_row(status="disabled"))
 
-    with pytest.raises(InvalidGrantError, match="invalid_client"):
+    with pytest.raises(InvalidGrantError, match="client authentication failed") as exc_info:
         await svc.authenticate_client_credentials("sva_test123", "jcs_anything")
+    assert exc_info.value.oauth_error_code == "invalid_client"
 
 
 def _make_agent_row(*, status: str = "active") -> MagicMock:

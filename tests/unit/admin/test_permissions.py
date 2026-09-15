@@ -26,8 +26,6 @@ from jentic_one.admin.core.permissions import (
     OVERLAYS_CONFIRM,
     SERVICE_ACCOUNTS_READ,
     SERVICE_ACCOUNTS_WRITE,
-    TOOLKITS_READ,
-    TOOLKITS_WRITE,
     USERS_READ,
     USERS_WRITE,
     compute_effective,
@@ -39,21 +37,19 @@ def test_compute_effective_empty_input() -> None:
 
 
 def test_compute_effective_single_leaf_permission() -> None:
-    result = compute_effective({TOOLKITS_READ})
-    assert result == {TOOLKITS_READ}
+    result = compute_effective({AUDIT_READ})
+    assert result == {AUDIT_READ}
 
 
 def test_compute_effective_single_direct_implication() -> None:
-    result = compute_effective({TOOLKITS_WRITE})
-    assert result == {TOOLKITS_WRITE, TOOLKITS_READ}
+    result = compute_effective({USERS_WRITE})
+    assert result == {USERS_WRITE, USERS_READ}
 
 
 def test_compute_effective_transitive_expansion() -> None:
     result = compute_effective({ORG_ADMIN})
     assert USERS_WRITE in result
     assert USERS_READ in result
-    assert TOOLKITS_WRITE in result
-    assert TOOLKITS_READ in result
     assert CAPABILITIES_EXECUTE in result
     assert CAPABILITIES_READ in result
     assert JOBS_WRITE in result
@@ -74,8 +70,6 @@ def test_compute_effective_org_admin_expands_all() -> None:
         ORG_ADMIN,
         CAPABILITIES_EXECUTE,
         CAPABILITIES_READ,
-        TOOLKITS_WRITE,
-        TOOLKITS_READ,
         USERS_WRITE,
         USERS_READ,
         JOBS_WRITE,
@@ -103,8 +97,8 @@ def test_compute_effective_org_admin_expands_all() -> None:
 
 
 def test_compute_effective_multiple_grants() -> None:
-    result = compute_effective({TOOLKITS_WRITE, EVENTS_WRITE})
-    assert result == {TOOLKITS_WRITE, TOOLKITS_READ, EVENTS_WRITE, EVENTS_READ}
+    result = compute_effective({JOBS_WRITE, EVENTS_WRITE})
+    assert result == {JOBS_WRITE, JOBS_READ, EVENTS_WRITE, EVENTS_READ}
 
 
 def test_compute_effective_idempotency() -> None:

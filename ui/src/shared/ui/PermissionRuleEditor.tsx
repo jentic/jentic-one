@@ -5,15 +5,15 @@ import { Select } from '@/shared/ui/Select';
 import type { PermissionRuleSchema } from '@/shared/api';
 
 /**
- * Editor for the agent-defined permission rules on a toolkit↔credential
+ * Editor for the permission rules on an agent↔credential
  * binding. Each rule is `{ effect, methods?, path?, match_mode?, operations? }`.
  * Rules are evaluated in order, first match wins — so rows are numbered (#1 is
  * evaluated first) and can be reordered, and the numbers are the same ones the
  * rule tester's verdict references.
  *
  * Lives in `shared/ui` (not a feature module) so every surface that authors
- * binding rules can reuse it — the toolkit detail page and the provisioning-plan
- * fulfilment wizard both compose it.
+ * binding rules can reuse it — the agent console's rule editor and the
+ * provisioning-plan fulfilment wizard both compose it.
  */
 
 /** Write shape for a permission rule (allow/deny + methods/path/operations). */

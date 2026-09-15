@@ -153,7 +153,12 @@ async def archive_service_account(
     identity: Identity = get_current_identity(required_permissions=["service-accounts:write"]),
     sa_svc: ServiceAccountService = Depends(get_service_account_service),
 ) -> Response:
-    """Soft-archive a service account — revokes scope grants."""
+    """Archive a service account — terminal-but-kept.
+
+    The row is retained for history, but the action is not reversible and
+    the account's scope grants are revoked. For the reversible kill switch
+    use ``:disable`` / ``:enable`` instead.
+    """
     await sa_svc.archive(service_account_id, identity=identity)
     return Response(status_code=204)
 

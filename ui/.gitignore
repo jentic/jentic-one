@@ -24,3 +24,6 @@ e2e/docker/playwright/.auth/
 # Vitest browser-mode artifacts (screenshots/attachments on failure)
 .vitest-attachments/
 **/__screenshots__/
+
+# Vitest failure-screenshot attachments (local artifact)
+.vitest/

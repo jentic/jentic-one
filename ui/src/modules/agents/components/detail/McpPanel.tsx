@@ -93,9 +93,13 @@ export function McpConfigCard({ agentName }: { agentName: string }) {
 	const instanceHost = identity.data?.host || safeHost(instanceUrl);
 	// On a remote install the broker lives on its own host and is never derived
 	// from the control-plane URL — without --broker-url the environment has no
-	// broker and `jentic execute` fail-closes (register.go). The UI can't know
-	// the broker URL, so the snippet carries an explicit placeholder.
+	// broker and `jentic execute` fail-closes (register.go). The instance
+	// endpoint reports the operator-configured broker URL when it can honestly
+	// advertise one (#1249); when it can't (older backend, or a loopback-only
+	// broker on a remote install) the snippet keeps an explicit placeholder
+	// and the help text sends the operator to whoever deployed the instance.
 	const isRemote = identity.data?.backend === 'remote';
+	const brokerUrl = identity.data?.brokerUrl ?? null;
 
 	// §3.10 one-agent-per-runtime: the context name is whatever binding the
 	// operator created on the agent machine — the agent's name is the
@@ -103,7 +107,7 @@ export function McpConfigCard({ agentName }: { agentName: string }) {
 	const context = shellArg(agentName);
 	const command = `jentic mcp --context ${context}`;
 	const registerCommand = `jentic register --url ${shellArg(instanceUrl)}${
-		isRemote ? ' --broker-url <broker-url>' : ''
+		isRemote ? ` --broker-url ${brokerUrl ? shellArg(brokerUrl) : '<broker-url>'}` : ''
 	}`;
 	const jsonConfig = JSON.stringify(
 		{ mcpServers: { jentic: { command: 'jentic', args: ['mcp', '--context', agentName] } } },
@@ -135,7 +139,7 @@ export function McpConfigCard({ agentName }: { agentName: string }) {
 				<code className="font-mono text-xs">{registerCommand}</code> on the{' '}
 				<strong>agent machine</strong> — or{' '}
 				<code className="font-mono text-xs">jentic setup</code> for the guided path.
-				{isRemote && (
+				{isRemote && !brokerUrl && (
 					<>
 						{' '}
 						On a remote install <code className="font-mono text-xs">
@@ -144,6 +148,17 @@ export function McpConfigCard({ agentName }: { agentName: string }) {
 						is required — without it{' '}
 						<code className="font-mono text-xs">jentic execute</code> fail-closes. Ask
 						your operator for the broker (data plane) URL.
+					</>
+				)}
+				{isRemote && brokerUrl && (
+					<>
+						{' '}
+						On a remote install <code className="font-mono text-xs">
+							--broker-url
+						</code>{' '}
+						is required — without it{' '}
+						<code className="font-mono text-xs">jentic execute</code> fail-closes. The
+						snippet carries this instance's broker (data plane) URL.
 					</>
 				)}
 			</p>
@@ -183,6 +198,14 @@ export function McpConfigCard({ agentName }: { agentName: string }) {
 				/>
 				{identity.data?.backend && (
 					<MetaItem label="Backend" value={identity.data.backend} />
+				)}
+				{/* Operator-facing lookup for the data plane address (#1249):
+				    rendered only when the backend reports one — never a guess. */}
+				{brokerUrl && (
+					<MetaItem
+						label="Broker URL"
+						value={<span className="font-mono">{brokerUrl}</span>}
+					/>
 				)}
 			</dl>
 		</DetailSection>

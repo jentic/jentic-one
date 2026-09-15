@@ -1,15 +1,12 @@
-"""End-to-end test of the provisioning-plan access-request flow.
+"""End-to-end tests of the provisioning-plan access-request flow (Phase 3 shape).
 
-Drives the real service layer against a real DB: an agent files a full
-provisioning plan (toolkit:create + credential:provision + credential:bind +
-toolkit:bind), the "wizard" fulfils the create/provision steps by creating a
-real toolkit + credential and amending their ids onto the bind item, then the
-operator approves the whole request. Asserts the approval actually wired the
-credential->toolkit binding (+ rules) and the agent->toolkit binding — i.e. the
-plan reaches an executable state, not a hollow yes.
-
-This is a scratch verification test (added during end-to-end validation); it can
-be folded into the permanent suite or removed.
+Drives the real service layer against a real DB: an agent files a provisioning
+plan — the 2-item ``credential:provision`` + ``credential:bind`` chain — the
+"wizard" fulfils the provision step by creating a real credential and amending
+its id onto the bind item, then the operator approves the whole request.
+Asserts the approval actually wired the direct agent↔credential binding (+
+control-DB rules) — i.e. the plan reaches an executable state, not a hollow
+yes — and that the broker's execute-path resolvers can derive it.
 """
 
 from __future__ import annotations
@@ -20,22 +17,15 @@ from typing import Any
 import pytest
 from sqlalchemy import delete, select, text
 
-from jentic_one.auth.repos import ToolkitNameRepository
-from jentic_one.broker.repos.toolkit_binding_resolver import ToolkitBindingResolver
+from jentic_one.broker.repos.credential_binding_resolver import CredentialBindingResolver
 from jentic_one.broker.services.credentials.resolver import CredentialResolver
 from jentic_one.control.core.schema.access_request_items import AccessRequestItem
 from jentic_one.control.core.schema.access_requests import AccessRequest
 from jentic_one.control.core.schema.credentials import Credential
-from jentic_one.control.core.schema.toolkit_credential_bindings import ToolkitCredentialBinding
-from jentic_one.control.core.schema.toolkit_permission_rules import ToolkitPermissionRule
-from jentic_one.control.core.schema.toolkits import Toolkit
-from jentic_one.control.repos.toolkit_binding_repo import ToolkitBindingRepository
-from jentic_one.control.repos.toolkit_permission_repo import ToolkitPermissionRepository
 from jentic_one.control.services.access_requests.service import AccessRequestService
 from jentic_one.control.services.credentials.schemas.credentials import CredentialCreate
 from jentic_one.control.services.credentials.schemas.provision import APIReference
 from jentic_one.control.services.credentials.service import CredentialService
-from jentic_one.control.services.toolkits.service import ToolkitService
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.session import DatabaseSession
@@ -63,7 +53,7 @@ def _owner_identity() -> Identity:
     return Identity(
         sub=OWNER_SUB,
         email="owner@test.local",
-        permissions=["agents:write", "toolkits:write", "credentials:write"],
+        permissions=["agents:write", "credentials:write"],
     )
 
 
@@ -73,22 +63,26 @@ async def clean(
 ) -> AsyncGenerator[None, None]:
     async def _wipe() -> None:
         async with control_db.session() as session:
-            await session.execute(delete(ToolkitPermissionRule))
-            await session.execute(delete(ToolkitCredentialBinding))
             await session.execute(delete(AccessRequestItem))
             await session.execute(delete(AccessRequest))
+            await session.execute(
+                text("DELETE FROM agent_permission_rules WHERE agent_id = :a"), {"a": AGENT_SUB}
+            )
             await session.execute(delete(Credential))
-            await session.execute(delete(Toolkit))
             await session.commit()
         async with admin_db.session() as session:
             await session.execute(
-                text("DELETE FROM agent_toolkit_bindings WHERE agent_id = :a"), {"a": AGENT_SUB}
+                text("DELETE FROM agent_credential_bindings WHERE agent_id = :a"),
+                {"a": AGENT_SUB},
+            )
+            await session.execute(
+                text("DELETE FROM actor_scope_grants WHERE actor_id = :a"), {"a": AGENT_SUB}
             )
             await session.execute(text("DELETE FROM agents WHERE id = :a"), {"a": AGENT_SUB})
             await session.commit()
 
     await _wipe()
-    # The agent must exist for the toolkit:bind admin effect's FK.
+    # The agent must exist for the credential:bind admin effect's FK.
     async with admin_db.session() as session:
         await session.execute(
             text(
@@ -102,17 +96,42 @@ async def clean(
     await _wipe()
 
 
+async def _agent_binding_row(ctx: Context, credential_id: str) -> tuple[str, str | None] | None:
+    """The agent's admin binding row for ``credential_id`` (id, rule_set_id)."""
+    async with ctx.admin_db.session() as session:
+        row = await session.execute(
+            text(
+                "SELECT id, rule_set_id FROM agent_credential_bindings "
+                "WHERE agent_id = :a AND credential_id = :c"
+            ),
+            {"a": AGENT_SUB, "c": credential_id},
+        )
+        found = row.first()
+    return (str(found[0]), found[1]) if found is not None else None
+
+
+async def _agent_rules(ctx: Context, credential_id: str) -> list[Any]:
+    async with ctx.control_db.session() as session:
+        rows = await session.execute(
+            text(
+                "SELECT effect, path FROM agent_permission_rules "
+                "WHERE agent_id = :a AND credential_id = :c"
+            ),
+            {"a": AGENT_SUB, "c": credential_id},
+        )
+        return list(rows.fetchall())
+
+
 async def test_provisioning_plan_end_to_end(integration_context: Context, clean: None) -> None:
     ctx = integration_context
     access_svc = AccessRequestService(ctx)
-    toolkit_svc = ToolkitService(ctx)
     cred_svc = CredentialService(ctx)
 
     api = {"vendor": "httpbin.org", "name": "httpbin", "version": "1.0.0"}
 
-    # 1. AGENT files the provisioning plan (as the CLI --provision builder does).
+    # 1. AGENT files the provisioning plan (as the CLI --provision builder does):
+    #    the 2-item credential:provision + credential:bind chain.
     plan_items: list[dict[str, Any]] = [
-        {"resource_type": "toolkit", "action": "create", "resource_reference": api},
         {
             "resource_type": "credential",
             "action": "provision",
@@ -121,9 +140,9 @@ async def test_provisioning_plan_end_to_end(integration_context: Context, clean:
         {
             "resource_type": "credential",
             "action": "bind",
+            "resource_reference": api,
             "rules": [{"effect": "allow", "methods": ["GET"], "path": ".*"}],
         },
-        {"resource_type": "toolkit", "action": "bind", "resource_reference": api},
     ]
     view = await access_svc.file(
         actor_id=AGENT_SUB,
@@ -132,17 +151,12 @@ async def test_provisioning_plan_end_to_end(integration_context: Context, clean:
         identity=_agent_identity(),
     )
     assert view.status == "pending"
-    assert len(view.items) == 4
+    assert len(view.items) == 2
     bind_item = next(
         i for i in view.items if i.resource_type == "credential" and i.action == "bind"
     )
-    agent_bind_item = next(
-        i for i in view.items if i.resource_type == "toolkit" and i.action == "bind"
-    )
 
-    # 2. WIZARD (operator) fulfils the create/provision steps with real resources.
-    _create = await toolkit_svc.create(name="httpbin.org/httpbin", identity=_owner_identity())
-    created_toolkit = _create.toolkit
+    # 2. WIZARD (operator) fulfils the provision step with a real credential.
     created_cred = await cred_svc.create(
         CredentialCreate(
             type=CredentialType.BEARER_TOKEN,
@@ -153,22 +167,16 @@ async def test_provisioning_plan_end_to_end(integration_context: Context, clean:
         identity=_owner_identity(),
     )
 
-    # 3. WIZARD amends the resolved ids + confirmed rules onto the bind items.
-    #    The credential:bind gets to_id (toolkit) + resource_id (credential); the
-    #    toolkit:bind (agent->toolkit) gets the concrete toolkit id so it resolves
-    #    by id rather than by the credential join (which isn't populated until the
-    #    credential:bind effect applies later in the same decision).
+    # 3. WIZARD amends the resolved credential id + confirmed rules onto the bind.
     await access_svc.amend(
         view.id,
         identity=_owner_identity(),
         item_amendments=[
             {
                 "item_id": bind_item.id,
-                "to_id": created_toolkit.id,
                 "resource_id": created_cred.credential_id,
                 "rules": [{"effect": "allow", "methods": ["GET"], "path": ".*"}],
             },
-            {"item_id": agent_bind_item.id, "resource_id": created_toolkit.id},
         ],
     )
 
@@ -179,115 +187,89 @@ async def test_provisioning_plan_end_to_end(integration_context: Context, clean:
     ]
     decided = await access_svc.decide(view.id, identity=_owner_identity(), item_decisions=decisions)
 
-    # 5. ASSERT the plan reached an executable state (not a hollow yes).
+    # 5. ASSERT the plan reached an executable state (not a hollow yes):
+    #    the direct agent↔credential binding + its control-DB rules both exist.
     assert decided.status == "approved", [
         (i.resource_type, i.action, i.status, i.decision_reason) for i in decided.items
     ]
 
-    async with ctx.control_db.session() as session:
-        binding = await ToolkitBindingRepository.get(
-            session, created_toolkit.id, created_cred.credential_id
-        )
-        assert binding is not None, "credential:bind did not create a toolkit_credential_binding"
-        rules = await ToolkitPermissionRepository.list_rules(
-            session, created_toolkit.id, created_cred.credential_id
-        )
-        assert any(r.effect == "allow" for r in rules), "no allow rule written on the binding"
+    binding = await _agent_binding_row(ctx, created_cred.credential_id)
+    assert binding is not None, "credential:bind did not create an agent_credential_binding"
+    rules = await _agent_rules(ctx, created_cred.credential_id)
+    assert any(effect == "allow" for effect, _path in rules), "no allow rule written on the bind"
 
-    async with ctx.admin_db.session() as session:
-        bound = await session.execute(
-            text("SELECT 1 FROM agent_toolkit_bindings WHERE agent_id = :a AND toolkit_id = :t"),
-            {"a": AGENT_SUB, "t": created_toolkit.id},
-        )
-        assert bound.scalar_one_or_none() is not None, "toolkit:bind did not bind the agent"
-
-    # whoami / list_toolkits now reports which APIs the binding serves, so an
-    # agent can tell it already has access without a throwaway denied execute.
-    # Exercise the served-APIs repository (the cross-boundary read whoami uses).
-    async with ctx.control_db.session() as session:
-        served = await ToolkitNameRepository.get_served_apis_for_ids(session, [created_toolkit.id])
-    apis = served.get(created_toolkit.id, [])
-    assert any(vendor == "httpbin-org" for vendor, _name, _version in apis), (
-        f"binding should report the served API, got {apis}"
+    # The broker's execute-path derivation reports the binding, so an agent can
+    # tell it already has access without a throwaway denied execute.
+    resolver = CredentialBindingResolver(ctx.admin_db, ctx.control_db)
+    derivation = await resolver.derive_credentials(
+        agent_id=AGENT_SUB, vendor="httpbin-org", name="httpbin", version="1.0.0"
     )
+    assert [c.credential_id for c in derivation.credentials] == [created_cred.credential_id]
 
 
-async def test_provisioning_plan_fulfilled_into_existing_toolkit(
+async def test_provisioning_plan_fulfilled_with_existing_credential(
     integration_context: Context, clean: None
 ) -> None:
-    """A plan can be fulfilled into a PRE-EXISTING toolkit — the #897 reuse path.
+    """A plan can be fulfilled with a PRE-EXISTING credential — the reuse path (#897).
 
-    The reporter's scenario: the operator already has a toolkit (serving other
-    APIs) and wants the new credential added to IT, not a parallel toolkit. The
-    wizard's "use existing" choice amends the bind items at the existing toolkit
-    id and — audit honesty — stamps the inert ``toolkit:create`` /
-    ``credential:provision`` placeholders with the ids that fulfilled them, so
-    the approved record reads "fulfilled by tk_…" instead of implying a create
-    that never happened. This drives that exact amend+decide shape through the
-    real service layer: it must reach FULL approval (the agent's ``--wait``
-    exits 0) with no second toolkit anywhere.
+    The operator already holds a covering credential and wants the agent bound
+    to IT, not a duplicate provisioned. The wizard's "use existing" choice
+    amends the bind item at the existing credential id and — audit honesty —
+    stamps the inert ``credential:provision`` placeholder with the id that
+    fulfilled it, so the approved record reads "fulfilled by cred_…" instead of
+    implying a provision that never happened. Must reach FULL approval (the
+    agent's ``--wait`` exits 0) with no second credential anywhere.
     """
     ctx = integration_context
     access_svc = AccessRequestService(ctx)
-    toolkit_svc = ToolkitService(ctx)
     cred_svc = CredentialService(ctx)
 
-    # The operator's pre-existing toolkit ("My Travel Agent") — created BEFORE
-    # the plan is filed, outside any wizard session.
-    _existing = await toolkit_svc.create(name="My Travel Agent", identity=_owner_identity())
-    existing_toolkit = _existing.toolkit
-
-    api = {"vendor": "httpbin.org", "name": "httpbin", "version": "1.0.0"}
-    plan_items: list[dict[str, Any]] = [
-        {"resource_type": "toolkit", "action": "create", "resource_reference": api},
-        {
-            "resource_type": "credential",
-            "action": "provision",
-            "resource_reference": {**api, "security_scheme": "bearer"},
-        },
-        {
-            "resource_type": "credential",
-            "action": "bind",
-            "rules": [{"effect": "allow", "methods": ["GET"], "path": ".*"}],
-        },
-        {"resource_type": "toolkit", "action": "bind", "resource_reference": api},
-    ]
-    view = await access_svc.file(
-        actor_id=AGENT_SUB,
-        reason="Extend my existing toolkit",
-        items=plan_items,
-        identity=_agent_identity(),
-    )
-    by_key = {(i.resource_type, i.action): i for i in view.items}
-
-    # Wizard fulfilment: only the credential is created; the toolkit is reused.
-    created_cred = await cred_svc.create(
+    # The operator's pre-existing credential — created BEFORE the plan is filed.
+    existing_cred = await cred_svc.create(
         CredentialCreate(
             type=CredentialType.BEARER_TOKEN,
-            name="httpbin cred (reuse)",
+            name="httpbin cred (pre-existing)",
             api=APIReference(vendor="httpbin.org", name="httpbin", version="1.0.0"),
             token="secret-token-value-456",
         ),
         identity=_owner_identity(),
     )
+
+    api = {"vendor": "httpbin.org", "name": "httpbin", "version": "1.0.0"}
+    view = await access_svc.file(
+        actor_id=AGENT_SUB,
+        reason="Bind to the existing credential",
+        items=[
+            {
+                "resource_type": "credential",
+                "action": "provision",
+                "resource_reference": {**api, "security_scheme": "bearer"},
+            },
+            {
+                "resource_type": "credential",
+                "action": "bind",
+                "resource_reference": api,
+                "rules": [{"effect": "allow", "methods": ["GET"], "path": ".*"}],
+            },
+        ],
+        identity=_agent_identity(),
+    )
+    by_key = {(i.resource_type, i.action): i for i in view.items}
+
     await access_svc.amend(
         view.id,
         identity=_owner_identity(),
         item_amendments=[
             {
                 "item_id": by_key[("credential", "bind")].id,
-                "to_id": existing_toolkit.id,
-                "resource_id": created_cred.credential_id,
+                "resource_id": existing_cred.credential_id,
                 "rules": [{"effect": "allow", "methods": ["GET"], "path": ".*"}],
             },
-            {"item_id": by_key[("toolkit", "bind")].id, "resource_id": existing_toolkit.id},
-            # Placeholder stamping: resource_id on fulfilment-only items must be
-            # amendable (the scope-grant allow-list guard only fires for
-            # scope:grant) so the record names the reused objects.
-            {"item_id": by_key[("toolkit", "create")].id, "resource_id": existing_toolkit.id},
+            # Placeholder stamping: resource_id on the fulfilment-only item must
+            # be amendable so the record names the reused object.
             {
                 "item_id": by_key[("credential", "provision")].id,
-                "resource_id": created_cred.credential_id,
+                "resource_id": existing_cred.credential_id,
             },
         ],
     )
@@ -302,46 +284,38 @@ async def test_provisioning_plan_fulfilled_into_existing_toolkit(
     assert decided.status == "approved", [
         (i.resource_type, i.action, i.status, i.decision_reason) for i in decided.items
     ]
-    decided_create = next(
-        i for i in decided.items if i.resource_type == "toolkit" and i.action == "create"
+    decided_provision = next(
+        i for i in decided.items if i.resource_type == "credential" and i.action == "provision"
     )
-    assert decided_create.resource_id == existing_toolkit.id
+    assert decided_provision.resource_id == existing_cred.credential_id
 
-    # The wiring landed on the EXISTING toolkit, and no parallel toolkit exists.
+    # The wiring landed on the EXISTING credential, and no duplicate exists.
+    binding = await _agent_binding_row(ctx, existing_cred.credential_id)
+    assert binding is not None, "credential:bind did not attach to the existing credential"
     async with ctx.control_db.session() as session:
-        binding = await ToolkitBindingRepository.get(
-            session, existing_toolkit.id, created_cred.credential_id
+        cred_ids = (await session.execute(select(Credential.id))).scalars().all()
+        assert cred_ids == [existing_cred.credential_id], (
+            f"unexpected extra credentials: {cred_ids}"
         )
-        assert binding is not None, "credential:bind did not attach to the existing toolkit"
-        toolkit_ids = (await session.execute(select(Toolkit.id))).scalars().all()
-        assert toolkit_ids == [existing_toolkit.id], f"unexpected extra toolkits: {toolkit_ids}"
-
-    async with ctx.admin_db.session() as session:
-        bound = await session.execute(
-            text("SELECT 1 FROM agent_toolkit_bindings WHERE agent_id = :a AND toolkit_id = :t"),
-            {"a": AGENT_SUB, "t": existing_toolkit.id},
-        )
-        assert bound.scalar_one_or_none() is not None, "agent was not bound to the existing toolkit"
 
 
 async def test_noauth_plan_is_executable_via_broker_resolvers(
     integration_context: Context, clean: None
 ) -> None:
     """A fulfilled NO-AUTH plan must be resolvable by BOTH broker resolvers at
-    execute time — the toolkit-binding resolver AND the credential resolver —
-    when the operation resolves to a concrete version.
+    execute time — the binding deriver AND the credential resolver — when the
+    operation resolves to a concrete version.
 
     This is the end-to-end guard for issue #775. A no-auth API's credential is
     versionless (api_version NULL = "covers all versions"), and the broker
     resolves the operation to a concrete version (e.g. "4.2.3"). Every resolver
     on the execute path must treat NULL as a wildcard, or a fully-approved plan
-    still 403s (no_toolkit_binding) / 424s (credential_not_provisioned) despite
-    valid bindings. The provisioning-path test above stops at approval; this one
-    drives the actual resolver logic the broker runs on `jentic execute`.
+    still 403s / 424s (credential_not_provisioned) despite a valid binding. The
+    provisioning-path test above stops at approval; this one drives the actual
+    resolver logic the broker runs on `jentic execute`.
     """
     ctx = integration_context
     access_svc = AccessRequestService(ctx)
-    toolkit_svc = ToolkitService(ctx)
     cred_svc = CredentialService(ctx)
 
     # A no-auth API. The version the OPERATION resolves to at execute time.
@@ -353,7 +327,6 @@ async def test_noauth_plan_is_executable_via_broker_resolvers(
         actor_id=AGENT_SUB,
         reason="Look up the caller's country from their IP",
         items=[
-            {"resource_type": "toolkit", "action": "create", "resource_reference": api},
             {
                 "resource_type": "credential",
                 "action": "provision",
@@ -362,23 +335,18 @@ async def test_noauth_plan_is_executable_via_broker_resolvers(
             {
                 "resource_type": "credential",
                 "action": "bind",
+                "resource_reference": api,
                 "rules": [{"effect": "allow", "methods": ["GET"], "path": ".*"}],
             },
-            {"resource_type": "toolkit", "action": "bind", "resource_reference": api},
         ],
         identity=_agent_identity(),
     )
     bind_item = next(
         i for i in view.items if i.resource_type == "credential" and i.action == "bind"
     )
-    agent_bind_item = next(
-        i for i in view.items if i.resource_type == "toolkit" and i.action == "bind"
-    )
 
-    # 2. WIZARD fulfils: create the toolkit + a NO_AUTH credential (no version →
-    #    persisted NULL), amend their ids onto the binds, then approve.
-    _create = await toolkit_svc.create(name="country-is/country-is", identity=_owner_identity())
-    created_toolkit = _create.toolkit
+    # 2. WIZARD fulfils: create a NO_AUTH credential (no version → persisted
+    #    NULL), amend its id onto the bind, then approve.
     created_cred = await cred_svc.create(
         CredentialCreate(
             type=CredentialType.NO_AUTH,
@@ -393,11 +361,9 @@ async def test_noauth_plan_is_executable_via_broker_resolvers(
         item_amendments=[
             {
                 "item_id": bind_item.id,
-                "to_id": created_toolkit.id,
                 "resource_id": created_cred.credential_id,
                 "rules": [{"effect": "allow", "methods": ["GET"], "path": ".*"}],
             },
-            {"item_id": agent_bind_item.id, "resource_id": created_toolkit.id},
         ],
     )
     refreshed = await access_svc.get(view.id, identity=_owner_identity())
@@ -421,21 +387,24 @@ async def test_noauth_plan_is_executable_via_broker_resolvers(
         assert cred_row.api_version is None, "versionless credential must store NULL, not ''"
 
     # 3. EXECUTE-PATH RESOLVERS: both must resolve for the CONCRETE version.
-    #    (a) toolkit-binding resolver — which toolkit serves this API for the agent.
-    toolkit_resolver = ToolkitBindingResolver(ctx.admin_db, ctx.control_db)
-    derivation = await toolkit_resolver.derive_toolkits(
+    #    (a) binding deriver — which credentials the agent is directly bound to.
+    binding_resolver = CredentialBindingResolver(ctx.admin_db, ctx.control_db)
+    derivation = await binding_resolver.derive_credentials(
         agent_id=AGENT_SUB, vendor="country-is", name="country-is", version=resolved_version
     )
-    assert derivation.toolkits == (created_toolkit.id,), (
-        "toolkit-binding resolver must serve the no-auth API at a concrete version "
-        f"(NULL-version credential wildcard); got {derivation.toolkits}"
+    bound_ids = [c.credential_id for c in derivation.credentials]
+    assert bound_ids == [created_cred.credential_id], (
+        "binding deriver must serve the no-auth API at a concrete version "
+        f"(NULL-version credential wildcard); got {bound_ids}"
     )
 
-    #    (b) credential resolver — the credential to inject (a no-op for NO_AUTH).
+    #    (b) credential resolver — the credential to inject (a no-op for NO_AUTH),
+    #    confined to the derived injection boundary as the broker calls it.
     cred_resolver = CredentialResolver(ctx)
     resolved = await cred_resolver.resolve(
         api=APIReference(vendor="country-is", name="country-is", version=resolved_version),
         caller=AGENT_SUB,
+        allowed_credential_ids=bound_ids,
     )
     assert resolved.credential_id == created_cred.credential_id
     assert resolved.wire_type == CredentialType.NO_AUTH
@@ -444,13 +413,13 @@ async def test_noauth_plan_is_executable_via_broker_resolvers(
 async def test_plain_approve_of_unfulfilled_plan_is_denied_legibly(
     integration_context: Context, clean: None
 ) -> None:
-    """A plan approved WITHOUT the wizard's fulfilment must deny the binds with a
-    plan-aware reason — not the cryptic 'to_id missing' / 'no toolkit serves API'.
+    """A plan approved WITHOUT the wizard's fulfilment must deny the bind with a
+    plan-aware reason — not the cryptic 'no credential covers API'.
 
-    Reproduces the real dogfooding failure: the operator approved the plan through
-    the plain path, the inert toolkit:create/credential:provision items were
-    skipped, and the two bind items failed with confusing errors. The guard now
-    denies them pointing at the setup wizard.
+    Reproduces the real dogfooding failure: the operator approved the plan
+    through the plain path, the inert credential:provision intent was skipped,
+    and the bind item failed with a confusing error. The guard now denies it
+    pointing at the setup wizard.
     """
     ctx = integration_context
     access_svc = AccessRequestService(ctx)
@@ -460,7 +429,6 @@ async def test_plain_approve_of_unfulfilled_plan_is_denied_legibly(
         actor_id=AGENT_SUB,
         reason="Make httpbin executable",
         items=[
-            {"resource_type": "toolkit", "action": "create", "resource_reference": api},
             {
                 "resource_type": "credential",
                 "action": "provision",
@@ -469,9 +437,9 @@ async def test_plain_approve_of_unfulfilled_plan_is_denied_legibly(
             {
                 "resource_type": "credential",
                 "action": "bind",
+                "resource_reference": api,
                 "rules": [{"effect": "allow", "methods": ["GET"], "path": ".*"}],
             },
-            {"resource_type": "toolkit", "action": "bind", "resource_reference": api},
         ],
         identity=_agent_identity(),
     )
@@ -483,19 +451,24 @@ async def test_plain_approve_of_unfulfilled_plan_is_denied_legibly(
         item_decisions=[{"item_id": i.id, "decision": "approved"} for i in view.items],
     )
 
-    # The plan cannot complete: the two intents approve (inert no-ops) but the
-    # binds are denied with the plan-aware reason pointing at the wizard.
+    # The plan cannot complete: the intent approves (an inert no-op) but the
+    # bind is denied with the plan-aware reason pointing at the wizard.
     by_key = {(i.resource_type, i.action): i for i in decided.items}
+    intent = by_key[("credential", "provision")]
     cred_bind = by_key[("credential", "bind")]
-    tk_bind = by_key[("toolkit", "bind")]
+    assert intent.status == "approved"
+    assert intent.applied_effects is not None
+    assert intent.applied_effects.get("skipped") is True
     assert cred_bind.status == "denied"
-    assert tk_bind.status == "denied"
     assert "provisioning plan" in (cred_bind.decision_reason or "")
-    assert "provisioning plan" in (tk_bind.decision_reason or "")
+    assert intent.id in (cred_bind.decision_reason or "")
     # And no half-provisioned state leaked (no binding created).
-    async with ctx.control_db.session() as session:
-        rows = (await session.execute(select(ToolkitCredentialBinding))).scalars().all()
-        assert rows == [], "a denied plan must not create any credential binding"
+    async with ctx.admin_db.session() as session:
+        rows = await session.execute(
+            text("SELECT count(*) FROM agent_credential_bindings WHERE agent_id = :a"),
+            {"a": AGENT_SUB},
+        )
+        assert rows.scalar_one() == 0, "a denied plan must not create any agent binding"
 
 
 def _chain_items(api: dict[str, str], scheme: str) -> list[dict[str, Any]]:
@@ -504,7 +477,6 @@ def _chain_items(api: dict[str, str], scheme: str) -> list[dict[str, Any]]:
     marker: item order is not guaranteed, so the reference is what keeps a
     composite request's chains attributable)."""
     return [
-        {"resource_type": "toolkit", "action": "create", "resource_reference": api},
         {
             "resource_type": "credential",
             "action": "provision",
@@ -516,54 +488,46 @@ def _chain_items(api: dict[str, str], scheme: str) -> list[dict[str, Any]]:
             "resource_reference": api,
             "rules": [{"effect": "allow", "methods": ["GET"], "path": ".*"}],
         },
-        {"resource_type": "toolkit", "action": "bind", "resource_reference": api},
     ]
 
 
-def _chain_binds(view: Any, api: dict[str, str]) -> tuple[Any, Any]:
-    """The (credential:bind, toolkit:bind) items of the chain for ``api``,
-    matched by the stamped reference — never by position."""
+def _chain_bind(view: Any, api: dict[str, str]) -> Any:
+    """The credential:bind item of the chain for ``api``, matched by the
+    stamped reference — never by position."""
 
     def _matches(item: Any) -> bool:
         ref = item.resource_reference or {}
         return ref.get("vendor") == api["vendor"] and ref.get("name") == api["name"]
 
-    cred_bind = next(
+    return next(
         i
         for i in view.items
         if i.resource_type == "credential" and i.action == "bind" and _matches(i)
     )
-    tk_bind = next(
-        i for i in view.items if i.resource_type == "toolkit" and i.action == "bind" and _matches(i)
-    )
-    return cred_bind, tk_bind
 
 
 async def test_composite_request_two_chains_plus_plain_items_end_to_end(
     integration_context: Context, clean: None
 ) -> None:
     """One composite request — two provisioning chains + a plain reference
-    toolkit:bind to a pre-existing toolkit + a scope:grant — fulfils and
+    credential:bind to a pre-existing credential + a scope:grant — fulfils and
     approves to a fully wired state (issue #844).
 
     Also guards the mixed-composite fix: the plain reference bind rides in a
     request that IS a provisioning plan (sibling chains carry fulfilment
-    intents), and must resolve against the existing toolkit instead of being
-    auto-denied with the plan-aware reason.
+    intents), and must resolve against the existing credential instead of
+    being auto-denied with the plan-aware reason.
     """
     ctx = integration_context
     access_svc = AccessRequestService(ctx)
-    toolkit_svc = ToolkitService(ctx)
     cred_svc = CredentialService(ctx)
 
     api_a = {"vendor": "httpbin.org", "name": "httpbin"}
     api_b = {"vendor": "country-is", "name": "country-is"}
     api_existing = {"vendor": "postman-echo.com", "name": "echo"}
 
-    # 0. A toolkit already serving api_existing (toolkit + credential + binding),
-    #    so the composite's plain toolkit:bind reference can resolve.
-    _existing = await toolkit_svc.create(name="postman-echo.com/echo", identity=_owner_identity())
-    existing_toolkit = _existing.toolkit
+    # 0. A credential already covering api_existing, so the composite's plain
+    #    credential:bind reference can resolve.
     existing_cred = await cred_svc.create(
         CredentialCreate(
             type=CredentialType.BEARER_TOKEN,
@@ -573,20 +537,17 @@ async def test_composite_request_two_chains_plus_plain_items_end_to_end(
         ),
         identity=_owner_identity(),
     )
-    async with ctx.control_db.session() as session:
-        await ToolkitBindingRepository.bind(
-            session,
-            toolkit_id=existing_toolkit.id,
-            credential_id=existing_cred.credential_id,
-            created_by=OWNER_SUB,
-        )
-        await session.commit()
 
     # 1. AGENT files ONE composite request, as the CLI composes it.
     items = [
         *_chain_items(api_a, "bearer"),
         *_chain_items(api_b, "no_auth"),
-        {"resource_type": "toolkit", "action": "bind", "resource_reference": api_existing},
+        {
+            "resource_type": "credential",
+            "action": "bind",
+            "resource_reference": api_existing,
+            "rules": [{"effect": "allow", "methods": ["GET"], "path": ".*"}],
+        },
         {"resource_type": "scope", "action": "grant", "resource_id": "catalog:import"},
     ]
     view = await access_svc.file(
@@ -596,17 +557,14 @@ async def test_composite_request_two_chains_plus_plain_items_end_to_end(
         identity=_agent_identity(),
     )
     assert view.status == "pending"
-    assert len(view.items) == 10
+    assert len(view.items) == 6
 
     # 2. WIZARD fulfils BOTH chains, resolving each by its stamped reference.
-    fulfilled: dict[str, tuple[str, str]] = {}
+    fulfilled: dict[str, str] = {}
     for api, cred_type, token in (
         (api_a, CredentialType.BEARER_TOKEN, "secret-a-1"),
         (api_b, CredentialType.NO_AUTH, None),
     ):
-        _create = await toolkit_svc.create(
-            name=f"{api['vendor']}/{api['name']}", identity=_owner_identity()
-        )
         created_cred = await cred_svc.create(
             CredentialCreate(
                 type=cred_type,
@@ -616,20 +574,18 @@ async def test_composite_request_two_chains_plus_plain_items_end_to_end(
             ),
             identity=_owner_identity(),
         )
-        fulfilled[api["vendor"]] = (_create.toolkit.id, created_cred.credential_id)
+        fulfilled[api["vendor"]] = created_cred.credential_id
 
-        cred_bind, tk_bind = _chain_binds(view, api)
+        cred_bind = _chain_bind(view, api)
         await access_svc.amend(
             view.id,
             identity=_owner_identity(),
             item_amendments=[
                 {
                     "item_id": cred_bind.id,
-                    "to_id": _create.toolkit.id,
                     "resource_id": created_cred.credential_id,
                     "rules": [{"effect": "allow", "methods": ["GET"], "path": ".*"}],
                 },
-                {"item_id": tk_bind.id, "resource_id": _create.toolkit.id},
             ],
         )
 
@@ -650,19 +606,21 @@ async def test_composite_request_two_chains_plus_plain_items_end_to_end(
     ]
 
     # 4. ASSERT the full end-state: both chains wired, the plain bind bound the
-    #    agent to the EXISTING toolkit, and the scope granted.
-    async with ctx.control_db.session() as session:
-        for vendor, (toolkit_id, credential_id) in fulfilled.items():
-            binding = await ToolkitBindingRepository.get(session, toolkit_id, credential_id)
-            assert binding is not None, f"chain for {vendor} did not wire its credential binding"
-
+    #    agent to the EXISTING credential, and the scope granted.
     async with ctx.admin_db.session() as session:
         bound = await session.execute(
-            text("SELECT toolkit_id FROM agent_toolkit_bindings WHERE agent_id = :a"),
+            text("SELECT credential_id FROM agent_credential_bindings WHERE agent_id = :a"),
             {"a": AGENT_SUB},
         )
         bound_ids = {row[0] for row in bound.fetchall()}
-    expected = {tk for tk, _cred in fulfilled.values()} | {existing_toolkit.id}
+        granted = await session.execute(
+            text(
+                "SELECT 1 FROM actor_scope_grants WHERE actor_id = :a AND scope = 'catalog:import'"
+            ),
+            {"a": AGENT_SUB},
+        )
+        assert granted.scalar_one_or_none() is not None, "scope was not granted"
+    expected = set(fulfilled.values()) | {existing_cred.credential_id}
     assert bound_ids == expected, f"agent bindings {bound_ids} != expected {expected}"
 
 
@@ -671,11 +629,10 @@ async def test_composite_partial_fulfilment_is_partially_approved(
 ) -> None:
     """Fulfilling only one of a composite's chains and approving everything
     yields ``partially_approved``: the fulfilled chain wires, the unfulfilled
-    chain's binds are auto-denied with the plan-aware reason — per chain, not
+    chain's bind is auto-denied with the plan-aware reason — per chain, not
     per request."""
     ctx = integration_context
     access_svc = AccessRequestService(ctx)
-    toolkit_svc = ToolkitService(ctx)
     cred_svc = CredentialService(ctx)
 
     api_a = {"vendor": "httpbin.org", "name": "httpbin"}
@@ -689,7 +646,6 @@ async def test_composite_partial_fulfilment_is_partially_approved(
     )
 
     # Fulfil ONLY chain A.
-    _create = await toolkit_svc.create(name="httpbin.org/httpbin", identity=_owner_identity())
     created_cred = await cred_svc.create(
         CredentialCreate(
             type=CredentialType.BEARER_TOKEN,
@@ -699,18 +655,16 @@ async def test_composite_partial_fulfilment_is_partially_approved(
         ),
         identity=_owner_identity(),
     )
-    cred_bind_a, tk_bind_a = _chain_binds(view, api_a)
+    cred_bind_a = _chain_bind(view, api_a)
     await access_svc.amend(
         view.id,
         identity=_owner_identity(),
         item_amendments=[
             {
                 "item_id": cred_bind_a.id,
-                "to_id": _create.toolkit.id,
                 "resource_id": created_cred.credential_id,
                 "rules": [{"effect": "allow", "methods": ["GET"], "path": ".*"}],
             },
-            {"item_id": tk_bind_a.id, "resource_id": _create.toolkit.id},
         ],
     )
 
@@ -728,14 +682,11 @@ async def test_composite_partial_fulfilment_is_partially_approved(
     assert decided.status == "partially_approved", [
         (i.resource_type, i.action, i.status, i.decision_reason) for i in decided.items
     ]
-    cred_bind_a2, tk_bind_a2 = _chain_binds(decided, api_a)
-    cred_bind_b, tk_bind_b = _chain_binds(decided, api_b)
-    assert cred_bind_a2.status == "approved" and tk_bind_a2.status == "approved"
-    assert cred_bind_b.status == "denied" and tk_bind_b.status == "denied"
+    cred_bind_a2 = _chain_bind(decided, api_a)
+    cred_bind_b = _chain_bind(decided, api_b)
+    assert cred_bind_a2.status == "approved"
+    assert cred_bind_b.status == "denied"
     assert "provisioning plan" in (cred_bind_b.decision_reason or "")
     # Chain A's wiring landed despite chain B's denial.
-    async with ctx.control_db.session() as session:
-        binding = await ToolkitBindingRepository.get(
-            session, _create.toolkit.id, created_cred.credential_id
-        )
-        assert binding is not None, "the fulfilled chain must still wire on partial approval"
+    binding = await _agent_binding_row(ctx, created_cred.credential_id)
+    assert binding is not None, "the fulfilled chain must still wire on partial approval"

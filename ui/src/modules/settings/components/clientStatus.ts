@@ -74,7 +74,11 @@ export const CLIENT_STATUS_FILTER_LABEL: Record<ClientStatusFilter, string> = {
 	active: 'Active',
 	pending: 'Pending',
 	denied: 'Denied',
-	inactive: 'Inactive',
+	// User-facing label for the approved+inactive segment: "Disabled" — the
+	// lifecycle vocabulary's reversible kill-switch verb (Disable/Enable),
+	// matching the roster's Disable/Enable actions. The segment ID stays
+	// `inactive` (internal state, mirrors the wire `active` flag).
+	inactive: 'Disabled',
 };
 
 /** Which segment (other than `all`) a client row belongs to. */

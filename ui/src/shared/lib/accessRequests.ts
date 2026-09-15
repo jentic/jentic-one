@@ -47,11 +47,23 @@ export interface AccessRequestItem {
 	resource_id?: string | null;
 	/** A structured target reference (e.g. `{vendor,name,version}`) when there's no id. */
 	resource_reference?: Record<string, unknown> | null;
-	/** Assignment target type/id (e.g. assign a toolkit TO an agent) — the "deviation" context. */
+	/**
+	 * HISTORICAL ONLY. New items never carry an assignment target — a
+	 * `credential:bind` binds the item's own actor (the agent) directly to the
+	 * credential in `resource_id`. Rows decided before toolkits were retired
+	 * from this flow may still carry `to_type`/`to_id` (the toolkit the
+	 * credential was bound to); render the stored strings read-only.
+	 */
 	to_type?: string | null;
 	to_id?: string | null;
 	/** Permission rules attached to the item (effect/methods/path/operations). */
 	rules?: Record<string, unknown>[] | null;
+	/**
+	 * Shared permission rule set attached to a `credential:bind` item, as an
+	 * alternative policy carrier to inline `rules` (mutually exclusive). While
+	 * attached, the set's ordered list is the binding's effective policy.
+	 */
+	rule_set_id?: string | null;
 	decided_by?: string | null;
 	decided_at?: string | null;
 	decision_reason?: string | null;
@@ -65,9 +77,9 @@ export interface AccessRequestItem {
 	 */
 	already_satisfied?: boolean | null;
 	/**
-	 * For a satisfied toolkit:bind, the id of the toolkit the agent is already
-	 * bound to — lets the wizard name the exact object instead of a bare
-	 * boolean. Absent/null otherwise.
+	 * For a satisfied credential:bind, the id of the CREDENTIAL the agent is
+	 * already bound to — lets the wizard name the exact object instead of a
+	 * bare boolean. Absent/null otherwise.
 	 */
 	already_satisfied_by?: string | null;
 }
@@ -80,9 +92,10 @@ export type PermissionRuleMatchMode = 'regex' | 'prefix' | 'exact';
 
 /**
  * A single permission rule on a `credential.bind` item. On approval these are
- * written verbatim as the binding's `ToolkitPermissionRule`s (broker-enforced,
- * ordered, first-match-wins, default-deny), so the reviewer is effectively
- * granting exactly this allow/block list of operations.
+ * written verbatim as the binding's permission rules (broker-enforced, ordered,
+ * first-match-wins, default-deny, keyed on the `(agent, credential)` pair), so
+ * the reviewer is effectively granting exactly this allow/block list of
+ * operations.
  */
 export interface PermissionRule {
 	effect: PermissionRuleEffect;
@@ -165,15 +178,16 @@ export interface ItemDecision {
 
 /**
  * A per-item amendment sent to the `:amend` verb. The provisioning-plan wizard
- * uses this to write the freshly-created toolkit/credential ids onto a pending
- * `credential:bind` item (`to_id` = toolkit, `resource_id` = credential) and to
- * attach the operator-confirmed permission `rules`, before the final `:decide`.
+ * uses this to write the freshly-created credential's id onto a pending
+ * `credential:bind` item (`resource_id`) and to attach the operator-confirmed
+ * permission policy — inline `rules` OR a shared `rule_set_id` (mutually
+ * exclusive) — before the final `:decide`.
  */
 export interface ItemAmendment {
 	item_id: string;
 	resource_id?: string | null;
-	to_id?: string | null;
 	rules?: PermissionRule[] | null;
+	rule_set_id?: string | null;
 }
 
 export interface ListAccessRequestsParams {
@@ -242,8 +256,8 @@ export async function decideAccessRequest(
 
 /**
  * Amend pending items on an access request (`POST /access-requests/{id}:amend`).
- * Used by the provisioning-plan wizard to write resolved toolkit/credential ids
- * and confirmed rules onto a pending `credential:bind` item before approval.
+ * Used by the provisioning-plan wizard to write the resolved credential id and
+ * confirmed policy onto a pending `credential:bind` item before approval.
  */
 export async function amendAccessRequest(
 	requestId: string,
@@ -318,6 +332,21 @@ export function isSpecificResource(item: AccessRequestItem): boolean {
 }
 
 /**
+ * One-line human summary of WHAT an item does, in the new (post-toolkit)
+ * vocabulary: a `credential:bind` binds the item's own actor — the agent —
+ * directly to a credential, a `credential:provision` asks a human to create
+ * one. Unknown/retired combinations (historical `toolkit:*` rows) fall back to
+ * the stored `resource_type`, so decided history renders without crashing.
+ */
+export function itemActionSummary(item: AccessRequestItem): string {
+	const key = `${item.resource_type}:${item.action}`;
+	if (key === 'credential:bind') return 'Bind agent to credential';
+	if (key === 'credential:provision') return 'Provision a credential';
+	if (key === 'scope:grant') return 'Platform scope';
+	return item.resource_type;
+}
+
+/**
  * True when the item grants a PLATFORM SCOPE (a coarse capability like
  * `capabilities:execute` bound to the actor) rather than a per-resource grant.
  * For these items `resource_id` IS the scope string the backend grants on
@@ -364,7 +393,7 @@ export const ACCESS_REQUEST_STATUS_VARIANT: Record<string, BadgeVariant> = {
 
 /**
  * True when an item's permission `rules` will ACTUALLY be enforced on approval.
- * Broker rules are keyed per `(toolkit_id, credential_id)`, so only a
+ * Broker rules are keyed per `(agent, credential)` binding, so only a
  * `credential.bind` has a key to apply them to — the backend mirrors this and
  * rejects rules on any other item type (`RulesNotSupportedForBindError`). The
  * single source of truth for "rules enforce on this item type" so the card and

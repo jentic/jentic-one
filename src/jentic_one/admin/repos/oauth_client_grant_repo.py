@@ -7,7 +7,9 @@ from datetime import UTC, datetime
 from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.oauth_client_grants import OAuthClientGrant
+from jentic_one.shared.models.actors import ActorStatus
 from jentic_one.shared.models.oauth_clients import OAuthGrantStatus
 
 
@@ -68,11 +70,35 @@ class OAuthClientGrantRepository:
         An agent ownership transfer revokes all of these in the transfer's own
         transaction, so unlike :meth:`list_grants` this is deliberately
         unpaginated: the sweep must see the complete set or fail the transfer.
+        Also deliberately does NOT filter on the agent's status (#1233): the
+        sweeps (transfer, archive) run against agents mid-transition, and a
+        sweep that skipped dormant rows would leave stragglers.
         """
         stmt = (
             select(OAuthClientGrant)
             .where(
                 OAuthClientGrant.agent_id == agent_id,
+                OAuthClientGrant.status == OAuthGrantStatus.ACTIVE.value,
+            )
+            .order_by(OAuthClientGrant.created_at.asc(), OAuthClientGrant.id.asc())
+        )
+        result = await session.execute(stmt)
+        return list(result.scalars().all())
+
+    @staticmethod
+    async def list_active_for_client(
+        session: AsyncSession, oauth_client_id: str
+    ) -> list[OAuthClientGrant]:
+        """Every active grant held against ONE public ``client_id`` — the
+        client hard-delete sweep set.
+
+        Like :meth:`list_active_for_agent`, deliberately unpaginated: the
+        delete transaction must revoke the complete set or fail the delete.
+        """
+        stmt = (
+            select(OAuthClientGrant)
+            .where(
+                OAuthClientGrant.oauth_client_id == oauth_client_id,
                 OAuthClientGrant.status == OAuthGrantStatus.ACTIVE.value,
             )
             .order_by(OAuthClientGrant.created_at.asc(), OAuthClientGrant.id.asc())
@@ -129,10 +155,21 @@ class OAuthClientGrantRepository:
 
     @staticmethod
     async def count_active_by_client(session: AsyncSession) -> dict[str, int]:
-        """Active-grant counts keyed by public ``client_id`` (per-client count)."""
+        """Working-connection counts keyed by public ``client_id``.
+
+        Counts grants that are ``active`` AND bound to an ``active`` agent:
+        a grant on a disabled agent is dormant (#1233 — no token resolves
+        while the agent is non-active), so counting it as a live connection
+        would make the clients list lie. The dormant rows themselves stay
+        visible in :meth:`list_grants`, annotated with the agent's status.
+        """
         stmt = (
             select(OAuthClientGrant.oauth_client_id, func.count())
-            .where(OAuthClientGrant.status == OAuthGrantStatus.ACTIVE.value)
+            .join(Agent, Agent.id == OAuthClientGrant.agent_id)
+            .where(
+                OAuthClientGrant.status == OAuthGrantStatus.ACTIVE.value,
+                Agent.status == ActorStatus.ACTIVE.value,
+            )
             .group_by(OAuthClientGrant.oauth_client_id)
         )
         result = await session.execute(stmt)
@@ -140,17 +177,20 @@ class OAuthClientGrantRepository:
 
     @staticmethod
     async def count_active_for_client(session: AsyncSession, oauth_client_id: str) -> int:
-        """Active-grant count for ONE public ``client_id``.
+        """Working-connection count for ONE public ``client_id``.
 
         The single-client companion to :meth:`count_active_by_client` — a
         per-client GET must not pay a whole-table aggregate for one row.
+        Same honesty rule: only grants whose agent is ``active`` count.
         """
         stmt = (
             select(func.count())
             .select_from(OAuthClientGrant)
+            .join(Agent, Agent.id == OAuthClientGrant.agent_id)
             .where(
                 OAuthClientGrant.oauth_client_id == oauth_client_id,
                 OAuthClientGrant.status == OAuthGrantStatus.ACTIVE.value,
+                Agent.status == ActorStatus.ACTIVE.value,
             )
         )
         result = await session.execute(stmt)
