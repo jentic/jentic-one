@@ -155,7 +155,15 @@ describe('VendorConnectFlow — self mode', () => {
 		// mutation never fires. Awaiting a scope row proves the seed
 		// has run.
 		await screen.findByText('read:user');
-		await user.click(await screen.findByRole('button', { name: /continue to github/i }));
+		// Continue on the scopes page moves to the rules page (client-side
+		// transition, no backend call). Second Continue on the rules page
+		// fires the combined ``:connect`` + ``:confirm`` mutation and lands
+		// us on the awaiting step.
+		await user.click(await screen.findByRole('button', { name: /^continue$/i }));
+		expect(await screen.findByText(/permission rules/i)).toBeInTheDocument();
+		await user.click(
+			await screen.findByRole('button', { name: /(skip.*continue|^continue$)/i }),
+		);
 
 		// The awaiting step shows the vendor's ``user_code`` verbatim —
 		// this is the string the human types into the vendor page, so a
@@ -190,6 +198,7 @@ describe('VendorConnectFlow — approve mode', () => {
 				},
 			],
 			reason: 'Need repo push access to open a follow-up PR on issue #42.',
+			requested_permission_rules: [],
 		};
 		worker.use(
 			http.get('/connect-sessions/sess_9', () => HttpResponse.json(session)),
@@ -235,6 +244,61 @@ describe('VendorConnectFlow — approve mode', () => {
 		expect(
 			await screen.findByText('Need repo push access to open a follow-up PR on issue #42.'),
 		).toBeInTheDocument();
+	});
+
+	it('renders agent-requested rules on the rules page with a "requested" tag', async () => {
+		// The agent's rules ride on ``ReviewSession.requested_permission_rules``;
+		// after the human clicks Continue on scopes, the rules page pre-fills
+		// with those rows and tags them so the owner can tell what the agent
+		// asked for vs what they've since edited.
+		const session: ReviewSession = {
+			session_id: 'sess_rules',
+			state: 'created',
+			vendor_key: 'github',
+			vendor_display_name: 'GitHub',
+			resolved_flow: 'device_authorization',
+			requested_by_actor_id: 'agnt_1',
+			scopes: [
+				{
+					name: 'repo',
+					classification: 'write',
+					default: false,
+					requested: true,
+					description: 'Full control',
+				},
+			],
+			reason: null,
+			requested_permission_rules: [
+				{ effect: 'allow', methods: ['GET'], path: '/repos', match_mode: 'prefix' },
+			],
+		};
+		worker.use(
+			http.get('/connect-sessions/sess_rules', () => HttpResponse.json(session)),
+			http.get('/agents', () =>
+				HttpResponse.json({ data: [], has_more: false, next_cursor: null }),
+			),
+		);
+		renderWithProviders(
+			<VendorConnectFlow
+				mode="approve"
+				sessionId="sess_rules"
+				pollToken="tok_r"
+				onBack={vi.fn()}
+				onDone={vi.fn()}
+			/>,
+		);
+		const user = userEvent.setup();
+		// Wait for the scope row to render — the seed effect populates
+		// ``selectedScopes`` from ``requested`` scopes at that point, so
+		// the Continue button becomes enabled.
+		expect(await screen.findByText('repo')).toBeInTheDocument();
+		await waitFor(() =>
+			expect(screen.getByRole('button', { name: /^continue$/i })).not.toBeDisabled(),
+		);
+		await user.click(screen.getByRole('button', { name: /^continue$/i }));
+		// The rules page mounts, agent-requested row is present with the tag.
+		expect(await screen.findByText('Permission rules')).toBeInTheDocument();
+		expect(await screen.findByText('requested by agent')).toBeInTheDocument();
 	});
 
 	it('renders an error alert when the approval link is invalid', async () => {

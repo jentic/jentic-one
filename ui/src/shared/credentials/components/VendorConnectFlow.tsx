@@ -80,7 +80,17 @@ interface VendorDisplay {
 	iconKey: string;
 }
 
-type Phase = 'configure' | 'awaiting' | 'terminal';
+type Phase = 'configure' | 'rules' | 'awaiting' | 'terminal';
+
+// Default preset the "Skip" button on the rules page persists:
+// ``Allow: GET /*`` (methods list + prefix match). Not condition-less
+// (path is constrained) so the backend model-validator accepts it.
+const DEFAULT_ALLOW_GET_RULE: PermissionRule = {
+	effect: 'allow',
+	methods: ['GET'],
+	path: '/',
+	match_mode: 'prefix',
+};
 
 export function VendorConnectFlow(props: VendorConnectFlowProps) {
 	if (props.mode === 'approve') {
@@ -117,6 +127,7 @@ function VendorSelfConnectFlow({
 	const [selectedScopes, setSelectedScopes] = useState<Set<string>>(new Set());
 	const [scopesTouched, setScopesTouched] = useState(false);
 	const [phase, setPhase] = useState<Phase>('configure');
+	const [rules, setRules] = useState<PermissionRule[] | null>(null);
 	const [session, setSession] = useState<{ id: string; pollToken: string } | null>(null);
 	const [challenge, setChallenge] = useState<ConfirmResponse | null>(null);
 
@@ -239,16 +250,24 @@ function VendorSelfConnectFlow({
 		});
 	};
 
-	const startFlow = async () => {
+	// Continue on the scopes page — no backend call yet. Seeds rules from the
+	// scope classifications and hands off to the rules page for user review.
+	const goToRules = (): void => {
+		setRules((prev) => prev ?? derivePermissionRules(scopes, selectedScopes));
+		setPhase('rules');
+	};
+
+	// Continue on the rules page — fires ``:connect`` + ``:confirm`` back-to-back
+	// with the user's finalised rules.
+	const startFlow = async (finalRules: PermissionRule[]) => {
 		try {
 			const result = await startMutation.mutateAsync({
 				vendor: vendor.key,
-				// agent_id intentionally omitted — credentials still bind
-				// through toolkits, so the picker was purely cosmetic. Will
-				// be surfaced again as a required field once agent-credential
-				// bindings replace toolkit membership.
+				// agent_id intentionally omitted for now (self-driven flow — the
+				// user IS the initiator). Bound to the current user's implicit
+				// agent by the eventual agent-credential-binding migration.
 				requested_scopes: Array.from(selectedScopes),
-				permission_rules: derivePermissionRules(scopes, selectedScopes),
+				permission_rules: finalRules,
 			});
 			sessionRef.current = { id: result.session_id, pollToken: result.poll_token };
 			phaseRef.current = 'awaiting';
@@ -308,6 +327,21 @@ function VendorSelfConnectFlow({
 		);
 	}
 
+	if (phase === 'rules') {
+		return (
+			<RulesStep
+				display={display}
+				requestedRules={[]}
+				currentRules={rules ?? []}
+				onChange={setRules}
+				onBack={(): void => setPhase('configure')}
+				onContinue={(finalRules: PermissionRule[]) => void startFlow(finalRules)}
+				submitting={startMutation.isPending}
+				error={startError ?? null}
+			/>
+		);
+	}
+
 	return (
 		<div className="space-y-5">
 			<VendorHeader
@@ -323,8 +357,6 @@ function VendorSelfConnectFlow({
 				onToggle={toggleScope}
 			/>
 
-			{startError && <ErrorAlert message={startError} />}
-
 			<div className="border-border bg-muted/20 -mx-5 -mb-4 flex items-center justify-between border-t px-5 py-3">
 				<Button
 					type="button"
@@ -339,11 +371,10 @@ function VendorSelfConnectFlow({
 				<Button
 					type="button"
 					variant="primary"
-					onClick={(): void => void startFlow()}
-					loading={startMutation.isPending}
+					onClick={goToRules}
 					disabled={selectedScopes.size === 0}
 				>
-					Continue to {vendor.display_name}
+					Continue
 				</Button>
 			</div>
 		</div>
@@ -371,6 +402,7 @@ function VendorApproveFlow({
 
 	const [selectedScopes, setSelectedScopes] = useState<Set<string> | null>(null);
 	const [phase, setPhase] = useState<Phase>('configure');
+	const [rules, setRules] = useState<PermissionRule[] | null>(null);
 	const [challenge, setChallenge] = useState<ConfirmResponse | null>(null);
 
 	const confirmMutation = useConfirmConnectSession(sessionId);
@@ -472,13 +504,29 @@ function VendorApproveFlow({
 		});
 	};
 
-	const approve = async () => {
+	// Continue on the review page — no backend call, just move to rules.
+	// Rules are seeded from the agent's requested rules (from the review
+	// payload) if present, otherwise from the classifications of the
+	// selected scopes.
+	const goToRules = (): void => {
+		const chosen = Array.from(selectedScopes ?? []);
+		setRules((prev) => {
+			if (prev !== null) return prev;
+			const requested = session?.requested_permission_rules ?? [];
+			if (requested.length > 0) return requested;
+			return derivePermissionRulesFromReview(scopes, new Set(chosen));
+		});
+		setPhase('rules');
+	};
+
+	// Continue on the rules page — fires ``:confirm`` with the user's
+	// finalised rules (session already exists in approve mode).
+	const approve = async (finalRules: PermissionRule[]) => {
 		const chosen = Array.from(selectedScopes ?? []);
 		try {
-			const rules = derivePermissionRulesFromReview(scopes, new Set(chosen));
 			const result = await confirmMutation.mutateAsync({
 				confirmed_scopes: chosen,
-				permission_rules: rules,
+				permission_rules: finalRules,
 			});
 			setChallenge(result);
 			phaseRef.current = 'awaiting';
@@ -546,9 +594,23 @@ function VendorApproveFlow({
 		);
 	}
 
+	if (phase === 'rules') {
+		return (
+			<RulesStep
+				display={display}
+				requestedRules={session.requested_permission_rules ?? []}
+				currentRules={rules ?? []}
+				onChange={setRules}
+				onBack={(): void => setPhase('configure')}
+				onContinue={(finalRules: PermissionRule[]) => void approve(finalRules)}
+				submitting={confirmMutation.isPending}
+				error={(confirmMutation.error as Error | null) ?? null}
+			/>
+		);
+	}
+
 	const agentList = agents.data?.data ?? [];
 	const agent = agentList.find((a) => a.id === session.requested_by_actor_id);
-	const confirmError = confirmMutation.error as Error | undefined;
 	const currentSelection = selectedScopes ?? new Set<string>();
 
 	return (
@@ -574,7 +636,106 @@ function VendorApproveFlow({
 				agentRequested={new Set(scopes.filter((s) => s.requested).map((s) => s.name))}
 			/>
 
-			{confirmError && <ErrorAlert message={confirmError} />}
+			<div className="border-border bg-muted/20 -mx-5 -mb-4 flex items-center justify-between border-t px-5 py-3">
+				<Button type="button" variant="ghost" size="sm" onClick={onBack}>
+					Cancel
+				</Button>
+				<Button
+					type="button"
+					variant="primary"
+					onClick={goToRules}
+					disabled={currentSelection.size === 0}
+				>
+					Continue
+				</Button>
+			</div>
+		</div>
+	);
+}
+
+// ---------------------------------------------------------------------------
+// Rules step — page 2 of the dialog
+// ---------------------------------------------------------------------------
+
+/**
+ * Rules-review page. Sits between the scopes page and the vendor
+ * round-trip. The user can either **Skip** (persists a single
+ * ``Allow: GET /*`` preset) or accept the pre-populated rules (from
+ * scope classifications, or from the agent's request in approve mode)
+ * and Continue.
+ *
+ * Add/Edit/Remove and the operation-impact preview land in the
+ * follow-up steps of the plan (step 5 + step 6).
+ */
+function RulesStep({
+	display,
+	requestedRules,
+	currentRules,
+	onChange,
+	onBack,
+	onContinue,
+	submitting,
+	error,
+}: {
+	display: VendorDisplay;
+	// Rules the initiating agent supplied on ``:connect``. Empty in the
+	// self-flow. When non-empty, rows render with a "requested by agent"
+	// pill (see below) so the human owner sees exactly what the agent
+	// asked for. Kept as a distinct prop from ``currentRules`` — the
+	// current list may diverge as the user edits, but the "requested"
+	// tag on the ones that started life as agent-requested should stick.
+	requestedRules: PermissionRule[];
+	currentRules: PermissionRule[];
+	onChange: (rules: PermissionRule[]) => void;
+	onBack: () => void;
+	onContinue: (finalRules: PermissionRule[]) => void;
+	submitting: boolean;
+	error: Error | null;
+}) {
+	const isEmpty = currentRules.length === 0;
+	const previewRules = isEmpty ? [DEFAULT_ALLOW_GET_RULE] : currentRules;
+	// Fast index for the "requested by agent" tag — deep-compare by
+	// JSON since ``PermissionRule`` is a plain data shape and users
+	// might edit rows in-place without changing identity.
+	const requestedKeys = useMemo(
+		() => new Set(requestedRules.map((r) => JSON.stringify(r))),
+		[requestedRules],
+	);
+
+	const handleContinue = (): void => {
+		const final = isEmpty ? [DEFAULT_ALLOW_GET_RULE] : currentRules;
+		if (isEmpty) onChange(final);
+		onContinue(final);
+	};
+
+	return (
+		<div className="space-y-5">
+			<VendorHeader
+				display={display}
+				subtitle={`Set what this credential lets an agent do on ${display.displayName}.`}
+			/>
+
+			<div className="space-y-2">
+				<Label>Permission rules</Label>
+				<p className="text-muted-foreground text-xs">
+					{isEmpty
+						? "We'll allow all read operations (GET) unless you set your own rules. Continue to accept, or add custom rules below."
+						: 'First-match-wins. Requests that match no rule are denied.'}
+				</p>
+				<div className="border-border bg-muted/20 space-y-1.5 rounded-lg border p-2">
+					{previewRules.map((rule, i) => (
+						<RulePreviewRow
+							key={i}
+							rule={rule}
+							isDefault={isEmpty}
+							isRequested={requestedKeys.has(JSON.stringify(rule))}
+						/>
+					))}
+				</div>
+				{/* Editor UI lands in step 5. */}
+			</div>
+
+			{error && <ErrorAlert message={error} />}
 
 			<div className="border-border bg-muted/20 -mx-5 -mb-4 flex items-center justify-between border-t px-5 py-3">
 				<Button
@@ -582,20 +743,67 @@ function VendorApproveFlow({
 					variant="ghost"
 					size="sm"
 					onClick={onBack}
-					disabled={confirmMutation.isPending}
+					disabled={submitting}
 				>
-					Cancel
+					<ArrowLeft className="h-4 w-4" />
+					Back
 				</Button>
 				<Button
 					type="button"
 					variant="primary"
-					onClick={(): void => void approve()}
-					loading={confirmMutation.isPending}
-					disabled={currentSelection.size === 0}
+					onClick={handleContinue}
+					loading={submitting}
 				>
-					Approve &amp; continue
+					{isEmpty ? 'Skip & continue' : 'Continue'}
 				</Button>
 			</div>
+		</div>
+	);
+}
+
+/**
+ * Read-only display of a single ``PermissionRule``. Shape:
+ * ``Allow GET  /repos/**   [requested]``. Editor mode lands in step 5.
+ */
+function RulePreviewRow({
+	rule,
+	isDefault,
+	isRequested,
+}: {
+	rule: PermissionRule;
+	isDefault: boolean;
+	isRequested: boolean;
+}) {
+	const effectClass =
+		rule.effect === 'allow'
+			? 'bg-success/10 text-success border-success/40'
+			: 'bg-danger/10 text-danger border-danger/40';
+	const methodsLabel =
+		rule.methods && rule.methods.length > 0 ? rule.methods.join(', ') : 'any method';
+	return (
+		<div
+			className={`bg-background border-border flex items-center gap-2.5 rounded-md border px-2.5 py-1.5 text-xs ${
+				isDefault ? 'opacity-70' : ''
+			}`}
+		>
+			<span
+				className={`rounded-md border px-1.5 py-0.5 font-mono text-[10px] tracking-wide uppercase ${effectClass}`}
+			>
+				{rule.effect}
+			</span>
+			<span className="text-foreground font-mono text-[11px]">{methodsLabel}</span>
+			<span className="text-muted-foreground truncate font-mono text-[11px]">
+				{rule.path ?? '/'}
+				{rule.match_mode && rule.match_mode !== 'regex' ? ` (${rule.match_mode})` : ''}
+			</span>
+			{isRequested && (
+				<Badge variant="default" className="ml-auto text-[10px]">
+					requested by agent
+				</Badge>
+			)}
+			{isDefault && !isRequested && (
+				<span className="text-muted-foreground ml-auto text-[10px] italic">default</span>
+			)}
 		</div>
 	);
 }

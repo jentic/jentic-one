@@ -32,6 +32,14 @@ export interface ReviewSession {
 	 * *why* the agent wants this credential.
 	 */
 	reason: string | null;
+	/**
+	 * Rules the initiating agent asked the human owner to approve, captured
+	 * verbatim from ``IntegrationsConnectRequest.requested_permission_rules``
+	 * at ``:connect`` time. Renders on the rules-page as pre-filled rows the
+	 * user can accept / edit / drop. Empty when a user initiated the flow
+	 * themselves (nothing to pre-populate).
+	 */
+	requested_permission_rules: PermissionRule[];
 }
 
 export interface PermissionRule {
