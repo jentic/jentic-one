@@ -118,6 +118,13 @@ class ReviewData:
     # As-requested permission rules from ``:connect`` — the human hasn't
     # approved them yet, they render on the review page as pre-filled rows.
     requested_permission_rules: list[dict[str, object]]
+    # Where the vendor's OpenAPI lives once it's been imported by the
+    # catalog auto-importer. Nullable because the version isn't known
+    # until the import finishes; SPA polls / falls back to "importing…"
+    # when it's ``None``.
+    api_vendor: str
+    api_name: str | None
+    api_version: str | None
 
 
 @dataclass(slots=True, frozen=True)
@@ -415,6 +422,11 @@ class ConnectSessionService:
             row = await ConnectSessionRepository.get_by_id(session, session_id)
             if row is None:
                 raise SessionNotFoundError(session_id)
+            # Pull the credential's api coords so the SPA can call
+            # ``/apis/{vendor}/{name}/{version}/operations`` for the
+            # rules-page preview. ``api_version`` is nullable — the
+            # catalog import populates it asynchronously.
+            credential = await CredentialRepository.get_by_id(session, row.credential_id)
 
         entry = self._vendors.get(row.vendor)
         resolved = self._vendors.merge_scopes(row.vendor, row.requested_scopes or [])
@@ -428,6 +440,9 @@ class ConnectSessionService:
             requested_by_actor_id=row.initiator_actor_id,
             scopes=[_scope_view(s) for s in resolved],
             requested_permission_rules=row.requested_permission_rules or [],
+            api_vendor=credential.api_vendor if credential else "",
+            api_name=credential.api_name if credential else None,
+            api_version=credential.api_version if credential else None,
         )
 
     # ---- confirm ----------------------------------------------------------

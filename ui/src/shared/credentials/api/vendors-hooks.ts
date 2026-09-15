@@ -12,9 +12,11 @@ import {
 	getConnectSession,
 	getVendorAuthCapabilities,
 	listAgentsForPicker,
+	listVendorOperations,
 	listVendors,
 	pollConnectSessionStatus,
 	startIntegrationConnect,
+	type VendorOperationsPage,
 } from '@/shared/credentials/api/vendors-client';
 import type { AgentListResponse } from '@/shared/api';
 import type {
@@ -77,6 +79,36 @@ export function useConnectSession(
 export function useConfirmConnectSession(sessionId: string) {
 	return useMutation<ConfirmResponse, Error, ConfirmRequest>({
 		mutationFn: (body) => confirmConnectSession(sessionId, body),
+	});
+}
+
+/**
+ * Fetch operations for a vendor's imported OpenAPI. Polls every 2s while
+ * ``data`` is ``null`` (import still queued — the client returns null on
+ * 404) so the rules-page preview can render as soon as the import lands.
+ * ``enabled`` gates the whole thing to when the caller actually needs it
+ * (e.g. only on the rules phase).
+ */
+export function useVendorOperations(
+	api: { vendor: string; name: string | null; version: string | null } | null | undefined,
+	opts: { enabled?: boolean } = {},
+) {
+	const ready = !!api && !!api.name && !!api.version;
+	return useQuery<VendorOperationsPage | null>({
+		queryKey: [
+			'integrations',
+			'operations',
+			api?.vendor ?? '',
+			api?.name ?? '',
+			api?.version ?? '',
+		] as const,
+		queryFn: () =>
+			listVendorOperations(api!.vendor, api!.name as string, api!.version as string),
+		enabled: (opts.enabled ?? true) && ready,
+		// Poll while ``data`` is null (import still queued). Once ops land,
+		// stop polling.
+		refetchInterval: (query) => (query.state.data == null ? 2_000 : false),
+		staleTime: 30_000,
 	});
 }
 

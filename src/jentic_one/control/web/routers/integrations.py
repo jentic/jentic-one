@@ -26,6 +26,7 @@ from jentic_one.control.services.vendors.service import (
 )
 from jentic_one.control.web.deps import get_connect_session_service
 from jentic_one.control.web.schemas.integrations import (
+    ApiReferenceResponse,
     AuthCodeConfirmSessionResponse,
     ConfirmSessionRequest,
     ConfirmSessionResponse,
@@ -219,6 +220,11 @@ async def get_connect_session(
         requested_permission_rules=[
             PermissionRuleSchema.model_validate(r) for r in data.requested_permission_rules
         ],
+        api_reference=ApiReferenceResponse(
+            vendor=data.api_vendor,
+            name=data.api_name,
+            version=data.api_version,
+        ),
     )
 
 

@@ -40,6 +40,16 @@ export interface ReviewSession {
 	 * themselves (nothing to pre-populate).
 	 */
 	requested_permission_rules: PermissionRule[];
+	/**
+	 * Where the vendor's OpenAPI lives in the registry. ``version`` is
+	 * nullable because the catalog import runs asynchronously — the SPA
+	 * treats a 404 from the ops-list endpoint as "still importing".
+	 */
+	api_reference: {
+		vendor: string;
+		name: string | null;
+		version: string | null;
+	};
 }
 
 export interface PermissionRule {

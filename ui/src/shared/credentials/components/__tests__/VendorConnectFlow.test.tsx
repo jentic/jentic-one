@@ -199,6 +199,7 @@ describe('VendorConnectFlow — approve mode', () => {
 			],
 			reason: 'Need repo push access to open a follow-up PR on issue #42.',
 			requested_permission_rules: [],
+			api_reference: { vendor: 'github-com', name: 'github-com', version: null },
 		};
 		worker.use(
 			http.get('/connect-sessions/sess_9', () => HttpResponse.json(session)),
@@ -271,6 +272,7 @@ describe('VendorConnectFlow — approve mode', () => {
 			requested_permission_rules: [
 				{ effect: 'allow', methods: ['GET'], path: '/repos', match_mode: 'prefix' },
 			],
+			api_reference: { vendor: 'github-com', name: 'github-com', version: null },
 		};
 		worker.use(
 			http.get('/connect-sessions/sess_rules', () => HttpResponse.json(session)),
@@ -324,6 +326,7 @@ describe('VendorConnectFlow — approve mode', () => {
 			],
 			reason: null,
 			requested_permission_rules: [],
+			api_reference: { vendor: 'github-com', name: 'github-com', version: null },
 		};
 		worker.use(
 			http.get('/connect-sessions/sess_edit', () => HttpResponse.json(session)),

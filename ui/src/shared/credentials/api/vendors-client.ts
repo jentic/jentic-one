@@ -125,6 +125,46 @@ export function listVendors(): Promise<VendorListResponse> {
 	return request('/vendors');
 }
 
+/**
+ * One operation as returned by ``GET /apis/{vendor}/{name}/{version}/operations``.
+ * Slim projection — the rules-page preview only needs
+ * ``(method, path, operation_id)`` to feed the client-side matcher, plus
+ * ``name`` for the display label. The full ``OperationSummaryResponse``
+ * carries links + tags + description that the preview doesn't render.
+ */
+export interface VendorOperation {
+	operation_id: string;
+	method: string;
+	path: string;
+	name?: string | null;
+	description?: string | null;
+}
+
+export interface VendorOperationsPage {
+	data: VendorOperation[];
+	has_more: boolean;
+	next_cursor: string | null;
+}
+
+/**
+ * Fetch operations for a vendor's imported OpenAPI. Returns ``null`` when
+ * the API isn't imported yet (404) — the rules-page preview surfaces that
+ * as "operations still importing…" with a retry rather than throwing.
+ */
+export async function listVendorOperations(
+	vendor: string,
+	name: string,
+	version: string,
+): Promise<VendorOperationsPage | null> {
+	const url = `/apis/${encodeURIComponent(vendor)}/${encodeURIComponent(name)}/${encodeURIComponent(version)}/operations`;
+	try {
+		return await request<VendorOperationsPage>(url);
+	} catch (err) {
+		if (err instanceof IntegrationsApiError && err.status === 404) return null;
+		throw err;
+	}
+}
+
 export function getVendorAuthCapabilities(vendorKey: string): Promise<VendorAuthCapabilities> {
 	return request(`/vendors/${encodeURIComponent(vendorKey)}/auth-capabilities`);
 }

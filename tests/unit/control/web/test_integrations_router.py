@@ -198,6 +198,9 @@ def test_get_review_data_returns_scope_catalog() -> None:
                 )
             ],
             requested_permission_rules=[],
+            api_vendor="gh",
+            api_name="gh/api.gh",
+            api_version=None,
         )
     )
     app = _build_app(svc=svc, identity=_USER_IDENTITY)

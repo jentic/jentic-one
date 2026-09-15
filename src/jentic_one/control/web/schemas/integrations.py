@@ -88,6 +88,20 @@ class ReviewScopeResponse(BaseModel):
     description: str
 
 
+class ApiReferenceResponse(BaseModel):
+    """Where the vendor's OpenAPI lives in the registry.
+
+    ``version`` is nullable because the catalog auto-importer runs
+    asynchronously — the SPA's rules-page preview polls this endpoint
+    and shows an "operations still importing…" skeleton until it
+    becomes non-null and the operations endpoint returns 200.
+    """
+
+    vendor: str
+    name: str | None
+    version: str | None
+
+
 class ReviewSessionResponse(BaseModel):
     session_id: str
     state: str
@@ -100,6 +114,10 @@ class ReviewSessionResponse(BaseModel):
     # Captured verbatim from ``IntegrationsConnectRequest.requested_permission_rules``
     # so the approve page can render them as pre-filled rows.
     requested_permission_rules: list[PermissionRuleSchema] = Field(default_factory=list)
+    # Where the vendor's OpenAPI lives once imported — SPA needs this
+    # to hit ``/apis/{vendor}/{name}/{version}/operations`` on the
+    # rules-page preview.
+    api_reference: ApiReferenceResponse
 
 
 # ---------------------------------------------------------------------------

@@ -33,11 +33,13 @@ import {
 	usePollConnectSessionStatus,
 	useStartAndConfirmVendorConnect,
 	useVendorAuthCapabilities,
+	useVendorOperations,
 } from '@/shared/credentials/api/vendors-hooks';
 import {
 	cancelConnectSession,
 	cancelConnectSessionBeacon,
 } from '@/shared/credentials/api/vendors-client';
+import { evaluateRules } from '@/shared/credentials/lib/rule-matcher';
 import { isHttpsVendorUrl, openVendorUrl } from '@/shared/credentials/lib/safe-navigation';
 import type {
 	AuthCodeConfirmResponse,
@@ -342,6 +344,12 @@ function VendorSelfConnectFlow({
 				onContinue={(finalRules: PermissionRule[]) => void startFlow(finalRules)}
 				submitting={startMutation.isPending}
 				error={startError ?? null}
+				// Self flow: session/credential don't exist yet. The preview
+				// will skeleton on "importing…" until the user Continues
+				// (which fires ``:connect`` + ``:confirm`` + the catalog
+				// import). Acceptable — the value of the preview lands in
+				// the approve mode.
+				apiReference={null}
 			/>
 		);
 	}
@@ -609,6 +617,7 @@ function VendorApproveFlow({
 				onContinue={(finalRules: PermissionRule[]) => void approve(finalRules)}
 				submitting={confirmMutation.isPending}
 				error={(confirmMutation.error as Error | null) ?? null}
+				apiReference={session.api_reference}
 			/>
 		);
 	}
@@ -680,6 +689,7 @@ function RulesStep({
 	onContinue,
 	submitting,
 	error,
+	apiReference,
 }: {
 	display: VendorDisplay;
 	// Rules the initiating agent supplied on ``:connect``. Empty in the
@@ -695,6 +705,11 @@ function RulesStep({
 	onContinue: (finalRules: PermissionRule[]) => void;
 	submitting: boolean;
 	error: Error | null;
+	// Where the vendor's OpenAPI lives. Null in the self-flow before
+	// ``:connect`` fires; ``version`` null while the import is queued.
+	// The operation-impact preview shows a skeleton until both are set
+	// AND the ops endpoint returns 200.
+	apiReference: { vendor: string; name: string | null; version: string | null } | null;
 }) {
 	const isEmpty = currentRules.length === 0;
 	const previewRules = isEmpty ? [DEFAULT_ALLOW_GET_RULE] : currentRules;
@@ -753,6 +768,11 @@ function RulesStep({
 				</div>
 				<AddRuleForm onAdd={(rule) => onChange([...currentRules, rule])} />
 			</div>
+
+			<OperationImpactPreview
+				api={apiReference}
+				rules={isEmpty ? previewRules : currentRules}
+			/>
 
 			{error && <ErrorAlert message={error} />}
 
@@ -862,6 +882,90 @@ function RulePreviewRow({
 							<X className="h-3.5 w-3.5" />
 						</button>
 					)}
+				</div>
+			)}
+		</div>
+	);
+}
+
+/**
+ * Operation-impact preview. Fetches the vendor's operations list and
+ * renders each with an allow (green) / deny (red) pill computed from
+ * the current rule set via the client-side matcher (parity-tested
+ * against the Python matcher). No per-op HTTP call; rule edits are
+ * instant.
+ *
+ * States:
+ * * ``api == null`` or ``version == null`` → "still importing" skeleton
+ *   (session hasn't kicked the import yet, or import job is queued).
+ * * fetch returned ``null`` (404) → same skeleton, hook is polling.
+ * * fetch returned an empty page → "no operations imported yet" note.
+ * * fetch returned data → render.
+ */
+function OperationImpactPreview({
+	api,
+	rules,
+}: {
+	api: { vendor: string; name: string | null; version: string | null } | null;
+	rules: readonly PermissionRule[];
+}) {
+	const ops = useVendorOperations(api ?? undefined, { enabled: !!api });
+	const items = ops.data?.data ?? [];
+	const importing = !api || !api.name || !api.version || ops.data == null;
+
+	return (
+		<div className="space-y-2">
+			<Label>What this credential lets an agent do</Label>
+			{importing ? (
+				<div className="border-border bg-muted/20 rounded-lg border px-3 py-6 text-center">
+					<Loader2 className="text-muted-foreground mx-auto h-4 w-4 animate-spin" />
+					<p className="text-muted-foreground mt-2 text-xs">
+						Operations still importing — this preview will fill in shortly.
+					</p>
+				</div>
+			) : items.length === 0 ? (
+				<div className="border-border bg-muted/20 rounded-lg border px-3 py-4 text-center">
+					<p className="text-muted-foreground text-xs">
+						No operations imported for this vendor yet.
+					</p>
+				</div>
+			) : (
+				<div className="border-border max-h-56 space-y-1 overflow-y-auto rounded-lg border p-2">
+					{items.map((op) => {
+						const allowed = evaluateRules(rules, {
+							method: op.method,
+							path: op.path,
+							operation_id: op.operation_id,
+						});
+						return (
+							<div
+								key={op.operation_id}
+								className="bg-background border-border flex items-center gap-2.5 rounded-md border px-2.5 py-1.5 text-xs"
+							>
+								<span
+									className={`rounded-md border px-1.5 py-0.5 font-mono text-[10px] uppercase ${
+										allowed
+											? 'bg-success/10 text-success border-success/40'
+											: 'bg-danger/10 text-danger border-danger/40'
+									}`}
+									aria-label={allowed ? 'allowed' : 'denied'}
+								>
+									{allowed ? 'allow' : 'deny'}
+								</span>
+								<span className="text-muted-foreground font-mono text-[10px] uppercase">
+									{op.method}
+								</span>
+								<span className="text-foreground truncate font-mono text-[11px]">
+									{op.path}
+								</span>
+								{op.name && (
+									<span className="text-muted-foreground ml-auto truncate text-[10px]">
+										{op.name}
+									</span>
+								)}
+							</div>
+						);
+					})}
 				</div>
 			)}
 		</div>
