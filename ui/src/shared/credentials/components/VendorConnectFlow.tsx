@@ -1,5 +1,5 @@
 import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react';
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
 	AlertTriangle,
@@ -8,6 +8,8 @@ import {
 	ArrowUp,
 	Bot,
 	CheckCircle2,
+	ChevronDown,
+	ChevronRight,
 	ExternalLink,
 	Loader2,
 	Pencil,
@@ -22,7 +24,6 @@ import {
 	Button,
 	Checkbox,
 	CopyButton,
-	Dialog,
 	ErrorAlert,
 	Label,
 	Skeleton,
@@ -43,9 +44,15 @@ import {
 import {
 	cancelConnectSession,
 	cancelConnectSessionBeacon,
+	type VendorOperation,
 } from '@/shared/credentials/api/vendors-client';
 import { nextPathCompletion } from '@/shared/credentials/lib/path-completion';
-import { evaluateRules, ruleValidityIssue } from '@/shared/credentials/lib/rule-matcher';
+import { ruleValidityIssue } from '@/shared/credentials/lib/rule-matcher';
+import {
+	evaluateTemplateOp,
+	generateRuleExamples,
+	ruleNarrowsTemplate,
+} from '@/shared/credentials/lib/template-matcher';
 import { isHttpsVendorUrl, openVendorUrl } from '@/shared/credentials/lib/safe-navigation';
 import type {
 	AuthCodeConfirmResponse,
@@ -853,12 +860,12 @@ function VendorApproveFlow({
  * Rules-review page. Sits between the scopes page and the vendor
  * round-trip.
  *
- * Empty state: the rules list stays empty in local state; the UI
- * renders a text-only placeholder explaining that Continue will bind
- * with an ``Allow: GET /*`` fallback. Only when the user clicks
+ * Empty state: the rules list stays empty in local state but the UI
+ * shows a single greyed-out ``Allow GET /`` preview row so the user
+ * can SEE the rule that will land on Continue. The row's ``default``
+ * tag signals it's not user-authored. Only when the user clicks
  * Continue does the client inject that default into the ``:confirm``
- * request body — the editor itself never renders it as a row so the
- * user always sees exactly what they authored.
+ * request body — local state stays empty either way.
  *
  * Non-empty: rules render in first-match-wins order with reorder +
  * delete controls. Agent-requested rules (approve mode) carry a
@@ -910,12 +917,11 @@ function RulesStep({
 	// rules, preview against those exactly.
 	const previewRules = isEmpty ? [DEFAULT_ALLOW_GET_RULE] : currentRules;
 
-	// Which row (by index) has the edit dialog open. ``null`` when the
-	// dialog is closed. Keeping the dialog mounted with ``open=false``
-	// lets it play its exit animation on close and preserves focus
-	// behaviour of the underlying <dialog>.
+	// Which row (by index) is currently being edited inline. ``null``
+	// when no edit is active. The target row is replaced in place with
+	// an ``InlineEditRuleForm`` — same UX shape as the Add form so both
+	// paths feel identical.
 	const [editingIndex, setEditingIndex] = useState<number | null>(null);
-	const editingRule = editingIndex != null ? currentRules[editingIndex] : undefined;
 
 	// Fetch ops once at the rules-page level and thread the result down.
 	// React-Query dedupes by query key so ``OperationImpactPreview``'s
@@ -951,45 +957,51 @@ function RulesStep({
 
 			<div className="space-y-2">
 				<Label>Permission rules</Label>
-				{isEmpty ? (
-					<div className="border-border bg-muted/20 rounded-lg border border-dashed px-3 py-4">
-						<p className="text-muted-foreground text-xs">
-							No rules yet. If you continue without adding any, this credential will
-							be bound with a default read-only rule (
-							<code className="font-mono">Allow GET /</code>) so agents can call any
-							GET endpoint but nothing else. Add rules below to customise.
-						</p>
-					</div>
-				) : (
-					<>
-						<p className="text-muted-foreground text-xs">
-							First-match-wins. Requests that match no rule are denied.
-						</p>
-						<div className="border-border bg-muted/20 space-y-1.5 rounded-lg border p-2">
-							{currentRules.map((rule, i) => (
-								<RulePreviewRow
-									key={i}
-									rule={rule}
-									isRequested={requestedKeys.has(JSON.stringify(rule))}
-									onEdit={(): void => setEditingIndex(i)}
-									onDelete={(): void =>
-										onChange(currentRules.filter((_, j) => j !== i))
-									}
-									onMoveUp={
-										i === 0
-											? undefined
-											: (): void => onChange(swap(currentRules, i, i - 1))
-									}
-									onMoveDown={
-										i === currentRules.length - 1
-											? undefined
-											: (): void => onChange(swap(currentRules, i, i + 1))
-									}
-								/>
-							))}
-						</div>
-					</>
-				)}
+				<p className="text-muted-foreground text-xs">
+					{isEmpty
+						? "We'll allow all read operations (GET) unless you set your own rules. Continue to accept, or add custom rules below."
+						: 'First-match-wins. Requests that match no rule are denied.'}
+				</p>
+				<div className="border-border bg-muted/20 space-y-1.5 rounded-lg border p-2">
+					{previewRules.map((rule, i) =>
+						!isEmpty && editingIndex === i ? (
+							<InlineEditRuleForm
+								key={i}
+								initial={rule}
+								onSave={(updated): void => {
+									onChange(currentRules.map((r, j) => (j === i ? updated : r)));
+									setEditingIndex(null);
+								}}
+								onCancel={(): void => setEditingIndex(null)}
+								pathSuggestions={pathSuggestions}
+							/>
+						) : (
+							<RulePreviewRow
+								key={i}
+								rule={rule}
+								isDefault={isEmpty}
+								isRequested={requestedKeys.has(JSON.stringify(rule))}
+								onEdit={isEmpty ? undefined : (): void => setEditingIndex(i)}
+								onDelete={
+									isEmpty
+										? undefined
+										: (): void =>
+												onChange(currentRules.filter((_, j) => j !== i))
+								}
+								onMoveUp={
+									isEmpty || i === 0
+										? undefined
+										: (): void => onChange(swap(currentRules, i, i - 1))
+								}
+								onMoveDown={
+									isEmpty || i === currentRules.length - 1
+										? undefined
+										: (): void => onChange(swap(currentRules, i, i + 1))
+								}
+							/>
+						),
+					)}
+				</div>
 				<AddRuleForm
 					onAdd={(rule) => onChange([...currentRules, rule])}
 					pathSuggestions={pathSuggestions}
@@ -1020,22 +1032,6 @@ function RulesStep({
 					{isEmpty ? 'Skip & continue' : 'Continue'}
 				</Button>
 			</div>
-
-			{editingIndex != null && (
-				// Conditionally mounted so the dialog's inputs don't shadow the
-				// Add form's placeholder ("/repos") in test queries and so any
-				// stale draft state gets torn down cleanly between edits.
-				<EditRuleDialog
-					open
-					initial={editingRule}
-					onClose={(): void => setEditingIndex(null)}
-					onSave={(rule): void => {
-						onChange(currentRules.map((r, j) => (j === editingIndex ? rule : r)));
-						setEditingIndex(null);
-					}}
-					pathSuggestions={pathSuggestions}
-				/>
-			)}
 		</div>
 	);
 }
@@ -1046,9 +1042,16 @@ function RulesStep({
  * empty), a warning badge is shown inline — otherwise the rule fails
  * silently closed at broker time and the user has no way to tell why
  * the ops-preview grid stays red.
+ *
+ * ``isDefault`` renders the row greyed out with a "default" tag: the
+ * empty-state preview uses this to show the ``Allow GET /`` fallback
+ * that will land at ``:confirm`` if the user continues with no
+ * authored rules. Default rows have no edit / delete / reorder
+ * controls — the user hasn't authored them.
  */
 function RulePreviewRow({
 	rule,
+	isDefault,
 	isRequested,
 	onEdit,
 	onDelete,
@@ -1056,6 +1059,7 @@ function RulePreviewRow({
 	onMoveDown,
 }: {
 	rule: PermissionRule;
+	isDefault?: boolean;
 	isRequested: boolean;
 	onEdit?: () => void;
 	onDelete?: () => void;
@@ -1076,7 +1080,11 @@ function RulePreviewRow({
 				? 'Empty regex — the rule will never match. Add a pattern (e.g. `.*` for match-any) or delete the rule.'
 				: null;
 	return (
-		<div className="bg-background border-border flex items-center gap-2.5 rounded-md border px-2.5 py-1.5 text-xs">
+		<div
+			className={`bg-background border-border flex items-center gap-2.5 rounded-md border px-2.5 py-1.5 text-xs ${
+				isDefault ? 'opacity-70' : ''
+			}`}
+		>
 			<span
 				className={`rounded-md border px-1.5 py-0.5 font-mono text-[10px] tracking-wide uppercase ${effectClass}`}
 			>
@@ -1103,6 +1111,9 @@ function RulePreviewRow({
 				<Badge variant="default" className="ml-auto text-[10px]">
 					requested by agent
 				</Badge>
+			)}
+			{isDefault && !isRequested && (
+				<span className="text-muted-foreground ml-auto text-[10px] italic">default</span>
 			)}
 			{(onEdit || onMoveUp || onMoveDown || onDelete) && (
 				<div className="ml-auto flex items-center gap-0.5">
@@ -1166,6 +1177,35 @@ function RulePreviewRow({
  * * fetch returned an empty page → "no operations imported yet" note.
  * * fetch returned data → render.
  */
+interface EvaluatedOp {
+	op: VendorOperation;
+	allowed: boolean;
+	// Concrete example paths derived from the rule that matched this op
+	// — only present when the rule narrows the op's template
+	// (see ``ruleNarrowsTemplate``). Rules that match every path (like a
+	// broad ``Allow GET /``) yield no examples because the op template
+	// itself is the answer.
+	examples: readonly string[];
+}
+
+interface OpGroup {
+	// Display prefix, e.g. ``/repos`` (no trailing slash). Root ops go
+	// under ``/`` so they still get a bucket.
+	prefix: string;
+	ops: EvaluatedOp[];
+	allowedCount: number;
+	deniedCount: number;
+}
+
+/** First path segment or ``/`` when the path has no segments. */
+function firstPathSegment(path: string): string {
+	// Trim leading slash, take up to the next slash.
+	const rest = path.startsWith('/') ? path.slice(1) : path;
+	if (rest.length === 0) return '/';
+	const nextSlash = rest.indexOf('/');
+	return `/${nextSlash === -1 ? rest : rest.slice(0, nextSlash)}`;
+}
+
 function OperationImpactPreview({
 	api,
 	rules,
@@ -1177,25 +1217,60 @@ function OperationImpactPreview({
 	const items = ops.data?.data ?? [];
 	const importing = !api || !api.name || !api.version || ops.data == null;
 
-	// Sort so allowed operations appear first, denied last. Rules can change
-	// on every keystroke in the editor, so this recomputes for the sort AND
-	// once more inside the render — the extra ``evaluateRules`` per row is
-	// negligible next to the DOM cost, and it keeps the render pure.
-	// ``require-approval`` isn't a legal effect on binding rules today
-	// (the broker treats non-allow as deny), so we only need two buckets;
-	// leave a comment here so the middle bucket lands in the obvious place
-	// when the enforcement effect gains a third value.
-	const sortedItems = useMemo(() => {
-		const withAllow = items.map((op) => ({
-			op,
-			allowed: evaluateRules(rules, {
+	// Bucket every op by its first path segment. Within a group, allowed
+	// ops render first, then denied. Group order is: groups with any
+	// allowed ops first (sorted by allowed count DESC, then by prefix),
+	// then all-denied groups sorted by prefix. ``require-approval`` isn't
+	// a legal effect on binding rules today (broker treats non-allow as
+	// deny), so we only need two buckets per group — when a third effect
+	// lands, add it between allow and deny inside the group.
+	const groups = useMemo<OpGroup[]>(() => {
+		if (items.length === 0) return [];
+		const byPrefix = new Map<string, EvaluatedOp[]>();
+		for (const op of items) {
+			const evaluation = evaluateTemplateOp(rules, {
 				method: op.method,
 				path: op.path,
 				operation_id: op.operation_id,
-			}),
-		}));
-		// Stable sort: allowed (true) < denied (false).
-		return withAllow.sort((a, b) => Number(b.allowed) - Number(a.allowed));
+			});
+			// Examples only when a narrowing rule matched — a broad
+			// allow (path=/) matches everything and offers no useful
+			// concrete example beyond the op's own template.
+			const examples =
+				evaluation.matchingRule && ruleNarrowsTemplate(evaluation.matchingRule, op.path)
+					? generateRuleExamples(evaluation.matchingRule, op.path)
+					: [];
+			const entry: EvaluatedOp = {
+				op,
+				allowed: evaluation.allowed,
+				examples,
+			};
+			const key = firstPathSegment(op.path);
+			const bucket = byPrefix.get(key);
+			if (bucket) bucket.push(entry);
+			else byPrefix.set(key, [entry]);
+		}
+		const out: OpGroup[] = [];
+		for (const [prefix, evaluated] of byPrefix) {
+			evaluated.sort((a, b) => Number(b.allowed) - Number(a.allowed));
+			out.push({
+				prefix,
+				ops: evaluated,
+				allowedCount: evaluated.filter((e) => e.allowed).length,
+				deniedCount: evaluated.filter((e) => !e.allowed).length,
+			});
+		}
+		out.sort((a, b) => {
+			// Groups with any allowed ops before all-denied groups.
+			if (a.allowedCount > 0 !== b.allowedCount > 0) {
+				return a.allowedCount > 0 ? -1 : 1;
+			}
+			// Within a tier, more-allowed first (skims the credential's
+			// affirmative surface first).
+			if (a.allowedCount !== b.allowedCount) return b.allowedCount - a.allowedCount;
+			return a.prefix.localeCompare(b.prefix);
+		});
+		return out;
 	}, [items, rules]);
 
 	return (
@@ -1215,32 +1290,95 @@ function OperationImpactPreview({
 					</p>
 				</div>
 			) : (
-				<div className="border-border max-h-56 space-y-1 overflow-y-auto rounded-lg border p-2">
-					{sortedItems.map(({ op, allowed }) => (
+				<div className="border-border max-h-72 space-y-1 overflow-y-auto rounded-lg border p-2">
+					{groups.map((g) => (
+						<OperationImpactGroup key={g.prefix} group={g} />
+					))}
+				</div>
+			)}
+		</div>
+	);
+}
+
+/**
+ * One collapsible path-prefix group in the ops preview. Rows inside are
+ * ordered allow-first, deny-last so the affirmative surface is always
+ * on top. Groups with more allows than denies open by default —
+ * anything otherwise is opt-in expand, matching the "see high-level
+ * roots at a glance, expand for fine-grained access" ask.
+ */
+function OperationImpactGroup({ group }: { group: OpGroup }) {
+	// Default open when the group is mostly allowed (the interesting
+	// bit). Predominantly-denied groups start collapsed so the
+	// affirmative rows above them dominate the initial view.
+	const [open, setOpen] = useState(group.allowedCount > 0);
+	return (
+		<div className="border-border bg-background rounded-md border">
+			<button
+				type="button"
+				onClick={(): void => setOpen((v) => !v)}
+				className="hover:bg-muted/40 flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-xs transition-colors"
+				aria-expanded={open}
+			>
+				{open ? (
+					<ChevronDown className="text-muted-foreground h-3.5 w-3.5 shrink-0" />
+				) : (
+					<ChevronRight className="text-muted-foreground h-3.5 w-3.5 shrink-0" />
+				)}
+				<span className="text-foreground font-mono text-[11px]">{group.prefix}/</span>
+				<span className="ml-auto flex items-center gap-1.5">
+					{group.allowedCount > 0 && (
+						<span className="bg-success/10 text-success border-success/40 rounded-md border px-1.5 py-0.5 font-mono text-[10px]">
+							{group.allowedCount} allowed
+						</span>
+					)}
+					{group.deniedCount > 0 && (
+						<span className="bg-danger/10 text-danger border-danger/40 rounded-md border px-1.5 py-0.5 font-mono text-[10px]">
+							{group.deniedCount} denied
+						</span>
+					)}
+				</span>
+			</button>
+			{open && (
+				<div className="border-border space-y-1 border-t p-1.5">
+					{group.ops.map(({ op, allowed, examples }) => (
 						<div
 							key={op.operation_id}
-							className="bg-background border-border flex items-center gap-2.5 rounded-md border px-2.5 py-1.5 text-xs"
+							className="bg-muted/20 border-border rounded-md border px-2.5 py-1 text-xs"
 						>
-							<span
-								className={`rounded-md border px-1.5 py-0.5 font-mono text-[10px] uppercase ${
-									allowed
-										? 'bg-success/10 text-success border-success/40'
-										: 'bg-danger/10 text-danger border-danger/40'
-								}`}
-								aria-label={allowed ? 'allowed' : 'denied'}
-							>
-								{allowed ? 'allow' : 'deny'}
-							</span>
-							<span className="text-muted-foreground font-mono text-[10px] uppercase">
-								{op.method}
-							</span>
-							<span className="text-foreground truncate font-mono text-[11px]">
-								{op.path}
-							</span>
-							{op.name && (
-								<span className="text-muted-foreground ml-auto truncate text-[10px]">
-									{op.name}
+							<div className="flex items-center gap-2.5">
+								<span
+									className={`rounded-md border px-1.5 py-0.5 font-mono text-[10px] uppercase ${
+										allowed
+											? 'bg-success/10 text-success border-success/40'
+											: 'bg-danger/10 text-danger border-danger/40'
+									}`}
+									aria-label={allowed ? 'allowed' : 'denied'}
+								>
+									{allowed ? 'allow' : 'deny'}
 								</span>
+								<span className="text-muted-foreground font-mono text-[10px] uppercase">
+									{op.method}
+								</span>
+								<span className="text-foreground truncate font-mono text-[11px]">
+									{op.path}
+								</span>
+								{op.name && (
+									<span className="text-muted-foreground ml-auto truncate text-[10px]">
+										{op.name}
+									</span>
+								)}
+							</div>
+							{examples.length > 0 && (
+								<div className="text-muted-foreground pt-0.5 pl-16 font-mono text-[10px]">
+									e.g.{' '}
+									{examples.map((ex, i) => (
+										<span key={ex}>
+											{i > 0 ? ', ' : ''}
+											<span className="text-foreground/80">{ex}</span>
+										</span>
+									))}
+								</div>
 							)}
 						</div>
 					))}
@@ -1315,18 +1453,29 @@ function validateDraft(draft: RuleDraft): string | null {
 	return null;
 }
 
+// Max suggestions rendered below the path input at once. Deliberately
+// small — a longer list dominates the dialog and forces the user to
+// scan rather than skim.
+const MAX_PATH_SUGGESTIONS = 5;
+
 /**
  * Fully-controlled form fields. Consumers own the draft state and the
  * validation lifecycle so this component is trivially reusable between the
- * inline Add form and the modal Edit dialog.
+ * inline Add form and the inline Edit form.
  *
  * ``pathSuggestions`` is the set of real operation paths from the
- * vendor's OpenAPI — used to power the browser-native ``<datalist>``
- * suggestion dropdown as the user types AND the Tab-to-next-subsection
- * keyboard shortcut (matching prefixes step through path segments so
- * users don't have to hand-type long paths like ``/repos/{owner}/{repo}/pulls``).
- * Empty until the catalog import completes; the input degrades to a
- * plain textbox and Tab moves focus as normal.
+ * vendor's OpenAPI — used to power a compact custom autocomplete
+ * dropdown (positioned directly under the path input, capped to
+ * ``MAX_PATH_SUGGESTIONS`` rows, styled with app design tokens) AND
+ * the Tab-to-next-subsection keyboard shortcut (matching prefixes
+ * step through path segments so users don't have to hand-type long
+ * paths like ``/repos/{owner}/{repo}/pulls``). Empty until the
+ * catalog import completes; the input degrades to a plain textbox
+ * and Tab moves focus as normal.
+ *
+ * Why not a browser-native ``<datalist>``: those are unstyled (jarring
+ * colour), can't be capped to a fixed row count, and — depending on the
+ * browser — stop filtering as the user types past the initial match.
  */
 function RuleFormBody({
 	draft,
@@ -1346,25 +1495,68 @@ function RuleFormBody({
 		onChange({ ...draft, methods: next });
 	};
 
-	// Cheap unique identifier keeps this form usable in more than one
-	// place on the same page (Add + Edit dialog) without <datalist>
-	// collisions.
-	const datalistId = useId();
-
 	const paths = pathSuggestions ?? EMPTY_PATHS;
+	// Prefix-match filter, capped so the dropdown never dominates the
+	// dialog. ``startsWith`` matches on the raw input string — with no
+	// path typed we still surface the first ``MAX_PATH_SUGGESTIONS``
+	// so the dropdown is useful from the first focus.
 	const filteredSuggestions = useMemo(() => {
-		if (paths.length === 0) return [];
-		if (!draft.path) return paths.slice(0, 25);
-		return paths.filter((p) => p.startsWith(draft.path)).slice(0, 25);
+		if (paths.length === 0) return EMPTY_PATHS;
+		const filtered = draft.path ? paths.filter((p) => p.startsWith(draft.path)) : paths;
+		return filtered.slice(0, MAX_PATH_SUGGESTIONS);
 	}, [paths, draft.path]);
 
+	const [suggestOpen, setSuggestOpen] = useState(false);
+	const [highlightedIndex, setHighlightedIndex] = useState(0);
+	// Reset the highlight when the visible suggestion list changes —
+	// otherwise arrow-navigating past the trimmed list points at
+	// nothing and Enter fires no-op.
+	useEffect(() => {
+		setHighlightedIndex(0);
+	}, [filteredSuggestions]);
+
+	const commitSuggestion = (path: string): void => {
+		onChange({ ...draft, path });
+		setSuggestOpen(false);
+	};
+
+	const showDropdown = suggestOpen && filteredSuggestions.length > 0;
+
 	const handlePathKeyDown = (e: ReactKeyboardEvent<HTMLInputElement>): void => {
-		if (e.key !== 'Tab' || e.shiftKey) return;
 		if (paths.length === 0) return;
-		const extended = nextPathCompletion(draft.path, paths);
-		if (extended == null) return; // Nothing to extend to — let Tab move focus.
-		e.preventDefault();
-		onChange({ ...draft, path: extended });
+		if (e.key === 'Escape') {
+			if (suggestOpen) {
+				e.preventDefault();
+				setSuggestOpen(false);
+			}
+			return;
+		}
+		if (e.key === 'ArrowDown' && showDropdown) {
+			e.preventDefault();
+			setHighlightedIndex((i) => (i + 1) % filteredSuggestions.length);
+			return;
+		}
+		if (e.key === 'ArrowUp' && showDropdown) {
+			e.preventDefault();
+			setHighlightedIndex(
+				(i) => (i - 1 + filteredSuggestions.length) % filteredSuggestions.length,
+			);
+			return;
+		}
+		if (e.key === 'Enter' && showDropdown) {
+			const pick = filteredSuggestions[highlightedIndex];
+			if (pick != null) {
+				e.preventDefault();
+				commitSuggestion(pick);
+			}
+			return;
+		}
+		if (e.key === 'Tab' && !e.shiftKey) {
+			const extended = nextPathCompletion(draft.path, paths);
+			if (extended == null) return; // Nothing to extend — let Tab move focus.
+			e.preventDefault();
+			onChange({ ...draft, path: extended });
+		}
 	};
 
 	return (
@@ -1421,27 +1613,69 @@ function RuleFormBody({
 				 * + placeholder colour tokens: without ``text-foreground`` the
 				 * value renders in the browser default (near-black on the
 				 * dark card background, i.e. invisible).
+				 *
+				 * The ``relative`` wrapper anchors the custom autocomplete
+				 * dropdown directly under the input so it doesn't shift the
+				 * form layout when it opens.
 				 */}
-				<input
-					type="text"
-					value={draft.path}
-					onChange={(e): void => onChange({ ...draft, path: e.target.value })}
-					onKeyDown={handlePathKeyDown}
-					placeholder="/repos"
-					list={paths.length > 0 ? datalistId : undefined}
-					// The browser's built-in autofill takes over once the user
-					// starts typing; Tab extends the input to the next path
-					// segment when there is one shared across matches.
-					autoComplete="off"
-					className="border-border bg-background text-foreground placeholder:text-input-placeholder flex-1 rounded-md border px-2 py-1 font-mono text-[11px]"
-				/>
-				{paths.length > 0 && (
-					<datalist id={datalistId}>
-						{filteredSuggestions.map((p) => (
-							<option key={p} value={p} />
-						))}
-					</datalist>
-				)}
+				<div className="relative flex-1">
+					<input
+						type="text"
+						value={draft.path}
+						onChange={(e): void => {
+							onChange({ ...draft, path: e.target.value });
+							setSuggestOpen(true);
+						}}
+						onKeyDown={handlePathKeyDown}
+						onFocus={(): void => setSuggestOpen(true)}
+						onBlur={(): void => {
+							// Small delay so a click on a suggestion has a
+							// chance to commit before the dropdown unmounts.
+							// ``onMouseDown`` on the option preventDefaults
+							// the blur too — this is belt-and-braces for
+							// keyboard-driven blur (Tab to next field).
+							setTimeout(() => setSuggestOpen(false), 100);
+						}}
+						placeholder="/repos"
+						autoComplete="off"
+						role="combobox"
+						aria-expanded={showDropdown}
+						aria-autocomplete="list"
+						aria-controls="rule-path-suggestions"
+						className="border-border bg-background text-foreground placeholder:text-input-placeholder w-full rounded-md border px-2 py-1 font-mono text-[11px]"
+					/>
+					{showDropdown && (
+						<ul
+							id="rule-path-suggestions"
+							role="listbox"
+							className="border-border bg-card shadow-pop absolute top-full right-0 left-0 z-20 mt-1 max-h-56 overflow-y-auto rounded-md border py-1"
+						>
+							{filteredSuggestions.map((p, i) => (
+								<li
+									key={p}
+									role="option"
+									aria-selected={i === highlightedIndex}
+									// ``onMouseDown`` (not click) with
+									// preventDefault keeps focus on the input
+									// so the ``onBlur`` above doesn't fire
+									// before ``commitSuggestion`` runs.
+									onMouseDown={(e): void => {
+										e.preventDefault();
+										commitSuggestion(p);
+									}}
+									onMouseEnter={(): void => setHighlightedIndex(i)}
+									className={`cursor-pointer px-2 py-1 font-mono text-[11px] ${
+										i === highlightedIndex
+											? 'bg-muted text-foreground'
+											: 'text-muted-foreground'
+									}`}
+								>
+									{p}
+								</li>
+							))}
+						</ul>
+					)}
+				</div>
 				<select
 					value={draft.matchMode}
 					onChange={(e): void =>
@@ -1540,38 +1774,24 @@ function AddRuleForm({
 }
 
 /**
- * Modal dialog for editing an existing rule. Opens with the rule
- * pre-populated; Save writes back to the owner's rule list at the same
- * index. Kept as a distinct component from {@link AddRuleForm} so the
- * two paths can't accidentally share transient state — but the field
- * rendering and validation come from the shared ``RuleFormBody`` +
- * ``validateDraft`` pair.
+ * Inline rule editor rendered in place of a row when the user clicks
+ * Edit — uses the exact same layout as {@link AddRuleForm}'s expanded
+ * body so the Add and Edit paths feel identical. Pre-populates from
+ * the target rule and writes back to the same list index on Save.
  */
-function EditRuleDialog({
-	open,
+function InlineEditRuleForm({
 	initial,
-	onClose,
 	onSave,
+	onCancel,
 	pathSuggestions,
 }: {
-	open: boolean;
-	// Undefined while the dialog is closed. Callers should keep the
-	// dialog mounted with ``open=false`` between edits so animations
-	// play; the effect below re-syncs the draft whenever a new rule
-	// arrives.
-	initial: PermissionRule | undefined;
-	onClose: () => void;
+	initial: PermissionRule;
 	onSave: (rule: PermissionRule) => void;
+	onCancel: () => void;
 	pathSuggestions?: readonly string[];
 }) {
-	const [draft, setDraft] = useState<RuleDraft>(EMPTY_RULE_DRAFT);
+	const [draft, setDraft] = useState<RuleDraft>(() => ruleDraftFromRule(initial));
 	const [error, setError] = useState<string | null>(null);
-
-	useEffect(() => {
-		if (!open || !initial) return;
-		setDraft(ruleDraftFromRule(initial));
-		setError(null);
-	}, [open, initial]);
 
 	const handleSave = (): void => {
 		const msg = validateDraft(draft);
@@ -1583,31 +1803,23 @@ function EditRuleDialog({
 	};
 
 	return (
-		<Dialog
-			open={open}
-			onClose={onClose}
-			title="Edit rule"
-			size="md"
-			footer={
-				<div className="flex items-center justify-end gap-2">
-					<Button type="button" variant="ghost" size="sm" onClick={onClose}>
-						Cancel
-					</Button>
-					<Button type="button" variant="primary" size="sm" onClick={handleSave}>
-						Save
-					</Button>
-				</div>
-			}
-		>
-			<div className="p-4">
-				<RuleFormBody
-					draft={draft}
-					onChange={setDraft}
-					error={error}
-					pathSuggestions={pathSuggestions}
-				/>
+		<div className="border-border bg-background rounded-lg border p-3">
+			<RuleFormBody
+				draft={draft}
+				onChange={setDraft}
+				error={error}
+				pathSuggestions={pathSuggestions}
+			/>
+
+			<div className="flex items-center justify-end gap-2 pt-2">
+				<Button type="button" variant="ghost" size="sm" onClick={onCancel}>
+					Cancel
+				</Button>
+				<Button type="button" variant="primary" size="sm" onClick={handleSave}>
+					Save
+				</Button>
 			</div>
-		</Dialog>
+		</div>
 	);
 }
 

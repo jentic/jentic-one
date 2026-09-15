@@ -406,11 +406,11 @@ describe('VendorConnectFlow — approve mode', () => {
 		expect(await screen.findByText(/\/issues\s*\(prefix\)/i)).toBeInTheDocument();
 	});
 
-	it('lets the user edit an existing rule via the edit dialog', async () => {
-		// Every user-authored row exposes a Pencil icon that opens a
-		// modal with the rule's current values pre-filled. Saving writes
-		// back to the same index in the rules list. Regression guard for
-		// the "edit any rule you created" promise on the rules page.
+	it('lets the user edit an existing rule inline', async () => {
+		// Every user-authored row exposes a Pencil icon that swaps the
+		// row in place for an inline editor pre-filled with the rule's
+		// current values — same UX shape as the Add form so both paths
+		// feel identical. Saving writes back to the same index.
 		const session: ReviewSession = {
 			session_id: 'sess_ed',
 			state: 'created',
@@ -461,7 +461,8 @@ describe('VendorConnectFlow — approve mode', () => {
 		expect(await screen.findByText(/\/repos\s*\(prefix\)/i)).toBeInTheDocument();
 		// Click Edit on the row.
 		await user.click(screen.getByRole('button', { name: /edit rule/i }));
-		// Dialog opens with the rule pre-filled — the path input carries `/repos`.
+		// Inline editor replaces the row with the rule pre-filled — the
+		// path input carries `/repos`.
 		const pathInput = await screen.findByDisplayValue('/repos');
 		// Edit the path.
 		await user.clear(pathInput);

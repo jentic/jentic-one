@@ -13,7 +13,7 @@ import {
 	getConnectSession,
 	getVendorAuthCapabilities,
 	listAgentsForPicker,
-	listVendorOperations,
+	listAllVendorOperations,
 	listVendors,
 	pollConnectSessionStatus,
 	startIntegrationConnect,
@@ -95,11 +95,15 @@ export function useConfirmConnectSession(sessionId: string) {
 }
 
 /**
- * Fetch operations for a vendor's imported OpenAPI. Polls every 2s while
- * ``data`` is ``null`` (import still queued — the client returns null on
- * 404) so the rules-page preview can render as soon as the import lands.
- * ``enabled`` gates the whole thing to when the caller actually needs it
- * (e.g. only on the rules phase).
+ * Fetch every operation for a vendor's imported OpenAPI. Follows
+ * ``next_cursor`` server-side pagination until the full list is loaded
+ * (via ``listAllVendorOperations``) so the rules-page preview,
+ * autocomplete, and grouper all see every operation — a single 50/200-
+ * op page would leave large vendors like GitHub with most of their
+ * surface hidden. Polls every 2s while ``data`` is ``null`` (import
+ * still queued — the client returns null on 404). ``enabled`` gates
+ * the whole thing to when the caller actually needs it (e.g. only on
+ * the rules phase).
  */
 export function useVendorOperations(
 	api: { vendor: string; name: string | null; version: string | null } | null | undefined,
@@ -113,9 +117,10 @@ export function useVendorOperations(
 			api?.vendor ?? '',
 			api?.name ?? '',
 			api?.version ?? '',
+			'all',
 		] as const,
 		queryFn: () =>
-			listVendorOperations(api!.vendor, api!.name as string, api!.version as string),
+			listAllVendorOperations(api!.vendor, api!.name as string, api!.version as string),
 		enabled: (opts.enabled ?? true) && ready,
 		// Poll while ``data`` is null (import still queued). Once ops land,
 		// stop polling.

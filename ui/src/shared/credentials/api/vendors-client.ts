@@ -178,22 +178,76 @@ export interface VendorOperationsPage {
 }
 
 /**
- * Fetch operations for a vendor's imported OpenAPI. Returns ``null`` when
- * the API isn't imported yet (404) — the rules-page preview surfaces that
- * as "operations still importing…" with a retry rather than throwing.
+ * Fetch a single page of operations for a vendor's imported OpenAPI.
+ * Returns ``null`` when the API isn't imported yet (404) — the rules-page
+ * preview surfaces that as "operations still importing…" rather than
+ * throwing. Callers that need the full list should use
+ * ``listAllVendorOperations`` which follows ``next_cursor`` until
+ * exhaustion; this single-page variant stays exported for tests + narrow
+ * consumers that only need the first page.
  */
 export async function listVendorOperations(
 	vendor: string,
 	name: string,
 	version: string,
+	opts: { cursor?: string | null; limit?: number } = {},
 ): Promise<VendorOperationsPage | null> {
-	const url = `/apis/${encodeURIComponent(vendor)}/${encodeURIComponent(name)}/${encodeURIComponent(version)}/operations`;
+	const params = new URLSearchParams();
+	if (opts.cursor) params.set('cursor', opts.cursor);
+	if (opts.limit != null) params.set('limit', String(opts.limit));
+	const qs = params.toString();
+	const url = `/apis/${encodeURIComponent(vendor)}/${encodeURIComponent(name)}/${encodeURIComponent(version)}/operations${qs ? `?${qs}` : ''}`;
 	try {
 		return await request<VendorOperationsPage>(url);
 	} catch (err) {
 		if (err instanceof IntegrationsApiError && err.status === 404) return null;
 		throw err;
 	}
+}
+
+/**
+ * Fetch every page of a vendor's operations by following ``next_cursor``
+ * until the server returns ``has_more: false``. The rules-page preview
+ * needs the complete op list — grouping / autocomplete / matcher all
+ * assume they're seeing every op — and vendors like GitHub can carry
+ * ~1000 ops which don't fit in a single 200-op page.
+ *
+ * Returns ``null`` (like the single-page variant) when the API hasn't
+ * imported yet; the SPA continues polling.
+ */
+export async function listAllVendorOperations(
+	vendor: string,
+	name: string,
+	version: string,
+): Promise<VendorOperationsPage | null> {
+	// Server caps ``limit`` at 200 (see ``list_api_operations``).
+	const PAGE_SIZE = 200;
+	// Belt-and-braces cap on total pages to keep a runaway cursor loop
+	// from hanging the SPA. 200 * 100 = 20000 ops, comfortably past any
+	// real vendor.
+	const MAX_PAGES = 100;
+	const collected: VendorOperation[] = [];
+	let cursor: string | null | undefined = null;
+	for (let i = 0; i < MAX_PAGES; i++) {
+		const page: VendorOperationsPage | null = await listVendorOperations(
+			vendor,
+			name,
+			version,
+			{
+				cursor,
+				limit: PAGE_SIZE,
+			},
+		);
+		if (page == null) return null;
+		collected.push(...page.data);
+		if (!page.has_more || !page.next_cursor) {
+			return { data: collected, has_more: false, next_cursor: null };
+		}
+		cursor = page.next_cursor;
+	}
+	// Fell off the safety cap — return what we have with ``has_more`` so
+	// callers know it's truncated (unlikely to matter in practice).
+	return { data: collected, has_more: true, next_cursor: cursor ?? null };
 }
 
 export function getVendorAuthCapabilities(vendorKey: string): Promise<VendorAuthCapabilities> {
