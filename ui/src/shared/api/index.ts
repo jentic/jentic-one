@@ -134,14 +134,8 @@ export type { CredentialRedactedResponse } from '@/shared/api/generated/models/C
 export type { ProviderDiscoveryResponse } from '@/shared/api/generated/models/ProviderDiscoveryResponse';
 export type { ProviderDiscoveryEntryResponse } from '@/shared/api/generated/models/ProviderDiscoveryEntryResponse';
 
-// Agent Rail — access-request decisions (`POST /access-requests/{id}:decide`).
-// The access-request router (tag "Access Requests") is now exposed as a
-// generated `AccessRequestsService` after the codegen retag. The rail's
-// access-request repository (`shared/lib/accessRequests`) still issues its calls
-// through the low-level request primitive the generated services use, kept
-// behind the facade so the Bearer-JWT `OpenAPI` config still applies; switching
-// it to `AccessRequestsService` is a safe follow-up. Append-only, like the rest.
-export { AccessRequestsService } from '@/shared/api/generated/services/AccessRequestsService';
+// Agent Rail — low-level request primitive the generated services use, kept
+// behind the facade so the Bearer-JWT `OpenAPI` config still applies.
 export { OpenAPI } from '@/shared/api/generated/core/OpenAPI';
 export { request as apiRequest } from '@/shared/api/generated/core/request';
 
@@ -200,7 +194,7 @@ export type { UsageTopRow } from '@/shared/api/generated/models/UsageTopRow';
 // `ActorsService.listActors`) hydrates the actor picker shared across the
 // Executions/Events/Audit tabs. Also consumed by the shared actor-directory
 // hook (`useActorDirectory`) + `<ActorLabel>` to resolve raw `actor_id` values
-// into human-readable names across access-request and agent surfaces.
+// into human-readable names across monitor and agent surfaces.
 // `ActorType` is exported as a *value* (not just a type) because `<ActorLabel>`
 // reads the enum members for its subtle type prefix. Append-only.
 export { ActorsService } from '@/shared/api/generated/services/ActorsService';

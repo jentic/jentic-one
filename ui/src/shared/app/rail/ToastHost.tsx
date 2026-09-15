@@ -137,14 +137,6 @@ export function ToastHost() {
 	}
 
 	function handleAction(toast: Toast, action: InlineActionSpec) {
-		// Decisions (deny) and the per-item "View" dialog don't belong in a 6s
-		// toast — route the operator into the record to decide deliberately.
-		if (action.decides || action.opensRequest) {
-			const target = primaryDestinationFor(toast);
-			if (target) navigate(target);
-			dismiss(toast.id);
-			return;
-		}
 		if (action.href && !action.acknowledges) {
 			const target = action.href(toast);
 			if (target) navigate(target);
@@ -211,14 +203,7 @@ function ToastCard({
 	}, []);
 
 	const headline = KIND_LABEL[toast.kind];
-	// In the toast, collapse the access-request actions (View / Deny) into a
-	// single "Review" affordance — the actual decision is made in the rail row's
-	// dialog (a 6s toast is the wrong place to type a denial reason).
-	const rawActions = inlineActionsFor(toast);
-	const hasDecision = rawActions.some((a) => a.decides || a.opensRequest);
-	const actions: InlineActionSpec[] = hasDecision
-		? [{ kind: 'view_request', label: 'Review', opensRequest: true }]
-		: rawActions;
+	const actions = inlineActionsFor(toast);
 	const critical = toast.severity === 'critical' || toast.severity === 'error';
 	// Burst coalescing: only the first failure inside the window interrupts.
 	const assertive = critical && toast.assertive;

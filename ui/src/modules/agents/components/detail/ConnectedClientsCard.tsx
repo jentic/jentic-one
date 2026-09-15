@@ -14,8 +14,8 @@
  * write-set admin) is deliberately NARROWER than the list predicate (agent's
  * current owner or read-set admin), so a viewer who can
  * see a grant may not be able to revoke it; the button disables with an
- * explanatory tooltip instead of offering a 403. A status filter mirrors the
- * access-requests card so revoked history is reachable on demand, and the
+ * explanatory tooltip instead of offering a 403. A status filter keeps
+ * revoked history reachable on demand, and the
  * list pages through `next_cursor` behind "Load more" like the roster.
  *
  * Listing is owner-or-admin on the backend; a 403 renders as an honest quiet

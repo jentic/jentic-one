@@ -56,7 +56,6 @@ import {
 	listAgentBindingPermissions,
 	replaceAgentBindingPermissions,
 	testAgentBindingPermissions,
-	fetchActorAccessRequests,
 	fetchActorsUsage,
 	fetchActorUsageDetail,
 	fetchActorExecutions,
@@ -91,7 +90,6 @@ import type {
 	PermissionRuleInput,
 	ServiceAccountEntity,
 } from '@/modules/agents/api/types';
-import type { AccessRequest } from '@/shared/lib';
 import { sharedQueryKeys } from '@/shared/api';
 import { credentialKeys } from '@/shared/credentials/api';
 
@@ -134,23 +132,6 @@ const serviceAccountKeys = {
  * registry. The `agents` root already owns the `permissions` namespace here.
  */
 const permissionsKey = [...agentsKeys.all, 'permissions'] as const;
-
-/**
- * Access requests filed BY an actor (#619), keyed by the actor's id + status.
- * `actor_id` is globally unique across agents and service accounts, so one key
- * factory serves both detail pages.
- */
-export const actorAccessRequestsKey = (actorId: string, status: string) =>
-	['access-requests', 'by-actor', actorId, status] as const;
-
-/**
- * Prefix key covering EVERY status slice for one actor. A decision moves a
- * request between the pending / approved / denied / all views, so invalidating
- * this root refreshes them all in one call — and keeps the key shape owned here
- * (the single source of truth) rather than hand-written at the call site.
- */
-export const actorAccessRequestsRootKey = (actorId: string) =>
-	['access-requests', 'by-actor', actorId] as const;
 
 /**
  * OAuth consent grants binding clients to one agent, keyed by
@@ -535,7 +516,7 @@ export function useUpdateAgent() {
 			qc.invalidateQueries({ queryKey: agentsKeys.lists() });
 			qc.invalidateQueries({ queryKey: sharedQueryKeys.dashboardRoot });
 			// A rename changes what every `ActorLabel` renders — monitor rows,
-			// audit trails, access requests, and the "Registered by / Approved
+			// audit trails, and the "Registered by / Approved
 			// by" grid on this very page all resolve names through the actor
 			// directory (5-min staleTime, no focus refetch). Invalidate it so the
 			// new name shows up immediately instead of after the staleTime.
@@ -807,22 +788,6 @@ export function useActorExecutions(actorId: string | null) {
 		enabled: actorId != null,
 		staleTime: 30 * 1000,
 		retry: false,
-	});
-}
-
-/**
- * Access requests filed by a single actor (`GET /access-requests?actor_id=…`),
- * defaulting to the still-pending queue (#619). Works for both agents and
- * service accounts — the backend keys requests by `actor_id`, which is the
- * actor's own id. Pass `status: null` to fetch every status (the "All" filter).
- * `enabled` only when an id is present so the detail page's loading/not-found
- * states aren't disturbed.
- */
-export function useActorAccessRequests(actorId: string | null, status: string | null = 'pending') {
-	return useQuery<AccessRequest[]>({
-		queryKey: actorAccessRequestsKey(actorId ?? '', status ?? 'all'),
-		queryFn: () => fetchActorAccessRequests(actorId as string, status),
-		enabled: actorId != null,
 	});
 }
 

@@ -60,15 +60,6 @@ describe('ServiceAccountDetailPage', () => {
 		expect(within(list).getByText('credentials:read')).toBeInTheDocument();
 	});
 
-	it('shows an empty pending-access-requests card when none are filed (#619)', async () => {
-		const user = userEvent.setup();
-		renderDetail('sva_active_1');
-		await screen.findByRole('heading', { name: 'metrics-exporter' });
-		await user.click(screen.getByRole('tab', { name: 'Access' }));
-		expect(await screen.findByRole('heading', { name: 'Access requests' })).toBeInTheDocument();
-		expect(await screen.findByText('No pending access requests')).toBeInTheDocument();
-	});
-
 	it('renders a not-found surface for an unknown id', async () => {
 		renderDetail('sva_does_not_exist');
 		expect(await screen.findByText('Service account not found')).toBeInTheDocument();

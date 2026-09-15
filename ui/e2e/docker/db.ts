@@ -4,17 +4,13 @@ import { Client } from 'pg';
  * Direct Postgres access for the one real-backend seam with NO public API:
  * assigning an agent's `owner_id`.
  *
- * Why this exists: approving an access request is gated by the backend
- * (`control/services/access_requests/service.py::_compute_evaluation`) on two
- * rules — the reviewer must NOT be the filer (`not_filer`) AND must own the
- * filing agent (`owns_filer`: reviewer.sub == request.filer_owner_id, where
- * filer_owner_id resolves to the agent's `owner_id`). A DCR-registered agent is
- * created with `owner_id = NULL` (admin/repos/agent_repo.py::create_dcr) and
- * there is no endpoint that sets it, so an admin can never satisfy `owns_filer`
- * for an agent-filed request through the public API alone. To exercise the REAL
- * happy-path approve (admin :decide → approved), we set the agent's owner to the
- * admin directly. Everything else in the flow — register, :approve, jwt-bearer
- * mint, file, :decide — is real and public.
+ * Why this exists: several backend rules are gated on the reviewer OWNING the
+ * acting agent (reviewer.sub == the agent's `owner_id`). A DCR-registered
+ * agent is created with `owner_id = NULL` (admin/repos/agent_repo.py::create_dcr)
+ * and there is no endpoint that sets it, so an admin can never satisfy those
+ * ownership rules through the public API alone. To exercise the REAL
+ * happy paths, we set the agent's owner to the admin directly. Everything else
+ * in the flow — register, :approve, jwt-bearer mint — is real and public.
  *
  * Portability: the DSN is env-driven. Defaults to the superuser the CI fixtures
  * (`make start-fixtures`) expose on :5432; locally point it at the isolated
