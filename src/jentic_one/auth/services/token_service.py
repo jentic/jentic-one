@@ -561,10 +561,9 @@ class TokenService:
         For long-lived agent and service-account tokens (an access+refresh pair,
         ``is_ephemeral=False``), scopes are resolved *live* from the actor's
         current ``ActorScopeGrant`` rows rather than the frozen snapshot stored
-        on the token. This makes scope edits (grant/revoke, replace, approved
-        ``scope:grant`` access requests) take effect immediately without forcing
-        a re-mint — the token row's ``scopes`` column is only a mint-time
-        snapshot.
+        on the token. This makes scope edits (grant/revoke, replace) take
+        effect immediately without forcing a re-mint — the token row's
+        ``scopes`` column is only a mint-time snapshot.
 
         Ephemeral minted tokens (``mint_task_token`` → ``issue_access_only``,
         ``is_ephemeral=True``) keep their frozen snapshot: their scopes are a
