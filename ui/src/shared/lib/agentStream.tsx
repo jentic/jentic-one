@@ -133,7 +133,7 @@ export const RAIL_COLLAPSE_CHANGE_EVENT = 'j1:rail-collapse-change';
 const KNOWN_KINDS = new Set<StreamKind>(['import', 'execution', 'credential', 'agent', 'catalog']);
 
 /**
- * RETIRED event-type namespaces (theme 7, epic jentic/jentic-one#1372). The
+ * RETIRED event-type namespaces (theme 7, epic jentic/jentic-one#1374). The
  * backend no longer grows these, but HISTORICAL rows can still arrive on a
  * backlog page or a reconnect-overlap redelivery. The rail TOLERATES them —
  * they're silently dropped at ingestion (never rendered, never toasted) so an
