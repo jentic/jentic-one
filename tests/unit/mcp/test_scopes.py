@@ -5,8 +5,8 @@ REST route it fronts declares, through the same ``compute_effective``
 expansion + ``org:admin`` bypass ``get_current_identity`` applies. A scope
 failure maps exactly like the Go client's wire 403 (``mcpCoded``):
 NOT_AUTHENTICATED with the get_started pointer — except ``search_catalog``,
-whose 403 is a missing-scope fact the agent can fix itself (BROKER_DENIED +
-request_access, the Go special case).
+whose 403 is a missing-scope fact routed to the operator (BROKER_DENIED with
+an ask-your-operator step, the Go special case).
 """
 
 from __future__ import annotations
@@ -105,19 +105,20 @@ async def test_scope_failure_renders_not_authenticated(
     assert "whoami" in payload["actionable_step"]
 
 
-async def test_search_catalog_scope_failure_is_the_agent_fixable_special_case() -> None:
-    """GET /catalog → capabilities:read; unlike the others the agent can mint
-    this scope itself, so the mapping is BROKER_DENIED + request_access. The
-    wire error rides as the message tail (Go's ``: %v`` — mcp_access.go)."""
+async def test_search_catalog_scope_failure_is_the_operator_grant_special_case() -> None:
+    """GET /catalog → capabilities:read; unlike the others this is an access
+    gap the operator closes with a dashboard grant, so the mapping is
+    BROKER_DENIED with an ask-your-operator step and no tool pointer. The
+    wire error rides as the message tail (Go's ``: %v`` — mcp_catalog.go)."""
     result = await dispatch_tool_call(_env([]), "search_catalog", {"query": "pets"})
     assert result.is_error
     payload = _payload(result)
     assert payload["error_code"] == "BROKER_DENIED"
-    # request_access is served on this lane since PR B, so #1254's lane filter
-    # lets the pointer ride; the actionable prose names it too (shared
-    # contract spelling).
-    assert payload["next_tool"] == "request_access"
-    assert "request_access" in payload["actionable_step"]
+    # Access requests are retired: the scope grant is an operator action, not
+    # a tool call, so no next_tool pointer rides.
+    assert "next_tool" not in payload
+    assert "operator" in payload["actionable_step"]
+    assert "capabilities:read" in payload["actionable_step"]
     assert "capabilities:read" in payload["error"]
     prefix, _, tail = payload["error"].partition("scope: ")
     assert prefix == "reading the catalog requires the capabilities:read "

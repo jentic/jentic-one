@@ -2,14 +2,14 @@
 
 The HTTP mount serves the :data:`jentic_one.mcp.spec.SERVED_TOOLS` subset of
 the pinned surface, but the coded soft errors carry the stdio lane's shared
-pointer spellings (``get_started``, ``request_access``, …). A pointer at a
+pointer spellings (``get_started``, …). A pointer at a
 tool absent from this lane's ``tools/list`` is an unactionable dead end, so
 :func:`soft_error_result` — the one seam every soft error renders through —
 must drop any ``next_tool`` that does not resolve in ``SERVED_TOOLS``.
 
 These tests pin that projection for every pointer the pinned spec knows
 about, so serving (or unserving) a tool consciously changes which envelopes
-carry pointers. The stdio lane is untouched: the Go server serves all ten
+carry pointers. The stdio lane is untouched: the Go server serves all nine
 tools, and its envelope bytes stay pinned by ``mcp_golden_test.go``.
 """
 
