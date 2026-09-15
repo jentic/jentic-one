@@ -17,7 +17,7 @@ export const dashboardIndexRoute: RouteObject = { index: true, element: <Dashboa
 
 /**
  * Dashboard's non-index child routes. `/app/access-requests` (the retired
- * access-request queue — theme 7, epic jentic/jentic-one#1372) redirects to
+ * access-request queue — theme 7, epic jentic/jentic-one#1374) redirects to
  * the dashboard so stale bookmarks and old `approve_url` deep links land
  * somewhere useful instead of a 404.
  */
