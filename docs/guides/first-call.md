@@ -77,29 +77,21 @@ covers an API and how the broker picks one at execution time:
 ## 5. Grant access
 
 Access is **default-deny**: an approved agent is bound to nothing until an
-operator grants it. Asking is a reviewable request, not a silent widening. A
-freshly imported API has no **credential** stored for it yet, so ask for the
-whole path to first execution — provision a credential *and* bind this agent
-to it — as one provisioning plan:
+operator grants it. The grant is an operator action in the dashboard. A
+freshly imported API has no **credential** stored for it yet, so the operator
+performs the whole path to first execution — connect/provision a credential
+*and* bind this agent to it:
 
-```bash
-jentic access request --provision httpbin.org/httpbin --auth none   # returns a request id (and an approve_url)
-jentic access status <request-id>                                   # has it been granted?
-```
+1. In the console (`/app`), the operator provisions a credential for
+   `httpbin.org/httpbin` (auth type `none` — httpbin takes no credential).
+2. They bind this agent to that credential, with the permission rules the
+   call needs.
 
-A note on the hand-off: the operator approves in the dashboard at
-**`<app URL>/app/access-requests`** — send them there with the request id.
-Don't hand them the `approve_url` value itself: it is built from
-`control.access_requests.canonical_base_url`, which defaults to empty (no
-install guide sets it), and the path it forms is the authenticated JSON API
-route, not a browser page.
-
-`--auth none` declares that httpbin takes no credential. For an authenticated
-API, declare its type instead (`bearer`, `api_key`, `basic`, `oauth2`) — the
-operator enters the secret while approving; it never rides in your request.
-Once a credential already serves an API,
-`jentic access request --api httpbin.org/httpbin` asks for just the
-binding.
+For an authenticated API, the operator declares its type instead (`bearer`,
+`api_key`, `basic`, `oauth2`) and enters the secret while provisioning; the
+agent never sees it. Once a credential already serves an API, the grant is
+just the binding — no new credential needed. Re-check what you can call with
+`jentic api GET /me`.
 
 ## 6. Make the call
 
