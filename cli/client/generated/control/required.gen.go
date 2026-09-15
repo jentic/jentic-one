@@ -9,19 +9,9 @@ package control
 // it — `api describe`'s required_fields come from the runtime spec parse
 // (internal/cli/apispec), so this surface has no in-tree caller by design.
 
-func (APIReference) RequiredFields() []string             { return []string{"name", "vendor", "version"} }
-func (APIReferenceRequest) RequiredFields() []string      { return []string{"vendor"} }
-func (AccessRequestFileRequest) RequiredFields() []string { return []string{"items"} }
-func (AccessRequestItemRequest) RequiredFields() []string { return []string{"action", "resource_type"} }
-func (AccessRequestItemResponse) RequiredFields() []string {
-	return []string{"action", "id", "resource_type", "status"}
-}
-func (AccessRequestListResponse) RequiredFields() []string  { return []string{"data", "has_more"} }
-func (AccessRequestOwnerResponse) RequiredFields() []string { return []string{"email", "id"} }
-func (AccessRequestResponse) RequiredFields() []string {
-	return []string{"actor_id", "approve_url", "created_by", "expires_at", "filed_at", "id", "items", "requested_by", "status"}
-}
-func (ActorListResponse) RequiredFields() []string { return []string{"data", "has_more"} }
+func (APIReference) RequiredFields() []string        { return []string{"name", "vendor", "version"} }
+func (APIReferenceRequest) RequiredFields() []string { return []string{"vendor"} }
+func (ActorListResponse) RequiredFields() []string   { return []string{"data", "has_more"} }
 func (ActorSummaryResponse) RequiredFields() []string {
 	return []string{"active", "actor_type", "created_at", "id", "name"}
 }
@@ -32,8 +22,6 @@ func (AgentResponse) RequiredFields() []string {
 }
 func (AgentScopesRequest) RequiredFields() []string     { return []string{"scopes"} }
 func (AgentScopesResponse) RequiredFields() []string    { return []string{"scopes"} }
-func (AmendItemSchema) RequiredFields() []string        { return []string{"item_id"} }
-func (AmendRequest) RequiredFields() []string           { return []string{"items"} }
 func (ApiImportLinksResponse) RequiredFields() []string { return []string{"self"} }
 func (ApiImportRequest) RequiredFields() []string       { return []string{"sources"} }
 func (ApiImportResponse) RequiredFields() []string      { return []string{"_links", "job_id", "status"} }
@@ -108,15 +96,8 @@ func (CurrentUserResponse) RequiredFields() []string {
 func (DailyExecutionBucket) RequiredFields() []string {
 	return []string{"date", "failed", "success", "total"}
 }
-func (DecideItemSchema) RequiredFields() []string { return []string{"decision", "item_id"} }
-func (DecideRequest) RequiredFields() []string    { return []string{"items"} }
-func (DuplicatePendingProblem) RequiredFields() []string {
-	return []string{"approve_url", "detail", "existing_request_id"}
-}
 func (EffectivePermission) RequiredFields() []string     { return []string{"name"} }
 func (ErrorItem) RequiredFields() []string               { return []string{"detail"} }
-func (EvaluationCheckResponse) RequiredFields() []string { return []string{"check", "passed"} }
-func (EvaluationResponse) RequiredFields() []string      { return []string{"can_fulfill", "checks"} }
 func (EventAcknowledgeRequest) RequiredFields() []string { return []string{"acknowledged"} }
 func (EventLinks) RequiredFields() []string              { return []string{"self"} }
 func (EventListResponse) RequiredFields() []string       { return []string{"data", "has_more"} }
@@ -220,6 +201,7 @@ func (PermissionResponse) RequiredFields() []string {
 }
 func (PermissionRuleListResponse) RequiredFields() []string { return []string{"data"} }
 func (PermissionRuleReadSchema) RequiredFields() []string   { return []string{"effect"} }
+func (PermissionRuleSchema) RequiredFields() []string       { return []string{"effect"} }
 func (PermissionTestRequest) RequiredFields() []string      { return []string{"method", "path"} }
 func (PermissionTestResponse) RequiredFields() []string     { return []string{"allowed", "matched"} }
 func (Permissions) RequiredFields() []string                { return []string{"assigned", "effective"} }

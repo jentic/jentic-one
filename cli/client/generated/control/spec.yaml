@@ -45,293 +45,6 @@ components:
       - vendor
       title: APIReferenceRequest
       type: object
-    AccessRequestFileRequest:
-      description: Request body for filing an access request.
-      properties:
-        items:
-          items:
-            $ref: '#/components/schemas/AccessRequestItemRequest'
-          minItems: 1
-          title: Items
-          type: array
-        reason:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Reason
-      required:
-      - items
-      title: AccessRequestFileRequest
-      type: object
-    AccessRequestItemRequest:
-      description: |-
-        A single line-item in a file request.
-
-        **Permission rules:** Rules control which upstream API operations the broker
-        allows through a direct agent↔credential binding. They are enforced per
-        (agent, credential) pair, so they can only be attached to credential:bind
-        items — not scope:grant. Include them (or a shared ``rule_set_id``)
-        directly on the credential:bind item when filing the access request, and
-        the approver's decision persists them on the binding.
-      properties:
-        action:
-          enum:
-          - bind
-          - grant
-          - provision
-          title: Action
-          type: string
-        resource_id:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Resource Id
-        resource_reference:
-          anyOf:
-          - additionalProperties: true
-            type: object
-          - type: 'null'
-          title: Resource Reference
-        resource_type:
-          enum:
-          - credential
-          - scope
-          title: Resource Type
-          type: string
-        rule_set_id:
-          anyOf:
-          - type: string
-          - type: 'null'
-          description: Shared permission rule set for the binding (credential:bind only), as an alternative to inline rules. While attached, the set's ordered list is the binding's effective policy.
-          title: Rule Set Id
-        rules:
-          anyOf:
-          - items:
-              $ref: '#/components/schemas/jentic_one__control__web__schemas__access_requests__PermissionRuleSchema'
-            type: array
-          - type: 'null'
-          description: 'Permission rules for the binding (credential:bind only). Rules are evaluated first-match-wins by the broker; if no rule matches, the request is denied. Example: [{"effect": "allow", "path": ".*"}].'
-          title: Rules
-      required:
-      - resource_type
-      - action
-      title: AccessRequestItemRequest
-      type: object
-    AccessRequestItemResponse:
-      description: Response model for a single access-request line item.
-      properties:
-        action:
-          title: Action
-          type: string
-        already_satisfied:
-          anyOf:
-          - type: boolean
-          - type: 'null'
-          description: Whether this item's outcome is already in effect (the binding or grant it asks for already exists), letting a reviewer approve manually-fulfilled work instead of re-doing it in the wizard. Populated on single-request GETs for pending credential:bind and scope:grant items; null when not computed (list endpoints, decided items, fulfilment-only intents, an item whose target cannot be determined, an ambiguous credential reference — which approval would refuse as filed — or a credential:bind whose credential is not visible to the caller). API REFERENCES are resolved under the caller's visibility, mirroring decide-time resolution, so False can also mean 'satisfied by a credential this caller cannot see'; explicit-id targets are probed directly.
-          title: Already Satisfied
-        already_satisfied_by:
-          anyOf:
-          - type: string
-          - type: 'null'
-          description: For a satisfied credential:bind, the id of the credential the agent is already bound to — names the exact object so consumers can point the operator at it. Null for other item types and whenever already_satisfied is not true.
-          title: Already Satisfied By
-        applied_effects:
-          anyOf:
-          - additionalProperties: true
-            type: object
-          - type: 'null'
-          title: Applied Effects
-        credential_name:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Credential Name
-        decided_at:
-          anyOf:
-          - format: date-time
-            type: string
-          - type: 'null'
-          title: Decided At
-        decided_by:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Decided By
-        decision_reason:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Decision Reason
-        id:
-          title: Id
-          type: string
-        resource_id:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Resource Id
-        resource_reference:
-          anyOf:
-          - additionalProperties: true
-            type: object
-          - type: 'null'
-          title: Resource Reference
-        resource_type:
-          title: Resource Type
-          type: string
-        rule_set_id:
-          anyOf:
-          - type: string
-          - type: 'null'
-          description: Shared permission rule set attached to a credential:bind item, as an alternative policy carrier to inline rules.
-          title: Rule Set Id
-        rules:
-          anyOf:
-          - items:
-              additionalProperties: true
-              type: object
-            type: array
-          - type: 'null'
-          title: Rules
-        status:
-          title: Status
-          type: string
-        to_id:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: To Id
-        to_type:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: To Type
-        toolkit_name:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Toolkit Name
-      required:
-      - id
-      - resource_type
-      - action
-      - status
-      title: AccessRequestItemResponse
-      type: object
-    AccessRequestListResponse:
-      description: Paginated list of access requests.
-      properties:
-        data:
-          items:
-            $ref: '#/components/schemas/AccessRequestResponse'
-          title: Data
-          type: array
-        has_more:
-          title: Has More
-          type: boolean
-        next_cursor:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Next Cursor
-      required:
-      - data
-      - has_more
-      title: AccessRequestListResponse
-      type: object
-    AccessRequestOwnerResponse:
-      description: |-
-        Display info for the filer's human owner (labelling only, not authorization).
-
-        Server-resolved from ``filer_owner_id`` (falling back to ``created_by``
-        when the former is null, mirroring what consumers render) so they don't
-        need ``users:read`` (or a roster fetch) just to label a row. Absent when
-        the id doesn't resolve to a user (service-account filers, purged rows) or
-        on mutation responses, which skip the enrichment.
-      properties:
-        display_name:
-          anyOf:
-          - type: string
-          - type: 'null'
-          description: The owner's full name, when set on the profile.
-          title: Display Name
-        email:
-          description: The owner's email address.
-          title: Email
-          type: string
-        id:
-          description: The resolved owner's user id (filer_owner_id, or created_by when null).
-          title: Id
-          type: string
-      required:
-      - id
-      - email
-      title: AccessRequestOwnerResponse
-      type: object
-    AccessRequestResponse:
-      description: Response model for an access request envelope.
-      properties:
-        actor_id:
-          title: Actor Id
-          type: string
-        approve_url:
-          title: Approve Url
-          type: string
-        created_by:
-          title: Created By
-          type: string
-        evaluation:
-          anyOf:
-          - $ref: '#/components/schemas/EvaluationResponse'
-          - type: 'null'
-        expires_at:
-          format: date-time
-          title: Expires At
-          type: string
-        filed_at:
-          format: date-time
-          title: Filed At
-          type: string
-        filer_owner:
-          anyOf:
-          - $ref: '#/components/schemas/AccessRequestOwnerResponse'
-          - type: 'null'
-        filer_owner_id:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Filer Owner Id
-        id:
-          title: Id
-          type: string
-        items:
-          items:
-            $ref: '#/components/schemas/AccessRequestItemResponse'
-          title: Items
-          type: array
-        reason:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Reason
-        requested_by:
-          title: Requested By
-          type: string
-        status:
-          title: Status
-          type: string
-      required:
-      - id
-      - actor_id
-      - requested_by
-      - status
-      - approve_url
-      - filed_at
-      - expires_at
-      - created_by
-      - items
-      title: AccessRequestResponse
-      type: object
     ActorListResponse:
       description: Paginated list of actors.
       properties:
@@ -564,46 +277,6 @@ components:
       required:
       - scopes
       title: AgentScopesResponse
-      type: object
-    AmendItemSchema:
-      description: A single item amendment.
-      properties:
-        item_id:
-          title: Item Id
-          type: string
-        resource_id:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Resource Id
-        rule_set_id:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Rule Set Id
-        rules:
-          anyOf:
-          - items:
-              $ref: '#/components/schemas/jentic_one__control__web__schemas__access_requests__PermissionRuleSchema'
-            type: array
-          - type: 'null'
-          title: Rules
-      required:
-      - item_id
-      title: AmendItemSchema
-      type: object
-    AmendRequest:
-      description: Request body for the :amend verb.
-      properties:
-        items:
-          items:
-            $ref: '#/components/schemas/AmendItemSchema'
-          minItems: 1
-          title: Items
-          type: array
-      required:
-      - items
-      title: AmendRequest
       type: object
     ApiImportLinksResponse:
       description: Hypermedia links for an import response.
@@ -2158,142 +1831,6 @@ components:
       - failed
       title: DailyExecutionBucket
       type: object
-    DecideItemSchema:
-      description: A single item decision.
-      properties:
-        decision:
-          enum:
-          - approved
-          - denied
-          title: Decision
-          type: string
-        decision_reason:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Decision Reason
-        item_id:
-          title: Item Id
-          type: string
-      required:
-      - item_id
-      - decision
-      title: DecideItemSchema
-      type: object
-    DecideRequest:
-      description: Request body for the :decide verb.
-      properties:
-        items:
-          items:
-            $ref: '#/components/schemas/DecideItemSchema'
-          minItems: 1
-          title: Items
-          type: array
-      required:
-      - items
-      title: DecideRequest
-      type: object
-    DuplicatePendingProblem:
-      description: |-
-        RFC 9457 Problem Details for a 409 on ``POST /access-requests``.
-
-        Filing a request whose target already has a pending request is refused with
-        a 409 whose body carries two extension members on top of the standard
-        Problem Details shape, so a client can attach to the existing request rather
-        than re-file. These are emitted at runtime by the access-request error hook
-        (``control/web/errors.py``); this model documents them in the OpenAPI spec so
-        the generated SDK exposes a typed 409
-        (``FileAccessRequestHTTPResp.ApplicationproblemJSON409``) instead of forcing
-        callers to parse the raw body (ARCH-21 Step 0).
-      examples:
-      - detail: The request body is missing one or more required fields.
-        errors:
-        - detail: Field 'name' is required.
-          pointer: '#/name'
-        instance: /v2/capability-sets
-        status: 400
-        title: Bad Request
-        type: about:blank
-      properties:
-        approve_url:
-          description: Console URL to review/approve the existing pending request.
-          examples:
-          - https://app.jentic.com/access-requests/acr_01HXXY...
-          title: Approve Url
-          type: string
-        code:
-          anyOf:
-          - maxLength: 50
-            type: string
-          - type: 'null'
-          description: An optional provider-specific code for internal error taxonomy and observability correlation.
-          examples:
-          - JENTIC-4001
-          title: Code
-        detail:
-          description: A human-readable explanation specific to this occurrence of the problem. MUST be present. Provide actionable information where possible.
-          examples:
-          - The request body is missing required field 'name'.
-          maxLength: 4096
-          title: Detail
-          type: string
-        errors:
-          anyOf:
-          - items:
-              $ref: '#/components/schemas/ErrorItem'
-            maxItems: 1000
-            type: array
-          - type: 'null'
-          description: An array of granular error details. Use when multiple validation errors or field-level problems need to be surfaced in a single response.
-          title: Errors
-        existing_request_id:
-          description: The id of the pending access request that already covers the conflicting target.
-          examples:
-          - acr_01HXXY...
-          title: Existing Request Id
-          type: string
-        instance:
-          anyOf:
-          - maxLength: 1024
-            type: string
-          - type: 'null'
-          description: A URI reference identifying the specific occurrence of the problem. Typically the request path.
-          examples:
-          - /v2/capability-sets
-          title: Instance
-        status:
-          anyOf:
-          - maximum: 599.0
-            minimum: 100.0
-            type: integer
-          - type: 'null'
-          description: The HTTP status code for this occurrence of the problem.
-          examples:
-          - 400
-          title: Status
-        title:
-          anyOf:
-          - maxLength: 1024
-            type: string
-          - type: 'null'
-          description: A short, human-readable summary of the problem type. Should not change between occurrences except for localisation purposes.
-          examples:
-          - Bad Request
-          title: Title
-        type:
-          default: about:blank
-          description: A URI reference identifying the problem type. When set to 'about:blank', the title SHOULD be the standard HTTP status phrase. Use an IANA-registered type URI where one applies.
-          examples:
-          - about:blank
-          maxLength: 1024
-          title: Type
-          type: string
-      required:
-      - detail
-      - existing_request_id
-      - approve_url
-      title: DuplicatePendingProblem
-      type: object
     EffectivePermission:
       description: A single effective permission with provenance.
       properties:
@@ -2361,41 +1898,6 @@ components:
       required:
       - detail
       title: ErrorItem
-      type: object
-    EvaluationCheckResponse:
-      description: A single evaluation check result.
-      properties:
-        blocker:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Blocker
-        check:
-          title: Check
-          type: string
-        passed:
-          title: Passed
-          type: boolean
-      required:
-      - check
-      - passed
-      title: EvaluationCheckResponse
-      type: object
-    EvaluationResponse:
-      description: Computed evaluation of whether the caller can fulfill a request.
-      properties:
-        can_fulfill:
-          title: Can Fulfill
-          type: boolean
-        checks:
-          items:
-            $ref: '#/components/schemas/EvaluationCheckResponse'
-          title: Checks
-          type: array
-      required:
-      - can_fulfill
-      - checks
-      title: EvaluationResponse
       type: object
     EventAcknowledgeRequest:
       description: Request body for acknowledging an event.
@@ -4787,6 +4289,57 @@ components:
       - effect
       title: PermissionRuleReadSchema
       type: object
+    PermissionRuleSchema:
+      additionalProperties: false
+      description: |-
+        Permission rule for an agent↔credential binding.
+
+        Rules are evaluated first-match-wins. If no rule matches, the request is
+        denied (default-deny). A binding with zero rules therefore blocks all
+        operations — users must explicitly add at least one allow rule.
+      properties:
+        effect:
+          description: Whether this rule allows or denies the matched request.
+          enum:
+          - allow
+          - deny
+          title: Effect
+          type: string
+        match_mode:
+          default: regex
+          description: 'How `path` is interpreted: `regex` (full-match), `prefix` (string prefix), or `exact` (equality). Defaults to `regex` for backwards compatibility.'
+          enum:
+          - regex
+          - prefix
+          - exact
+          title: Match Mode
+          type: string
+        methods:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          description: HTTP methods to match (case-insensitive). None matches all.
+          title: Methods
+        operations:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          description: OpenAPI operation IDs to match. None matches all operations.
+          title: Operations
+        path:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: 'Path pattern to match. Interpreted per `match_mode`: `regex` uses full-match semantics (the pattern must describe the whole path); `prefix` and `exact` are literal. None matches all paths.'
+          title: Path
+      required:
+      - effect
+      title: PermissionRuleSchema
+      type: object
     PermissionTestRequest:
       additionalProperties: false
       description: Request body for :test — dry-run a request shape against the binding's rules.
@@ -4874,7 +4427,7 @@ components:
         add:
           anyOf:
           - items:
-              $ref: '#/components/schemas/jentic_one__control__web__schemas__permission_rules__PermissionRuleSchema'
+              $ref: '#/components/schemas/PermissionRuleSchema'
             type: array
           - type: 'null'
           title: Add
@@ -5405,7 +4958,7 @@ components:
         rules:
           description: Initial ordered rule list (first-match-wins, default-deny).
           items:
-            $ref: '#/components/schemas/jentic_one__control__web__schemas__permission_rules__PermissionRuleSchema'
+            $ref: '#/components/schemas/PermissionRuleSchema'
           maxItems: 100
           title: Rules
           type: array
@@ -6441,103 +5994,6 @@ components:
       - reason
       title: DenyRequest
       type: object
-    jentic_one__control__web__schemas__access_requests__PermissionRuleSchema:
-      additionalProperties: false
-      description: Permission rule for an access request item.
-      properties:
-        effect:
-          enum:
-          - allow
-          - deny
-          - require-approval
-          title: Effect
-          type: string
-        match_mode:
-          default: regex
-          description: 'How `path` is interpreted: `regex` (full-match), `prefix` (string prefix), or `exact` (equality). Defaults to `regex` for backwards compatibility.'
-          enum:
-          - regex
-          - prefix
-          - exact
-          title: Match Mode
-          type: string
-        methods:
-          anyOf:
-          - items:
-              type: string
-            type: array
-          - type: 'null'
-          description: HTTP methods to match (case-insensitive). None matches all.
-          title: Methods
-        operations:
-          anyOf:
-          - items:
-              type: string
-            type: array
-          - type: 'null'
-          description: OpenAPI operation IDs to match. None matches all operations.
-          title: Operations
-        path:
-          anyOf:
-          - type: string
-          - type: 'null'
-          description: 'Path pattern to match. Interpreted per `match_mode`: `regex` uses full-match semantics (the pattern must describe the whole path); `prefix` and `exact` are literal. None matches all paths.'
-          title: Path
-      required:
-      - effect
-      title: PermissionRuleSchema
-      type: object
-    jentic_one__control__web__schemas__permission_rules__PermissionRuleSchema:
-      additionalProperties: false
-      description: |-
-        Permission rule for an agent↔credential binding.
-
-        Rules are evaluated first-match-wins. If no rule matches, the request is
-        denied (default-deny). A binding with zero rules therefore blocks all
-        operations — users must explicitly add at least one allow rule.
-      properties:
-        effect:
-          description: Whether this rule allows or denies the matched request.
-          enum:
-          - allow
-          - deny
-          title: Effect
-          type: string
-        match_mode:
-          default: regex
-          description: 'How `path` is interpreted: `regex` (full-match), `prefix` (string prefix), or `exact` (equality). Defaults to `regex` for backwards compatibility.'
-          enum:
-          - regex
-          - prefix
-          - exact
-          title: Match Mode
-          type: string
-        methods:
-          anyOf:
-          - items:
-              type: string
-            type: array
-          - type: 'null'
-          description: HTTP methods to match (case-insensitive). None matches all.
-          title: Methods
-        operations:
-          anyOf:
-          - items:
-              type: string
-            type: array
-          - type: 'null'
-          description: OpenAPI operation IDs to match. None matches all operations.
-          title: Operations
-        path:
-          anyOf:
-          - type: string
-          - type: 'null'
-          description: 'Path pattern to match. Interpreted per `match_mode`: `regex` uses full-match semantics (the pattern must describe the whole path); `prefix` and `exact` are literal. None matches all paths.'
-          title: Path
-      required:
-      - effect
-      title: PermissionRuleSchema
-      type: object
   securitySchemes:
     BearerAuth:
       description: |-
@@ -6709,7 +6165,7 @@ info:
       | `rev_` | API revision | ULID-shaped. |
       | `usr_` | User | Org member. Resolves via `GET /users/{user_id}`. Used in `acknowledged_by`, `decided_by`, and similar audit references. |
       | `inv_` | Invite token | One-time token issued at user creation. Plaintext value shown **once** at issue / re-issue; `:redeem-invite` consumes it. |
-      | `areq_` | Access request | Human-approval ticket for scope grants and credential bindings; see the `Access Requests` tag. |
+      | `areq_` | Access request (retired) | Retired (theme 7): the access-request flow is gone. Ids still appear in stored audit/event records. |
       | `note_` | Note | ULID-shaped. Free-form annotation attached to a registry resource — see the `Notes` tag. |
       | `ovr_` | Overlay | ULID-shaped. OpenAPI Overlay 1.0 document attached to an `Api` aggregate — see the `Overlays` tag. |
       | `jntc_live_` | Plaintext toolkit API key value (retired) | Never issued anymore (issuance died in Phase 4, the management routes in Phase 5b). A surviving value keeps authenticating — as its migrated service account — for the deprecation window; rotate holders to `sak_` keys. |
@@ -7011,488 +6467,6 @@ paths:
       summary: OAuth protected resource metadata for the MCP resource
       tags:
       - Discovery
-  /access-requests:
-    get:
-      description: List access requests with cursor-based pagination.
-      operationId: listAccessRequests
-      parameters:
-      - in: query
-        name: actor_id
-        required: false
-        schema:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Actor Id
-      - in: query
-        name: status
-        required: false
-        schema:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Status
-      - in: query
-        name: cursor
-        required: false
-        schema:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Cursor
-      - in: query
-        name: limit
-        required: false
-        schema:
-          default: 50
-          maximum: 200
-          minimum: 1
-          title: Limit
-          type: integer
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/AccessRequestListResponse'
-          description: Successful Response
-        '400':
-          content:
-            application/problem+json:
-              example: *id001
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Bad Request
-        '401':
-          content:
-            application/problem+json:
-              example: &id005
-                detail: Authentication is required or the bearer token is invalid.
-                instance: /example/path
-                status: 401
-                title: Unauthorized
-                type: unauthorized
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unauthorized
-        '403':
-          content:
-            application/problem+json:
-              example: &id006
-                detail: The authenticated principal lacks the required permission.
-                instance: /example/path
-                status: 403
-                title: Forbidden
-                type: forbidden
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Forbidden
-        '422':
-          content:
-            application/problem+json:
-              example: *id002
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unprocessable Entity
-        '500':
-          content:
-            application/problem+json:
-              example: *id003
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Internal Server Error
-        '503':
-          content:
-            application/problem+json:
-              example: *id004
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Service Unavailable
-      security:
-      - BearerAuth: []
-      summary: List access requests
-      tags:
-      - Access Requests
-    post:
-      description: File a new access request.
-      operationId: fileAccessRequest
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/AccessRequestFileRequest'
-        required: true
-      responses:
-        '202':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/AccessRequestResponse'
-          description: Successful Response
-        '400':
-          content:
-            application/problem+json:
-              example: *id001
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Bad Request
-        '401':
-          content:
-            application/problem+json:
-              example: *id005
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unauthorized
-        '403':
-          content:
-            application/problem+json:
-              example: *id006
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Forbidden
-        '409':
-          content:
-            application/problem+json:
-              example: &id008
-                detail: The request conflicts with the current state of the resource.
-                instance: /example/path
-                status: 409
-                title: Conflict
-                type: conflict
-              schema:
-                $ref: '#/components/schemas/DuplicatePendingProblem'
-          description: A pending request already exists for the same resource.
-        '422':
-          content:
-            application/problem+json:
-              example: *id002
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unprocessable Entity
-        '500':
-          content:
-            application/problem+json:
-              example: *id003
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Internal Server Error
-        '503':
-          content:
-            application/problem+json:
-              example: *id004
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Service Unavailable
-      security:
-      - BearerAuth: []
-      summary: File access request
-      tags:
-      - Access Requests
-  /access-requests/{request_id}:
-    get:
-      description: Get a single access request by ID.
-      operationId: getAccessRequest
-      parameters:
-      - in: path
-        name: request_id
-        required: true
-        schema:
-          title: Request Id
-          type: string
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/AccessRequestResponse'
-          description: Successful Response
-        '400':
-          content:
-            application/problem+json:
-              example: *id001
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Bad Request
-        '401':
-          content:
-            application/problem+json:
-              example: *id005
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unauthorized
-        '403':
-          content:
-            application/problem+json:
-              example: *id006
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Forbidden
-        '404':
-          content:
-            application/problem+json:
-              example: &id007
-                detail: The requested resource does not exist or is not visible to you.
-                instance: /example/path
-                status: 404
-                title: Not Found
-                type: not_found
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Not Found
-        '422':
-          content:
-            application/problem+json:
-              example: *id002
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unprocessable Entity
-        '500':
-          content:
-            application/problem+json:
-              example: *id003
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Internal Server Error
-        '503':
-          content:
-            application/problem+json:
-              example: *id004
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Service Unavailable
-      security:
-      - BearerAuth: []
-      summary: Get access request
-      tags:
-      - Access Requests
-  /access-requests/{request_id}:amend:
-    post:
-      description: Amend pending items on an access request.
-      operationId: amendAccessRequest
-      parameters:
-      - in: path
-        name: request_id
-        required: true
-        schema:
-          title: Request Id
-          type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/AmendRequest'
-        required: true
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/AccessRequestResponse'
-          description: Successful Response
-        '400':
-          content:
-            application/problem+json:
-              example: *id001
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Bad Request
-        '401':
-          content:
-            application/problem+json:
-              example: *id005
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unauthorized
-        '403':
-          content:
-            application/problem+json:
-              example: *id006
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Forbidden
-        '404':
-          content:
-            application/problem+json:
-              example: *id007
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Not Found
-        '422':
-          content:
-            application/problem+json:
-              example: *id002
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unprocessable Entity
-        '500':
-          content:
-            application/problem+json:
-              example: *id003
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Internal Server Error
-        '503':
-          content:
-            application/problem+json:
-              example: *id004
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Service Unavailable
-      security:
-      - BearerAuth: []
-      summary: Amend access request
-      tags:
-      - Access Requests
-  /access-requests/{request_id}:decide:
-    post:
-      description: Decide (approve/deny) items on an access request.
-      operationId: decideAccessRequest
-      parameters:
-      - in: path
-        name: request_id
-        required: true
-        schema:
-          title: Request Id
-          type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/DecideRequest'
-        required: true
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/AccessRequestResponse'
-          description: Successful Response
-        '400':
-          content:
-            application/problem+json:
-              example: *id001
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Bad Request
-        '401':
-          content:
-            application/problem+json:
-              example: *id005
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unauthorized
-        '403':
-          content:
-            application/problem+json:
-              example: *id006
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Forbidden
-        '404':
-          content:
-            application/problem+json:
-              example: *id007
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Not Found
-        '422':
-          content:
-            application/problem+json:
-              example: *id002
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unprocessable Entity
-        '500':
-          content:
-            application/problem+json:
-              example: *id003
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Internal Server Error
-        '503':
-          content:
-            application/problem+json:
-              example: *id004
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Service Unavailable
-      security:
-      - BearerAuth: []
-      summary: Decide access request items
-      tags:
-      - Access Requests
-  /access-requests/{request_id}:withdraw:
-    post:
-      description: Withdraw a pending access request.
-      operationId: withdrawAccessRequest
-      parameters:
-      - in: path
-        name: request_id
-        required: true
-        schema:
-          title: Request Id
-          type: string
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/AccessRequestResponse'
-          description: Successful Response
-        '400':
-          content:
-            application/problem+json:
-              example: *id001
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Bad Request
-        '401':
-          content:
-            application/problem+json:
-              example: *id005
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unauthorized
-        '403':
-          content:
-            application/problem+json:
-              example: *id006
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Forbidden
-        '404':
-          content:
-            application/problem+json:
-              example: *id007
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Not Found
-        '422':
-          content:
-            application/problem+json:
-              example: *id002
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unprocessable Entity
-        '500':
-          content:
-            application/problem+json:
-              example: *id003
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Internal Server Error
-        '503':
-          content:
-            application/problem+json:
-              example: *id004
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Service Unavailable
-      security:
-      - BearerAuth: []
-      summary: Withdraw access request
-      tags:
-      - Access Requests
   /actors:
     get:
       description: List all actors (users, agents, service accounts) for UI cache hydration.
@@ -7532,14 +6506,24 @@ paths:
         '401':
           content:
             application/problem+json:
-              example: *id005
+              example: &id005
+                detail: Authentication is required or the bearer token is invalid.
+                instance: /example/path
+                status: 401
+                title: Unauthorized
+                type: unauthorized
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Unauthorized
         '403':
           content:
             application/problem+json:
-              example: *id006
+              example: &id006
+                detail: The authenticated principal lacks the required permission.
+                instance: /example/path
+                status: 403
+                title: Forbidden
+                type: forbidden
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Forbidden
@@ -7669,7 +6653,12 @@ paths:
         '404':
           content:
             application/problem+json:
-              example: *id007
+              example: &id007
+                detail: The requested resource does not exist or is not visible to you.
+                instance: /example/path
+                status: 404
+                title: Not Found
+                type: not_found
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Not Found
@@ -12990,7 +11979,12 @@ paths:
         '409':
           content:
             application/problem+json:
-              example: *id008
+              example: &id008
+                detail: The request conflicts with the current state of the resource.
+                instance: /example/path
+                status: 409
+                title: Conflict
+                type: conflict
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: The catalog entry has no outstanding update to snooze.
@@ -14004,7 +12998,7 @@ paths:
           application/json:
             schema:
               items:
-                $ref: '#/components/schemas/jentic_one__control__web__schemas__permission_rules__PermissionRuleSchema'
+                $ref: '#/components/schemas/PermissionRuleSchema'
               maxItems: 100
               title: Body
               type: array
@@ -17779,7 +16773,7 @@ paths:
           application/json:
             schema:
               items:
-                $ref: '#/components/schemas/jentic_one__control__web__schemas__permission_rules__PermissionRuleSchema'
+                $ref: '#/components/schemas/PermissionRuleSchema'
               maxItems: 100
               title: Body
               type: array
@@ -19867,17 +18861,6 @@ tags:
 - description: Part of the **Core / Access** bounded context — a `PermissionRuleSet` is a named, shareable ordered rule list (first-match-wins, default-deny) that many direct agent↔credential bindings can point at via their `rule_set_id`, so a policy edit or `permissions:test` stays a single-place operation. A binding with no `rule_set_id` uses its own inline rules instead. Rule sets carry policy, not secrets; deleting one that bindings still reference is refused (409 `rule_set_in_use`).
   name: Permission Rule Sets
 - description: |-
-    Actor-agnostic, multi-item access-request surface (Core / Access bounded context). When an agent's brokered call is rejected by a permission rule — or the agent needs access it doesn't yet have — the agent files an `AccessRequest` containing one or more line items (`AccessRequestItem`). The request enters `pending` state and surfaces an `approve_url` that the agent presents to a human reviewer.
-
-    Reviewers `:decide` individual items (approve or deny each); filers can `:amend` pending items (adjust rules or target) or `:withdraw` the entire request. Each item transitions independently; the envelope status reflects the aggregate (`pending` while any item is pending, `partially_approved` when some items are decided but others remain, terminal once all items resolve).
-
-    Pending requests carry a TTL (default 7 days, configurable). Envelope lifecycle: `pending → partially_approved → approved | denied | withdrawn | expired`.
-
-    **Identity scoping.** List and get operations are identity-scoped: filers see their own requests, reviewers see their inbox, `org:admin` sees all. Non-owners receive `404` (not `403`) to avoid leaking existence.
-
-    **Security.** Mutating operations (`POST`, `:decide`, `:amend`, `:withdraw`) require `agents:write`; read operations require `agents:read`.
-  name: Access Requests
-- description: |-
     The `Api` aggregate root — what APIs are registered for this deployment, addressable by the loose `(vendor, name, version)` tuple. Every successful import lands a new immutable `ApiRevision`; the `Api` carries the live `current_revision_id` plus presentation metadata (`display_name`, `description`, `icon_url`).
 
     Mutation surfaces:
@@ -19994,7 +18977,6 @@ x-tagGroups:
   tags:
   - Credentials
   - Permission Rule Sets
-  - Access Requests
 - name: Registry
   tags:
   - APIs
