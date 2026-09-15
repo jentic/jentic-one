@@ -19,7 +19,7 @@ export type CapabilitiesResponse = {
      */
     capabilities_version: number;
     /**
-     * Deployment feature flags. OSS ships 'mcp'; downstream packages may contribute additional boolean flags (additive — never overriding built-ins).
+     * Deployment feature flags. OSS ships 'mcp' (server.mcp.enabled) and 'governed_hosts' (true iff the registry surface — which serves GET /governed-hosts — is mounted on this process); downstream packages may contribute additional boolean flags (additive — never overriding built-ins).
      */
     features: Record<string, boolean>;
     instance: CapabilitiesInstanceResponse;

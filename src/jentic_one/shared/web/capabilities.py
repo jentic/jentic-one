@@ -309,7 +309,9 @@ class CapabilitiesResponse(BaseModel):
     urls: CapabilitiesUrlsResponse
     auth: CapabilitiesAuthResponse
     features: dict[str, bool] = Field(
-        description="Deployment feature flags. OSS ships 'mcp'; downstream packages "
+        description="Deployment feature flags. OSS ships 'mcp' (server.mcp.enabled) "
+        "and 'governed_hosts' (true iff the registry surface — which serves "
+        "GET /governed-hosts — is mounted on this process); downstream packages "
         "may contribute additional boolean flags (additive — never overriding "
         "built-ins)."
     )
@@ -433,7 +435,14 @@ def resolve_capabilities(
         base_url = canonical_base_url
     base_url = base_url.rstrip("/")
 
-    features: dict[str, bool] = {"mcp": ctx.config.server.mcp.enabled}
+    features: dict[str, bool] = {
+        "mcp": ctx.config.server.mcp.enabled,
+        # Process-scoped, like the mount-derived auth flags: GET /governed-hosts
+        # is mounted unconditionally on the registry surface, so it is served
+        # exactly when that surface is (false = "not served here", not "does
+        # not exist on the deployment").
+        "governed_hosts": "registry" in surfaces,
+    }
     view = CapabilityView(
         backend=ctx.config.server.backend,
         canonical_base_url=canonical_base_url,

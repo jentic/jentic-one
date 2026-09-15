@@ -94,7 +94,7 @@ def test_capabilities_default_body_is_golden(sample_config_dict: dict[str, Any])
                 "service_accounts": {"enabled": True},
             }
         },
-        "features": {"mcp": False},
+        "features": {"mcp": False, "governed_hosts": True},
         "capabilities_version": 1,
     }
 
@@ -173,6 +173,18 @@ def test_capabilities_reflects_surface_composition(sample_config_dict: dict[str,
     assert doc.urls.oauth_client_registration is None
     assert doc.auth.methods.agent_dcr.enabled is False
     assert doc.auth.methods.service_accounts.enabled is False
+
+
+def test_capabilities_governed_hosts_follows_the_registry_mount(
+    sample_config_dict: dict[str, Any],
+) -> None:
+    """``features.governed_hosts`` is true iff the registry surface — which
+    serves ``GET /governed-hosts`` unconditionally — is mounted on this
+    process, so a gate client can branch on the flag instead of probing the
+    route by 404 (which cannot distinguish "unsupported" from "wrong path")."""
+    ctx = _ctx(sample_config_dict)
+    assert resolve_capabilities(ctx, ["registry"]).features["governed_hosts"] is True
+    assert resolve_capabilities(ctx, ["control", "auth"]).features["governed_hosts"] is False
 
 
 def test_capabilities_urls_are_absolute_when_base_url_known(
@@ -299,7 +311,7 @@ def test_contributor_extends_features(sample_config_dict: dict[str, Any]) -> Non
 
     register_capability_contributor(contribute)
     doc = resolve_capabilities(_ctx(sample_config_dict), _ALL_APPS)
-    assert doc.features == {"mcp": False, "acme_sso": True}
+    assert doc.features == {"mcp": False, "governed_hosts": True, "acme_sso": True}
 
 
 def test_contributor_receives_a_frozen_view_not_the_context(
@@ -342,7 +354,7 @@ def test_contributor_cannot_case_shadow_built_in_keys(
     case-insensitive client."""
     register_capability_contributor(lambda view: {"MCP": True})
     doc = resolve_capabilities(_ctx(sample_config_dict), _ALL_APPS)
-    assert doc.features == {"mcp": False}
+    assert doc.features == {"mcp": False, "governed_hosts": True}
 
 
 def test_contributors_merge_in_registration_order(sample_config_dict: dict[str, Any]) -> None:
@@ -366,7 +378,7 @@ def test_contributor_failures_never_break_the_document(
     register_capability_contributor(lambda view: None)  # type: ignore[arg-type]
     register_capability_contributor(lambda view: {"acme_ok": True})
     doc = resolve_capabilities(_ctx(sample_config_dict), _ALL_APPS)
-    assert doc.features == {"mcp": False, "acme_ok": True}
+    assert doc.features == {"mcp": False, "governed_hosts": True, "acme_ok": True}
 
 
 def test_contributor_non_str_keys_and_non_bool_values_are_dropped(
@@ -378,7 +390,7 @@ def test_contributor_non_str_keys_and_non_bool_values_are_dropped(
         lambda view: {42: True, "acme_level": 3, "acme_obj": object(), "acme_ok": True}  # type: ignore[arg-type]
     )
     doc = resolve_capabilities(_ctx(sample_config_dict), _ALL_APPS)
-    assert doc.features == {"mcp": False, "acme_ok": True}
+    assert doc.features == {"mcp": False, "governed_hosts": True, "acme_ok": True}
 
 
 def test_register_rejects_non_callables_and_wrong_arity() -> None:
@@ -460,7 +472,7 @@ def test_contributors_run_at_app_build_not_per_request(
     register_capability_contributor(lambda view: {"acme_late": True})
     first = client.get("/capabilities").json()["features"]
     second = client.get("/capabilities").json()["features"]
-    assert first == second == {"mcp": False, "acme_early": True}
+    assert first == second == {"mcp": False, "governed_hosts": True, "acme_early": True}
     assert "acme_late" not in first
     assert len(calls) == build_time_calls  # request path never re-runs contributors
 
