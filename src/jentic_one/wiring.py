@@ -23,12 +23,14 @@ from dataclasses import replace
 
 import structlog
 from fastapi import FastAPI
+from sqlalchemy import select
 
 from jentic_one.mcp.installer import (
     install_mcp_challenge_placeholder,
     install_mcp_mount,
     mcp_lifespan,
 )
+from jentic_one.registry.core.schema.apis import Api
 from jentic_one.registry.services.catalog.service import CatalogService
 from jentic_one.registry.services.errors import CatalogEntryNotFoundError
 from jentic_one.registry.services.inspect.registry_service import RegistryService
@@ -143,10 +145,6 @@ class InProcessCatalogAutoImporter:
         no-match; the SPA polls until this becomes non-null.
         """
         try:
-            from sqlalchemy import select
-
-            from jentic_one.registry.core.schema.apis import Api
-
             async with self._ctx.registry_db.session() as session:
                 stmt = (
                     select(Api.version)
