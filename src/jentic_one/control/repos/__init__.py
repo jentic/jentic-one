@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from jentic_one.control.repos.access_request_repo import AccessRequestRepository
 from jentic_one.control.repos.agent_permission_rule_repo import AgentPermissionRuleRepository
 from jentic_one.control.repos.basic_credential_repo import BasicCredentialRepository
 from jentic_one.control.repos.connect_nonce_repo import ConnectNonceRepository
@@ -19,7 +18,6 @@ from jentic_one.control.repos.toolkit_permission_repo import ToolkitPermissionRe
 from jentic_one.control.repos.toolkit_repo import ToolkitRepository
 
 __all__ = [
-    "AccessRequestRepository",
     "AgentPermissionRuleRepository",
     "BasicCredentialRepository",
     "ConnectNonceRepository",

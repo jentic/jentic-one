@@ -1,11 +1,10 @@
-"""Integration tests for the satisfaction predicates on ``PrerequisiteRepository``.
+"""Integration tests for the cross-DB predicates on ``PrerequisiteRepository``.
 
-These back the ``already_satisfied`` enrichment on single-request GETs (issue
-#826): ``get_agent_credential_binding`` answers "is this credential:bind's
-outcome already in effect?" (it also backs the per-binding permission
-endpoints), and ``actor_scope_grant_exists`` mirrors the uniqueness key of the
-idempotent scope-grant effect. ``agent_bound_to_any_toolkit`` survives for
-toolkit consumers outside access requests. All run against a real admin DB.
+``get_agent_credential_binding`` answers "does a direct agent↔credential
+binding exist?" (it backs the per-binding permission endpoints);
+``agent_bound_to_any_toolkit`` survives for toolkit consumers outside the
+removed access-request flow (theme 7) until the toolkit tables go (theme-5
+Phase 6b). All run against a real admin DB.
 """
 
 from __future__ import annotations
@@ -68,13 +67,6 @@ async def seed_admin_rows(admin_db: DatabaseSession) -> AsyncGenerator[None, Non
             ),
             {"aid": _AGENT_ID},
         )
-        await session.execute(
-            text(
-                "INSERT INTO actor_scope_grants (id, actor_id, actor_type, scope, granted_by) "
-                "VALUES ('asg_satisfaction_1', :aid, 'agent', 'apis:write', :owner)"
-            ),
-            {"aid": _AGENT_ID, "owner": _OWNER_ID},
-        )
         await session.commit()
     yield
     await _cleanup()
@@ -104,29 +96,15 @@ async def test_agent_bound_to_any_toolkit(admin_db: DatabaseSession, seed_admin_
         )
 
 
-async def test_actor_scope_grant_exists(admin_db: DatabaseSession, seed_admin_rows: None) -> None:
-    """Exists exactly when the (actor_id, scope) grant row does."""
-    async with admin_db.session() as session:
-        assert await PrerequisiteRepository.actor_scope_grant_exists(
-            session, actor_id=_AGENT_ID, scope="apis:write"
-        )
-        assert not await PrerequisiteRepository.actor_scope_grant_exists(
-            session, actor_id=_AGENT_ID, scope="capabilities:execute"
-        )
-        assert not await PrerequisiteRepository.actor_scope_grant_exists(
-            session, actor_id="agnt_satisfaction_absent", scope="apis:write"
-        )
-
-
 async def test_get_agent_credential_binding(
     admin_db: DatabaseSession, seed_admin_rows: None
 ) -> None:
-    """The credential:bind satisfaction probe: row (with its suspended flag and
+    """The direct-binding probe: row (with its suspended flag and
     rule_set_id) when the direct binding exists, None otherwise.
 
     A SUSPENDED binding still returns — suspension is a broker-derivation
-    cut-off, not an un-bind, so the request's outcome is still "in effect" for
-    the ``already_satisfied`` annotator and the per-binding rules endpoints.
+    cut-off, not an un-bind, so the row still backs the per-binding rules
+    endpoints.
     """
     async with admin_db.session() as session:
         row = await PrerequisiteRepository.get_agent_credential_binding(
