@@ -197,6 +197,7 @@ def test_get_review_data_returns_scope_catalog() -> None:
                     description="Full control of private repositories",
                 )
             ],
+            requested_permission_rules=[],
         )
     )
     app = _build_app(svc=svc, identity=_USER_IDENTITY)

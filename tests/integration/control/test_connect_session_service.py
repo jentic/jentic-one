@@ -190,6 +190,45 @@ async def test_create_session_device_authorization_seeds_credential_and_aux_row(
     assert row.agent_id == _AGENT_ID
     assert row.initiator_actor_id == _USER_ID
     assert row.requested_scopes == ["repo"]
+    # Default when caller doesn't pass rules — the round-trip test below
+    # pins the non-empty case.
+    assert row.requested_permission_rules == []
+
+
+async def test_create_session_persists_requested_permission_rules(
+    integration_context: Context,
+    seed_test_vendors: None,
+    clean_session_tables: None,
+) -> None:
+    # Rules the initiator (typically an agent) asks the human owner to
+    # approve on the review page: captured verbatim on the session row
+    # at ``:connect`` time and surfaced back through ``get_review_data``.
+    # NOT written to ``agent_permission_rules`` until ``:confirm``.
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+
+    requested: list[dict[str, object]] = [
+        {"effect": "allow", "methods": ["GET"], "path": "/repos", "match_mode": "prefix"},
+        {"effect": "deny", "methods": ["DELETE"], "path": "/", "match_mode": "prefix"},
+    ]
+
+    created = await svc.create_session(
+        vendor_key="testdev",
+        agent_id=_AGENT_ID,
+        initiator_actor_id=_USER_ID,
+        requested_scopes=["repo"],
+        requested_permission_rules=requested,
+    )
+
+    # Round-trip on the row itself.
+    async with ctx.control_db.session() as session:
+        row = await ConnectSessionRepository.get_by_id(session, created.session_id)
+    assert row is not None
+    assert row.requested_permission_rules == requested
+
+    # Round-trip via the review-data path (what the approve page reads).
+    review = await svc.get_review_data(created.session_id)
+    assert review.requested_permission_rules == requested
 
     async with ctx.control_db.session() as session:
         credential = await CredentialRepository.get_by_id(session, row.credential_id)

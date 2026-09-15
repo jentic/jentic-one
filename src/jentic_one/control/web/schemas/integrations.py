@@ -60,6 +60,12 @@ class IntegrationsConnectRequest(BaseModel):
     requested_scopes: list[str] = Field(default_factory=list)
     preferred_flow: str | None = Field(default=None)
     reason: str | None = Field(default=None, max_length=1024)
+    # As-requested permission rules — typically the initiating agent's ask,
+    # rendered on the review page as pre-filled rows the human owner can
+    # accept / edit / drop before ``:confirm`` persists the final set.
+    # Captured on the session row; never bound to
+    # ``agent_permission_rules`` until ``:confirm``.
+    requested_permission_rules: list[PermissionRuleSchema] = Field(default_factory=list)
 
 
 class IntegrationsConnectResponse(BaseModel):
@@ -91,6 +97,9 @@ class ReviewSessionResponse(BaseModel):
     reason: str | None
     requested_by_actor_id: str
     scopes: list[ReviewScopeResponse]
+    # Captured verbatim from ``IntegrationsConnectRequest.requested_permission_rules``
+    # so the approve page can render them as pre-filled rows.
+    requested_permission_rules: list[PermissionRuleSchema] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------

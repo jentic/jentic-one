@@ -4360,6 +4360,13 @@
             ],
             "title": "Reason"
           },
+          "requested_permission_rules": {
+            "items": {
+              "$ref": "#/components/schemas/jentic_one__control__web__schemas__permission_rules__PermissionRuleSchema"
+            },
+            "title": "Requested Permission Rules",
+            "type": "array"
+          },
           "requested_scopes": {
             "items": {
               "type": "string"

@@ -63,6 +63,16 @@ class ConnectSession(AuditableMixin, ControlBase):
     # table — that keeps ``get_review_data`` flow-agnostic. Nullable to
     # allow older rows created before this column landed.
     requested_scopes: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True, default=list)
+    # As-requested permission rules from the initiator (typically an agent
+    # asking the human owner to approve them). Stored on the session — not
+    # written to ``agent_permission_rules`` at ``:connect`` time — because
+    # they are the initiator's *request*, only persisted onto the binding
+    # once the human confirms or edits them on the review page. Each
+    # element is an ``AgentPermissionRule`` dict per ``PermissionRuleSchema``:
+    # ``{effect, methods, path, match_mode, operations, comment}``.
+    requested_permission_rules: Mapped[list[dict[str, object]]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default="[]"
+    )
     # Identity echo result (e.g. "@octocat"); set on `connected`.
     connected_as: Mapped[str | None] = mapped_column(String(255), nullable=True)
     # Terminal failure code (see `error-taxonomy` — machine-readable slug).

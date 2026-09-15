@@ -36,6 +36,7 @@ from jentic_one.control.web.schemas.integrations import (
     ReviewSessionResponse,
     StatusResponse,
 )
+from jentic_one.control.web.schemas.permission_rules import PermissionRuleSchema
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.resilience import RateLimiter
@@ -143,6 +144,9 @@ async def integrations_connect(
             agent_id=agent_id,
             initiator_actor_id=identity.sub,
             requested_scopes=body.requested_scopes,
+            requested_permission_rules=[
+                r.model_dump(exclude_none=True) for r in body.requested_permission_rules
+            ],
             preferred_flow=body.preferred_flow,
             reason=body.reason,
         )
@@ -208,6 +212,12 @@ async def get_connect_session(
                 description=s.description,
             )
             for s in data.scopes
+        ],
+        # Re-validate through ``PermissionRuleSchema`` on the way out so the
+        # response contract stays honest even if the stored JSON is ever
+        # hand-edited or migrated from an older shape.
+        requested_permission_rules=[
+            PermissionRuleSchema.model_validate(r) for r in data.requested_permission_rules
         ],
     )
 

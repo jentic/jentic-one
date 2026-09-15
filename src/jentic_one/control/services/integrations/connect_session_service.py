@@ -115,6 +115,9 @@ class ReviewData:
     reason: str | None
     requested_by_actor_id: str
     scopes: list[ScopeView]
+    # As-requested permission rules from ``:connect`` — the human hasn't
+    # approved them yet, they render on the review page as pre-filled rows.
+    requested_permission_rules: list[dict[str, object]]
 
 
 @dataclass(slots=True, frozen=True)
@@ -287,6 +290,11 @@ class ConnectSessionService:
         requested_scopes: list[str] | None = None,
         preferred_flow: str | None = None,
         reason: str | None = None,
+        # Wire-shape ``PermissionRuleSchema`` dicts — validated at the
+        # router boundary. Stored on the session row and surfaced on the
+        # review page so the human owner sees exactly what the agent asked
+        # for before committing anything to ``agent_permission_rules``.
+        requested_permission_rules: list[dict[str, object]] | None = None,
     ) -> CreatedSession:
         """Create a pending session + upfront credential row.
 
@@ -358,6 +366,7 @@ class ConnectSessionService:
                 resolved_flow=flow.kind,
                 poll_token=poll_token,
                 requested_scopes=requested_scopes or [],
+                requested_permission_rules=requested_permission_rules or [],
                 preferred_flow=preferred_flow,
                 reason=reason,
                 created_by=initiator_actor_id,
@@ -418,6 +427,7 @@ class ConnectSessionService:
             reason=row.reason,
             requested_by_actor_id=row.initiator_actor_id,
             scopes=[_scope_view(s) for s in resolved],
+            requested_permission_rules=row.requested_permission_rules or [],
         )
 
     # ---- confirm ----------------------------------------------------------
