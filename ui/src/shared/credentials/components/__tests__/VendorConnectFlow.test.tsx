@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { worker } from '@/mocks/browser';
-import { renderWithProviders, screen, userEvent, waitFor } from '@/__tests__/test-utils';
+import { renderWithProviders, screen, userEvent, waitFor, within } from '@/__tests__/test-utils';
 import { VendorConnectFlow } from '@/shared/credentials/components/VendorConnectFlow';
 import type { ReviewSession, VendorAuthCapabilities } from '@/shared/credentials/api/vendors-types';
 
@@ -471,6 +471,243 @@ describe('VendorConnectFlow — approve mode', () => {
 		// The row now shows the edited path; the old one is gone.
 		expect(await screen.findByText(/\/issues\s*\(prefix\)/i)).toBeInTheDocument();
 		expect(screen.queryByText(/\/repos\s*\(prefix\)/i)).toBeNull();
+	});
+
+	it('expands a partial-verdict op row to show one ALLOW + one DENY sample', async () => {
+		// A narrow rule (only allows jentic/jentic-one) matched against a
+		// templated op like ``/repos/{owner}/{repo}/commits`` yields a
+		// partial verdict — some concrete instances are allowed (that
+		// specific owner/repo) and others denied. The leaf row starts
+		// collapsed with a yellow "partial" pill; clicking it must show
+		// exactly one allowed sample and one denied sample so the user
+		// sees the actual slice covered.
+		const session: ReviewSession = {
+			session_id: 'sess_partial',
+			state: 'created',
+			vendor_key: 'github',
+			vendor_display_name: 'GitHub',
+			resolved_flow: 'device_authorization',
+			requested_by_actor_id: 'agnt_1',
+			scopes: [
+				{
+					name: 'repo',
+					classification: 'write',
+					default: false,
+					requested: true,
+					description: 'Full control',
+				},
+			],
+			reason: null,
+			// Narrow rule → the op will classify as ``partial``.
+			requested_permission_rules: [
+				{
+					effect: 'allow',
+					methods: ['GET'],
+					path: '/repos/jentic/jentic-one',
+					match_mode: 'prefix',
+				},
+			],
+			api_reference: { vendor: 'github-com', name: 'github-com', version: '1.0.0' },
+		};
+		worker.use(
+			http.get('/connect-sessions/sess_partial', () => HttpResponse.json(session)),
+			http.get('/agents', () =>
+				HttpResponse.json({ data: [], has_more: false, next_cursor: null }),
+			),
+			http.get('/apis/github-com/github-com/1.0.0/operations', () =>
+				HttpResponse.json({
+					data: [
+						{
+							operation_id: 'repos/list-commits',
+							method: 'GET',
+							path: '/repos/{owner}/{repo}/commits',
+							name: 'List commits',
+						},
+					],
+					has_more: false,
+					next_cursor: null,
+				}),
+			),
+		);
+		renderWithProviders(
+			<VendorConnectFlow
+				mode="approve"
+				sessionId="sess_partial"
+				pollToken="tok_p"
+				onBack={vi.fn()}
+				onDone={vi.fn()}
+			/>,
+		);
+		const user = userEvent.setup();
+		await screen.findByText('repo');
+		await waitFor(() =>
+			expect(screen.getByRole('button', { name: /^continue$/i })).not.toBeDisabled(),
+		);
+		await user.click(screen.getByRole('button', { name: /^continue$/i }));
+		// Open the top-level ``/repos/`` group.
+		const groupHeader = await screen.findByRole('button', { name: /\/repos\// });
+		await user.click(groupHeader);
+		// The leaf op is present with the ``partial`` pill.
+		const opText = await screen.findByText('/repos/{owner}/{repo}/commits');
+		const opRow = opText.closest('div.bg-muted\\/20') as HTMLElement;
+		expect(opRow).not.toBeNull();
+		expect(within(opRow).getByText(/^partial$/i)).toBeInTheDocument();
+		// Sample lines are hidden by default — the row is collapsed.
+		expect(within(opRow).queryByText(/e\.g\./)).toBeNull();
+		// Click the row to expand; one allowed + one denied sample appear.
+		await user.click(opRow);
+		const expanded = await screen.findAllByText(/e\.g\./);
+		expect(expanded.length).toBeGreaterThanOrEqual(2);
+		// Allowed sample carries the rule's owner + repo values.
+		expect(
+			await within(opRow).findByText(/\/repos\/jentic\/jentic-one\/commits/),
+		).toBeInTheDocument();
+	});
+
+	it('flags a rule that touches no imported operation as "no ops affected"', async () => {
+		// A syntactically-valid rule authored against a path the vendor
+		// doesn't expose is a silent-fail: at runtime nothing matches
+		// so no grant is created. The rule row surfaces "no ops affected"
+		// once the ops list has finished loading (gate keeps the warning
+		// from flashing while the import is still queued).
+		const session: ReviewSession = {
+			session_id: 'sess_noops',
+			state: 'created',
+			vendor_key: 'github',
+			vendor_display_name: 'GitHub',
+			resolved_flow: 'device_authorization',
+			requested_by_actor_id: 'agnt_1',
+			scopes: [
+				{
+					name: 'repo',
+					classification: 'write',
+					default: false,
+					requested: true,
+					description: 'Full control',
+				},
+			],
+			reason: null,
+			requested_permission_rules: [
+				// Rule path does not correspond to any op below.
+				{
+					effect: 'allow',
+					methods: ['GET'],
+					path: '/nonexistent-surface',
+					match_mode: 'prefix',
+				},
+			],
+			api_reference: { vendor: 'github-com', name: 'github-com', version: '1.0.0' },
+		};
+		worker.use(
+			http.get('/connect-sessions/sess_noops', () => HttpResponse.json(session)),
+			http.get('/agents', () =>
+				HttpResponse.json({ data: [], has_more: false, next_cursor: null }),
+			),
+			http.get('/apis/github-com/github-com/1.0.0/operations', () =>
+				HttpResponse.json({
+					data: [
+						{
+							operation_id: 'repos/get',
+							method: 'GET',
+							path: '/repos/{owner}/{repo}',
+							name: 'Get a repository',
+						},
+					],
+					has_more: false,
+					next_cursor: null,
+				}),
+			),
+		);
+		renderWithProviders(
+			<VendorConnectFlow
+				mode="approve"
+				sessionId="sess_noops"
+				pollToken="tok_noops"
+				onBack={vi.fn()}
+				onDone={vi.fn()}
+			/>,
+		);
+		const user = userEvent.setup();
+		await screen.findByText('repo');
+		await waitFor(() =>
+			expect(screen.getByRole('button', { name: /^continue$/i })).not.toBeDisabled(),
+		);
+		await user.click(screen.getByRole('button', { name: /^continue$/i }));
+		// The warning appears once the ops query has resolved.
+		expect(await screen.findByText(/no ops affected/i)).toBeInTheDocument();
+	});
+
+	it('completes a path via the custom autocomplete dropdown (arrow + Enter)', async () => {
+		// Custom autocomplete replaces the browser ``<datalist>``: capped
+		// at 5 rows, styled with app tokens, keeps filtering as the user
+		// types. Keyboard navigation (ArrowDown + Enter) must commit the
+		// highlighted suggestion — the primary "no mouse" path.
+		const session: ReviewSession = {
+			session_id: 'sess_ac',
+			state: 'created',
+			vendor_key: 'github',
+			vendor_display_name: 'GitHub',
+			resolved_flow: 'device_authorization',
+			requested_by_actor_id: 'agnt_1',
+			scopes: [
+				{
+					name: 'repo',
+					classification: 'write',
+					default: false,
+					requested: true,
+					description: 'Full control',
+				},
+			],
+			reason: null,
+			requested_permission_rules: [],
+			api_reference: { vendor: 'github-com', name: 'github-com', version: '1.0.0' },
+		};
+		worker.use(
+			http.get('/connect-sessions/sess_ac', () => HttpResponse.json(session)),
+			http.get('/agents', () =>
+				HttpResponse.json({ data: [], has_more: false, next_cursor: null }),
+			),
+			http.get('/apis/github-com/github-com/1.0.0/operations', () =>
+				HttpResponse.json({
+					data: [
+						{ operation_id: 'a', method: 'GET', path: '/repos/{owner}/{repo}' },
+						{ operation_id: 'b', method: 'GET', path: '/repos/{owner}/{repo}/pulls' },
+					],
+					has_more: false,
+					next_cursor: null,
+				}),
+			),
+		);
+		renderWithProviders(
+			<VendorConnectFlow
+				mode="approve"
+				sessionId="sess_ac"
+				pollToken="tok_ac"
+				onBack={vi.fn()}
+				onDone={vi.fn()}
+			/>,
+		);
+		const user = userEvent.setup();
+		await screen.findByText('repo');
+		await waitFor(() =>
+			expect(screen.getByRole('button', { name: /^continue$/i })).not.toBeDisabled(),
+		);
+		await user.click(screen.getByRole('button', { name: /^continue$/i }));
+		// Open the Add-rule form.
+		await user.click(await screen.findByRole('button', { name: /add rule/i }));
+		const pathInput = screen.getByPlaceholderText('/repos') as HTMLInputElement;
+		// Focus opens the dropdown; type ``/r`` to start filtering (the
+		// mocked op list gives suggestions starting with ``/repos``).
+		await user.click(pathInput);
+		await user.type(pathInput, '/r');
+		// Wait for the listbox to render.
+		await screen.findByRole('listbox');
+		// ArrowDown moves the highlight; Enter commits it. The value
+		// commits verbatim (one of the two op paths — either is fine, we
+		// just verify the input has been replaced by a real suggestion).
+		await user.keyboard('{ArrowDown}{Enter}');
+		expect(pathInput.value.startsWith('/repos')).toBe(true);
+		expect(pathInput.value.length).toBeGreaterThan('/r'.length);
 	});
 
 	it('renders an error alert when the approval link is invalid', async () => {

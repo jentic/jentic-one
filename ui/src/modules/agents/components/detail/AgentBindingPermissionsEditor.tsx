@@ -10,6 +10,11 @@ import {
 } from '@/modules/agents/api';
 import { AgentBindingRuleTester } from '@/modules/agents/components/detail/AgentBindingRuleTester';
 import { panelMotion } from '@/modules/agents/components/detail/shared';
+import {
+	OperationImpactPreview,
+	type OpsApiReference,
+} from '@/shared/credentials/components/OperationImpactPreview';
+import type { PermissionRule as PreviewPermissionRule } from '@/shared/credentials/api/vendors-types';
 
 /**
  * Inline editor for the permission rules on one direct agent↔credential
@@ -32,6 +37,31 @@ export interface AgentBindingPermissionsEditorProps {
 	credentialLabel: string;
 	initialRules: BindingPermissionRule[];
 	onClose: () => void;
+	/**
+	 * The API the credential is bound against — powers the operation-impact
+	 * preview below the editor so the user sees the DRAFT rules against
+	 * real ops as they edit. When omitted (e.g. binding has no served
+	 * ``ServedApiEntity`` with a version — rare, but possible) the
+	 * preview is skipped.
+	 */
+	apiReference?: OpsApiReference | null;
+}
+
+/**
+ * Adapt a mutable ``PermissionRuleInput`` (agent-module type generated
+ * from ``PermissionRuleSchema``) to the credentials-module ``PermissionRule``
+ * shape the ops preview expects. Structurally identical for our fields;
+ * the explicit narrow avoids a bare cast so a future divergence in either
+ * type is caught at build.
+ */
+function toPreviewRule(rule: PermissionRuleInput): PreviewPermissionRule {
+	return {
+		effect: rule.effect === 'deny' ? 'deny' : 'allow',
+		methods: rule.methods ?? null,
+		path: rule.path ?? null,
+		match_mode: (rule.match_mode as PreviewPermissionRule['match_mode']) ?? undefined,
+		operations: rule.operations ?? null,
+	};
 }
 
 function toInput(rule: BindingPermissionRule): PermissionRuleInput {
@@ -102,6 +132,7 @@ export function AgentBindingPermissionsEditor({
 	credentialLabel,
 	initialRules,
 	onClose,
+	apiReference,
 }: AgentBindingPermissionsEditorProps) {
 	const [rules, setRules] = useState<PermissionRuleInput[]>(() =>
 		initialRules.filter((r) => !r._system).map(toInput),
@@ -150,6 +181,18 @@ export function AgentBindingPermissionsEditor({
 			</div>
 
 			<PermissionRuleEditor rules={rules} onChange={setRules} />
+
+			{apiReference && (
+				// Preview the DRAFT rules against real ops from the vendor's
+				// OpenAPI. Uses the shared ``OperationImpactPreview`` — same
+				// component the connect flow's rules page renders, so
+				// authoring here mirrors what the user saw during connect.
+				<OperationImpactPreview
+					api={apiReference}
+					rules={clean.map(toPreviewRule)}
+					label="Effective access for this binding"
+				/>
+			)}
 
 			{/* What this save changes — removals first (the security-critical
 			    signal), then additions, each in the platform's rule voice. */}

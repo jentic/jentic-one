@@ -27,35 +27,6 @@ function renderAccessTab(route = ROUTE) {
 	);
 }
 
-/**
- * Override the org-wide `GET /credentials` surface for bind-picker tests.
- * The agents module reads it through the shared API; the credentials mock
- * store starts empty, so we stub a small fixture here (no sibling-module
- * import).
- */
-function seedCredentials(
-	creds: Array<{ credential_id: string; name: string; type: string; vendor: string }>,
-) {
-	worker.use(
-		http.get('/credentials', () =>
-			HttpResponse.json({
-				data: creds.map((c) => ({
-					credential_id: c.credential_id,
-					name: c.name,
-					type: c.type,
-					provider: 'manual',
-					active: true,
-					api: { vendor: c.vendor, name: 'default', version: '1.0.0' },
-					created_at: '2026-05-01T10:00:00Z',
-					updated_at: null,
-				})),
-				has_more: false,
-				next_cursor: null,
-			}),
-		),
-	);
-}
-
 /** The binding row whose heading contains `label`, or undefined. */
 function findRow(label: string): HTMLElement | undefined {
 	return screen.getAllByTestId('binding-row').find((r) => within(r).queryByText(label)) as
@@ -107,86 +78,31 @@ describe('BoundCredentialsCard (agent detail · Access tab)', () => {
 		await checkA11y(container);
 	});
 
-	it('shows the empty state pointing at the bind action', async () => {
+	it('shows the empty state pointing at the connect-integration action', async () => {
 		worker.use(http.get('/agents/:id/credentials', () => HttpResponse.json({ data: [] })));
 		renderAccessTab();
 		expect(
 			await screen.findByText(/no credentials bound directly to this agent/i),
 		).toBeInTheDocument();
-		expect(screen.getByRole('button', { name: /bind a credential/i })).toBeInTheDocument();
+		// Empty-state inline CTA + the section header action both point at
+		// the same connect flow now that the "Bind existing" path folded
+		// into it.
+		expect(screen.getByRole('button', { name: /connect an integration/i })).toBeInTheDocument();
 	});
 
-	it('binds a credential with the allow-all grant through the two-step wizard', async () => {
-		seedCredentials([
-			{
-				credential_id: 'cred_acme_1',
-				name: 'Acme token',
-				type: 'bearer_token',
-				vendor: 'acme',
-			},
-		]);
+	it('opens the connect wizard from the single "Connect integration" action', async () => {
+		// The old "Bind existing" wizard was replaced by a single button
+		// that opens ``CreateCredentialDialog`` with ``preselectedAgentId``.
+		// The dialog itself is exercised in its own tests — we just verify
+		// the wiring here.
 		const user = userEvent.setup();
 		renderAccessTab();
 		await screen.findByRole('heading', { name: /bound credentials/i });
-
-		await user.click(screen.getByRole('button', { name: /^bind existing$/i }));
-		const dialog = await screen.findByRole('dialog');
-
-		// Step 1: workspace credentials appear; already-bound ones are hidden.
-		expect(await within(dialog).findByText('Acme token')).toBeInTheDocument();
-		expect(within(dialog).queryByText('Slack bot token')).not.toBeInTheDocument();
-
-		// Step 2: picking advances to the access decision (NOT an instant bind),
-		// defaulting to the allow-all grant.
-		await user.click(within(dialog).getByText('Acme token'));
-		expect(
-			await within(dialog).findByRole('radio', { name: /allow all operations/i }),
-		).toHaveAttribute('aria-checked', 'true');
-		await user.click(within(dialog).getByRole('button', { name: /^bind credential$/i }));
-		await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
-
-		// The binding lands WITH the allow-all rule — no zero-rules warning.
-		// (The mock store names bind-created rows by nothing, so the heading is
-		// the credential id.)
-		const label = await screen.findByText('cred_acme_1');
-		const row = label.closest('[data-testid="binding-row"]') as HTMLElement;
-		expect(row).not.toBeNull();
-		expect(await within(row).findByText('Allow')).toBeInTheDocument();
-		expect(within(row).queryByTestId('binding-warning')).not.toBeInTheDocument();
-	});
-
-	it('binds in the blocked state (zero rules) and surfaces the default-deny warning; custom mode requires at least one rule', async () => {
-		seedCredentials([
-			{
-				credential_id: 'cred_notion_1',
-				name: 'Notion token',
-				type: 'api_key',
-				vendor: 'notion',
-			},
-		]);
-		const user = userEvent.setup();
-		renderAccessTab();
-		await screen.findByRole('heading', { name: /bound credentials/i });
-
-		await user.click(screen.getByRole('button', { name: /^bind existing$/i }));
-		const dialog = await screen.findByRole('dialog');
-		await user.click(await within(dialog).findByText('Notion token'));
-
-		// Custom rules with an empty rule list cannot submit — a zero-rules
-		// custom grant is a contradiction the wizard blocks up front.
-		await user.click(await within(dialog).findByRole('radio', { name: /custom rules/i }));
-		expect(within(dialog).getByRole('button', { name: /^bind credential$/i })).toBeDisabled();
-
-		// "Start blocked" is the deliberate zero-rules mode.
-		await user.click(within(dialog).getByRole('radio', { name: /start blocked/i }));
-		await user.click(within(dialog).getByRole('button', { name: /^bind credential$/i }));
-		await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
-
-		const label = await screen.findByText('cred_notion_1');
-		const row = label.closest('[data-testid="binding-row"]') as HTMLElement;
-		expect(await within(row).findByTestId('binding-warning')).toHaveTextContent(
-			/default deny/i,
-		);
+		const connectBtn = await screen.findByRole('button', {
+			name: /^connect integration$/i,
+		});
+		await user.click(connectBtn);
+		expect(await screen.findByRole('dialog')).toBeInTheDocument();
 	});
 
 	it('suspends a binding behind an inline confirm, then resumes it', async () => {
@@ -276,6 +192,72 @@ describe('BoundCredentialsCard (agent detail · Access tab)', () => {
 		});
 	});
 
+	it('renders the shared ops preview inside the binding rule editor when serves resolves', async () => {
+		// The rules-editor panel now embeds ``OperationImpactPreview``
+		// so users editing binding rules see the same allow/partial/deny
+		// visualisation they saw during connect. Requires the binding's
+		// ``serves`` entry to carry ``(vendor, name, version)``; the
+		// default mock leaves name/version null (matches most bindings),
+		// so this test overrides the endpoint with a fully-populated
+		// entry plus the ops endpoint the preview polls.
+		worker.use(
+			http.get('/agents/:id/credentials', () =>
+				HttpResponse.json({
+					data: [
+						{
+							id: 'bind_preview_1',
+							credential_id: 'cred_preview_1',
+							name: 'Preview binding',
+							suspended: false,
+							rule_set_id: null,
+							bound_at: '2026-05-01T10:00:00Z',
+							serves: [
+								{
+									api_vendor: 'github-com',
+									api_name: 'github-com',
+									api_version: '1.0.0',
+								},
+							],
+						},
+					],
+				}),
+			),
+			// Preview polls ``current_version`` gate via the ops endpoint;
+			// a real 200 with an op template drives the render.
+			http.get('/apis/github-com/github-com/1.0.0/operations', () =>
+				HttpResponse.json({
+					data: [
+						{
+							operation_id: 'repos/get',
+							method: 'GET',
+							path: '/repos/{owner}/{repo}',
+							name: 'Get a repository',
+						},
+					],
+					has_more: false,
+					next_cursor: null,
+				}),
+			),
+			// Binding permissions load empty so the row has a "no rules"
+			// warning but the editor still opens. The wire path is
+			// credentials-scoped, not agents-scoped — see
+			// ``CredentialsService.listAgentCredentialPermissions``.
+			http.get('/credentials/:cid/agents/:aid/permissions', () =>
+				HttpResponse.json({ data: [] }),
+			),
+		);
+		const user = userEvent.setup();
+		renderAccessTab();
+		// Wait for the row to render before reaching into it.
+		await screen.findByText('Preview binding');
+		const row = findRow('Preview binding') as HTMLElement;
+		expect(row).not.toBeNull();
+		await user.click(within(row).getByRole('button', { name: /edit rules/i }));
+		// The preview's overridable section label appears when the
+		// editor mounts against a fully-resolved served API.
+		expect(await screen.findByText(/effective access for this binding/i)).toBeInTheDocument();
+	});
+
 	it('dry-runs a request against the saved rules with the rule tester — both verdicts', async () => {
 		const user = userEvent.setup();
 		renderAccessTab();
@@ -313,13 +295,11 @@ describe('BoundCredentialsCard (agent detail · Access tab)', () => {
 		// The empty copy explains the approval gate instead of dangling a
 		// dead-end CTA…
 		expect(await screen.findByText(/approve this agent first/i)).toBeInTheDocument();
-		// …and no bind affordance renders for a pending agent — both the
-		// "Bind existing" (existing credential) and "Connect new integration"
-		// (vendor-connect flow) entry points are gated on the agent being
+		// …and no bind affordance renders for a pending agent — the
+		// "Connect integration" entry point is gated on the agent being
 		// active.
-		expect(screen.queryByRole('button', { name: /bind existing/i })).not.toBeInTheDocument();
 		expect(
-			screen.queryByRole('button', { name: /connect new integration/i }),
+			screen.queryByRole('button', { name: /connect integration/i }),
 		).not.toBeInTheDocument();
 	});
 });

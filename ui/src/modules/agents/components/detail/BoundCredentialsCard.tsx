@@ -23,7 +23,6 @@ import {
 	Edit2,
 	Key,
 	KeyRound,
-	Link as LinkIcon,
 	PauseCircle,
 	PlayCircle,
 	ShieldCheck,
@@ -41,7 +40,6 @@ import {
 	type AgentEntity,
 	type CredentialBindingEntity,
 } from '@/modules/agents/api';
-import { BindAgentCredentialDialog } from '@/modules/agents/components/detail/BindAgentCredentialDialog';
 import { AgentBindingPermissionsEditor } from '@/modules/agents/components/detail/AgentBindingPermissionsEditor';
 import { CreateCredentialDialog } from '@/shared/credentials/components/CreateCredentialDialog';
 import { PostConnectBindMore } from '@/shared/credentials/components/PostConnectBindMore';
@@ -225,6 +223,22 @@ function BindingRow({
 							credentialLabel={heading}
 							initialRules={permissions.data ?? []}
 							onClose={onToggleEdit}
+							apiReference={
+								// A binding can carry multiple ``serves`` entries
+								// but the common case is one API per credential.
+								// The preview renders one API at a time; using the
+								// first served entry is fine for the current
+								// single-served-API topology and degrades to no
+								// preview when the vendor/name/version isn't
+								// fully known.
+								serves && serves.vendor && serves.name && serves.version
+									? {
+											vendor: serves.vendor,
+											name: serves.name,
+											version: serves.version,
+										}
+									: null
+							}
 						/>
 					</motion.div>
 				)}
@@ -244,7 +258,6 @@ export function BoundCredentialsCard({
 	const unbind = useUnbindAgentCredential(agentId);
 	const resume = useResumeAgentCredentialBinding(agentId);
 
-	const [bindOpen, setBindOpen] = useState(false);
 	const [connectOpen, setConnectOpen] = useState(false);
 	const [editingCredId, setEditingCredId] = useState<string | null>(null);
 
@@ -252,37 +265,28 @@ export function BoundCredentialsCard({
 	const canBind = agentStatus === 'active';
 
 	const rows = useMemo(() => bindings.data ?? [], [bindings.data]);
-	// Memoised so the picker's internal useMemos don't invalidate on every
-	// parent re-render. Suspended bindings stay in the set — they are still
-	// bound; re-binding would 409.
-	const boundIds = useMemo(() => new Set(rows.map((b) => b.credentialId)), [rows]);
 
 	return (
 		<>
 			<DetailSection
 				title={`Bound credentials (${rows.length})`}
 				icon={<ShieldCheck className="h-4 w-4" />}
-				trailing={
-					// Two entry points to add a credential to this agent:
-					// "Connect new integration" runs the vendor OAuth flow with
-					// the agent pre-selected; "Bind existing" attaches a
-					// credential already created via the credentials page.
-					// Both are gated on the agent being active (approval
-					// vouches for the identity before capability accrues).
-					canBind ? (
-						<div className="flex items-center gap-2">
-							<Button
-								variant="secondary"
-								size="sm"
-								onClick={() => setConnectOpen(true)}
-							>
-								<KeyRound className="h-4 w-4" /> Connect new integration
-							</Button>
-							<Button variant="secondary" size="sm" onClick={() => setBindOpen(true)}>
-								<LinkIcon className="h-4 w-4" /> Bind existing
-							</Button>
-						</div>
-					) : undefined
+				action={
+					// Single entry point: the connect wizard runs the vendor
+					// OAuth flow with this agent pre-selected AND handles the
+					// pick-existing-credential path via its API picker. Gated
+					// on the agent being active (approval vouches for the
+					// identity before capability accrues).
+					canBind
+						? {
+								label: (
+									<>
+										<KeyRound className="h-4 w-4" /> Connect integration
+									</>
+								),
+								onClick: () => setConnectOpen(true),
+							}
+						: undefined
 				}
 			>
 				{bindings.isPending ? (
@@ -297,10 +301,10 @@ export function BoundCredentialsCard({
 								<Button
 									variant="ghost"
 									size="sm"
-									onClick={() => setBindOpen(true)}
+									onClick={() => setConnectOpen(true)}
 									className="text-primary h-auto px-1 py-0 text-xs font-medium"
 								>
-									<KeyRound className="h-3 w-3" /> Bind a credential
+									<KeyRound className="h-3 w-3" /> Connect an integration
 								</Button>{' '}
 								to grant it API access.
 							</>
@@ -342,15 +346,6 @@ export function BoundCredentialsCard({
 					</AnimatePresence>
 				)}
 			</DetailSection>
-
-			{/* Two-step bind wizard (mounted once — its draft survives dismissal,
-			    resets only on a successful bind: dialog-state rule). */}
-			<BindAgentCredentialDialog
-				agentId={agentId}
-				open={bindOpen}
-				onClose={() => setBindOpen(false)}
-				boundIds={boundIds}
-			/>
 
 			{/* Vendor-connect flow with agent locked to this page's agent —
 			    dropdown greys out via ``preselectedAgentId``. On success the
