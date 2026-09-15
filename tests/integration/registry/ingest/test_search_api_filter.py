@@ -80,8 +80,8 @@ async def two_ingested_apis(
         "alpha-example-com/alpha-api",
         "alpha-example-com",
         "alpha-example-com:alpha-api:1.2.3",  # legacy colon form stays supported
-        # Raw spellings slugify to the stored form, the same way ingest and the
-        # access-request path normalize them — a dotted domain must not 422.
+        # Raw spellings slugify to the stored form, the same way ingest
+        # normalizes them — a dotted domain must not 422.
         "alpha.example.com/alpha.api/1.2.3",
         "Alpha-Example-Com",
     ],
