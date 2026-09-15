@@ -49,10 +49,11 @@ SURFACE_DB_DEPS: dict[str, set[str]] = {
     # mode behind the parts-mode Helm smoke timeouts.
     "control": {"admin"},
     # Registry additionally reads the control DB: GET /governed-hosts derives
-    # the caller's credential scopes from control's toolkit_credential_bindings
-    # (issue #1278), and ApiService's toolkit-binding reconciliation touches it
-    # opportunistically. Without it, a standalone registry surface (parts-mode
-    # deploy) answers /governed-hosts with a 500.
+    # the caller's credential scopes from control's credentials table, keyed by
+    # the identity's admin agent_credential_bindings (issue #1278), and
+    # ApiService's binding reconciliation touches it opportunistically. Without
+    # it, a standalone registry surface (parts-mode deploy) answers
+    # /governed-hosts with a 500.
     "registry": {"admin", "control"},
 }
 
