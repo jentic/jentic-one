@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { ArrowLeft, Download, Info, Loader2 } from 'lucide-react';
 import { Button, Dialog, ErrorAlert, Input, Label, Skeleton, toast } from '@/shared/ui';
@@ -30,7 +30,10 @@ import { managedProviderUnavailableMessage, providerOptions } from '@/shared/cre
 import { ApiPicker } from '@/shared/credentials/components/ApiPicker';
 import { AuthTypeCards } from '@/shared/credentials/components/AuthTypeCards';
 import { ServerVariablesSection } from '@/shared/credentials/components/ServerVariablesSection';
-import { VendorConnectFlow } from '@/shared/credentials/components/VendorConnectFlow';
+import {
+	VendorConnectFlow,
+	type PostConnectInfo,
+} from '@/shared/credentials/components/VendorConnectFlow';
 import {
 	apiKeyFieldsFromScheme,
 	oauth2FlowsFromSchemes,
@@ -80,6 +83,21 @@ interface CreateCredentialDialogProps {
 	 * shows the agent-requested scopes for the human to review + confirm.
 	 */
 	approvalSession?: { sessionId: string; pollToken: string };
+	/**
+	 * When set, the vendor-connect flow opens with the given agent locked in
+	 * as the binding target — passed through to ``VendorConnectFlow``'s
+	 * ``preselectedAgentId`` prop, which greys out the picker so the user
+	 * can't re-target during binding. Used by the "Connect new integration"
+	 * entry on an agent's detail page.
+	 */
+	preselectedAgentId?: string;
+	/**
+	 * Render-prop threaded through to ``VendorConnectFlow`` — callers
+	 * supply the "bind to more agents" CTA (``PostConnectBindMore``);
+	 * the dialog stays agnostic of what the extra content is so it
+	 * doesn't have to import a component that some callers won't want.
+	 */
+	renderPostConnect?: (info: PostConnectInfo) => ReactNode;
 }
 
 type Step = 'pick' | 'form' | 'vendor';
@@ -111,6 +129,8 @@ export function CreateCredentialDialog({
 	onCreated,
 	initialType,
 	approvalSession,
+	preselectedAgentId,
+	renderPostConnect,
 }: CreateCredentialDialogProps) {
 	const [step, setStep] = useState<Step>('pick');
 	const [selectedApi, setSelectedApi] = useState<SelectedApi | null>(null);
@@ -555,6 +575,7 @@ export function CreateCredentialDialog({
 					mode="approve"
 					sessionId={approvalSession.sessionId}
 					pollToken={approvalSession.pollToken}
+					renderPostConnect={renderPostConnect}
 					onBack={onClose}
 					onDone={onClose}
 				/>
@@ -572,6 +593,8 @@ export function CreateCredentialDialog({
 						<VendorConnectFlow
 							mode="self"
 							vendor={selectedVendor}
+							preselectedAgentId={preselectedAgentId}
+							renderPostConnect={renderPostConnect}
 							onBack={goBackToPick}
 							onDone={onClose}
 						/>

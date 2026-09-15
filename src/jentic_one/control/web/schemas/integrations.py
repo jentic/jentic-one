@@ -127,7 +127,14 @@ class ReviewSessionResponse(BaseModel):
 
 class ConfirmSessionRequest(BaseModel):
     confirmed_scopes: list[str]
-    permission_rules: list[PermissionRuleModel] = Field(default_factory=list)
+    permission_rules: list[PermissionRuleSchema] = Field(default_factory=list)
+    # Selected at the rules-page Continue-click when the session was
+    # opened without a target agent (user starts a session by clicking a
+    # vendor tile, then picks the agent to bind on the way through).
+    # Ignored when the session already carries an ``agent_id`` — the
+    # service refuses to switch the target once a binding has been made
+    # visible to the user.
+    agent_id: str | None = Field(default=None)
 
 
 class DeviceAuthorizationConfirmSessionResponse(BaseModel):

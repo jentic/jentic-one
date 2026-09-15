@@ -7,6 +7,7 @@
 
 import { useMutation, useQuery, useQueryClient, type UseQueryOptions } from '@tanstack/react-query';
 import {
+	bindCredentialToAgentBlocked,
 	cancelConnectSession,
 	confirmConnectSession,
 	getConnectSession,
@@ -126,6 +127,41 @@ export function useVendorOperations(
 export function useStartIntegrationConnect() {
 	return useMutation<ConnectResponse, Error, ConnectRequest>({
 		mutationFn: (body) => startIntegrationConnect(body),
+	});
+}
+
+/**
+ * Bind a credential to a batch of agents in "start blocked" mode (no
+ * rules). Powers the post-connect "Bind to more agents" CTA: after
+ * the user finishes the OAuth flow, they can tick a set of other
+ * agents that should also have access to the credential, and click
+ * Bind. The per-binding rules the user authored at ``:confirm`` were
+ * specific to the primary (agent, credential) pair — additional
+ * agents get suspended rows that the user grants access from each
+ * agent's page.
+ *
+ * Serial rather than parallel: a 409 (already-bound out-of-band) on
+ * one agent shouldn't cancel the others' in-flight requests. The
+ * mutation invalidates each touched agent's binding list and the
+ * credential's bindings list so the surrounding UI refreshes without
+ * a manual reload.
+ */
+export function useBindCredentialToAgents() {
+	const client = useQueryClient();
+	return useMutation<void, Error, { credentialId: string; agentIds: readonly string[] }>({
+		mutationFn: async ({ credentialId, agentIds }) => {
+			for (const aid of agentIds) {
+				await bindCredentialToAgentBlocked(aid, credentialId);
+			}
+		},
+		onSuccess: (_res, { credentialId, agentIds }) => {
+			for (const aid of agentIds) {
+				void client.invalidateQueries({
+					queryKey: ['agents', aid, 'credential-bindings'],
+				});
+			}
+			void client.invalidateQueries({ queryKey: ['credentials', credentialId, 'bindings'] });
+		},
 	});
 }
 

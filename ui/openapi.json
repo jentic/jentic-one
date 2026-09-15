@@ -2698,6 +2698,17 @@
       },
       "ConfirmSessionRequest": {
         "properties": {
+          "agent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Id"
+          },
           "confirmed_scopes": {
             "items": {
               "type": "string"

@@ -4,6 +4,7 @@
 /* eslint-disable */
 import type { PermissionRuleModel } from './PermissionRuleModel';
 export type ConfirmSessionRequest = {
+    agent_id?: (string | null);
     confirmed_scopes: Array<string>;
     permission_rules?: Array<PermissionRuleModel>;
 };

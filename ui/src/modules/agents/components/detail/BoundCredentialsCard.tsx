@@ -43,6 +43,8 @@ import {
 } from '@/modules/agents/api';
 import { BindAgentCredentialDialog } from '@/modules/agents/components/detail/BindAgentCredentialDialog';
 import { AgentBindingPermissionsEditor } from '@/modules/agents/components/detail/AgentBindingPermissionsEditor';
+import { CreateCredentialDialog } from '@/shared/credentials/components/CreateCredentialDialog';
+import { PostConnectBindMore } from '@/shared/credentials/components/PostConnectBindMore';
 import { InlineConfirm } from '@/modules/agents/components/InlineConfirm';
 import { panelMotion, rowMotion, toDisplayRules } from '@/modules/agents/components/detail/shared';
 
@@ -243,6 +245,7 @@ export function BoundCredentialsCard({
 	const resume = useResumeAgentCredentialBinding(agentId);
 
 	const [bindOpen, setBindOpen] = useState(false);
+	const [connectOpen, setConnectOpen] = useState(false);
 	const [editingCredId, setEditingCredId] = useState<string | null>(null);
 
 	// Approval gate: only a vouched-for (active) agent may gain capabilities.
@@ -259,17 +262,27 @@ export function BoundCredentialsCard({
 			<DetailSection
 				title={`Bound credentials (${rows.length})`}
 				icon={<ShieldCheck className="h-4 w-4" />}
-				action={
-					canBind
-						? {
-								label: (
-									<>
-										<LinkIcon className="h-4 w-4" /> Bind credential
-									</>
-								),
-								onClick: () => setBindOpen(true),
-							}
-						: undefined
+				trailing={
+					// Two entry points to add a credential to this agent:
+					// "Connect new integration" runs the vendor OAuth flow with
+					// the agent pre-selected; "Bind existing" attaches a
+					// credential already created via the credentials page.
+					// Both are gated on the agent being active (approval
+					// vouches for the identity before capability accrues).
+					canBind ? (
+						<div className="flex items-center gap-2">
+							<Button
+								variant="secondary"
+								size="sm"
+								onClick={() => setConnectOpen(true)}
+							>
+								<KeyRound className="h-4 w-4" /> Connect new integration
+							</Button>
+							<Button variant="secondary" size="sm" onClick={() => setBindOpen(true)}>
+								<LinkIcon className="h-4 w-4" /> Bind existing
+							</Button>
+						</div>
+					) : undefined
 				}
 			>
 				{bindings.isPending ? (
@@ -338,6 +351,26 @@ export function BoundCredentialsCard({
 				onClose={() => setBindOpen(false)}
 				boundIds={boundIds}
 			/>
+
+			{/* Vendor-connect flow with agent locked to this page's agent —
+			    dropdown greys out via ``preselectedAgentId``. On success the
+			    credential is bound + rules-authored in one shot. Mounted
+			    conditionally so its child effects (``:connect`` on mount)
+			    don't fire until the user actually clicks the button. */}
+			{connectOpen && (
+				<CreateCredentialDialog
+					open
+					onClose={() => setConnectOpen(false)}
+					onCreated={() => setConnectOpen(false)}
+					preselectedAgentId={agentId}
+					renderPostConnect={({ credentialId, boundAgentId }) => (
+						<PostConnectBindMore
+							credentialId={credentialId}
+							boundAgentId={boundAgentId}
+						/>
+					)}
+				/>
+			)}
 		</>
 	);
 }

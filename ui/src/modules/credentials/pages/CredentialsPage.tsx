@@ -20,6 +20,7 @@ import {
 } from '@/shared/credentials/components/CreateCredentialDialog';
 import { DeviceCodeConnectDialog } from '@/shared/credentials/components/DeviceCodeConnectDialog';
 import { EditCredentialSheet } from '@/shared/credentials/components/EditCredentialSheet';
+import { PostConnectBindMore } from '@/shared/credentials/components/PostConnectBindMore';
 import type { DeviceAuthorizationChallengeResponse } from '@/shared/credentials/api/types';
 
 /**
@@ -274,6 +275,9 @@ export function CredentialsPage() {
 					clearApprovalParams();
 				}}
 				approvalSession={approvalSession}
+				renderPostConnect={({ credentialId, boundAgentId }) => (
+					<PostConnectBindMore credentialId={credentialId} boundAgentId={boundAgentId} />
+				)}
 				onCreated={(info: CreatedCredentialInfo): void => {
 					setCreateOpen(false);
 					// Auto-open the sign-in flow only for OAuth2 credentials that

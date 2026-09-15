@@ -90,7 +90,7 @@ describe('VendorConnectFlow — self mode', () => {
 		vi.restoreAllMocks();
 	});
 
-	it('renders the configure step with vendor header + scope catalog (no agent picker)', async () => {
+	it('renders the configure step with vendor header + scope catalog + agent picker', async () => {
 		renderWithProviders(
 			<VendorConnectFlow mode="self" vendor={vendor} onBack={vi.fn()} onDone={vi.fn()} />,
 		);
@@ -99,11 +99,33 @@ describe('VendorConnectFlow — self mode', () => {
 		expect(await screen.findByText('GitHub')).toBeInTheDocument();
 		expect(await screen.findByText('repo')).toBeInTheDocument();
 		expect(await screen.findByText('read:user')).toBeInTheDocument();
-		// Agent picker is intentionally NOT rendered — credentials still
-		// bind through toolkits, so surfacing the choice would suggest
-		// something the UI can't actually deliver on today. Comes back
-		// once agent-credential bindings replace toolkit membership.
-		expect(screen.queryByLabelText(/which agent uses this/i)).toBeNull();
+		// Agent picker IS rendered — theme-5 landed on main and
+		// credentials now bind directly to a specified agent at
+		// ``:confirm``, so the choice has to be surfaced here. Uses the
+		// agent's ``name`` in the options.
+		const picker = await screen.findByLabelText(/which agent uses this/i);
+		expect(picker).toBeInTheDocument();
+		expect(await screen.findByRole('option', { name: 'Scout' })).toBeInTheDocument();
+	});
+
+	it('disables the agent picker when preselectedAgentId is provided (agent-page entry)', async () => {
+		renderWithProviders(
+			<VendorConnectFlow
+				mode="self"
+				vendor={vendor}
+				preselectedAgentId="agnt_1"
+				onBack={vi.fn()}
+				onDone={vi.fn()}
+			/>,
+		);
+		// The dropdown renders but is disabled — locked to the agent
+		// whose page opened the flow, so the user can't accidentally
+		// re-target a binding during the connect step.
+		const picker = (await screen.findByLabelText(
+			/which agent uses this/i,
+		)) as HTMLSelectElement;
+		expect(picker).toBeDisabled();
+		expect(picker.value).toBe('agnt_1');
 	});
 
 	it('connect-on-mount, then confirm on rules-continue, lands on awaiting', async () => {
@@ -165,11 +187,15 @@ describe('VendorConnectFlow — self mode', () => {
 		);
 		const user = userEvent.setup();
 
-		// Wait for both capabilities + session-id (Continue is gated on
-		// both). ``read:user`` proves the scope catalog hydrated; then we
-		// wait for the button to un-disable, which means ``:connect``
-		// returned.
+		// Wait for both capabilities + session-id + agent choice (Continue
+		// is gated on all three). ``read:user`` proves the scope catalog
+		// hydrated; picking Scout satisfies the agent gate; the button
+		// un-disables when ``:connect`` also returns.
 		await screen.findByText('read:user');
+		const picker = (await screen.findByLabelText(
+			/which agent uses this/i,
+		)) as HTMLSelectElement;
+		await user.selectOptions(picker, 'agnt_1');
 		await waitFor(() =>
 			expect(screen.getByRole('button', { name: /^continue$/i })).not.toBeDisabled(),
 		);
@@ -378,6 +404,72 @@ describe('VendorConnectFlow — approve mode', () => {
 		// The rendered row prints ``<path> (<match_mode>)`` — match on the
 		// combined text so we're robust against exact whitespace.
 		expect(await screen.findByText(/\/issues\s*\(prefix\)/i)).toBeInTheDocument();
+	});
+
+	it('lets the user edit an existing rule via the edit dialog', async () => {
+		// Every user-authored row exposes a Pencil icon that opens a
+		// modal with the rule's current values pre-filled. Saving writes
+		// back to the same index in the rules list. Regression guard for
+		// the "edit any rule you created" promise on the rules page.
+		const session: ReviewSession = {
+			session_id: 'sess_ed',
+			state: 'created',
+			vendor_key: 'github',
+			vendor_display_name: 'GitHub',
+			resolved_flow: 'device_authorization',
+			requested_by_actor_id: 'agnt_1',
+			scopes: [
+				{
+					name: 'repo',
+					classification: 'write',
+					default: false,
+					requested: true,
+					description: 'Full control',
+				},
+			],
+			reason: null,
+			// One agent-requested rule pre-populates the list so the row
+			// is present without needing to open the Add form first.
+			requested_permission_rules: [
+				{ effect: 'allow', methods: ['GET'], path: '/repos', match_mode: 'prefix' },
+			],
+			api_reference: { vendor: 'github-com', name: 'github-com', version: null },
+		};
+		worker.use(
+			http.get('/connect-sessions/sess_ed', () => HttpResponse.json(session)),
+			http.get('/agents', () =>
+				HttpResponse.json({ data: [], has_more: false, next_cursor: null }),
+			),
+		);
+		renderWithProviders(
+			<VendorConnectFlow
+				mode="approve"
+				sessionId="sess_ed"
+				pollToken="tok_ed"
+				onBack={vi.fn()}
+				onDone={vi.fn()}
+			/>,
+		);
+		const user = userEvent.setup();
+		expect(await screen.findByText('repo')).toBeInTheDocument();
+		await waitFor(() =>
+			expect(screen.getByRole('button', { name: /^continue$/i })).not.toBeDisabled(),
+		);
+		await user.click(screen.getByRole('button', { name: /^continue$/i }));
+		expect(await screen.findByText('Permission rules')).toBeInTheDocument();
+		// The seeded row is present.
+		expect(await screen.findByText(/\/repos\s*\(prefix\)/i)).toBeInTheDocument();
+		// Click Edit on the row.
+		await user.click(screen.getByRole('button', { name: /edit rule/i }));
+		// Dialog opens with the rule pre-filled — the path input carries `/repos`.
+		const pathInput = await screen.findByDisplayValue('/repos');
+		// Edit the path.
+		await user.clear(pathInput);
+		await user.type(pathInput, '/issues');
+		await user.click(screen.getByRole('button', { name: /^save$/i }));
+		// The row now shows the edited path; the old one is gone.
+		expect(await screen.findByText(/\/issues\s*\(prefix\)/i)).toBeInTheDocument();
+		expect(screen.queryByText(/\/repos\s*\(prefix\)/i)).toBeNull();
 	});
 
 	it('renders an error alert when the approval link is invalid', async () => {

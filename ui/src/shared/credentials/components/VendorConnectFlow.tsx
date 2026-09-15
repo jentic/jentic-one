@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
+	AlertTriangle,
 	ArrowDown,
 	ArrowLeft,
 	ArrowUp,
@@ -8,6 +10,7 @@ import {
 	CheckCircle2,
 	ExternalLink,
 	Loader2,
+	Pencil,
 	Plus,
 	ShieldAlert,
 	X,
@@ -19,9 +22,11 @@ import {
 	Button,
 	Checkbox,
 	CopyButton,
+	Dialog,
 	ErrorAlert,
 	Label,
 	Skeleton,
+	Tooltip,
 	VendorIcon,
 	toast,
 } from '@/shared/ui';
@@ -39,7 +44,8 @@ import {
 	cancelConnectSession,
 	cancelConnectSessionBeacon,
 } from '@/shared/credentials/api/vendors-client';
-import { evaluateRules } from '@/shared/credentials/lib/rule-matcher';
+import { nextPathCompletion } from '@/shared/credentials/lib/path-completion';
+import { evaluateRules, ruleValidityIssue } from '@/shared/credentials/lib/rule-matcher';
 import { isHttpsVendorUrl, openVendorUrl } from '@/shared/credentials/lib/safe-navigation';
 import type {
 	AuthCodeConfirmResponse,
@@ -66,10 +72,33 @@ import type {
  * Both variants share the awaiting (device code + polling) and terminal
  * (success / failure) steps.
  */
+/**
+ * Info handed to ``renderPostConnect`` on a successful connect. Callers
+ * use it to build the "Bind to more agents" CTA (or anything else) —
+ * that lives in ``modules/agents`` because layering forbids ``shared/``
+ * from importing module code, so this component takes a render prop
+ * instead of composing the CTA inline.
+ */
+export interface PostConnectInfo {
+	credentialId: string;
+	// The agent the credential was just bound to at ``:confirm``. Null
+	// only for the (rare) case where the session had no target agent —
+	// callers can decide whether to show anything in that state.
+	boundAgentId: string | null;
+}
+
 export type VendorConnectFlowProps =
 	| {
 			mode: 'self';
 			vendor: VendorSummary;
+			// When set, the flow opens with the given agent pre-selected and
+			// the picker rendered disabled. Used by the "Bind credential"
+			// entry from an agent's detail page so the user can't
+			// accidentally re-target during binding.
+			preselectedAgentId?: string;
+			// Extra content rendered on the terminal step's success path
+			// (typically a "Bind to more agents" CTA). See ``PostConnectInfo``.
+			renderPostConnect?: (info: PostConnectInfo) => ReactNode;
 			onBack: () => void;
 			onDone: () => void;
 	  }
@@ -77,6 +106,7 @@ export type VendorConnectFlowProps =
 			mode: 'approve';
 			sessionId: string;
 			pollToken: string;
+			renderPostConnect?: (info: PostConnectInfo) => ReactNode;
 			onBack: () => void;
 			onDone: () => void;
 	  };
@@ -88,9 +118,13 @@ interface VendorDisplay {
 
 type Phase = 'configure' | 'rules' | 'awaiting' | 'terminal';
 
-// Default preset the "Skip" button on the rules page persists:
-// ``Allow: GET /*`` (methods list + prefix match). Not condition-less
-// (path is constrained) so the backend model-validator accepts it.
+// Fallback the client injects into the ``:confirm`` request when the
+// user reaches the rules page and leaves the list empty — ``Allow: GET /*``
+// (methods list + prefix match). Not condition-less (path is
+// constrained) so the backend model-validator accepts it. Only fires
+// at Continue-click; the rules editor itself never renders this as a
+// row so the user always sees exactly what they authored, and the
+// empty state describes the fallback in prose.
 const DEFAULT_ALLOW_GET_RULE: PermissionRule = {
 	effect: 'allow',
 	methods: ['GET'],
@@ -98,19 +132,31 @@ const DEFAULT_ALLOW_GET_RULE: PermissionRule = {
 	match_mode: 'prefix',
 };
 
+// Stable empty reference for the ``pathSuggestions`` default so the
+// form's ``useMemo`` doesn't invalidate on every render when the caller
+// omits it.
+const EMPTY_PATHS: readonly string[] = [];
+
 export function VendorConnectFlow(props: VendorConnectFlowProps) {
 	if (props.mode === 'approve') {
 		return (
 			<VendorApproveFlow
 				sessionId={props.sessionId}
 				pollToken={props.pollToken}
+				renderPostConnect={props.renderPostConnect}
 				onBack={props.onBack}
 				onDone={props.onDone}
 			/>
 		);
 	}
 	return (
-		<VendorSelfConnectFlow vendor={props.vendor} onBack={props.onBack} onDone={props.onDone} />
+		<VendorSelfConnectFlow
+			vendor={props.vendor}
+			preselectedAgentId={props.preselectedAgentId}
+			renderPostConnect={props.renderPostConnect}
+			onBack={props.onBack}
+			onDone={props.onDone}
+		/>
 	);
 }
 
@@ -120,14 +166,19 @@ export function VendorConnectFlow(props: VendorConnectFlowProps) {
 
 function VendorSelfConnectFlow({
 	vendor,
+	preselectedAgentId,
+	renderPostConnect,
 	onBack,
 	onDone,
 }: {
 	vendor: VendorSummary;
+	preselectedAgentId?: string;
+	renderPostConnect?: (info: PostConnectInfo) => ReactNode;
 	onBack: () => void;
 	onDone: () => void;
 }) {
 	const capabilities = useVendorAuthCapabilities(vendor.key);
+	const agents = useAgentsForPicker();
 
 	const queryClient = useQueryClient();
 	const [selectedScopes, setSelectedScopes] = useState<Set<string>>(new Set());
@@ -136,6 +187,10 @@ function VendorSelfConnectFlow({
 	const [rules, setRules] = useState<PermissionRule[] | null>(null);
 	const [session, setSession] = useState<{ id: string; pollToken: string } | null>(null);
 	const [challenge, setChallenge] = useState<ConfirmResponse | null>(null);
+	// When ``preselectedAgentId`` is supplied by the caller (entry from
+	// an agent's detail page), the picker starts locked to that id.
+	// Otherwise it starts empty and the user must pick before Continue.
+	const [agentId, setAgentId] = useState<string | null>(preselectedAgentId ?? null);
 
 	const startMutation = useStartIntegrationConnect();
 	const confirmMutation = useConfirmConnectSession(session?.id ?? '');
@@ -295,22 +350,29 @@ function VendorSelfConnectFlow({
 		});
 	};
 
-	// Continue on the scopes page — no backend call yet. Seeds rules from the
-	// scope classifications and hands off to the rules page for user review.
+	// Continue on the scopes page — no backend call yet. Rules start empty;
+	// the empty-state message on the rules page tells the user that
+	// leaving it empty falls back to allow-all-GETs at ``:confirm`` time.
+	// We do not pre-populate rules from scope classifications — the user
+	// sees exactly what they authored, nothing more.
 	const goToRules = (): void => {
-		setRules((prev) => prev ?? derivePermissionRules(scopes, selectedScopes));
+		setRules((prev) => prev ?? []);
 		setPhase('rules');
 	};
 
 	// Continue on the rules page — session already exists (``:connect``
 	// fired at mount). Just POST ``:confirm`` with the human-approved
-	// scopes + rules and transition to ``awaiting``.
+	// scopes + rules + selected agent, and transition to ``awaiting``.
+	// ``agent_id`` lands at ``:confirm`` (not ``:connect``) so the
+	// session-on-vendor-click semantics are preserved for the self flow
+	// — see the backend's late-bind branch in ``ConnectSessionService.confirm``.
 	const confirmFlow = async (finalRules: PermissionRule[]) => {
 		if (!session) return;
 		try {
 			const result = await confirmMutation.mutateAsync({
 				confirmed_scopes: Array.from(selectedScopes),
 				permission_rules: finalRules,
+				agent_id: agentId,
 			});
 			phaseRef.current = 'awaiting';
 			setChallenge(result);
@@ -342,6 +404,9 @@ function VendorSelfConnectFlow({
 				status={polling.data?.status ?? 'failed'}
 				connectedAs={polling.data?.connected_as ?? null}
 				errorCode={polling.data?.error_code ?? null}
+				credentialId={polling.data?.credential_id ?? null}
+				renderPostConnect={renderPostConnect}
+				boundAgentId={agentId}
 				onDone={onDone}
 				onRetry={(): void => {
 					setPhase('configure');
@@ -391,6 +456,15 @@ function VendorSelfConnectFlow({
 				subtitle={`You'll approve this connection on ${display.displayName} in a moment.`}
 			/>
 
+			<AgentPickerField
+				agents={agents.data?.data ?? []}
+				loading={agents.isLoading}
+				error={agents.error as Error | null}
+				value={agentId}
+				onChange={setAgentId}
+				disabled={preselectedAgentId != null}
+			/>
+
 			<ScopeChooseField
 				loading={capabilities.isLoading}
 				error={capabilities.error as Error | null}
@@ -412,13 +486,85 @@ function VendorSelfConnectFlow({
 					onClick={goToRules}
 					// ``:connect`` fires at mount — wait for the session id
 					// before letting the user advance so the rules page has
-					// something to attach to when it renders.
-					disabled={selectedScopes.size === 0 || !session}
+					// something to attach to when it renders. Also require
+					// an agent — the credential must bind to one, and the
+					// server refuses to accept ``agent_id: null`` at
+					// ``:confirm`` because there's nothing to bind against.
+					disabled={selectedScopes.size === 0 || !session || !agentId}
 					loading={startMutation.isPending && !session}
 				>
 					Continue
 				</Button>
 			</div>
+		</div>
+	);
+}
+
+/**
+ * Agent-selection dropdown on the self-flow configure page. Renders
+ * ``agent.name`` — actor IDs are non-obvious identifiers, so surfacing
+ * them would only confuse the user. Empty state (no agents in this
+ * user's account) shows an inline note pointing at agent-creation.
+ * ``disabled`` locks the field to its current value so the "Bind
+ * credential" entry from an agent's detail page can pre-select without
+ * risk of accidental re-target.
+ */
+function AgentPickerField({
+	agents,
+	loading,
+	error,
+	value,
+	onChange,
+	disabled,
+}: {
+	agents: readonly { id: string; name: string }[];
+	loading: boolean;
+	error: Error | null;
+	value: string | null;
+	onChange: (id: string | null) => void;
+	disabled: boolean;
+}) {
+	if (loading) {
+		return (
+			<div className="space-y-2">
+				<Label>Which agent uses this credential?</Label>
+				<Skeleton className="h-9 w-full" />
+			</div>
+		);
+	}
+	if (error) return <ErrorAlert message={error.message} />;
+	if (agents.length === 0) {
+		return (
+			<div className="space-y-2">
+				<Label>Which agent uses this credential?</Label>
+				<div className="border-border bg-muted/30 rounded-lg border border-dashed p-3">
+					<p className="text-muted-foreground text-xs">
+						You don&apos;t have any agents yet. Create one first, then come back to
+						connect the credential.
+					</p>
+				</div>
+			</div>
+		);
+	}
+	return (
+		<div className="space-y-2">
+			<Label htmlFor="connect-agent-picker">Which agent uses this credential?</Label>
+			<select
+				id="connect-agent-picker"
+				value={value ?? ''}
+				onChange={(e): void => onChange(e.target.value || null)}
+				disabled={disabled}
+				className="border-border bg-background text-foreground disabled:text-muted-foreground w-full rounded-md border px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-70"
+			>
+				<option value="" disabled>
+					Select an agent…
+				</option>
+				{agents.map((a) => (
+					<option key={a.id} value={a.id}>
+						{a.name}
+					</option>
+				))}
+			</select>
 		</div>
 	);
 }
@@ -430,11 +576,13 @@ function VendorSelfConnectFlow({
 function VendorApproveFlow({
 	sessionId,
 	pollToken,
+	renderPostConnect,
 	onBack,
 	onDone,
 }: {
 	sessionId: string;
 	pollToken: string;
+	renderPostConnect?: (info: PostConnectInfo) => ReactNode;
 	onBack: () => void;
 	onDone: () => void;
 }) {
@@ -547,16 +695,14 @@ function VendorApproveFlow({
 	};
 
 	// Continue on the review page — no backend call, just move to rules.
-	// Rules are seeded from the agent's requested rules (from the review
-	// payload) if present, otherwise from the classifications of the
-	// selected scopes.
+	// Rules seed from the agent's ``requested_permission_rules`` when the
+	// agent supplied any (those are agent-authored, not client-guessed);
+	// otherwise the list stays empty and the empty-state fallback kicks
+	// in at ``:confirm`` time, same as the self flow.
 	const goToRules = (): void => {
-		const chosen = Array.from(selectedScopes ?? []);
 		setRules((prev) => {
 			if (prev !== null) return prev;
-			const requested = session?.requested_permission_rules ?? [];
-			if (requested.length > 0) return requested;
-			return derivePermissionRulesFromReview(scopes, new Set(chosen));
+			return session?.requested_permission_rules ?? [];
 		});
 		setPhase('rules');
 	};
@@ -620,6 +766,9 @@ function VendorApproveFlow({
 				status={polling.data?.status ?? 'failed'}
 				connectedAs={polling.data?.connected_as ?? null}
 				errorCode={polling.data?.error_code ?? null}
+				credentialId={polling.data?.credential_id ?? null}
+				renderPostConnect={renderPostConnect}
+				boundAgentId={session.requested_by_actor_id}
 				onDone={onDone}
 			/>
 		);
@@ -702,13 +851,18 @@ function VendorApproveFlow({
 
 /**
  * Rules-review page. Sits between the scopes page and the vendor
- * round-trip. The user can either **Skip** (persists a single
- * ``Allow: GET /*`` preset) or accept the pre-populated rules (from
- * scope classifications, or from the agent's request in approve mode)
- * and Continue.
+ * round-trip.
  *
- * Add/Edit/Remove and the operation-impact preview land in the
- * follow-up steps of the plan (step 5 + step 6).
+ * Empty state: the rules list stays empty in local state; the UI
+ * renders a text-only placeholder explaining that Continue will bind
+ * with an ``Allow: GET /*`` fallback. Only when the user clicks
+ * Continue does the client inject that default into the ``:confirm``
+ * request body — the editor itself never renders it as a row so the
+ * user always sees exactly what they authored.
+ *
+ * Non-empty: rules render in first-match-wins order with reorder +
+ * delete controls. Agent-requested rules (approve mode) carry a
+ * "requested by agent" pill.
  */
 function RulesStep({
 	display,
@@ -742,7 +896,6 @@ function RulesStep({
 	apiReference: { vendor: string; name: string | null; version: string | null } | null;
 }) {
 	const isEmpty = currentRules.length === 0;
-	const previewRules = isEmpty ? [DEFAULT_ALLOW_GET_RULE] : currentRules;
 	// Fast index for the "requested by agent" tag — deep-compare by
 	// JSON since ``PermissionRule`` is a plain data shape and users
 	// might edit rows in-place without changing identity.
@@ -751,9 +904,41 @@ function RulesStep({
 		[requestedRules],
 	);
 
+	// Operation-impact preview: when the user has authored no rules,
+	// preview against the confirm-time fallback so they see what
+	// leaving the list empty actually grants. When they've authored
+	// rules, preview against those exactly.
+	const previewRules = isEmpty ? [DEFAULT_ALLOW_GET_RULE] : currentRules;
+
+	// Which row (by index) has the edit dialog open. ``null`` when the
+	// dialog is closed. Keeping the dialog mounted with ``open=false``
+	// lets it play its exit animation on close and preserves focus
+	// behaviour of the underlying <dialog>.
+	const [editingIndex, setEditingIndex] = useState<number | null>(null);
+	const editingRule = editingIndex != null ? currentRules[editingIndex] : undefined;
+
+	// Fetch ops once at the rules-page level and thread the result down.
+	// React-Query dedupes by query key so ``OperationImpactPreview``'s
+	// own ``useVendorOperations`` call hits the shared cache without
+	// re-fetching. The paths feed the Add/Edit dialogs' path-completion
+	// suggestions (both native ``<datalist>`` and the Tab-to-next-segment
+	// shortcut).
+	const opsQuery = useVendorOperations(apiReference ?? undefined, {
+		enabled: !!apiReference,
+	});
+	const pathSuggestions = useMemo<readonly string[]>(() => {
+		const rows = opsQuery.data?.data;
+		if (!rows) return EMPTY_PATHS;
+		// De-dup — one path can back multiple ops (different methods) and
+		// the completion helper only cares about the distinct set.
+		return Array.from(new Set(rows.map((op) => op.path))).sort();
+	}, [opsQuery.data]);
+
 	const handleContinue = (): void => {
+		// The single point where the fallback lands in the request body.
+		// Local state stays empty either way; the injection is
+		// transient, not persisted back into ``currentRules``.
 		const final = isEmpty ? [DEFAULT_ALLOW_GET_RULE] : currentRules;
-		if (isEmpty) onChange(final);
 		onContinue(final);
 	};
 
@@ -766,43 +951,52 @@ function RulesStep({
 
 			<div className="space-y-2">
 				<Label>Permission rules</Label>
-				<p className="text-muted-foreground text-xs">
-					{isEmpty
-						? "We'll allow all read operations (GET) unless you set your own rules. Continue to accept, or add custom rules below."
-						: 'First-match-wins. Requests that match no rule are denied.'}
-				</p>
-				<div className="border-border bg-muted/20 space-y-1.5 rounded-lg border p-2">
-					{previewRules.map((rule, i) => (
-						<RulePreviewRow
-							key={i}
-							rule={rule}
-							isDefault={isEmpty}
-							isRequested={requestedKeys.has(JSON.stringify(rule))}
-							onDelete={
-								isEmpty
-									? undefined
-									: (): void => onChange(currentRules.filter((_, j) => j !== i))
-							}
-							onMoveUp={
-								isEmpty || i === 0
-									? undefined
-									: (): void => onChange(swap(currentRules, i, i - 1))
-							}
-							onMoveDown={
-								isEmpty || i === currentRules.length - 1
-									? undefined
-									: (): void => onChange(swap(currentRules, i, i + 1))
-							}
-						/>
-					))}
-				</div>
-				<AddRuleForm onAdd={(rule) => onChange([...currentRules, rule])} />
+				{isEmpty ? (
+					<div className="border-border bg-muted/20 rounded-lg border border-dashed px-3 py-4">
+						<p className="text-muted-foreground text-xs">
+							No rules yet. If you continue without adding any, this credential will
+							be bound with a default read-only rule (
+							<code className="font-mono">Allow GET /</code>) so agents can call any
+							GET endpoint but nothing else. Add rules below to customise.
+						</p>
+					</div>
+				) : (
+					<>
+						<p className="text-muted-foreground text-xs">
+							First-match-wins. Requests that match no rule are denied.
+						</p>
+						<div className="border-border bg-muted/20 space-y-1.5 rounded-lg border p-2">
+							{currentRules.map((rule, i) => (
+								<RulePreviewRow
+									key={i}
+									rule={rule}
+									isRequested={requestedKeys.has(JSON.stringify(rule))}
+									onEdit={(): void => setEditingIndex(i)}
+									onDelete={(): void =>
+										onChange(currentRules.filter((_, j) => j !== i))
+									}
+									onMoveUp={
+										i === 0
+											? undefined
+											: (): void => onChange(swap(currentRules, i, i - 1))
+									}
+									onMoveDown={
+										i === currentRules.length - 1
+											? undefined
+											: (): void => onChange(swap(currentRules, i, i + 1))
+									}
+								/>
+							))}
+						</div>
+					</>
+				)}
+				<AddRuleForm
+					onAdd={(rule) => onChange([...currentRules, rule])}
+					pathSuggestions={pathSuggestions}
+				/>
 			</div>
 
-			<OperationImpactPreview
-				api={apiReference}
-				rules={isEmpty ? previewRules : currentRules}
-			/>
+			<OperationImpactPreview api={apiReference} rules={previewRules} />
 
 			{error && <ErrorAlert message={error} />}
 
@@ -826,26 +1020,44 @@ function RulesStep({
 					{isEmpty ? 'Skip & continue' : 'Continue'}
 				</Button>
 			</div>
+
+			{editingIndex != null && (
+				// Conditionally mounted so the dialog's inputs don't shadow the
+				// Add form's placeholder ("/repos") in test queries and so any
+				// stale draft state gets torn down cleanly between edits.
+				<EditRuleDialog
+					open
+					initial={editingRule}
+					onClose={(): void => setEditingIndex(null)}
+					onSave={(rule): void => {
+						onChange(currentRules.map((r, j) => (j === editingIndex ? rule : r)));
+						setEditingIndex(null);
+					}}
+					pathSuggestions={pathSuggestions}
+				/>
+			)}
 		</div>
 	);
 }
 
 /**
- * One row in the rules editor. Read-only view of the rule + optional
- * delete + up/down controls when the row is editable (i.e. it's a real
- * user-authored rule, not the greyed-out default preset).
+ * One row in the rules editor. Read-only view of the rule + edit +
+ * delete + up/down controls. When the rule's regex is malformed (or
+ * empty), a warning badge is shown inline — otherwise the rule fails
+ * silently closed at broker time and the user has no way to tell why
+ * the ops-preview grid stays red.
  */
 function RulePreviewRow({
 	rule,
-	isDefault,
 	isRequested,
+	onEdit,
 	onDelete,
 	onMoveUp,
 	onMoveDown,
 }: {
 	rule: PermissionRule;
-	isDefault: boolean;
 	isRequested: boolean;
+	onEdit?: () => void;
 	onDelete?: () => void;
 	onMoveUp?: () => void;
 	onMoveDown?: () => void;
@@ -856,12 +1068,15 @@ function RulePreviewRow({
 			: 'bg-danger/10 text-danger border-danger/40';
 	const methodsLabel =
 		rule.methods && rule.methods.length > 0 ? rule.methods.join(', ') : 'any method';
+	const validityIssue = ruleValidityIssue(rule);
+	const warningLabel =
+		validityIssue === 'invalid-regex'
+			? "This regex pattern isn't valid — the rule will never match. Edit the path or delete the rule."
+			: validityIssue === 'empty-regex'
+				? 'Empty regex — the rule will never match. Add a pattern (e.g. `.*` for match-any) or delete the rule.'
+				: null;
 	return (
-		<div
-			className={`bg-background border-border flex items-center gap-2.5 rounded-md border px-2.5 py-1.5 text-xs ${
-				isDefault ? 'opacity-70' : ''
-			}`}
-		>
+		<div className="bg-background border-border flex items-center gap-2.5 rounded-md border px-2.5 py-1.5 text-xs">
 			<span
 				className={`rounded-md border px-1.5 py-0.5 font-mono text-[10px] tracking-wide uppercase ${effectClass}`}
 			>
@@ -872,16 +1087,35 @@ function RulePreviewRow({
 				{rule.path ?? '/'}
 				{rule.match_mode && rule.match_mode !== 'regex' ? ` (${rule.match_mode})` : ''}
 			</span>
+			{warningLabel && (
+				<Tooltip content={warningLabel}>
+					<span
+						className="text-warning inline-flex items-center gap-1 font-mono text-[10px] uppercase"
+						role="status"
+						aria-label={warningLabel}
+					>
+						<AlertTriangle className="h-3 w-3 shrink-0" />
+						never matches
+					</span>
+				</Tooltip>
+			)}
 			{isRequested && (
 				<Badge variant="default" className="ml-auto text-[10px]">
 					requested by agent
 				</Badge>
 			)}
-			{isDefault && !isRequested && (
-				<span className="text-muted-foreground ml-auto text-[10px] italic">default</span>
-			)}
-			{(onMoveUp || onMoveDown || onDelete) && (
+			{(onEdit || onMoveUp || onMoveDown || onDelete) && (
 				<div className="ml-auto flex items-center gap-0.5">
+					{onEdit && (
+						<button
+							type="button"
+							className="text-muted-foreground hover:text-foreground p-0.5"
+							aria-label="Edit rule"
+							onClick={onEdit}
+						>
+							<Pencil className="h-3.5 w-3.5" />
+						</button>
+					)}
 					{onMoveUp && (
 						<button
 							type="button"
@@ -943,6 +1177,27 @@ function OperationImpactPreview({
 	const items = ops.data?.data ?? [];
 	const importing = !api || !api.name || !api.version || ops.data == null;
 
+	// Sort so allowed operations appear first, denied last. Rules can change
+	// on every keystroke in the editor, so this recomputes for the sort AND
+	// once more inside the render — the extra ``evaluateRules`` per row is
+	// negligible next to the DOM cost, and it keeps the render pure.
+	// ``require-approval`` isn't a legal effect on binding rules today
+	// (the broker treats non-allow as deny), so we only need two buckets;
+	// leave a comment here so the middle bucket lands in the obvious place
+	// when the enforcement effect gains a third value.
+	const sortedItems = useMemo(() => {
+		const withAllow = items.map((op) => ({
+			op,
+			allowed: evaluateRules(rules, {
+				method: op.method,
+				path: op.path,
+				operation_id: op.operation_id,
+			}),
+		}));
+		// Stable sort: allowed (true) < denied (false).
+		return withAllow.sort((a, b) => Number(b.allowed) - Number(a.allowed));
+	}, [items, rules]);
+
 	return (
 		<div className="space-y-2">
 			<Label>What this credential lets an agent do</Label>
@@ -961,41 +1216,34 @@ function OperationImpactPreview({
 				</div>
 			) : (
 				<div className="border-border max-h-56 space-y-1 overflow-y-auto rounded-lg border p-2">
-					{items.map((op) => {
-						const allowed = evaluateRules(rules, {
-							method: op.method,
-							path: op.path,
-							operation_id: op.operation_id,
-						});
-						return (
-							<div
-								key={op.operation_id}
-								className="bg-background border-border flex items-center gap-2.5 rounded-md border px-2.5 py-1.5 text-xs"
+					{sortedItems.map(({ op, allowed }) => (
+						<div
+							key={op.operation_id}
+							className="bg-background border-border flex items-center gap-2.5 rounded-md border px-2.5 py-1.5 text-xs"
+						>
+							<span
+								className={`rounded-md border px-1.5 py-0.5 font-mono text-[10px] uppercase ${
+									allowed
+										? 'bg-success/10 text-success border-success/40'
+										: 'bg-danger/10 text-danger border-danger/40'
+								}`}
+								aria-label={allowed ? 'allowed' : 'denied'}
 							>
-								<span
-									className={`rounded-md border px-1.5 py-0.5 font-mono text-[10px] uppercase ${
-										allowed
-											? 'bg-success/10 text-success border-success/40'
-											: 'bg-danger/10 text-danger border-danger/40'
-									}`}
-									aria-label={allowed ? 'allowed' : 'denied'}
-								>
-									{allowed ? 'allow' : 'deny'}
+								{allowed ? 'allow' : 'deny'}
+							</span>
+							<span className="text-muted-foreground font-mono text-[10px] uppercase">
+								{op.method}
+							</span>
+							<span className="text-foreground truncate font-mono text-[11px]">
+								{op.path}
+							</span>
+							{op.name && (
+								<span className="text-muted-foreground ml-auto truncate text-[10px]">
+									{op.name}
 								</span>
-								<span className="text-muted-foreground font-mono text-[10px] uppercase">
-									{op.method}
-								</span>
-								<span className="text-foreground truncate font-mono text-[11px]">
-									{op.path}
-								</span>
-								{op.name && (
-									<span className="text-muted-foreground ml-auto truncate text-[10px]">
-										{op.name}
-									</span>
-								)}
-							</div>
-						);
-					})}
+							)}
+						</div>
+					))}
 				</div>
 			)}
 		</div>
@@ -1009,72 +1257,118 @@ function swap<T>(items: T[], i: number, j: number): T[] {
 	return next;
 }
 
+// -----------------------------------------------------------------------
+// Rule form — shared draft + body for the Add and Edit paths
+// -----------------------------------------------------------------------
+
 /**
- * Compact inline form for authoring a new ``PermissionRule``. Mirrors
- * the backend ``PermissionRuleSchema`` field-by-field + reimplements
- * ``_reject_condition_less_allow`` client-side so the user gets an
- * inline error instead of a 422 from the server on Continue.
+ * Local editing shape for a ``PermissionRule``. Kept separate from the
+ * wire type so the form can track a ``Set`` of methods and a raw ``path``
+ * string without threading nullable list/string juggling through every
+ * field. Converted at save time via {@link ruleFromDraft}.
  */
-function AddRuleForm({ onAdd }: { onAdd: (rule: PermissionRule) => void }) {
-	const [open, setOpen] = useState(false);
-	const [effect, setEffect] = useState<'allow' | 'deny'>('allow');
-	const [methods, setMethods] = useState<Set<string>>(new Set());
-	const [path, setPath] = useState('');
-	const [matchMode, setMatchMode] = useState<'regex' | 'prefix' | 'exact'>('prefix');
-	const [error, setError] = useState<string | null>(null);
+interface RuleDraft {
+	effect: 'allow' | 'deny';
+	methods: Set<string>;
+	path: string;
+	matchMode: 'regex' | 'prefix' | 'exact';
+}
 
-	const reset = (): void => {
-		setEffect('allow');
-		setMethods(new Set());
-		setPath('');
-		setMatchMode('prefix');
-		setError(null);
+const EMPTY_RULE_DRAFT: RuleDraft = {
+	effect: 'allow',
+	methods: new Set(),
+	path: '',
+	matchMode: 'prefix',
+};
+
+function ruleDraftFromRule(rule: PermissionRule): RuleDraft {
+	return {
+		effect: rule.effect,
+		methods: new Set(rule.methods ?? []),
+		path: rule.path ?? '',
+		matchMode: (rule.match_mode ?? 'prefix') as RuleDraft['matchMode'],
 	};
+}
 
-	const toggleMethod = (method: string): void => {
-		setMethods((prev) => {
-			const next = new Set(prev);
-			if (next.has(method)) next.delete(method);
-			else next.add(method);
-			return next;
-		});
+function ruleFromDraft(draft: RuleDraft): PermissionRule {
+	const hasMethods = draft.methods.size > 0;
+	const hasPath = draft.path.trim().length > 0;
+	return {
+		effect: draft.effect,
+		methods: hasMethods ? Array.from(draft.methods) : null,
+		path: hasPath ? draft.path.trim() : null,
+		match_mode: draft.matchMode,
 	};
+}
 
-	const handleSave = (): void => {
-		const hasMethods = methods.size > 0;
-		const hasPath = path.trim().length > 0;
-		if (effect === 'allow' && !hasMethods && !hasPath) {
-			setError('An "allow" rule must constrain at least one of methods or path.');
-			return;
-		}
-		const rule: PermissionRule = {
-			effect,
-			methods: hasMethods ? Array.from(methods) : null,
-			path: hasPath ? path.trim() : null,
-			match_mode: matchMode,
-		};
-		onAdd(rule);
-		setOpen(false);
-		reset();
-	};
-
-	if (!open) {
-		return (
-			<Button
-				type="button"
-				variant="ghost"
-				size="sm"
-				className="w-full justify-start"
-				onClick={(): void => setOpen(true)}
-			>
-				<Plus className="h-3.5 w-3.5" />
-				Add rule
-			</Button>
-		);
+/**
+ * Client-side mirror of ``PermissionRuleSchema._reject_condition_less_allow``
+ * so the user gets an inline error instead of a 422 from the server on
+ * Continue. Returns the error string (or ``null`` when the draft is valid).
+ */
+function validateDraft(draft: RuleDraft): string | null {
+	const hasMethods = draft.methods.size > 0;
+	const hasPath = draft.path.trim().length > 0;
+	if (draft.effect === 'allow' && !hasMethods && !hasPath) {
+		return 'An "allow" rule must constrain at least one of methods or path.';
 	}
+	return null;
+}
+
+/**
+ * Fully-controlled form fields. Consumers own the draft state and the
+ * validation lifecycle so this component is trivially reusable between the
+ * inline Add form and the modal Edit dialog.
+ *
+ * ``pathSuggestions`` is the set of real operation paths from the
+ * vendor's OpenAPI — used to power the browser-native ``<datalist>``
+ * suggestion dropdown as the user types AND the Tab-to-next-subsection
+ * keyboard shortcut (matching prefixes step through path segments so
+ * users don't have to hand-type long paths like ``/repos/{owner}/{repo}/pulls``).
+ * Empty until the catalog import completes; the input degrades to a
+ * plain textbox and Tab moves focus as normal.
+ */
+function RuleFormBody({
+	draft,
+	onChange,
+	error,
+	pathSuggestions,
+}: {
+	draft: RuleDraft;
+	onChange: (next: RuleDraft) => void;
+	error: string | null;
+	pathSuggestions?: readonly string[];
+}) {
+	const toggleMethod = (method: string): void => {
+		const next = new Set(draft.methods);
+		if (next.has(method)) next.delete(method);
+		else next.add(method);
+		onChange({ ...draft, methods: next });
+	};
+
+	// Cheap unique identifier keeps this form usable in more than one
+	// place on the same page (Add + Edit dialog) without <datalist>
+	// collisions.
+	const datalistId = useId();
+
+	const paths = pathSuggestions ?? EMPTY_PATHS;
+	const filteredSuggestions = useMemo(() => {
+		if (paths.length === 0) return [];
+		if (!draft.path) return paths.slice(0, 25);
+		return paths.filter((p) => p.startsWith(draft.path)).slice(0, 25);
+	}, [paths, draft.path]);
+
+	const handlePathKeyDown = (e: ReactKeyboardEvent<HTMLInputElement>): void => {
+		if (e.key !== 'Tab' || e.shiftKey) return;
+		if (paths.length === 0) return;
+		const extended = nextPathCompletion(draft.path, paths);
+		if (extended == null) return; // Nothing to extend to — let Tab move focus.
+		e.preventDefault();
+		onChange({ ...draft, path: extended });
+	};
 
 	return (
-		<div className="border-border bg-background space-y-2 rounded-lg border p-3">
+		<div className="space-y-2">
 			<div className="flex items-center gap-2">
 				<Label className="text-[11px]">Effect</Label>
 				<div className="flex gap-1">
@@ -1082,9 +1376,9 @@ function AddRuleForm({ onAdd }: { onAdd: (rule: PermissionRule) => void }) {
 						<button
 							key={e}
 							type="button"
-							onClick={(): void => setEffect(e)}
+							onClick={(): void => onChange({ ...draft, effect: e })}
 							className={`rounded-md border px-2 py-0.5 font-mono text-[10px] uppercase ${
-								effect === e
+								draft.effect === e
 									? e === 'allow'
 										? 'bg-success/15 text-success border-success/50'
 										: 'bg-danger/15 text-danger border-danger/50'
@@ -1106,7 +1400,7 @@ function AddRuleForm({ onAdd }: { onAdd: (rule: PermissionRule) => void }) {
 							type="button"
 							onClick={(): void => toggleMethod(m)}
 							className={`rounded-md border px-1.5 py-0.5 font-mono text-[10px] ${
-								methods.has(m)
+								draft.methods.has(m)
 									? 'bg-primary/15 text-primary border-primary/40'
 									: 'text-muted-foreground border-border'
 							}`}
@@ -1119,17 +1413,44 @@ function AddRuleForm({ onAdd }: { onAdd: (rule: PermissionRule) => void }) {
 
 			<div className="flex items-center gap-2">
 				<Label className="text-[11px]">Path</Label>
+				{/*
+				 * Raw <input>/<select> here (rather than the shared ``Input``
+				 * / ``Select`` primitives) so we can keep the compact inline
+				 * layout — those primitives wrap in a full-width column that
+				 * breaks the flex row. What we borrow from them is the text
+				 * + placeholder colour tokens: without ``text-foreground`` the
+				 * value renders in the browser default (near-black on the
+				 * dark card background, i.e. invisible).
+				 */}
 				<input
 					type="text"
-					value={path}
-					onChange={(e): void => setPath(e.target.value)}
+					value={draft.path}
+					onChange={(e): void => onChange({ ...draft, path: e.target.value })}
+					onKeyDown={handlePathKeyDown}
 					placeholder="/repos"
-					className="border-border bg-background flex-1 rounded-md border px-2 py-1 font-mono text-[11px]"
+					list={paths.length > 0 ? datalistId : undefined}
+					// The browser's built-in autofill takes over once the user
+					// starts typing; Tab extends the input to the next path
+					// segment when there is one shared across matches.
+					autoComplete="off"
+					className="border-border bg-background text-foreground placeholder:text-input-placeholder flex-1 rounded-md border px-2 py-1 font-mono text-[11px]"
 				/>
+				{paths.length > 0 && (
+					<datalist id={datalistId}>
+						{filteredSuggestions.map((p) => (
+							<option key={p} value={p} />
+						))}
+					</datalist>
+				)}
 				<select
-					value={matchMode}
-					onChange={(e): void => setMatchMode(e.target.value as typeof matchMode)}
-					className="border-border bg-background rounded-md border px-2 py-1 font-mono text-[10px]"
+					value={draft.matchMode}
+					onChange={(e): void =>
+						onChange({
+							...draft,
+							matchMode: e.target.value as RuleDraft['matchMode'],
+						})
+					}
+					className="border-border bg-background text-foreground rounded-md border px-2 py-1 font-mono text-[10px]"
 				>
 					<option value="prefix">prefix</option>
 					<option value="exact">exact</option>
@@ -1138,8 +1459,67 @@ function AddRuleForm({ onAdd }: { onAdd: (rule: PermissionRule) => void }) {
 			</div>
 
 			{error && <p className="text-danger text-[11px]">{error}</p>}
+		</div>
+	);
+}
 
-			<div className="flex items-center justify-end gap-2 pt-1">
+/**
+ * Inline "Add rule" form. Collapses to a single "Add rule" button until
+ * the user opens it, then expands into a compact field editor mirroring
+ * the backend ``PermissionRuleSchema``.
+ */
+function AddRuleForm({
+	onAdd,
+	pathSuggestions,
+}: {
+	onAdd: (rule: PermissionRule) => void;
+	pathSuggestions?: readonly string[];
+}) {
+	const [open, setOpen] = useState(false);
+	const [draft, setDraft] = useState<RuleDraft>(EMPTY_RULE_DRAFT);
+	const [error, setError] = useState<string | null>(null);
+
+	const reset = (): void => {
+		setDraft(EMPTY_RULE_DRAFT);
+		setError(null);
+	};
+
+	const handleSave = (): void => {
+		const msg = validateDraft(draft);
+		if (msg) {
+			setError(msg);
+			return;
+		}
+		onAdd(ruleFromDraft(draft));
+		setOpen(false);
+		reset();
+	};
+
+	if (!open) {
+		return (
+			<Button
+				type="button"
+				variant="ghost"
+				size="sm"
+				className="w-full justify-start"
+				onClick={(): void => setOpen(true)}
+			>
+				<Plus className="h-3.5 w-3.5" />
+				Add rule
+			</Button>
+		);
+	}
+
+	return (
+		<div className="border-border bg-background rounded-lg border p-3">
+			<RuleFormBody
+				draft={draft}
+				onChange={setDraft}
+				error={error}
+				pathSuggestions={pathSuggestions}
+			/>
+
+			<div className="flex items-center justify-end gap-2 pt-2">
 				<Button
 					type="button"
 					variant="ghost"
@@ -1156,6 +1536,78 @@ function AddRuleForm({ onAdd }: { onAdd: (rule: PermissionRule) => void }) {
 				</Button>
 			</div>
 		</div>
+	);
+}
+
+/**
+ * Modal dialog for editing an existing rule. Opens with the rule
+ * pre-populated; Save writes back to the owner's rule list at the same
+ * index. Kept as a distinct component from {@link AddRuleForm} so the
+ * two paths can't accidentally share transient state — but the field
+ * rendering and validation come from the shared ``RuleFormBody`` +
+ * ``validateDraft`` pair.
+ */
+function EditRuleDialog({
+	open,
+	initial,
+	onClose,
+	onSave,
+	pathSuggestions,
+}: {
+	open: boolean;
+	// Undefined while the dialog is closed. Callers should keep the
+	// dialog mounted with ``open=false`` between edits so animations
+	// play; the effect below re-syncs the draft whenever a new rule
+	// arrives.
+	initial: PermissionRule | undefined;
+	onClose: () => void;
+	onSave: (rule: PermissionRule) => void;
+	pathSuggestions?: readonly string[];
+}) {
+	const [draft, setDraft] = useState<RuleDraft>(EMPTY_RULE_DRAFT);
+	const [error, setError] = useState<string | null>(null);
+
+	useEffect(() => {
+		if (!open || !initial) return;
+		setDraft(ruleDraftFromRule(initial));
+		setError(null);
+	}, [open, initial]);
+
+	const handleSave = (): void => {
+		const msg = validateDraft(draft);
+		if (msg) {
+			setError(msg);
+			return;
+		}
+		onSave(ruleFromDraft(draft));
+	};
+
+	return (
+		<Dialog
+			open={open}
+			onClose={onClose}
+			title="Edit rule"
+			size="md"
+			footer={
+				<div className="flex items-center justify-end gap-2">
+					<Button type="button" variant="ghost" size="sm" onClick={onClose}>
+						Cancel
+					</Button>
+					<Button type="button" variant="primary" size="sm" onClick={handleSave}>
+						Save
+					</Button>
+				</div>
+			}
+		>
+			<div className="p-4">
+				<RuleFormBody
+					draft={draft}
+					onChange={setDraft}
+					error={error}
+					pathSuggestions={pathSuggestions}
+				/>
+			</div>
+		</Dialog>
 	);
 }
 
@@ -1523,6 +1975,9 @@ function TerminalStep({
 	status,
 	connectedAs,
 	errorCode,
+	credentialId,
+	boundAgentId,
+	renderPostConnect,
 	onDone,
 	onRetry,
 }: {
@@ -1530,6 +1985,19 @@ function TerminalStep({
 	status: string;
 	connectedAs: string | null;
 	errorCode: string | null;
+	// The credential id the successful connect wrote — from
+	// ``/status.credential_id``. Handed to ``renderPostConnect`` for
+	// the "bind to more agents" CTA. ``null`` when the flow failed or
+	// hasn't yielded a credential row.
+	credentialId: string | null;
+	// The agent the credential just got bound to at ``:confirm``. The
+	// bind-more picker excludes this one so the list shows only NEW
+	// targets.
+	boundAgentId: string | null;
+	// Post-connect extra content — see ``PostConnectInfo``. Callers
+	// supply this from ``modules/agents`` (the ``shared/`` layer
+	// can't import module code).
+	renderPostConnect?: (info: PostConnectInfo) => ReactNode;
 	onDone: () => void;
 	// Approve-mode has no meaningful "retry" — once the session hits
 	// terminal, the agent must initiate a new one. Callers in that mode
@@ -1566,6 +2034,8 @@ function TerminalStep({
 				</div>
 			</div>
 
+			{success && credentialId && renderPostConnect?.({ credentialId, boundAgentId })}
+
 			<div className="border-border bg-muted/20 -mx-5 -mb-4 flex items-center justify-end gap-2 border-t px-5 py-3">
 				{!success && onRetry && (
 					<Button type="button" variant="secondary" onClick={onRetry}>
@@ -1573,7 +2043,7 @@ function TerminalStep({
 					</Button>
 				)}
 				<Button type="button" variant="primary" onClick={onDone}>
-					Done
+					{success ? 'Close' : 'Done'}
 				</Button>
 			</div>
 		</div>
@@ -1592,38 +2062,4 @@ function reviewScopesToCatalog(scopes: ReviewScope[]): VendorScopeCatalog[] {
 		default: s.default,
 		description: s.description,
 	}));
-}
-
-/**
- * Derive minimal read/write permission rules from the selected scopes. Kept
- * lock-step with the backend expectation on `:confirm` — the human doesn't see
- * these; they're a platform-side gate the vendor scopes imply.
- */
-function derivePermissionRules(
-	catalog: VendorScopeCatalog[],
-	selected: Set<string>,
-): PermissionRule[] {
-	const chosen = catalog.filter((s) => selected.has(s.name));
-	return rulesForClassifications(chosen.map((s) => s.classification));
-}
-
-function derivePermissionRulesFromReview(
-	scopes: ReviewScope[],
-	selected: Set<string>,
-): PermissionRule[] {
-	const chosen = scopes.filter((s) => selected.has(s.name));
-	return rulesForClassifications(chosen.map((s) => s.classification));
-}
-
-function rulesForClassifications(classifications: ScopeClassification[]): PermissionRule[] {
-	const hasRead = classifications.includes('read');
-	const hasWrite = classifications.includes('write') || classifications.includes('admin');
-	const rules: PermissionRule[] = [];
-	if (hasRead) rules.push({ method: 'GET', path: '/**', effect: 'allow' });
-	if (hasWrite) {
-		for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
-			rules.push({ method, path: '/**', effect: 'allow' });
-		}
-	}
-	return rules;
 }

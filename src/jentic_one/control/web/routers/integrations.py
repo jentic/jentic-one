@@ -250,6 +250,7 @@ async def confirm_connect_session(
             session_id,
             confirmed_scopes=body.confirmed_scopes,
             permission_rules=[r.model_dump() for r in body.permission_rules],
+            agent_id=body.agent_id,
             caller_actor_id=identity.sub,
             caller_actor_type=str(identity.actor_type),
         )

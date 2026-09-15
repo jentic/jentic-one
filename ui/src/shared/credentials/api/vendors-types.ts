@@ -61,6 +61,13 @@ export interface PermissionRule {
 export interface ConfirmRequest {
 	confirmed_scopes: string[];
 	permission_rules: PermissionRule[];
+	// Set when the caller wants the credential bound to an agent that
+	// wasn't specified at ``:connect`` time (self-flow: session opens
+	// on vendor click, agent picked on the rules-page Continue). The
+	// server refuses to re-target sessions that already carry an
+	// agent_id — so this is only meaningful for user-initiated
+	// unbound sessions.
+	agent_id?: string | null;
 }
 
 /**

@@ -69,6 +69,37 @@ export function startIntegrationConnect(body: ConnectRequest): Promise<ConnectRe
 	});
 }
 
+/**
+ * Bind an existing credential to an agent in "start blocked" mode (no
+ * rules). Lives here rather than in ``modules/agents/api`` so the
+ * post-connect "Bind to more agents" CTA — which is a credentials-
+ * domain feature but touches an agent-owned endpoint — can compose it
+ * without crossing the module-vs-module boundary. Uses the generated
+ * ``AgentsService`` (allowed at this repository tier) so a schema
+ * change lands automatically.
+ */
+export async function bindCredentialToAgentBlocked(
+	agentId: string,
+	credentialId: string,
+): Promise<void> {
+	try {
+		await AgentsService.bindAgentCredential({
+			agentId,
+			requestBody: { credential_id: credentialId },
+		});
+	} catch (err) {
+		const status =
+			typeof (err as { status?: number })?.status === 'number'
+				? (err as { status: number }).status
+				: null;
+		throw new IntegrationsApiError(
+			(err as Error)?.message ?? 'Failed to bind the credential.',
+			status,
+			err,
+		);
+	}
+}
+
 export function getConnectSession(sessionId: string): Promise<ReviewSession> {
 	return request(`/connect-sessions/${encodeURIComponent(sessionId)}`);
 }

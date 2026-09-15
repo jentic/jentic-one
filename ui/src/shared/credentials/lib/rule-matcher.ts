@@ -121,3 +121,28 @@ export function evaluateRules(
 	}
 	return false;
 }
+
+/**
+ * Reason a rule can never match, or ``null`` if the rule looks well-formed.
+ * The rules editor calls this per row so it can flag a rule whose pattern
+ * would silently fail-closed — otherwise the user has no signal that the
+ * rule isn't doing anything. Mirrors the fail-closed branches in
+ * ``compileMatcher``.
+ */
+export type RuleValidityIssue = 'invalid-regex' | 'empty-regex';
+
+export function ruleValidityIssue(rule: PermissionRule): RuleValidityIssue | null {
+	// The regex mode is where silent failure is most likely — an empty
+	// pattern or an unparseable one both produce a matcher that will
+	// never fire, and the user gets no feedback until they hit Continue
+	// and observe the ops-preview grid stay red.
+	if ((rule.match_mode ?? 'regex') !== 'regex') return null;
+	if (rule.path == null) return null;
+	if (rule.path === '') return 'empty-regex';
+	try {
+		new RegExp(rule.path);
+		return null;
+	} catch {
+		return 'invalid-regex';
+	}
+}

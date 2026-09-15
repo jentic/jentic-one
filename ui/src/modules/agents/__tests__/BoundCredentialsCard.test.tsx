@@ -129,7 +129,7 @@ describe('BoundCredentialsCard (agent detail · Access tab)', () => {
 		renderAccessTab();
 		await screen.findByRole('heading', { name: /bound credentials/i });
 
-		await user.click(screen.getByRole('button', { name: /^bind credential$/i }));
+		await user.click(screen.getByRole('button', { name: /^bind existing$/i }));
 		const dialog = await screen.findByRole('dialog');
 
 		// Step 1: workspace credentials appear; already-bound ones are hidden.
@@ -168,7 +168,7 @@ describe('BoundCredentialsCard (agent detail · Access tab)', () => {
 		renderAccessTab();
 		await screen.findByRole('heading', { name: /bound credentials/i });
 
-		await user.click(screen.getByRole('button', { name: /^bind credential$/i }));
+		await user.click(screen.getByRole('button', { name: /^bind existing$/i }));
 		const dialog = await screen.findByRole('dialog');
 		await user.click(await within(dialog).findByText('Notion token'));
 
@@ -313,7 +313,13 @@ describe('BoundCredentialsCard (agent detail · Access tab)', () => {
 		// The empty copy explains the approval gate instead of dangling a
 		// dead-end CTA…
 		expect(await screen.findByText(/approve this agent first/i)).toBeInTheDocument();
-		// …and no bind affordance renders for a pending agent.
-		expect(screen.queryByRole('button', { name: /bind credential/i })).not.toBeInTheDocument();
+		// …and no bind affordance renders for a pending agent — both the
+		// "Bind existing" (existing credential) and "Connect new integration"
+		// (vendor-connect flow) entry points are gated on the agent being
+		// active.
+		expect(screen.queryByRole('button', { name: /bind existing/i })).not.toBeInTheDocument();
+		expect(
+			screen.queryByRole('button', { name: /connect new integration/i }),
+		).not.toBeInTheDocument();
 	});
 });

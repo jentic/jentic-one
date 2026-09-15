@@ -471,6 +471,11 @@ class ConnectSessionService:
         *,
         confirmed_scopes: list[str],
         permission_rules: list[dict[str, str]],
+        # Agent to bind the credential to, when the session was opened
+        # without a target (user clicks a vendor tile before picking an
+        # agent). Ignored when the session already carries an agent_id
+        # — a user cannot silently re-target an existing session.
+        agent_id: str | None = None,
         caller_actor_id: str,
         caller_actor_type: str,
     ) -> ConfirmResult:
@@ -482,6 +487,19 @@ class ConnectSessionService:
 
         _forbid_self_confirm(row, caller_actor_type)
         _require_state(row, expected="created", action="confirm")
+
+        # Late-bind agent_id: user-initiated sessions are opened without
+        # a target and pick one on the rules-page Continue-click. The
+        # first winner sticks; subsequent ``:confirm`` calls (blocked by
+        # the state guard above) can't re-target. Downstream reads use
+        # ``effective_agent_id`` rather than ``row.agent_id`` so the
+        # binder + rules-write see the freshly-persisted value without
+        # another read round-trip.
+        effective_agent_id = row.agent_id
+        if row.agent_id is None and agent_id is not None:
+            async with self._ctx.control_db.transaction() as ag_session:
+                await ConnectSessionRepository.update_fields(ag_session, row.id, agent_id=agent_id)
+            effective_agent_id = agent_id
 
         flow = self._vendors.resolve_flow(row.vendor, row.resolved_flow)
         try:
@@ -506,10 +524,10 @@ class ConnectSessionService:
             # broker enforces for the ``(agent, credential)`` pair. Skipped
             # when no agent is named — a user connecting without an agent
             # leaves binding + rules to a later explicit bind.
-            if row.agent_id is not None:
+            if effective_agent_id is not None:
                 await AgentPermissionRuleRepository.replace_user_rules(
                     session,
-                    row.agent_id,
+                    effective_agent_id,
                     row.credential_id,
                     _to_binding_rules(permission_rules),
                     created_by=caller_actor_id,
@@ -527,7 +545,7 @@ class ConnectSessionService:
                 )
             await ConnectSessionRepository.update_fields(session, row.id, state="polling")
 
-        if row.agent_id is not None:
+        if effective_agent_id is not None:
             # Create the admin-DB binding row after the control commit
             # (intent-then-apply — the rules above are the committed intent;
             # the cross-DB binding is applied idempotently, so a re-connect
@@ -536,7 +554,7 @@ class ConnectSessionService:
             async with self._ctx.admin_db.transaction() as admin_session:
                 await EffectsRepository.bind_agent_to_credential(
                     admin_session,
-                    agent_id=row.agent_id,
+                    agent_id=effective_agent_id,
                     credential_id=row.credential_id,
                     rule_set_id=None,
                     created_by=caller_actor_id,
