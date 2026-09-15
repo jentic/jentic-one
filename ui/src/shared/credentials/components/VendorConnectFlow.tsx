@@ -1224,87 +1224,21 @@ interface EvaluatedOp {
 	coverage: OpCoverage;
 }
 
-/**
- * Hierarchical grouping of ops by path segment. Each node represents one
- * segment of the URL structure; children are the next-segment nodes;
- * leaf ops attach at the level where their template terminates. The
- * root node is synthetic (empty segment) — its children are the
- * top-level nodes rendered in the preview.
- *
- * Aggregate ``allowedCount`` / ``deniedCount`` roll up over the whole
- * subtree so a collapsed node still summarises what's inside without
- * the user needing to expand it.
- */
-interface OpTreeNode {
-	segment: string;
-	fullPath: string;
-	children: Map<string, OpTreeNode>;
+interface OpGroup {
+	// First path segment, e.g. ``/repos``. Root ops (bare ``/``) go
+	// under ``/`` so they still get a bucket.
+	prefix: string;
 	ops: EvaluatedOp[];
 	allowedCount: number;
 	deniedCount: number;
 }
 
-function newTreeNode(segment: string, fullPath: string): OpTreeNode {
-	return {
-		segment,
-		fullPath,
-		children: new Map(),
-		ops: [],
-		allowedCount: 0,
-		deniedCount: 0,
-	};
-}
-
-function buildOpTree(items: readonly EvaluatedOp[]): OpTreeNode {
-	const root = newTreeNode('', '');
-	for (const item of items) {
-		const parts = item.op.path.split('/').filter((s) => s.length > 0);
-		let node = root;
-		let pathSoFar = '';
-		for (const seg of parts) {
-			pathSoFar = `${pathSoFar}/${seg}`;
-			let child = node.children.get(seg);
-			if (!child) {
-				child = newTreeNode(seg, pathSoFar);
-				node.children.set(seg, child);
-			}
-			node = child;
-		}
-		node.ops.push(item);
-	}
-	// Post-order aggregate. Fully-allowed and partially-allowed ops
-	// both count toward ``allowedCount`` for the group summary — the
-	// group header is a rough surface indicator; the leaf row is where
-	// the partial nuance surfaces.
-	const aggregate = (node: OpTreeNode): void => {
-		let a = 0;
-		let d = 0;
-		for (const op of node.ops) {
-			if (op.coverage.verdict === 'deny') d++;
-			else a++;
-		}
-		for (const child of node.children.values()) {
-			aggregate(child);
-			a += child.allowedCount;
-			d += child.deniedCount;
-		}
-		node.allowedCount = a;
-		node.deniedCount = d;
-	};
-	aggregate(root);
-	return root;
-}
-
-function sortTreeChildren(children: readonly OpTreeNode[]): OpTreeNode[] {
-	// Nodes with any allowed ops first, then all-denied. Within a tier,
-	// more-allowed first; then alphabetical by segment name.
-	return [...children].sort((a, b) => {
-		if (a.allowedCount > 0 !== b.allowedCount > 0) {
-			return a.allowedCount > 0 ? -1 : 1;
-		}
-		if (a.allowedCount !== b.allowedCount) return b.allowedCount - a.allowedCount;
-		return a.segment.localeCompare(b.segment);
-	});
+/** First path segment or ``/`` when the path has no segments. */
+function firstPathSegment(path: string): string {
+	const rest = path.startsWith('/') ? path.slice(1) : path;
+	if (rest.length === 0) return '/';
+	const nextSlash = rest.indexOf('/');
+	return `/${nextSlash === -1 ? rest : rest.slice(0, nextSlash)}`;
 }
 
 function OperationImpactPreview({
@@ -1318,17 +1252,49 @@ function OperationImpactPreview({
 	const items = ops.data?.data ?? [];
 	const importing = !api || !api.name || !api.version || ops.data == null;
 
-	const tree = useMemo<OpTreeNode | null>(() => {
-		if (items.length === 0) return null;
-		const evaluated: EvaluatedOp[] = items.map((op) => ({
-			op,
-			coverage: classifyOpCoverage(rules, {
+	// Flat top-level grouping by first path segment. A deep hierarchical
+	// tree was more accurate but harder to navigate on real APIs like
+	// GitHub — most useful high-level buckets are a single segment
+	// (``/repos``, ``/users``, …) and nesting beyond that just adds
+	// clicks. Partial ops carry their own per-row disclosure to expose
+	// the concrete allow/deny slice.
+	const groups = useMemo<OpGroup[]>(() => {
+		if (items.length === 0) return [];
+		const byPrefix = new Map<string, EvaluatedOp[]>();
+		for (const op of items) {
+			const coverage = classifyOpCoverage(rules, {
 				method: op.method,
 				path: op.path,
 				operation_id: op.operation_id,
-			}),
-		}));
-		return buildOpTree(evaluated);
+			});
+			const entry: EvaluatedOp = { op, coverage };
+			const key = firstPathSegment(op.path);
+			const bucket = byPrefix.get(key);
+			if (bucket) bucket.push(entry);
+			else byPrefix.set(key, [entry]);
+		}
+		const opRank = (op: EvaluatedOp): number =>
+			op.coverage.verdict === 'allow' ? 2 : op.coverage.verdict === 'partial' ? 1 : 0;
+		const out: OpGroup[] = [];
+		for (const [prefix, entries] of byPrefix) {
+			entries.sort((a, b) => opRank(b) - opRank(a));
+			const allowedCount = entries.filter((e) => e.coverage.verdict !== 'deny').length;
+			out.push({
+				prefix,
+				ops: entries,
+				allowedCount,
+				deniedCount: entries.length - allowedCount,
+			});
+		}
+		out.sort((a, b) => {
+			// Groups with any allowed ops before all-denied groups.
+			if (a.allowedCount > 0 !== b.allowedCount > 0) {
+				return a.allowedCount > 0 ? -1 : 1;
+			}
+			if (a.allowedCount !== b.allowedCount) return b.allowedCount - a.allowedCount;
+			return a.prefix.localeCompare(b.prefix);
+		});
+		return out;
 	}, [items, rules]);
 
 	return (
@@ -1341,7 +1307,7 @@ function OperationImpactPreview({
 						Operations still importing — this preview will fill in shortly.
 					</p>
 				</div>
-			) : !tree || tree.children.size === 0 ? (
+			) : groups.length === 0 ? (
 				<div className="border-border bg-muted/20 rounded-lg border px-3 py-4 text-center">
 					<p className="text-muted-foreground text-xs">
 						No operations imported for this vendor yet.
@@ -1349,8 +1315,8 @@ function OperationImpactPreview({
 				</div>
 			) : (
 				<div className="border-border max-h-96 space-y-1 overflow-y-auto rounded-lg border p-2">
-					{sortTreeChildren([...tree.children.values()]).map((child) => (
-						<OperationImpactTreeNode key={child.segment} node={child} />
+					{groups.map((g) => (
+						<OperationImpactGroup key={g.prefix} group={g} />
 					))}
 				</div>
 			)}
@@ -1359,19 +1325,12 @@ function OperationImpactPreview({
 }
 
 /**
- * One node in the ops-preview hierarchy. Renders as a collapsible group
- * (children + any ops that terminate at this segment). Default state is
- * COLLAPSED at every depth — the aggregate ``X allowed / Y denied``
- * counts on the header let the user skim the surface without having to
- * expand anything, and expand is opt-in for each layer.
+ * One top-level path-prefix group. Starts collapsed — the aggregate
+ * ``X allowed / Y denied`` counts on the header let the user skim
+ * without expanding. Ops inside are sorted allowed → partial → denied.
  */
-function OperationImpactTreeNode({ node }: { node: OpTreeNode }) {
+function OperationImpactGroup({ group }: { group: OpGroup }) {
 	const [open, setOpen] = useState(false);
-	const sortedChildren = sortTreeChildren([...node.children.values()]);
-	// Sort within-node ops so allowed / partial ops come first, denied last.
-	const opRank = (op: EvaluatedOp): number =>
-		op.coverage.verdict === 'allow' ? 2 : op.coverage.verdict === 'partial' ? 1 : 0;
-	const sortedOps = [...node.ops].sort((a, b) => opRank(b) - opRank(a));
 	return (
 		<div className="border-border bg-background rounded-md border">
 			<button
@@ -1386,27 +1345,24 @@ function OperationImpactTreeNode({ node }: { node: OpTreeNode }) {
 					<ChevronRight className="text-muted-foreground h-3.5 w-3.5 shrink-0" />
 				)}
 				<span className="text-foreground truncate font-mono text-[11px]">
-					/{node.segment}/
+					{group.prefix}/
 				</span>
 				<span className="ml-auto flex items-center gap-1.5">
-					{node.allowedCount > 0 && (
+					{group.allowedCount > 0 && (
 						<span className="bg-success/10 text-success border-success/40 rounded-md border px-1.5 py-0.5 font-mono text-[10px]">
-							{node.allowedCount} allowed
+							{group.allowedCount} allowed
 						</span>
 					)}
-					{node.deniedCount > 0 && (
+					{group.deniedCount > 0 && (
 						<span className="bg-danger/10 text-danger border-danger/40 rounded-md border px-1.5 py-0.5 font-mono text-[10px]">
-							{node.deniedCount} denied
+							{group.deniedCount} denied
 						</span>
 					)}
 				</span>
 			</button>
 			{open && (
-				<div className="border-border space-y-1 border-t p-1.5 pl-4">
-					{sortedChildren.map((child) => (
-						<OperationImpactTreeNode key={child.segment} node={child} />
-					))}
-					{sortedOps.map(({ op, coverage }) => (
+				<div className="border-border space-y-1 border-t p-1.5">
+					{group.ops.map(({ op, coverage }) => (
 						<OperationImpactLeafRow key={op.operation_id} op={op} coverage={coverage} />
 					))}
 				</div>
@@ -1416,44 +1372,28 @@ function OperationImpactTreeNode({ node }: { node: OpTreeNode }) {
 }
 
 /**
- * Leaf op row shown inside the deepest tree node where the op's path
- * terminates. Verdict pill is one of ``allow`` / ``partial`` / ``deny``:
+ * Leaf op row rendered inside a group's expanded body. Verdict pill is
+ * one of ``allow`` / ``partial`` / ``deny``.
  *
- * * ``allow`` — every sampled concrete instance is allowed (fully
- *   covered). No expand affordance.
- * * ``deny`` — every sampled instance is denied. No expand affordance.
- * * ``partial`` — some allowed, some denied. The row is expandable and
- *   shows one or more concrete allowed samples AND concrete denied
- *   samples so the user sees exactly which slice of the op is covered.
+ * On partial ops the row shows two follow-up lines directly inline
+ * (not gated on expand — they're the whole point of "partial"):
+ *   ``ALLOW e.g. /repos/jentic/jentic-one/commits``
+ *   ``DENY  e.g. /repos/example-owner/example-repo/commits``
+ * One example per bucket keeps the row scannable on large APIs.
  */
 function OperationImpactLeafRow({ op, coverage }: { op: VendorOperation; coverage: OpCoverage }) {
-	const [expanded, setExpanded] = useState(false);
 	const verdictPill =
 		coverage.verdict === 'allow'
 			? 'bg-success/10 text-success border-success/40'
 			: coverage.verdict === 'partial'
 				? 'bg-warning/10 text-warning border-warning/40'
 				: 'bg-danger/10 text-danger border-danger/40';
-	const verdictLabel = coverage.verdict; // 'allow' | 'partial' | 'deny'
-	const canExpand = coverage.verdict === 'partial';
-
-	// Whole-row click toggles expand on partial rows so users don't have
-	// to hunt for a caret. Non-partial rows have no expand state so the
-	// click handler is skipped.
-	const rowInteractive = canExpand ? 'cursor-pointer hover:bg-muted/40 transition-colors' : '';
-
+	const verdictLabel = coverage.verdict;
+	const allowExample = coverage.allowedSamples[0];
+	const denyExample = coverage.deniedSamples[0];
 	return (
-		<div
-			className={`bg-muted/20 border-border rounded-md border px-2.5 py-1 text-xs ${rowInteractive}`}
-			onClick={canExpand ? (): void => setExpanded((v) => !v) : undefined}
-		>
+		<div className="bg-muted/20 border-border rounded-md border px-2.5 py-1 text-xs">
 			<div className="flex items-center gap-2.5">
-				{canExpand &&
-					(expanded ? (
-						<ChevronDown className="text-muted-foreground h-3 w-3 shrink-0" />
-					) : (
-						<ChevronRight className="text-muted-foreground h-3 w-3 shrink-0" />
-					))}
 				<span
 					className={`rounded-md border px-1.5 py-0.5 font-mono text-[10px] uppercase ${verdictPill}`}
 					aria-label={verdictLabel}
@@ -1470,24 +1410,26 @@ function OperationImpactLeafRow({ op, coverage }: { op: VendorOperation; coverag
 					</span>
 				)}
 			</div>
-			{expanded && canExpand && (
-				<div className="border-border/50 mt-1 space-y-0.5 border-t pt-1 pl-6 font-mono text-[10px]">
-					{coverage.allowedSamples.map((sample) => (
-						<div key={`a-${sample}`} className="flex items-center gap-2">
+			{coverage.verdict === 'partial' && (allowExample || denyExample) && (
+				<div className="mt-0.5 space-y-0.5 pl-4 font-mono text-[10px]">
+					{allowExample && (
+						<div className="flex items-center gap-1.5">
 							<span className="bg-success/10 text-success border-success/40 rounded border px-1 py-0 text-[9px] uppercase">
 								allow
 							</span>
-							<span className="text-foreground/80 truncate">{sample}</span>
+							<span className="text-muted-foreground">e.g.</span>
+							<span className="text-foreground/80 truncate">{allowExample}</span>
 						</div>
-					))}
-					{coverage.deniedSamples.map((sample) => (
-						<div key={`d-${sample}`} className="flex items-center gap-2">
+					)}
+					{denyExample && (
+						<div className="flex items-center gap-1.5">
 							<span className="bg-danger/10 text-danger border-danger/40 rounded border px-1 py-0 text-[9px] uppercase">
 								deny
 							</span>
-							<span className="text-foreground/80 truncate">{sample}</span>
+							<span className="text-muted-foreground">e.g.</span>
+							<span className="text-foreground/80 truncate">{denyExample}</span>
 						</div>
-					))}
+					)}
 				</div>
 			)}
 		</div>
