@@ -105,12 +105,17 @@ func ReuseSecrets(d *Draft, path string) (bool, error) {
 
 	// Encryption keyset: preserve the whole block verbatim. A hand-rotated
 	// multi-key keyset (active_id: v2 + v1/v2 entries) must survive; only
-	// carry it over when it looks real (has at least one non-empty entry) so
-	// an empty/malformed prior config doesn't wipe the fresh default.
+	// carry it over when it looks real (has at least one entry with a
+	// material source) so an empty/malformed prior config doesn't wipe the
+	// fresh default. An entry is real when ANY of the three sources is set —
+	// a material_file/material_env keyset carries no inline material, and
+	// dropping it here would silently re-key the install (every stored
+	// credential becomes undecryptable while the operator is told secrets
+	// were reused).
 	if len(view.Credentials.Encryption.Entries) > 0 {
 		nonEmpty := false
 		for _, e := range view.Credentials.Encryption.Entries {
-			if e.ID != "" && e.Material != "" {
+			if e.ID != "" && (e.Material != "" || e.MaterialEnv != "" || e.MaterialFile != "") {
 				nonEmpty = true
 				break
 			}

@@ -303,7 +303,9 @@ Credentials subsystem configuration.
 | `credentials.encryption.active_id` | string | `"v1"` | `JENTIC__CREDENTIALS__ENCRYPTION__ACTIVE_ID` |  |
 | `credentials.encryption.entries` | list of EncryptionKey | — | `JENTIC__CREDENTIALS__ENCRYPTION__ENTRIES` |  |
 | `credentials.encryption.entries.<n>.id` | string | *required* | `JENTIC__CREDENTIALS__ENCRYPTION__ENTRIES__<N>__ID` |  |
-| `credentials.encryption.entries.<n>.material` | string (secret) | *required* | `JENTIC__CREDENTIALS__ENCRYPTION__ENTRIES__<N>__MATERIAL` |  |
+| `credentials.encryption.entries.<n>.material` | string (secret) \| null | `null` | `JENTIC__CREDENTIALS__ENCRYPTION__ENTRIES__<N>__MATERIAL` | Base64-encoded key material, inline in the config. |
+| `credentials.encryption.entries.<n>.material_env` | string \| null | `null` | `JENTIC__CREDENTIALS__ENCRYPTION__ENTRIES__<N>__MATERIAL_ENV` | Name of an environment variable holding the base64-encoded key material. |
+| `credentials.encryption.entries.<n>.material_file` | string \| null | `null` | `JENTIC__CREDENTIALS__ENCRYPTION__ENTRIES__<N>__MATERIAL_FILE` | Path to a regular file holding the base64-encoded key material (docker/k8s secret mount, systemd LoadCredential path). |
 | `credentials.providers` | map of DirectOAuth2ProviderConfig \| PipedreamProviderConfig | — | `JENTIC__CREDENTIALS__PROVIDERS` |  |
 | `credentials.providers.<name>.kind` | "direct_oauth2" \| "pipedream" | `"direct_oauth2"` | `JENTIC__CREDENTIALS__PROVIDERS__<NAME>__KIND` |  |
 | `credentials.providers.<name>.redirect_uri` | string | *required* | `JENTIC__CREDENTIALS__PROVIDERS__<NAME>__REDIRECT_URI` |  |

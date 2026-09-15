@@ -981,13 +981,43 @@ func (j *EncryptionConfig) UnmarshalJSON(value []byte) error {
 }
 
 // A single named encryption key.
+//
+// Key material comes from exactly ONE source:
+//
+//   - “material“      — inline in the config (local dev / vault-templated files),
+//   - “material_env“  — the name of an environment variable holding the key,
+//   - “material_file“ — a regular file to read the key from (docker/k8s secret
+//     mounts, systemd “LoadCredential“ paths). Pipes and “/dev/fd“ sources
+//     are rejected: config may be validated more than once per process, and a
+//     source that cannot be re-read would hang or fail the second load.
+//
+// “material_env“/“material_file“ are resolved once, at config load, into
+// “material“ — consumers keep reading “resolved_material“ and never learn
+// where the bytes came from (the source field is cleared after resolution, so
+// a resolved key re-validates cleanly and never re-reads the environment or
+// the file). Resolution failures (unset variable, unreadable file, empty
+// value) fail validation loudly rather than booting a server that cannot
+// decrypt its own credentials.
 type EncryptionKey struct {
 	// Id corresponds to the JSON schema field "id".
 	Id string `json:"id" yaml:"id" mapstructure:"id"`
 
-	// Material corresponds to the JSON schema field "material".
-	Material string `json:"material" yaml:"material" mapstructure:"material"`
+	// Base64-encoded key material, inline in the config.
+	Material interface{} `json:"material,omitempty,omitzero" yaml:"material,omitempty" mapstructure:"material,omitempty"`
+
+	// Name of an environment variable holding the base64-encoded key material.
+	MaterialEnv interface{} `json:"material_env,omitempty,omitzero" yaml:"material_env,omitempty" mapstructure:"material_env,omitempty"`
+
+	// Path to a regular file holding the base64-encoded key material (docker/k8s
+	// secret mount, systemd LoadCredential path).
+	MaterialFile interface{} `json:"material_file,omitempty,omitzero" yaml:"material_file,omitempty" mapstructure:"material_file,omitempty"`
 }
+
+type EncryptionKeyMaterialEnv_0 *string
+
+type EncryptionKeyMaterialFile_0 *string
+
+type EncryptionKeyMaterial_0 *string
 
 // UnmarshalJSON implements json.Unmarshaler.
 func (j *EncryptionKey) UnmarshalJSON(value []byte) error {
@@ -997,9 +1027,6 @@ func (j *EncryptionKey) UnmarshalJSON(value []byte) error {
 	}
 	if _, ok := raw["id"]; raw != nil && !ok {
 		return fmt.Errorf("field id in EncryptionKey: required")
-	}
-	if _, ok := raw["material"]; raw != nil && !ok {
-		return fmt.Errorf("field material in EncryptionKey: required")
 	}
 	type Plain EncryptionKey
 	var plain Plain

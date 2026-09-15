@@ -83,9 +83,17 @@ type adminOut struct {
 	Invite adminInviteOut `yaml:"invite"`
 }
 
+// encryptionEntryOut mirrors EncryptionKey (config.py): key material comes
+// from exactly one of the three sources. All three must round-trip through
+// ReuseSecrets — dropping an unrecognised source field would silently re-key
+// a reinstall. Material carries omitempty so a carried-over material_env/
+// material_file entry doesn't render a spurious `material: ""` (the backend
+// rejects an entry with more than one source set).
 type encryptionEntryOut struct {
-	ID       string `yaml:"id"`
-	Material string `yaml:"material"`
+	ID           string `yaml:"id"`
+	Material     string `yaml:"material,omitempty"`
+	MaterialEnv  string `yaml:"material_env,omitempty"`
+	MaterialFile string `yaml:"material_file,omitempty"`
 }
 
 type encryptionOut struct {
