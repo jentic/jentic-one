@@ -157,6 +157,12 @@ describe('BoundCredentialsCard (agent detail · Access tab)', () => {
 	});
 
 	it('edits rules with a live pending-changes diff and saves through the permissions PUT', async () => {
+		// The editor now uses the shared ``RuleListEditor`` — rules
+		// render as compact read-only rows and per-row fields (method
+		// toggles etc.) are only visible after clicking the row's
+		// Pencil to open the inline form. Flow: outer "Edit rules" →
+		// inline Pencil on target row → toggle method → inline Save →
+		// outer "Save rules".
 		const user = userEvent.setup();
 		renderAccessTab();
 		await screen.findByRole('heading', { name: /bound credentials \(2\)/i });
@@ -169,9 +175,14 @@ describe('BoundCredentialsCard (agent detail · Access tab)', () => {
 		expect(screen.queryByTestId('rules-diff')).not.toBeInTheDocument();
 		expect(screen.getByRole('button', { name: /save rules/i })).toBeDisabled();
 
-		// Toggle GET onto the seeded allow-POST rule: the diff must show the old
-		// grant leaving (−) and the widened grant arriving (+).
-		await user.click(screen.getAllByRole('button', { name: 'GET', pressed: false })[0]);
+		// Open the inline edit-a-rule form (Pencil icon on the row —
+		// aria-label "Edit rule", distinct from the outer "Edit rules"
+		// toggle). Toggle GET onto the seeded allow-POST rule, commit
+		// the inline Save. Outer diff panel then shows the old grant
+		// leaving (−) and the widened grant arriving (+).
+		await user.click(screen.getByRole('button', { name: /^edit rule$/i }));
+		await user.click(screen.getByRole('button', { name: 'GET' }));
+		await user.click(screen.getByRole('button', { name: /^save$/i }));
 		const diff = await screen.findByTestId('rules-diff');
 		expect(
 			within(diff).getByText(/Allows POST, scoped to paths starting with \/chat\./),
@@ -179,7 +190,7 @@ describe('BoundCredentialsCard (agent detail · Access tab)', () => {
 		expect(within(diff).getByText(/Allows POST, GET/)).toBeInTheDocument();
 		expect(screen.getByRole('button', { name: /save rules/i })).toBeEnabled();
 
-		// Save commits the replacement and closes the editor.
+		// Outer save commits the replacement and closes the editor.
 		await user.click(screen.getByRole('button', { name: /save rules/i }));
 		await waitFor(() =>
 			expect(screen.queryByRole('button', { name: /save rules/i })).not.toBeInTheDocument(),
@@ -192,14 +203,12 @@ describe('BoundCredentialsCard (agent detail · Access tab)', () => {
 		});
 	});
 
-	it('renders the shared ops preview inside the binding rule editor when serves resolves', async () => {
-		// The rules-editor panel now embeds ``OperationImpactPreview``
-		// so users editing binding rules see the same allow/partial/deny
-		// visualisation they saw during connect. Requires the binding's
-		// ``serves`` entry to carry ``(vendor, name, version)``; the
-		// default mock leaves name/version null (matches most bindings),
-		// so this test overrides the endpoint with a fully-populated
-		// entry plus the ops endpoint the preview polls.
+	it('renders the shared ops preview on the binding row when the credential resolves', async () => {
+		// The preview is always visible on the row (not gated on the
+		// Edit-rules toggle). Version is sourced from the credential's
+		// ``api`` field via ``useCredential`` — the binding's ``serves``
+		// entry only carries ``(vendor, name)``. Overrides here: the
+		// binding list, the credential row, and the vendor's ops.
 		worker.use(
 			http.get('/agents/:id/credentials', () =>
 				HttpResponse.json({
@@ -212,18 +221,28 @@ describe('BoundCredentialsCard (agent detail · Access tab)', () => {
 							rule_set_id: null,
 							bound_at: '2026-05-01T10:00:00Z',
 							serves: [
-								{
-									api_vendor: 'github-com',
-									api_name: 'github-com',
-									api_version: '1.0.0',
-								},
+								{ api_vendor: 'github-com', api_name: null, api_version: null },
 							],
 						},
 					],
 				}),
 			),
-			// Preview polls ``current_version`` gate via the ops endpoint;
-			// a real 200 with an op template drives the render.
+			// Version comes from the credential's ``api`` field, not the
+			// binding's serves entry. Return a credential whose api
+			// carries the concrete ``(vendor, name, version)`` triple.
+			http.get('/credentials/cred_preview_1', () =>
+				HttpResponse.json({
+					credential_id: 'cred_preview_1',
+					name: 'Preview binding',
+					type: 'bearer_token',
+					provider: 'manual',
+					active: true,
+					api: { vendor: 'github-com', name: 'github-com', version: '1.0.0' },
+					created_at: '2026-05-01T10:00:00Z',
+					updated_at: null,
+				}),
+			),
+			// Ops preview drives off the resolved (vendor, name, version).
 			http.get('/apis/github-com/github-com/1.0.0/operations', () =>
 				HttpResponse.json({
 					data: [
@@ -238,23 +257,15 @@ describe('BoundCredentialsCard (agent detail · Access tab)', () => {
 					next_cursor: null,
 				}),
 			),
-			// Binding permissions load empty so the row has a "no rules"
-			// warning but the editor still opens. The wire path is
-			// credentials-scoped, not agents-scoped — see
+			// Binding permissions load empty. The wire path is
+			// credentials-scoped — see
 			// ``CredentialsService.listAgentCredentialPermissions``.
 			http.get('/credentials/:cid/agents/:aid/permissions', () =>
 				HttpResponse.json({ data: [] }),
 			),
 		);
-		const user = userEvent.setup();
 		renderAccessTab();
-		// Wait for the row to render before reaching into it.
-		await screen.findByText('Preview binding');
-		const row = findRow('Preview binding') as HTMLElement;
-		expect(row).not.toBeNull();
-		await user.click(within(row).getByRole('button', { name: /edit rules/i }));
-		// The preview's overridable section label appears when the
-		// editor mounts against a fully-resolved served API.
+		// Preview label appears on the row without needing to click Edit.
 		expect(await screen.findByText(/effective access for this binding/i)).toBeInTheDocument();
 	});
 

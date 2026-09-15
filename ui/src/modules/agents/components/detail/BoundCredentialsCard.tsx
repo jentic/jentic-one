@@ -38,11 +38,36 @@ import {
 	useResumeAgentCredentialBinding,
 	useUnbindAgentCredential,
 	type AgentEntity,
+	type BindingPermissionRule,
 	type CredentialBindingEntity,
 } from '@/modules/agents/api';
 import { AgentBindingPermissionsEditor } from '@/modules/agents/components/detail/AgentBindingPermissionsEditor';
 import { CreateCredentialDialog } from '@/shared/credentials/components/CreateCredentialDialog';
 import { PostConnectBindMore } from '@/shared/credentials/components/PostConnectBindMore';
+import { OperationImpactPreview } from '@/shared/credentials/components/OperationImpactPreview';
+import { useCredential } from '@/shared/credentials/api';
+import type { PermissionRule as PreviewPermissionRule } from '@/shared/credentials/api/vendors-types';
+
+/**
+ * Adapt a stored ``BindingPermissionRule`` (agent-module wire type) into
+ * the ``PermissionRule`` shape ``OperationImpactPreview`` consumes.
+ * Structurally identical for our fields; explicit narrow makes a future
+ * divergence in either type a build-time error.
+ */
+function bindingRuleToPreview(rule: BindingPermissionRule): PreviewPermissionRule {
+	return {
+		effect: rule.effect === 'deny' ? 'deny' : 'allow',
+		methods: rule.methods ?? null,
+		path: rule.path ?? null,
+		match_mode:
+			rule.match_mode === 'prefix' ||
+			rule.match_mode === 'exact' ||
+			rule.match_mode === 'regex'
+				? rule.match_mode
+				: undefined,
+		operations: rule.operations ?? null,
+	};
+}
 import { InlineConfirm } from '@/modules/agents/components/InlineConfirm';
 import { panelMotion, rowMotion, toDisplayRules } from '@/modules/agents/components/detail/shared';
 
@@ -76,6 +101,17 @@ function BindingRow({
 }) {
 	const permissions = useAgentBindingPermissions(agentId, binding.credentialId);
 	const displayRules = toDisplayRules(permissions.data);
+	// Resolve the vendor's OpenAPI version from the credential — the
+	// binding's ``serves`` entry has ``(vendor, name)`` but rarely a
+	// version, whereas the credential's ``api`` field always carries
+	// a full ``(vendor, name, version)`` tuple. Feed either into the
+	// ops preview; the preview shows a skeleton while this is loading.
+	const credential = useCredential(binding.credentialId);
+	const apiReference = useMemo(() => {
+		const api = credential.data?.api;
+		if (!api) return null;
+		return { vendor: api.vendor, name: api.name, version: api.version };
+	}, [credential.data]);
 
 	// Heading = the credential's human name (control-DB enrichment) with the
 	// id as the never-blank fallback; subtitle = the served API's machine
@@ -213,6 +249,27 @@ function BindingRow({
 						</p>
 					)}
 				</div>
+				{/*
+				 * Effective-access preview is always visible on the row (not
+				 * gated on the Edit-rules toggle) so users can see the
+				 * binding's real surface at a glance. Uses the resolved
+				 * ``apiReference`` sourced from the credential's ``api``
+				 * field — the binding's ``serves`` entry only has
+				 * ``(vendor, name)``, but the credential always carries a
+				 * concrete version. Renders a skeleton while the credential
+				 * query resolves.
+				 */}
+				{apiReference && !permissions.isPending && (
+					<div className="w-full pt-1">
+						<OperationImpactPreview
+							api={apiReference}
+							rules={(permissions.data ?? [])
+								.filter((r) => !r._system)
+								.map(bindingRuleToPreview)}
+							label="Effective access for this binding"
+						/>
+					</div>
+				)}
 			</div>
 			<AnimatePresence initial={false}>
 				{editing && !permissions.isPending && !permissions.isError && (
@@ -224,20 +281,19 @@ function BindingRow({
 							initialRules={permissions.data ?? []}
 							onClose={onToggleEdit}
 							apiReference={
-								// A binding can carry multiple ``serves`` entries
-								// but the common case is one API per credential.
-								// The preview renders one API at a time; using the
-								// first served entry is fine for the current
-								// single-served-API topology and degrades to no
-								// preview when the vendor/name/version isn't
-								// fully known.
-								serves && serves.vendor && serves.name && serves.version
+								// Credential-driven version (see above) — the
+								// binding's ``serves`` entry rarely carries a
+								// version, whereas the credential's ``api``
+								// field always does. Fall back to serves only
+								// when the credential query hasn't resolved.
+								apiReference ??
+								(serves && serves.vendor && serves.name && serves.version
 									? {
 											vendor: serves.vendor,
 											name: serves.name,
 											version: serves.version,
 										}
-									: null
+									: null)
 							}
 						/>
 					</motion.div>
