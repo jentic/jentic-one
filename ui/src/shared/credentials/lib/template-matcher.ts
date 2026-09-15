@@ -28,6 +28,7 @@
 
 import RandExp from 'randexp';
 import type { PermissionRule } from '@/shared/credentials/api/vendors-types';
+import { evaluateRules } from '@/shared/credentials/lib/rule-matcher';
 
 /**
  * Convert an OpenAPI-style path template to a JS RegExp that matches any
@@ -245,6 +246,137 @@ export function evaluateTemplateOp(
 		return { allowed: rule.effect === 'allow', matchingRule: rule };
 	}
 	return { allowed: false, matchingRule: null };
+}
+
+// ---------------------------------------------------------------------------
+// Per-op coverage classification (partial-allow visibility)
+// ---------------------------------------------------------------------------
+
+/**
+ * Verdict for an op given the current rule set. ``partial`` means some
+ * concrete instances of the op template are allowed and others denied
+ * — the ops preview surfaces that state so the user isn't misled into
+ * thinking a rule affects the whole op when it only covers a slice.
+ */
+export type OpCoverageVerdict = 'allow' | 'deny' | 'partial';
+
+export interface OpCoverage {
+	verdict: OpCoverageVerdict;
+	// Up to a few concrete allowed sample paths (empty for ``deny``).
+	allowedSamples: readonly string[];
+	// Up to a few concrete denied sample paths (empty for ``allow``).
+	deniedSamples: readonly string[];
+}
+
+/**
+ * Sample concrete request paths from an op template — the enumeration
+ * feeds the coverage classifier below. For each ``{placeholder}`` we
+ * combine:
+ * * a generic value (``example-<name>``) so we always cover the "no
+ *   specific value is authorised" case, and
+ * * every literal segment that appears at the same position in some
+ *   rule's path (so a rule constraining owner to ``jentic`` also
+ *   generates ``/repos/jentic/…`` samples).
+ *
+ * The Cartesian product is capped to keep evaluation cheap; ordering
+ * biases toward samples that include rule-derived values so partial
+ * verdicts hit meaningful splits (allow via rule vs default deny) as
+ * early as possible.
+ */
+export function sampleTemplatePaths(
+	template: string,
+	rules: readonly PermissionRule[],
+	limit: number = 8,
+): string[] {
+	const parts = template.split('/');
+	const placeholderNames: (string | null)[] = parts.map((p) =>
+		/^\{[^}]+\}$/.test(p) ? p.slice(1, -1) : null,
+	);
+	if (!placeholderNames.some((n) => n != null)) {
+		// No placeholders — the template is its own concrete path.
+		return [template];
+	}
+
+	// Per-position candidate value sets. Placeholder positions get a
+	// generic + any rule-derived candidates; fixed positions carry the
+	// template's own literal.
+	const perPosition: string[][] = parts.map((seg, i) => {
+		const name = placeholderNames[i];
+		if (name == null) return [seg];
+		const candidates = new Set<string>([`example-${name}`]);
+		for (const rule of rules) {
+			if (!rule.path) continue;
+			const rParts = rule.path.split('/');
+			if (i >= rParts.length) continue;
+			const rSeg = rParts[i];
+			// Only literal rule segments contribute — placeholders in the
+			// rule are already covered by the generic value.
+			if (/^\{[^}]+\}$/.test(rSeg) || rSeg.length === 0) continue;
+			candidates.add(rSeg);
+		}
+		return Array.from(candidates);
+	});
+
+	// Cartesian product, capped. Interleave generic + rule-derived so a
+	// small ``limit`` still hits both branches.
+	let combos: string[][] = [[]];
+	for (const segCandidates of perPosition) {
+		const next: string[][] = [];
+		for (const combo of combos) {
+			for (const cand of segCandidates) {
+				next.push([...combo, cand]);
+				if (next.length >= limit * 4) break;
+			}
+			if (next.length >= limit * 4) break;
+		}
+		combos = next;
+	}
+	return combos.slice(0, limit).map((c) => c.join('/'));
+}
+
+/**
+ * Classify how the rule set covers an op template. Runs enforce-time
+ * evaluation (``evaluateRules``, now placeholder-aware) over a set of
+ * concrete samples drawn from the template. Bucket:
+ *
+ * * ``allow`` — every sample is allowed. Op is fully covered.
+ * * ``deny`` — every sample is denied. Op has no path in.
+ * * ``partial`` — some allowed, some denied. Op has a narrow allow
+ *   surface — user sees "e.g. X allowed / e.g. Y denied" on expand.
+ *
+ * Sample count is bounded, so ``allow``/``deny`` are best-effort
+ * (a pathological rule set could sneak an outlier past the samples).
+ * In practice the biased sampler in ``sampleTemplatePaths`` hits any
+ * literal a rule references, so realistic policy patterns classify
+ * correctly.
+ */
+export function classifyOpCoverage(
+	rules: readonly PermissionRule[],
+	op: { method: string; path: string; operation_id: string | null },
+	maxExamples: number = 2,
+): OpCoverage {
+	const samples = sampleTemplatePaths(op.path, rules);
+	const allowedSamples: string[] = [];
+	const deniedSamples: string[] = [];
+	for (const sample of samples) {
+		const allowed = evaluateRules(rules, {
+			method: op.method,
+			path: sample,
+			operation_id: op.operation_id,
+		});
+		if (allowed) {
+			if (allowedSamples.length < maxExamples) allowedSamples.push(sample);
+		} else {
+			if (deniedSamples.length < maxExamples) deniedSamples.push(sample);
+		}
+	}
+	if (allowedSamples.length > 0 && deniedSamples.length === 0) {
+		return { verdict: 'allow', allowedSamples: [], deniedSamples: [] };
+	}
+	if (deniedSamples.length > 0 && allowedSamples.length === 0) {
+		return { verdict: 'deny', allowedSamples: [], deniedSamples: [] };
+	}
+	return { verdict: 'partial', allowedSamples, deniedSamples };
 }
 
 /** Fill the template's placeholders past the given prefix with generic sample values. */

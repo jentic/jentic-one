@@ -49,9 +49,9 @@ import {
 import { nextPathCompletion } from '@/shared/credentials/lib/path-completion';
 import { ruleValidityIssue } from '@/shared/credentials/lib/rule-matcher';
 import {
-	evaluateTemplateOp,
-	generateRuleExamples,
-	ruleNarrowsTemplate,
+	classifyOpCoverage,
+	ruleAppliesToTemplate,
+	type OpCoverage,
 } from '@/shared/credentials/lib/template-matcher';
 import { isHttpsVendorUrl, openVendorUrl } from '@/shared/credentials/lib/safe-navigation';
 import type {
@@ -981,6 +981,8 @@ function RulesStep({
 								rule={rule}
 								isDefault={isEmpty}
 								isRequested={requestedKeys.has(JSON.stringify(rule))}
+								opTemplates={pathSuggestions}
+								opsLoaded={pathSuggestions.length > 0}
 								onEdit={isEmpty ? undefined : (): void => setEditingIndex(i)}
 								onDelete={
 									isEmpty
@@ -1048,11 +1050,19 @@ function RulesStep({
  * that will land at ``:confirm`` if the user continues with no
  * authored rules. Default rows have no edit / delete / reorder
  * controls — the user hasn't authored them.
+ *
+ * ``opTemplates`` / ``opsLoaded`` let the row detect that the authored
+ * rule doesn't touch any imported operation and surface a muted
+ * "no operations affected" note. Only computed once ops have loaded
+ * (``opsLoaded`` gate) so a still-importing preview doesn't false-
+ * positive the check while op paths are empty.
  */
 function RulePreviewRow({
 	rule,
 	isDefault,
 	isRequested,
+	opTemplates,
+	opsLoaded,
 	onEdit,
 	onDelete,
 	onMoveUp,
@@ -1061,6 +1071,8 @@ function RulePreviewRow({
 	rule: PermissionRule;
 	isDefault?: boolean;
 	isRequested: boolean;
+	opTemplates?: readonly string[];
+	opsLoaded?: boolean;
 	onEdit?: () => void;
 	onDelete?: () => void;
 	onMoveUp?: () => void;
@@ -1079,10 +1091,24 @@ function RulePreviewRow({
 			: validityIssue === 'empty-regex'
 				? 'Empty regex — the rule will never match. Add a pattern (e.g. `.*` for match-any) or delete the rule.'
 				: null;
+	// A syntactically valid rule that touches zero imported ops is a
+	// silent-fail case: the user thinks they've granted something but
+	// the credential's actual surface is unaffected. Only report once
+	// ops have finished loading — otherwise we'd flash "no operations
+	// affected" while the import is still pending. Suppressed when a
+	// stronger validity warning is already active.
+	const affectsNothing = Boolean(
+		opsLoaded &&
+		!isDefault &&
+		!warningLabel &&
+		opTemplates &&
+		opTemplates.length > 0 &&
+		!opTemplates.some((tpl) => ruleAppliesToTemplate(rule, tpl)),
+	);
 	return (
 		<div
 			className={`bg-background border-border flex items-center gap-2.5 rounded-md border px-2.5 py-1.5 text-xs ${
-				isDefault ? 'opacity-70' : ''
+				isDefault || affectsNothing ? 'opacity-60' : ''
 			}`}
 		>
 			<span
@@ -1104,6 +1130,18 @@ function RulePreviewRow({
 					>
 						<AlertTriangle className="h-3 w-3 shrink-0" />
 						never matches
+					</span>
+				</Tooltip>
+			)}
+			{affectsNothing && (
+				<Tooltip content="This rule doesn't match any imported operation. Adjust the path or method to grant the access you intend.">
+					<span
+						className="text-warning inline-flex items-center gap-1 font-mono text-[10px] uppercase"
+						role="status"
+						aria-label="No operations affected"
+					>
+						<AlertTriangle className="h-3 w-3 shrink-0" />
+						no ops affected
 					</span>
 				</Tooltip>
 			)}
@@ -1179,31 +1217,94 @@ function RulePreviewRow({
  */
 interface EvaluatedOp {
 	op: VendorOperation;
-	allowed: boolean;
-	// Concrete example paths derived from the rule that matched this op
-	// — only present when the rule narrows the op's template
-	// (see ``ruleNarrowsTemplate``). Rules that match every path (like a
-	// broad ``Allow GET /``) yield no examples because the op template
-	// itself is the answer.
-	examples: readonly string[];
+	// Sample-and-classify coverage across concrete instances of the op
+	// template. Verdict is ``allow`` / ``deny`` / ``partial``; the
+	// ``partial`` case carries concrete allowed + denied sample paths
+	// so the leaf row can expand to show what's really covered.
+	coverage: OpCoverage;
 }
 
-interface OpGroup {
-	// Display prefix, e.g. ``/repos`` (no trailing slash). Root ops go
-	// under ``/`` so they still get a bucket.
-	prefix: string;
+/**
+ * Hierarchical grouping of ops by path segment. Each node represents one
+ * segment of the URL structure; children are the next-segment nodes;
+ * leaf ops attach at the level where their template terminates. The
+ * root node is synthetic (empty segment) — its children are the
+ * top-level nodes rendered in the preview.
+ *
+ * Aggregate ``allowedCount`` / ``deniedCount`` roll up over the whole
+ * subtree so a collapsed node still summarises what's inside without
+ * the user needing to expand it.
+ */
+interface OpTreeNode {
+	segment: string;
+	fullPath: string;
+	children: Map<string, OpTreeNode>;
 	ops: EvaluatedOp[];
 	allowedCount: number;
 	deniedCount: number;
 }
 
-/** First path segment or ``/`` when the path has no segments. */
-function firstPathSegment(path: string): string {
-	// Trim leading slash, take up to the next slash.
-	const rest = path.startsWith('/') ? path.slice(1) : path;
-	if (rest.length === 0) return '/';
-	const nextSlash = rest.indexOf('/');
-	return `/${nextSlash === -1 ? rest : rest.slice(0, nextSlash)}`;
+function newTreeNode(segment: string, fullPath: string): OpTreeNode {
+	return {
+		segment,
+		fullPath,
+		children: new Map(),
+		ops: [],
+		allowedCount: 0,
+		deniedCount: 0,
+	};
+}
+
+function buildOpTree(items: readonly EvaluatedOp[]): OpTreeNode {
+	const root = newTreeNode('', '');
+	for (const item of items) {
+		const parts = item.op.path.split('/').filter((s) => s.length > 0);
+		let node = root;
+		let pathSoFar = '';
+		for (const seg of parts) {
+			pathSoFar = `${pathSoFar}/${seg}`;
+			let child = node.children.get(seg);
+			if (!child) {
+				child = newTreeNode(seg, pathSoFar);
+				node.children.set(seg, child);
+			}
+			node = child;
+		}
+		node.ops.push(item);
+	}
+	// Post-order aggregate. Fully-allowed and partially-allowed ops
+	// both count toward ``allowedCount`` for the group summary — the
+	// group header is a rough surface indicator; the leaf row is where
+	// the partial nuance surfaces.
+	const aggregate = (node: OpTreeNode): void => {
+		let a = 0;
+		let d = 0;
+		for (const op of node.ops) {
+			if (op.coverage.verdict === 'deny') d++;
+			else a++;
+		}
+		for (const child of node.children.values()) {
+			aggregate(child);
+			a += child.allowedCount;
+			d += child.deniedCount;
+		}
+		node.allowedCount = a;
+		node.deniedCount = d;
+	};
+	aggregate(root);
+	return root;
+}
+
+function sortTreeChildren(children: readonly OpTreeNode[]): OpTreeNode[] {
+	// Nodes with any allowed ops first, then all-denied. Within a tier,
+	// more-allowed first; then alphabetical by segment name.
+	return [...children].sort((a, b) => {
+		if (a.allowedCount > 0 !== b.allowedCount > 0) {
+			return a.allowedCount > 0 ? -1 : 1;
+		}
+		if (a.allowedCount !== b.allowedCount) return b.allowedCount - a.allowedCount;
+		return a.segment.localeCompare(b.segment);
+	});
 }
 
 function OperationImpactPreview({
@@ -1217,60 +1318,17 @@ function OperationImpactPreview({
 	const items = ops.data?.data ?? [];
 	const importing = !api || !api.name || !api.version || ops.data == null;
 
-	// Bucket every op by its first path segment. Within a group, allowed
-	// ops render first, then denied. Group order is: groups with any
-	// allowed ops first (sorted by allowed count DESC, then by prefix),
-	// then all-denied groups sorted by prefix. ``require-approval`` isn't
-	// a legal effect on binding rules today (broker treats non-allow as
-	// deny), so we only need two buckets per group — when a third effect
-	// lands, add it between allow and deny inside the group.
-	const groups = useMemo<OpGroup[]>(() => {
-		if (items.length === 0) return [];
-		const byPrefix = new Map<string, EvaluatedOp[]>();
-		for (const op of items) {
-			const evaluation = evaluateTemplateOp(rules, {
+	const tree = useMemo<OpTreeNode | null>(() => {
+		if (items.length === 0) return null;
+		const evaluated: EvaluatedOp[] = items.map((op) => ({
+			op,
+			coverage: classifyOpCoverage(rules, {
 				method: op.method,
 				path: op.path,
 				operation_id: op.operation_id,
-			});
-			// Examples only when a narrowing rule matched — a broad
-			// allow (path=/) matches everything and offers no useful
-			// concrete example beyond the op's own template.
-			const examples =
-				evaluation.matchingRule && ruleNarrowsTemplate(evaluation.matchingRule, op.path)
-					? generateRuleExamples(evaluation.matchingRule, op.path)
-					: [];
-			const entry: EvaluatedOp = {
-				op,
-				allowed: evaluation.allowed,
-				examples,
-			};
-			const key = firstPathSegment(op.path);
-			const bucket = byPrefix.get(key);
-			if (bucket) bucket.push(entry);
-			else byPrefix.set(key, [entry]);
-		}
-		const out: OpGroup[] = [];
-		for (const [prefix, evaluated] of byPrefix) {
-			evaluated.sort((a, b) => Number(b.allowed) - Number(a.allowed));
-			out.push({
-				prefix,
-				ops: evaluated,
-				allowedCount: evaluated.filter((e) => e.allowed).length,
-				deniedCount: evaluated.filter((e) => !e.allowed).length,
-			});
-		}
-		out.sort((a, b) => {
-			// Groups with any allowed ops before all-denied groups.
-			if (a.allowedCount > 0 !== b.allowedCount > 0) {
-				return a.allowedCount > 0 ? -1 : 1;
-			}
-			// Within a tier, more-allowed first (skims the credential's
-			// affirmative surface first).
-			if (a.allowedCount !== b.allowedCount) return b.allowedCount - a.allowedCount;
-			return a.prefix.localeCompare(b.prefix);
-		});
-		return out;
+			}),
+		}));
+		return buildOpTree(evaluated);
 	}, [items, rules]);
 
 	return (
@@ -1283,16 +1341,16 @@ function OperationImpactPreview({
 						Operations still importing — this preview will fill in shortly.
 					</p>
 				</div>
-			) : items.length === 0 ? (
+			) : !tree || tree.children.size === 0 ? (
 				<div className="border-border bg-muted/20 rounded-lg border px-3 py-4 text-center">
 					<p className="text-muted-foreground text-xs">
 						No operations imported for this vendor yet.
 					</p>
 				</div>
 			) : (
-				<div className="border-border max-h-72 space-y-1 overflow-y-auto rounded-lg border p-2">
-					{groups.map((g) => (
-						<OperationImpactGroup key={g.prefix} group={g} />
+				<div className="border-border max-h-96 space-y-1 overflow-y-auto rounded-lg border p-2">
+					{sortTreeChildren([...tree.children.values()]).map((child) => (
+						<OperationImpactTreeNode key={child.segment} node={child} />
 					))}
 				</div>
 			)}
@@ -1301,17 +1359,19 @@ function OperationImpactPreview({
 }
 
 /**
- * One collapsible path-prefix group in the ops preview. Rows inside are
- * ordered allow-first, deny-last so the affirmative surface is always
- * on top. Groups with more allows than denies open by default —
- * anything otherwise is opt-in expand, matching the "see high-level
- * roots at a glance, expand for fine-grained access" ask.
+ * One node in the ops-preview hierarchy. Renders as a collapsible group
+ * (children + any ops that terminate at this segment). Default state is
+ * COLLAPSED at every depth — the aggregate ``X allowed / Y denied``
+ * counts on the header let the user skim the surface without having to
+ * expand anything, and expand is opt-in for each layer.
  */
-function OperationImpactGroup({ group }: { group: OpGroup }) {
-	// Default open when the group is mostly allowed (the interesting
-	// bit). Predominantly-denied groups start collapsed so the
-	// affirmative rows above them dominate the initial view.
-	const [open, setOpen] = useState(group.allowedCount > 0);
+function OperationImpactTreeNode({ node }: { node: OpTreeNode }) {
+	const [open, setOpen] = useState(false);
+	const sortedChildren = sortTreeChildren([...node.children.values()]);
+	// Sort within-node ops so allowed / partial ops come first, denied last.
+	const opRank = (op: EvaluatedOp): number =>
+		op.coverage.verdict === 'allow' ? 2 : op.coverage.verdict === 'partial' ? 1 : 0;
+	const sortedOps = [...node.ops].sort((a, b) => opRank(b) - opRank(a));
 	return (
 		<div className="border-border bg-background rounded-md border">
 			<button
@@ -1325,61 +1385,107 @@ function OperationImpactGroup({ group }: { group: OpGroup }) {
 				) : (
 					<ChevronRight className="text-muted-foreground h-3.5 w-3.5 shrink-0" />
 				)}
-				<span className="text-foreground font-mono text-[11px]">{group.prefix}/</span>
+				<span className="text-foreground truncate font-mono text-[11px]">
+					/{node.segment}/
+				</span>
 				<span className="ml-auto flex items-center gap-1.5">
-					{group.allowedCount > 0 && (
+					{node.allowedCount > 0 && (
 						<span className="bg-success/10 text-success border-success/40 rounded-md border px-1.5 py-0.5 font-mono text-[10px]">
-							{group.allowedCount} allowed
+							{node.allowedCount} allowed
 						</span>
 					)}
-					{group.deniedCount > 0 && (
+					{node.deniedCount > 0 && (
 						<span className="bg-danger/10 text-danger border-danger/40 rounded-md border px-1.5 py-0.5 font-mono text-[10px]">
-							{group.deniedCount} denied
+							{node.deniedCount} denied
 						</span>
 					)}
 				</span>
 			</button>
 			{open && (
-				<div className="border-border space-y-1 border-t p-1.5">
-					{group.ops.map(({ op, allowed, examples }) => (
-						<div
-							key={op.operation_id}
-							className="bg-muted/20 border-border rounded-md border px-2.5 py-1 text-xs"
-						>
-							<div className="flex items-center gap-2.5">
-								<span
-									className={`rounded-md border px-1.5 py-0.5 font-mono text-[10px] uppercase ${
-										allowed
-											? 'bg-success/10 text-success border-success/40'
-											: 'bg-danger/10 text-danger border-danger/40'
-									}`}
-									aria-label={allowed ? 'allowed' : 'denied'}
-								>
-									{allowed ? 'allow' : 'deny'}
-								</span>
-								<span className="text-muted-foreground font-mono text-[10px] uppercase">
-									{op.method}
-								</span>
-								<span className="text-foreground truncate font-mono text-[11px]">
-									{op.path}
-								</span>
-								{op.name && (
-									<span className="text-muted-foreground ml-auto truncate text-[10px]">
-										{op.name}
-									</span>
-								)}
-							</div>
-							{examples.length > 0 && (
-								<div className="text-muted-foreground pt-0.5 pl-16 font-mono text-[10px]">
-									e.g.{' '}
-									{examples.map((ex, i) => (
-										<span key={ex}>
-											{i > 0 ? ', ' : ''}
-											<span className="text-foreground/80">{ex}</span>
-										</span>
-									))}
-								</div>
-							)}
+				<div className="border-border space-y-1 border-t p-1.5 pl-4">
+					{sortedChildren.map((child) => (
+						<OperationImpactTreeNode key={child.segment} node={child} />
+					))}
+					{sortedOps.map(({ op, coverage }) => (
+						<OperationImpactLeafRow key={op.operation_id} op={op} coverage={coverage} />
+					))}
+				</div>
+			)}
+		</div>
+	);
+}
+
+/**
+ * Leaf op row shown inside the deepest tree node where the op's path
+ * terminates. Verdict pill is one of ``allow`` / ``partial`` / ``deny``:
+ *
+ * * ``allow`` — every sampled concrete instance is allowed (fully
+ *   covered). No expand affordance.
+ * * ``deny`` — every sampled instance is denied. No expand affordance.
+ * * ``partial`` — some allowed, some denied. The row is expandable and
+ *   shows one or more concrete allowed samples AND concrete denied
+ *   samples so the user sees exactly which slice of the op is covered.
+ */
+function OperationImpactLeafRow({ op, coverage }: { op: VendorOperation; coverage: OpCoverage }) {
+	const [expanded, setExpanded] = useState(false);
+	const verdictPill =
+		coverage.verdict === 'allow'
+			? 'bg-success/10 text-success border-success/40'
+			: coverage.verdict === 'partial'
+				? 'bg-warning/10 text-warning border-warning/40'
+				: 'bg-danger/10 text-danger border-danger/40';
+	const verdictLabel = coverage.verdict; // 'allow' | 'partial' | 'deny'
+	const canExpand = coverage.verdict === 'partial';
+
+	// Whole-row click toggles expand on partial rows so users don't have
+	// to hunt for a caret. Non-partial rows have no expand state so the
+	// click handler is skipped.
+	const rowInteractive = canExpand ? 'cursor-pointer hover:bg-muted/40 transition-colors' : '';
+
+	return (
+		<div
+			className={`bg-muted/20 border-border rounded-md border px-2.5 py-1 text-xs ${rowInteractive}`}
+			onClick={canExpand ? (): void => setExpanded((v) => !v) : undefined}
+		>
+			<div className="flex items-center gap-2.5">
+				{canExpand &&
+					(expanded ? (
+						<ChevronDown className="text-muted-foreground h-3 w-3 shrink-0" />
+					) : (
+						<ChevronRight className="text-muted-foreground h-3 w-3 shrink-0" />
+					))}
+				<span
+					className={`rounded-md border px-1.5 py-0.5 font-mono text-[10px] uppercase ${verdictPill}`}
+					aria-label={verdictLabel}
+				>
+					{verdictLabel}
+				</span>
+				<span className="text-muted-foreground font-mono text-[10px] uppercase">
+					{op.method}
+				</span>
+				<span className="text-foreground truncate font-mono text-[11px]">{op.path}</span>
+				{op.name && (
+					<span className="text-muted-foreground ml-auto truncate text-[10px]">
+						{op.name}
+					</span>
+				)}
+			</div>
+			{expanded && canExpand && (
+				<div className="border-border/50 mt-1 space-y-0.5 border-t pt-1 pl-6 font-mono text-[10px]">
+					{coverage.allowedSamples.map((sample) => (
+						<div key={`a-${sample}`} className="flex items-center gap-2">
+							<span className="bg-success/10 text-success border-success/40 rounded border px-1 py-0 text-[9px] uppercase">
+								allow
+							</span>
+							<span className="text-foreground/80 truncate">{sample}</span>
+						</div>
+					))}
+					{coverage.deniedSamples.map((sample) => (
+						<div key={`d-${sample}`} className="flex items-center gap-2">
+							<span className="bg-danger/10 text-danger border-danger/40 rounded border px-1 py-0 text-[9px] uppercase">
+								deny
+							</span>
+							<span className="text-foreground/80 truncate">{sample}</span>
 						</div>
 					))}
 				</div>

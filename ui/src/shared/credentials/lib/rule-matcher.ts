@@ -15,11 +15,17 @@
 // * ``methods is null`` → no method constraint.
 // * ``operations is null`` → no operation-id constraint.
 // * Match modes: ``regex`` (JS full-match — see ``fullMatch`` below),
-//   ``prefix`` (String#startsWith), ``exact`` (equality).
+//   ``prefix`` (``startsWith`` for pure-literal, prefix-regex for
+//   placeholder-bearing paths), ``exact`` (equality for pure-literal,
+//   fullmatch-regex for placeholder-bearing paths).
 // * A regex that fails to compile → fail-closed matcher (never matches).
 // * A condition-less ``allow`` rule is skipped by the evaluator (should
 //   have been rejected client-side; belt & braces).
 // * First-match-wins; default-deny when nothing matches.
+// * Exact / prefix paths bearing ``{name}`` placeholders compile to a
+//   regex where each placeholder is ``[^/]+`` — same shape users see on
+//   op templates. See ``templatePathToRegex``. Kept in lockstep with
+//   Python ``matching.py::_template_path_to_regex``.
 
 import type { PermissionRule } from '@/shared/credentials/api/vendors-types';
 
@@ -30,6 +36,36 @@ interface PathMatcher {
 	literal: string | null;
 	pattern: RegExp | null;
 	never: boolean;
+}
+
+// ``{name}`` placeholder — single-segment (no slashes) OpenAPI style.
+// Kept in step with the Python side's ``_PLACEHOLDER_RE``.
+const PLACEHOLDER_RE = /\{[^}/]+\}/g;
+
+function hasPlaceholders(path: string): boolean {
+	return path.includes('{') && PLACEHOLDER_RE.test(path);
+}
+
+function escapeRegex(s: string): string {
+	return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Compile a placeholder-bearing exact/prefix path into a RegExp — each
+ * ``{name}`` becomes ``[^/]+`` (single-segment wildcard), matching the
+ * OpenAPI template shape the user sees on op definitions. Literal parts
+ * are regex-escaped so slashes and dots are matched verbatim.
+ */
+function templatePathToRegex(path: string): RegExp {
+	// Consume the source in one pass: everything between placeholder
+	// hits is escaped literal, placeholders themselves become wildcards.
+	// ``PLACEHOLDER_RE`` is a global regex so we reset its lastIndex to
+	// keep this function pure across calls (the ``test`` call in
+	// ``hasPlaceholders`` may have moved it).
+	PLACEHOLDER_RE.lastIndex = 0;
+	const parts = path.split(PLACEHOLDER_RE);
+	const source = parts.map((seg, i) => (i === 0 ? '' : '[^/]+') + escapeRegex(seg)).join('');
+	return new RegExp(source);
 }
 
 function compileMatcher(path: string | null | undefined, mode: MatchMode): PathMatcher | null {
@@ -46,6 +82,13 @@ function compileMatcher(path: string | null | undefined, mode: MatchMode): PathM
 			return { mode: 'regex', literal: null, pattern: null, never: true };
 		}
 	}
+	// exact / prefix with ``{name}`` placeholders compiles to a regex —
+	// see docstring on ``templatePathToRegex``. Paths with no
+	// placeholders stay on the pure-literal branch below so existing
+	// behaviour is unchanged for the common case.
+	if (hasPlaceholders(path)) {
+		return { mode, literal: path, pattern: templatePathToRegex(path), never: false };
+	}
 	return { mode, literal: path, pattern: null, never: false };
 }
 
@@ -58,10 +101,27 @@ function fullMatch(pattern: RegExp, s: string): boolean {
 	return anchored.test(s);
 }
 
+/**
+ * Start-anchored partial match — mirrors ``re.match`` semantics on the
+ * Python side so a placeholder-bearing prefix rule ``/repos/{owner}``
+ * accepts ``/repos/octocat/anything``.
+ */
+function anchoredStartMatch(pattern: RegExp, s: string): boolean {
+	const anchored = new RegExp(`^(?:${pattern.source})`, pattern.flags);
+	return anchored.test(s);
+}
+
 function matcherMatches(m: PathMatcher, requestPath: string): boolean {
 	if (m.never) return false;
 	if (m.mode === 'regex') {
 		if (m.pattern == null) return false;
+		return fullMatch(m.pattern, requestPath);
+	}
+	// Exact / prefix: pattern set only when the authored path had
+	// placeholders; otherwise we fall through to the pure-literal
+	// comparison against ``literal``.
+	if (m.pattern != null) {
+		if (m.mode === 'prefix') return anchoredStartMatch(m.pattern, requestPath);
 		return fullMatch(m.pattern, requestPath);
 	}
 	if (m.literal == null) return false;

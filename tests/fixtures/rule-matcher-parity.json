@@ -156,6 +156,79 @@
       ],
       "request": { "method": "GET", "path": "/repos", "operation_id": null },
       "allowed": true
+    },
+    {
+      "name": "exact rule with {placeholder} matches concrete path",
+      "rules": [
+        {
+          "effect": "allow",
+          "methods": ["GET"],
+          "path": "/repos/{owner}/{repo}",
+          "match_mode": "exact"
+        }
+      ],
+      "request": { "method": "GET", "path": "/repos/octocat/hello-world", "operation_id": null },
+      "allowed": true
+    },
+    {
+      "name": "exact rule with {placeholder} rejects segment-count mismatch",
+      "rules": [
+        {
+          "effect": "allow",
+          "methods": ["GET"],
+          "path": "/repos/{owner}/{repo}",
+          "match_mode": "exact"
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "path": "/repos/octocat/hello-world/commits",
+        "operation_id": null
+      },
+      "allowed": false
+    },
+    {
+      "name": "exact rule with {placeholder} rejects placeholder spanning slashes",
+      "rules": [
+        {
+          "effect": "allow",
+          "methods": ["GET"],
+          "path": "/repos/{owner}",
+          "match_mode": "exact"
+        }
+      ],
+      "request": { "method": "GET", "path": "/repos/octocat/hello-world", "operation_id": null },
+      "allowed": false
+    },
+    {
+      "name": "prefix rule with {placeholder} matches deeper concrete path",
+      "rules": [
+        {
+          "effect": "allow",
+          "methods": ["GET"],
+          "path": "/repos/{owner}/{repo}",
+          "match_mode": "prefix"
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "path": "/repos/octocat/hello-world/commits",
+        "operation_id": null
+      },
+      "allowed": true
+    },
+    {
+      "name": "prefix rule with {placeholder} rejects wrong fixed segment",
+      "rules": [
+        {
+          "effect": "allow",
+          "methods": ["GET"],
+          "path": "/repos/{owner}/{repo}",
+          "match_mode": "prefix"
+        }
+      ],
+      "request": { "method": "GET", "path": "/users/octocat", "operation_id": null },
+      "allowed": false
     }
   ]
 }

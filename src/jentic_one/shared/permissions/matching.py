@@ -59,10 +59,14 @@ class PathValidationError:
 class PathMatcher:
     """Compiled path matcher — immutable so the evaluator can cache it safely.
 
-    ``pattern`` is the compiled regex for regex mode, ``None`` for literal
-    modes. ``never`` is the fail-closed flag: a stored pattern that failed
-    to compile at load time matches nothing (instead of today's silent
-    wildcard). ``literal`` carries the original string for literal modes.
+    ``pattern`` is a compiled regex whenever regex-style semantics apply:
+    ``regex`` mode, or an ``exact`` / ``prefix`` mode path that contained
+    ``{name}`` placeholders (compiled to ``[^/]+`` per placeholder — see
+    ``_template_path_to_regex`` for rationale). ``literal`` carries the
+    original string for pure-literal modes (no placeholders, no regex).
+    ``never`` is the fail-closed flag: a stored pattern that failed to
+    compile at load time matches nothing (instead of today's silent
+    wildcard).
     """
 
     mode: MatchMode
@@ -78,7 +82,16 @@ class PathMatcher:
             # `pattern` is present unless `never` is True (guarded above).
             assert self.pattern is not None
             return self.pattern.fullmatch(request_path) is not None
-        # Literal modes — `literal` is present unless `never` is True.
+        # Exact/prefix — either we compiled a placeholder-aware regex or
+        # we're doing a pure-literal comparison. ``pattern`` set means
+        # the authored path used ``{name}`` placeholders.
+        if self.pattern is not None:
+            if self.mode == "prefix":
+                # Start-anchored, no end anchor — mirrors ``startswith``
+                # semantics for a wildcard-bearing prefix.
+                return self.pattern.match(request_path) is not None
+            # exact
+            return self.pattern.fullmatch(request_path) is not None
         assert self.literal is not None
         if self.mode == "prefix":
             return request_path.startswith(self.literal)
@@ -137,6 +150,38 @@ def validate_path(path: str | None, mode: str) -> PathValidationError | None:
     return _check(path, mode)
 
 
+# OpenAPI-style single-segment placeholders — ``{owner}``, ``{repo}`` etc.
+# We treat any ``{...}`` block (no slashes inside) as a wildcard when
+# authored in exact / prefix mode, so users can write rules against the
+# same shape they see on op templates (e.g. ``/repos/{owner}/{repo}``).
+# See ``_template_path_to_regex``.
+_PLACEHOLDER_RE = re.compile(r"\{[^}/]+\}")
+
+
+def _has_placeholders(path: str) -> bool:
+    return "{" in path and _PLACEHOLDER_RE.search(path) is not None
+
+
+def _template_path_to_regex(path: str) -> re.Pattern[str]:
+    """Compile a ``{name}``-bearing exact/prefix path into a regex.
+
+    Each placeholder becomes ``[^/]+`` — single-segment wildcard —
+    mirroring the semantics of OpenAPI path templates the user sees in
+    the ops preview. Literal parts are escaped so regex metacharacters
+    inside the authored path (unusual but possible) don't leak into
+    the pattern. Caller supplies ``fullmatch`` vs ``match`` to switch
+    between exact and prefix semantics.
+    """
+    parts = _PLACEHOLDER_RE.split(path)
+    # Interleave escaped literals with wildcards. ``parts`` has one more
+    # element than there were placeholders, so we can zip them safely.
+    out = re.escape(parts[0])
+    for literal_after in parts[1:]:
+        out += "[^/]+"
+        out += re.escape(literal_after)
+    return re.compile(out)
+
+
 def compile_matcher(path: str | None, mode: str) -> PathMatcher | None:
     """Compile a stored ``(path, match_mode)`` pair into a matcher.
 
@@ -146,6 +191,14 @@ def compile_matcher(path: str | None, mode: str) -> PathMatcher | None:
     a ``PathMatcher(never=True)`` — a matcher that never matches. That is
     the opposite of today's silent-wildcard behaviour and is enforced
     fail-closed so legacy bad rows cannot accidentally grant access.
+
+    Exact / prefix paths that contain ``{name}`` placeholders are
+    compiled to a regex (each ``{name}`` becomes ``[^/]+``) so users can
+    author rules against the same template shape they see on op
+    definitions. Placeholder detection is opt-in on the shape of the
+    authored path — a path with no ``{...}`` still compiles to a pure
+    literal comparison, preserving existing behaviour for the common
+    case.
     """
     if path is None:
         return None
@@ -154,4 +207,10 @@ def compile_matcher(path: str | None, mode: str) -> PathMatcher | None:
         return PathMatcher(mode="regex", literal=None, pattern=None, never=True)
     if mode == "regex":
         return PathMatcher(mode="regex", literal=None, pattern=re.compile(path))
+    if _has_placeholders(path):
+        return PathMatcher(
+            mode=mode,  # type: ignore[arg-type]
+            literal=path,
+            pattern=_template_path_to_regex(path),
+        )
     return PathMatcher(mode=mode, literal=path, pattern=None)  # type: ignore[arg-type]
