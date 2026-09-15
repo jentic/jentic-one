@@ -126,6 +126,7 @@ HTTP server settings.
 | `server.port` | integer | `8000` | `JENTIC__SERVER__PORT` |  |
 | `server.reload` | boolean | `false` | `JENTIC__SERVER__RELOAD` |  |
 | `server.backend` | "local" \| "remote" | `"local"` | `JENTIC__SERVER__BACKEND` |  |
+| `server.advertised_broker_url` | string | `""` | `JENTIC__SERVER__ADVERTISED_BROKER_URL` |  |
 | `server.mcp.enabled` | boolean | `false` | `JENTIC__SERVER__MCP__ENABLED` |  |
 | `server.mcp.broker_url` | string | `"http://127.0.0.1:8100"` | `JENTIC__SERVER__MCP__BROKER_URL` |  |
 | `server.mcp.oauth.enabled` | boolean | `false` | `JENTIC__SERVER__MCP__OAUTH__ENABLED` |  |

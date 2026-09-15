@@ -174,7 +174,10 @@ func isSensitiveKey(key string) bool { return ux.IsSensitiveKey(key) }
 // sensitiveSweepAllowlist is the reviewed false-positive set for
 // Test1H_SensitiveAnnotationSweep. A property name here is exempt from the
 // "must carry x-sensitive: true" requirement because it is secret-shaped but
-// not a secret (a boolean flag, a count, a masked/redacted view).
+// not a secret (a boolean flag, a count, a masked/redacted view). An entry may
+// be schema-qualified ("SchemaName.prop.path") to exempt one property on one
+// schema without exempting every property of that name — prefer that form for
+// any name (like "token") that is a real secret elsewhere.
 //
 // The backend `x-sensitive` annotation pass (impl/2.1 §4b, GEN-9) landed: every
 // real secret-carrying field is annotated at its Pydantic source
@@ -186,6 +189,10 @@ var sensitiveSweepAllowlist = map[string]bool{
 	"has_api_key":          true, // presence flag, not the key
 	"must_change_password": true, // policy boolean
 	"clear_session_token":  true, // "clear the token?" boolean directive
+	// The public capability document's OAuth token-endpoint URL (RFC 8414
+	// token_endpoint) — a routable address, not a credential. Scoped to the
+	// schema because bare "token" is a real secret everywhere else.
+	"CapabilitiesUrlsResponse.token": true,
 }
 
 // Test1H_SensitiveAnnotationSweep walks every schema property in the vendored
@@ -231,7 +238,7 @@ func Test1H_SensitiveAnnotationSweep(t *testing.T) {
 				if xSensitiveTrue(propSchema) {
 					return // properly annotated — good
 				}
-				if sensitiveSweepAllowlist[prop] {
+				if sensitiveSweepAllowlist[prop] || sensitiveSweepAllowlist[schemaName+"."+propPath] {
 					return // reviewed false positive / pending backend annotation
 				}
 				unclassified = append(unclassified, finding{spec: specName, schema: schemaName, prop: propPath})

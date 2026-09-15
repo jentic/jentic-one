@@ -111,7 +111,7 @@ def _public_instance_id(instance_id: str | None) -> str | None:
     return digest.hexdigest()[:_INSTANCE_ID_DIGEST_LENGTH]
 
 
-def _sanitized_url_parts(canonical_base_url: str) -> tuple[str, str]:
+def sanitized_url_parts(canonical_base_url: str) -> tuple[str, str]:
     """Return ``(canonical_base_url, host)`` with any userinfo stripped.
 
     ``urlsplit().netloc`` retains ``user:password@`` userinfo, so both the echoed
@@ -166,7 +166,7 @@ def _advertised_broker_url(config_broker_url: str, backend: str) -> str | None:
     parts = urlsplit(config_broker_url)
     if backend == "remote" and _is_loopback_host(parts.hostname):
         return None
-    sanitized, _host = _sanitized_url_parts(config_broker_url)
+    sanitized, _host = sanitized_url_parts(config_broker_url)
     return sanitized
 
 
@@ -174,7 +174,7 @@ def resolve_instance_identity(ctx: Context) -> InstanceIdentityResponse:
     """Build the backend-identity payload from the live application ``Context``."""
     canonical_base_url = ctx.config.auth.canonical_base_url or ""
     canonical_base_url, host = (
-        _sanitized_url_parts(canonical_base_url) if canonical_base_url else ("", "")
+        sanitized_url_parts(canonical_base_url) if canonical_base_url else ("", "")
     )
     return InstanceIdentityResponse(
         backend=ctx.config.server.backend,
