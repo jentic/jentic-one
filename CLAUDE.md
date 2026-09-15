@@ -76,7 +76,7 @@ src/jentic_one/
 ├── py.typed          # PEP 561 marker
 ├── wiring.py         # Top-level composition root for cross-surface wiring
 ├── registry/         # Registry surface (API spec catalogue + ingest)
-├── control/          # Control surface (credential storage + access requests)
+├── control/          # Control surface (credential storage + connect flows)
 ├── admin/            # Admin surface (users, jobs, audit, executions)
 ├── broker/           # Broker module (credential-injecting data-plane proxy)
 ├── auth/             # Auth surface (identity, tokens, IdP)

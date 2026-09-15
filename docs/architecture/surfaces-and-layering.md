@@ -54,9 +54,10 @@ cross-surface needs are met three ways:
   package so it may import several of them. It builds the `AppContainer` and
   the in-process seams (for example `InProcessRegistryResolver`, which lets
   the broker resolve operations without importing `jentic_one.registry`).
-- **Raw SQL at a named seam** — when the control plane must write an
-  admin-DB row (approving an access request binds a credential to an agent),
-  [`control/repos/effects_repo.py`](../../src/jentic_one/control/repos/effects_repo.py) uses raw SQL rather than importing admin's
+- **Raw SQL at a named seam** — when one surface must write another
+  surface's database row (deleting a registry API deactivates the control-DB
+  credentials that reference it),
+  [`registry/repos/control_credential_boundary_repo.py`](../../src/jentic_one/registry/repos/control_credential_boundary_repo.py) uses raw SQL rather than importing control's
   ORM models. The [worked example below](#a-request-layer-by-layer) traces
   this seam in action.
 
@@ -102,31 +103,29 @@ model these filters implement.
 
 ### A request, layer by layer
 
-`POST /access-requests/{id}:decide` — an operator approving an agent's
-access request — exercises every rule above, including the cross-database
+`DELETE /apis/{vendor}/{name}/{version}` — an operator removing an API from
+the catalog — traces the layering end to end, including the cross-database
 seam:
 
-1. **`web/`** — the router ([`control/web/routers/access_requests.py`](../../src/jentic_one/control/web/routers/access_requests.py))
-   declares its auth dependency, receives the resolved `Identity`, converts
-   the body to plain data, and calls `AccessRequestService.decide()`. No DB
-   import, no business logic; a failure surfaces as an RFC 9457 problem
-   detail.
-2. **`services/`** — `decide()` builds the identity's access filters, opens
-   `control_db.transaction()`, and applies the decision plus the
-   control-side effects (the binding's permission rules) **atomically** in
-   that one transaction.
-3. **`repos/`** — `AccessRequestRepository.get(session, id, filters=…)`
-   applies the filters it was handed. It never sees the `Identity` that
-   produced them.
-4. **The cross-database seam** — an approved credential bind or scope grant
-   must land in the *admin* DB, which the control transaction cannot span.
-   So `decide()` commits phase 1, then drives the admin-DB writes through
-   `EffectsRepository` (raw SQL, idempotent `ON CONFLICT`), and acks them
-   back into the control DB. An un-acked item is the retry marker:
-   re-calling `decide()` reconciles instead of erroring, so a crash between
-   the two phases leaves no orphaned grants. This is the
-   no-cross-database-foreign-keys rule (see [data model](data-model.md))
-   showing up as control flow.
+1. **`web/`** — the router ([`registry/web/routers/apis.py`](../../src/jentic_one/registry/web/routers/apis.py))
+   declares its auth dependency, receives the resolved `Identity`, and calls
+   `ApiService.delete()`. No DB import, no business logic; a failure
+   surfaces as an RFC 9457 problem detail.
+2. **`services/`** — `delete()` opens `registry_db.transaction()`, resolves
+   the API, and deletes it **atomically** in that one transaction. (On a
+   scoped *read* path, the service would first build the identity's access
+   filters and pass them down — see [the scoping packages](#the-scoping-packages).)
+3. **`repos/`** — `ApiRepository` runs the queries it is handed. It never
+   sees the `Identity` that authorized them.
+4. **The cross-database seam** — deleting the API must also deactivate the
+   *control*-DB credentials that reference it by identity tuple, and the
+   registry transaction cannot span that database. So `delete()` commits the
+   registry delete first, then drives the control-DB update through
+   `ControlCredentialBoundaryRepository` (raw SQL, no control ORM imports) —
+   deactivating rather than deleting, so the rows stay visible to the
+   operator and a later re-import cannot collide with a stale active
+   credential. This is the no-cross-database-foreign-keys rule (see
+   [data model](data-model.md)) showing up as control flow.
 
 ## Facade rules (one home per concern)
 
