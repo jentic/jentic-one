@@ -15,9 +15,9 @@ Every task against an external API follows the same audited loop:
 jentic whoami                          # 1. what your bindings already SERVE
 jentic catalog search "<capability>"   # 2. find an importable API (public catalog)
 jentic catalog import <vendor/name>    #    import it into the local registry
-jentic search "<what you want to do>"  # 3. find the operation — each hit gives its METHOD and URL
-jentic inspect GET:https://api.example.com/v1/things/{id}     # 4. params, schemas, auth
-jentic execute GET:https://api.example.com/v1/things/{id} --path id=abc   # 5. call it through the broker
+jentic search "<what you want to do>"  # 2. find the operation — each hit gives its METHOD and URL
+jentic inspect GET:https://api.example.com/v1/things/{id}     # 3. params, schemas, auth
+jentic execute GET:https://api.example.com/v1/things/{id} --path id=abc   # 4. call it through the broker
 ```
 
 Key behaviours (details and full flag syntax in the skill):
@@ -50,16 +50,23 @@ Key behaviours (details and full flag syntax in the skill):
    like `catalog --update` or `import` do not exist. Before the first use of
    any command, run `jentic <command> --help`; every failure also prints the
    exact next command on stderr, so read the error before trying anything else.
-2. **A freshly imported API has no credential.** Your operator must first
-   connect/provision a credential for it in the dashboard (auth type +
-   permission rules), then bind you to it — importing alone grants nothing.
+2. **A freshly imported API has no credential.** Importing puts the API in
+   the registry; it does not connect an account. For a vendor in the
+   deployment's connect registry, `jentic connect <vendor>` starts the
+   connection (and imports the API for you); otherwise your operator must
+   store a credential for it in the dashboard (auth type + permission rules)
+   and bind you to it.
 3. **One report per job**, always with the reason — never thrash your
    operator with per-operation or duplicate asks.
+4. **Hand off when told to.** A `prompt_human` directive (missing secret,
+   vendor not in the registry, lapsed account link) means a human must act
+   in the console — report it to the operator and wait; never re-send the
+   same call hoping for a different answer.
 
 ## How to do an action (worked example)
 
 Task: *"get the current Bitcoin price"* on a fresh instance — nothing
-imported, no access yet.
+imported, no credential bound yet.
 
 ```bash
 # 1. What can I already call? (nothing yet, on a fresh install)
@@ -81,7 +88,7 @@ jentic catalog import coincap-io/coincap-io
 # 4. Find the operation — the hit gives you its METHOD and URL
 jentic search "get current asset price"
 
-# 5. Inspect, then execute with that exact METHOD + URL
+# 3. Inspect, then execute with that exact METHOD + URL
 jentic inspect GET:https://rest.coincap.io/v3/assets/{id}
 jentic execute GET:https://rest.coincap.io/v3/assets/{id} --path id=bitcoin
 ```
@@ -102,8 +109,8 @@ recovery — follow its instruction instead of retrying the same call.
   (pass `--timeout` on long waits such as `register`).
 - Exit codes are a coarse contract: **0** ok, **1** transport/unexpected,
   **2** "cannot succeed as asked" (denial, resolve failure, missing context —
-  do not blind-retry), **3** timed out still pending (retry later),
-  **4** partially approved. Two caveats: `execute` exits **0 for any
+  do not blind-retry), **3** timed out still pending (retry later). Two
+  caveats: `execute` exits **0 for any
   non-denial broker response**, including 429 rate-limits, 503 shed/circuit
   responses and 504 timeouts — always check the HTTP status in the JSON
   envelope, never the exit code alone. Exit 1 is also broader than

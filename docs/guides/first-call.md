@@ -29,8 +29,8 @@ From the terminal instead: `jenticctl setup` creates the account;
 
 ## 2. Register the agent *(agent machine)*
 
-Nearly every step from here runs the `jentic` CLI — the exception is step 4,
-which happens in the dashboard — and every `jentic` command (even
+Nearly every step from here runs the `jentic` CLI — the exceptions are steps 4
+and 5, which happen (mostly) in the dashboard — and every `jentic` command (even
 browsing the catalog) needs a registered agent. From the machine that will
 run the agent:
 
@@ -76,22 +76,27 @@ covers an API and how the broker picks one at execution time:
 
 ## 5. Grant access
 
-Access is **default-deny**: an approved agent is bound to nothing until an
-operator grants it. The grant is an operator action in the dashboard. A
-freshly imported API has no **credential** stored for it yet, so the operator
-performs the whole path to first execution — connect/provision a credential
-*and* bind this agent to it:
+Access is **default-deny**: an approved agent is bound to nothing until a
+human grants it, and granting is always a human decision — never something
+the agent does to itself. Two paths:
 
-1. In the console (`/app`), the operator provisions a credential for
-   `httpbin.org/httpbin` (auth type `none` — httpbin takes no credential).
-2. They bind this agent to that credential, with the permission rules the
-   call needs.
+- **Operator bind (works for every API).** In the dashboard, open the agent
+  and bind it to the stored credential, adding the `allow` rules that
+  describe what it may call — a rule-less binding still blocks everything.
+  For a no-auth API like httpbin, store a no-auth credential for
+  `httpbin.org/httpbin` first, then bind it the same way.
+- **Agent-driven connect flow (OAuth vendors).** When the deployment's vendor
+  registry covers the API, the agent starts the flow itself —
+  `jentic connect <vendor>`, over `POST /integrations:connect` — and relays
+  the printed approval link; you approve it and consent inside the OAuth
+  flow. The API is imported automatically, and the
+  credential, the agent binding, and its permissions land together; the
+  secret still never reaches the agent.
 
-For an authenticated API, the operator declares its type instead (`bearer`,
-`api_key`, `basic`, `oauth2`) and enters the secret while provisioning; the
-agent never sees it. Once a credential already serves an API, the grant is
-just the binding — no new credential needed. Re-check what you can call with
-`jentic api GET /me`.
+Either way, an agent denied at execution gets a typed directive naming which
+of the two paths recovers it.
+
+Once a grant lands, the agent re-checks what it can call with `jentic whoami`.
 
 ## 6. Make the call
 
