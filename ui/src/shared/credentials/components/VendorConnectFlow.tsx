@@ -1375,13 +1375,17 @@ function OperationImpactGroup({ group }: { group: OpGroup }) {
  * Leaf op row rendered inside a group's expanded body. Verdict pill is
  * one of ``allow`` / ``partial`` / ``deny``.
  *
- * On partial ops the row shows two follow-up lines directly inline
- * (not gated on expand — they're the whole point of "partial"):
+ * ``partial`` rows carry a caret and start COLLAPSED — clicking the row
+ * expands two follow-up lines with one concrete sample per bucket:
  *   ``ALLOW e.g. /repos/jentic/jentic-one/commits``
  *   ``DENY  e.g. /repos/example-owner/example-repo/commits``
- * One example per bucket keeps the row scannable on large APIs.
+ * Inline-expanded partial detail dominated the group; hiding it behind
+ * a click keeps the surface scannable while still letting the user
+ * drill into the "narrow slice of a broader op" case that partial
+ * exists to signal.
  */
 function OperationImpactLeafRow({ op, coverage }: { op: VendorOperation; coverage: OpCoverage }) {
+	const [expanded, setExpanded] = useState(false);
 	const verdictPill =
 		coverage.verdict === 'allow'
 			? 'bg-success/10 text-success border-success/40'
@@ -1391,9 +1395,20 @@ function OperationImpactLeafRow({ op, coverage }: { op: VendorOperation; coverag
 	const verdictLabel = coverage.verdict;
 	const allowExample = coverage.allowedSamples[0];
 	const denyExample = coverage.deniedSamples[0];
+	const canExpand = coverage.verdict === 'partial' && Boolean(allowExample || denyExample);
+	const rowInteractive = canExpand ? 'cursor-pointer hover:bg-muted/40 transition-colors' : '';
 	return (
-		<div className="bg-muted/20 border-border rounded-md border px-2.5 py-1 text-xs">
+		<div
+			className={`bg-muted/20 border-border rounded-md border px-2.5 py-1 text-xs ${rowInteractive}`}
+			onClick={canExpand ? (): void => setExpanded((v) => !v) : undefined}
+		>
 			<div className="flex items-center gap-2.5">
+				{canExpand &&
+					(expanded ? (
+						<ChevronDown className="text-muted-foreground h-3 w-3 shrink-0" />
+					) : (
+						<ChevronRight className="text-muted-foreground h-3 w-3 shrink-0" />
+					))}
 				<span
 					className={`rounded-md border px-1.5 py-0.5 font-mono text-[10px] uppercase ${verdictPill}`}
 					aria-label={verdictLabel}
@@ -1410,8 +1425,8 @@ function OperationImpactLeafRow({ op, coverage }: { op: VendorOperation; coverag
 					</span>
 				)}
 			</div>
-			{coverage.verdict === 'partial' && (allowExample || denyExample) && (
-				<div className="mt-0.5 space-y-0.5 pl-4 font-mono text-[10px]">
+			{expanded && canExpand && (
+				<div className="mt-0.5 space-y-0.5 pl-6 font-mono text-[10px]">
 					{allowExample && (
 						<div className="flex items-center gap-1.5">
 							<span className="bg-success/10 text-success border-success/40 rounded border px-1 py-0 text-[9px] uppercase">
