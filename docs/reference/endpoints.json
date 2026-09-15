@@ -2468,6 +2468,31 @@
       "typical_caller": "agent"
     },
     {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "credentials:read": [],
+        "owner:credentials:read": []
+      },
+      "method": "GET",
+      "operation_id": "getGovernedHosts",
+      "path": "/governed-hosts",
+      "public": false,
+      "required_scopes": [
+        "credentials:read",
+        "owner:credentials:read"
+      ],
+      "summary": "Get Governed Hosts",
+      "surface": "governed-hosts",
+      "typical_caller": "any"
+    },
+    {
       "actor_types": [],
       "auth_note": null,
       "authenticated": false,

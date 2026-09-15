@@ -229,7 +229,7 @@ _Total endpoints: **184**._
 | POST | `/users/{user_id}:enable` | `users:write` | operator | Enable User |
 | POST | `/users/{user_id}:reissue-invite` | `users:write` | operator | Reissue Invite |
 
-## Any authenticated actor (70)
+## Any authenticated actor (71)
 
 
 ### `access-requests`
@@ -300,6 +300,12 @@ _Total endpoints: **184**._
 | DELETE | `/credentials/{credential_id}/agents/{agent_id}/rule-set` | `credentials:write` | any | Detach rule set from binding |
 | PUT | `/credentials/{credential_id}/agents/{agent_id}/rule-set` | `credentials:write` | any | Attach rule set to binding |
 | POST | `/credentials/{credential_id}/connect` | `credentials:write` | any | Begin OAuth connect flow |
+
+### `governed-hosts`
+
+| Method | Path | Scope(s) | Typical caller | Summary |
+|---|---|---|---|---|
+| GET | `/governed-hosts` | `credentials:read`, `owner:credentials:read` | any | Get Governed Hosts |
 
 ### `jobs`
 

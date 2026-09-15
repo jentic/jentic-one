@@ -7,6 +7,25 @@ class RegistryServiceError(Exception):
     """Base for all registry service errors."""
 
 
+class GovernedHostsUnavailableError(RegistryServiceError):
+    """Raised when the governed-hosts derivation is missing a database leg.
+
+    The derivation reads three databases (admin bindings → control credential
+    scopes → registry hosts); a process serving the route without one of them
+    is misdeployed (``SURFACE_DB_DEPS`` in ``__main__.py`` grants a standalone
+    registry surface all three). Surfaced as **503** so the caller retries
+    against a healthy replica instead of receiving a bare 500 — and never as
+    an empty 200, which a gate would read as "govern nothing".
+    """
+
+    def __init__(self, db_name: str) -> None:
+        super().__init__(
+            f"governed-hosts derivation requires the '{db_name}' database, "
+            "which this process is not configured to access"
+        )
+        self.db_name = db_name
+
+
 class ApiNotFoundError(RegistryServiceError):
     """Raised when an API identified by (vendor, name, version) does not exist."""
 
