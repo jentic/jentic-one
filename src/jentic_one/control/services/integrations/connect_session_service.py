@@ -388,6 +388,14 @@ class ConnectSessionService:
             initiator_actor_id=initiator_actor_id,
         )
         _sessions_created.add(1, {"vendor": vendor_key, "flow": flow.kind})
+        # Kick off the vendor's OpenAPI import as early as we can — the SPA
+        # opens the connect dialog and immediately calls ``:connect``, so
+        # firing here (rather than at ``:confirm``) gives the import
+        # ~seconds while the user reviews scopes + rules. By the time the
+        # rules-page operation-impact preview mounts, the ops list is
+        # usually available. Idempotent + best-effort; ``:confirm`` still
+        # calls this as a defensive re-trigger for edge cases.
+        await self._maybe_import_catalog(api_id=entry.vendor, initiator_actor_id=initiator_actor_id)
         return CreatedSession(
             session_id=row.id,
             approval_url=approval_url,
