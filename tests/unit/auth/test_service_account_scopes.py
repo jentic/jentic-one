@@ -42,6 +42,9 @@ def _mock_sa(sa_id: str = "sa_test1", status: str = "active") -> MagicMock:
     sa.status = status
     sa.denial_reason = None
     sa.denied_by = None
+    # Theme-8 Phase 1: unstamped by default — the stamp guard must not trip.
+    sa.migrated_to_actor_id = None
+    sa.migrated_at = None
     sa.created_at = datetime(2026, 6, 23, tzinfo=UTC)
     sa.approved_at = datetime(2026, 6, 23, tzinfo=UTC)
     return sa

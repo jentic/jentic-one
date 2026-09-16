@@ -10,7 +10,11 @@ from jentic_one.admin.repos import (
     ServiceAccountRepository,
 )
 from jentic_one.admin.scoping.filters import build_access_filters
-from jentic_one.auth.services.errors import ActorNotFoundError, InvalidTransitionError
+from jentic_one.auth.services.errors import (
+    ActorNotFoundError,
+    InvalidTransitionError,
+    ServiceAccountMigratedError,
+)
 from jentic_one.auth.services.schemas.service_accounts import (
     ServiceAccountCreatePayload,
     ServiceAccountView,
@@ -208,6 +212,7 @@ class ServiceAccountService:
             sa = await ServiceAccountRepository.get_by_id(session, service_account_id)
             if sa is None:
                 raise ActorNotFoundError(service_account_id)
+            _refuse_if_migrated(sa)
             if sa.status == ActorStatus.ARCHIVED:
                 raise InvalidTransitionError(service_account_id, ActorStatus.ARCHIVED, "archive")
             await ServiceAccountRepository.archive(session, service_account_id)
@@ -237,6 +242,7 @@ class ServiceAccountService:
             sa = await ServiceAccountRepository.get_by_id(session, service_account_id)
             if sa is None:
                 raise ActorNotFoundError(service_account_id)
+            _refuse_if_migrated(sa)
             if sa.status == ActorStatus.ARCHIVED:
                 raise InvalidTransitionError(
                     service_account_id, ActorStatus.ARCHIVED, "replace_scopes"
@@ -271,8 +277,24 @@ class ServiceAccountService:
         sa = await ServiceAccountRepository.get_by_id(session, service_account_id)
         if sa is None:
             raise ActorNotFoundError(service_account_id)
+        _refuse_if_migrated(sa)
         if sa.status == ActorStatus.ARCHIVED:
             raise InvalidTransitionError(service_account_id, ActorStatus.ARCHIVED, verb)
         allowed_from = _VALID_TRANSITIONS[verb]
         if sa.status not in allowed_from:
             raise InvalidTransitionError(service_account_id, sa.status, verb)
+
+
+def _refuse_if_migrated(sa: ServiceAccount) -> None:
+    """Theme-8 Phase 1 stamp guard (NF-1/NF-2): refuse mutations on stamped rows.
+
+    Uniform predicate ``migrated_to_actor_id IS NOT NULL`` — the live actor
+    is the successor agent (or, for skip-but-stamp rows, nothing at all), so
+    a mutation here would silently no-op against the key or diverge the
+    copied state. Runbook: dual-kill — disable the successor agent.
+    Reads stay unguarded; ``create`` too (new rows are unstamped, the boot
+    job re-runs migrate them, F5).
+    """
+    if sa.migrated_to_actor_id is not None:
+        successor = sa.migrated_to_actor_id
+        raise ServiceAccountMigratedError(sa.id, None if successor == "skipped" else successor)
