@@ -121,7 +121,7 @@ def make_superset_verifier(ctx: Context) -> Any:
 
 def _make_auth_verifier(ctx: Context) -> Any:
     """Build the auth token verifier (API keys + opaque access tokens + JWT)."""
-    api_key_resolver = ApiKeyResolver(ctx.admin_db)
+    api_key_resolver = ApiKeyResolver(ctx.admin_db, telemetry=ctx.telemetry)
 
     async def _verify(token: str, request: Request) -> Identity:
         if token.startswith(AGENT_API_KEY_PREFIX) or token.startswith(
