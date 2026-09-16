@@ -11,6 +11,7 @@ apply.
 
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 import hashlib
 from collections.abc import AsyncGenerator, Awaitable, Callable
@@ -30,6 +31,12 @@ from jentic_one.auth.services.errors import ServiceAccountMigratedError
 from jentic_one.auth.services.schemas.service_accounts import ServiceAccountCreatePayload
 from jentic_one.auth.services.service_account_auth_service import ServiceAccountAuthService
 from jentic_one.auth.services.service_account_service import ServiceAccountService
+from jentic_one.control.core.schema.toolkit_keys import ToolkitKey
+from jentic_one.control.core.schema.toolkits import Toolkit
+from jentic_one.control.repos.key_retirement_repo import KeyRetirementRepository
+from jentic_one.control.repos.service_account_migration_repo import (
+    ServiceAccountMigrationRepository,
+)
 from jentic_one.control.services.service_account_migration import (
     ServiceAccountMigrationService,
 )
@@ -386,6 +393,166 @@ async def test_rerun_is_noop_via_stamp_short_circuit(
     assert len(successors) == 1  # no double mint
 
 
+async def test_rerun_heals_lost_control_restamp(
+    integration_context: Context,
+    admin_db: DatabaseSession,
+    control_db: DatabaseSession,
+    seed_owner: None,
+) -> None:
+    """M1: a crash between the admin commit and the control-DB re-stamp must
+    not lose the ``toolkit_keys`` re-stamp forever — the ``already_migrated``
+    path re-runs the idempotent re-stamp."""
+    sa_id = await _seed_sa(admin_db, suffix="restamp", api_key_plaintext="sak_t8m_restamp")
+    async with control_db.session() as session:
+        session.add(Toolkit(id="tk_t8m_restamp", name="t8m-restamp", created_by=_OWNER))
+        await session.flush()
+        session.add(
+            ToolkitKey(
+                id="ck_t8m_restamp",
+                toolkit_id="tk_t8m_restamp",
+                hashed_key="t8m-restamp-hash",
+                key_preview="jntc_live_t8m...",
+                label="t8m-restamp",
+                migrated_actor_id=sa_id,  # theme-5 retirement stamped the SA
+                created_by=_OWNER,
+            )
+        )
+        await session.commit()
+
+    svc = ServiceAccountMigrationService(integration_context)
+    try:
+        outcomes = {o.service_account_id: o for o in await svc.run()}
+        agent_id = outcomes[sa_id].successor_agent_id
+
+        # Simulate the crash: the admin transaction committed (stamp in
+        # place) but the control-DB re-stamp was lost.
+        async with control_db.session() as session:
+            await session.execute(
+                text("UPDATE toolkit_keys SET migrated_actor_id = :sa WHERE id = :id"),
+                {"sa": sa_id, "id": "ck_t8m_restamp"},
+            )
+            await session.commit()
+
+        rerun = {o.service_account_id: o for o in await svc.run()}
+        assert rerun[sa_id].outcome == "already_migrated"
+
+        async with control_db.session() as session:
+            key = await session.get(ToolkitKey, "ck_t8m_restamp")
+            assert key is not None
+            assert key.migrated_actor_id == agent_id  # healed by the re-run
+    finally:
+        async with control_db.session() as session:
+            await session.execute(text("DELETE FROM toolkit_keys WHERE id = 'ck_t8m_restamp'"))
+            await session.execute(text("DELETE FROM toolkits WHERE id = 'tk_t8m_restamp'"))
+            await session.commit()
+
+
+async def test_skip_but_stamp_revokes_outstanding_tokens_too(
+    integration_context: Context, admin_db: DatabaseSession, seed_owner: None
+) -> None:
+    """M5: a skip-but-stamp SA (no successor) still gets its opaque sessions
+    family-revoked in the stamp transaction — verify criterion 3 counts every
+    SA row and would otherwise fail unfixably."""
+    sa_id = await _seed_sa(
+        admin_db, suffix="skiptok", status="pending", scopes=("toolkit:read",), with_tokens=True
+    )
+
+    svc = ServiceAccountMigrationService(integration_context)
+    outcomes = {o.service_account_id: o for o in await svc.run()}
+
+    outcome = outcomes[sa_id]
+    assert outcome.outcome == "skipped-non-active"
+    assert outcome.successor_agent_id is None
+    assert outcome.access_tokens_revoked == 1
+    assert outcome.refresh_tokens_revoked == 1
+    for table in ("access_tokens", "refresh_tokens"):
+        tokens = await _rows(
+            admin_db, f"SELECT revoked_at FROM {table} WHERE actor_id = :id", {"id": sa_id}
+        )
+        assert len(tokens) == 1 and tokens[0].revoked_at is not None, table
+
+    result = await svc.verify()
+    assert result.unrevoked_token_count == 0
+    assert result.passed is True
+
+
+async def test_two_concurrent_sessions_race_one_unstamped_sa(
+    integration_context: Context, admin_db: DatabaseSession, seed_owner: None
+) -> None:
+    """L1: a REAL two-session race on one unstamped SA — both sessions run
+    the full copy→revoke→stamp transaction concurrently; exactly one wins,
+    the loser reports cleanly, and no partial write survives."""
+    plaintext = "sak_t8m_realrace"
+    sa_id = await _seed_sa(
+        admin_db, suffix="realrace", scopes=("toolkit:read",), api_key_plaintext=plaintext
+    )
+    async with admin_db.session() as session:
+        rows = await ServiceAccountMigrationRepository.list_service_accounts(session)
+    row = next(r for r in rows if r.id == sa_id)
+    assert row.migrated_to_actor_id is None
+
+    svc_a = ServiceAccountMigrationService(integration_context)
+    svc_b = ServiceAccountMigrationService(integration_context)
+    outcome_a, outcome_b = await asyncio.gather(svc_a._migrate_one(row), svc_b._migrate_one(row))
+
+    results = sorted((outcome_a.outcome, outcome_b.outcome))
+    winners = [o for o in (outcome_a, outcome_b) if o.outcome == "migrated"]
+    assert len(winners) == 1, results
+    loser = next(o for o in (outcome_a, outcome_b) if o is not winners[0])
+    assert loser.outcome in {"already_migrated", "failed"}, results
+
+    # Exactly one successor, one credential row, stamp points at the winner.
+    successors = await _rows(
+        admin_db,
+        "SELECT id FROM agents WHERE registered_by = 'system:theme8-sa-migration'",
+        {},
+    )
+    assert len(successors) == 1
+    digests = await _rows(
+        admin_db,
+        "SELECT id FROM agent_credentials WHERE api_key_hash = :h",
+        {"h": _digest(plaintext)},
+    )
+    assert len(digests) == 1
+    stamp, _ = await _stamp_of(admin_db, sa_id)
+    assert stamp == winners[0].successor_agent_id
+
+
+async def test_unexpected_row_error_is_isolated_and_the_loop_continues(
+    integration_context: Context,
+    admin_db: DatabaseSession,
+    seed_owner: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """L2: an arbitrary per-row failure (not just the two anticipated types)
+    reports ``failed`` and never aborts the run for the remaining SAs."""
+    poisoned = await _seed_sa(
+        admin_db, suffix="err_a", scopes=("toolkit:read",), api_key_plaintext="sak_t8m_err_a"
+    )
+    healthy = await _seed_sa(admin_db, suffix="err_b", api_key_plaintext="sak_t8m_err_b")
+
+    original = ServiceAccountMigrationRepository.copy_scope_grants
+
+    async def _poisoned_copy(session: Any, *, service_account_id: str, agent_id: str) -> int:
+        if service_account_id == poisoned:
+            raise RuntimeError("simulated malformed row")
+        return await original(session, service_account_id=service_account_id, agent_id=agent_id)
+
+    monkeypatch.setattr(ServiceAccountMigrationRepository, "copy_scope_grants", _poisoned_copy)
+
+    outcomes = {
+        o.service_account_id: o
+        for o in await ServiceAccountMigrationService(integration_context).run()
+    }
+
+    assert outcomes[poisoned].outcome == "failed"
+    assert outcomes[poisoned].reason == "error:RuntimeError"
+    assert outcomes[healthy].outcome == "migrated"
+    # The poisoned row rolled back whole: no stamp, no successor remnant.
+    stamp, _ = await _stamp_of(admin_db, poisoned)
+    assert stamp is None
+
+
 async def test_zero_grant_sa_yields_zero_grant_successor_and_never_pending(
     integration_context: Context, admin_db: DatabaseSession, seed_owner: None
 ) -> None:
@@ -524,6 +691,78 @@ async def test_disabled_sa_successor_created_disabled_and_key_dead_until_agent_e
         await session.commit()
     revived = await resolver.resolve(plaintext)
     assert revived is not None and revived.sub == agent_id
+
+
+async def test_disabling_the_successor_fails_closed_never_falls_back_to_active_sa(
+    integration_context: Context, admin_db: DatabaseSession, seed_owner: None
+) -> None:
+    """H1(a): the runbook's kill lever — disable the successor agent — must cut
+    the old plaintext even though the SA row is still active (the SA-side
+    disable is 409-refused by the stamp guard)."""
+    plaintext = "sak_t8m_killlever"
+    sa_id = await _seed_sa(
+        admin_db, suffix="killlever", scopes=("toolkit:read",), api_key_plaintext=plaintext
+    )
+    outcomes = {
+        o.service_account_id: o
+        for o in await ServiceAccountMigrationService(integration_context).run()
+    }
+    agent_id = outcomes[sa_id].successor_agent_id
+
+    # Operator cuts the key: disables the successor. SA row stays active.
+    async with admin_db.session() as session:
+        await session.execute(
+            text("UPDATE agents SET status = 'disabled' WHERE id = :id"), {"id": agent_id}
+        )
+        await session.commit()
+    sa_status = await _rows(
+        admin_db, "SELECT status FROM service_accounts WHERE id = :id", {"id": sa_id}
+    )
+    assert [r.status for r in sa_status] == [("active")]
+
+    resolver = ApiKeyResolver(admin_db)
+    with structlog.testing.capture_logs() as logs:
+        identity = await resolver.resolve(plaintext)
+
+    assert identity is None  # fail closed — never the SA fallback
+    fail_closed = [log for log in logs if log["event"] == "migrated_key_fail_closed"]
+    assert len(fail_closed) == 1 and fail_closed[0]["reason"] == "successor_inactive"
+    # No fallback WARNING/counter: the SA arm was never consulted.
+    assert [log for log in logs if log["event"] == "service_account_fallback_resolve"] == []
+
+
+async def test_revoking_the_successor_key_fails_closed_on_stamped_sa(
+    integration_context: Context, admin_db: DatabaseSession, seed_owner: None
+) -> None:
+    """H1(b): revoking/rotating the successor's key NULLs the agent-side
+    digest — a genuine agent-arm miss — but the stamped SA row must refuse
+    regardless of its (still-active) status."""
+    plaintext = "sak_t8m_revlever"
+    sa_id = await _seed_sa(
+        admin_db, suffix="revlever", scopes=("toolkit:read",), api_key_plaintext=plaintext
+    )
+    outcomes = {
+        o.service_account_id: o
+        for o in await ServiceAccountMigrationService(integration_context).run()
+    }
+    agent_id = outcomes[sa_id].successor_agent_id
+
+    # Operator revokes the successor's key: agent-side digest is NULLed.
+    async with admin_db.session() as session:
+        await session.execute(
+            text("UPDATE agent_credentials SET api_key_hash = NULL WHERE agent_id = :id"),
+            {"id": agent_id},
+        )
+        await session.commit()
+
+    resolver = ApiKeyResolver(admin_db)
+    with structlog.testing.capture_logs() as logs:
+        identity = await resolver.resolve(plaintext)
+
+    assert identity is None  # the still-live SA digest must not resurrect the key
+    fail_closed = [log for log in logs if log["event"] == "migrated_key_fail_closed"]
+    assert len(fail_closed) == 1 and fail_closed[0]["reason"] == "stamped_service_account"
+    assert fail_closed[0]["service_account_id"] == sa_id
 
 
 async def test_non_active_sas_are_skipped_but_stamped(
@@ -842,6 +1081,199 @@ async def test_sweep_backdated_stamp_passes_age_gate_and_skip_stamp_rows_archive
         {"a": migrated, "b": skipped},
     )
     assert [r.status for r in statuses] == ["archived", "archived"]
+
+
+async def test_pre_archived_stamped_sa_is_swept_and_sweep_is_idempotent(
+    integration_context: Context, admin_db: DatabaseSession, seed_owner: None
+) -> None:
+    """M2: an SA already ``archived`` at migration time (skip-but-stamp) must
+    still get its lingering ``sva_``-keyed grant/binding/digest rows swept —
+    they would block the Phase-4 drop. L3: the archive UPDATE no-ops (already
+    archived), so NO duplicate ARCHIVE audit row is written; a second sweep
+    finds nothing left to do."""
+    sa_id = await _seed_sa(
+        admin_db,
+        suffix="prearch",
+        status="archived",
+        scopes=("toolkit:read",),
+        api_key_plaintext="sak_t8m_prearch",
+        toolkit_ids=("tk_t8m_prearch",),
+    )
+    svc = ServiceAccountMigrationService(integration_context)
+    outcomes = {o.service_account_id: o for o in await svc.run()}
+    assert outcomes[sa_id].outcome == "skipped-non-active"
+
+    first = await svc.sweep(ignore_age_gate=True)
+    assert sa_id in first.swept
+
+    # Satellites gone, digest NULLed, status still archived.
+    for table, column in (
+        ("actor_scope_grants", "actor_id"),
+        ("agent_toolkit_bindings", "agent_id"),
+    ):
+        rows = await _rows(admin_db, f"SELECT id FROM {table} WHERE {column} = :id", {"id": sa_id})
+        assert rows == [], table
+    sa_rows = await _rows(
+        admin_db,
+        "SELECT sa.status, sac.api_key_hash FROM service_accounts sa"
+        " JOIN service_account_credentials sac ON sac.service_account_id = sa.id"
+        " WHERE sa.id = :id",
+        {"id": sa_id},
+    )
+    assert [(r.status, r.api_key_hash) for r in sa_rows] == [("archived", None)]
+
+    # L3: the row was already archived — no ARCHIVE audit row from the sweep.
+    archives = await _rows(
+        admin_db,
+        "SELECT id FROM audit_entries WHERE actor_id = 'migrate-service-accounts'"
+        " AND action = 'archive' AND target_id = :id",
+        {"id": sa_id},
+    )
+    assert archives == []
+
+    # Idempotent: nothing left to sweep on the second pass.
+    second = await svc.sweep(ignore_age_gate=True)
+    assert sa_id not in second.swept
+
+
+async def test_repeated_sweeps_write_exactly_one_archive_audit_row(
+    integration_context: Context, admin_db: DatabaseSession, seed_owner: None
+) -> None:
+    """L3: the archive UPDATE's in-transaction re-check (status != 'archived')
+    keeps re-sweeps from duplicating the ARCHIVE audit row."""
+    sa_id = await _seed_sa(admin_db, suffix="resweep", api_key_plaintext="sak_t8m_resweep")
+    svc = ServiceAccountMigrationService(integration_context)
+    await svc.run()
+
+    await svc.sweep(ignore_age_gate=True)
+    await svc.sweep(ignore_age_gate=True)
+
+    archives = await _rows(
+        admin_db,
+        "SELECT id FROM audit_entries WHERE actor_id = 'migrate-service-accounts'"
+        " AND action = 'archive' AND target_id = :id",
+        {"id": sa_id},
+    )
+    assert len(archives) == 1
+
+
+# ------------------------------------------------------- W8 stamp guards (M4)
+
+
+async def test_key_retirement_set_actor_status_redirects_stamped_sa_to_successor(
+    integration_context: Context, admin_db: DatabaseSession, seed_owner: None
+) -> None:
+    """M4(a): the raw-SQL SA-table fallback must never resurrect a stamped
+    row — the update is redirected to the stamped successor agent."""
+    plaintext = "sak_t8m_redirect"
+    sa_id = await _seed_sa(admin_db, suffix="redirect", api_key_plaintext=plaintext)
+    outcomes = {
+        o.service_account_id: o
+        for o in await ServiceAccountMigrationService(integration_context).run()
+    }
+    agent_id = outcomes[sa_id].successor_agent_id
+
+    # An operator lever still holding the old sva_ id: redirect to the agent.
+    async with admin_db.transaction() as session:
+        await KeyRetirementRepository.set_actor_status(session, actor_id=sa_id, status="disabled")
+
+    agents = await _rows(admin_db, "SELECT status FROM agents WHERE id = :id", {"id": agent_id})
+    assert [r.status for r in agents] == ["disabled"]
+    sas = await _rows(admin_db, "SELECT status FROM service_accounts WHERE id = :id", {"id": sa_id})
+    assert [r.status for r in sas] == ["active"]  # the stamped row is never written
+
+    # Skip-but-stamp rows have no successor: the call is a logged no-op.
+    skipped_id = await _seed_sa(admin_db, suffix="redirskip", status="pending")
+    await ServiceAccountMigrationService(integration_context).run()
+    async with admin_db.transaction() as session:
+        await KeyRetirementRepository.set_actor_status(
+            session, actor_id=skipped_id, status="disabled"
+        )
+    skipped_rows = await _rows(
+        admin_db, "SELECT status FROM service_accounts WHERE id = :id", {"id": skipped_id}
+    )
+    assert [r.status for r in skipped_rows] == ["pending"]  # untouched
+
+    # Unstamped SAs keep the pre-theme-8 fallback behaviour.
+    unstamped_id = f"sva_t8m_unstamped_{plaintext[-4:]}"
+    async with admin_db.session() as session:
+        await session.execute(
+            text(
+                "INSERT INTO service_accounts (id, name, owner_id, registered_by,"
+                " status, created_by)"
+                " VALUES (:id, 't8m-unstamped-m4', :owner, :owner, 'active', :owner)"
+            ),
+            {"id": unstamped_id, "owner": _OWNER},
+        )
+        await session.commit()
+    async with admin_db.transaction() as session:
+        await KeyRetirementRepository.set_actor_status(
+            session, actor_id=unstamped_id, status="disabled"
+        )
+    unstamped_rows = await _rows(
+        admin_db, "SELECT status FROM service_accounts WHERE id = :id", {"id": unstamped_id}
+    )
+    assert [r.status for r in unstamped_rows] == ["disabled"]
+
+
+async def test_key_retirement_find_successor_never_reuses_stamped_sa_remnant(
+    integration_context: Context, admin_db: DatabaseSession, seed_owner: None
+) -> None:
+    """M4(b): a stamped crash-remnant SA is never reused as a successor —
+    binds onto it would be fresh post-stamp ``sva_``-keyed rows. A real
+    stamp redirects; a ``skipped`` stamp mints fresh (returns None)."""
+    sa_id = await _seed_sa(admin_db, suffix="remnant", api_key_plaintext="sak_t8m_remnant")
+    await _seed_sa(admin_db, suffix="remskip", status="rejected")
+    outcomes = {
+        o.service_account_id: o
+        for o in await ServiceAccountMigrationService(integration_context).run()
+    }
+    agent_id = outcomes[sa_id].successor_agent_id
+
+    async with admin_db.session() as session:
+        redirected = await KeyRetirementRepository.find_successor_by_name(
+            session, name="t8m-remnant"
+        )
+        minted_fresh = await KeyRetirementRepository.find_successor_by_name(
+            session, name="t8m-remskip"
+        )
+        unstamped = await KeyRetirementRepository.find_successor_by_name(
+            session, name="t8m-no-such-row"
+        )
+
+    assert redirected == agent_id  # stamped remnant → its successor
+    assert minted_fresh is None  # skipped stamp → caller mints a fresh agent
+    assert unstamped is None
+
+
+async def test_verify_counts_post_stamp_sva_binding_inserts(
+    integration_context: Context, admin_db: DatabaseSession, seed_owner: None
+) -> None:
+    """M4: verify criterion 5 counts fresh ``sva_``-keyed binding rows written
+    after the stamp (raw-SQL writers bypassing the service guards)."""
+    sa_id = await _seed_sa(
+        admin_db, suffix="vbind", scopes=("toolkit:read",), api_key_plaintext="sak_t8m_vbind"
+    )
+    svc = ServiceAccountMigrationService(integration_context)
+    await svc.run()
+
+    clean = await svc.verify()
+    assert clean.post_stamp_mutation_count == 0
+
+    async with admin_db.session() as session:
+        await session.execute(
+            text(
+                "INSERT INTO agent_toolkit_bindings"
+                " (id, agent_id, toolkit_id, created_by, created_at)"
+                " VALUES ('atb_t8m_late', :id, 'tk_t8m_late', :by, :late)"
+            ),
+            {"id": sa_id, "by": _OWNER, "late": dt.datetime.now(dt.UTC) + dt.timedelta(hours=1)},
+        )
+        await session.commit()
+
+    result = await svc.verify()
+    assert result.passed is False
+    assert result.post_stamp_mutation_count == 1
 
 
 # ------------------------------------------------------------ W9 verify/ack
