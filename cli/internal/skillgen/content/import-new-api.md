@@ -27,8 +27,8 @@ a company name is given, find its public API docs by searching for `<company> AP
 - No local jentic-public-apis checkout needed — the vendor-existence check runs against GitHub
   via `gh`.
 - For the optional local-first step only: a running Jentic control plane and a registered agent
-  identity (`jentic doctor` confirms a resolvable identity with a usable token; `jentic access
-  whoami` shows what you can do).
+  identity (`jentic doctor` confirms a resolvable identity with a usable token; `jentic api GET
+  /me` shows what you can do).
 
 ## Steps
 
@@ -97,12 +97,9 @@ If a local jentic-one instance is running, import the spec there **before** cont
 upstream — the user's agent can execute the API immediately instead of waiting on catalog
 review. Skip this step if `jentic doctor` reports the control plane unreachable.
 
-Local import needs the `apis:write` scope, which is not granted by default — request it once:
-
-```
-jentic access request --scope apis:write --reason "import a locally generated spec for <vendor>" --wait
-jentic access refresh
-```
+Local import needs the `apis:write` scope, which is not granted by default — ask your operator
+to grant it to this agent in the dashboard (granted scopes land on the next fresh token; tokens
+are short-lived and re-mint automatically), then continue.
 
 Import the spec with the CLI's own upload command — it reads the local file and sends it inline
 for you (async; prints a job id). Pass `--vendor`/`--name`/`--version` explicitly so attribution

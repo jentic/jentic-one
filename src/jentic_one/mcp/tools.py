@@ -2,12 +2,14 @@
 
 Each handler is the Python twin of the Go stdio server's handler for the same
 tool (``cli/internal/cli/api/mcp_tools.go`` / ``mcp_discovery.go`` /
-``mcp_access.go`` / ``mcp_execute.go``): the same argument normalization
+``mcp_catalog.go`` / ``mcp_execute.go`` / ``mcp_request_connection.go``): the
+same argument normalization
 (aliases + coercions), the same envelope keys, and the same coded soft-error
 mapping — the golden contract tests replay identical tool calls against both
 implementations. Where the Go server calls REST routes, these handlers call
 the owning services **in-process** (registry search/inspect/catalog, admin
-jobs, auth identity); the execute family proxies to the broker server-side
+jobs, auth identity, connect sessions); the execute family proxies to the
+broker server-side
 (the broker stays MCP-free).
 
 Scope enforcement mirrors the REST routes fronted: the same
@@ -16,8 +18,8 @@ identity through the same ``compute_effective`` expansion + ``org:admin``
 bypass ``get_current_identity`` applies. A scope failure maps exactly like the
 Go client's wire 403 (``mcpCoded``): NOT_AUTHENTICATED with the get_started
 pointer — except ``search_catalog`` and ``import_api``, whose 403s are
-missing-scope facts the agent can fix itself (BROKER_DENIED + request_access,
-the Go special case).
+missing-scope facts routed to the operator (BROKER_DENIED with an
+ask-your-operator step, the Go special case).
 """
 
 from __future__ import annotations
@@ -29,13 +31,11 @@ import uuid as uuid_mod
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import urlparse
 
 import mcp.types as mcp_types
 import structlog
 from jentic.problem_details import Forbidden, Unauthorized
 from mcp.shared.exceptions import MCPError
-from pydantic import ValidationError
 
 from jentic_one.admin.services.errors import JobNotFoundError
 from jentic_one.admin.services.job_result_service import JobResultService
@@ -49,29 +49,21 @@ from jentic_one.auth.web.routers.identity import (
     _resolve_service_account,
     _resolve_user,
 )
-from jentic_one.control.services.access_requests.errors import (
-    AccessRequestNotFoundError,
-    DuplicatePendingError,
-    RequiredFieldMissingError,
-    RulesNotSupportedForBindError,
-    UnsupportedScopeGrantError,
+from jentic_one.control.services.integrations.connect_session_service import (
+    ConnectSessionService,
 )
-from jentic_one.control.services.access_requests.schemas.access_requests import AccessRequestView
-from jentic_one.control.services.access_requests.service import AccessRequestService
-from jentic_one.control.web.routers.access_requests import _to_response
-from jentic_one.control.web.schemas.access_requests import AccessRequestFileRequest
+from jentic_one.control.services.integrations.errors import NoOpForFlowError
+from jentic_one.control.web.routers.integrations import _CONNECT_BURST, _CONNECT_RPM
+from jentic_one.control.services.vendors.service import (
+    UnknownVendorError,
+    UnsupportedFlowError,
+    VendorNotConfiguredError,
+)
 from jentic_one.mcp import execute as ex
-from jentic_one.mcp.access_compose import (
-    AccessRequestOptions,
-    AccessTargetRequiredError,
-    ComposeError,
-    rules_json_values,
-)
 from jentic_one.mcp.envelopes import (
     CODE_BROKER_DENIED,
     CODE_INTERNAL_ERROR,
     CODE_NOT_AUTHENTICATED,
-    CODE_PARTIAL_APPROVAL,
     CODE_RESOLVE_FAILED,
     CODE_TRANSPORT_ERROR,
     SCHEMA_VERSION,
@@ -102,7 +94,10 @@ from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.permission_catalog import compute_effective
 from jentic_one.shared.auth.permissions import has_effective_permission
 from jentic_one.shared.context import Context
+from jentic_one.shared.models import ActorType
 from jentic_one.shared.pagination import InvalidCursorError, InvalidSearchCursorError
+from jentic_one.shared.resilience import RateLimiter
+from jentic_one.shared.state import MemoryStateBackend
 
 _INVALID_PARAMS = mcp_types.INVALID_PARAMS
 
@@ -506,16 +501,15 @@ async def handle_search_catalog(
         require_scopes(env.identity, ["capabilities:read"])
     except ToolError as exc:
         # The Go special case: a 403 on THIS route is the missing
-        # capabilities:read scope, which the agent can fix itself. The wire
-        # error rides as the message tail, like Go's ``: %v`` (mcp_access.go).
+        # capabilities:read scope — an access gap the operator closes with a
+        # dashboard grant, not a revoked identity. The wire
+        # error rides as the message tail, like Go's ``: %v`` (mcp_catalog.go).
         raise ToolError(
             CODE_BROKER_DENIED,
             f"reading the catalog requires the capabilities:read scope: {exc}",
-            actionable='Request the scope with request_access, e.g. {"scopes": '
-            '["capabilities:read"], "reason": "search the catalog for the API needed '
-            "for this task\"}, wait for your operator's approval, then retry "
-            "search_catalog.",
-            next_tool="request_access",
+            actionable="Ask your human operator to grant this agent the "
+            "capabilities:read scope in the dashboard, then retry "
+            "search_catalog once they confirm.",
         ) from None
     _require_db(env.ctx, "registry", "the catalog")
 
@@ -782,15 +776,14 @@ async def handle_import_api(env: CallEnv, arguments: dict[str, Any]) -> mcp_type
         require_scopes(env.identity, ["catalog:import"])
     except ToolError as exc:
         # The Go special case (importAPIError's 403 arm): a 403 on THIS route
-        # is the missing catalog:import scope — an access gap the agent can
-        # close itself via request_access, not a revoked identity.
+        # is the missing catalog:import scope — an access gap the operator
+        # closes with a dashboard grant, not a revoked identity.
         raise ToolError(
             CODE_BROKER_DENIED,
             f"importing a cataloged API requires the catalog:import scope: {exc}",
-            actionable='Request the scope with request_access, e.g. {"scopes": '
-            '["catalog:import"], "reason": "import the API needed for this task"}, wait '
-            "for your operator's approval, then retry import_api.",
-            next_tool="request_access",
+            actionable="Ask your human operator to grant this agent the "
+            "catalog:import scope in the dashboard, then retry import_api "
+            "once they confirm.",
         ) from None
     _require_db(env.ctx, "registry", "the catalog")
     _require_db(env.ctx, "admin", "import job tracking")
@@ -1158,351 +1151,157 @@ async def _attach_job_result(env: CallEnv, job_id: str, payload: dict[str, Any])
             payload["result"] = raw.decode("utf-8", errors="replace")
 
 
-# ── request_access ────────────────────────────────────────────────────────────
+# ── request_connection ────────────────────────────────────────────────────────
 
-_REQUEST_ACCESS_PARAMS = [
-    ParamSpec("request_id", "string", ("id",)),
-    ParamSpec("provision", "string_list", ("provisions",)),
-    # "toolkits"/"toolkit" are the deprecated spellings of "apis" (toolkits
-    # were retired, theme-5); accepted as aliases for one release.
-    ParamSpec("apis", "string_list", ("api", "toolkits", "toolkit")),
-    # toolkit_ids stays accepted so an old caller gets compose()'s re-file
-    # error naming "apis" instead of an unknown-parameter failure.
-    ParamSpec("toolkit_ids", "string_list", ("toolkit_id",)),
-    ParamSpec("scopes", "string_list", ("scope",)),
-    ParamSpec("auth", "string_list", ("auths",)),
-    # rules_json is "json", not "string_list": a JSON rules array carries
-    # commas, and the string-list coercion would comma-split a bare string.
-    ParamSpec("rules_json", "json", ("rules",)),
+_REQUEST_CONNECTION_PARAMS = [
+    ParamSpec("vendor", "string"),
+    ParamSpec("requested_scopes", "string_list", ("scopes",)),
     ParamSpec("reason", "string"),
 ]
 
-#: The human-in-the-loop wording every pending request_access result carries
-#: (Go: ``pendingAccessInstruction``, verbatim): the tool files and polls, a
-#: HUMAN approves.
-_PENDING_ACCESS_INSTRUCTION = (
-    "Relay approve_url to your human operator — granting is always a human "
-    "action in the dashboard; this tool never approves. Poll the decision by "
-    "calling request_access "
-    'with {"request_id": "<id>"}; never re-file the same request while one is pending.'
+#: The operator-relay guidance stamped on every successful result (Go:
+#: ``requestConnectionInstruction`` in ``mcp_request_connection.go``).
+#: Lane-invariant by construction: it names only whoami and the human
+#: approval step, never a stdio-only tool.
+_REQUEST_CONNECTION_INSTRUCTION = (
+    "Relay the approval_url to your human operator — they open it in their browser and "
+    "approve (or reject) the connection; you cannot open it or approve it yourself. Once "
+    "they confirm, call whoami to see the new credential binding, then retry the call "
+    "that was blocked."
+)
+
+#: the route's ``reason`` bound (``IntegrationsConnectRequest.reason`` —
+#: ``max_length=1024``), enforced here because the in-process call skips the
+#: route's pydantic validation.
+_REQUEST_CONNECTION_REASON_MAX = 1024
+
+#: Per-actor rate-limit twin of the route's: the mount calls the
+#: connect-session service in-process, bypassing the route's app-state
+#: limiter, so it carries its own with the SAME policy knobs (imported from
+#: the route module — one place owns the policy). In-memory / per-worker like
+#: the route's — sufficient for the abuse case (one actor spamming the
+#: vendor's authorize endpoint), not a coordinated-cluster limit.
+_connect_limiter = RateLimiter(
+    MemoryStateBackend(),
+    default_rpm=_CONNECT_RPM,
+    burst=_CONNECT_BURST,
+    namespace="mcp_integrations_connect",
 )
 
 
-def _request_access_options(args: dict[str, Any]) -> AccessRequestOptions:
-    """Fold the normalized arguments onto the compose() options (Go:
-    ``requestAccessOptions``) — a malformed ``rules_json`` is an
-    invalid-params protocol error on BOTH arms."""
-    try:
-        rules_jsons = rules_json_values(args.get("rules_json"))
-    except ComposeError as exc:
-        raise invalid_params(str(exc)) from None
-    return AccessRequestOptions(
-        provisions=args.get("provision") or [],
-        apis=args.get("apis") or [],
-        toolkit_ids=args.get("toolkit_ids") or [],
-        scopes=args.get("scopes") or [],
-        auths=args.get("auth") or [],
-        rules_jsons=rules_jsons,
-        reason=args.get("reason", ""),
-    )
-
-
-def absolutize_approve_url(base_url: str, approve_url: str) -> str:
-    """Absolutize a service-stored approve_url onto the deployment base URL.
-
-    The service stores ``{control.access_requests.canonical_base_url}/…``,
-    which is RELATIVE (a rooted path) when that knob is unset (default ``""``).
-    An already-absolute URL passes through (the stored canonical base wins
-    over ``env.base_url`` when the two knobs disagree), and a scheme-relative
-    ``//host/…`` value would resolve onto a FOREIGN host and is cleared —
-    both exactly like Go's ``absolutizeApproveURL``. For non-rooted relatives
-    this port is deliberately STRICTER than Go: Go resolves them against the
-    base (``ResolveReference``), we clear them — such a value can only come
-    from a misconfigured ``control.access_requests.canonical_base_url``, and
-    resolving it would mint a plausible-looking but wrong link. Each cleared
-    non-empty value logs a warning so the misconfiguration is diagnosable.
-    """
-    if not approve_url:
-        return ""
-    if approve_url.startswith("//"):
-        logger.warning(
-            "approve_url_cleared",
-            approve_url=approve_url,
-            reason="scheme-relative URL would resolve onto a foreign host",
-        )
-        return ""
-    if urlparse(approve_url).scheme:
-        return approve_url
-    if not approve_url.startswith("/"):
-        logger.warning(
-            "approve_url_cleared",
-            approve_url=approve_url,
-            reason="not a rooted path; check control.access_requests.canonical_base_url",
-        )
-        return ""
-    return base_url.rstrip("/") + approve_url
-
-
-def _granted_scopes(view: AccessRequestView) -> list[str]:
-    """The scope names this request's APPROVED scope:grant items granted."""
-    return [
-        item.resource_id
-        for item in view.items
-        if item.resource_type == "scope"
-        and item.action == "grant"
-        and item.status == "approved"
-        and item.resource_id
-    ]
-
-
-def _scope_grant_instruction(env: CallEnv, view: AccessRequestView) -> str | None:
-    """The honesty branch that replaces the CLI's token re-mint.
-
-    There is nothing to re-mint on the mount: ``resolve_effective_scopes``
-    draws agent scopes live from ``actor_scope_grants`` on every request, so
-    an approved grant is active on the very next tool call — UNLESS this
-    session's consent/client ceiling excludes it. The instruction speaks only
-    to the grant's OWN actor: when a different identity polls (an org:admin
-    user watching an agent's approved request), this session's ceilings say
-    nothing about the grantee's, so no instruction is emitted at all.
-    Membership is judged the way ``require_scopes`` judges it — the caller's
-    permissions expanded through ``compute_effective``, with ``org:admin``
-    covering every scope — because that expanded set is what every scope gate
-    on this mount tests; a literal-membership probe would tell an org:admin
-    session (which passes every gate) that a retry will fail when it would
-    succeed. Never promise "retry and it works" when the scope is outside
-    the session's ceiling.
-    """
-    if view.actor_id != env.identity.sub:
-        return None
-    granted = _granted_scopes(view)
-    if not granted:
-        return None
-    caller = compute_effective(set(env.identity.permissions))
-    missing: list[str] = []
-    if "org:admin" not in caller:
-        missing = sorted(scope for scope in granted if scope not in caller)
-    if not missing:
-        return (
-            f"The granted scope(s) ({', '.join(sorted(granted))}) are active now — "
-            "scopes are drawn live on every call, so retry the tool call that was denied."
-        )
-    return (
-        f"Scope(s) {', '.join(missing)} were approved, but this session's consent "
-        "does not cover them — re-authorization is required before this session can "
-        "use them. Do not assume a retry will succeed; relay this to your human "
-        "operator."
-    )
-
-
-def _access_request_result(
-    env: CallEnv,
-    view: AccessRequestView,
-    extra: dict[str, Any] | None,
-) -> mcp_types.CallToolResult:
-    """Render one access request as the tool result (Go: ``accessRequestResult``).
-
-    The payload is the FULL access-request object — the REST response-schema
-    dump of the request row (the ``_to_response`` projection the router
-    serves; Go: ``structToMap(AccessRequestResponse)``) — with
-    ``schema_version`` joined as a top-level sibling and extras
-    (``attached_to_existing``, ``instruction``) merged without clobbering.
-    Terminal non-approved states wrap that same payload under the coded
-    error's ``request`` extra, exactly as Go does.
-    """
-    payload: dict[str, Any] = _to_response(view).model_dump(mode="json")
-    payload["approve_url"] = absolutize_approve_url(
-        env.base_url, str(payload.get("approve_url") or "")
-    )
-    payload["schema_version"] = SCHEMA_VERSION
-    for key, value in (extra or {}).items():
-        payload.setdefault(key, value)
-
-    status = view.status
-    if status == "denied":
-        raise ToolError(
-            CODE_BROKER_DENIED,
-            f"access request {view.id} was denied",
-            actionable="Read the items' decision_reason in this result to learn why "
-            "before giving up. A bare bind request for an API no credential serves "
-            'auto-denies — file a provisioning plan ({"provision": ["vendor/name"], …}) '
-            "instead. Only re-file if something material changed.",
-            next_tool="whoami",
-            extra={"request": payload},
-        )
-    if status in ("expired", "withdrawn"):
-        raise ToolError(
-            CODE_BROKER_DENIED,
-            f"request {view.id} is {status}, not approved; nothing was granted",
-            actionable="File a fresh request_access naming what you still need, with "
-            "a clear reason.",
-            next_tool="request_access",
-            extra={"request": payload},
-        )
-    if status == "partially_approved":
-        extras: dict[str, Any] = {"request": payload}
-        if (instruction := _scope_grant_instruction(env, view)) is not None:
-            extras["instruction"] = instruction
-        raise ToolError(
-            CODE_PARTIAL_APPROVAL,
-            "partially approved — not all requested items were granted",
-            actionable="Check items[].status in this result: proceed only with what "
-            "was approved, and do not assume the rest is available.",
-            next_tool="whoami",
-            extra=extras,
-        )
-    if status == "approved":
-        if (instruction := _scope_grant_instruction(env, view)) is not None:
-            payload.setdefault("instruction", instruction)
-        return tool_result(env.ctx, payload)
-    # pending
-    payload.setdefault("instruction", _PENDING_ACCESS_INSTRUCTION)
-    return tool_result(env.ctx, payload)
-
-
-async def handle_request_access(
+async def handle_request_connection(
     env: CallEnv, arguments: dict[str, Any]
 ) -> mcp_types.CallToolResult:
-    """POST /access-requests + GET /access-requests/{id} in-process (Go:
-    ``handleRequestAccess``), minus the deliberately-dropped legs.
+    """POST /integrations:connect in-process (Go: ``handleRequestConnection``).
 
-    No scope gate: the REST route uses bare ``get_current_identity()`` with no
-    ``required_permissions`` — filing is open to every current identity (an
-    empty-list ``require_scopes`` would deny every non-admin). No post-file
-    poll: Go's ``awaitAutoDecision`` waits for a file-time auto-decision that
-    does not exist on this backend (``file()`` always leaves the request
-    PENDING; the unserved-bind "auto-deny" happens at decide time), so the
-    PENDING envelope returns immediately. No token re-mint: scopes are drawn
-    live per request — the honesty branch in ``_scope_grant_instruction``
-    replaces it.
+    Create-only (theme-7 Phase 1b): starts a connect session for a registry
+    vendor and returns ``{session_id, approval_url, resolved_flow}`` plus the
+    operator-relay instruction. The ``poll_token`` is deliberately withheld —
+    this surface serves no poll leg (the recovery loop is relay approval_url →
+    operator approves → confirm via whoami → retry), so exposing an unusable
+    capability token would only invite the model to invent one. ``agent_id``
+    is never taken from arguments: the caller *is* the agent (the route
+    refuses a supplied agent_id with 403 for the same reason).
     """
-    args = normalize_tool_args(arguments, _REQUEST_ACCESS_PARAMS)
-    opts = _request_access_options(args)
-    # The service rides both planes: the access-request tables live on the
-    # control DB, and reads/advisories resolve owners/events on the admin DB.
-    _require_db(env.ctx, "control", "access requests")
-    _require_db(env.ctx, "admin", "access requests")
-
-    # The poll arm: a request_id fetches the decision state and nothing else.
-    # Filing parameters riding along are a confused call, not noise to drop:
-    # a malformed rules_json or a stray reason silently ignored would teach
-    # the model its arguments were accepted.
-    if request_id := args.get("request_id", ""):
-        if opts.has_filing_params():
-            raise invalid_params(
-                'pass EITHER "request_id" (to poll an existing request) OR filing '
-                'parameters ("provision"/"apis"/"scopes" with '
-                '"auth"/"rules_json"/"reason") to file a new one, not both'
-            )
-        try:
-            view = await AccessRequestService(env.ctx).get(request_id, identity=env.identity)
-        except AccessRequestNotFoundError:
-            # The identity resolved — the id is wrong (or row-filtered out of
-            # this caller's visibility); the recovery is re-reading the
-            # earlier request_access result (self-pointer).
-            raise ToolError(
-                CODE_RESOLVE_FAILED,
-                f'access request "{request_id}" not found',
-                actionable="Re-check the request id — it is the `id` in the "
-                "request_access result that filed it — and call request_access "
-                "again with the exact value.",
-                next_tool="request_access",
-            ) from None
-        return _access_request_result(env, view, None)
-
-    # The filing arm: compose the same item list `jentic access request`
-    # builds (provisioning plans first, then binds, then scope grants) and
-    # file it in-process.
-    try:
-        items = opts.compose()
-    except AccessTargetRequiredError:
+    args = normalize_tool_args(arguments, _REQUEST_CONNECTION_PARAMS)
+    vendor = args.get("vendor", "")
+    if not vendor:
         raise invalid_params(
-            'request_access requires a target: "provision" (vendor/name plans), '
-            '"apis" (vendor/name binds), or "scopes" '
-            '— or "request_id" to poll an existing request'
+            'request_connection requires "vendor": the vendor registry key, '
+            'e.g. {"vendor": "github"}'
+        )
+    reason = args.get("reason", "")
+    if len(reason) > _REQUEST_CONNECTION_REASON_MAX:
+        raise invalid_params(
+            f"reason must be at most {_REQUEST_CONNECTION_REASON_MAX} characters, "
+            f"got {len(reason)}"
+        )
+    try:
+        # The route's any-of gate (credentials:connect | credentials:write);
+        # agents hold credentials:connect by default.
+        require_scopes(env.identity, ["credentials:connect", "credentials:write"])
+    except ToolError as exc:
+        # The Go special case (requestConnectionError's 403 arm): a 403 on
+        # THIS route is the missing credentials:connect scope — an access gap
+        # the operator closes with a dashboard grant, not a revoked identity.
+        raise ToolError(
+            CODE_BROKER_DENIED,
+            f"starting a connect session requires the credentials:connect scope: {exc}",
+            actionable="Ask your human operator to grant this agent the "
+            "credentials:connect scope in the dashboard, then retry "
+            "request_connection once they confirm.",
         ) from None
-    except ComposeError as exc:
-        raise invalid_params(str(exc)) from None
 
-    # Validation parity: round-trip the composed items through the REST
-    # pydantic schemas — the same (resource_type, action) allow-list,
-    # exactly-one-of resource_id/resource_reference, and rule-shape checks the
-    # router applies — then hand file() the router's exact dump. Composed
-    # items are shaped to pass; a rules_json whose rules are mis-shaped (e.g.
-    # a bad effect) fails here as a correctable protocol error, never reaching
-    # the DB with less validation than REST applies.
-    try:
-        body = AccessRequestFileRequest.model_validate(
-            {"reason": opts.reason or None, "items": items}
+    outcome = await _connect_limiter.acquire(env.identity.sub)
+    if not outcome.allowed:
+        raise ToolError(
+            CODE_TRANSPORT_ERROR,
+            "connect sessions are rate limited (http 429: rate limit exceeded)",
+            actionable="Wait briefly and retry request_connection; do not loop on it.",
+            extra={"retryable": True, "retry_after_s": outcome.retry_after_s},
         )
-    except ValidationError as exc:
-        # Compacted to the first error's loc/msg: pydantic's full rendering is
-        # a multi-line dump with errors.pydantic.dev links — noise for a
-        # model, and the first failing location is deterministic. Only the
-        # caller's own input is echoed.
-        first = exc.errors()[0]
-        loc = ".".join(str(part) for part in first["loc"])
-        raise invalid_params(f"invalid access-request items: {loc}: {first['msg']}") from None
 
-    svc = AccessRequestService(env.ctx)
+    # Mirror the route's identity injection: an agent caller connects for
+    # itself; a user/service-account caller over this mount connects an
+    # unbound credential (the tool surface carries no agent_id).
+    agent_id = env.identity.sub if env.identity.actor_type == ActorType.AGENT else None
     try:
-        view = await svc.file(
-            actor_id=env.identity.sub,
-            reason=body.reason,
-            items=[item.model_dump(exclude_none=True) for item in body.items],
-            identity=env.identity,
+        created = await ConnectSessionService(env.ctx).create_session(
+            vendor_key=vendor,
+            agent_id=agent_id,
+            initiator_actor_id=env.identity.sub,
+            requested_scopes=args.get("requested_scopes") or None,
+            preferred_flow=None,
+            reason=reason or None,
         )
-    except DuplicatePendingError as exc:
-        return await _attach_or_refuse_duplicate(env, svc, opts, exc)
-    except (RulesNotSupportedForBindError, UnsupportedScopeGrantError) as exc:
-        # File-time validation-shaped refusals (REST: 422): the call is
-        # correctable — a rule on an item type that can't enforce it, or a
-        # scope outside the self-service allow-list.
-        raise invalid_params(str(exc)) from None
-    except RequiredFieldMissingError as exc:
-        raise invalid_params(str(exc)) from None
-    return _access_request_result(env, view, None)
-
-
-async def _attach_or_refuse_duplicate(
-    env: CallEnv,
-    svc: AccessRequestService,
-    opts: AccessRequestOptions,
-    exc: DuplicatePendingError,
-) -> mcp_types.CallToolResult:
-    """The duplicate-pending arm (Go: the wire-409 handling, typed in-process).
-
-    Filing is all-or-nothing: a duplicate on a composite means NOTHING was
-    filed — attaching would silently swap the composite for the older,
-    smaller request. A single target attaches to the existing pending
-    request, like the CLI.
-    """
-    existing_id = exc.existing_request_id
-    if opts.target_count() > 1:
+    except UnknownVendorError as exc:
         raise ToolError(
             CODE_RESOLVE_FAILED,
-            "nothing was filed: one of the requested targets already has a pending "
-            f"request ({existing_id})",
-            actionable=f'Poll the pending request with request_access {{"request_id": '
-            f'"{existing_id}"}} to see what it covers, then either drop that target '
-            "from this composite and re-file, or ask your operator to decide the "
-            "pending request first.",
-            details={"existing_request_id": existing_id},
-            next_tool="request_access",
+            f"cannot start a connect session for vendor {vendor!r}: {exc}",
+            actionable='Pass a vendor registry key this deployment supports (e.g. "github"). '
+            "If the vendor is not in the registry, this tool cannot connect it: find the "
+            "API with search_catalog and ask your human operator to connect a credential "
+            "for it in the dashboard instead.",
+            next_tool="search_catalog",
         ) from None
-    try:
-        attached = await svc.get(existing_id, identity=env.identity)
-    except Exception as fetch_exc:
-        # The duplicate is actor-scoped so the fetch should succeed; if it
-        # doesn't, surface the failure with the id — never a silent swap.
+    except (UnsupportedFlowError, NoOpForFlowError) as exc:
+        # Aligned with the Go mount's 400 arm (review L1): the route answers
+        # 400 for an unusable flow just as for an unknown vendor, and the
+        # recovery is the same caller-shaped step — this vendor cannot be
+        # connected here, so rediscover or route to the operator.
         raise ToolError(
-            CODE_INTERNAL_ERROR,
-            f"a pending request ({existing_id}) already covers this target, but "
-            f"fetching it failed: {fetch_exc}",
-            details={"existing_request_id": existing_id},
-            next_tool="request_access",
-        ) from fetch_exc
-    return _access_request_result(env, attached, {"attached_to_existing": True})
+            CODE_RESOLVE_FAILED,
+            f"cannot start a connect session for vendor {vendor!r}: {exc}",
+            actionable="This vendor's connect flow is not usable on this deployment, so "
+            "this tool cannot connect it: find the API with search_catalog and ask your "
+            "human operator to connect a credential for it in the dashboard instead.",
+            next_tool="search_catalog",
+        ) from None
+    except VendorNotConfiguredError as exc:
+        raise ToolError(
+            CODE_BROKER_DENIED,
+            f"vendor {vendor!r} is registered but not configured on this deployment: {exc}",
+            actionable=f"Ask your human operator to configure the {vendor!r} vendor's "
+            "OAuth client on this deployment (or connect the credential in the "
+            "dashboard), then retry.",
+        ) from None
+
+    logger.info(
+        "mcp_request_connection",
+        vendor=vendor,
+        session_id=created.session_id,
+        flow=created.resolved_flow,
+    )
+    return tool_result(
+        env.ctx,
+        {
+            "schema_version": SCHEMA_VERSION,
+            "session_id": created.session_id,
+            "approval_url": created.approval_url,
+            "resolved_flow": created.resolved_flow,
+            "instruction": _REQUEST_CONNECTION_INSTRUCTION,
+        },
+    )
 
 
 # ── dispatch ──────────────────────────────────────────────────────────────────
@@ -1518,7 +1317,7 @@ HANDLERS: dict[str, Handler] = {
     "execute": handle_execute,
     "execute_read": handle_execute_read,
     "get_execution_result": handle_get_execution_result,
-    "request_access": handle_request_access,
+    "request_connection": handle_request_connection,
 }
 
 

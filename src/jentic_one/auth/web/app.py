@@ -156,7 +156,7 @@ def _make_auth_verifier(ctx: Context) -> Any:
                 # the AGENT branch of resolve_permissions_for_actor is an
                 # unimplemented stub that returns [], which silently drops every
                 # granted scope — an approved capabilities:read then 403s and
-                # `jentic access refresh` can never take effect. This mirrors the
+                # a token re-mint can never take effect. This mirrors the
                 # broker's InProcessTokenResolver, which already reads row.scopes.
                 # parent_permissions (owner inheritance) is still resolved above.
                 permissions = list(resolved.permissions)
