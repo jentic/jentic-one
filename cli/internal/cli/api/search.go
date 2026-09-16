@@ -39,6 +39,10 @@ func newSearchCmd(app *app) *cobra.Command {
 		Long: "search finds API operations whose descriptions, names, or paths match a\n" +
 			"query. Results are ranked by lexical (full-text) relevance. The\n" +
 			"query can also be passed via -q for piping.\n\n" +
+			"Each hit's method + url join as the METHOD:url target for\n" +
+			"inspect/execute. A hit whose spec declares no servers carries a\n" +
+			"host-relative url (e.g. /pets) — that form does not resolve as\n" +
+			"METHOD:url; pass that hit's operation_id instead.\n\n" +
 			"Output defaults to JSON when stdout is not a TTY (agent-friendly);\n" +
 			"use --json to force JSON on a terminal.",
 		Example: "  jentic search \"list users\"\n" +

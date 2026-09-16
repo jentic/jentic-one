@@ -197,9 +197,12 @@ prints a job id). This needs `apis:write` rather than `catalog:import`.
 `search` returns JSON when piped. Each hit carries the operation's `method`
 and `url` — join them as `METHOD:url` (e.g. `GET:https://…`) and pass that
 to `inspect`/`execute`; the hit's `_links.inspect` decodes to the same
-`METHOD URL` pair. (Hits also carry a registry `operation_id`, and the id
-shown by `jentic catalog show` is the spec's `operationId`; both still
-resolve as compatibility fallbacks, but prefer the `METHOD:url` form.)
+`METHOD URL` pair. One exception: a hit whose spec declares no servers
+carries a host-relative `url` (e.g. `/pets`) — that form doesn't resolve
+as `METHOD:url`, so pass that hit's registry `operation_id` instead.
+(Hits also carry that `operation_id`, and the id shown by `jentic catalog
+show` is the spec's `operationId`; both still resolve as compatibility
+fallbacks, but prefer the `METHOD:url` form.)
 
 If `search` returns no results, it prints a hint to run `jentic catalog
 search` / `jentic catalog import` first — that almost always means nothing

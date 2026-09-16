@@ -1599,7 +1599,7 @@
           "path": "jentic search",
           "use": "search \u003cquery\u003e",
           "short": "Search for operations by natural-language query",
-          "long": "search finds API operations whose descriptions, names, or paths match a\nquery. Results are ranked by lexical (full-text) relevance. The\nquery can also be passed via -q for piping.\n\nOutput defaults to JSON when stdout is not a TTY (agent-friendly);\nuse --json to force JSON on a terminal.",
+          "long": "search finds API operations whose descriptions, names, or paths match a\nquery. Results are ranked by lexical (full-text) relevance. The\nquery can also be passed via -q for piping.\n\nEach hit's method + url join as the METHOD:url target for\ninspect/execute. A hit whose spec declares no servers carries a\nhost-relative url (e.g. /pets) — that form does not resolve as\nMETHOD:url; pass that hit's operation_id instead.\n\nOutput defaults to JSON when stdout is not a TTY (agent-friendly);\nuse --json to force JSON on a terminal.",
           "example": "  jentic search \"list users\"\n  jentic search -q \"create issue\" --api github-com/api-github-com --limit 5\n  jentic search \"list pets\" --all --json | jq -r '.data[] | \"\\(.method):\\(.url)\"'",
           "group_title": "Find and run operations",
           "flags": [

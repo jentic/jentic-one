@@ -31,8 +31,9 @@ this file adds the lane-specific detail.
   rejected.
 - Address operations by their `METHOD URL` pair — a search hit's `method` +
   `url` (what `_links.inspect` decodes to). The registry `operation_id` and
-  the spec `operationId` from `catalog show` still resolve as fallbacks,
-  but don't reach for them — and never guess ids.
+  the spec `operationId` from `catalog show` still resolve as fallbacks —
+  reach for the hit's `operation_id` only when its `url` is host-relative
+  (a spec with no servers, e.g. `/pets`) — and never guess ids.
 - Backend mismatch shows as *silent wrong answers*, not errors: verify with
   `jentic api GET /instance` / `jentic context view` before concluding
   anything is missing, and stick to one surface for the whole task.

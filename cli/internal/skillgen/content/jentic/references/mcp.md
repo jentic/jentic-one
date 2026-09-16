@@ -121,7 +121,9 @@ result carries a non-terminal `status` (queued, tracking timed out), poll
 re-importing. Each `search_apis` hit carries the operation's `method` and
 `url` — join them as `METHOD:url` and pass that straight to
 `inspect_operation`/`execute` (the tools' `operation_id` argument takes
-this form).
+this form). One exception: a hit whose spec declares no servers carries a
+host-relative `url` (e.g. `/pets`) — that form doesn't resolve as
+`METHOD:url`, so pass that hit's `operation_id` instead.
 
 If APIs or credentials you know existed appear missing, compare `instance`
 stamps before diagnosing (see `SKILL.md` step 3): an MCP server on a remote

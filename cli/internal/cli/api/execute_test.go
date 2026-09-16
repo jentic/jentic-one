@@ -1209,6 +1209,9 @@ func TestParseMethodPath(t *testing.T) {
 		{"post:/v1/users", "POST", "/v1/users"},
 		{"DELETE:/v1/items/{id}", "DELETE", "/v1/items/{id}"},
 		{"PATCH:/v1/pets/42", "PATCH", "/v1/pets/42"},
+		// TRACE is part of the OpenAPI method set the registry ingests — the
+		// canonical METHOD target form must cover every discoverable method.
+		{"TRACE:/v1/debug", "TRACE", "/v1/debug"},
 		{"listPets", "", ""},
 		{"createUser", "", ""},
 		{"notamethod:/foo", "", ""},
