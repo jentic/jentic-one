@@ -13,6 +13,7 @@ from jentic_one.shared.auth import permission_catalog
 from jentic_one.shared.auth.permission_catalog import (
     ALL_PERMISSIONS,
     APIS_READ,
+    CREDENTIALS_CONNECT,
     CREDENTIALS_READ,
     CREDENTIALS_WRITE,
     ORG_ADMIN,
@@ -27,8 +28,13 @@ def test_compute_effective_empty() -> None:
 
 
 def test_compute_effective_single_implication() -> None:
-    # credentials:write implies credentials:read.
-    assert compute_effective({CREDENTIALS_WRITE}) == {CREDENTIALS_WRITE, CREDENTIALS_READ}
+    # credentials:write implies credentials:read (and the narrower
+    # credentials:connect).
+    assert compute_effective({CREDENTIALS_WRITE}) == {
+        CREDENTIALS_WRITE,
+        CREDENTIALS_READ,
+        CREDENTIALS_CONNECT,
+    }
 
 
 def test_compute_effective_org_admin_expands_all() -> None:
