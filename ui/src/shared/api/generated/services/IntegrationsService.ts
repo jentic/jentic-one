@@ -3,11 +3,59 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { ConfirmSessionRequest } from '../models/ConfirmSessionRequest';
+import type { ConnectSessionListResponse } from '../models/ConnectSessionListResponse';
 import type { IntegrationsConnectRequest } from '../models/IntegrationsConnectRequest';
 import type { CancelablePromise } from '../core/CancelablePromise';
 import { OpenAPI } from '../core/OpenAPI';
 import { request as __request } from '../core/request';
 export class IntegrationsService {
+    /**
+     * List connect sessions
+     * List connect sessions with cursor-based pagination.
+     *
+     * Rows are slim summaries scoped to the caller (initiator-owned;
+     * ``org:admin`` sees all; a delegated agent holding
+     * ``owner:credentials:read`` also sees its owner's sessions). The
+     * ``poll_token`` capability is never included.
+     * @returns ConnectSessionListResponse Successful Response
+     * @throws ApiError
+     */
+    public static listConnectSessions({
+        state,
+        vendor,
+        cursor,
+        limit = 50,
+    }: {
+        /**
+         * Filter by session state
+         */
+        state?: ('created' | 'confirmed' | 'polling' | 'connected' | 'expired' | 'failed' | null),
+        /**
+         * Filter by vendor registry key
+         */
+        vendor?: (string | null),
+        cursor?: (string | null),
+        limit?: number,
+    }): CancelablePromise<ConnectSessionListResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/connect-sessions',
+            query: {
+                'state': state,
+                'vendor': vendor,
+                'cursor': cursor,
+                'limit': limit,
+            },
+            errors: {
+                400: `Bad Request`,
+                401: `Unauthorized`,
+                403: `Forbidden`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
     /**
      * Get review data for a connect session
      * Data the review page needs: vendor display name, resolved flow, the

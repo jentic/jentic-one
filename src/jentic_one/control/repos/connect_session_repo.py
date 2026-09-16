@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.elements import ColumnElement
 
 from jentic_one.control.core.schema.connect_sessions import ConnectSession
 
@@ -58,6 +60,43 @@ class ConnectSessionRepository:
         stmt = select(ConnectSession).where(ConnectSession.id == session_id)
         result = await session.execute(stmt)
         return result.scalar_one_or_none()
+
+    @staticmethod
+    async def list_all(
+        session: AsyncSession,
+        *,
+        cursor: tuple[datetime, str] | None = None,
+        limit: int = 50,
+        state: str | None = None,
+        vendor: str | None = None,
+        filters: Sequence[ColumnElement[bool]] | None = None,
+    ) -> list[ConnectSession]:
+        """List connect sessions with keyset pagination (created_at, id).
+
+        Fetches ``limit + 1`` rows so the caller can detect ``has_more``
+        (same contract as ``CredentialRepository.list_all``). ``filters``
+        carries the caller's pre-built access-scoping expressions — this
+        repo never sees ``Identity``.
+        """
+        stmt = select(ConnectSession).order_by(
+            ConnectSession.created_at.desc(), ConnectSession.id.desc()
+        )
+        if state is not None:
+            stmt = stmt.where(ConnectSession.state == state)
+        if vendor is not None:
+            stmt = stmt.where(ConnectSession.vendor == vendor)
+        if cursor is not None:
+            cursor_ts, cursor_id = cursor
+            stmt = stmt.where(
+                (ConnectSession.created_at < cursor_ts)
+                | ((ConnectSession.created_at == cursor_ts) & (ConnectSession.id < cursor_id))
+            )
+        if filters is not None:
+            for f in filters:
+                stmt = stmt.where(f)
+        stmt = stmt.limit(limit + 1)
+        result = await session.execute(stmt)
+        return list(result.scalars().all())
 
     @staticmethod
     async def get_by_poll_token(session: AsyncSession, poll_token: str) -> ConnectSession | None:

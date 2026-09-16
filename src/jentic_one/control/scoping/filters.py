@@ -8,6 +8,7 @@ from typing import Any
 from sqlalchemy import or_
 from sqlalchemy.sql.elements import ColumnElement
 
+from jentic_one.control.core.schema.connect_sessions import ConnectSession
 from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.scopes import (
@@ -17,10 +18,16 @@ from jentic_one.shared.scopes import (
 
 _OWNER_MODELS: dict[type[Any], Any] = {
     Credential: Credential.created_by,
+    # Connect sessions ride the credential visibility axis: the initiator is
+    # the owner, and delegated agents reuse the credential-read owner scope
+    # (no dedicated owner:connect-sessions:read scope exists — see the
+    # query-scoping rule's resource→scope table).
+    ConnectSession: ConnectSession.initiator_actor_id,
 }
 
 _DELEGATION_SCOPES: dict[type[Any], str] = {
     Credential: OWNER_CREDENTIALS_READ,
+    ConnectSession: OWNER_CREDENTIALS_READ,
 }
 
 # ---------------------------------------------------------------------------

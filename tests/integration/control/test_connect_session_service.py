@@ -63,6 +63,7 @@ from jentic_one.shared.config import (
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.models import ActorType
+from jentic_one.shared.scopes import OWNER_CREDENTIALS_READ
 
 pytestmark = pytest.mark.integration
 
@@ -1097,3 +1098,128 @@ async def test_expire_stale_sessions_sweeps_abandoned_sessions_and_credentials(
         fresh_row = await ConnectSessionRepository.get_by_id(session, fresh.session_id)
         assert fresh_row is not None
         assert fresh_row.state == "created"
+
+
+# ---------------------------------------------------------------------------
+# list_all — console list scoping + pagination against real rows
+# ---------------------------------------------------------------------------
+
+
+def _list_identity(
+    sub: str,
+    permissions: list[str],
+    parent_actor_id: str | None = None,
+    actor_type: ActorType = ActorType.USER,
+) -> Identity:
+    return Identity(
+        sub=sub,
+        email="lister@example.com",
+        permissions=permissions,
+        actor_type=actor_type,
+        parent_actor_id=parent_actor_id,
+    )
+
+
+async def _seed_sessions(svc: ConnectSessionService) -> dict[str, str]:
+    """Create three sessions across two initiators; return initiator→session_id."""
+    alice = await svc.create_session(
+        vendor_key="testdev", agent_id=None, initiator_actor_id=_USER_ID
+    )
+    mallory = await svc.create_session(
+        vendor_key="testdev", agent_id=None, initiator_actor_id=_OTHER_USER_ID
+    )
+    agent = await svc.create_session(
+        vendor_key="testauth", agent_id=_AGENT_ID, initiator_actor_id=_AGENT_ID
+    )
+    return {
+        _USER_ID: alice.session_id,
+        _OTHER_USER_ID: mallory.session_id,
+        _AGENT_ID: agent.session_id,
+    }
+
+
+async def test_list_all_plain_caller_sees_only_own_sessions(
+    integration_context: Context,
+    seed_test_vendors: None,
+    clean_session_tables: None,
+) -> None:
+    svc = ConnectSessionService(integration_context)
+    ids = await _seed_sessions(svc)
+
+    page = await svc.list_all(
+        identity=_list_identity(_USER_ID, ["credentials:read"]),
+    )
+    assert [s.session_id for s in page.data] == [ids[_USER_ID]]
+    assert page.has_more is False
+    row = page.data[0]
+    assert row.requested_by_actor_id == _USER_ID
+    assert row.vendor_key == "testdev"
+    assert row.vendor_display_name == "Test Device Vendor"
+
+
+async def test_list_all_org_admin_sees_all_sessions(
+    integration_context: Context,
+    seed_test_vendors: None,
+    clean_session_tables: None,
+) -> None:
+    svc = ConnectSessionService(integration_context)
+    ids = await _seed_sessions(svc)
+
+    page = await svc.list_all(identity=_list_identity("usr_root", ["org:admin"]))
+    assert {s.session_id for s in page.data} == set(ids.values())
+
+
+async def test_list_all_delegated_agent_sees_owner_sessions(
+    integration_context: Context,
+    seed_test_vendors: None,
+    clean_session_tables: None,
+) -> None:
+    # An agent holding owner:credentials:read with parent_actor_id set sees
+    # its own sessions AND its owner's — but never a stranger's.
+    svc = ConnectSessionService(integration_context)
+    ids = await _seed_sessions(svc)
+
+    page = await svc.list_all(
+        identity=_list_identity(
+            _AGENT_ID,
+            [OWNER_CREDENTIALS_READ],
+            parent_actor_id=_USER_ID,
+            actor_type=ActorType.AGENT,
+        )
+    )
+    assert {s.session_id for s in page.data} == {ids[_AGENT_ID], ids[_USER_ID]}
+
+
+async def test_list_all_filters_by_state_and_paginates(
+    integration_context: Context,
+    seed_test_vendors: None,
+    clean_session_tables: None,
+) -> None:
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    ids = await _seed_sessions(svc)
+
+    # Flip one session to a terminal state directly at the repo layer.
+    async with ctx.control_db.transaction() as session:
+        await ConnectSessionRepository.update_fields(
+            session, ids[_USER_ID], state="failed", error_code="vendor_denied"
+        )
+
+    admin = _list_identity("usr_root", ["org:admin"])
+
+    failed_page = await svc.list_all(state="failed", identity=admin)
+    assert [s.session_id for s in failed_page.data] == [ids[_USER_ID]]
+    assert failed_page.data[0].error_code == "vendor_denied"
+
+    created_page = await svc.list_all(state="created", identity=admin)
+    assert {s.session_id for s in created_page.data} == {ids[_OTHER_USER_ID], ids[_AGENT_ID]}
+
+    # Keyset pagination: page of 1 exposes has_more + a working next_cursor.
+    first = await svc.list_all(limit=1, identity=admin)
+    assert len(first.data) == 1
+    assert first.has_more is True
+    assert first.next_cursor is not None
+    rest = await svc.list_all(cursor=first.next_cursor, limit=2, identity=admin)
+    assert first.data[0].session_id not in {s.session_id for s in rest.data}
+    assert len(rest.data) == 2
+    assert rest.has_more is False

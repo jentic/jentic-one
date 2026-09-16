@@ -1808,6 +1808,31 @@
       "authenticated": true,
       "group": "Any authenticated actor",
       "implied_scopes": {
+        "credentials:read": [],
+        "owner:credentials:read": []
+      },
+      "method": "GET",
+      "operation_id": "listConnectSessions",
+      "path": "/connect-sessions",
+      "public": false,
+      "required_scopes": [
+        "credentials:read",
+        "owner:credentials:read"
+      ],
+      "summary": "List connect sessions",
+      "surface": "connect-sessions",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
         "credentials:write": [
           "credentials:connect",
           "credentials:read"
@@ -5089,5 +5114,5 @@
     ],
     "total": 30
   },
-  "total": 185
+  "total": 186
 }

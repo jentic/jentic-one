@@ -41,6 +41,7 @@ from jentic_one.shared.db.errors import (
     DatabaseIntegrityError,
     DatabaseUnavailableError,
 )
+from jentic_one.shared.pagination import InvalidCursorError
 from jentic_one.shared.web.errors import make_service_error_handler
 
 _ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
@@ -170,3 +171,14 @@ _DB_SAFE_DETAILS: dict[type[Exception], str] = {
 }
 
 database_error_handler = make_service_error_handler(_DB_ERROR_MAP, safe_details=_DB_SAFE_DETAILS)
+
+# A tampered/garbage pagination cursor is a client fault, not a server one:
+# map it to a 400 like the admin surface (`admin/web/errors.py`) and the auth
+# surface do. Registered as its own handler because `InvalidCursorError` lives
+# outside the control service-error hierarchies (it's a shared pagination
+# error, ultimately a ValueError).
+_CURSOR_ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
+    InvalidCursorError: (400, "invalid_cursor"),
+}
+
+cursor_error_handler = make_service_error_handler(_CURSOR_ERROR_MAP)

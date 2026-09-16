@@ -23,6 +23,9 @@ from jentic_one.control.web.schemas.integrations import (
     AuthCodeConfirmSessionResponse,
     ConfirmSessionRequest,
     ConfirmSessionResponse,
+    ConnectSessionListResponse,
+    ConnectSessionState,
+    ConnectSessionSummaryResponse,
     DeviceAuthorizationConfirmSessionResponse,
     IntegrationsConnectRequest,
     IntegrationsConnectResponse,
@@ -158,6 +161,58 @@ async def integrations_connect(
         approval_url=created.approval_url,
         poll_token=created.poll_token,
         resolved_flow=created.resolved_flow,
+    )
+
+
+# ---------------------------------------------------------------------------
+# GET /connect-sessions — console list
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/connect-sessions",
+    summary="List connect sessions",
+)
+async def list_connect_sessions(
+    state: ConnectSessionState | None = Query(default=None, description="Filter by session state"),
+    vendor: str | None = Query(default=None, description="Filter by vendor registry key"),
+    cursor: str | None = None,
+    limit: int = Query(default=50, ge=1, le=200),
+    identity: Identity = get_current_identity(
+        required_permissions=["credentials:read", "owner:credentials:read"]
+    ),
+    svc: ConnectSessionService = Depends(get_connect_session_service),
+) -> ConnectSessionListResponse:
+    """List connect sessions with cursor-based pagination.
+
+    Rows are slim summaries scoped to the caller (initiator-owned;
+    ``org:admin`` sees all; a delegated agent holding
+    ``owner:credentials:read`` also sees its owner's sessions). The
+    ``poll_token`` capability is never included.
+    """
+    # A garbage cursor raises InvalidCursorError — mapped to 400 by the
+    # surface's cursor_error_handler (see control/web/errors.py).
+    page = await svc.list_all(
+        cursor=cursor, limit=limit, state=state, vendor=vendor, identity=identity
+    )
+    return ConnectSessionListResponse(
+        data=[
+            ConnectSessionSummaryResponse(
+                session_id=s.session_id,
+                state=s.state,  # type: ignore[arg-type]
+                vendor_key=s.vendor_key,
+                vendor_display_name=s.vendor_display_name,
+                agent_id=s.agent_id,
+                requested_by_actor_id=s.requested_by_actor_id,
+                reason=s.reason,
+                connected_as=s.connected_as,
+                error_code=s.error_code,
+                created_at=s.created_at,
+            )
+            for s in page.data
+        ],
+        has_more=page.has_more,
+        next_cursor=page.next_cursor,
     )
 
 

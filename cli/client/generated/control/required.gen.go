@@ -71,8 +71,12 @@ func (CatalogRefreshResponse) RequiredFields() []string { return []string{"count
 func (ChangePasswordRequest) RequiredFields() []string {
 	return []string{"current_password", "new_password"}
 }
-func (ClaimRequest) RequiredFields() []string                { return []string{"token"} }
-func (ConfirmSessionRequest) RequiredFields() []string       { return []string{"confirmed_scopes"} }
+func (ClaimRequest) RequiredFields() []string               { return []string{"token"} }
+func (ConfirmSessionRequest) RequiredFields() []string      { return []string{"confirmed_scopes"} }
+func (ConnectSessionListResponse) RequiredFields() []string { return []string{"data", "has_more"} }
+func (ConnectSessionSummaryResponse) RequiredFields() []string {
+	return []string{"created_at", "requested_by_actor_id", "session_id", "state", "vendor_display_name", "vendor_key"}
+}
 func (ConsentAgentStatusResponse) RequiredFields() []string  { return []string{"status"} }
 func (CreateAdminRequest) RequiredFields() []string          { return []string{"email", "password"} }
 func (CredentialAgentListResponse) RequiredFields() []string { return []string{"data", "has_more"} }

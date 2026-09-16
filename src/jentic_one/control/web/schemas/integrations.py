@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
@@ -75,6 +76,37 @@ class IntegrationsConnectResponse(BaseModel):
     approval_url: str
     poll_token: str
     resolved_flow: str
+
+
+# ---------------------------------------------------------------------------
+# GET /connect-sessions   (console list)
+# ---------------------------------------------------------------------------
+
+
+ConnectSessionState = Literal["created", "confirmed", "polling", "connected", "expired", "failed"]
+
+
+class ConnectSessionSummaryResponse(BaseModel):
+    """Slim list row for the console — deliberately excludes ``poll_token``."""
+
+    session_id: str
+    state: ConnectSessionState
+    vendor_key: str
+    vendor_display_name: str
+    agent_id: str | None = None
+    requested_by_actor_id: str
+    reason: str | None = None
+    connected_as: str | None = None
+    error_code: str | None = None
+    created_at: datetime
+
+
+class ConnectSessionListResponse(BaseModel):
+    """Cursor-paginated envelope of connect-session summaries."""
+
+    data: list[ConnectSessionSummaryResponse]
+    has_more: bool
+    next_cursor: str | None = None
 
 
 # ---------------------------------------------------------------------------

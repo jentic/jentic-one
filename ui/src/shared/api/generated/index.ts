@@ -54,6 +54,8 @@ export type { ChangePasswordRequest } from './models/ChangePasswordRequest';
 export type { ClaimRequest } from './models/ClaimRequest';
 export type { ConfirmSessionRequest } from './models/ConfirmSessionRequest';
 export type { ConnectRequestBody } from './models/ConnectRequestBody';
+export type { ConnectSessionListResponse } from './models/ConnectSessionListResponse';
+export { ConnectSessionSummaryResponse } from './models/ConnectSessionSummaryResponse';
 export { ConsentAgentStatusResponse } from './models/ConsentAgentStatusResponse';
 export type { CreateAdminRequest } from './models/CreateAdminRequest';
 export type { CredentialAgentListResponse } from './models/CredentialAgentListResponse';

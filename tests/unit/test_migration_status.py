@@ -30,17 +30,9 @@ from jentic_one.migrations.run import (
 # per-database loop is exercised by the CLI-facing --check tests below.
 _DB = "admin"
 
-
-@pytest.fixture
-def sqlite_stack(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Point config at fresh, empty per-database SQLite files."""
-    cfg = tmp_path / "jentic-one.yaml"
-    lines = ["databases:"]
-    for name in ("admin", "control", "registry"):
-        lines += [f"  {name}:", "    backend: sqlite", f"    path: {tmp_path / f'{name}.db'}"]
-    cfg.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    monkeypatch.setenv("JENTIC_CONFIG_FILE", str(cfg))
-    return tmp_path
+# The sqlite_stack fixture (fresh per-database SQLite files via
+# JENTIC_CONFIG_FILE) lives in tests/unit/conftest.py — shared with the
+# per-migration up/down tests.
 
 
 def _tables(db_path: Path) -> set[str]:

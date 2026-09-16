@@ -243,6 +243,36 @@ func (e BearerTokenUpdateRequestType) Valid() bool {
 	}
 }
 
+// Defines values for ConnectSessionSummaryResponseState.
+const (
+	ConnectSessionSummaryResponseStateConfirmed ConnectSessionSummaryResponseState = "confirmed"
+	ConnectSessionSummaryResponseStateConnected ConnectSessionSummaryResponseState = "connected"
+	ConnectSessionSummaryResponseStateCreated   ConnectSessionSummaryResponseState = "created"
+	ConnectSessionSummaryResponseStateExpired   ConnectSessionSummaryResponseState = "expired"
+	ConnectSessionSummaryResponseStateFailed    ConnectSessionSummaryResponseState = "failed"
+	ConnectSessionSummaryResponseStatePolling   ConnectSessionSummaryResponseState = "polling"
+)
+
+// Valid indicates whether the value is a known member of the ConnectSessionSummaryResponseState enum.
+func (e ConnectSessionSummaryResponseState) Valid() bool {
+	switch e {
+	case ConnectSessionSummaryResponseStateConfirmed:
+		return true
+	case ConnectSessionSummaryResponseStateConnected:
+		return true
+	case ConnectSessionSummaryResponseStateCreated:
+		return true
+	case ConnectSessionSummaryResponseStateExpired:
+		return true
+	case ConnectSessionSummaryResponseStateFailed:
+		return true
+	case ConnectSessionSummaryResponseStatePolling:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ConsentAgentStatusResponseStatus.
 const (
 	ConsentAgentStatusResponseStatusApproved ConsentAgentStatusResponseStatus = "approved"
@@ -822,6 +852,36 @@ func (e ListAgentOauthGrantsParamsStatus) Valid() bool {
 	}
 }
 
+// Defines values for ListConnectSessionsParamsState.
+const (
+	ListConnectSessionsParamsStateConfirmed ListConnectSessionsParamsState = "confirmed"
+	ListConnectSessionsParamsStateConnected ListConnectSessionsParamsState = "connected"
+	ListConnectSessionsParamsStateCreated   ListConnectSessionsParamsState = "created"
+	ListConnectSessionsParamsStateExpired   ListConnectSessionsParamsState = "expired"
+	ListConnectSessionsParamsStateFailed    ListConnectSessionsParamsState = "failed"
+	ListConnectSessionsParamsStatePolling   ListConnectSessionsParamsState = "polling"
+)
+
+// Valid indicates whether the value is a known member of the ListConnectSessionsParamsState enum.
+func (e ListConnectSessionsParamsState) Valid() bool {
+	switch e {
+	case ListConnectSessionsParamsStateConfirmed:
+		return true
+	case ListConnectSessionsParamsStateConnected:
+		return true
+	case ListConnectSessionsParamsStateCreated:
+		return true
+	case ListConnectSessionsParamsStateExpired:
+		return true
+	case ListConnectSessionsParamsStateFailed:
+		return true
+	case ListConnectSessionsParamsStatePolling:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for InspectOperationParamsDetail.
 const (
 	Full    InspectOperationParamsDetail = "full"
@@ -1363,6 +1423,30 @@ type ConnectRequestBody struct {
 	Extra  *map[string]string `json:"extra,omitempty"`
 	Scopes *[]string          `json:"scopes,omitempty"`
 }
+
+// ConnectSessionListResponse Cursor-paginated envelope of connect-session summaries.
+type ConnectSessionListResponse struct {
+	Data       []ConnectSessionSummaryResponse `json:"data"`
+	HasMore    bool                            `json:"has_more"`
+	NextCursor *string                         `json:"next_cursor,omitempty"`
+}
+
+// ConnectSessionSummaryResponse Slim list row for the console — deliberately excludes “poll_token“.
+type ConnectSessionSummaryResponse struct {
+	AgentId            *string                            `json:"agent_id,omitempty"`
+	ConnectedAs        *string                            `json:"connected_as,omitempty"`
+	CreatedAt          time.Time                          `json:"created_at"`
+	ErrorCode          *string                            `json:"error_code,omitempty"`
+	Reason             *string                            `json:"reason,omitempty"`
+	RequestedByActorId string                             `json:"requested_by_actor_id"`
+	SessionId          string                             `json:"session_id"`
+	State              ConnectSessionSummaryResponseState `json:"state"`
+	VendorDisplayName  string                             `json:"vendor_display_name"`
+	VendorKey          string                             `json:"vendor_key"`
+}
+
+// ConnectSessionSummaryResponseState defines model for ConnectSessionSummaryResponse.State.
+type ConnectSessionSummaryResponseState string
 
 // ConsentAgentStatusResponse Minimal tri-state for the consent page's pending-agent awaiting page (P4).
 //
@@ -3327,6 +3411,20 @@ type PreviewCatalogOperationsParams struct {
 
 // SnoozeCatalogEntryJSONBody defines parameters for SnoozeCatalogEntry.
 type SnoozeCatalogEntryJSONBody = CatalogSnoozeRequest
+
+// ListConnectSessionsParams defines parameters for ListConnectSessions.
+type ListConnectSessionsParams struct {
+	// State Filter by session state
+	State *ListConnectSessionsParamsState `form:"state,omitempty" json:"state,omitempty"`
+
+	// Vendor Filter by vendor registry key
+	Vendor *string `form:"vendor,omitempty" json:"vendor,omitempty"`
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+	Limit  *int    `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// ListConnectSessionsParamsState defines parameters for ListConnectSessions.
+type ListConnectSessionsParamsState string
 
 // GetConnectSessionParams defines parameters for GetConnectSession.
 type GetConnectSessionParams struct {
@@ -5485,6 +5583,18 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /catalog:refresh (the `RefreshCatalog` operationId).
 	RefreshCatalog(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListConnectSessions List connect sessions
+	//
+	// List connect sessions with cursor-based pagination.
+	//
+	// Rows are slim summaries scoped to the caller (initiator-owned;
+	// ``org:admin`` sees all; a delegated agent holding
+	// ``owner:credentials:read`` also sees its owner's sessions). The
+	// ``poll_token`` capability is never included.
+	//
+	// Corresponds with GET /connect-sessions (the `ListConnectSessions` operationId).
+	ListConnectSessions(ctx context.Context, params *ListConnectSessionsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetConnectSession Get review data for a connect session
 	//
@@ -9066,6 +9176,28 @@ func (c *Client) UnsnoozeCatalogEntry(ctx context.Context, apiId string, reqEdit
 // Corresponds with POST /catalog:refresh (the `RefreshCatalog` operationId).
 func (c *Client) RefreshCatalog(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRefreshCatalogRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListConnectSessions List connect sessions
+//
+// List connect sessions with cursor-based pagination.
+//
+// Rows are slim summaries scoped to the caller (initiator-owned;
+// “org:admin“ sees all; a delegated agent holding
+// “owner:credentials:read“ also sees its owner's sessions). The
+// “poll_token“ capability is never included.
+//
+// Corresponds with GET /connect-sessions (the `ListConnectSessions` operationId).
+func (c *Client) ListConnectSessions(ctx context.Context, params *ListConnectSessionsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListConnectSessionsRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -16191,6 +16323,96 @@ func NewRefreshCatalogRequest(server string) (*http.Request, error) {
 	return req, nil
 }
 
+// NewListConnectSessionsRequest constructs an http.Request for the ListConnectSessions method
+func NewListConnectSessionsRequest(server string, params *ListConnectSessionsParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/connect-sessions")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.State != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "state", *params.State, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Vendor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "vendor", *params.Vendor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewGetConnectSessionRequest constructs an http.Request for the GetConnectSession method
 func NewGetConnectSessionRequest(server string, sessionId string, params *GetConnectSessionParams) (*http.Request, error) {
 	var err error
@@ -22298,6 +22520,20 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /catalog:refresh (the `RefreshCatalog` operationId).
 	RefreshCatalogWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*RefreshCatalogHTTPResp, error)
+
+	// ListConnectSessionsWithResponse List connect sessions
+	//
+	// List connect sessions with cursor-based pagination.
+	//
+	// Rows are slim summaries scoped to the caller (initiator-owned;
+	// ``org:admin`` sees all; a delegated agent holding
+	// ``owner:credentials:read`` also sees its owner's sessions). The
+	// ``poll_token`` capability is never included.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /connect-sessions (the `ListConnectSessions` operationId).
+	ListConnectSessionsWithResponse(ctx context.Context, params *ListConnectSessionsParams, reqEditors ...RequestEditorFn) (*ListConnectSessionsHTTPResp, error)
 
 	// GetConnectSessionWithResponse Get review data for a connect session
 	//
@@ -30406,6 +30642,89 @@ func (r RefreshCatalogHTTPResp) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r RefreshCatalogHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListConnectSessionsHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ConnectSessionListResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListConnectSessionsHTTPResp) GetJSON200() *ConnectSessionListResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ListConnectSessionsHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ListConnectSessionsHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ListConnectSessionsHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r ListConnectSessionsHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r ListConnectSessionsHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ListConnectSessionsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ListConnectSessionsHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListConnectSessionsHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListConnectSessionsHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListConnectSessionsHTTPResp) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -40008,6 +40327,26 @@ func (c *ClientWithResponses) RefreshCatalogWithResponse(ctx context.Context, re
 	return ParseRefreshCatalogHTTPResp(rsp)
 }
 
+// ListConnectSessionsWithResponse List connect sessions
+//
+// List connect sessions with cursor-based pagination.
+//
+// Rows are slim summaries scoped to the caller (initiator-owned;
+// “org:admin“ sees all; a delegated agent holding
+// “owner:credentials:read“ also sees its owner's sessions). The
+// “poll_token“ capability is never included.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /connect-sessions (the `ListConnectSessions` operationId).
+func (c *ClientWithResponses) ListConnectSessionsWithResponse(ctx context.Context, params *ListConnectSessionsParams, reqEditors ...RequestEditorFn) (*ListConnectSessionsHTTPResp, error) {
+	rsp, err := c.ListConnectSessions(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListConnectSessionsHTTPResp(rsp)
+}
+
 // GetConnectSessionWithResponse Get review data for a connect session
 //
 // Data the review page needs: vendor display name, resolved flow, the
@@ -47786,6 +48125,74 @@ func ParseRefreshCatalogHTTPResp(rsp *http.Response) (*RefreshCatalogHTTPResp, e
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest CatalogRefreshResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListConnectSessionsHTTPResp parses an HTTP response from a ListConnectSessionsWithResponse call
+func ParseListConnectSessionsHTTPResp(rsp *http.Response) (*ListConnectSessionsHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListConnectSessionsHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ConnectSessionListResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

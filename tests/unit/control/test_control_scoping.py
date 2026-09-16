@@ -6,8 +6,9 @@ surface is gone; the tables survive only for the Phase-4 retirement job and
 the flag-off broker fallback until Phase 6b). Visibility widening for agents
 now comes exclusively from ``bound_credential_ids`` — the caller-resolved
 direct ``agent_credential_bindings`` ids. Theme 7 then removed the
-``AccessRequest`` axis with the access-request feature, leaving ``Credential``
-as the only scoped model.
+``AccessRequest`` axis with the access-request feature. ``Credential`` and
+``ConnectSession`` (initiator axis, reusing the credential delegation scope)
+are the scoped models.
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ from __future__ import annotations
 import pytest
 from sqlalchemy import ColumnElement, exists, select
 
+from jentic_one.control.core.schema.connect_sessions import ConnectSession
 from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.core.schema.toolkits import Toolkit
 from jentic_one.control.scoping import filters as scoping_filters
@@ -222,3 +224,51 @@ def test_admin_ignores_include_shared() -> None:
     """org:admin stays unrestricted even with include_shared."""
     identity = _identity(permissions=["org:admin"])
     assert build_access_filters(identity, Credential, include_shared=True) == []
+
+
+# --- ConnectSession model tests (initiator axis, credential-read delegation) ---
+
+
+def test_connect_session_admin_returns_empty_filters() -> None:
+    identity = _identity(permissions=["org:admin"])
+    assert build_access_filters(identity, ConnectSession) == []
+
+
+def test_connect_session_user_returns_initiator_filter() -> None:
+    identity = _identity(sub="usr_lister", permissions=["credentials:read"])
+    filters = build_access_filters(identity, ConnectSession)
+    assert len(filters) == 1
+    sql = str(filters[0].compile(compile_kwargs={"literal_binds": True}))
+    assert "initiator_actor_id" in sql
+    assert "usr_lister" in sql
+
+
+def test_connect_session_agent_with_credential_delegation_scope_returns_or_filter() -> None:
+    """ConnectSession reuses OWNER_CREDENTIALS_READ — no dedicated scope exists."""
+    identity = _identity(
+        sub="agnt_lister",
+        permissions=[OWNER_CREDENTIALS_READ],
+        actor_type=ActorType.AGENT,
+        parent_actor_id="usr_owner",
+    )
+    filters = build_access_filters(identity, ConnectSession)
+    assert len(filters) == 1
+    sql = str(filters[0].compile(compile_kwargs={"literal_binds": True}))
+    assert "initiator_actor_id" in sql
+    assert "agnt_lister" in sql
+    assert "usr_owner" in sql
+
+
+def test_connect_session_agent_without_delegation_scope_is_self_only() -> None:
+    identity = _identity(
+        sub="agnt_lister",
+        permissions=["credentials:read"],
+        actor_type=ActorType.AGENT,
+        parent_actor_id="usr_owner",
+    )
+    filters = build_access_filters(identity, ConnectSession)
+    assert len(filters) == 1
+    sql = str(filters[0].compile(compile_kwargs={"literal_binds": True}))
+    assert "agnt_lister" in sql
+    assert "usr_owner" not in sql
+
