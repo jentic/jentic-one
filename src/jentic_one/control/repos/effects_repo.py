@@ -217,6 +217,32 @@ class EffectsRepository:
         return existing.scalar_one(), True
 
     @staticmethod
+    async def unbind_agent_from_credential(
+        session: AsyncSession,
+        *,
+        agent_id: str,
+        credential_id: str,
+    ) -> bool:
+        """Delete a direct agent↔credential binding via raw SQL (admin DB).
+
+        Mirror of ``bind_agent_to_credential`` for the connect flow's
+        unhappy-terminal sweep: the pending credential is deleted
+        control-side (its ``agent_permission_rules`` rows cascade with it),
+        but the admin-DB binding row is cross-DB (no FK), so it must be
+        removed explicitly or a ghost binding outlives the credential.
+        Idempotent — returns True when a row was deleted.
+        """
+        result = await session.execute(
+            text(
+                "DELETE FROM agent_credential_bindings "
+                "WHERE agent_id = :agent_id AND credential_id = :credential_id"
+            ),
+            {"agent_id": agent_id, "credential_id": credential_id},
+        )
+        await session.flush()
+        return bool(getattr(result, "rowcount", 0))
+
+    @staticmethod
     async def grant_scope_to_actor(
         session: AsyncSession,
         *,

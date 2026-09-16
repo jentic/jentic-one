@@ -104,9 +104,10 @@ async def integrations_connect(
     Agent callers: `agent_id` in the payload is refused (the caller *is*
     the agent — spoofing another agent's id is a permission-boundary
     violation). The caller's own identity is injected instead. UI / user
-    callers: `agent_id` is optional and currently ignored downstream,
-    since credentials still bind through toolkits — it becomes mandatory
-    once agent-credential bindings replace toolkit membership.
+    callers: `agent_id` is optional — when named, confirm creates the
+    direct agent-credential binding + permission rules; when omitted, the
+    credential connects unbound and an agent can be bound later through
+    the credentials API.
     """
     # Per-actor rate limit — every :connect POST fires the vendor's
     # authorize/device-authorization endpoint, so a spammy caller can get

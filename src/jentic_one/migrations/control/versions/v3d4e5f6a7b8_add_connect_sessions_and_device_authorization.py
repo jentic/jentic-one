@@ -2,13 +2,12 @@
 
 Backs the agent-driven integration flow: a new
 `connect_sessions` table drives the state machine, `device_authorization_credentials`
-holds RFC 8628 registration + polling state per credential, a new
-`agent_credential_permissions` junction records permission rules for the
-theme-5 target model, and `credentials.state` distinguishes pending from
+holds RFC 8628 registration + polling state per credential, and
+`credentials.state` distinguishes pending from
 connected rows so the broker can skip half-formed credentials.
 
-Revision ID: q8e9f0a1b2c3
-Revises: p7d8e9f0a1b2
+Revision ID: v3d4e5f6a7b8
+Revises: u2c3d4e5f6a7
 """
 
 from collections.abc import Sequence
@@ -16,8 +15,8 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "q8e9f0a1b2c3"
-down_revision: str | None = "p7d8e9f0a1b2"
+revision: str = "v3d4e5f6a7b8"
+down_revision: str | None = "u2c3d4e5f6a7"  # pragma: allowlist secret
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -136,50 +135,8 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
     )
 
-    # 4. agent_credential_permissions — junction table for theme-5's target model.
-    op.create_table(
-        "agent_credential_permissions",
-        sa.Column(
-            "id",
-            sa.String(30),
-            server_default=sa.func.generate_ksuid("acp") if pg else None,
-            nullable=False,
-        ),
-        sa.Column("agent_id", sa.String(30), nullable=False),
-        sa.Column(
-            "credential_id",
-            sa.String(30),
-            sa.ForeignKey("credentials.id", ondelete="CASCADE"),
-            nullable=False,
-        ),
-        sa.Column(
-            "rules",
-            json_type,
-            server_default=sa.text("'[]'"),
-            nullable=False,
-        ),
-        sa.Column(
-            "created_at",
-            sa.DateTime(timezone=True),
-            server_default=sa.func.now(),
-            nullable=False,
-        ),
-        sa.Column(
-            "updated_at",
-            sa.DateTime(timezone=True),
-            server_default=sa.func.now(),
-            nullable=False,
-        ),
-        sa.Column("created_by", sa.String(255), nullable=True),
-        sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("agent_id", "credential_id", name="uq_agent_credential"),
-    )
-    op.create_index("ix_acp_agent", "agent_credential_permissions", ["agent_id"])
-
 
 def downgrade() -> None:
-    op.drop_index("ix_acp_agent", table_name="agent_credential_permissions")
-    op.drop_table("agent_credential_permissions")
     op.drop_table("device_authorization_credentials")
     op.drop_index("ix_connect_sessions_poll_token", table_name="connect_sessions")
     op.drop_index("ix_connect_sessions_credential", table_name="connect_sessions")

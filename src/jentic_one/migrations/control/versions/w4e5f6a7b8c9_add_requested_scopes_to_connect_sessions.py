@@ -9,8 +9,8 @@ same read path.
 
 Nullable + default ``'[]'::jsonb`` so existing rows don't need a backfill.
 
-Revision ID: r9f0a1b2c3d4
-Revises: q8e9f0a1b2c3
+Revision ID: w4e5f6a7b8c9
+Revises: v3d4e5f6a7b8
 """
 
 from collections.abc import Sequence
@@ -19,8 +19,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
-revision: str = "r9f0a1b2c3d4"
-down_revision: str | None = "q8e9f0a1b2c3"
+revision: str = "w4e5f6a7b8c9"
+down_revision: str | None = "v3d4e5f6a7b8"  # pragma: allowlist secret
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

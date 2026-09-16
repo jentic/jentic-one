@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from jentic_one.control.core.schema.access_request_items import AccessRequestItem
 from jentic_one.control.core.schema.access_requests import AccessRequest
-from jentic_one.control.core.schema.agent_credential_permissions import AgentCredentialPermission
 from jentic_one.control.core.schema.agent_permission_rules import AgentPermissionRule
 from jentic_one.control.core.schema.basic_credentials import BasicCredential
 from jentic_one.control.core.schema.connect_nonces import ConnectNonce
@@ -32,7 +31,6 @@ from jentic_one.shared.db.base import ControlBase
 __all__ = [
     "AccessRequest",
     "AccessRequestItem",
-    "AgentCredentialPermission",
     "AgentPermissionRule",
     "BasicCredential",
     "ConnectNonce",

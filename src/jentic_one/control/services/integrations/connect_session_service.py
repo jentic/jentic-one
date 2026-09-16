@@ -11,6 +11,7 @@ called on the concrete ``AuthCodeFlowHandler`` from
 
 from __future__ import annotations
 
+import re
 import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -19,11 +20,13 @@ import structlog
 
 from jentic_one.control.core.schema.connect_sessions import ConnectSession
 from jentic_one.control.core.schema.credentials import Credential
-from jentic_one.control.repos import CredentialRepository, OAuthTokenRepository
-from jentic_one.control.repos.agent_credential_permission_repo import (
-    AgentCredentialPermissionRepository,
+from jentic_one.control.repos import (
+    AgentPermissionRuleRepository,
+    CredentialRepository,
+    OAuthTokenRepository,
 )
 from jentic_one.control.repos.connect_session_repo import ConnectSessionRepository
+from jentic_one.control.repos.effects_repo import EffectsRepository
 from jentic_one.control.services.credentials.state import consume_callback_state
 from jentic_one.control.services.integrations import identity_echo
 from jentic_one.control.services.integrations.errors import (
@@ -198,6 +201,40 @@ def _verify_poll_token(row: ConnectSession, token: str) -> None:
         raise InvalidPollTokenError("poll_token mismatch")
 
 
+def _to_binding_rules(permission_rules: list[dict[str, str]]) -> list[dict[str, object]]:
+    """Translate approve-page rules to stored agent-permission-rule dicts.
+
+    The approve page speaks ``{method, path, effect}`` with glob paths
+    (``/**``, ``/repos/*``); stored ``agent_permission_rules`` rows use the
+    canonical binding shape (``methods`` list + ``path`` interpreted per
+    ``match_mode`` — see ``web/schemas/permission_rules.py``). ``/**``
+    (match everything) maps to ``path=None``; any other glob is escaped and
+    its ``**`` / ``*`` wildcards become ``.*`` / ``[^/]*`` under
+    ``match_mode="regex"`` (full-match semantics, same as the broker's
+    evaluator).
+    """
+    rules: list[dict[str, object]] = []
+    for rule in permission_rules:
+        raw_path = (rule.get("path") or "").strip()
+        path: str | None
+        if raw_path in ("", "/**", "**"):
+            path = None
+        else:
+            path = (
+                re.escape(raw_path).replace(re.escape("**"), ".*").replace(re.escape("*"), "[^/]*")
+            )
+        method = rule.get("method")
+        rules.append(
+            {
+                "effect": rule.get("effect", "allow"),
+                "methods": [method] if method else None,
+                "path": path,
+                "match_mode": "regex",
+            }
+        )
+    return rules
+
+
 def _terminal_status(
     row: ConnectSession,
     bound_scopes: list[str] | None,
@@ -255,11 +292,10 @@ class ConnectSessionService:
 
         Actor-type checks live in the router (agent callers have
         ``agent_id`` forced to their own identity and refuse a payload
-        override; user callers may omit it). ``agent_id`` is currently
-        allowed to be None — credentials still bind through toolkits, so
-        the eventual agent-credential permission grant is a no-op when
-        no agent is named. Will become mandatory once agent-credential
-        bindings replace toolkit membership.
+        override; user callers may omit it). When ``agent_id`` is None no
+        agent-credential binding is created at confirm time — the user is
+        connecting a credential without granting any agent access to it,
+        and can bind an agent later through the credentials API.
         """
         entry = self._vendors.get(vendor_key)
         flow = self._vendors.resolve_flow(vendor_key, preferred_flow)
@@ -280,7 +316,7 @@ class ConnectSessionService:
         # ``api_name`` and lets the import pipeline slugify it), and
         # ``catalog_api_id`` verbatim as display-only provenance. That way the
         # credential's identity matches ``list_by_vendor`` **and** the broker's
-        # per-operation identity check that fires under toolkit-mediated calls.
+        # per-operation identity check.
         raw_vendor = entry.vendor.split("/", 1)[0]
         api_scope = canonical_credential_scope(
             vendor=raw_vendor,
@@ -294,9 +330,9 @@ class ConnectSessionService:
                 type=handler.stored_type.value,
                 # Credential name is display-only + user-editable; scoping
                 # by ``agent_id`` here would collapse to ``(None)`` in the
-                # UI once ``agent_id`` is optional and be redundant even
-                # when present (the eventual agent-credential binding row
-                # is the source of truth for "which agent uses this").
+                # UI when ``agent_id`` is omitted and be redundant even
+                # when present (the agent-credential binding row is the
+                # source of truth for "which agent uses this").
                 name=entry.display_name,
                 api_vendor=api_scope.vendor,
                 api_name=api_scope.name,
@@ -422,26 +458,23 @@ class ConnectSessionService:
         challenge = await handler.begin(row, flow=flow, confirmed_scopes=confirmed_scopes)
 
         async with self._ctx.control_db.transaction() as session:
-            # Persist proposed permission rules against the (agent, credential)
-            # pair. Broker won't read this yet (theme-5 pending), but the row
-            # is the durable capture of what the human approved. Skipped when
-            # no agent is named — nothing to bind rules against until
-            # ``agent_id`` becomes mandatory (once agent-credential bindings
-            # replace toolkit membership).
+            # Persist the approved rules as direct agent-credential binding
+            # rules (theme 5): ``agent_permission_rules`` is the list the
+            # broker enforces for the ``(agent, credential)`` pair. Skipped
+            # when no agent is named — a user connecting without an agent
+            # leaves binding + rules to a later explicit bind.
             if row.agent_id is not None:
-                await AgentCredentialPermissionRepository.upsert(
+                await AgentPermissionRuleRepository.replace_user_rules(
                     session,
-                    agent_id=row.agent_id,
-                    credential_id=row.credential_id,
-                    rules=permission_rules,
+                    row.agent_id,
+                    row.credential_id,
+                    _to_binding_rules(permission_rules),
                     created_by=caller_actor_id,
                 )
             elif permission_rules:
-                # Operators reading this log line can spot pre-migration
-                # configs that assumed the rules landed. Once
-                # ``agent_id`` becomes mandatory (agent-credential
-                # bindings replace toolkit membership) this branch goes
-                # away entirely.
+                # Operators reading this log line can spot approvals whose
+                # rules had nothing to bind against — the session names no
+                # agent, so the rules are dropped, not silently applied.
                 _logger.info(
                     "connect_session.permission_rules_dropped",
                     session_id=row.id,
@@ -450,6 +483,21 @@ class ConnectSessionService:
                     reason="no agent_id on session",
                 )
             await ConnectSessionRepository.update_fields(session, row.id, state="polling")
+
+        if row.agent_id is not None:
+            # Create the admin-DB binding row after the control commit
+            # (intent-then-apply — the rules above are the committed intent;
+            # the cross-DB binding is applied idempotently, so a re-connect
+            # over an existing binding leaves the operator-owned row
+            # untouched). ``_mark_terminal`` sweeps it if the flow dies.
+            async with self._ctx.admin_db.transaction() as admin_session:
+                await EffectsRepository.bind_agent_to_credential(
+                    admin_session,
+                    agent_id=row.agent_id,
+                    credential_id=row.credential_id,
+                    rule_set_id=None,
+                    created_by=caller_actor_id,
+                )
 
         _logger.info(
             "connect_session.confirmed",
@@ -919,6 +967,18 @@ class ConnectSessionService:
         )
         async with self._ctx.control_db.transaction() as session:
             await CredentialRepository.delete(session, row.credential_id)
+        if row.agent_id is not None:
+            # The control-side ``agent_permission_rules`` rows cascade with
+            # the credential; the admin-DB binding row is cross-DB (no FK)
+            # and must be swept explicitly so no ghost binding outlives the
+            # credential. Idempotent — a pre-confirm terminal never created
+            # one, and the DELETE is a no-op then.
+            async with self._ctx.admin_db.transaction() as admin_session:
+                await EffectsRepository.unbind_agent_from_credential(
+                    admin_session,
+                    agent_id=row.agent_id,
+                    credential_id=row.credential_id,
+                )
 
     # ---- redirect-based (auth-code / MCP) completion ----------------------
 

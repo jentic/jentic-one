@@ -42,11 +42,11 @@ class ConnectSession(AuditableMixin, ControlBase):
     vendor: Mapped[str] = mapped_column(String(255), nullable=False)
     # Target agent to bind on success. FK-less: `agents` lives in the admin DB
     # (cross-DB FKs are forbidden by the architecture).
-    # Nullable until credentials bind directly to agents. Present when
-    # the initiator is an agent (from the auth identity) or when a user
-    # caller supplied it; the eventual agent-credential permission row
-    # keys off this and is skipped when None. Becomes NOT NULL once
-    # agent-credential bindings replace toolkit membership.
+    # Nullable: present when the initiator is an agent (from the auth
+    # identity) or when a user caller supplied it — confirm then creates
+    # the direct agent-credential binding + permission rules. None means
+    # the credential connects unbound (a user can bind an agent later
+    # through the credentials API).
     agent_id: Mapped[str | None] = mapped_column(String(30), nullable=True)
     # Who called `:connect`. Actor type is derived from the id prefix
     # (`agt_`/`usr_`/`sa_`) via the existing identity utility — no separate col.
