@@ -1478,6 +1478,28 @@
       "title": "SigningKeyConfig",
       "type": "object"
     },
+    "SpecMirrorConfig": {
+      "description": "Opt-in mirror of registry spec documents to a local directory.\n\nWhen enabled, every successful import, promote, archive, and delete also\nrewrites the affected API's directory under ``path`` so the filesystem\nmirrors the registry DB: one JSON spec document per revision, grouped by\nlifecycle state (``published/``, ``imported/``, ``draft/``, ``archived/``),\nplus a ``<revision_id>.meta.json`` sidecar. The directory is meant to be\nmounted read-write into jentic-one and read-only into consumer services\nthat want direct file access to specs (``published/`` + ``imported/``\ntogether hold the at-most-one servable revision per API version).\n\nMirroring is best-effort and post-commit: the DB is the source of truth, a\nfile-write failure never fails the registry operation, and drift heals on\nthe next sync or the startup reconcile. Defaults to **OFF**: omitting this\nblock wires nothing and never touches the filesystem.",
+      "properties": {
+        "enabled": {
+          "default": false,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "path": {
+          "default": "",
+          "title": "Path",
+          "type": "string"
+        },
+        "reconcile_on_startup": {
+          "default": true,
+          "title": "Reconcile On Startup",
+          "type": "boolean"
+        }
+      },
+      "title": "SpecMirrorConfig",
+      "type": "object"
+    },
     "StateBackendConfig": {
       "description": "Configuration for :func:`build_state_backend`.",
       "properties": {
@@ -1779,6 +1801,9 @@
     },
     "services": {
       "$ref": "#/$defs/ServicesConfig"
+    },
+    "spec_mirror": {
+      "$ref": "#/$defs/SpecMirrorConfig"
     },
     "telemetry": {
       "$ref": "#/$defs/TelemetryConfig"

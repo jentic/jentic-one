@@ -411,6 +411,25 @@ class ApiRevisionRepository:
         return result.scalar_one_or_none()
 
     @staticmethod
+    async def list_for_api_with_spec_files(
+        session: AsyncSession, api_id: uuid.UUID
+    ) -> list[ApiRevision]:
+        """Every revision of an API with its spec files eagerly loaded.
+
+        Serves the spec-mirror sync, which snapshots the full revision set
+        (all lifecycle states) plus the spec documents in one read so it can
+        rewrite the API's on-disk directory after the session closes.
+        """
+        stmt = (
+            select(ApiRevision)
+            .where(ApiRevision.api_id == api_id)
+            .options(selectinload(ApiRevision.spec_files))
+            .order_by(ApiRevision.created_at.asc(), ApiRevision.id.asc())
+        )
+        result = await session.execute(stmt)
+        return list(result.scalars().all())
+
+    @staticmethod
     async def set_state(
         session: AsyncSession,
         revision_id: uuid.UUID,

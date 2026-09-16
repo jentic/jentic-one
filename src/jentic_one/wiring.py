@@ -26,6 +26,7 @@ from jentic_one.mcp.installer import (
     mcp_lifespan,
 )
 from jentic_one.registry.services.inspect.registry_service import RegistryService
+from jentic_one.registry.services.spec_mirror_service import spec_mirror_lifespan
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.broker.protocols import ResolveResult, RevisionPinResult
 from jentic_one.shared.context import Context
@@ -94,6 +95,10 @@ def build_default_container(ctx: Context) -> AppContainer:
     documents, so the ``resource_metadata`` pointers must keep landing on the
     discovery-chain 401 challenge (never a dangling 404) even though the real
     transport lives with control.
+
+    Registry shapes with ``spec_mirror.enabled`` additionally carry the mirror
+    startup lifespan (directory validation + reconcile); the flag defaults to
+    off, so a default install wires nothing.
     """
     container = AppContainer.default(ctx)
     if "control" in ctx.config.apps:
@@ -106,5 +111,17 @@ def build_default_container(ctx: Context) -> AppContainer:
         container = replace(
             container,
             extra_installers=(*container.extra_installers, install_mcp_challenge_placeholder),
+        )
+    if (
+        ctx.config.spec_mirror.enabled
+        and "registry" in ctx.config.apps
+        and ctx.is_db_allowed("registry")
+    ):
+        # Registry-surface shapes only (same gate as the import worker): a
+        # broker-only process is granted the registry DB for spec lookups but
+        # must not own the mirror directory.
+        container = replace(
+            container,
+            extra_lifespans=(*container.extra_lifespans, spec_mirror_lifespan),
         )
     return container

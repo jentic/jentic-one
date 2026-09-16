@@ -17,6 +17,7 @@ from jentic_one.registry.repos.control_credential_boundary_repo import (
     ControlCredentialBoundaryRepository,
 )
 from jentic_one.registry.services.errors import ApiNotFoundError, NoCurrentRevisionError
+from jentic_one.registry.services.spec_mirror_service import SpecMirrorService
 from jentic_one.registry.web.schemas.apis import (
     SecuritySchemeFlowResponse,
     SecuritySchemeListResponse,
@@ -218,6 +219,9 @@ class ApiService:
             await ApiRepository.delete(session, api.id)
 
         deactivated = await self._deactivate_control_credentials(vendor, name, version)
+        # Post-commit mirror side effect (best-effort, self-gated on
+        # spec_mirror.enabled): drop the deleted API's directory.
+        await SpecMirrorService(self._ctx).remove_api(vendor, name, version)
 
         await record_audit_best_effort(
             self._ctx,

@@ -63,6 +63,17 @@ class ApiRepository:
         return list(result.scalars().all())
 
     @staticmethod
+    async def list_identifiers(session: AsyncSession) -> list[tuple[str, str, str]]:
+        """Every registered ``(vendor, name, version)`` tuple, unpaginated.
+
+        Serves whole-registry sweeps (e.g. the spec-mirror reconcile) that need
+        the full identifier set to diff against an external copy — identifiers
+        only, so the result stays small even for large registries.
+        """
+        result = await session.execute(select(Api.vendor, Api.name, Api.version))
+        return [(row.vendor, row.name, row.version) for row in result]
+
+    @staticmethod
     async def resolve_ids(
         session: AsyncSession,
         *,
