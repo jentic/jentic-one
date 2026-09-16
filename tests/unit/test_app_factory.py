@@ -8,12 +8,15 @@ import pytest
 from fastapi.testclient import TestClient
 
 from jentic_one import __version__
-from jentic_one.__main__ import _expand_allowed_dbs
+from jentic_one.__main__ import _build_app, _expand_allowed_dbs
 from jentic_one.auth.web.app import create_app as create_auth_app
 from jentic_one.control.web.app import create_app as create_control_app
-from jentic_one.shared.config import AppConfig
+from jentic_one.registry.services.spec_mirror_service import spec_mirror_lifespan
+from jentic_one.registry.web import app as registry_app_module
+from jentic_one.shared.config import AppConfig, SpecMirrorConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.web.app_factory import SURFACE_MODULES, create_combined_app
+from jentic_one.wiring import build_default_container
 
 
 @pytest.fixture()
@@ -235,3 +238,62 @@ def test_html_get_401_without_spa_keeps_problem_details(ctx: Context) -> None:
     client = TestClient(app, raise_server_exceptions=False, follow_redirects=False)
     resp = client.get("/users", headers=_html_headers())
     assert resp.status_code == 401
+
+
+# ── Spec-mirror lifespan wiring (combined and standalone registry) ──────────
+
+
+def _spec_mirror_config(app_config: AppConfig, apps: list[str]) -> AppConfig:
+    return app_config.model_copy(
+        update={
+            "apps": apps,
+            "spec_mirror": SpecMirrorConfig(enabled=True, path="/var/lib/jentic/specs"),
+        }
+    )
+
+
+def test_container_wires_spec_mirror_lifespan_for_registry_shape(app_config: AppConfig) -> None:
+    config = _spec_mirror_config(app_config, ["registry"])
+    ctx = Context(config, allowed_dbs=_expand_allowed_dbs(["registry"], config))
+    container = build_default_container(ctx)
+    assert spec_mirror_lifespan in container.extra_lifespans
+
+
+def test_container_skips_spec_mirror_lifespan_when_disabled(app_config: AppConfig) -> None:
+    ctx = Context(app_config)
+    container = build_default_container(ctx)
+    assert spec_mirror_lifespan not in container.extra_lifespans
+
+
+def test_container_skips_spec_mirror_lifespan_for_non_registry_shape(
+    app_config: AppConfig,
+) -> None:
+    # A broker-only process is granted the registry DB for spec lookups but
+    # must not own the mirror directory.
+    config = _spec_mirror_config(app_config, ["broker"])
+    ctx = Context(config, allowed_dbs=_expand_allowed_dbs(["broker"], config))
+    container = build_default_container(ctx)
+    assert spec_mirror_lifespan not in container.extra_lifespans
+
+
+def test_standalone_registry_app_carries_composition_container(
+    app_config: AppConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Parts-mode regression guard: a standalone registry process must receive
+    the composition container so the spec-mirror startup lifespan (directory
+    validation + reconcile) actually runs there — the surface that owns the
+    import worker is exactly the one that needs it."""
+    config = _spec_mirror_config(app_config, ["registry"])
+    ctx = Context(config, allowed_dbs=_expand_allowed_dbs(["registry"], config))
+    captured: dict[str, Any] = {}
+    real_create_app = registry_app_module.create_app
+
+    def capturing_create_app(ctx_arg: Context, container: Any = None) -> Any:
+        captured["container"] = container
+        return real_create_app(ctx_arg, container=container)
+
+    monkeypatch.setattr(registry_app_module, "create_app", capturing_create_app)
+    _build_app(ctx, ["registry"])
+
+    assert captured["container"] is not None
+    assert spec_mirror_lifespan in captured["container"].extra_lifespans

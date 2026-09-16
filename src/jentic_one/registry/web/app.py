@@ -20,6 +20,7 @@ from jentic_one.registry.web.routers import (
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.errors import DatabaseConsistencyError
 from jentic_one.shared.web.app_factory import create_surface_app
+from jentic_one.shared.web.container import AppContainer
 from jentic_one.shared.web.health import make_health_router
 
 
@@ -51,10 +52,19 @@ def get_exception_handlers() -> list[tuple[type[Exception], Any]]:
     ]
 
 
-def create_app(ctx: Context) -> FastAPI:
-    """Create the registry FastAPI application for standalone deployment."""
+def create_app(ctx: Context, container: AppContainer | None = None) -> FastAPI:
+    """Create the registry FastAPI application for standalone deployment.
+
+    ``container`` lets the composition root ride its extras (notably the
+    spec-mirror startup lifespan when ``spec_mirror.enabled``) on a
+    standalone registry process; ``None`` keeps the default wiring.
+    """
     app = create_surface_app(
-        ctx, title="jentic-one-registry", routers=get_routers(), enabled_apps={"registry"}
+        ctx,
+        title="jentic-one-registry",
+        routers=get_routers(),
+        enabled_apps={"registry"},
+        container=container,
     )
     for exc_class, handler in get_exception_handlers():
         app.add_exception_handler(exc_class, handler)

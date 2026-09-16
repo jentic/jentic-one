@@ -2249,19 +2249,24 @@ func (j *SigningKeyConfig) UnmarshalJSON(value []byte) error {
 
 // Opt-in mirror of registry spec documents to a local directory.
 //
-// When enabled, every successful import, promote, archive, and delete also
-// rewrites the affected API's directory under “path“ so the filesystem
-// mirrors the registry DB: one JSON spec document per revision, grouped by
-// lifecycle state (“published/“, “imported/“, “draft/“, “archived/“),
-// plus a “<revision_id>.meta.json“ sidecar. The directory is meant to be
-// mounted read-write into jentic-one and read-only into consumer services
-// that want direct file access to specs (“published/“ + “imported/“
-// together hold the at-most-one servable revision per API version).
+// When enabled, every successful import, promote, archive, delete, and
+// overlay rollback also rewrites the affected API's directory under “path“
+// so the filesystem mirrors the registry DB: one JSON spec document per
+// revision, grouped by lifecycle state (“published/“, “imported/“,
+// “draft/“, “archived/“), plus a “<revision_id>.meta.json“ sidecar.
+// The directory is meant to be mounted read-write into jentic-one and
+// read-only into consumer services that want direct file access to specs
+// (“published/“ + “imported/“ together hold the at-most-one servable
+// revision per API version).
 //
 // Mirroring is best-effort and post-commit: the DB is the source of truth, a
-// file-write failure never fails the registry operation, and drift heals on
-// the next sync or the startup reconcile. Defaults to **OFF**: omitting this
-// block wires nothing and never touches the filesystem.
+// file-write failure never fails the registry operation (failures log at
+// error level and count on the “spec_mirror.failures“ metric), and drift
+// heals on the next sync or the startup reconcile. Write serialization is
+// per process — run exactly **one** registry-surface process per mirror
+// directory; replicas sharing a read-write mount are unsupported. Defaults
+// to **OFF**: omitting this block wires nothing and never touches the
+// filesystem.
 type SpecMirrorConfig struct {
 	// Enabled corresponds to the JSON schema field "enabled".
 	Enabled bool `json:"enabled,omitempty,omitzero" yaml:"enabled,omitempty" mapstructure:"enabled,omitempty"`

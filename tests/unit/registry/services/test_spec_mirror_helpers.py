@@ -7,12 +7,14 @@ tests exercise the pure path/write/prune helpers against a temp directory.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
 import pytest
 
 from jentic_one.registry.services.spec_mirror_service import (
+    _decode_segment,
     _encode_segment,
     _prune_unknown_dirs,
     _remove_version_dir,
@@ -30,6 +32,16 @@ from jentic_one.registry.services.spec_mirror_service import (
         ("..", "%2E%2E"),
         (".", "%2E"),
         ("v1", "v1"),
+        # Uppercase is encoded so case-only-distinct identifiers can't collide
+        # into one directory on case-insensitive filesystems (macOS, Windows).
+        ("Stripe", "%53tripe"),
+        ("COM", "%43%4F%4D"),
+        # Windows reserved device names (incl. with an extension) get their
+        # first character encoded so the directory stays creatable there.
+        ("con", "%63on"),
+        ("nul.json", "%6Eul.json"),
+        ("com1", "%63om1"),
+        ("console", "console"),
     ],
 )
 def test_encode_segment_produces_safe_single_segments(raw: str, expected: str) -> None:
@@ -37,6 +49,11 @@ def test_encode_segment_produces_safe_single_segments(raw: str, expected: str) -
     assert encoded == expected
     assert "/" not in encoded
     assert encoded not in (".", "..")
+
+
+@pytest.mark.parametrize("raw", ["acme.com", "a/b", "Stripe", "con", "nul.json", "%2E", ".."])
+def test_encode_segment_round_trips(raw: str) -> None:
+    assert _decode_segment(_encode_segment(raw)) == raw
 
 
 def _snapshot(
@@ -66,7 +83,19 @@ def test_write_version_dir_places_revisions_by_state(tmp_path: Path) -> None:
     assert json.loads(spec_a.read_text())["info"]["title"] == "rev-a"
     assert json.loads(spec_b.read_text())["info"]["title"] == "rev-b"
     meta_a = json.loads((version_dir / "rev-a.meta.json").read_text())
-    assert meta_a == {"revision_id": "rev-a", "state": "published"}
+    assert meta_a["revision_id"] == "rev-a"
+    assert meta_a["state"] == "published"
+
+
+def test_write_version_dir_meta_carries_verifiable_mirror_digest(tmp_path: Path) -> None:
+    """``mirror_digest`` hashes the mirrored file's bytes, so a consumer can
+    verify the spec it reads (``sha`` refers to the original source bytes)."""
+    _write_version_dir(tmp_path, _SEGMENTS, [_snapshot("rev-a", "published")])
+
+    version_dir = tmp_path / "acme.com" / "widget" / "v1"
+    spec_bytes = (version_dir / "published" / "rev-a.json").read_bytes()
+    meta = json.loads((version_dir / "rev-a.meta.json").read_text())
+    assert meta["mirror_digest"] == f"sha256:{hashlib.sha256(spec_bytes).hexdigest()}"
 
 
 def test_write_version_dir_moves_file_on_state_change(tmp_path: Path) -> None:
@@ -93,7 +122,36 @@ def test_write_version_dir_prunes_deleted_revisions(tmp_path: Path) -> None:
     assert not (version_dir / "rev-b.meta.json").exists()
 
 
-def test_write_version_dir_skips_rewrite_when_meta_unchanged(tmp_path: Path) -> None:
+def test_write_version_dir_prunes_out_of_enum_state_dirs(tmp_path: Path) -> None:
+    """A file left in a directory outside the known lifecycle states (e.g. a
+    revision that once carried an out-of-enum state) is still pruned."""
+    _write_version_dir(tmp_path, _SEGMENTS, [_snapshot("rev-a", "published")])
+    version_dir = tmp_path / "acme.com" / "widget" / "v1"
+    weird = version_dir / "superseded"
+    weird.mkdir()
+    (weird / "rev-old.json").write_text("{}")
+
+    _write_version_dir(tmp_path, _SEGMENTS, [_snapshot("rev-a", "published")])
+
+    assert not weird.exists()
+    assert (version_dir / "published" / "rev-a.json").is_file()
+
+
+def test_write_version_dir_prunes_orphaned_tmp_files(tmp_path: Path) -> None:
+    """Temp files left by a crashed write are removed on the next sync, both
+    inside state dirs and at the version level (meta temps)."""
+    _write_version_dir(tmp_path, _SEGMENTS, [_snapshot("rev-a", "published")])
+    version_dir = tmp_path / "acme.com" / "widget" / "v1"
+    (version_dir / "published" / ".rev-a.json.abc123.tmp").write_text("{")
+    (version_dir / ".rev-a.meta.json.abc123.tmp").write_text("{")
+
+    _write_version_dir(tmp_path, _SEGMENTS, [_snapshot("rev-a", "published")])
+
+    assert not (version_dir / "published" / ".rev-a.json.abc123.tmp").exists()
+    assert not (version_dir / ".rev-a.meta.json.abc123.tmp").exists()
+
+
+def test_write_version_dir_skips_rewrite_when_unchanged(tmp_path: Path) -> None:
     snap = _snapshot("rev-a", "published")
     _write_version_dir(tmp_path, _SEGMENTS, [snap])
     spec_path = tmp_path / "acme.com" / "widget" / "v1" / "published" / "rev-a.json"
@@ -102,6 +160,19 @@ def test_write_version_dir_skips_rewrite_when_meta_unchanged(tmp_path: Path) -> 
     _write_version_dir(tmp_path, _SEGMENTS, [snap])
 
     assert spec_path.stat().st_mtime_ns == first_mtime
+
+
+def test_write_version_dir_heals_corrupted_spec_file(tmp_path: Path) -> None:
+    """A truncated/tampered spec file is rewritten even when its sidecar still
+    matches — presence of the file alone must not suppress the write."""
+    snap = _snapshot("rev-a", "published")
+    _write_version_dir(tmp_path, _SEGMENTS, [snap])
+    spec_path = tmp_path / "acme.com" / "widget" / "v1" / "published" / "rev-a.json"
+    spec_path.write_text('{"truncated": tru')
+
+    _write_version_dir(tmp_path, _SEGMENTS, [snap])
+
+    assert json.loads(spec_path.read_text())["info"]["title"] == "rev-a"
 
 
 def test_write_version_dir_none_removes_the_api(tmp_path: Path) -> None:
@@ -135,7 +206,7 @@ def test_prune_unknown_dirs_removes_only_unregistered_apis(tmp_path: Path) -> No
 
 
 def test_prune_unknown_dirs_decodes_encoded_segments(tmp_path: Path) -> None:
-    segments = ("a/b", "name with space", "v1")
+    segments = ("a/b", "Name With Space", "v1")
     encoded = (
         _encode_segment(segments[0]),
         _encode_segment(segments[1]),

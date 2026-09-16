@@ -1117,6 +1117,20 @@ def test_spec_mirror_enabled_requires_path():
         SpecMirrorConfig(enabled=True)
 
 
+def test_spec_mirror_enabled_requires_absolute_path():
+    # A relative path would resolve against the process CWD and silently
+    # split the mirror between differently-launched processes.
+    with pytest.raises(ValidationError, match=r"absolute"):
+        SpecMirrorConfig(enabled=True, path="var/lib/specs")
+
+
+def test_spec_mirror_disabled_allows_relative_path():
+    # The validator only constrains the enabled case; a stale relative path
+    # in a disabled block must not fail boot.
+    config = SpecMirrorConfig(enabled=False, path="var/lib/specs")
+    assert config.enabled is False
+
+
 def test_spec_mirror_from_yaml(tmp_path: Path):
     minimal = {
         "databases": {

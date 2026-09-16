@@ -14,17 +14,19 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from sqlalchemy import delete, update
+from sqlalchemy import delete, select, update
 
 from jentic_one.registry.core.schema.api_revisions import ApiRevision
 from jentic_one.registry.core.schema.apis import Api
 from jentic_one.registry.core.schema.operation_url_index import OperationURLIndex
 from jentic_one.registry.core.schema.operations import Operation
+from jentic_one.registry.core.schema.overlays import Overlay
 from jentic_one.registry.core.schema.security_schemes import SecurityScheme, SecuritySchemeFlow
 from jentic_one.registry.core.schema.servers import Server, ServerVariable
 from jentic_one.registry.core.schema.spec_files import SpecFile
 from jentic_one.registry.services.api_service import ApiService
 from jentic_one.registry.services.import_service import ImportHandler
+from jentic_one.registry.services.overlay_service import OverlayService
 from jentic_one.registry.services.revision_service import RevisionService
 from jentic_one.registry.services.spec_mirror_service import SpecMirrorService
 from jentic_one.shared.auth.identity import Identity
@@ -86,6 +88,7 @@ async def _clean_registry(registry_db: DatabaseSession) -> AsyncGenerator[None, 
             await session.execute(delete(Server))
             await session.execute(delete(Operation))
             await session.execute(delete(SpecFile))
+            await session.execute(delete(Overlay))
             await session.execute(update(Api).values(current_revision_id=None))
             await session.execute(delete(ApiRevision))
             await session.execute(delete(Api))
@@ -231,6 +234,130 @@ async def test_reconcile_backfills_and_prunes(
 
     assert (_version_dir(mirror_dir) / "published" / f"{revision_id}.json").is_file()
     assert not (mirror_dir / "gone.example").exists()
+
+
+async def test_sync_heals_corrupted_spec_file(
+    mirror_context: Context,
+    registry_db: DatabaseSession,
+    mirror_dir: Path,
+    _clean_registry: None,
+) -> None:
+    """A truncated mirrored spec is rewritten on the next sync even though its
+    meta sidecar still matches — file presence alone must not suppress writes."""
+    _api_id, revision_id = await _seed_api_with_revision(
+        registry_db, state=ApiRevisionState.PUBLISHED
+    )
+    svc = SpecMirrorService(mirror_context)
+    await svc.sync_api("mirror.test", "widget", "v1")
+    spec_path = _version_dir(mirror_dir) / "published" / f"{revision_id}.json"
+    spec_path.write_text('{"truncated": tru')
+
+    await svc.sync_api("mirror.test", "widget", "v1")
+
+    assert json.loads(spec_path.read_text())["info"]["title"] == "Mirror Test API"
+
+
+async def test_overlay_rollback_resyncs_mirror(
+    mirror_context: Context,
+    registry_db: DatabaseSession,
+    mirror_dir: Path,
+    _clean_registry: None,
+) -> None:
+    """A5b rollback flips revision states outside the promote/archive paths —
+    the mirror must follow: the restored base revision returns to the live
+    (imported/) dir and the rolled-back overlay revision moves to archived/,
+    so consumers globbing the live dirs never keep serving the overlay spec.
+    """
+    handler = ImportHandler(mirror_context)
+    base_result = await handler.execute(
+        job_id=str(uuid.uuid4()),
+        session=None,
+        payload={
+            "sources": [
+                {
+                    "type": "inline",
+                    "content": json.dumps(
+                        {**_SPEC_CONTENT, "servers": [{"url": "https://old.example.com"}]}
+                    ),
+                    "filename": "openapi.json",
+                    "vendor": "mirror.test",
+                    "api_name": "widget",
+                    "version": "v1",
+                    "origin": "catalog",
+                    "source_url": "https://catalog.example.com/base.json",
+                }
+            ]
+        },
+        created_by="usr_test",
+    )
+    base = base_result.body["revisions"][0]
+    base_revision_id = base["revision_id"]
+    api_ident = base["api"]
+
+    async with registry_db.session() as session:
+        api_row = (
+            await session.execute(select(Api).where(Api.vendor == api_ident["vendor"]))
+        ).scalar_one()
+        overlay = Overlay(
+            api_id=api_row.id,
+            document={
+                "overlay": "1.0.0",
+                "actions": [
+                    {"target": "$.servers", "remove": True},
+                    {"target": "$", "update": {"servers": [{"url": "https://new.example.com"}]}},
+                ],
+            },
+            status="pending",
+            created_by="usr_test",
+        )
+        session.add(overlay)
+        await session.commit()
+        overlay_id = overlay.id
+
+    # Materialize the overlay (the job a confirm would enqueue), then flip it
+    # CONFIRMED the way the confirm service does — rollback requires CONFIRMED.
+    materialize_result = await handler.execute(
+        job_id=str(uuid.uuid4()),
+        session=None,
+        payload={
+            "sources": [
+                {
+                    "type": "inline",
+                    "content": json.dumps(
+                        {**_SPEC_CONTENT, "servers": [{"url": "https://new.example.com"}]}
+                    ),
+                    "filename": "openapi.json",
+                    "vendor": api_ident["vendor"],
+                    "api_name": api_ident["name"],
+                    "version": api_ident["version"],
+                    "origin": "overlay",
+                    "source_url": "https://catalog.example.com/base.json",
+                }
+            ],
+            "overlay_id": overlay_id,
+        },
+        created_by="usr_test",
+    )
+    overlay_revision_id = materialize_result.body["revisions"][0]["revision_id"]
+    async with registry_db.session() as session:
+        await session.execute(
+            update(Overlay).where(Overlay.id == overlay_id).values(status="confirmed")
+        )
+        await session.commit()
+
+    version_dir = mirror_dir / api_ident["vendor"] / api_ident["name"] / api_ident["version"]
+    # Post-materialize the overlay revision is live and the base is archived.
+    assert (version_dir / "imported" / f"{overlay_revision_id}.json").is_file()
+    assert (version_dir / "archived" / f"{base_revision_id}.json").is_file()
+
+    await OverlayService(mirror_context).rollback(
+        api_ident["vendor"], api_ident["name"], api_ident["version"], overlay_id, identity=_IDENTITY
+    )
+
+    # The mirror inverted with the DB: base back in the live dir, overlay retired.
+    assert (version_dir / "imported" / f"{base_revision_id}.json").is_file()
+    assert (version_dir / "archived" / f"{overlay_revision_id}.json").is_file()
+    assert not (version_dir / "imported" / f"{overlay_revision_id}.json").exists()
 
 
 async def test_disabled_mirror_never_touches_disk(

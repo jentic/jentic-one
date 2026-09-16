@@ -11,7 +11,7 @@ import re
 import secrets
 import stat
 import threading
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import Annotated, Any, Literal, cast
 from urllib.parse import urlparse
 
@@ -1560,34 +1560,44 @@ class EntitlementConfig(BaseModel):
 class SpecMirrorConfig(BaseModel):
     """Opt-in mirror of registry spec documents to a local directory.
 
-    When enabled, every successful import, promote, archive, and delete also
-    rewrites the affected API's directory under ``path`` so the filesystem
-    mirrors the registry DB: one JSON spec document per revision, grouped by
-    lifecycle state (``published/``, ``imported/``, ``draft/``, ``archived/``),
-    plus a ``<revision_id>.meta.json`` sidecar. The directory is meant to be
-    mounted read-write into jentic-one and read-only into consumer services
-    that want direct file access to specs (``published/`` + ``imported/``
-    together hold the at-most-one servable revision per API version).
+    When enabled, every successful import, promote, archive, delete, and
+    overlay rollback also rewrites the affected API's directory under ``path``
+    so the filesystem mirrors the registry DB: one JSON spec document per
+    revision, grouped by lifecycle state (``published/``, ``imported/``,
+    ``draft/``, ``archived/``), plus a ``<revision_id>.meta.json`` sidecar.
+    The directory is meant to be mounted read-write into jentic-one and
+    read-only into consumer services that want direct file access to specs
+    (``published/`` + ``imported/`` together hold the at-most-one servable
+    revision per API version).
 
     Mirroring is best-effort and post-commit: the DB is the source of truth, a
-    file-write failure never fails the registry operation, and drift heals on
-    the next sync or the startup reconcile. Defaults to **OFF**: omitting this
-    block wires nothing and never touches the filesystem.
+    file-write failure never fails the registry operation (failures log at
+    error level and count on the ``spec_mirror.failures`` metric), and drift
+    heals on the next sync or the startup reconcile. Write serialization is
+    per process — run exactly **one** registry-surface process per mirror
+    directory; replicas sharing a read-write mount are unsupported. Defaults
+    to **OFF**: omitting this block wires nothing and never touches the
+    filesystem.
     """
 
     enabled: bool = False
-    # Directory the mirror writes into. Required whenever ``enabled``; created
-    # on startup when missing. Must be writable by the app process.
+    # Directory the mirror writes into. Required and absolute whenever
+    # ``enabled`` (a relative path would resolve against the process CWD and
+    # silently split the mirror between differently-launched processes);
+    # created on startup when missing. Must be writable by the app process.
     path: str = ""
     # Rebuild the whole mirror from the DB during app startup: backfills specs
     # imported before the feature was enabled and prunes files whose API or
-    # revision no longer exists. Runs before the HTTP surface serves traffic.
+    # revision no longer exists. Runs as a background task supervised by the
+    # app lifespan, so a large registry doesn't delay readiness.
     reconcile_on_startup: bool = True
 
     @model_validator(mode="after")
     def _require_path_when_enabled(self) -> SpecMirrorConfig:
         if self.enabled and not self.path:
             raise ValueError("spec_mirror.enabled requires spec_mirror.path")
+        if self.enabled and not PurePath(self.path).is_absolute():
+            raise ValueError("spec_mirror.path must be an absolute path")
         return self
 
 

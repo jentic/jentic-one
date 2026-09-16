@@ -220,8 +220,10 @@ class ApiService:
 
         deactivated = await self._deactivate_control_credentials(vendor, name, version)
         # Post-commit mirror side effect (best-effort, self-gated on
-        # spec_mirror.enabled): drop the deleted API's directory.
-        await SpecMirrorService(self._ctx).remove_api(vendor, name, version)
+        # spec_mirror.enabled): a DB-driven sync of a deleted API removes its
+        # directory — and stays correct if a re-import of the same identity
+        # already landed between the delete commit and this call.
+        await SpecMirrorService(self._ctx).sync_api(vendor, name, version)
 
         await record_audit_best_effort(
             self._ctx,
