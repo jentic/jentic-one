@@ -183,7 +183,9 @@ async def test_broker_denial_with_directive_is_the_coded_soft_error(broker) -> N
         return httpx.Response(
             403,
             headers={"Content-Type": "application/json"},
-            content=json.dumps({"detail": "denied", "agent_directive": directive}).encode(),
+            content=json.dumps(
+                {"type": "no_credential_binding", "detail": "denied", "agent_directive": directive}
+            ).encode(),
         )
 
     broker(handler)
@@ -198,8 +200,51 @@ async def test_broker_denial_with_directive_is_the_coded_soft_error(broker) -> N
     assert payload["actionable_step"] == directive["instruction"]
     assert payload["details"] == {"http_status": 403}
     assert payload["retryable"] is False
-    assert payload["next_tool"] == "whoami"
+    assert payload["next_tool"] == "request_connection"
     assert "instance" in payload
+
+
+@pytest.mark.parametrize(
+    ("status", "body", "want_tool"),
+    [
+        (403, {"type": "no_credential_binding", "detail": "denied"}, "request_connection"),
+        (403, {"type": "no_toolkit_binding", "detail": "denied"}, "request_connection"),
+        (424, {"type": "credential_not_provisioned", "detail": "denied"}, "request_connection"),
+        (403, {"type": "action_denied", "detail": "a permission rule forbids this"}, "whoami"),
+        (403, {"type": "credential_identity_mismatch", "detail": "denied"}, "whoami"),
+        (424, {"type": "credential_undecryptable", "detail": "denied"}, "whoami"),
+        (403, {"detail": "denied"}, "whoami"),
+    ],
+)
+async def test_denial_next_tool_keys_on_problem_type(
+    broker, status: int, body: dict[str, Any], want_tool: str
+) -> None:
+    """The type→next_tool mapping (Phase 1b review M1): request_connection
+    ONLY for the provisioning-shaped problem types; action_denied /
+    identity-mismatch / unknown denials keep whoami — a status-keyed fork
+    would teach the model to file connect sessions to route around
+    permission rules. The synthesized hint must match the pointer."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            status,
+            headers={"Content-Type": "application/problem+json"},
+            content=json.dumps(body).encode(),
+        )
+
+    broker(handler)
+    env = make_env("http://127.0.0.1:8100")
+    result = await dispatch_tool_call(env, "execute", {"operation_id": "GET:/v1/pets"})
+    assert result.is_error
+
+    payload = decode_tool_json(result)
+    assert payload["error_code"] == "BROKER_DENIED"
+    assert payload["next_tool"] == want_tool
+    step = payload["actionable_step"]
+    if want_tool == "whoami":
+        assert "request_connection" not in step
+    else:
+        assert "request_connection" in step
 
 
 async def test_insecure_broker_refusal_is_the_coded_transport_error(broker) -> None:
