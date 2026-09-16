@@ -40,6 +40,7 @@ from jentic_one.broker.services.credentials.errors import (
 )
 from jentic_one.broker.services.credentials.refresh import TokenRefresher
 from jentic_one.broker.services.credentials.resolver import CredentialResolver, ResolvedCredential
+from jentic_one.shared.access_guidance import connect_vendor_key
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.crypto import DecryptionError
@@ -373,24 +374,49 @@ class CredentialService:
     def _not_provisioned(
         self, api: APIReference, identity: Identity
     ) -> DomainCredentialNotProvisionedError:
-        """Build the 424 with a ``prompt_human`` directive enabling a human handoff."""
+        """Build the 424 with a ``prompt_human`` directive enabling a human handoff.
+
+        Phase 1b: when the API reverse-maps onto a vendor-registry key
+        (``connect_vendor_key``), the provisioning leg is agent-initiable —
+        the directive carries a runnable ``parameters.suggested_command``
+        (``jentic connect <key>``, the registry key, never the API identity)
+        and the prose teaches the relay loop. Off the registry the ask stays
+        with the operator (same registry-gated pattern as the 403 arms in
+        ``broker/web/routers/execute.py``); approval stays human either way.
+        """
         intent_id = f"intent_{uuid.uuid4().hex}"
         params: dict[str, object] = {"intent_id": intent_id, "vendor": api.vendor}
 
-        base = self._ctx.config.broker.account_linking_base_url
-        instruction = (
-            f"No credential is connected for '{api.vendor}'; "
-            "ask the user to connect the account before retrying."
+        connect_vendor = connect_vendor_key(
+            self._ctx.config.vendors, vendor=api.vendor, name=api.name, version=api.version
         )
+        if connect_vendor:
+            params["suggested_command"] = f"jentic connect {connect_vendor}"
+
+        base = self._ctx.config.broker.account_linking_base_url
+        if connect_vendor:
+            instruction = (
+                f"No credential is connected for '{api.vendor}'. Start connecting one "
+                f"yourself: run `jentic connect {connect_vendor}` (or call the "
+                "request_connection tool) and relay the approval_url to your human "
+                "operator — they approve it in the browser; you cannot. Once they "
+                "confirm, verify the new binding with whoami and retry."
+            )
+        else:
+            instruction = (
+                f"No credential is connected for '{api.vendor}'; "
+                "ask the user to connect the account before retrying."
+            )
         if base:
             provisioning_url = (
                 f"{base.rstrip('/')}/connect/{api.vendor}?actor={identity.sub}&intent={intent_id}"
             )
             params["provisioning_url"] = provisioning_url
-            instruction = (
-                f"No credential is connected for '{api.vendor}'. Ask the user to open "
-                f"{provisioning_url} to authorize, then retry once they confirm."
-            )
+            if not connect_vendor:
+                instruction = (
+                    f"No credential is connected for '{api.vendor}'. Ask the user to open "
+                    f"{provisioning_url} to authorize, then retry once they confirm."
+                )
 
         return DomainCredentialNotProvisionedError(
             detail=f"No credential provisioned for '{api.vendor}'.",
