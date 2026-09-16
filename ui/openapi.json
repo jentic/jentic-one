@@ -23715,7 +23715,7 @@
         ],
         "summary": "Get review data for a connect session",
         "tags": [
-          "integrations"
+          "Integrations"
         ]
       }
     },
@@ -23869,7 +23869,7 @@
         ],
         "summary": "Poll a connect session's status",
         "tags": [
-          "integrations"
+          "Integrations"
         ]
       }
     },
@@ -24019,7 +24019,7 @@
         ],
         "summary": "Cancel an in-flight connect session",
         "tags": [
-          "integrations"
+          "Integrations"
         ]
       }
     },
@@ -24173,7 +24173,7 @@
         ],
         "summary": "Confirm scopes + permissions and kick off the vendor flow",
         "tags": [
-          "integrations"
+          "Integrations"
         ]
       }
     },
@@ -28731,7 +28731,7 @@
     },
     "/integrations:connect": {
       "post": {
-        "description": "Both entrypoints (agent + UI) use this endpoint.\n\nAgent callers: `agent_id` in the payload is refused (the caller *is*\nthe agent — spoofing another agent's id is a permission-boundary\nviolation). The caller's own identity is injected instead. UI / user\ncallers: `agent_id` is optional and currently ignored downstream,\nsince credentials still bind through toolkits — it becomes mandatory\nonce agent-credential bindings replace toolkit membership.",
+        "description": "Both entrypoints (agent + UI) use this endpoint.\n\nAgent callers: `agent_id` in the payload is refused (the caller *is*\nthe agent — spoofing another agent's id is a permission-boundary\nviolation). The caller's own identity is injected instead. UI / user\ncallers: `agent_id` is optional — when named, confirm creates the\ndirect agent-credential binding + permission rules; when omitted, the\ncredential connects unbound and an agent can be bound later through\nthe credentials API.",
         "operationId": "integrationsConnect",
         "requestBody": {
           "content": {
@@ -28868,7 +28868,7 @@
         ],
         "summary": "Start an integration connect session",
         "tags": [
-          "integrations"
+          "Integrations"
         ]
       }
     },
@@ -38687,7 +38687,7 @@
         ],
         "summary": "List verified vendors",
         "tags": [
-          "vendors"
+          "Vendors"
         ]
       }
     },
@@ -38831,7 +38831,7 @@
         ],
         "summary": "Get a vendor's SSO capabilities",
         "tags": [
-          "vendors"
+          "Vendors"
         ]
       }
     }
@@ -38855,6 +38855,14 @@
     {
       "description": "Part of the **Core / Access** bounded context — a `PermissionRuleSet` is a named, shareable ordered rule list (first-match-wins, default-deny) that many direct agent↔credential bindings can point at via their `rule_set_id`, so a policy edit or `permissions:test` stays a single-place operation. A binding with no `rule_set_id` uses its own inline rules instead. Rule sets carry policy, not secrets; deleting one that bindings still reference is refused (409 `rule_set_in_use`).",
       "name": "Permission Rule Sets"
+    },
+    {
+      "description": "Part of the **Core / Access** bounded context — the platform-curated catalog of verified vendors that support agent-initiated OAuth connect flows. Each entry describes the OAuth flows available (device_authorization, authorization_code) and the scope catalog with read/write classification. Vendor entries are seeded from operator config, not user-managed — the API surfaces them read-only so the SPA and agents can discover which vendors are available and pick a flow at ``:connect`` time.",
+      "name": "Vendors"
+    },
+    {
+      "description": "Part of the **Core / Access** bounded context — agent-initiated OAuth connect sessions. A caller (agent or UI) begins a session via ``POST /integrations:connect``, choosing a vendor and requested scope set; the platform provisions a pending credential, initiates the vendor's OAuth flow (device_authorization or authorization_code depending on the vendor), and returns a session id + human-facing challenge (device user_code / authorize_url).\n\nThe initiator polls ``GET /connect-sessions/{id}/status`` until the session reaches ``connected`` (tokens vaulted) or a terminal failure. Sessions are capped by a TTL; unfinished sessions can be cancelled via ``POST /connect-sessions/{id}:cancel``. The ``:confirm`` step is a UI-only hand-off that binds any pre-declared permission rules to the resulting credential.",
+      "name": "Integrations"
     },
     {
       "description": "Actor-agnostic, multi-item access-request surface (Core / Access bounded context). When an agent's brokered call is rejected by a permission rule — or the agent needs access it doesn't yet have — the agent files an `AccessRequest` containing one or more line items (`AccessRequestItem`). The request enters `pending` state and surfaces an `approve_url` that the agent presents to a human reviewer.\n\nReviewers `:decide` individual items (approve or deny each); filers can `:amend` pending items (adjust rules or target) or `:withdraw` the entire request. Each item transitions independently; the envelope status reflects the aggregate (`pending` while any item is pending, `partially_approved` when some items are decided but others remain, terminal once all items resolve).\n\nPending requests carry a TTL (default 7 days, configurable). Envelope lifecycle: `pending → partially_approved → approved | denied | withdrawn | expired`.\n\n**Identity scoping.** List and get operations are identity-scoped: filers see their own requests, reviewers see their inbox, `org:admin` sees all. Non-owners receive `404` (not `403`) to avoid leaking existence.\n\n**Security.** Mutating operations (`POST`, `:decide`, `:amend`, `:withdraw`) require `agents:write`; read operations require `agents:read`.",
@@ -38979,6 +38987,8 @@
       "tags": [
         "Credentials",
         "Permission Rule Sets",
+        "Vendors",
+        "Integrations",
         "Access Requests"
       ]
     },

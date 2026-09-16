@@ -735,6 +735,24 @@ func (e OperationResultResponseType) Valid() bool {
 	}
 }
 
+// Defines values for PermissionRuleModelEffect.
+const (
+	PermissionRuleModelEffectAllow PermissionRuleModelEffect = "allow"
+	PermissionRuleModelEffectDeny  PermissionRuleModelEffect = "deny"
+)
+
+// Valid indicates whether the value is a known member of the PermissionRuleModelEffect enum.
+func (e PermissionRuleModelEffect) Valid() bool {
+	switch e {
+	case PermissionRuleModelEffectAllow:
+		return true
+	case PermissionRuleModelEffectDeny:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for PermissionRuleReadSchemaEffect.
 const (
 	PermissionRuleReadSchemaEffectAllow PermissionRuleReadSchemaEffect = "allow"
@@ -1566,10 +1584,10 @@ type ClaimRequest struct {
 	Token string `json:"token"`
 }
 
-// ConnectChallengeResponse Response from a connect initiation.
-type ConnectChallengeResponse struct {
-	AuthorizeUrl string `json:"authorize_url"`
-	State        string `json:"state"`
+// ConfirmSessionRequest defines model for ConfirmSessionRequest.
+type ConfirmSessionRequest struct {
+	ConfirmedScopes []string               `json:"confirmed_scopes"`
+	PermissionRules *[]PermissionRuleModel `json:"permission_rules,omitempty"`
 }
 
 // ConnectRequestBody Request body for initiating a credential connect flow.
@@ -2014,6 +2032,17 @@ type InstanceIdentityResponse struct {
 
 // InstanceIdentityResponseBackend Operator-declared backend locality (server.backend): 'local' for a self-hosted install on the operator's own machine/network, 'remote' for a hosted install run elsewhere. A hint, not an authorization signal; defaults to 'local'.
 type InstanceIdentityResponseBackend string
+
+// IntegrationsConnectRequest defines model for IntegrationsConnectRequest.
+type IntegrationsConnectRequest struct {
+	AgentId         *string   `json:"agent_id,omitempty"`
+	PreferredFlow   *string   `json:"preferred_flow,omitempty"`
+	Reason          *string   `json:"reason,omitempty"`
+	RequestedScopes *[]string `json:"requested_scopes,omitempty"`
+
+	// Vendor Vendor registry key (e.g. 'github')
+	Vendor string `json:"vendor"`
+}
 
 // IntrospectRequest Introspection endpoint request (form body).
 type IntrospectRequest struct {
@@ -2786,6 +2815,20 @@ type PermissionRuleListResponse struct {
 	Data []PermissionRuleReadSchema `json:"data"`
 }
 
+// PermissionRuleModel One agent permission rule (allow/deny).
+type PermissionRuleModel struct {
+	Effect *PermissionRuleModelEffect `json:"effect,omitempty"`
+
+	// Method Examples: GET, POST
+	Method string `json:"method"`
+
+	// Path Examples: /repos/**, /repos/*/issues
+	Path string `json:"path"`
+}
+
+// PermissionRuleModelEffect defines model for PermissionRuleModel.Effect.
+type PermissionRuleModelEffect string
+
 // PermissionRuleReadSchema Permission rule response (includes system fields).
 type PermissionRuleReadSchema struct {
 	UnderscoreComment *string                            `json:"_comment,omitempty"`
@@ -3399,6 +3442,19 @@ type UserUpdateRequest struct {
 	LastName  *string `json:"last_name,omitempty"`
 }
 
+// VendorListResponse defines model for VendorListResponse.
+type VendorListResponse struct {
+	Data []VendorSummaryResponse `json:"data"`
+}
+
+// VendorSummaryResponse defines model for VendorSummaryResponse.
+type VendorSummaryResponse struct {
+	DisplayName string   `json:"display_name"`
+	FlowKinds   []string `json:"flow_kinds"`
+	Key         string   `json:"key"`
+	Vendor      string   `json:"vendor"`
+}
+
 // VersionResponse The running app version and the latest release known to this backend.
 type VersionResponse struct {
 	// Current The version of jentic-one currently running on this backend.
@@ -3632,6 +3688,18 @@ type PreviewCatalogOperationsParams struct {
 
 // SnoozeCatalogEntryJSONBody defines parameters for SnoozeCatalogEntry.
 type SnoozeCatalogEntryJSONBody = CatalogSnoozeRequest
+
+// PollConnectSessionStatusParams defines parameters for PollConnectSessionStatus.
+type PollConnectSessionStatusParams struct {
+	// PollToken Opaque poll capability
+	PollToken string `form:"poll_token" json:"poll_token"`
+}
+
+// CancelConnectSessionParams defines parameters for CancelConnectSession.
+type CancelConnectSessionParams struct {
+	// PollToken Opaque poll capability
+	PollToken string `form:"poll_token" json:"poll_token"`
+}
 
 // ListCredentialsParams defines parameters for ListCredentials.
 type ListCredentialsParams struct {
@@ -3928,6 +3996,9 @@ type LoginJSONRequestBody = LoginRequest
 // SnoozeCatalogEntryJSONRequestBody defines body for SnoozeCatalogEntry for application/json ContentType.
 type SnoozeCatalogEntryJSONRequestBody = SnoozeCatalogEntryJSONBody
 
+// ConfirmConnectSessionJSONRequestBody defines body for ConfirmConnectSession for application/json ContentType.
+type ConfirmConnectSessionJSONRequestBody = ConfirmSessionRequest
+
 // CreateCredentialJSONRequestBody defines body for CreateCredential for application/json ContentType.
 type CreateCredentialJSONRequestBody CreateCredentialJSONBody
 
@@ -3951,6 +4022,9 @@ type ConnectCredentialJSONRequestBody = ConnectRequestBody
 
 // AcknowledgeEventJSONRequestBody defines body for AcknowledgeEvent for application/json ContentType.
 type AcknowledgeEventJSONRequestBody = EventAcknowledgeRequest
+
+// IntegrationsConnectJSONRequestBody defines body for IntegrationsConnect for application/json ContentType.
+type IntegrationsConnectJSONRequestBody = IntegrationsConnectRequest
 
 // LoginSubmitFormdataRequestBody defines body for LoginSubmit for application/x-www-form-urlencoded ContentType.
 type LoginSubmitFormdataRequestBody = BodyLoginSubmit
@@ -5845,6 +5919,57 @@ type ClientInterface interface {
 	// Corresponds with POST /catalog:refresh (the `RefreshCatalog` operationId).
 	RefreshCatalog(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// GetConnectSession Get review data for a connect session
+	//
+	// Data the review page needs: vendor display name, resolved flow, the
+	// scope catalog flagged with default/requested, current state, reason.
+	//
+	// Corresponds with GET /connect-sessions/{session_id} (the `GetConnectSession` operationId).
+	GetConnectSession(ctx context.Context, sessionId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PollConnectSessionStatus Poll a connect session's status
+	//
+	// Corresponds with GET /connect-sessions/{session_id}/status (the `PollConnectSessionStatus` operationId).
+	PollConnectSessionStatus(ctx context.Context, sessionId string, params *PollConnectSessionStatusParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CancelConnectSession Cancel an in-flight connect session
+	//
+	// Terminate a still-active session at the user's request.
+	//
+	// Gated by the same ``poll_token`` capability as ``/status`` — the
+	// SPA already holds it, so we don't force the caller to bring a
+	// heavier scope than the poller endpoint they're already using.
+	//
+	// A still-existing but already-terminal session is a 204 no-op — a
+	// "Cancel" click racing the poll scanner doesn't error. A session
+	// that has already been cascade-deleted (unhappy-terminal path in
+	// ``_mark_terminal``) surfaces as 403, matching ``/status`` — the
+	// caller can't distinguish "gone" from "your poll_token is wrong",
+	// which is the enumeration-oracle guard. The SPA's cancel-on-unmount
+	// is fire-and-forget and ``.catch``es the 403, so this doesn't leak
+	// into the UX.
+	//
+	// Corresponds with POST /connect-sessions/{session_id}:cancel (the `CancelConnectSession` operationId).
+	CancelConnectSession(ctx context.Context, sessionId string, params *CancelConnectSessionParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ConfirmConnectSessionWithBody Confirm scopes + permissions and kick off the vendor flow
+	//
+	// Called by the review page after the human confirms selections.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /connect-sessions/{session_id}:confirm (the `ConfirmConnectSession` operationId).
+	ConfirmConnectSessionWithBody(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ConfirmConnectSession Confirm scopes + permissions and kick off the vendor flow
+	//
+	// Called by the review page after the human confirms selections.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /connect-sessions/{session_id}:confirm (the `ConfirmConnectSession` operationId).
+	ConfirmConnectSession(ctx context.Context, sessionId string, body ConfirmConnectSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ControlHealth Control health
 	//
 	// Return service health status for this surface.
@@ -6065,6 +6190,11 @@ type ClientInterface interface {
 	//
 	// Initiate the OAuth connect flow for a credential.
 	//
+	// Discriminates on the provider's returned challenge: OAuth2
+	// authorization-code providers return an ``authorize_url`` for popup
+	// redirect; device-flow providers return ``user_code`` /
+	// ``verification_uri`` for the RFC 8628 human step.
+	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /credentials/{credential_id}/connect (the `ConnectCredential` operationId).
@@ -6073,6 +6203,11 @@ type ClientInterface interface {
 	// ConnectCredential Begin OAuth connect flow
 	//
 	// Initiate the OAuth connect flow for a credential.
+	//
+	// Discriminates on the provider's returned challenge: OAuth2
+	// authorization-code providers return an ``authorize_url`` for popup
+	// redirect; device-flow providers return ``user_code`` /
+	// ``verification_uri`` for the RFC 8628 human step.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -6192,6 +6327,40 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /instance (the `GetInstance` operationId).
 	GetInstance(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// IntegrationsConnectWithBody Start an integration connect session
+	//
+	// Both entrypoints (agent + UI) use this endpoint.
+	//
+	// Agent callers: `agent_id` in the payload is refused (the caller *is*
+	// the agent — spoofing another agent's id is a permission-boundary
+	// violation). The caller's own identity is injected instead. UI / user
+	// callers: `agent_id` is optional — when named, confirm creates the
+	// direct agent-credential binding + permission rules; when omitted, the
+	// credential connects unbound and an agent can be bound later through
+	// the credentials API.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /integrations:connect (the `IntegrationsConnect` operationId).
+	IntegrationsConnectWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// IntegrationsConnect Start an integration connect session
+	//
+	// Both entrypoints (agent + UI) use this endpoint.
+	//
+	// Agent callers: `agent_id` in the payload is refused (the caller *is*
+	// the agent — spoofing another agent's id is a permission-boundary
+	// violation). The caller's own identity is injected instead. UI / user
+	// callers: `agent_id` is optional — when named, confirm creates the
+	// direct agent-credential binding + permission rules; when omitted, the
+	// credential connects unbound and an agent can be bound later through
+	// the credentials API.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /integrations:connect (the `IntegrationsConnect` operationId).
+	IntegrationsConnect(ctx context.Context, body IntegrationsConnectJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListJobs List Jobs
 	//
@@ -7375,6 +7544,25 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /users:redeem-invite (the `RedeemInvite` operationId).
 	RedeemInvite(ctx context.Context, body RedeemInviteJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListVendors List verified vendors
+	//
+	// Public metadata for every vendor in the config-seeded registry.
+	//
+	// Used by the UI's "Add integration" picker. Never returns secrets.
+	//
+	// Corresponds with GET /vendors (the `ListVendors` operationId).
+	ListVendors(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetAuthCapabilities Get a vendor's SSO capabilities
+	//
+	// Full auth capabilities for one vendor — flows, scopes, classifications.
+	//
+	// Never returns client_secret (authorization-code flow's secret is stripped
+	// at response build time).
+	//
+	// Corresponds with GET /vendors/{vendor_key}/auth-capabilities (the `GetAuthCapabilities` operationId).
+	GetAuthCapabilities(ctx context.Context, vendorKey string, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
 // Jwks JSON Web Key Set
@@ -9467,6 +9655,107 @@ func (c *Client) RefreshCatalog(ctx context.Context, reqEditors ...RequestEditor
 	return c.Client.Do(req)
 }
 
+// GetConnectSession Get review data for a connect session
+//
+// Data the review page needs: vendor display name, resolved flow, the
+// scope catalog flagged with default/requested, current state, reason.
+//
+// Corresponds with GET /connect-sessions/{session_id} (the `GetConnectSession` operationId).
+func (c *Client) GetConnectSession(ctx context.Context, sessionId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetConnectSessionRequest(c.Server, sessionId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PollConnectSessionStatus Poll a connect session's status
+//
+// Corresponds with GET /connect-sessions/{session_id}/status (the `PollConnectSessionStatus` operationId).
+func (c *Client) PollConnectSessionStatus(ctx context.Context, sessionId string, params *PollConnectSessionStatusParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPollConnectSessionStatusRequest(c.Server, sessionId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CancelConnectSession Cancel an in-flight connect session
+//
+// Terminate a still-active session at the user's request.
+//
+// Gated by the same “poll_token“ capability as “/status“ — the
+// SPA already holds it, so we don't force the caller to bring a
+// heavier scope than the poller endpoint they're already using.
+//
+// A still-existing but already-terminal session is a 204 no-op — a
+// "Cancel" click racing the poll scanner doesn't error. A session
+// that has already been cascade-deleted (unhappy-terminal path in
+// “_mark_terminal“) surfaces as 403, matching “/status“ — the
+// caller can't distinguish "gone" from "your poll_token is wrong",
+// which is the enumeration-oracle guard. The SPA's cancel-on-unmount
+// is fire-and-forget and “.catch“es the 403, so this doesn't leak
+// into the UX.
+//
+// Corresponds with POST /connect-sessions/{session_id}:cancel (the `CancelConnectSession` operationId).
+func (c *Client) CancelConnectSession(ctx context.Context, sessionId string, params *CancelConnectSessionParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCancelConnectSessionRequest(c.Server, sessionId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ConfirmConnectSessionWithBody Confirm scopes + permissions and kick off the vendor flow
+//
+// Called by the review page after the human confirms selections.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /connect-sessions/{session_id}:confirm (the `ConfirmConnectSession` operationId).
+func (c *Client) ConfirmConnectSessionWithBody(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewConfirmConnectSessionRequestWithBody(c.Server, sessionId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ConfirmConnectSession Confirm scopes + permissions and kick off the vendor flow
+//
+// Called by the review page after the human confirms selections.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /connect-sessions/{session_id}:confirm (the `ConfirmConnectSession` operationId).
+func (c *Client) ConfirmConnectSession(ctx context.Context, sessionId string, body ConfirmConnectSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewConfirmConnectSessionRequest(c.Server, sessionId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // ControlHealth Control health
 //
 // Return service health status for this surface.
@@ -9897,6 +10186,11 @@ func (c *Client) AttachAgentCredentialRuleSet(ctx context.Context, credentialId 
 //
 // Initiate the OAuth connect flow for a credential.
 //
+// Discriminates on the provider's returned challenge: OAuth2
+// authorization-code providers return an “authorize_url“ for popup
+// redirect; device-flow providers return “user_code“ /
+// “verification_uri“ for the RFC 8628 human step.
+//
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /credentials/{credential_id}/connect (the `ConnectCredential` operationId).
@@ -9915,6 +10209,11 @@ func (c *Client) ConnectCredentialWithBody(ctx context.Context, credentialId str
 // ConnectCredential Begin OAuth connect flow
 //
 // Initiate the OAuth connect flow for a credential.
+//
+// Discriminates on the provider's returned challenge: OAuth2
+// authorization-code providers return an “authorize_url“ for popup
+// redirect; device-flow providers return “user_code“ /
+// “verification_uri“ for the RFC 8628 human step.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -10155,6 +10454,60 @@ func (c *Client) InspectOperation(ctx context.Context, params *InspectOperationP
 // Corresponds with GET /instance (the `GetInstance` operationId).
 func (c *Client) GetInstance(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetInstanceRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// IntegrationsConnectWithBody Start an integration connect session
+//
+// Both entrypoints (agent + UI) use this endpoint.
+//
+// Agent callers: `agent_id` in the payload is refused (the caller *is*
+// the agent — spoofing another agent's id is a permission-boundary
+// violation). The caller's own identity is injected instead. UI / user
+// callers: `agent_id` is optional — when named, confirm creates the
+// direct agent-credential binding + permission rules; when omitted, the
+// credential connects unbound and an agent can be bound later through
+// the credentials API.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /integrations:connect (the `IntegrationsConnect` operationId).
+func (c *Client) IntegrationsConnectWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewIntegrationsConnectRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// IntegrationsConnect Start an integration connect session
+//
+// Both entrypoints (agent + UI) use this endpoint.
+//
+// Agent callers: `agent_id` in the payload is refused (the caller *is*
+// the agent — spoofing another agent's id is a permission-boundary
+// violation). The caller's own identity is injected instead. UI / user
+// callers: `agent_id` is optional — when named, confirm creates the
+// direct agent-credential binding + permission rules; when omitted, the
+// credential connects unbound and an agent can be bound later through
+// the credentials API.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /integrations:connect (the `IntegrationsConnect` operationId).
+func (c *Client) IntegrationsConnect(ctx context.Context, body IntegrationsConnectJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewIntegrationsConnectRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -12298,6 +12651,45 @@ func (c *Client) RedeemInviteWithBody(ctx context.Context, contentType string, b
 // Corresponds with POST /users:redeem-invite (the `RedeemInvite` operationId).
 func (c *Client) RedeemInvite(ctx context.Context, body RedeemInviteJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRedeemInviteRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListVendors List verified vendors
+//
+// Public metadata for every vendor in the config-seeded registry.
+//
+// Used by the UI's "Add integration" picker. Never returns secrets.
+//
+// Corresponds with GET /vendors (the `ListVendors` operationId).
+func (c *Client) ListVendors(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListVendorsRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetAuthCapabilities Get a vendor's SSO capabilities
+//
+// Full auth capabilities for one vendor — flows, scopes, classifications.
+//
+// Never returns client_secret (authorization-code flow's secret is stripped
+// at response build time).
+//
+// Corresponds with GET /vendors/{vendor_key}/auth-capabilities (the `GetAuthCapabilities` operationId).
+func (c *Client) GetAuthCapabilities(ctx context.Context, vendorKey string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetAuthCapabilitiesRequest(c.Server, vendorKey)
 	if err != nil {
 		return nil, err
 	}
@@ -16651,6 +17043,201 @@ func NewRefreshCatalogRequest(server string) (*http.Request, error) {
 	return req, nil
 }
 
+// NewGetConnectSessionRequest constructs an http.Request for the GetConnectSession method
+func NewGetConnectSessionRequest(server string, sessionId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "session_id", sessionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/connect-sessions/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewPollConnectSessionStatusRequest constructs an http.Request for the PollConnectSessionStatus method
+func NewPollConnectSessionStatusRequest(server string, sessionId string, params *PollConnectSessionStatusParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "session_id", sessionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/connect-sessions/%s/status", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "poll_token", params.PollToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCancelConnectSessionRequest constructs an http.Request for the CancelConnectSession method
+func NewCancelConnectSessionRequest(server string, sessionId string, params *CancelConnectSessionParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "session_id", sessionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/connect-sessions/%s:cancel", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "poll_token", params.PollToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewConfirmConnectSessionRequest calls the generic ConfirmConnectSession builder with application/json body
+func NewConfirmConnectSessionRequest(server string, sessionId string, body ConfirmConnectSessionJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewConfirmConnectSessionRequestWithBody(server, sessionId, "application/json", bodyReader)
+}
+
+// NewConfirmConnectSessionRequestWithBody constructs an http.Request for the ConfirmConnectSession method, with any body, and a specified content type
+func NewConfirmConnectSessionRequestWithBody(server string, sessionId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "session_id", sessionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/connect-sessions/%s:confirm", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewControlHealthRequest constructs an http.Request for the ControlHealth method
 func NewControlHealthRequest(server string) (*http.Request, error) {
 	var err error
@@ -18262,6 +18849,46 @@ func NewGetInstanceRequest(server string) (*http.Request, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewIntegrationsConnectRequest calls the generic IntegrationsConnect builder with application/json body
+func NewIntegrationsConnectRequest(server string, body IntegrationsConnectJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewIntegrationsConnectRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewIntegrationsConnectRequestWithBody constructs an http.Request for the IntegrationsConnect method, with any body, and a specified content type
+func NewIntegrationsConnectRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/integrations:connect")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -21288,6 +21915,67 @@ func NewRedeemInviteRequestWithBody(server string, contentType string, body io.R
 	return req, nil
 }
 
+// NewListVendorsRequest constructs an http.Request for the ListVendors method
+func NewListVendorsRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/vendors")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetAuthCapabilitiesRequest constructs an http.Request for the GetAuthCapabilities method
+func NewGetAuthCapabilitiesRequest(server string, vendorKey string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "vendor_key", vendorKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/vendors/%s/auth-capabilities", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 func (c *Client) applyEditors(ctx context.Context, req *http.Request, additionalEditors []RequestEditorFn) error {
 	for _, r := range c.RequestEditors {
 		if err := r(ctx, req); err != nil {
@@ -22498,6 +23186,63 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /catalog:refresh (the `RefreshCatalog` operationId).
 	RefreshCatalogWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*RefreshCatalogHTTPResp, error)
 
+	// GetConnectSessionWithResponse Get review data for a connect session
+	//
+	// Data the review page needs: vendor display name, resolved flow, the
+	// scope catalog flagged with default/requested, current state, reason.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /connect-sessions/{session_id} (the `GetConnectSession` operationId).
+	GetConnectSessionWithResponse(ctx context.Context, sessionId string, reqEditors ...RequestEditorFn) (*GetConnectSessionHTTPResp, error)
+
+	// PollConnectSessionStatusWithResponse Poll a connect session's status
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /connect-sessions/{session_id}/status (the `PollConnectSessionStatus` operationId).
+	PollConnectSessionStatusWithResponse(ctx context.Context, sessionId string, params *PollConnectSessionStatusParams, reqEditors ...RequestEditorFn) (*PollConnectSessionStatusHTTPResp, error)
+
+	// CancelConnectSessionWithResponse Cancel an in-flight connect session
+	//
+	// Terminate a still-active session at the user's request.
+	//
+	// Gated by the same ``poll_token`` capability as ``/status`` — the
+	// SPA already holds it, so we don't force the caller to bring a
+	// heavier scope than the poller endpoint they're already using.
+	//
+	// A still-existing but already-terminal session is a 204 no-op — a
+	// "Cancel" click racing the poll scanner doesn't error. A session
+	// that has already been cascade-deleted (unhappy-terminal path in
+	// ``_mark_terminal``) surfaces as 403, matching ``/status`` — the
+	// caller can't distinguish "gone" from "your poll_token is wrong",
+	// which is the enumeration-oracle guard. The SPA's cancel-on-unmount
+	// is fire-and-forget and ``.catch``es the 403, so this doesn't leak
+	// into the UX.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /connect-sessions/{session_id}:cancel (the `CancelConnectSession` operationId).
+	CancelConnectSessionWithResponse(ctx context.Context, sessionId string, params *CancelConnectSessionParams, reqEditors ...RequestEditorFn) (*CancelConnectSessionHTTPResp, error)
+
+	// ConfirmConnectSessionWithBodyWithResponse Confirm scopes + permissions and kick off the vendor flow
+	//
+	// Called by the review page after the human confirms selections.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /connect-sessions/{session_id}:confirm (the `ConfirmConnectSession` operationId).
+	ConfirmConnectSessionWithBodyWithResponse(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ConfirmConnectSessionHTTPResp, error)
+
+	// ConfirmConnectSessionWithResponse Confirm scopes + permissions and kick off the vendor flow
+	//
+	// Called by the review page after the human confirms selections.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /connect-sessions/{session_id}:confirm (the `ConfirmConnectSession` operationId).
+	ConfirmConnectSessionWithResponse(ctx context.Context, sessionId string, body ConfirmConnectSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*ConfirmConnectSessionHTTPResp, error)
+
 	// ControlHealthWithResponse Control health
 	//
 	// Return service health status for this surface.
@@ -22736,6 +23481,11 @@ type ClientWithResponsesInterface interface {
 	//
 	// Initiate the OAuth connect flow for a credential.
 	//
+	// Discriminates on the provider's returned challenge: OAuth2
+	// authorization-code providers return an ``authorize_url`` for popup
+	// redirect; device-flow providers return ``user_code`` /
+	// ``verification_uri`` for the RFC 8628 human step.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /credentials/{credential_id}/connect (the `ConnectCredential` operationId).
@@ -22744,6 +23494,11 @@ type ClientWithResponsesInterface interface {
 	// ConnectCredentialWithResponse Begin OAuth connect flow
 	//
 	// Initiate the OAuth connect flow for a credential.
+	//
+	// Discriminates on the provider's returned challenge: OAuth2
+	// authorization-code providers return an ``authorize_url`` for popup
+	// redirect; device-flow providers return ``user_code`` /
+	// ``verification_uri`` for the RFC 8628 human step.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -22883,6 +23638,40 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /instance (the `GetInstance` operationId).
 	GetInstanceWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetInstanceHTTPResp, error)
+
+	// IntegrationsConnectWithBodyWithResponse Start an integration connect session
+	//
+	// Both entrypoints (agent + UI) use this endpoint.
+	//
+	// Agent callers: `agent_id` in the payload is refused (the caller *is*
+	// the agent — spoofing another agent's id is a permission-boundary
+	// violation). The caller's own identity is injected instead. UI / user
+	// callers: `agent_id` is optional — when named, confirm creates the
+	// direct agent-credential binding + permission rules; when omitted, the
+	// credential connects unbound and an agent can be bound later through
+	// the credentials API.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /integrations:connect (the `IntegrationsConnect` operationId).
+	IntegrationsConnectWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IntegrationsConnectHTTPResp, error)
+
+	// IntegrationsConnectWithResponse Start an integration connect session
+	//
+	// Both entrypoints (agent + UI) use this endpoint.
+	//
+	// Agent callers: `agent_id` in the payload is refused (the caller *is*
+	// the agent — spoofing another agent's id is a permission-boundary
+	// violation). The caller's own identity is injected instead. UI / user
+	// callers: `agent_id` is optional — when named, confirm creates the
+	// direct agent-credential binding + permission rules; when omitted, the
+	// credential connects unbound and an agent can be bound later through
+	// the credentials API.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /integrations:connect (the `IntegrationsConnect` operationId).
+	IntegrationsConnectWithResponse(ctx context.Context, body IntegrationsConnectJSONRequestBody, reqEditors ...RequestEditorFn) (*IntegrationsConnectHTTPResp, error)
 
 	// ListJobsWithResponse List Jobs
 	//
@@ -24146,6 +24935,29 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /users:redeem-invite (the `RedeemInvite` operationId).
 	RedeemInviteWithResponse(ctx context.Context, body RedeemInviteJSONRequestBody, reqEditors ...RequestEditorFn) (*RedeemInviteHTTPResp, error)
+
+	// ListVendorsWithResponse List verified vendors
+	//
+	// Public metadata for every vendor in the config-seeded registry.
+	//
+	// Used by the UI's "Add integration" picker. Never returns secrets.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /vendors (the `ListVendors` operationId).
+	ListVendorsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListVendorsHTTPResp, error)
+
+	// GetAuthCapabilitiesWithResponse Get a vendor's SSO capabilities
+	//
+	// Full auth capabilities for one vendor — flows, scopes, classifications.
+	//
+	// Never returns client_secret (authorization-code flow's secret is stripped
+	// at response build time).
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /vendors/{vendor_key}/auth-capabilities (the `GetAuthCapabilities` operationId).
+	GetAuthCapabilitiesWithResponse(ctx context.Context, vendorKey string, reqEditors ...RequestEditorFn) (*GetAuthCapabilitiesHTTPResp, error)
 }
 
 type JwksHTTPResp struct {
@@ -31001,6 +31813,331 @@ func (r RefreshCatalogHTTPResp) ContentType() string {
 	return ""
 }
 
+type GetConnectSessionHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *interface{}
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetConnectSessionHTTPResp) GetJSON200() *interface{} {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r GetConnectSessionHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r GetConnectSessionHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r GetConnectSessionHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r GetConnectSessionHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r GetConnectSessionHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r GetConnectSessionHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r GetConnectSessionHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetConnectSessionHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetConnectSessionHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetConnectSessionHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type PollConnectSessionStatusHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *interface{}
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r PollConnectSessionStatusHTTPResp) GetJSON200() *interface{} {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r PollConnectSessionStatusHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r PollConnectSessionStatusHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r PollConnectSessionStatusHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r PollConnectSessionStatusHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r PollConnectSessionStatusHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r PollConnectSessionStatusHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r PollConnectSessionStatusHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r PollConnectSessionStatusHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PollConnectSessionStatusHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r PollConnectSessionStatusHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CancelConnectSessionHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r CancelConnectSessionHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r CancelConnectSessionHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r CancelConnectSessionHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r CancelConnectSessionHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r CancelConnectSessionHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r CancelConnectSessionHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r CancelConnectSessionHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CancelConnectSessionHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CancelConnectSessionHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CancelConnectSessionHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ConfirmConnectSessionHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *interface{}
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ConfirmConnectSessionHTTPResp) GetJSON200() *interface{} {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ConfirmConnectSessionHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ConfirmConnectSessionHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ConfirmConnectSessionHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r ConfirmConnectSessionHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r ConfirmConnectSessionHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ConfirmConnectSessionHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ConfirmConnectSessionHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ConfirmConnectSessionHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ConfirmConnectSessionHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ConfirmConnectSessionHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ControlHealthHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -32271,7 +33408,7 @@ type ConnectCredentialHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *ConnectChallengeResponse
+	JSON200 *interface{}
 	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
 	ApplicationproblemJSON400 *ProblemDetail
 	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
@@ -32291,7 +33428,7 @@ type ConnectCredentialHTTPResp struct {
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ConnectCredentialHTTPResp) GetJSON200() *ConnectChallengeResponse {
+func (r ConnectCredentialHTTPResp) GetJSON200() *interface{} {
 	return r.JSON200
 }
 
@@ -33187,6 +34324,89 @@ func (r GetInstanceHTTPResp) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetInstanceHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type IntegrationsConnectHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *interface{}
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r IntegrationsConnectHTTPResp) GetJSON201() *interface{} {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r IntegrationsConnectHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r IntegrationsConnectHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r IntegrationsConnectHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r IntegrationsConnectHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r IntegrationsConnectHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r IntegrationsConnectHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r IntegrationsConnectHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r IntegrationsConnectHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r IntegrationsConnectHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r IntegrationsConnectHTTPResp) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -38362,6 +39582,172 @@ func (r RedeemInviteHTTPResp) ContentType() string {
 	return ""
 }
 
+type ListVendorsHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *VendorListResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListVendorsHTTPResp) GetJSON200() *VendorListResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ListVendorsHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ListVendorsHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ListVendorsHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r ListVendorsHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r ListVendorsHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ListVendorsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ListVendorsHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListVendorsHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListVendorsHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListVendorsHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetAuthCapabilitiesHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *interface{}
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetAuthCapabilitiesHTTPResp) GetJSON200() *interface{} {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r GetAuthCapabilitiesHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r GetAuthCapabilitiesHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r GetAuthCapabilitiesHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r GetAuthCapabilitiesHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r GetAuthCapabilitiesHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r GetAuthCapabilitiesHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r GetAuthCapabilitiesHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetAuthCapabilitiesHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetAuthCapabilitiesHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetAuthCapabilitiesHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // JwksWithResponse JSON Web Key Set
 //
 // Return the JWKS document with the active public signing keys (ES256).
@@ -40158,6 +41544,93 @@ func (c *ClientWithResponses) RefreshCatalogWithResponse(ctx context.Context, re
 	return ParseRefreshCatalogHTTPResp(rsp)
 }
 
+// GetConnectSessionWithResponse Get review data for a connect session
+//
+// Data the review page needs: vendor display name, resolved flow, the
+// scope catalog flagged with default/requested, current state, reason.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /connect-sessions/{session_id} (the `GetConnectSession` operationId).
+func (c *ClientWithResponses) GetConnectSessionWithResponse(ctx context.Context, sessionId string, reqEditors ...RequestEditorFn) (*GetConnectSessionHTTPResp, error) {
+	rsp, err := c.GetConnectSession(ctx, sessionId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetConnectSessionHTTPResp(rsp)
+}
+
+// PollConnectSessionStatusWithResponse Poll a connect session's status
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /connect-sessions/{session_id}/status (the `PollConnectSessionStatus` operationId).
+func (c *ClientWithResponses) PollConnectSessionStatusWithResponse(ctx context.Context, sessionId string, params *PollConnectSessionStatusParams, reqEditors ...RequestEditorFn) (*PollConnectSessionStatusHTTPResp, error) {
+	rsp, err := c.PollConnectSessionStatus(ctx, sessionId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePollConnectSessionStatusHTTPResp(rsp)
+}
+
+// CancelConnectSessionWithResponse Cancel an in-flight connect session
+//
+// Terminate a still-active session at the user's request.
+//
+// Gated by the same “poll_token“ capability as “/status“ — the
+// SPA already holds it, so we don't force the caller to bring a
+// heavier scope than the poller endpoint they're already using.
+//
+// A still-existing but already-terminal session is a 204 no-op — a
+// "Cancel" click racing the poll scanner doesn't error. A session
+// that has already been cascade-deleted (unhappy-terminal path in
+// “_mark_terminal“) surfaces as 403, matching “/status“ — the
+// caller can't distinguish "gone" from "your poll_token is wrong",
+// which is the enumeration-oracle guard. The SPA's cancel-on-unmount
+// is fire-and-forget and “.catch“es the 403, so this doesn't leak
+// into the UX.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /connect-sessions/{session_id}:cancel (the `CancelConnectSession` operationId).
+func (c *ClientWithResponses) CancelConnectSessionWithResponse(ctx context.Context, sessionId string, params *CancelConnectSessionParams, reqEditors ...RequestEditorFn) (*CancelConnectSessionHTTPResp, error) {
+	rsp, err := c.CancelConnectSession(ctx, sessionId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCancelConnectSessionHTTPResp(rsp)
+}
+
+// ConfirmConnectSessionWithBodyWithResponse Confirm scopes + permissions and kick off the vendor flow
+//
+// Called by the review page after the human confirms selections.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /connect-sessions/{session_id}:confirm (the `ConfirmConnectSession` operationId).
+func (c *ClientWithResponses) ConfirmConnectSessionWithBodyWithResponse(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ConfirmConnectSessionHTTPResp, error) {
+	rsp, err := c.ConfirmConnectSessionWithBody(ctx, sessionId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseConfirmConnectSessionHTTPResp(rsp)
+}
+
+// ConfirmConnectSessionWithResponse Confirm scopes + permissions and kick off the vendor flow
+//
+// Called by the review page after the human confirms selections.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /connect-sessions/{session_id}:confirm (the `ConfirmConnectSession` operationId).
+func (c *ClientWithResponses) ConfirmConnectSessionWithResponse(ctx context.Context, sessionId string, body ConfirmConnectSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*ConfirmConnectSessionHTTPResp, error) {
+	rsp, err := c.ConfirmConnectSession(ctx, sessionId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseConfirmConnectSessionHTTPResp(rsp)
+}
+
 // ControlHealthWithResponse Control health
 //
 // Return service health status for this surface.
@@ -40522,6 +41995,11 @@ func (c *ClientWithResponses) AttachAgentCredentialRuleSetWithResponse(ctx conte
 //
 // Initiate the OAuth connect flow for a credential.
 //
+// Discriminates on the provider's returned challenge: OAuth2
+// authorization-code providers return an “authorize_url“ for popup
+// redirect; device-flow providers return “user_code“ /
+// “verification_uri“ for the RFC 8628 human step.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /credentials/{credential_id}/connect (the `ConnectCredential` operationId).
@@ -40536,6 +42014,11 @@ func (c *ClientWithResponses) ConnectCredentialWithBodyWithResponse(ctx context.
 // ConnectCredentialWithResponse Begin OAuth connect flow
 //
 // Initiate the OAuth connect flow for a credential.
+//
+// Discriminates on the provider's returned challenge: OAuth2
+// authorization-code providers return an “authorize_url“ for popup
+// redirect; device-flow providers return “user_code“ /
+// “verification_uri“ for the RFC 8628 human step.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -40752,6 +42235,52 @@ func (c *ClientWithResponses) GetInstanceWithResponse(ctx context.Context, reqEd
 		return nil, err
 	}
 	return ParseGetInstanceHTTPResp(rsp)
+}
+
+// IntegrationsConnectWithBodyWithResponse Start an integration connect session
+//
+// Both entrypoints (agent + UI) use this endpoint.
+//
+// Agent callers: `agent_id` in the payload is refused (the caller *is*
+// the agent — spoofing another agent's id is a permission-boundary
+// violation). The caller's own identity is injected instead. UI / user
+// callers: `agent_id` is optional — when named, confirm creates the
+// direct agent-credential binding + permission rules; when omitted, the
+// credential connects unbound and an agent can be bound later through
+// the credentials API.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /integrations:connect (the `IntegrationsConnect` operationId).
+func (c *ClientWithResponses) IntegrationsConnectWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IntegrationsConnectHTTPResp, error) {
+	rsp, err := c.IntegrationsConnectWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseIntegrationsConnectHTTPResp(rsp)
+}
+
+// IntegrationsConnectWithResponse Start an integration connect session
+//
+// Both entrypoints (agent + UI) use this endpoint.
+//
+// Agent callers: `agent_id` in the payload is refused (the caller *is*
+// the agent — spoofing another agent's id is a permission-boundary
+// violation). The caller's own identity is injected instead. UI / user
+// callers: `agent_id` is optional — when named, confirm creates the
+// direct agent-credential binding + permission rules; when omitted, the
+// credential connects unbound and an agent can be bound later through
+// the credentials API.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /integrations:connect (the `IntegrationsConnect` operationId).
+func (c *ClientWithResponses) IntegrationsConnectWithResponse(ctx context.Context, body IntegrationsConnectJSONRequestBody, reqEditors ...RequestEditorFn) (*IntegrationsConnectHTTPResp, error) {
+	rsp, err := c.IntegrationsConnect(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseIntegrationsConnectHTTPResp(rsp)
 }
 
 // ListJobsWithResponse List Jobs
@@ -42591,6 +44120,41 @@ func (c *ClientWithResponses) RedeemInviteWithResponse(ctx context.Context, body
 		return nil, err
 	}
 	return ParseRedeemInviteHTTPResp(rsp)
+}
+
+// ListVendorsWithResponse List verified vendors
+//
+// Public metadata for every vendor in the config-seeded registry.
+//
+// Used by the UI's "Add integration" picker. Never returns secrets.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /vendors (the `ListVendors` operationId).
+func (c *ClientWithResponses) ListVendorsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListVendorsHTTPResp, error) {
+	rsp, err := c.ListVendors(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListVendorsHTTPResp(rsp)
+}
+
+// GetAuthCapabilitiesWithResponse Get a vendor's SSO capabilities
+//
+// Full auth capabilities for one vendor — flows, scopes, classifications.
+//
+// Never returns client_secret (authorization-code flow's secret is stripped
+// at response build time).
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /vendors/{vendor_key}/auth-capabilities (the `GetAuthCapabilities` operationId).
+func (c *ClientWithResponses) GetAuthCapabilitiesWithResponse(ctx context.Context, vendorKey string, reqEditors ...RequestEditorFn) (*GetAuthCapabilitiesHTTPResp, error) {
+	rsp, err := c.GetAuthCapabilities(ctx, vendorKey, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetAuthCapabilitiesHTTPResp(rsp)
 }
 
 // ParseJwksHTTPResp parses an HTTP response from a JwksWithResponse call
@@ -48234,6 +49798,274 @@ func ParseRefreshCatalogHTTPResp(rsp *http.Response) (*RefreshCatalogHTTPResp, e
 	return response, nil
 }
 
+// ParseGetConnectSessionHTTPResp parses an HTTP response from a GetConnectSessionWithResponse call
+func ParseGetConnectSessionHTTPResp(rsp *http.Response) (*GetConnectSessionHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetConnectSessionHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest interface{}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParsePollConnectSessionStatusHTTPResp parses an HTTP response from a PollConnectSessionStatusWithResponse call
+func ParsePollConnectSessionStatusHTTPResp(rsp *http.Response) (*PollConnectSessionStatusHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PollConnectSessionStatusHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest interface{}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCancelConnectSessionHTTPResp parses an HTTP response from a CancelConnectSessionWithResponse call
+func ParseCancelConnectSessionHTTPResp(rsp *http.Response) (*CancelConnectSessionHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CancelConnectSessionHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseConfirmConnectSessionHTTPResp parses an HTTP response from a ConfirmConnectSessionWithResponse call
+func ParseConfirmConnectSessionHTTPResp(rsp *http.Response) (*ConfirmConnectSessionHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ConfirmConnectSessionHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest interface{}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseControlHealthHTTPResp parses an HTTP response from a ControlHealthWithResponse call
 func ParseControlHealthHTTPResp(rsp *http.Response) (*ControlHealthHTTPResp, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -49299,7 +51131,7 @@ func ParseConnectCredentialHTTPResp(rsp *http.Response) (*ConnectCredentialHTTPR
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ConnectChallengeResponse
+		var dest interface{}
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -50036,6 +51868,74 @@ func ParseGetInstanceHTTPResp(rsp *http.Response) (*GetInstanceHTTPResp, error) 
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseIntegrationsConnectHTTPResp parses an HTTP response from a IntegrationsConnectWithResponse call
+func ParseIntegrationsConnectHTTPResp(rsp *http.Response) (*IntegrationsConnectHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &IntegrationsConnectHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest interface{}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
 
 	}
 
@@ -54239,6 +56139,142 @@ func ParseRedeemInviteHTTPResp(rsp *http.Response) (*RedeemInviteHTTPResp, error
 			return nil, err
 		}
 		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListVendorsHTTPResp parses an HTTP response from a ListVendorsWithResponse call
+func ParseListVendorsHTTPResp(rsp *http.Response) (*ListVendorsHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListVendorsHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest VendorListResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetAuthCapabilitiesHTTPResp parses an HTTP response from a GetAuthCapabilitiesWithResponse call
+func ParseGetAuthCapabilitiesHTTPResp(rsp *http.Response) (*GetAuthCapabilitiesHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetAuthCapabilitiesHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest interface{}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest ProblemDetail
