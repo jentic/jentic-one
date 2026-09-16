@@ -1,5 +1,13 @@
 """add operation name and method to execution_records
 
+Nullable-legacy adds: ``operation_name`` (the spec's path template, truncated to
+512 at the write seam) and ``operation_method`` (width mirrors registry
+``operations.method``). Nullable because historical rows and legacy in-flight
+job payloads carry only ``operation_id`` — no backfill, no lock concern.
+Deliberately unindexed: nothing filters or groups by these columns (list
+filters use toolkit/trace/status/api/actor; monitoring groups by
+``operation_id``); they are display-only.
+
 Revision ID: c1d2e3f4a5b6
 Revises: b9d0e1f2a3b4
 Create Date: 2026-09-16

@@ -20,7 +20,13 @@ export type ExecutionResponse = {
     execution_id: string;
     http_status?: (number | null);
     operation_id?: (string | null);
+    /**
+     * The operation's HTTP method, e.g. GET. Null on records predating the column.
+     */
     operation_method?: (string | null);
+    /**
+     * The operation's spec path template, e.g. /repos/{owner}/{repo}. Null on records predating the column — clients fall back to operation_id.
+     */
     operation_name?: (string | null);
     origin?: (string | null);
     pinned_revisions?: (Record<string, any> | null);

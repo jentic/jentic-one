@@ -77,3 +77,21 @@ def test_to_view_toolkit_name_none_when_no_map_provided() -> None:
     record = _make_record(toolkit_id="tk_abc123")
     view = ExecutionService._to_view(record)
     assert view.toolkit_name is None
+
+
+def test_to_view_populates_operation_identity() -> None:
+    """The record's flat operation trio maps onto the view unchanged."""
+    record = _make_record()
+    view = ExecutionService._to_view(record)
+    assert view.operation_id == "getThing"
+    assert view.operation_name == "/v1/things/{id}"
+    assert view.operation_method == "GET"
+
+
+def test_to_view_operation_identity_none_on_legacy_rows() -> None:
+    """Rows predating the operation_name/method columns map to None."""
+    record = _make_record(operation_name=None, operation_method=None)
+    view = ExecutionService._to_view(record)
+    assert view.operation_id == "getThing"
+    assert view.operation_name is None
+    assert view.operation_method is None

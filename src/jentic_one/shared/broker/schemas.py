@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from jentic_one.shared.schemas import OperationInfo
 
@@ -27,6 +27,12 @@ class ExecuteRequestContext(BaseModel):
     supplied as an inbound disambiguator. ``operation`` / ``api_*`` come from
     in-process discovery, not inbound ``Jentic-Api-*`` headers.
     """
+
+    # Forbid unknown fields: this is part of the public Broker contract and
+    # pydantic's default extra="ignore" would silently DROP a misspelled or
+    # since-renamed kwarg (e.g. the old ``operation_id=``) instead of failing
+    # loudly at the caller.
+    model_config = ConfigDict(extra="forbid")
 
     upstream_url: str
     method: str

@@ -807,6 +807,10 @@ export interface ActorExecutionEntity {
 	toolkitId: string | null;
 	toolkitName: string | null;
 	operationId: string | null;
+	/** Human-readable operation identity (spec path template + HTTP method);
+	 * null on rows predating the columns — display falls back to the id. */
+	operationName: string | null;
+	operationMethod: string | null;
 	durationMs: number | null;
 	httpStatus: number | null;
 	error: string | null;
@@ -834,6 +838,8 @@ export async function fetchActorExecutions(
 				toolkitId: r.toolkit_id ?? null,
 				toolkitName: r.toolkit_name ?? null,
 				operationId: r.operation_id ?? null,
+				operationName: r.operation_name ?? null,
+				operationMethod: r.operation_method ?? null,
 				durationMs: r.duration_ms ?? null,
 				httpStatus: r.http_status ?? null,
 				error: r.error ?? null,

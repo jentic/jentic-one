@@ -135,9 +135,9 @@ const EXECUTIONS = rebaseFixture([
 		error: null,
 		execution_id: 'exec_4',
 		http_status: 200,
+		// Legacy row: id-only, no operation_name/method — pins the table's
+		// fallback to the opaque id at component level.
 		operation_id: 'op_chatpost01',
-		operation_name: '/chat.postMessage',
-		operation_method: 'POST',
 		pinned_revisions: null,
 		started_at: '2026-06-19T10:07:00Z',
 		status: 'completed',

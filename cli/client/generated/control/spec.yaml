@@ -2623,6 +2623,18 @@ components:
           - type: string
           - type: 'null'
           title: Operation Id
+        operation_method:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: The operation's HTTP method, e.g. GET. Null on records predating the column.
+          title: Operation Method
+        operation_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: The operation's spec path template, e.g. /repos/{owner}/{repo}. Null on records predating the column — clients fall back to operation_id.
+          title: Operation Name
         origin:
           anyOf:
           - type: string

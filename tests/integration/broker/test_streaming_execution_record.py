@@ -132,3 +132,73 @@ async def test_streaming_execution_persists_failed_record(
     assert record.http_status == 502
     assert record.duration_ms == 15
     assert record.error == "upstream_error: ConnectionError"
+
+
+@pytest.mark.asyncio
+async def test_streaming_execution_without_operation_persists_null_trio(
+    admin_db: DatabaseSession,
+    ctx_req: ExecuteRequestContext,
+) -> None:
+    """No resolved operation → all three operation_* columns are NULL."""
+    execution_id = "integ-stream-exec-003"
+    ctx_req = ctx_req.model_copy(update={"operation": None})
+
+    async with admin_db.transaction() as session:
+        await persist_streaming_execution(
+            session,
+            execution_id=execution_id,
+            started_at=datetime.now(UTC),
+            status=ExecutionStatus.COMPLETED,
+            http_status=200,
+            duration_ms=5,
+            error=None,
+            ctx_req=ctx_req,
+            actor_id="agent-integ-1",
+            actor_type="agent",
+        )
+
+    async with admin_db.session() as session:
+        record = (
+            await session.execute(select(ExecutionRecord).where(ExecutionRecord.id == execution_id))
+        ).scalar_one()
+
+    assert record.operation_id is None
+    assert record.operation_name is None
+    assert record.operation_method is None
+
+
+@pytest.mark.asyncio
+async def test_oversized_operation_name_is_truncated_not_fatal(
+    admin_db: DatabaseSession,
+    ctx_req: ExecuteRequestContext,
+) -> None:
+    """A path template longer than the 512-char column truncates at the write
+    seam instead of failing the flush — the registry source column is unbounded
+    Text, so without the guard a successful execution would lose its record."""
+    execution_id = "integ-stream-exec-004"
+    long_name = "/v1/" + "x" * 600
+    ctx_req = ctx_req.model_copy(
+        update={"operation": OperationInfo(id="getData", name=long_name, method="GET")}
+    )
+
+    async with admin_db.transaction() as session:
+        await persist_streaming_execution(
+            session,
+            execution_id=execution_id,
+            started_at=datetime.now(UTC),
+            status=ExecutionStatus.COMPLETED,
+            http_status=200,
+            duration_ms=5,
+            error=None,
+            ctx_req=ctx_req,
+            actor_id="agent-integ-1",
+            actor_type="agent",
+        )
+
+    async with admin_db.session() as session:
+        record = (
+            await session.execute(select(ExecutionRecord).where(ExecutionRecord.id == execution_id))
+        ).scalar_one()
+
+    assert record.operation_name == long_name[:512]
+    assert record.operation_method == "GET"

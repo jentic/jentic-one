@@ -449,6 +449,10 @@ describe('Monitor inter-linking', () => {
 		// Header reads "Execution" (not "Trace") and shows the execution id.
 		expect(await screen.findByRole('heading', { name: 'exec_4' })).toBeInTheDocument();
 		expect(screen.getByText('Execution')).toBeInTheDocument();
+		// Legacy id-only row: the Operation cells fall back to the opaque
+		// operation_id (no operation_name/method on the record) — in both the
+		// table row and the sheet's Operation detail.
+		expect((await screen.findAllByText('op_chatpost01')).length).toBeGreaterThan(0);
 		// No trace-scoped audit link is offered for an unusable trace.
 		expect(
 			screen.queryByRole('link', { name: /View trace .* in the audit log/ }),

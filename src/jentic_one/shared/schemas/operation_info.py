@@ -1,6 +1,6 @@
 """Canonical operation identity model shared across layers."""
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class OperationInfo(BaseModel):
@@ -14,8 +14,12 @@ class OperationInfo(BaseModel):
     carry only the id.
     """
 
+    # Frozen: the identity is resolved once at discovery and must never be
+    # edited mid-pipeline (it also rides frozen dataclasses like ResolveResult).
+    model_config = ConfigDict(frozen=True)
+
     id: str
-    # The operation's path template from the spec, e.g. ``/repos/{owner}/{repo}``.
+    # The operation's path template from the spec, e.g. ``/repos/{owner}/{repo}``
+    # — "name" (not "path") to mirror the flat ``operation_name`` column/API field.
     name: str | None = None
-    # The operation's HTTP method, e.g. ``GET``.
     method: str | None = None

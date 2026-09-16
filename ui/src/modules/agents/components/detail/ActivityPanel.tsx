@@ -13,6 +13,7 @@
 import { Activity } from 'lucide-react';
 import { EmptyState, ExecutionVolumeCharts, LoadingState, RecentExecutionsCard } from '@/shared/ui';
 import { ROUTE_PATHS } from '@/shared/app';
+import { formatOperation } from '@/shared/lib';
 import { useActorExecutions, useActorUsageDetail } from '@/modules/agents/api';
 
 interface ActivityPanelProps {
@@ -73,17 +74,26 @@ export function ActivityPanel({ actorId, actorType }: ActivityPanelProps) {
 					monitorHref={monitorLink}
 					emptyMessage="No executions recorded for this actor yet."
 					hasMore={executions.data.hasMore}
-					items={items.map((row) => ({
-						id: row.id,
-						status: row.status,
-						httpStatus: row.httpStatus,
-						label: `${row.credentialName ?? row.credentialId ?? row.toolkitName ?? row.toolkitId ?? 'unattributed'}${
-							row.operationId ? `.${row.operationId}` : ''
-						}`,
-						error: row.error,
-						durationMs: row.durationMs,
-						startedAt: row.startedAt,
-					}))}
+					items={items.map((row) => {
+						// Prefer the human-readable operation (method + path
+						// template); legacy rows fall back to the opaque id.
+						const operation = formatOperation({
+							operation_id: row.operationId,
+							operation_name: row.operationName,
+							operation_method: row.operationMethod,
+						});
+						return {
+							id: row.id,
+							status: row.status,
+							httpStatus: row.httpStatus,
+							label: `${row.credentialName ?? row.credentialId ?? row.toolkitName ?? row.toolkitId ?? 'unattributed'}${
+								operation ? ` · ${operation}` : ''
+							}`,
+							error: row.error,
+							durationMs: row.durationMs,
+							startedAt: row.startedAt,
+						};
+					})}
 				/>
 			)}
 		</div>

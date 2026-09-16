@@ -4091,6 +4091,7 @@
                 "type": "null"
               }
             ],
+            "description": "The operation's HTTP method, e.g. GET. Null on records predating the column.",
             "title": "Operation Method"
           },
           "operation_name": {
@@ -4102,6 +4103,7 @@
                 "type": "null"
               }
             ],
+            "description": "The operation's spec path template, e.g. /repos/{owner}/{repo}. Null on records predating the column — clients fall back to operation_id.",
             "title": "Operation Name"
           },
           "origin": {

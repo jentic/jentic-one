@@ -260,3 +260,26 @@ export function apiIdentityTuple(input: {
 	if (vendor && name) return `${vendor}/${name}`;
 	return vendor || name;
 }
+
+/**
+ * Human-readable operation label for an execution record.
+ *
+ * Prefers the record's `operation_method` + `operation_name` (the spec's HTTP
+ * method + path template, e.g. "GET /repos/{owner}/{repo}"); rows predating
+ * those columns fall back to the opaque `operation_id`, then to null. The
+ * input is shaped after the wire `ExecutionResponse` fields so every surface
+ * that lists executions (Monitor, dashboard, agent activity) can pass its row
+ * straight through — or map camelCase fields into this shape.
+ */
+export function formatOperation(row: {
+	operation_id?: string | null;
+	operation_name?: string | null;
+	operation_method?: string | null;
+}): string | null {
+	if (row.operation_name) {
+		return row.operation_method
+			? `${row.operation_method} ${row.operation_name}`
+			: row.operation_name;
+	}
+	return row.operation_id ?? null;
+}

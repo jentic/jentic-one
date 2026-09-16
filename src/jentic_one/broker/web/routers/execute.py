@@ -1283,6 +1283,11 @@ async def _handle_async(
         "toolkit_id": ctx_req.toolkit_id,
         "trace_id": ctx_req.trace_id,
         "operation": ctx_req.operation.model_dump() if ctx_req.operation else None,
+        # Rolling-deploy shim: a pre-``operation``-dict worker draining this job
+        # reads only the flat key — without it the record would persist with
+        # operation_id NULL and the repeated-failure detector would skip it.
+        # Drop once no pre-operation-dict workers remain.
+        "operation_id": ctx_req.operation.id if ctx_req.operation else None,
         "api_vendor": ctx_req.api_vendor,
         "api_name": ctx_req.api_name,
         "api_version": ctx_req.api_version,

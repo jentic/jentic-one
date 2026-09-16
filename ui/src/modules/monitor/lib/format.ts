@@ -50,23 +50,3 @@ export function formatPercent(value: number | null | undefined): string {
 	const rounded = value.toFixed(1);
 	return `${rounded.endsWith('.0') ? rounded.slice(0, -2) : rounded}%`;
 }
-
-/**
- * Human-readable operation label for an execution row.
- *
- * Prefers the record's `operation_method` + `operation_name` (the spec's HTTP
- * method + path template, e.g. "GET /repos/{owner}/{repo}"); rows predating
- * those columns fall back to the opaque `operation_id`, then to null.
- */
-export function formatOperation(row: {
-	operation_id?: string | null;
-	operation_name?: string | null;
-	operation_method?: string | null;
-}): string | null {
-	if (row.operation_name) {
-		return row.operation_method
-			? `${row.operation_method} ${row.operation_name}`
-			: row.operation_name;
-	}
-	return row.operation_id ?? null;
-}

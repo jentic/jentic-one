@@ -18,10 +18,11 @@
  */
 import { ExternalLink } from 'lucide-react';
 import { ActorLabel, DataTable, VendorIcon, type Column } from '@/shared/ui';
+import { formatOperation } from '@/shared/lib';
 import { toExecutionStatus } from '@/modules/monitor/api';
 import type { ExecutionResponse } from '@/modules/monitor/api';
 import { ExecutionStatusPill } from '@/modules/monitor/components/StatusPill';
-import { formatDuration, formatOperation, formatRelative } from '@/modules/monitor/lib/format';
+import { formatDuration, formatRelative } from '@/modules/monitor/lib/format';
 
 interface ExecutionTableProps {
 	executions: ExecutionResponse[];

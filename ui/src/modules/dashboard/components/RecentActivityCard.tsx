@@ -13,6 +13,7 @@ import {
 import { useRecentExecutions, type ExecutionResponse } from '@/modules/dashboard/api';
 import { ROUTES } from '@/shared/app/routes';
 import { timeAgo } from '@/shared/lib/utils';
+import { formatOperation } from '@/shared/lib';
 import { SectionHeading } from '@/modules/dashboard/components/CardRow';
 
 /**
@@ -40,11 +41,7 @@ const columns: Column<ExecutionResponse>[] = [
 		render: (row) => (
 			<span className="block min-w-0">
 				<span className="text-foreground block truncate font-mono text-xs">
-					{/* Prefer the human-readable method + path template; rows
-					    predating those columns fall back to the opaque id. */}
-					{row.operation_name
-						? `${row.operation_method ? `${row.operation_method} ` : ''}${row.operation_name}`
-						: (row.operation_id ?? '—')}
+					{formatOperation(row) ?? '—'}
 				</span>
 				<span className="text-muted-foreground mt-0.5 block truncate text-[11px]">
 					{row.credential_name || row.credential_id || '—'}

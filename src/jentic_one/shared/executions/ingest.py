@@ -48,6 +48,13 @@ async def record_execution(
     if status not in tuple(ExecutionStatus):
         raise ValueError(f"Only terminal statuses allowed, got: {status!r}")
 
+    # Registry path templates are unbounded ``Text`` while the record column is
+    # ``String(512)`` — truncate defensively so an oversized template can't fail
+    # the flush and lose the whole record (the value is display-only; the join
+    # key stays ``operation_id``). Postgres rejects oversize; SQLite silently
+    # accepts it, so this is the only cross-backend guard.
+    operation_name = operation.name[:512] if operation and operation.name else None
+
     record = ExecutionRecord(
         id=execution_id,
         toolkit_id=toolkit_id or None,
@@ -56,7 +63,7 @@ async def record_execution(
         status=status,
         duration_ms=duration_ms,
         operation_id=operation.id if operation else None,
-        operation_name=operation.name if operation else None,
+        operation_name=operation_name,
         operation_method=operation.method if operation else None,
         api_vendor=api_vendor,
         api_name=api_name,

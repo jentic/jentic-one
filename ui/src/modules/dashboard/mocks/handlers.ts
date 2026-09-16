@@ -91,6 +91,11 @@ export const dashboardExecutions = [
 		execution_id: 'exec_2',
 		http_status: 500,
 		operation_id: 'repos/get',
+		// Human-readable identity present → the card renders method + path
+		// template; the sibling rows stay id-only so the legacy fallback keeps
+		// component-level coverage too.
+		operation_name: '/repos/{owner}/{repo}',
+		operation_method: 'GET',
 		started_at: minutesAgo(8),
 		status: 'failed',
 		credential_id: 'cred_dev',

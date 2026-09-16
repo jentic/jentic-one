@@ -52,10 +52,13 @@ class ExecutionRecord(AuditableMixin, AdminBase):
     duration_ms: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     operation_id: Mapped[str | None] = mapped_column(String(512), nullable=True)
-    # Human-readable operation identity (nullable: rows predating these columns
-    # and legacy in-flight jobs carry only ``operation_id``). ``operation_name``
-    # is the spec's path template (e.g. ``/repos/{owner}/{repo}``);
-    # ``operation_method`` its HTTP method.
+    # Human-readable operation identity, nullable in three cases: rows predating
+    # these columns, legacy in-flight jobs that carried only ``operation_id``,
+    # and executions where discovery resolved no operation at all (then all
+    # three operation_* columns are NULL). ``operation_name`` is the spec's path
+    # template (e.g. ``/repos/{owner}/{repo}``), truncated to 512 at the write
+    # seam (``record_execution``) because the registry source is unbounded Text;
+    # ``operation_method``'s width mirrors registry ``operations.method``.
     operation_name: Mapped[str | None] = mapped_column(String(512), nullable=True)
     operation_method: Mapped[str | None] = mapped_column(String(10), nullable=True)
     api_vendor: Mapped[str | None] = mapped_column(String(128), nullable=True)

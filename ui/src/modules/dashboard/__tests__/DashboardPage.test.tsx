@@ -88,8 +88,11 @@ describe('DashboardPage', () => {
 			}),
 		).toBeInTheDocument();
 
-		// Recent activity (executions) — an operation id from the sample.
+		// Recent activity (executions) — a legacy id-only row falls back to the
+		// opaque operation id, a row carrying the human-readable identity
+		// renders method + path template.
 		expect(await screen.findByText('charges/create')).toBeInTheDocument();
+		expect(screen.getByText('GET /repos/{owner}/{repo}')).toBeInTheDocument();
 	});
 
 	it('sorts the bell queue by urgency: severe alerts before approvals', async () => {
