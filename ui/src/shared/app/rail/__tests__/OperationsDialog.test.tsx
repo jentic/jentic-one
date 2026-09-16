@@ -65,10 +65,8 @@ describe('OperationsDialog', () => {
 		]);
 		const dialog = screen.getByRole('dialog');
 		// The legend spells out what require-approval does at call time so the
-		// reviewer doesn't have to guess — each held call files a new request.
-		expect(
-			within(dialog).getByText(/held and files a new access request/i),
-		).toBeInTheDocument();
+		// reviewer doesn't have to guess — each call is held for a human.
+		expect(within(dialog).getByText(/held for a human to approve/i)).toBeInTheDocument();
 		// Allow is explained too.
 		expect(within(dialog).getByText(/no human in the loop/i)).toBeInTheDocument();
 	});

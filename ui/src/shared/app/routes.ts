@@ -43,7 +43,6 @@ export const ROUTES = {
 	credentials: '/credentials',
 	agents: '/agents',
 	monitor: '/monitor',
-	accessRequests: '/access-requests',
 	docs: '/docs',
 } as const;
 

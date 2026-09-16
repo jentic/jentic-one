@@ -12,7 +12,7 @@
  *                 bound-credentials card
  *   - Activity  → execution volume + recent executions (same per-actor
  *                 monitoring reads; SA ids are actor ids)
- *   - Access    → platform scopes (#615) + filed access requests (#619)
+ *   - Access    → platform scopes (#615)
  *   - Keys      → generate only; SA responses expose no key metadata/history
  *                 (backend gap, documented inline)
  *   - Settings  → the copyable account id + danger zone; there is no PATCH
@@ -74,7 +74,6 @@ import { ActorStatusBadge } from '@/modules/agents/components/ActorStatusBadge';
 import { ApiKeyDialog } from '@/modules/agents/components/ApiKeyDialog';
 import { ConfirmDialog } from '@/modules/agents/components/confirm/ConfirmDialog';
 import { ScopesCard } from '@/modules/agents/components/ScopesCard';
-import { ActorAccessRequestsCard } from '@/modules/agents/components/ActorAccessRequestsCard';
 import {
 	LifecycleDialogs,
 	type PendingConfirm,
@@ -520,8 +519,6 @@ export default function ServiceAccountDetailPage() {
 							actorId={account.id}
 							actorName={account.name}
 						/>
-						{/* Pending access requests this SA has filed (#619). */}
-						<ActorAccessRequestsCard actorId={account.id} actorName={account.name} />
 					</>
 				)}
 

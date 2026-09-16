@@ -1,7 +1,7 @@
 /**
  * ActorLabel — resolve an opaque `actor_id` to a human-readable name.
  *
- * Executions, audit entries, the events feed, and access requests carry a raw
+ * Executions, audit entries, and the events feed carry a raw
  * `actor_id` (a KSUID like `agnt_6a3d3c62…`). Drop this anywhere one of those
  * ids would otherwise be rendered: it looks the actor up in the cached actor
  * directory (`useActorDirectory`) and shows its name, falling back to the raw
@@ -9,7 +9,7 @@
  * unknown. The raw id is always available on hover via `title`.
  *
  * Dependency-light by design — one shared hook, no module coupling — so any
- * surface (monitor, dashboard, agents, access-requests) can use it.
+ * surface (monitor, dashboard, agents) can use it.
  *
  * Directory scope is `user` / `agent` / `service_account` — those are the only
  * actor types `GET /actors` returns (the backend UNION excludes toolkits;

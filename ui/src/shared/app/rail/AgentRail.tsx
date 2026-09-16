@@ -20,12 +20,9 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
-import { useQueryClient } from '@tanstack/react-query';
-import { sharedQueryKeys } from '@/shared/api/queryKeys';
 import { ChevronLeft, TriangleAlert } from 'lucide-react';
 import { Button } from '@/shared/ui/Button';
 import { toast, Tooltip } from '@/shared/ui';
-import { AccessRequestDecisionDialog } from '@/shared/app/rail/AccessRequestDecisionDialog';
 import { RailEventRow } from '@/shared/app/rail/RailEventRow';
 import { RailFeed } from '@/shared/app/rail/RailFeed';
 import type { RailFeedFilters } from '@/shared/app/rail/RailFeed';
@@ -70,19 +67,9 @@ function notifyCollapseChange(collapsed: boolean) {
 }
 
 export function AgentRail() {
-	const {
-		events,
-		latest,
-		status,
-		acknowledge,
-		decide,
-		resolveEvent,
-		loadOlderEvents,
-		canLoadOlder,
-		loadingOlder,
-	} = useAgentStream();
+	const { events, latest, status, acknowledge, loadOlderEvents, canLoadOlder, loadingOlder } =
+		useAgentStream();
 	const navigate = useNavigate();
-	const queryClient = useQueryClient();
 
 	const [collapsed, setCollapsed] = useState<boolean>(() =>
 		readBool(RAIL_COLLAPSED_STORAGE_KEY, false),
@@ -91,13 +78,6 @@ export function AgentRail() {
 	const [audioOnCritical, setAudioOnCritical] = useState<boolean>(() =>
 		readBool(RAIL_AUDIO_STORAGE_KEY, true),
 	);
-
-	// Access-request detail dialog (per-item approve/deny), opened from a filed
-	// event's "View" action.
-	const [requestDialog, setRequestDialog] = useState<{
-		requestId: string;
-		eventId: string;
-	} | null>(null);
 
 	// Pause state. Two INDEPENDENT mechanisms, intentionally kept separate so the
 	// control isn't confusing:
@@ -239,17 +219,12 @@ export function AgentRail() {
 		setTimeout(() => URL.revokeObjectURL(url), 0);
 	}
 
-	function handleAction(eventId: string, action: InlineActionSpec, reason?: string) {
+	function handleAction(eventId: string, action: InlineActionSpec) {
 		// Pure navigation actions: navigate, skip the RPC.
-		if (action.href && !action.acknowledges && !action.decides) {
+		if (action.href && !action.acknowledges) {
 			const ev = renderEvents.find((e) => e.id === eventId);
 			const target = ev ? action.href(ev) : null;
 			if (target) navigate(target);
-			return;
-		}
-		// Access-request decision (approve/deny via :decide).
-		if (action.decides) {
-			void decide(eventId, action.decides, reason);
 			return;
 		}
 		if (action.acknowledges) {
@@ -378,7 +353,6 @@ export function AgentRail() {
 					events={renderEvents}
 					filters={filters}
 					onAction={handleAction}
-					onOpenRequest={(requestId, eventId) => setRequestDialog({ requestId, eventId })}
 					onNavigate={(href) => navigate(href)}
 				/>
 			</div>
@@ -389,30 +363,6 @@ export function AgentRail() {
 				audioOnCritical={audioOnCritical}
 				onAudioToggle={() => setAudioOnCritical((v) => !v)}
 			/>
-
-			{/* Routed through the shared decision wrapper (fetches the request by
-			    id) so a provisioning plan opens the setup wizard from the rail —
-			    exactly like the dashboard queue — instead of the plain dialog's
-			    "open it from Access Requests" dead end. */}
-			{requestDialog !== null && (
-				<AccessRequestDecisionDialog
-					requestId={requestDialog.requestId}
-					eventId={requestDialog.eventId}
-					onClose={() => setRequestDialog(null)}
-					onResolved={(eventId) => resolveEvent(eventId)}
-					onDecided={() => {
-						// A decision changes the durable queue + dashboard counts +
-						// the nav badge. Invalidate the shared roots (shared-layer
-						// code, no cross-module key imports) so every approval
-						// surface refreshes — not just the nav badge, which was
-						// the original stale-dashboard bug.
-						queryClient.invalidateQueries({ queryKey: sharedQueryKeys.dashboardRoot });
-						queryClient.invalidateQueries({
-							queryKey: sharedQueryKeys.accessRequestsRoot,
-						});
-					}}
-				/>
-			)}
 		</aside>
 	);
 }
