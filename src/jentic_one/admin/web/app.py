@@ -89,7 +89,7 @@ def install_on_app(app: FastAPI, ctx: Context) -> None:
 
 def _make_verifier(ctx: Context) -> Any:
     """Build the admin token verifier (API keys + JWT)."""
-    api_key_resolver = ApiKeyResolver(ctx.admin_db)
+    api_key_resolver = ApiKeyResolver(ctx.admin_db, telemetry=ctx.telemetry)
 
     async def _verify(token: str, request: Request) -> Identity:
         if token.startswith(AGENT_API_KEY_PREFIX) or token.startswith(
