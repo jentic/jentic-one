@@ -21,21 +21,22 @@ func newInspectCmd(app *app) *cobra.Command {
 	opts := &inspectOptions{}
 
 	cmd := &cobra.Command{
-		Use:   "inspect <METHOD:url | operation_id>",
+		Use:   "inspect <METHOD:url>",
 		Short: "Inspect an operation's contract (schema, parameters, examples)",
 		Long: "inspect resolves an operation to its full structural detail: HTTP\n" +
 			"method, URL, parameters, request/response schemas, and examples. The\n" +
-			"target may be a discovered operation's METHOD:url (the same form\n" +
-			"`jentic search` prints, e.g. GET:https://rest.coincap.io/v3/markets) or\n" +
-			"an opaque operation_id. The output format is negotiated with the\n" +
+			"target is a discovered operation's METHOD:url (the same form\n" +
+			"`jentic search` prints, e.g. GET:https://rest.coincap.io/v3/markets).\n" +
+			"An opaque registry operation_id also still resolves, for compatibility\n" +
+			"— prefer the METHOD:url form. The output format is negotiated with the\n" +
 			"server: JSON for machine consumption, Markdown for human reading.\n\n" +
 			"The space form (`GET <url>`) is also accepted, but the colon form is\n" +
 			"canonical (it needs no shell quoting).\n\n" +
 			"Default format: JSON when stdout is not a TTY, Markdown when it is.",
 		Example: "  jentic inspect GET:https://rest.coincap.io/v3/markets --format json | jq .method\n" +
-			"  jentic inspect createUser --format markdown\n" +
-			"  jentic search \"list users\" --json | jq -r '.data[0].operation_id' | xargs jentic inspect",
-		Args: exactNamedArgs("<METHOD:url | operation_id>", "target"),
+			"  jentic inspect POST:https://api.example.com/v1/users --format markdown\n" +
+			"  jentic search \"list users\" --json | jq -r '.data[0] | \"\\(.method):\\(.url)\"' | xargs jentic inspect",
+		Args: exactNamedArgs("<METHOD:url>", "target"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return app.inspectE(cmd, opts, args[0])
 		},
@@ -77,11 +78,11 @@ func (a *app) inspectE(cmd *cobra.Command, opts *inspectOptions, operationID str
 			return &ux.CodedError{
 				Code: ux.CodeResolveFailed,
 				Msg:  fmt.Sprintf("operation %q not found", operationID),
-				Actionable: "inspect accepts the registry operation id (from `jentic search` _links.inspect / " +
-					"`jentic apis operations`), a METHOD:url pair (e.g. " +
-					"jentic inspect GET:https://api.example.com/v1/things), or the spec operationId " +
-					"shown by `jentic catalog show` when it's unique across imported APIs. " +
-					"If a spec operationId is ambiguous, use the registry operation id from `jentic search`.",
+				Actionable: "inspect resolves a METHOD:url pair (e.g. " +
+					"jentic inspect GET:https://api.example.com/v1/things) — the form `jentic search` " +
+					"prints; build it from a hit's method + url. A registry operation id (from " +
+					"`jentic search` / `jentic apis operations`) and a unique spec operationId " +
+					"(from `jentic catalog show`) also resolve, as fallbacks.",
 			}
 		}
 		return err

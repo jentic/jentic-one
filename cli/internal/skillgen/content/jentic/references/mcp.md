@@ -118,8 +118,10 @@ as a failed (dead-letter) import whose error says identical content already
 exists — read that as "already there", never as something to retry. If the
 result carries a non-terminal `status` (queued, tracking timed out), poll
 `get_execution_result` with the `job_id` from that result rather than
-re-importing. Each `search_apis` hit carries the `operation_id` to pass
-straight to `inspect_operation`/`execute`.
+re-importing. Each `search_apis` hit carries the operation's `method` and
+`url` — join them as `METHOD:url` and pass that straight to
+`inspect_operation`/`execute` (the tools' `operation_id` argument takes
+this form).
 
 If APIs or credentials you know existed appear missing, compare `instance`
 stamps before diagnosing (see `SKILL.md` step 3): an MCP server on a remote
@@ -130,8 +132,8 @@ importing/searching again.
 ## Step 4 — inspect
 
 ```
-inspect_operation {"operation_id": "op_abc123"}
 inspect_operation {"operation_id": "GET:https://sheets.googleapis.com/v4/spreadsheets/{spreadsheetId}/values/{range}"}
+inspect_operation {"operation_id": "POST:https://api.example.com/v1/things"}
 ```
 
 Always inspect before you execute — the contract names the parameters and
@@ -145,7 +147,7 @@ clients approve read-only tools more readily; it rejects any other HTTP
 method — use `execute` for those):
 
 ```
-execute {"operation_id": "op_abc123", "inputs": {"limit": 10}}
+execute {"operation_id": "POST:https://api.example.com/v1/things", "inputs": {"limit": 10}}
 execute_read {"operation_id": "GET:https://sheets.googleapis.com/v4/spreadsheets/{id}/values/{range}", "inputs": {"id": "ABC", "range": "A1:Z10"}}
 ```
 
@@ -188,7 +190,8 @@ delivered in the envelope instead of stderr.
 - `whoami` — your identity, status, scopes, and credential bindings with the
   APIs each one serves; start here and decide access from it.
 - `search_apis` — search the imported registry for operations by
-  natural-language query; each hit carries the `operation_id`.
+  natural-language query; each hit carries the `method` + `url` to join as
+  the `METHOD:url` target.
 - `inspect_operation` — one operation's full contract (method, URL,
   parameters, schemas, security); always inspect before executing.
 - `execute` — run an operation through the broker (full upstream URL; the

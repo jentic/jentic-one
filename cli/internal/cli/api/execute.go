@@ -55,20 +55,21 @@ func newExecuteCmd(app *app) *cobra.Command {
 	opts := &executeOptions{}
 
 	cmd := &cobra.Command{
-		Use:   "execute <METHOD:url | METHOD:/path | operation_id>",
+		Use:   "execute <METHOD:url | METHOD:/path>",
 		Short: "Execute an operation through the Jentic broker",
 		Long: "execute sends an HTTP request through the Jentic broker. The broker\n" +
 			"authenticates the caller with their agent token and injects the stored\n" +
 			"upstream credential, so the agent token is never sent to the upstream\n" +
-			"API directly. The target can be specified in three ways:\n\n" +
+			"API directly. The target is the operation's method + URL:\n\n" +
 			"  1. METHOD:url — a discovered operation's full URL, the same form\n" +
-			"     `jentic search`/`jentic inspect` accept (e.g.\n" +
+			"     `jentic search`/`jentic inspect` print (e.g.\n" +
 			"     GET:https://rest.coincap.io/v3/markets). Resolved via inspect, then\n" +
 			"     routed through the broker. The space form (`GET <url>`) is also\n" +
 			"     accepted, but the colon form is canonical (it needs no shell quoting).\n" +
-			"  2. operation_id — resolve via inspect, then route through the broker.\n" +
-			"  3. METHOD:/path — a broker-relative path sent to --broker-host\n" +
+			"  2. METHOD:/path — a broker-relative path sent to --broker-host\n" +
 			"     verbatim (e.g. GET:/v1/pets); the caller supplies the broker path.\n\n" +
+			"(An opaque registry operation_id also still resolves, for compatibility\n" +
+			"with older scripts — prefer the METHOD:url form.)\n\n" +
 			"Path parameters, query parameters, headers, and a request body can be\n" +
 			"supplied via flags.\n\n" +
 			"When the broker denies the call (e.g. you have no credential binding\n" +
@@ -79,7 +80,7 @@ func newExecuteCmd(app *app) *cobra.Command {
 			"  0 — broker returned a non-denial HTTP response (incl. 2xx and upstream errors)\n" +
 			"  1 — local/transport failure (DNS, TLS, timeout, connection refused)\n" +
 			"  2 — denied by the broker (carries an agent_directive) or resolve failure\n" +
-			"      (inspect error, e.g. unknown operation_id)\n\n" +
+			"      (inspect error, e.g. an unknown operation)\n\n" +
 			"Broker target: resolved as built-in default (https://127.0.0.1:8100) <\n" +
 			"the active environment's broker_url < --broker-scheme/--broker-host. A\n" +
 			"local install serves the broker over plain HTTP, so `jentic register`\n" +
@@ -91,13 +92,13 @@ func newExecuteCmd(app *app) *cobra.Command {
 			"control plane you MUST set broker_url (or JENTIC_BROKER_URL); execute\n" +
 			"refuses with RESOLVE_FAILED rather than dialing the local default.",
 		Example: "  jentic execute GET:https://rest.coincap.io/v3/markets --json\n" +
-			"  jentic execute listPets --query limit=10 --json\n" +
+			"  jentic execute GET:https://api.example.com/v1/pets --query limit=10 --json\n" +
 			"  jentic execute GET:/v1/pets/{petId} --path petId=123 --raw\n" +
 			"  echo '{\"name\":\"Bob\"}' | jentic execute POST:/v1/users --json\n" +
-			"  jentic execute uploadPic --form demo=true --form-file images=@face.jpg --json\n" +
+			"  jentic execute POST:https://api.example.com/v1/pics --form demo=true --form-file images=@face.jpg --json\n" +
 			"  # Local broker over http, one-off (usually unnecessary — register seeds broker_url):\n" +
-			"  jentic execute listPets --broker-scheme http --broker-host 127.0.0.1:8100",
-		Args: exactNamedArgs("<METHOD:url | METHOD:/path | operation_id>", "target"),
+			"  jentic execute GET:https://api.example.com/v1/pets --broker-scheme http --broker-host 127.0.0.1:8100",
+		Args: exactNamedArgs("<METHOD:url | METHOD:/path>", "target"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return app.executeE(cmd, opts, args[0])
 		},

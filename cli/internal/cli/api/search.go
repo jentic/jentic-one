@@ -43,7 +43,7 @@ func newSearchCmd(app *app) *cobra.Command {
 			"use --json to force JSON on a terminal.",
 		Example: "  jentic search \"list users\"\n" +
 			"  jentic search -q \"create issue\" --api github-com/api-github-com --limit 5\n" +
-			"  jentic search \"list pets\" --all --json | jq '.data[].operation_id'",
+			"  jentic search \"list pets\" --all --json | jq -r '.data[] | \"\\(.method):\\(.url)\"'",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) > 0 {

@@ -159,7 +159,7 @@ Always follow the `agent_directive`'s `suggested_command` /
 `provisioning_url` rather than assuming which recovery applies. You can also
 request access proactively before you're denied. To propose rules from the
 spec, read the operation surface first: `jentic apis operations
-<vendor/name/version>` and `jentic inspect <operation_id>` show methods,
+<vendor/name/version>` and `jentic inspect <METHOD:url>` show methods,
 paths, and the declared auth.
 
 ## Step 3 — find an operation (import first, then search)
@@ -194,13 +194,12 @@ directly with `jentic apis import <file|url> --vendor <vendor> --name <name>
 --version <version>` (reads a local file inline or fetches a URL; async,
 prints a job id). This needs `apis:write` rather than `catalog:import`.
 
-`search` returns JSON when piped. Each hit carries both a registry
-`operation_id` and a `_links.inspect` (a `/inspect?id=METHOD%20URL` link).
-Pass the `operation_id` straight to `inspect`/`execute` — it resolves by
-registry key — or use the `METHOD URL` pair the link decodes to. (The id
-shown by `jentic catalog show` is the spec's `operationId`; `inspect`
-accepts that too, via a fallback, but the `operation_id` from
-`search`/`apis operations` is the most direct.)
+`search` returns JSON when piped. Each hit carries the operation's `method`
+and `url` — join them as `METHOD:url` (e.g. `GET:https://…`) and pass that
+to `inspect`/`execute`; the hit's `_links.inspect` decodes to the same
+`METHOD URL` pair. (Hits also carry a registry `operation_id`, and the id
+shown by `jentic catalog show` is the spec's `operationId`; both still
+resolve as compatibility fallbacks, but prefer the `METHOD:url` form.)
 
 If `search` returns no results, it prints a hint to run `jentic catalog
 search` / `jentic catalog import` first — that almost always means nothing
@@ -228,19 +227,19 @@ one (null otherwise).
 ## Step 4 — inspect
 
 ```
-jentic inspect "$(jentic search 'get spreadsheet values' --json | jq -r '.data[0].operation_id')"
+jentic inspect "$(jentic search 'get spreadsheet values' --json | jq -r '.data[0] | "\(.method):\(.url)"')"
 jentic inspect 'GET https://sheets.googleapis.com/v4/spreadsheets/{spreadsheetId}/values/{range}'
 ```
 
 On a 404, `inspect` prints the reason and a hint on stderr and exits 2 (it
-is not silent). If you passed the id from `catalog show` and it didn't
-resolve, use the `operation_id` from `search`/`apis operations`, or the
-`METHOD URL` pair that the hit's `_links.inspect` decodes to.
+is not silent). If a target doesn't resolve, use the `METHOD URL` pair that
+the hit's `_links.inspect` decodes to (or the hit's `method` + `url`) —
+don't guess ids.
 
 ## Step 5 — execute
 
 ```
-jentic execute <operation_id> --query limit=10
+jentic execute GET:https://api.example.com/v1/things --query limit=10
 jentic execute GET:https://sheets.googleapis.com/v4/spreadsheets/{id}/values/{range} --path id=ABC --path range=A1:Z10
 ```
 
@@ -248,7 +247,7 @@ jentic execute GET:https://sheets.googleapis.com/v4/spreadsheets/{id}/values/{ra
 broker **denial** prints an `agent_directive` on stderr (exit **2**). An
 error naming DNS, TLS, timeout, or connection refused is a **transport
 failure** — usually exit **1**, but exit **2** (`resolve … failed`) when the
-`operation_id` lookup hits an unreachable control plane — with two causes:
+operation lookup hits an unreachable control plane — with two causes:
 
 > Exit **2** broadly means "this request cannot succeed **as asked**" — a
 > broker denial, a failed operation resolve, or missing local context (e.g.
@@ -269,7 +268,7 @@ failure** — usually exit **1**, but exit **2** (`resolve … failed`) when the
 ```
 jentic register --url <control-plane URL> --broker-url <broker URL>   # fills a missing broker_url
 jentic env add <env> --url http://127.0.0.1:8000 --broker-url http://127.0.0.1:8100 --force
-jentic execute <operation_id> --broker-scheme http --broker-host 127.0.0.1:8100
+jentic execute <METHOD:url> --broker-scheme http --broker-host 127.0.0.1:8100
 ```
 
 - **Missing broker on a remote install (`RESOLVE_FAILED`, exit 2).** If the

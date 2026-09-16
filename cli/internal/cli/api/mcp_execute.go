@@ -143,7 +143,7 @@ func (s *mcpServer) executeTool(ctx context.Context, req *mcp.CallToolRequest, r
 	target, _ := args["operation_id"].(string)
 	if target == "" {
 		return nil, invalidParams(errors.New(toolName + ` requires "operation_id" (aliases: "id", "uuid"): ` +
-			`a registry operation id from a search_apis hit, or a METHOD:url pair like "GET:https://api.example.com/v1/things"`))
+			`a METHOD:url pair like "GET:https://api.example.com/v1/things" (from a search_apis hit's method + url)`))
 	}
 	body, _ := args["body"].(json.RawMessage)
 	if readOnlyVariant && len(body) > 0 {
@@ -634,8 +634,9 @@ func executeInputSchema(withBody bool) map[string]any {
 	props := map[string]any{
 		"operation_id": map[string]any{
 			"type": "string",
-			"description": "The operation to execute (required; \"id\" and \"uuid\" are accepted aliases): a registry " +
-				"operation id from a search_apis hit, or a METHOD:url pair like \"GET:https://api.example.com/v1/things\".",
+			"description": "The operation to execute (required; \"id\" and \"uuid\" are accepted aliases): a METHOD:url " +
+				"pair like \"GET:https://api.example.com/v1/things\" — build it from a search_apis hit's method + url. " +
+				"(A registry operation id also resolves, for compatibility — prefer METHOD:url.)",
 		},
 		"inputs": map[string]any{
 			"type": "object",
@@ -696,7 +697,7 @@ func (s *mcpServer) executeToolSpecs() []mcpToolSpec {
 					"this session. This is the final step of the flow (whoami → search_apis → " +
 					"inspect_operation → execute): always inspect the contract first, and never execute just " +
 					"to probe whether you have access (call whoami). " +
-					`Example: {"operation_id": "op_abc123", "inputs": {"petId": "42", "limit": 10}, ` +
+					`Example: {"operation_id": "POST:https://api.example.com/v1/pets", "inputs": {"petId": "42", "limit": 10}, ` +
 					`"body": {"name": "Bob"}}. ` +
 					"Returns {status, headers, body, execution_id}: any HTTP status, including upstream " +
 					"4xx/5xx, is the upstream's answer — a denial by the broker itself comes back as an " +
