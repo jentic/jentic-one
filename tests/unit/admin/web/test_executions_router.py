@@ -24,7 +24,7 @@ def _make_execution_view(**overrides: object) -> ExecutionView:
         "duration_ms": 150,
         "status": "completed",
         "operation_id": "getThing",
-        "operation_name": "/v1/things/{id}",
+        "operation_path": "/v1/things/{id}",
         "operation_method": "GET",
         "api": None,
         "pinned_revisions": None,
@@ -74,16 +74,16 @@ def test_response_includes_operation_identity_fields() -> None:
     resp = _execution_response(view, request)
     data = resp.model_dump(by_alias=True)
     assert data["operation_id"] == "getThing"
-    assert data["operation_name"] == "/v1/things/{id}"
+    assert data["operation_path"] == "/v1/things/{id}"
     assert data["operation_method"] == "GET"
 
 
 def test_response_operation_identity_fields_null_on_legacy_rows() -> None:
-    """Rows predating the operation_name/method columns serialize them as null."""
-    view = _make_execution_view(operation_name=None, operation_method=None)
+    """Rows predating the operation_path/method columns serialize them as null."""
+    view = _make_execution_view(operation_path=None, operation_method=None)
     request = _make_request()
     resp = _execution_response(view, request)
     data = resp.model_dump(by_alias=True)
     assert data["operation_id"] == "getThing"
-    assert data["operation_name"] is None
+    assert data["operation_path"] is None
     assert data["operation_method"] is None

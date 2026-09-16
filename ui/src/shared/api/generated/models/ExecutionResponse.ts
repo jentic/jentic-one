@@ -25,9 +25,9 @@ export type ExecutionResponse = {
      */
     operation_method?: (string | null);
     /**
-     * The operation's spec path template, e.g. /repos/{owner}/{repo}. Null on records predating the column — clients fall back to operation_id.
+     * The operation's spec path template, e.g. /repos/{owner}/{repo}. Null on records predating the column; display surfaces show a placeholder for such rows — the opaque operation_id is a machine key, not a human fallback.
      */
-    operation_name?: (string | null);
+    operation_path?: (string | null);
     origin?: (string | null);
     pinned_revisions?: (Record<string, any> | null);
     started_at: string;

@@ -31,6 +31,7 @@ from jentic_one.shared.jobs.execution_handler import ExecutionHandler
 from jentic_one.shared.jobs.protocols import UpstreamExecResult
 from jentic_one.shared.models import ExecutionStatus
 from jentic_one.shared.models.events import EventSeverity, EventType
+from jentic_one.shared.schemas import OperationInfo
 
 _ACTOR = "agt_repeat"
 _TOOLKIT = "tk_repeat0000000000000000000"
@@ -102,13 +103,18 @@ async def _add_failures(
     await session.flush()
 
 
-async def _emit(session: AsyncSession, config: SecurityConfig | None = None) -> None:
+async def _emit(
+    session: AsyncSession,
+    config: SecurityConfig | None = None,
+    *,
+    operation: OperationInfo | None = None,
+) -> None:
     await maybe_emit_repeated_failure(
         session,
         actor_id=_ACTOR,
         actor_type="agent",
         toolkit_id=_TOOLKIT,
-        operation_id=_OPERATION,
+        operation=operation or OperationInfo(id=_OPERATION),
         trace_id=_TRACE,
         config=config or SecurityConfig(),
     )
@@ -143,6 +149,39 @@ async def test_at_threshold_emits_one_error(session: AsyncSession) -> None:
     assert events[0].data["actor_id"] == _ACTOR
     assert events[0].data["toolkit_id"] == _TOOLKIT
     assert events[0].data["operation_id"] == _OPERATION
+
+
+async def test_summary_renders_the_human_operation_identity(session: AsyncSession) -> None:
+    """The summary shows method + path template — never the opaque op_… hash
+    when the human identity is available (the id stays in ``data`` for
+    machines and keeps keying the aggregation)."""
+    config = SecurityConfig(execution_repeated_failure_threshold=5)
+    await _add_failures(session, 5)
+    await _emit(
+        session,
+        config,
+        operation=OperationInfo(id=_OPERATION, path="/v1/things/{id}", method="GET"),
+    )
+
+    events = await _repeated_events(session)
+    assert len(events) == 1
+    assert "GET /v1/things/{id}" in events[0].summary
+    assert _OPERATION not in events[0].summary
+    assert events[0].data["operation_id"] == _OPERATION
+
+
+async def test_summary_falls_back_to_the_id_for_legacy_operations(
+    session: AsyncSession,
+) -> None:
+    """A legacy in-flight job carries only the id — the summary uses it rather
+    than naming no operation at all (an ops signal needs an identity)."""
+    config = SecurityConfig(execution_repeated_failure_threshold=5)
+    await _add_failures(session, 5)
+    await _emit(session, config, operation=OperationInfo(id=_OPERATION))
+
+    events = await _repeated_events(session)
+    assert len(events) == 1
+    assert _OPERATION in events[0].summary
 
 
 async def test_repeated_calls_within_window_dedup(session: AsyncSession) -> None:
@@ -250,7 +289,7 @@ async def test_missing_toolkit_or_operation_is_noop(session: AsyncSession) -> No
         actor_id=_ACTOR,
         actor_type="agent",
         toolkit_id=None,
-        operation_id=_OPERATION,
+        operation=OperationInfo(id=_OPERATION),
         trace_id=_TRACE,
         config=SecurityConfig(execution_repeated_failure_threshold=5),
     )

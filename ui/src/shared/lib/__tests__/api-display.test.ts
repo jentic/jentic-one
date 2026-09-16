@@ -399,7 +399,7 @@ describe('formatOperation', () => {
 	it('renders method + path template when both are present', () => {
 		expect(
 			formatOperation({
-				operation_name: '/repos/{owner}/{repo}',
+				operation_path: '/repos/{owner}/{repo}',
 				operation_method: 'GET',
 			}),
 		).toBe('GET /repos/{owner}/{repo}');
@@ -408,19 +408,19 @@ describe('formatOperation', () => {
 	it('renders the path template alone when the method is missing', () => {
 		expect(
 			formatOperation({
-				operation_name: '/v1/charges',
+				operation_path: '/v1/charges',
 				operation_method: null,
 			}),
 		).toBe('/v1/charges');
 	});
 
-	it('returns null on legacy name-less rows — the opaque op_… id never renders', () => {
+	it('returns null on legacy path-less rows — the opaque op_… id never renders', () => {
 		// Deliberate product rule: the machine hash is meaningless to humans,
-		// so a row predating the name/method columns shows the caller's empty
+		// so a row predating the path/method columns shows the caller's empty
 		// placeholder, not the id.
 		expect(
 			formatOperation({
-				operation_name: null,
+				operation_path: null,
 				operation_method: null,
 			}),
 		).toBeNull();

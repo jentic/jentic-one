@@ -385,7 +385,7 @@ async def test_handler_forwards_operation_dict_in_metadata() -> None:
         UpstreamExecResult(status_code=200, body=b"", content_type=None, duration_ms=1)
     )
     handler = ExecutionHandler(executor=executor)
-    operation = {"id": "op_x", "name": "/v1/things/{id}", "method": "GET"}
+    operation = {"id": "op_x", "path": "/v1/things/{id}", "method": "GET"}
 
     await handler.execute(
         "job_op",

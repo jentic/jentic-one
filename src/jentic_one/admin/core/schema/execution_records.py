@@ -55,11 +55,11 @@ class ExecutionRecord(AuditableMixin, AdminBase):
     # Human-readable operation identity, nullable in three cases: rows predating
     # these columns, legacy in-flight jobs that carried only ``operation_id``,
     # and executions where discovery resolved no operation at all (then all
-    # three operation_* columns are NULL). ``operation_name`` is the spec's path
+    # three operation_* columns are NULL). ``operation_path`` is the spec's path
     # template (e.g. ``/repos/{owner}/{repo}``), truncated to 512 at the write
     # seam (``record_execution``) because the registry source is unbounded Text;
     # ``operation_method``'s width mirrors registry ``operations.method``.
-    operation_name: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    operation_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
     operation_method: Mapped[str | None] = mapped_column(String(10), nullable=True)
     api_vendor: Mapped[str | None] = mapped_column(String(128), nullable=True)
     api_name: Mapped[str | None] = mapped_column(String(128), nullable=True)

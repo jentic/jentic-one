@@ -42,7 +42,7 @@ async def record_execution(
     (their consumer attribution is ``credential_id``).
 
     ``operation`` carries the resolved operation's identity as one object;
-    it is flattened onto the record's ``operation_id`` / ``operation_name`` /
+    it is flattened onto the record's ``operation_id`` / ``operation_path`` /
     ``operation_method`` columns here (the DB shape stays flat).
     """
     if status not in tuple(ExecutionStatus):
@@ -53,7 +53,7 @@ async def record_execution(
     # the flush and lose the whole record (the value is display-only; the join
     # key stays ``operation_id``). Postgres rejects oversize; SQLite silently
     # accepts it, so this is the only cross-backend guard.
-    operation_name = operation.name[:512] if operation and operation.name else None
+    operation_path = operation.path[:512] if operation and operation.path else None
 
     record = ExecutionRecord(
         id=execution_id,
@@ -63,7 +63,7 @@ async def record_execution(
         status=status,
         duration_ms=duration_ms,
         operation_id=operation.id if operation else None,
-        operation_name=operation_name,
+        operation_path=operation_path,
         operation_method=operation.method if operation else None,
         api_vendor=api_vendor,
         api_name=api_name,

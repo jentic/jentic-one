@@ -103,7 +103,7 @@ class ExecutionService:
             duration_ms=record.duration_ms,
             status=record.status,
             operation_id=record.operation_id,
-            operation_name=record.operation_name,
+            operation_path=record.operation_path,
             operation_method=record.operation_method,
             api=api,
             pinned_revisions=record.pinned_revisions,

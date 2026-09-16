@@ -109,7 +109,7 @@ async def test_resolve_operation_returns_operation_and_api_context(
 
     assert result is not None
     assert result.operation.id == op_id
-    assert result.operation.name == "/v1/pets/{petId}"
+    assert result.operation.path == "/v1/pets/{petId}"
     assert result.operation.method == "GET"
     assert result.api.vendor == "acme.com"
     assert result.api.name == "pets-api"

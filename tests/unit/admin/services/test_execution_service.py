@@ -18,7 +18,7 @@ def _make_record(**overrides: Any) -> MagicMock:
         "duration_ms": 100,
         "status": "completed",
         "operation_id": "getThing",
-        "operation_name": "/v1/things/{id}",
+        "operation_path": "/v1/things/{id}",
         "operation_method": "GET",
         "api_vendor": "example",
         "api_name": "api",
@@ -84,14 +84,14 @@ def test_to_view_populates_operation_identity() -> None:
     record = _make_record()
     view = ExecutionService._to_view(record)
     assert view.operation_id == "getThing"
-    assert view.operation_name == "/v1/things/{id}"
+    assert view.operation_path == "/v1/things/{id}"
     assert view.operation_method == "GET"
 
 
 def test_to_view_operation_identity_none_on_legacy_rows() -> None:
-    """Rows predating the operation_name/method columns map to None."""
-    record = _make_record(operation_name=None, operation_method=None)
+    """Rows predating the operation_path/method columns map to None."""
+    record = _make_record(operation_path=None, operation_method=None)
     view = ExecutionService._to_view(record)
     assert view.operation_id == "getThing"
-    assert view.operation_name is None
+    assert view.operation_path is None
     assert view.operation_method is None

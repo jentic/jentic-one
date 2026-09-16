@@ -108,7 +108,7 @@ def _payload() -> dict[str, Any]:
         "api_version": "1.0.0",
         # The resolved operation rides the payload as one dict (plus the
         # dual-written flat id for pre-dict workers).
-        "operation": {"id": "op_widgets", "name": "/v1/widgets", "method": "GET"},
+        "operation": {"id": "op_widgets", "path": "/v1/widgets", "method": "GET"},
         "operation_id": "op_widgets",
     }
 
@@ -150,7 +150,7 @@ async def test_async_job_dispatches_through_executor(
     # persists the human-readable identity.
     assert req.metadata["operation"] == {
         "id": "op_widgets",
-        "name": "/v1/widgets",
+        "path": "/v1/widgets",
         "method": "GET",
     }
 

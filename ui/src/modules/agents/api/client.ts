@@ -808,8 +808,10 @@ export interface ActorExecutionEntity {
 	toolkitName: string | null;
 	operationId: string | null;
 	/** Human-readable operation identity (spec path template + HTTP method);
-	 * null on rows predating the columns — display falls back to the id. */
-	operationName: string | null;
+	 * null on rows predating the columns. The display then renders no
+	 * operation label at all — deliberately never the opaque operationId
+	 * (see formatOperation); the id stays here for deep-linking/debugging. */
+	operationPath: string | null;
 	operationMethod: string | null;
 	durationMs: number | null;
 	httpStatus: number | null;
@@ -838,7 +840,7 @@ export async function fetchActorExecutions(
 				toolkitId: r.toolkit_id ?? null,
 				toolkitName: r.toolkit_name ?? null,
 				operationId: r.operation_id ?? null,
-				operationName: r.operation_name ?? null,
+				operationPath: r.operation_path ?? null,
 				operationMethod: r.operation_method ?? null,
 				durationMs: r.duration_ms ?? null,
 				httpStatus: r.http_status ?? null,

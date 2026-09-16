@@ -1939,8 +1939,8 @@ type ExecutionResponse struct {
 	// OperationMethod The operation's HTTP method, e.g. GET. Null on records predating the column.
 	OperationMethod *string `json:"operation_method,omitempty"`
 
-	// OperationName The operation's spec path template, e.g. /repos/{owner}/{repo}. Null on records predating the column — clients fall back to operation_id.
-	OperationName   *string                 `json:"operation_name,omitempty"`
+	// OperationPath The operation's spec path template, e.g. /repos/{owner}/{repo}. Null on records predating the column; display surfaces show a placeholder for such rows — the opaque operation_id is a machine key, not a human fallback.
+	OperationPath   *string                 `json:"operation_path,omitempty"`
 	Origin          *string                 `json:"origin,omitempty"`
 	PinnedRevisions *map[string]interface{} `json:"pinned_revisions,omitempty"`
 	StartedAt       time.Time               `json:"started_at"`

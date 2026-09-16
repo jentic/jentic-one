@@ -37,7 +37,7 @@ from jentic_one.shared.metrics import get_meter
 from jentic_one.shared.models import ExecutionStatus
 from jentic_one.shared.models.actors import origin_or_none
 from jentic_one.shared.models.events import ErrorSource, EventSeverity, EventTag, EventType
-from jentic_one.shared.schemas import APIReference
+from jentic_one.shared.schemas import APIReference, OperationInfo
 from jentic_one.shared.tracing import jentic_tracestate, pack_jentic_tracestate
 
 logger = structlog.get_logger(__name__)
@@ -211,7 +211,7 @@ async def run_execution(
             actor_type=actor_type,
             toolkit_id=ctx_req.toolkit_id,
             credential_id=ctx_req.credential_id,
-            operation_id=operation_id,
+            operation=ctx_req.operation,
             security_config=security_config,
             origin=origin,
         )
@@ -292,7 +292,7 @@ async def run_execution(
         actor_type=actor_type,
         toolkit_id=ctx_req.toolkit_id,
         credential_id=ctx_req.credential_id,
-        operation_id=operation_id,
+        operation=ctx_req.operation,
         security_config=security_config,
         error_tags=error_tags,
         origin=origin,
@@ -406,7 +406,7 @@ async def persist_streaming_execution(
         actor_type=actor_type,
         toolkit_id=ctx_req.toolkit_id,
         credential_id=ctx_req.credential_id,
-        operation_id=operation_id,
+        operation=ctx_req.operation,
         security_config=security_config,
         error_tags=error_tags,
         origin=origin,
@@ -461,7 +461,7 @@ async def _emit_execution_lifecycle(
     actor_type: str,
     toolkit_id: str | None = None,
     credential_id: str | None = None,
-    operation_id: str | None = None,
+    operation: OperationInfo | None = None,
     security_config: SecurityConfig | None = None,
     error_tags: set[EventTag] | None = None,
     origin: str | None = None,
@@ -527,7 +527,7 @@ async def _emit_execution_lifecycle(
             actor_type=actor_type,
             toolkit_id=toolkit_id,
             credential_id=credential_id,
-            operation_id=operation_id,
+            operation=operation,
             trace_id=event_trace_id,
             config=security_config,
         )

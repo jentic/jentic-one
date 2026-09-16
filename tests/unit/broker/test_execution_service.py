@@ -29,7 +29,7 @@ def _ctx_req() -> ExecuteRequestContext:
         method="GET",
         trace_id="a" * 32,
         toolkit_id="tk_test000000000000000000",
-        operation=OperationInfo(id="getThing", name="/v1/things", method="GET"),
+        operation=OperationInfo(id="getThing", path="/v1/things", method="GET"),
         api_vendor="example",
         api_name="api",
         api_version="1.0.0",
@@ -122,4 +122,4 @@ async def test_operation_info_forwarded_to_record_execution() -> None:
         )
 
     operation = mock_record.call_args.kwargs["operation"]
-    assert operation == OperationInfo(id="getThing", name="/v1/things", method="GET")
+    assert operation == OperationInfo(id="getThing", path="/v1/things", method="GET")

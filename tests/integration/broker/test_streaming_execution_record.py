@@ -51,7 +51,7 @@ def ctx_req() -> ExecuteRequestContext:
         method="GET",
         trace_id="trace-integ-001",
         toolkit_id="tk-integ-1",
-        operation=OperationInfo(id="getData", name="/data", method="GET"),
+        operation=OperationInfo(id="getData", path="/data", method="GET"),
         api_vendor="example",
         api_name="data-api",
         api_version="v1",
@@ -92,7 +92,7 @@ async def test_streaming_execution_persists_completed_record(
     assert record.duration_ms == 42
     assert record.toolkit_id == "tk-integ-1"
     assert record.operation_id == "getData"
-    assert record.operation_name == "/data"
+    assert record.operation_path == "/data"
     assert record.operation_method == "GET"
     assert record.actor_id == "agent-integ-1"
     assert record.actor_type == "agent"
@@ -163,12 +163,12 @@ async def test_streaming_execution_without_operation_persists_null_trio(
         ).scalar_one()
 
     assert record.operation_id is None
-    assert record.operation_name is None
+    assert record.operation_path is None
     assert record.operation_method is None
 
 
 @pytest.mark.asyncio
-async def test_oversized_operation_name_is_truncated_not_fatal(
+async def test_oversized_operation_path_is_truncated_not_fatal(
     admin_db: DatabaseSession,
     ctx_req: ExecuteRequestContext,
 ) -> None:
@@ -178,7 +178,7 @@ async def test_oversized_operation_name_is_truncated_not_fatal(
     execution_id = "integ-stream-exec-004"
     long_name = "/v1/" + "x" * 600
     ctx_req = ctx_req.model_copy(
-        update={"operation": OperationInfo(id="getData", name=long_name, method="GET")}
+        update={"operation": OperationInfo(id="getData", path=long_name, method="GET")}
     )
 
     async with admin_db.transaction() as session:
@@ -200,5 +200,5 @@ async def test_oversized_operation_name_is_truncated_not_fatal(
             await session.execute(select(ExecutionRecord).where(ExecutionRecord.id == execution_id))
         ).scalar_one()
 
-    assert record.operation_name == long_name[:512]
+    assert record.operation_path == long_name[:512]
     assert record.operation_method == "GET"

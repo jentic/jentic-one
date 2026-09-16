@@ -79,7 +79,7 @@ export function ActivityPanel({ actorId, actorType }: ActivityPanelProps) {
 						// template); the opaque op_… id never renders, so
 						// legacy rows show just the credential attribution.
 						const operation = formatOperation({
-							operation_name: row.operationName,
+							operation_path: row.operationPath,
 							operation_method: row.operationMethod,
 						});
 						return {

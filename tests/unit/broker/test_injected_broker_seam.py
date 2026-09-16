@@ -305,19 +305,19 @@ def test_ctx_from_metadata_rebuilds_operation() -> None:
             )
         )
 
-    full = _ctx({"operation": {"id": "op_x", "name": "/v1/things/{id}", "method": "GET"}})
-    assert full.operation == OperationInfo(id="op_x", name="/v1/things/{id}", method="GET")
+    full = _ctx({"operation": {"id": "op_x", "path": "/v1/things/{id}", "method": "GET"}})
+    assert full.operation == OperationInfo(id="op_x", path="/v1/things/{id}", method="GET")
 
     legacy = _ctx({"operation_id": "op_legacy"})
-    assert legacy.operation == OperationInfo(id="op_legacy", name=None, method=None)
+    assert legacy.operation == OperationInfo(id="op_legacy", path=None, method=None)
 
     both = _ctx(
         {
-            "operation": {"id": "op_x", "name": "/v1/things/{id}", "method": "GET"},
+            "operation": {"id": "op_x", "path": "/v1/things/{id}", "method": "GET"},
             "operation_id": "op_x",
         }
     )
     assert both.operation is not None
-    assert both.operation.name == "/v1/things/{id}"
+    assert both.operation.path == "/v1/things/{id}"
 
     assert _ctx({}).operation is None

@@ -658,7 +658,7 @@ function executionRow(opts: {
 	credentialId: string;
 	credentialName: string;
 	operationId: string;
-	operationName?: string;
+	operationPath?: string;
 	operationMethod?: string;
 	durationMs: number;
 	httpStatus: number;
@@ -677,7 +677,7 @@ function executionRow(opts: {
 		execution_id: opts.id,
 		http_status: opts.httpStatus,
 		operation_id: opts.operationId,
-		operation_name: opts.operationName ?? null,
+		operation_path: opts.operationPath ?? null,
 		operation_method: opts.operationMethod ?? null,
 		origin: opts.origin ?? 'api',
 		pinned_revisions: null,
@@ -710,7 +710,7 @@ const ACTOR_EXECUTIONS: Record<string, ReturnType<typeof executionRow>[]> = {
 			// Human-readable identity present → the feed renders method + path
 			// template; the sibling rows stay id-only to keep the legacy
 			// fallback rendered too.
-			operationName: '/repos/{owner}/{repo}/issues',
+			operationPath: '/repos/{owner}/{repo}/issues',
 			operationMethod: 'POST',
 			durationMs: 412,
 			httpStatus: 200,

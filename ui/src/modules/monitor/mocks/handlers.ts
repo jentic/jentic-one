@@ -70,7 +70,7 @@ const EXECUTIONS = rebaseFixture([
 		execution_id: 'exec_1',
 		http_status: 200,
 		operation_id: 'op_charges01',
-		operation_name: '/v1/charges',
+		operation_path: '/v1/charges',
 		operation_method: 'POST',
 		origin: 'api',
 		pinned_revisions: null,
@@ -91,7 +91,7 @@ const EXECUTIONS = rebaseFixture([
 		execution_id: 'exec_2',
 		http_status: 503,
 		operation_id: 'op_getrepo01',
-		operation_name: '/repos/{owner}/{repo}',
+		operation_path: '/repos/{owner}/{repo}',
 		operation_method: 'GET',
 		origin: 'cli',
 		pinned_revisions: null,
@@ -112,7 +112,7 @@ const EXECUTIONS = rebaseFixture([
 		execution_id: 'exec_3',
 		http_status: 200,
 		operation_id: 'op_refunds01',
-		operation_name: '/v1/refunds',
+		operation_path: '/v1/refunds',
 		operation_method: 'POST',
 		// MCP-origin run (local-MCP #1178) — the origin-filter specs pivot on it.
 		origin: 'mcp',
@@ -135,7 +135,7 @@ const EXECUTIONS = rebaseFixture([
 		error: null,
 		execution_id: 'exec_4',
 		http_status: 200,
-		// Legacy row: id-only, no operation_name/method — pins that the opaque
+		// Legacy row: id-only, no operation_path/method — pins that the opaque
 		// id never renders (the cells show the empty placeholder instead).
 		operation_id: 'op_chatpost01',
 		pinned_revisions: null,
