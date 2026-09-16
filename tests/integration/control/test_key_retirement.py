@@ -3,10 +3,10 @@
 Runs ``KeyRetirementService`` against real control + admin databases: seeds a
 toolkit, its ``jntc_live_`` key, credential bindings, and pair rules on the
 control side plus the owner user on the admin side, then asserts the job
-creates the successor service account (account + credential digest + execute
-grant + toolkit binding + per-credential bindings with copied rule sets) and
-stamps ``migrated_actor_id``. Also covers the skip reasons, fallback-owner
-resolution, and idempotency.
+creates the successor agent (theme-8 Phase 1: agent + credential digest +
+execute grant + toolkit binding + per-credential bindings with copied rule
+sets) and stamps ``migrated_actor_id``. Also covers the skip reasons,
+fallback-owner resolution, and idempotency.
 """
 
 from __future__ import annotations
@@ -65,17 +65,17 @@ async def clean_tables(
                 await session.execute(
                     text(
                         f"DELETE FROM {table} WHERE {column} IN "
-                        "(SELECT id FROM service_accounts WHERE name LIKE 'toolkit-key:ck_krtest%')"
+                        "(SELECT id FROM agents WHERE name LIKE 'toolkit-key:ck_krtest%')"
                     )
                 )
             await session.execute(
                 text(
-                    "DELETE FROM service_account_credentials WHERE service_account_id IN "
-                    "(SELECT id FROM service_accounts WHERE name LIKE 'toolkit-key:ck_krtest%')"
+                    "DELETE FROM agent_credentials WHERE agent_id IN "
+                    "(SELECT id FROM agents WHERE name LIKE 'toolkit-key:ck_krtest%')"
                 )
             )
             await session.execute(
-                text("DELETE FROM service_accounts WHERE name LIKE 'toolkit-key:ck_krtest%'")
+                text("DELETE FROM agents WHERE name LIKE 'toolkit-key:ck_krtest%'")
             )
             await session.execute(
                 text("DELETE FROM users WHERE id IN (:owner, :fallback)"),
@@ -209,7 +209,7 @@ async def test_happy_path_creates_all_successor_artifacts(
     admin_db: DatabaseSession,
     seed_owner: None,
 ) -> None:
-    """One resolvable key → account, digest, grant, both binding kinds, rule copy, stamp."""
+    """One resolvable key → agent, digest, grant, both binding kinds, rule copy, stamp."""
     toolkit_id, key_id, lookup = await _seed_toolkit_with_key(control_db, suffix="hp")
     ruled_cred = await _bind_credential(
         control_db,
@@ -225,45 +225,44 @@ async def test_happy_path_creates_all_successor_artifacts(
     outcome = by_key[key_id]
     assert outcome.action == "migrated"
     assert outcome.reason is None
-    sva_id = outcome.service_account_id
-    assert sva_id is not None and sva_id.startswith("sva_")
+    successor_id = outcome.successor_actor_id
+    assert successor_id is not None and successor_id.startswith("agnt_")
     assert set(outcome.bound_credential_ids) == {ruled_cred, rule_less_cred}
     assert outcome.rule_less_credential_ids == (rule_less_cred,)
 
-    # 1) The service account, named for the key, active, owned by the key's creator.
+    # 1) The agent, named for the key, active, owned by the key's creator
+    #    (theme-8 Phase 1: the job mints agents, never service accounts).
     accounts = await _admin_rows(
         admin_db,
-        "SELECT id, name, status, owner_id FROM service_accounts WHERE name = :name",
+        "SELECT id, name, status, owner_id FROM agents WHERE name = :name",
         {"name": f"toolkit-key:{key_id}"},
     )
     assert len(accounts) == 1
-    assert accounts[0].id == sva_id
+    assert accounts[0].id == successor_id
     assert accounts[0].status == "active"
     assert accounts[0].owner_id == _OWNER
 
     # 2) The credential row carries the key's SHA-256 lookup digest.
     creds = await _admin_rows(
         admin_db,
-        "SELECT api_key_hash FROM service_account_credentials WHERE service_account_id = :sva",
-        {"sva": sva_id},
+        "SELECT api_key_hash FROM agent_credentials WHERE agent_id = :sid",
+        {"sid": successor_id},
     )
     assert [row.api_key_hash for row in creds] == [lookup]
 
     # 3) Exactly the execute grant — never the default agent scope set.
     grants = await _admin_rows(
         admin_db,
-        "SELECT scope, actor_type FROM actor_scope_grants WHERE actor_id = :sva",
-        {"sva": sva_id},
+        "SELECT scope, actor_type FROM actor_scope_grants WHERE actor_id = :sid",
+        {"sid": successor_id},
     )
-    assert [(row.scope, row.actor_type) for row in grants] == [
-        ("capabilities:execute", "service_account")
-    ]
+    assert [(row.scope, row.actor_type) for row in grants] == [("capabilities:execute", "agent")]
 
     # 4) The flag-off path: one toolkit binding for the successor actor.
     toolkit_bindings = await _admin_rows(
         admin_db,
-        "SELECT toolkit_id FROM agent_toolkit_bindings WHERE agent_id = :sva",
-        {"sva": sva_id},
+        "SELECT toolkit_id FROM agent_toolkit_bindings WHERE agent_id = :sid",
+        {"sid": successor_id},
     )
     assert [row.toolkit_id for row in toolkit_bindings] == [toolkit_id]
 
@@ -271,8 +270,8 @@ async def test_happy_path_creates_all_successor_artifacts(
     cred_bindings = await _admin_rows(
         admin_db,
         "SELECT credential_id, rule_set_id FROM agent_credential_bindings "
-        "WHERE agent_id = :sva ORDER BY credential_id",
-        {"sva": sva_id},
+        "WHERE agent_id = :sid ORDER BY credential_id",
+        {"sid": successor_id},
     )
     bindings_by_cred = {row.credential_id: row.rule_set_id for row in cred_bindings}
     assert set(bindings_by_cred) == {ruled_cred, rule_less_cred}
@@ -301,7 +300,7 @@ async def test_happy_path_creates_all_successor_artifacts(
     ]
 
     # 7) The key is stamped with its successor.
-    assert await _migrated_actor_id(control_db, key_id) == sva_id
+    assert await _migrated_actor_id(control_db, key_id) == successor_id
 
 
 async def test_unresolvable_keys_are_skipped_with_reasons(
@@ -349,7 +348,7 @@ async def test_fallback_owner_email_resolves_ownerless_key(
     assert outcome.action == "migrated"
     accounts = await _admin_rows(
         admin_db,
-        "SELECT owner_id FROM service_accounts WHERE name = :name",
+        "SELECT owner_id FROM agents WHERE name = :name",
         {"name": f"toolkit-key:{key_id}"},
     )
     assert [row.owner_id for row in accounts] == [_FALLBACK_OWNER]
@@ -384,17 +383,19 @@ async def test_rerun_is_idempotent(
 
     assert first.action == "migrated"
     assert second.action == "already_migrated"
-    assert second.service_account_id == first.service_account_id
+    assert second.successor_actor_id == first.successor_actor_id
 
-    sva_id = first.service_account_id
+    successor_id = first.successor_actor_id
     for query in (
-        "SELECT id FROM service_accounts WHERE name = :name",
-        "SELECT id FROM service_account_credentials WHERE service_account_id = :sva",
-        "SELECT id FROM actor_scope_grants WHERE actor_id = :sva",
-        "SELECT id FROM agent_toolkit_bindings WHERE agent_id = :sva",
-        "SELECT id FROM agent_credential_bindings WHERE agent_id = :sva",
+        "SELECT id FROM agents WHERE name = :name",
+        "SELECT id FROM agent_credentials WHERE agent_id = :sid",
+        "SELECT id FROM actor_scope_grants WHERE actor_id = :sid",
+        "SELECT id FROM agent_toolkit_bindings WHERE agent_id = :sid",
+        "SELECT id FROM agent_credential_bindings WHERE agent_id = :sid",
     ):
-        rows = await _admin_rows(admin_db, query, {"name": f"toolkit-key:{key_id}", "sva": sva_id})
+        rows = await _admin_rows(
+            admin_db, query, {"name": f"toolkit-key:{key_id}", "sid": successor_id}
+        )
         assert len(rows) == 1, query
     async with control_db.session() as session:
         rule_sets = (
