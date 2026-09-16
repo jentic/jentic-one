@@ -12,6 +12,7 @@ from jentic_one.broker.services.execution.pipeline import (
     ExecutionOutcome,
     enrich_error_origin,
 )
+from jentic_one.shared.schemas import OperationInfo
 
 
 class _FakeRunner:
@@ -34,7 +35,7 @@ def _ctx() -> ExecutionContext:
     return ExecutionContext(
         execution_id="exec_x",
         toolkit_id="tk",
-        operation_id="op",
+        operation=OperationInfo(id="op"),
         api=None,
         trace_id="trace",
     )

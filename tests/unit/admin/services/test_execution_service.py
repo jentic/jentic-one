@@ -18,6 +18,8 @@ def _make_record(**overrides: Any) -> MagicMock:
         "duration_ms": 100,
         "status": "completed",
         "operation_id": "getThing",
+        "operation_name": "/v1/things/{id}",
+        "operation_method": "GET",
         "api_vendor": "example",
         "api_name": "api",
         "api_version": "1.0.0",

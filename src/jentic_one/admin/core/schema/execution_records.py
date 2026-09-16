@@ -52,6 +52,12 @@ class ExecutionRecord(AuditableMixin, AdminBase):
     duration_ms: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     operation_id: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    # Human-readable operation identity (nullable: rows predating these columns
+    # and legacy in-flight jobs carry only ``operation_id``). ``operation_name``
+    # is the spec's path template (e.g. ``/repos/{owner}/{repo}``);
+    # ``operation_method`` its HTTP method.
+    operation_name: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    operation_method: Mapped[str | None] = mapped_column(String(10), nullable=True)
     api_vendor: Mapped[str | None] = mapped_column(String(128), nullable=True)
     api_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
     api_version: Mapped[str | None] = mapped_column(String(128), nullable=True)

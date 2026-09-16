@@ -18,6 +18,7 @@ from jentic_one.broker.core.schemas import ExecuteRequestContext
 from jentic_one.broker.services.execution.service import persist_streaming_execution
 from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.models import ExecutionStatus
+from jentic_one.shared.schemas import OperationInfo
 
 pytestmark = pytest.mark.integration
 
@@ -50,7 +51,7 @@ def ctx_req() -> ExecuteRequestContext:
         method="GET",
         trace_id="trace-integ-001",
         toolkit_id="tk-integ-1",
-        operation_id="getData",
+        operation=OperationInfo(id="getData", name="/data", method="GET"),
         api_vendor="example",
         api_name="data-api",
         api_version="v1",
@@ -91,6 +92,8 @@ async def test_streaming_execution_persists_completed_record(
     assert record.duration_ms == 42
     assert record.toolkit_id == "tk-integ-1"
     assert record.operation_id == "getData"
+    assert record.operation_name == "/data"
+    assert record.operation_method == "GET"
     assert record.actor_id == "agent-integ-1"
     assert record.actor_type == "agent"
     assert record.error is None

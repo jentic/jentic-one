@@ -43,6 +43,11 @@ class ExecutionResponse(BaseModel):
     duration_ms: int | None = None
     status: str
     operation_id: str | None = None
+    # Human-readable operation identity: the spec's path template (e.g.
+    # ``/repos/{owner}/{repo}``) + HTTP method. Null on records that predate
+    # these columns — clients fall back to ``operation_id``.
+    operation_name: str | None = None
+    operation_method: str | None = None
     api: ApiInfoResponse | None = None
     pinned_revisions: dict[str, Any] | None = None
     http_status: int | None = None

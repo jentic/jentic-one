@@ -108,7 +108,9 @@ async def test_resolve_operation_returns_operation_and_api_context(
         result = await svc.resolve_operation(method="GET", url="https://api.acme.com/v1/pets/123")
 
     assert result is not None
-    assert result.operation_id == op_id
+    assert result.operation.id == op_id
+    assert result.operation.name == "/v1/pets/{petId}"
+    assert result.operation.method == "GET"
     assert result.api.vendor == "acme.com"
     assert result.api.name == "pets-api"
     assert result.api.version == "v1"
@@ -251,7 +253,7 @@ async def test_resolve_operation_trailing_slash_combinations(
         )
 
     assert result is not None
-    assert result.operation_id == op_id
+    assert result.operation.id == op_id
 
 
 @pytest.mark.parametrize("path_template", ["/v1/pets/{petId}", "/v1/pets/{petId}/"])
@@ -280,7 +282,7 @@ async def test_resolve_operation_parameterized_trailing_slash_combinations(
         )
 
     assert result is not None
-    assert result.operation_id == op_id
+    assert result.operation.id == op_id
     assert result.path_params == {"petId": "123"}
 
 
@@ -313,4 +315,4 @@ async def test_advertised_url_round_trip_for_trailing_slash_spec(
         result = await svc.resolve_operation(method="GET", url=advertised)
 
     assert result is not None
-    assert result.operation_id == op_id
+    assert result.operation.id == op_id

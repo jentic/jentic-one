@@ -144,12 +144,13 @@ async def run_execution(
     execution_id = execution_id or mint_execution_id()
     started_at = datetime.now(UTC)
     t0 = time.perf_counter()
+    operation_id = ctx_req.operation.id if ctx_req.operation else None
 
     logger.info(
         "execution_started",
         execution_id=execution_id,
         actor_id=actor_id,
-        operation_id=ctx_req.operation_id,
+        operation_id=operation_id,
         api_vendor=ctx_req.api_vendor,
     )
 
@@ -164,7 +165,7 @@ async def run_execution(
     exec_context = ExecutionContext(
         execution_id=execution_id,
         toolkit_id=ctx_req.toolkit_id,
-        operation_id=ctx_req.operation_id,
+        operation=ctx_req.operation,
         api=_api_reference(ctx_req),
         trace_id=ctx_req.trace_id,
     )
@@ -180,7 +181,7 @@ async def run_execution(
     try:
         with _tracer.start_as_current_span("broker.execute") as span:
             span.set_attribute("execution_id", execution_id)
-            span.set_attribute("operation_id", ctx_req.operation_id or "")
+            span.set_attribute("operation_id", operation_id or "")
             span.set_attribute("toolkit_id", ctx_req.toolkit_id or "")
             span.set_attribute("api_vendor", ctx_req.api_vendor or "")
             with jentic_tracestate(tracestate_member):
@@ -210,7 +211,7 @@ async def run_execution(
             actor_type=actor_type,
             toolkit_id=ctx_req.toolkit_id,
             credential_id=ctx_req.credential_id,
-            operation_id=ctx_req.operation_id,
+            operation_id=operation_id,
             security_config=security_config,
             origin=origin,
         )
@@ -250,8 +251,8 @@ async def run_execution(
         duration_ms=duration_ms,
     )
 
-    _executions_total.add(1, {"operation": ctx_req.operation_id or "", "status": status})
-    _execution_duration.record(result.duration_ms, {"operation": ctx_req.operation_id or ""})
+    _executions_total.add(1, {"operation": operation_id or "", "status": status})
+    _execution_duration.record(result.duration_ms, {"operation": operation_id or ""})
 
     await _persist(
         ctx_req,
@@ -291,7 +292,7 @@ async def run_execution(
         actor_type=actor_type,
         toolkit_id=ctx_req.toolkit_id,
         credential_id=ctx_req.credential_id,
-        operation_id=ctx_req.operation_id,
+        operation_id=operation_id,
         security_config=security_config,
         error_tags=error_tags,
         origin=origin,
@@ -350,9 +351,9 @@ async def persist_streaming_execution(
     (or terminates with an error). Shares metrics instrumentation with the
     buffered path for observability parity.
     """
-    operation = ctx_req.operation_id or ""
-    _executions_total.add(1, {"operation": operation, "status": status})
-    _execution_duration.record(duration_ms, {"operation": operation})
+    operation_id = ctx_req.operation.id if ctx_req.operation else None
+    _executions_total.add(1, {"operation": operation_id or "", "status": status})
+    _execution_duration.record(duration_ms, {"operation": operation_id or ""})
 
     logger.info(
         "execution_recorded",
@@ -370,7 +371,7 @@ async def persist_streaming_execution(
         started_at=started_at,
         status=status,
         duration_ms=duration_ms,
-        operation_id=ctx_req.operation_id,
+        operation=ctx_req.operation,
         api_vendor=ctx_req.api_vendor,
         api_name=ctx_req.api_name,
         api_version=ctx_req.api_version,
@@ -405,7 +406,7 @@ async def persist_streaming_execution(
         actor_type=actor_type,
         toolkit_id=ctx_req.toolkit_id,
         credential_id=ctx_req.credential_id,
-        operation_id=ctx_req.operation_id,
+        operation_id=operation_id,
         security_config=security_config,
         error_tags=error_tags,
         origin=origin,
@@ -434,7 +435,7 @@ async def _persist(
         started_at=started_at,
         status=status,
         duration_ms=duration_ms,
-        operation_id=ctx_req.operation_id,
+        operation=ctx_req.operation,
         api_vendor=ctx_req.api_vendor,
         api_name=ctx_req.api_name,
         api_version=ctx_req.api_version,

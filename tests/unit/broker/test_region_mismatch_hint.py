@@ -20,6 +20,7 @@ from jentic_one.shared.broker.execution import (
     ExecutionOutcome,
     RunnerResult,
 )
+from jentic_one.shared.schemas import OperationInfo
 
 _HINT_HEADER = JenticHeader.HINT.value
 
@@ -29,7 +30,7 @@ def _ctx_req(*, has_server_variable: bool) -> ExecuteRequestContext:
         upstream_url="https://us.posthog.com/api/projects",
         method="GET",
         trace_id="trace-1",
-        operation_id="op-1",
+        operation=OperationInfo(id="op-1"),
         api_vendor="posthog.com",
         api_name="posthog",
         api_version="v1",
@@ -48,7 +49,7 @@ def _outcome(status_code: int, body: bytes = b'{"detail":"Invalid Key"}') -> Exe
     context = ExecutionContext(
         execution_id="exec-1",
         toolkit_id="tk-1",
-        operation_id="op-1",
+        operation=OperationInfo(id="op-1"),
         api=None,
         trace_id="trace-1",
     )

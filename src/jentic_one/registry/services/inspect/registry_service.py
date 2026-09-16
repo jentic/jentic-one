@@ -27,6 +27,7 @@ from jentic_one.shared.broker.protocols import (
     RevisionPinResult,
 )
 from jentic_one.shared.models import ApiRevisionState
+from jentic_one.shared.schemas import OperationInfo
 
 # A ``Jentic-Revision`` value carries the revision id as ``rev_<uuid.hex>`` (the
 # 32-char hyphen-free hex form, which is what the spec ``rev_[A-Za-z0-9]+``
@@ -54,14 +55,16 @@ class RegistryService:
         )
         if hit is None:
             return None
-        api = await UrlIndexRepository.get_api_reference_for_operation(
-            self._session, hit.operation_id
-        )
-        if api is None:
+        op_ctx = await UrlIndexRepository.get_operation_context(self._session, hit.operation_id)
+        if op_ctx is None:
             return None
         return ResolveResult(
-            operation_id=hit.operation_id,
-            api=api,
+            operation=OperationInfo(
+                id=hit.operation_id,
+                name=op_ctx.path,
+                method=op_ctx.method,
+            ),
+            api=op_ctx.api,
             path_params=hit.path_params,
         )
 

@@ -103,6 +103,8 @@ class ExecutionService:
             duration_ms=record.duration_ms,
             status=record.status,
             operation_id=record.operation_id,
+            operation_name=getattr(record, "operation_name", None),
+            operation_method=getattr(record, "operation_method", None),
             api=api,
             pinned_revisions=record.pinned_revisions,
             http_status=record.http_status,

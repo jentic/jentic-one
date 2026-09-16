@@ -331,7 +331,7 @@ def _context_from_discovery(
         # discovered API identity by ``select_toolkit`` after discovery,
         # never taken verbatim from the inbound header.
         toolkit_id=None,
-        operation_id=resolved.operation_id,
+        operation=resolved.operation,
         api_vendor=resolved.api.vendor,
         api_name=resolved.api.name,
         api_version=resolved.api.version,
@@ -641,8 +641,8 @@ def _metadata_headers(ctx_req: ExecuteRequestContext, execution_id: str) -> dict
     meta: dict[str, str] = {JenticHeader.EXECUTION_ID.value: execution_id}
     if ctx_req.toolkit_id:
         meta[JenticHeader.TOOLKIT_ID.value] = ctx_req.toolkit_id
-    if ctx_req.operation_id:
-        meta[JenticHeader.OPERATION.value] = ctx_req.operation_id
+    if ctx_req.operation:
+        meta[JenticHeader.OPERATION.value] = ctx_req.operation.id
     if ctx_req.api_vendor:
         meta[JenticHeader.API_VENDOR.value] = ctx_req.api_vendor
     # Credential attribution (#740). Emitted only when the resolver actually
@@ -898,7 +898,7 @@ async def _handle(
             rule_set_id=rule_set_ids.get(selected_credential.credential_id),
             method=method,
             path=urlparse(upstream_url).path,
-            operation_id=resolved.operation_id,
+            operation_id=resolved.operation.id,
         )
         if not evaluation.allowed:
             # Same two-variant deny split as the toolkit path (#578): an empty
@@ -974,7 +974,7 @@ async def _handle(
             toolkit_id=ctx_req.toolkit_id,
             method=method,
             path=urlparse(upstream_url).path,
-            operation_id=resolved.operation_id,
+            operation_id=resolved.operation.id,
             api_vendor=resolved.api.vendor,
         )
         if not evaluation.allowed:
@@ -1282,7 +1282,7 @@ async def _handle_async(
         "method": ctx_req.method,
         "toolkit_id": ctx_req.toolkit_id,
         "trace_id": ctx_req.trace_id,
-        "operation_id": ctx_req.operation_id,
+        "operation": ctx_req.operation.model_dump() if ctx_req.operation else None,
         "api_vendor": ctx_req.api_vendor,
         "api_name": ctx_req.api_name,
         "api_version": ctx_req.api_version,

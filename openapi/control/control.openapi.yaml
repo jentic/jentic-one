@@ -2623,6 +2623,16 @@ components:
           - type: string
           - type: 'null'
           title: Operation Id
+        operation_method:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Operation Method
+        operation_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Operation Name
         origin:
           anyOf:
           - type: string

@@ -46,6 +46,8 @@ def _execution_response(view: ExecutionView, request: Request) -> ExecutionRespo
         duration_ms=view.duration_ms,
         status=view.status,
         operation_id=view.operation_id,
+        operation_name=view.operation_name,
+        operation_method=view.operation_method,
         api=api,
         pinned_revisions=view.pinned_revisions,
         http_status=view.http_status,

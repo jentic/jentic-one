@@ -96,6 +96,9 @@ class ExecutionHandler:
         api_name = payload.get("api_name")
         api_version = payload.get("api_version")
         origin = payload.get("origin")
+        # The repeated-failure detector keys on the operation id; jobs enqueued
+        # before the ``operation`` dict existed carry the legacy flat key.
+        operation_id = (payload.get("operation") or {}).get("id") or payload.get("operation_id")
 
         body: bytes | None = None
         body_b64 = payload.get("body_b64")
@@ -152,6 +155,10 @@ class ExecutionHandler:
                         "execution_id": execution_id,
                         "trace_id": trace_id,
                         "toolkit_id": payload.get("toolkit_id"),
+                        # The resolved operation (id + name + method) as one
+                        # dict; ``operation_id`` rides alongside for jobs
+                        # enqueued before the ``operation`` key existed.
+                        "operation": payload.get("operation"),
                         "operation_id": payload.get("operation_id"),
                         "api_vendor": api_vendor,
                         "api_name": api_name,
@@ -205,7 +212,7 @@ class ExecutionHandler:
             actor_type=actor_type,
             toolkit_id=payload.get("toolkit_id"),
             credential_id=credential_id,
-            operation_id=payload.get("operation_id"),
+            operation_id=operation_id,
             origin=origin,
         )
 

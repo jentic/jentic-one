@@ -20,6 +20,8 @@ export type ExecutionResponse = {
     execution_id: string;
     http_status?: (number | null);
     operation_id?: (string | null);
+    operation_method?: (string | null);
+    operation_name?: (string | null);
     origin?: (string | null);
     pinned_revisions?: (Record<string, any> | null);
     started_at: string;

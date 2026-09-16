@@ -32,6 +32,7 @@ from jentic_one.shared.jobs.protocols import (
     UpstreamExecResult,
     UpstreamExecutor,
 )
+from jentic_one.shared.schemas import OperationInfo
 
 
 class PipelineExecutor(UpstreamExecutor):
@@ -92,7 +93,7 @@ def _ctx_from_metadata(request: UpstreamExecRequest) -> ExecuteRequestContext:
         # "trace_id is always 32-hex" invariant for any other caller (#903).
         trace_id=valid_trace_id_or_minted(str(meta.get("trace_id") or "")),
         toolkit_id=meta.get("toolkit_id"),
-        operation_id=meta.get("operation_id"),
+        operation=_operation_from_metadata(meta),
         api_vendor=meta.get("api_vendor"),
         api_name=meta.get("api_name"),
         api_version=meta.get("api_version"),
@@ -101,6 +102,22 @@ def _ctx_from_metadata(request: UpstreamExecRequest) -> ExecuteRequestContext:
         credential_id=meta.get("credential_id"),
         credential_name=meta.get("credential_name"),
     )
+
+
+def _operation_from_metadata(meta: dict[str, Any]) -> OperationInfo | None:
+    """Rebuild the resolved operation from the worker's metadata.
+
+    The handler forwards the job payload's ``operation`` dict (id + name +
+    method). Jobs enqueued before that key existed carry only ``operation_id``;
+    fold it into an id-only ``OperationInfo`` so their records keep the id.
+    """
+    operation = meta.get("operation")
+    if operation:
+        return OperationInfo.model_validate(operation)
+    legacy_id = meta.get("operation_id")
+    if legacy_id:
+        return OperationInfo(id=str(legacy_id))
+    return None
 
 
 __all__ = ["PipelineExecutor"]

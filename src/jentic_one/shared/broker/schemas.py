@@ -17,12 +17,14 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from jentic_one.shared.schemas import OperationInfo
+
 
 class ExecuteRequestContext(BaseModel):
     """Contextual metadata for a broker proxy request — discovery-driven.
 
     ``toolkit_id`` is optional: derived from the discovered API identity or
-    supplied as an inbound disambiguator. ``operation_id`` / ``api_*`` come from
+    supplied as an inbound disambiguator. ``operation`` / ``api_*`` come from
     in-process discovery, not inbound ``Jentic-Api-*`` headers.
     """
 
@@ -30,7 +32,9 @@ class ExecuteRequestContext(BaseModel):
     method: str
     trace_id: str
     toolkit_id: str | None = None
-    operation_id: str | None = None
+    # The discovered operation (id + path template + method), carried as one
+    # object so every persistence/telemetry seam sees the same identity.
+    operation: OperationInfo | None = None
     api_vendor: str | None = None
     api_name: str | None = None
     api_version: str | None = None
