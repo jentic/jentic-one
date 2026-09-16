@@ -384,6 +384,16 @@ AWS Marketplace license gate for the Marketplace-listed deployment. Powers the e
 | `entitlement.license_dimensions` | list of string | — | `JENTIC__ENTITLEMENT__LICENSE_DIMENSIONS` |  |
 | `entitlement.endpoint` | string \| null | `null` | `JENTIC__ENTITLEMENT__ENDPOINT` |  |
 
+## `spec_mirror`
+
+Opt-in mirror of registry spec documents to a local directory. When enabled, every successful import, promote, archive, delete, and overlay rollback also rewrites the affected API's directory under `path` so the filesystem mirrors the registry DB: one JSON spec document per revision, grouped by lifecycle state (`published/`, `imported/`, `draft/`, `archived/`), plus a `<revision_id>.meta.json` sidecar. The directory is meant to be mounted read-write into jentic-one and read-only into consumer services that want direct file access to specs (`published/` + `imported/` together hold the at-most-one servable revision per API version). Mirroring is best-effort and post-commit: the DB is the source of truth, a file-write failure never fails the registry operation (failures log at error level and count on the `spec_mirror.failures` metric), and drift heals on the next sync or the startup reconcile. Write serialization is per process — run exactly **one** registry-surface process per mirror directory; replicas sharing a read-write mount are unsupported. Defaults to **OFF**: omitting this block wires nothing and never touches the filesystem.
+
+| Key | Type | Default | Env var | Description |
+| --- | ---- | ------- | ------- | ----------- |
+| `spec_mirror.enabled` | boolean | `false` | `JENTIC__SPEC_MIRROR__ENABLED` |  |
+| `spec_mirror.path` | string | `""` | `JENTIC__SPEC_MIRROR__PATH` |  |
+| `spec_mirror.reconcile_on_startup` | boolean | `true` | `JENTIC__SPEC_MIRROR__RECONCILE_ON_STARTUP` |  |
+
 ## `apps`
 
 | Key | Type | Default | Env var | Description |

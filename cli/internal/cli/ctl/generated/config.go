@@ -621,6 +621,9 @@ type ConfigSchemaJson struct {
 	// Services corresponds to the JSON schema field "services".
 	Services *ServicesConfig `json:"services,omitempty,omitzero" yaml:"services,omitempty" mapstructure:"services,omitempty"`
 
+	// SpecMirror corresponds to the JSON schema field "spec_mirror".
+	SpecMirror *SpecMirrorConfig `json:"spec_mirror,omitempty,omitzero" yaml:"spec_mirror,omitempty" mapstructure:"spec_mirror,omitempty"`
+
 	// Telemetry corresponds to the JSON schema field "telemetry".
 	Telemetry *TelemetryConfig `json:"telemetry,omitempty,omitzero" yaml:"telemetry,omitempty" mapstructure:"telemetry,omitempty"`
 
@@ -2241,6 +2244,61 @@ func (j *SigningKeyConfig) UnmarshalJSON(value []byte) error {
 		return err
 	}
 	*j = SigningKeyConfig(plain)
+	return nil
+}
+
+// Opt-in mirror of registry spec documents to a local directory.
+//
+// When enabled, every successful import, promote, archive, delete, and
+// overlay rollback also rewrites the affected API's directory under “path“
+// so the filesystem mirrors the registry DB: one JSON spec document per
+// revision, grouped by lifecycle state (“published/“, “imported/“,
+// “draft/“, “archived/“), plus a “<revision_id>.meta.json“ sidecar.
+// The directory is meant to be mounted read-write into jentic-one and
+// read-only into consumer services that want direct file access to specs
+// (“published/“ + “imported/“ together hold the at-most-one servable
+// revision per API version).
+//
+// Mirroring is best-effort and post-commit: the DB is the source of truth, a
+// file-write failure never fails the registry operation (failures log at
+// error level and count on the “spec_mirror.failures“ metric), and drift
+// heals on the next sync or the startup reconcile. Write serialization is
+// per process — run exactly **one** registry-surface process per mirror
+// directory; replicas sharing a read-write mount are unsupported. Defaults
+// to **OFF**: omitting this block wires nothing and never touches the
+// filesystem.
+type SpecMirrorConfig struct {
+	// Enabled corresponds to the JSON schema field "enabled".
+	Enabled bool `json:"enabled,omitempty,omitzero" yaml:"enabled,omitempty" mapstructure:"enabled,omitempty"`
+
+	// Path corresponds to the JSON schema field "path".
+	Path string `json:"path,omitempty,omitzero" yaml:"path,omitempty" mapstructure:"path,omitempty"`
+
+	// ReconcileOnStartup corresponds to the JSON schema field "reconcile_on_startup".
+	ReconcileOnStartup bool `json:"reconcile_on_startup,omitempty,omitzero" yaml:"reconcile_on_startup,omitempty" mapstructure:"reconcile_on_startup,omitempty"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *SpecMirrorConfig) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	type Plain SpecMirrorConfig
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	if v, ok := raw["enabled"]; !ok || v == nil {
+		plain.Enabled = false
+	}
+	if v, ok := raw["path"]; !ok || v == nil {
+		plain.Path = ""
+	}
+	if v, ok := raw["reconcile_on_startup"]; !ok || v == nil {
+		plain.ReconcileOnStartup = true
+	}
+	*j = SpecMirrorConfig(plain)
 	return nil
 }
 

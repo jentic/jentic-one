@@ -37,6 +37,30 @@ every default.
 
 Database passwords use `pydantic.SecretStr` — they are automatically redacted in logs, repr, and serialization. Access the raw value only via `.get_secret_value()`.
 
+### Mirroring spec documents to disk (`spec_mirror`)
+
+Opt-in: when enabled, the registry mirrors every spec document to a local
+directory (grouped per API version by revision lifecycle state, with a
+`*.meta.json` sidecar each), keeps it in sync on
+import/promote/archive/delete/overlay-rollback, and reconciles the whole
+directory from the DB in the background at startup. Mount the directory
+read-only into other services that want direct file access to specs.
+
+```yaml
+spec_mirror:
+  enabled: true
+  path: /var/lib/jentic/specs   # must be absolute
+```
+
+The DB stays the source of truth — mirroring is best-effort and never fails a
+registry operation (failures log at error level and count on the
+`spec_mirror.failures` metric). Run exactly **one** registry-surface process
+per mirror directory: write serialization is per process, so replicas sharing
+a read-write mount are unsupported. See the
+[config reference](../reference/config.md) for all fields and
+`src/jentic_one/registry/services/spec_mirror_service.py` for the
+on-disk layout.
+
 ## Context
 
 `Context` is the central object that holds the resolved config and manages database engines/sessions.

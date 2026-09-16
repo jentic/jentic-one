@@ -1478,6 +1478,28 @@
       "title": "SigningKeyConfig",
       "type": "object"
     },
+    "SpecMirrorConfig": {
+      "description": "Opt-in mirror of registry spec documents to a local directory.\n\nWhen enabled, every successful import, promote, archive, delete, and\noverlay rollback also rewrites the affected API's directory under ``path``\nso the filesystem mirrors the registry DB: one JSON spec document per\nrevision, grouped by lifecycle state (``published/``, ``imported/``,\n``draft/``, ``archived/``), plus a ``<revision_id>.meta.json`` sidecar.\nThe directory is meant to be mounted read-write into jentic-one and\nread-only into consumer services that want direct file access to specs\n(``published/`` + ``imported/`` together hold the at-most-one servable\nrevision per API version).\n\nMirroring is best-effort and post-commit: the DB is the source of truth, a\nfile-write failure never fails the registry operation (failures log at\nerror level and count on the ``spec_mirror.failures`` metric), and drift\nheals on the next sync or the startup reconcile. Write serialization is\nper process — run exactly **one** registry-surface process per mirror\ndirectory; replicas sharing a read-write mount are unsupported. Defaults\nto **OFF**: omitting this block wires nothing and never touches the\nfilesystem.",
+      "properties": {
+        "enabled": {
+          "default": false,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "path": {
+          "default": "",
+          "title": "Path",
+          "type": "string"
+        },
+        "reconcile_on_startup": {
+          "default": true,
+          "title": "Reconcile On Startup",
+          "type": "boolean"
+        }
+      },
+      "title": "SpecMirrorConfig",
+      "type": "object"
+    },
     "StateBackendConfig": {
       "description": "Configuration for :func:`build_state_backend`.",
       "properties": {
@@ -1779,6 +1801,9 @@
     },
     "services": {
       "$ref": "#/$defs/ServicesConfig"
+    },
+    "spec_mirror": {
+      "$ref": "#/$defs/SpecMirrorConfig"
     },
     "telemetry": {
       "$ref": "#/$defs/TelemetryConfig"

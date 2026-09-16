@@ -85,9 +85,11 @@ def _build_app(ctx: Context, apps: list[str]) -> FastAPI:
         # Standalone control carries the composition container so the /mcp
         # mount (installer + session-manager lifespan) rides it; standalone
         # auth carries it for the /mcp discovery-challenge placeholder (the
-        # discovery pointers it serves must not dangle) — the other surfaces
-        # keep their own default wiring.
-        if surface in ("control", "auth"):
+        # discovery pointers it serves must not dangle); standalone registry
+        # carries it for the spec-mirror startup lifespan (directory
+        # validation + reconcile must reach parts-mode deploys, not just the
+        # combined app) — the other surfaces keep their own default wiring.
+        if surface in ("control", "auth", "registry"):
             app: FastAPI = mod.create_app(ctx, container=container)
         else:
             app = mod.create_app(ctx)

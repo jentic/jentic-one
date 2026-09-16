@@ -17,6 +17,7 @@ from jentic_one.registry.services.errors import (
     RevisionNotFoundError,
     RevisionStateConflictError,
 )
+from jentic_one.registry.services.spec_mirror_service import SpecMirrorService
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_best_effort
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
@@ -81,6 +82,7 @@ class RevisionService:
 
     def __init__(self, ctx: Context) -> None:
         self._ctx = ctx
+        self._spec_mirror = SpecMirrorService(ctx)
 
     async def list_revisions(
         self,
@@ -258,6 +260,10 @@ class RevisionService:
             after={"state": ApiRevisionState.PUBLISHED},
             origin=identity.origin.value,
         )
+        # Post-commit mirror side effect (best-effort, self-gated on
+        # spec_mirror.enabled): the promoted revision moves to published/,
+        # the demoted ones to archived/.
+        await self._spec_mirror.sync_api(vendor, name, version)
         return view
 
     async def archive(
@@ -309,6 +315,9 @@ class RevisionService:
             after={"state": ApiRevisionState.ARCHIVED},
             origin=identity.origin.value,
         )
+        # Post-commit mirror side effect (best-effort, self-gated on
+        # spec_mirror.enabled): the archived revision moves to archived/.
+        await self._spec_mirror.sync_api(vendor, name, version)
         return RevisionView(
             id=refreshed.id,
             api_id=refreshed.api_id,
@@ -365,3 +374,6 @@ class RevisionService:
             target_parent_id=str(api.id),
             origin=identity.origin.value,
         )
+        # Post-commit mirror side effect (best-effort, self-gated on
+        # spec_mirror.enabled): the deleted revision's file is pruned.
+        await self._spec_mirror.sync_api(vendor, name, version)

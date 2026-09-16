@@ -29,6 +29,7 @@ from jentic_one.shared.config import (
     EntitlementConfig,
     RuntimeConfig,
     SigningKeyConfig,
+    SpecMirrorConfig,
     TelemetryConfig,
     _csv_to_list,
     _deep_merge,
@@ -1099,3 +1100,66 @@ def test_entitlement_env_override_round_trip(config_file: Path):
     assert config.entitlement.license_dimensions == ["users", "executions"]
     assert config.entitlement.region == "eu-west-1"
     assert config.entitlement.refresh_interval_seconds == 600
+
+
+# --- SpecMirrorConfig (spec documents mirrored to disk) ------------------------
+
+
+def test_spec_mirror_defaults_off(config_file: Path):
+    config = load_config(config_file)
+    assert config.spec_mirror.enabled is False
+    assert config.spec_mirror.path == ""
+    assert config.spec_mirror.reconcile_on_startup is True
+
+
+def test_spec_mirror_enabled_requires_path():
+    with pytest.raises(ValidationError, match=r"spec_mirror\.path"):
+        SpecMirrorConfig(enabled=True)
+
+
+def test_spec_mirror_enabled_requires_absolute_path():
+    # A relative path would resolve against the process CWD and silently
+    # split the mirror between differently-launched processes.
+    with pytest.raises(ValidationError, match=r"absolute"):
+        SpecMirrorConfig(enabled=True, path="var/lib/specs")
+
+
+def test_spec_mirror_disabled_allows_relative_path():
+    # The validator only constrains the enabled case; a stale relative path
+    # in a disabled block must not fail boot.
+    config = SpecMirrorConfig(enabled=False, path="var/lib/specs")
+    assert config.enabled is False
+
+
+def test_spec_mirror_from_yaml(tmp_path: Path):
+    minimal = {
+        "databases": {
+            "registry": {"name": "reg"},
+            "admin": {"name": "admin"},
+            "control": {"name": "ctrl"},
+        },
+        "spec_mirror": {
+            "enabled": True,
+            "path": "/var/lib/jentic/specs",
+            "reconcile_on_startup": False,
+        },
+    }
+    path = tmp_path / "spec_mirror.yaml"
+    path.write_text(yaml.dump(minimal))
+    config = load_config(path)
+    assert config.spec_mirror.enabled is True
+    assert config.spec_mirror.path == "/var/lib/jentic/specs"
+    assert config.spec_mirror.reconcile_on_startup is False
+
+
+def test_spec_mirror_env_override(config_file: Path):
+    env = {
+        "JENTIC__SPEC_MIRROR__ENABLED": "true",
+        "JENTIC__SPEC_MIRROR__PATH": "/mnt/specs",
+        "JENTIC__SPEC_MIRROR__RECONCILE_ON_STARTUP": "false",
+    }
+    with patch.dict(os.environ, env, clear=False):
+        config = load_config(config_file)
+    assert config.spec_mirror.enabled is True
+    assert config.spec_mirror.path == "/mnt/specs"
+    assert config.spec_mirror.reconcile_on_startup is False

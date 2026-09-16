@@ -31,6 +31,7 @@ from jentic_one.registry.services.errors import (
     SpecFileMissingError,
 )
 from jentic_one.registry.services.overlay_apply import OverlayApplyError, apply_overlay
+from jentic_one.registry.services.spec_mirror_service import SpecMirrorService
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_best_effort
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.permissions import has_effective_permission
@@ -1063,3 +1064,9 @@ class OverlayService:
             reason=f"rolled back; restored revision {overlay.superseded_revision_id}",
             origin=identity.origin.value,
         )
+        # Post-commit mirror side effect (best-effort, self-gated on
+        # spec_mirror.enabled): rollback flips revision states outside the
+        # promote/archive paths — the overlay revision moves to archived/, the
+        # restored one back to published//imported/. Without this hook the
+        # mirror would keep serving the rolled-back overlay spec as live.
+        await SpecMirrorService(self._ctx).sync_api(vendor, name, version)

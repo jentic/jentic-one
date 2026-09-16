@@ -24,6 +24,7 @@ from jentic_one.registry.services.catalog.flow3_metrics import (
     record_overlay_auto_deprecated,
     record_update_settled,
 )
+from jentic_one.registry.services.spec_mirror_service import SpecMirrorService
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_best_effort
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.errors import DatabaseIntegrityError
@@ -84,6 +85,7 @@ class ImportHandler:
 
     def __init__(self, ctx: Context) -> None:
         self._ctx = ctx
+        self._spec_mirror = SpecMirrorService(ctx)
 
     async def execute(
         self,
@@ -146,6 +148,13 @@ class ImportHandler:
                             "state": result.state,
                         },
                         origin=None,
+                    )
+                    # Post-commit mirror side effect (best-effort, self-gated
+                    # on spec_mirror.enabled): the ingest transaction is done,
+                    # so the mirror snapshots the fresh revision set — the new
+                    # revision plus any it archived.
+                    await self._spec_mirror.sync_api(
+                        result.api_vendor, result.api_name, result.api_version
                     )
                 except Exception as exc:
                     logger.exception("import_source_failed", source_index=idx, job_id=job_id)
