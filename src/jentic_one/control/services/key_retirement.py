@@ -1,12 +1,15 @@
 """Theme-5 Phase 4 — the toolkit-key retirement job.
 
-Converts every resolvable ``jntc_live_`` toolkit key into a **service
-account** (never an agent — the plan's toolkit-keys decision: a key carries
-exactly ``capabilities:execute``, and the default agent scope set would be a
-1→13 escalation). The presented plaintext keeps working unchanged: the
-service-account credential row carries the key's SHA-256 lookup digest, and
-``ApiKeyResolver`` matches by digest regardless of prefix, so migration is
-zero-touch for headless callers.
+Converts every resolvable ``jntc_live_`` toolkit key into an **agent**
+(since theme-8 Phase 1 — after the SA→agent migration no code path may
+create a service-account row, so this job must not be an SA producer for
+late stragglers; before theme 8 it minted service accounts). The successor
+carries exactly ``capabilities:execute`` — never the default agent scope
+set, which would be a 1→13 escalation (raw SQL, the theme-8 F1 constraint).
+The presented plaintext keeps working unchanged: the successor's credential
+row carries the key's SHA-256 lookup digest, and ``ApiKeyResolver`` matches
+by digest regardless of prefix, so migration is zero-touch for headless
+callers.
 
 Access parity is preserved on **both** authorization paths:
 
@@ -18,7 +21,7 @@ Access parity is preserved on **both** authorization paths:
   ``(toolkit, credential)`` pair from ``toolkit_permission_rules``
   (rule-less pairs bind with no set — default-deny on both paths).
 
-Idempotency: each key's successor account has a deterministic name
+Idempotency: each key's successor has a deterministic name
 (``toolkit-key:<key id>``); a re-run reuses it, and a stamped
 ``migrated_actor_id`` short-circuits the key entirely. Keys that cannot
 authenticate today (revoked, inactive toolkit, no lookup hash) are **not**
@@ -68,7 +71,10 @@ class KeyRetirementOutcome:
     toolkit_name: str
     action: str  # migrated | already_migrated | skipped
     reason: str | None = None  # revoked | toolkit_inactive | no_lookup_hash | owner_unresolved
-    service_account_id: str | None = None
+    #: The successor actor id — ``agnt_`` for runs since theme-8 Phase 1;
+    #: pre-theme-8 stamps (already_migrated lines) may still carry ``sva_``
+    #: until the SA→agent migration job re-stamps them.
+    successor_actor_id: str | None = None
     bound_credential_ids: tuple[str, ...] = ()
     rule_less_credential_ids: tuple[str, ...] = ()
 
@@ -78,7 +84,7 @@ def _rule_set_name(toolkit_id: str, credential_id: str) -> str:
     return f"theme5-key-retirement:{toolkit_id}:{credential_id}"
 
 
-def _service_account_name(key_id: str) -> str:
+def _successor_name(key_id: str) -> str:
     """Deterministic per-key name — the job's admin-side idempotency key."""
     return f"toolkit-key:{key_id}"
 
@@ -129,7 +135,7 @@ class KeyRetirementService:
                 toolkit_id=toolkit.id,
                 toolkit_name=toolkit.name,
                 action="already_migrated",
-                service_account_id=key.migrated_actor_id,
+                successor_actor_id=key.migrated_actor_id,
             )
         # A key that cannot authenticate today must not gain access by being
         # migrated — retirement is access-preserving, never access-widening.
@@ -140,8 +146,8 @@ class KeyRetirementService:
         if key.lookup_hash is None:
             return skipped("no_lookup_hash")
 
-        # Owner: the SA's owner_id is a NOT NULL FK to users. Prefer the
-        # key's creator, then the toolkit's, then the operator-supplied
+        # Owner: the successor's owner_id is a NOT NULL FK to users. Prefer
+        # the key's creator, then the toolkit's, then the operator-supplied
         # fallback; a key with no resolvable owner is reported, not guessed.
         async with self._ctx.admin_db.session() as admin_session:
             owner_id = await KeyRetirementRepository.resolve_user(
@@ -171,13 +177,13 @@ class KeyRetirementService:
                 )
 
         async with self._ctx.admin_db.transaction() as admin_session:
-            name = _service_account_name(key.id)
-            service_account_id = await KeyRetirementRepository.find_service_account_by_name(
+            name = _successor_name(key.id)
+            successor_id = await KeyRetirementRepository.find_successor_by_name(
                 admin_session, name=name
             )
-            if service_account_id is None:
+            if successor_id is None:
                 label = f" ({key.label})" if key.label else ""
-                service_account_id = await KeyRetirementRepository.create_service_account(
+                successor_id = await KeyRetirementRepository.create_successor_agent(
                     admin_session,
                     name=name,
                     description=(
@@ -188,27 +194,25 @@ class KeyRetirementService:
                     api_key_hash=key.lookup_hash,
                 )
             await KeyRetirementRepository.bind_actor_to_toolkit(
-                admin_session, actor_id=service_account_id, toolkit_id=toolkit.id
+                admin_session, actor_id=successor_id, toolkit_id=toolkit.id
             )
             for credential_id, rule_set_id in rule_sets.items():
                 await KeyRetirementRepository.bind_actor_to_credential(
                     admin_session,
-                    actor_id=service_account_id,
+                    actor_id=successor_id,
                     credential_id=credential_id,
                     rule_set_id=rule_set_id,
                 )
 
         async with self._ctx.control_db.transaction() as control_session:
-            await ToolkitKeyRepository.stamp_migrated_actor(
-                control_session, key.id, service_account_id
-            )
+            await ToolkitKeyRepository.stamp_migrated_actor(control_session, key.id, successor_id)
 
         return KeyRetirementOutcome(
             key_id=key.id,
             toolkit_id=toolkit.id,
             toolkit_name=toolkit.name,
             action="migrated",
-            service_account_id=service_account_id,
+            successor_actor_id=successor_id,
             bound_credential_ids=tuple(rule_sets),
             rule_less_credential_ids=tuple(rule_less),
         )

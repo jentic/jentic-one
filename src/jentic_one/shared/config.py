@@ -166,6 +166,14 @@ class ServicesConfig(BaseModel):
     request_timeout_s: float = 30.0
     retry_max: int = 3
     retry_backoff_s: float = 1.0
+    # Theme-8 Phase 1 (N3): minimum age of a service account's migration
+    # stamp before the boot job's automatic sweep archives the SA-side
+    # originals — the full-fleet-rollout proxy (old-image pods resolve
+    # migrated keys through the SA arm until every pod is upgraded).
+    # ``0`` disables the age gate (CI / fresh installs); a negative value
+    # disables the automatic sweep arm entirely (CLI-only sweeps via
+    # ``jentic_one migrate-service-accounts --sweep-migrated``).
+    service_account_sweep_min_stamp_age_hours: int = 24
 
 
 class WorkerConfig(BaseModel):

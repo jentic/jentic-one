@@ -81,6 +81,7 @@ Service-level settings (immutable after boot).
 | `services.request_timeout_s` | number | `30.0` | `JENTIC__SERVICES__REQUEST_TIMEOUT_S` |  |
 | `services.retry_max` | integer | `3` | `JENTIC__SERVICES__RETRY_MAX` |  |
 | `services.retry_backoff_s` | number | `1.0` | `JENTIC__SERVICES__RETRY_BACKOFF_S` |  |
+| `services.service_account_sweep_min_stamp_age_hours` | integer | `24` | `JENTIC__SERVICES__SERVICE_ACCOUNT_SWEEP_MIN_STAMP_AGE_HOURS` |  |
 
 ## `worker`
 

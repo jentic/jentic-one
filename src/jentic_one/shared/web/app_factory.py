@@ -18,6 +18,9 @@ from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
 
 from jentic_one import __version__
 from jentic_one.control.services.key_retirement import KeyRetirementService
+from jentic_one.control.services.service_account_migration import (
+    ServiceAccountMigrationService,
+)
 from jentic_one.registry.services.import_service import ImportHandler
 from jentic_one.shared.context import Context
 from jentic_one.shared.events import emit_event_best_effort
@@ -297,6 +300,54 @@ def _start_key_retirement(ctx: Context, enabled_apps: set[str]) -> asyncio.Task[
     return task
 
 
+def _start_service_account_migration(
+    ctx: Context, enabled_apps: set[str]
+) -> asyncio.Task[None] | None:
+    """One-shot service-account → agent migration at boot (theme-8 Phase 1).
+
+    Mirrors ``_start_key_retirement``: gate on the control surface plus both
+    DBs being reachable, fire-and-forget, loud-but-non-blocking on failure —
+    the ``migrate-service-accounts`` CLI is the recovery path. Re-runs are
+    cheap no-ops (stamp short-circuit), which is also what catches SAs
+    created during the window (``POST /service-accounts`` stays unguarded,
+    F5). After the migration pass the boot arm triggers the **age-gated**
+    automatic sweep (N3) — never the ungated sweep; a negative configured
+    stamp age disables the automatic sweep arm entirely.
+    """
+    if "control" not in enabled_apps:
+        return None
+    if not (ctx.has_db("control") and ctx.has_db("admin")):
+        return None
+
+    async def _run() -> None:
+        svc = ServiceAccountMigrationService(ctx)
+        try:
+            outcomes = await svc.run()
+        except Exception:
+            _logger.exception("service_account_migration_startup_failed")
+            return
+        failed = sum(1 for o in outcomes if o.outcome == "failed")
+        if failed:
+            _logger.warning(
+                "service_account_migration_rows_failed",
+                count=failed,
+                actionable_step=(
+                    "Run `jentic_one migrate-service-accounts` and inspect the "
+                    "JSONL report for the failing rows."
+                ),
+            )
+        if ctx.config.services.service_account_sweep_min_stamp_age_hours < 0:
+            return
+        try:
+            await svc.sweep()
+        except Exception:
+            _logger.exception("service_account_migration_sweep_failed")
+
+    task = asyncio.create_task(_run())
+    _logger.info("service_account_migration_task_started")
+    return task
+
+
 async def _stop_one_shot(task: asyncio.Task[None] | None) -> None:
     """Cancel-and-await a one-shot startup task at shutdown.
 
@@ -502,6 +553,7 @@ def create_surface_app(
             scanner_task = _start_expiry_scanner(ctx, enabled_apps)
             catalog_scanner_task = _start_catalog_update_scanner(ctx, enabled_apps)
             key_retirement_task = _start_key_retirement(ctx, enabled_apps)
+            sa_migration_task = _start_service_account_migration(ctx, enabled_apps)
             try:
                 yield
             finally:
@@ -513,6 +565,7 @@ def create_surface_app(
                 gate = getattr(app.state, "broker_admission_gate", None)
                 if gate is not None and hasattr(gate, "start_draining"):
                     gate.start_draining()
+                await _stop_one_shot(sa_migration_task)
                 await _stop_one_shot(key_retirement_task)
                 await _stop_catalog_update_scanner(catalog_scanner_task)
                 await _stop_expiry_scanner(scanner_task)
@@ -615,9 +668,11 @@ def create_combined_app(
             scanner_task = _start_expiry_scanner(ctx, set(apps))
             catalog_scanner_task = _start_catalog_update_scanner(ctx, set(apps))
             key_retirement_task = _start_key_retirement(ctx, set(apps))
+            sa_migration_task = _start_service_account_migration(ctx, set(apps))
             try:
                 yield
             finally:
+                await _stop_one_shot(sa_migration_task)
                 await _stop_one_shot(key_retirement_task)
                 await _stop_catalog_update_scanner(catalog_scanner_task)
                 await _stop_expiry_scanner(scanner_task)

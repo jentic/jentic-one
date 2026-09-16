@@ -61,6 +61,8 @@ def _make_sa_row(*, status: str = "active", owner_id: str = "usr_owner") -> Magi
     row.id = "sva_test123"
     row.status = status
     row.owner_id = owner_id
+    # Theme-8 Phase 1: unstamped by default — the stamp guard must not trip.
+    row.migrated_to_actor_id = None
     return row
 
 

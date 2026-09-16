@@ -19,6 +19,7 @@ from jentic_one.auth.services.errors import (
     ActorNotFoundError,
     InvalidGrantError,
     InvalidTransitionError,
+    ServiceAccountMigratedError,
 )
 from jentic_one.auth.services.token_service import TokenService
 from jentic_one.shared.audit import (
@@ -93,6 +94,17 @@ class ServiceAccountAuthService:
                 raise InvalidTransitionError(service_account_id, sa.status, "generate-api-key")
             if "org:admin" not in identity.permissions and sa.owner_id != identity.sub:
                 raise ActorNotFoundError(service_account_id)
+            # Theme-8 Phase 1 stamp guard (N-2): a rotation here would replace
+            # the SA-side digest AFTER the job copied it to the successor,
+            # breaking digest parity (the NF-3 verify criterion). Manage keys
+            # on the successor agent instead. Raised AFTER the ownership check
+            # (E1): the 409 payload names the successor id, which must not
+            # leak to non-owners.
+            if sa.migrated_to_actor_id is not None:
+                raise ServiceAccountMigratedError(
+                    service_account_id,
+                    None if sa.migrated_to_actor_id == "skipped" else sa.migrated_to_actor_id,
+                )
             await ServiceAccountCredentialRepository.set_api_key_hash(
                 session, service_account_id, api_key_hash=key_hash, created_by=identity.sub
             )
