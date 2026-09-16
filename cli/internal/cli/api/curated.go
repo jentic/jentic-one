@@ -82,6 +82,32 @@ func CuratedBindings() []CuratedBinding {
 			NotExposed: map[string]string{},
 		},
 		{
+			// connect: start a connect session for a registry vendor (theme-7
+			// Phase 1b). The vendor key is the positional argument;
+			// --scopes/--reason shape the ask the human approver reviews.
+			Command: "connect",
+			Params:  control.IntegrationsConnectRequest{},
+			Bind: map[string]string{
+				"vendor":           PositionalArg,
+				"requested_scopes": "scopes",
+				"reason":           "reason",
+			},
+			NotExposed: map[string]string{
+				"agent_id":       "never sent: an agent caller IS the agent (identity injected server-side; an override is refused 403); connecting FOR an agent is a dashboard action",
+				"preferred_flow": "the deployment's registry default flow is the right answer on this surface; flow selection is reachable via `jentic api IntegrationsConnect`",
+			},
+		},
+		{
+			// connect --wait poll leg: the poll_token capability is threaded
+			// from the create response in memory, never a user flag.
+			Command: "connect",
+			Params:  control.PollConnectSessionStatusParams{},
+			Bind:    map[string]string{},
+			NotExposed: map[string]string{
+				"poll_token": "internal poll capability from the create response, threaded by --wait; reachable via `jentic api PollConnectSessionStatus`",
+			},
+		},
+		{
 			// search: the query is the positional arg (also settable via -q);
 			// --api/--limit/--cursor drive the rest of the body (ARCH-21 A2,
 			// migrated off internal/searchclient onto the generated SDK).
