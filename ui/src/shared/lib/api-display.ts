@@ -264,22 +264,22 @@ export function apiIdentityTuple(input: {
 /**
  * Human-readable operation label for an execution record.
  *
- * Prefers the record's `operation_method` + `operation_name` (the spec's HTTP
- * method + path template, e.g. "GET /repos/{owner}/{repo}"); rows predating
- * those columns fall back to the opaque `operation_id`, then to null. The
- * input is shaped after the wire `ExecutionResponse` fields so every surface
- * that lists executions (Monitor, dashboard, agent activity) can pass its row
- * straight through — or map camelCase fields into this shape.
+ * Renders the record's `operation_method` + `operation_name` (the spec's HTTP
+ * method + path template, e.g. "GET /repos/{owner}/{repo}"). Returns null when
+ * the record carries no name (legacy rows) — deliberately NEVER the opaque
+ * `operation_id` (`op_…` hash): it is a machine key, meaningless to humans,
+ * and must not render anywhere in the UI. Callers show their own empty
+ * placeholder ("—") instead. The input is shaped after the wire
+ * `ExecutionResponse` fields so every surface that lists executions (Monitor,
+ * dashboard, agent activity) can pass its row straight through — or map
+ * camelCase fields into this shape.
  */
 export function formatOperation(row: {
-	operation_id?: string | null;
 	operation_name?: string | null;
 	operation_method?: string | null;
 }): string | null {
-	if (row.operation_name) {
-		return row.operation_method
-			? `${row.operation_method} ${row.operation_name}`
-			: row.operation_name;
-	}
-	return row.operation_id ?? null;
+	if (!row.operation_name) return null;
+	return row.operation_method
+		? `${row.operation_method} ${row.operation_name}`
+		: row.operation_name;
 }

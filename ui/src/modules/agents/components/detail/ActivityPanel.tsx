@@ -75,10 +75,10 @@ export function ActivityPanel({ actorId, actorType }: ActivityPanelProps) {
 					emptyMessage="No executions recorded for this actor yet."
 					hasMore={executions.data.hasMore}
 					items={items.map((row) => {
-						// Prefer the human-readable operation (method + path
-						// template); legacy rows fall back to the opaque id.
+						// Human-readable operation only (method + path
+						// template); the opaque op_… id never renders, so
+						// legacy rows show just the credential attribution.
 						const operation = formatOperation({
-							operation_id: row.operationId,
 							operation_name: row.operationName,
 							operation_method: row.operationMethod,
 						});

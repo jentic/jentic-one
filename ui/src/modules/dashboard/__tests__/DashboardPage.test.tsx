@@ -88,11 +88,13 @@ describe('DashboardPage', () => {
 			}),
 		).toBeInTheDocument();
 
-		// Recent activity (executions) — a legacy id-only row falls back to the
-		// opaque operation id, a row carrying the human-readable identity
-		// renders method + path template.
-		expect(await screen.findByText('charges/create')).toBeInTheDocument();
+		// Recent activity (executions) — rows carrying the human-readable
+		// identity render method + path template; the legacy id-only row
+		// (exec_3) shows the placeholder and its opaque id NEVER renders.
+		expect(await screen.findByText('POST /v1/charges')).toBeInTheDocument();
 		expect(screen.getByText('GET /repos/{owner}/{repo}')).toBeInTheDocument();
+		expect(screen.queryByText('messages/send')).not.toBeInTheDocument();
+		expect(screen.queryByText('charges/create')).not.toBeInTheDocument();
 	});
 
 	it('sorts the bell queue by urgency: severe alerts before approvals', async () => {
@@ -188,7 +190,7 @@ describe('DashboardPage', () => {
 		expect(
 			await screen.findByRole('button', { name: /Needs your action \(\d+/ }),
 		).toBeInTheDocument();
-		expect(await screen.findByText('charges/create')).toBeInTheDocument();
+		expect(await screen.findByText('POST /v1/charges')).toBeInTheDocument();
 		// …but the admin-only layer never mounts (no doomed 403 request either).
 		expect(screen.queryByText('Gateway health')).not.toBeInTheDocument();
 	});
@@ -265,7 +267,7 @@ describe('DashboardPage', () => {
 		// …while the other queue rows in the same panel still render.
 		expect(await within(inbox).findByText('invoice-bot')).toBeInTheDocument();
 		expect(await within(inbox).findByText('toolkit · use +2 more')).toBeInTheDocument();
-		expect(await screen.findByText('charges/create')).toBeInTheDocument();
+		expect(await screen.findByText('POST /v1/charges')).toBeInTheDocument();
 		expect(await screen.findByText('Gateway health')).toBeInTheDocument();
 	});
 
@@ -277,7 +279,7 @@ describe('DashboardPage', () => {
 		const user = userEvent.setup();
 
 		// The rest of the page (executions exist) keeps the working layout…
-		expect(await screen.findByText('charges/create')).toBeInTheDocument();
+		expect(await screen.findByText('POST /v1/charges')).toBeInTheDocument();
 		expect(screen.queryByText('Set up your workspace')).not.toBeInTheDocument();
 
 		// …and the bell reads all-clear (no count badge), with the panel
@@ -305,7 +307,7 @@ describe('DashboardPage', () => {
 		expect(
 			await screen.findByRole('button', { name: /Needs your action \(\d+/ }),
 		).toBeInTheDocument();
-		expect(await screen.findByText('charges/create')).toBeInTheDocument();
+		expect(await screen.findByText('POST /v1/charges')).toBeInTheDocument();
 	});
 
 	it('opens the quick-actions menu from the header', async () => {
@@ -327,7 +329,7 @@ describe('DashboardPage', () => {
 		seedDashboard();
 		const { container } = renderDashboard();
 		const user = userEvent.setup();
-		await screen.findByText('charges/create');
+		await screen.findByText('POST /v1/charges');
 		await screen.findByRole('region', { name: 'Top usage' });
 		await user.click(await screen.findByRole('button', { name: /Needs your action/ }));
 		await within(await screen.findByRole('dialog', { name: 'Needs your action' })).findByText(

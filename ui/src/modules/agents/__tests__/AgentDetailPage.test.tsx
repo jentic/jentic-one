@@ -155,10 +155,12 @@ describe('AgentDetailPage', () => {
 
 		// The feed lists this agent's executions only (agents-module fixture) —
 		// with the human-readable operation (method + path template) when the
-		// record carries one.
+		// record carries one; the opaque operation_id never renders (legacy
+		// rows show just the credential attribution).
 		expect(
 			await screen.findByText('github · POST /repos/{owner}/{repo}/issues'),
 		).toBeInTheDocument();
+		expect(screen.queryByText(/search_issues/)).not.toBeInTheDocument();
 		expect(screen.getByText(/pbac_denied/)).toBeInTheDocument();
 		expect(screen.getByText('Execution volume · 7d')).toBeInTheDocument();
 

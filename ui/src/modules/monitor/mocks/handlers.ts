@@ -135,8 +135,8 @@ const EXECUTIONS = rebaseFixture([
 		error: null,
 		execution_id: 'exec_4',
 		http_status: 200,
-		// Legacy row: id-only, no operation_name/method — pins the table's
-		// fallback to the opaque id at component level.
+		// Legacy row: id-only, no operation_name/method — pins that the opaque
+		// id never renders (the cells show the empty placeholder instead).
 		operation_id: 'op_chatpost01',
 		pinned_revisions: null,
 		started_at: '2026-06-19T10:07:00Z',
