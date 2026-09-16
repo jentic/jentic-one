@@ -180,19 +180,29 @@ async def test_disallowed_actor_type_rejected() -> None:
         await validator.validate(token)
 
 
-@pytest.mark.parametrize(
-    ("actor_type", "expected"),
-    [("agent", ActorType.AGENT), ("service_account", ActorType.SERVICE_ACCOUNT)],
-)
 @pytest.mark.asyncio
-async def test_allowed_actor_types_validate(actor_type: str, expected: ActorType) -> None:
+async def test_service_account_actor_type_rejected() -> None:
+    """Theme-8 Phase 1 (F3): an SA claim would sail past the grant migration
+    and token revocation (no DB read on this path) — refused; assert the
+    successor agent instead."""
     validator = JwtTokenValidator(verifier=JwtVerifier(secret=_SECRET))
     exp = int((datetime.now(UTC) + timedelta(minutes=5)).timestamp())
-    token = _sign({"sub": "x", "exp": exp, "actor_type": actor_type})
+    token = _sign({"sub": "sva_x", "exp": exp, "actor_type": "service_account"})
+
+    with pytest.raises(TokenValidationError, match="jwt_actor_type_not_allowed"):
+        await validator.validate(token)
+
+
+@pytest.mark.asyncio
+async def test_allowed_actor_type_validates() -> None:
+    """AGENT is the only actor type a trusted issuer may assert (theme-8 F3)."""
+    validator = JwtTokenValidator(verifier=JwtVerifier(secret=_SECRET))
+    exp = int((datetime.now(UTC) + timedelta(minutes=5)).timestamp())
+    token = _sign({"sub": "x", "exp": exp, "actor_type": "agent"})
 
     resolved = await validator.validate(token)
 
-    assert resolved.actor_type is expected
+    assert resolved.actor_type is ActorType.AGENT
 
 
 @pytest.mark.asyncio
