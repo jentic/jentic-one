@@ -1,15 +1,13 @@
 package api
 
-// mcp_access_test.go exercises the 2-E1 access-loop tool handlers against an
-// httptest control plane, following the per-tool patterns of the 1-B/1-C
-// suites: envelope passthrough with the sibling instance stamp, alias
-// tolerance, the coded soft-error mappings with their recovery pointers, and
-// — for request_access — the never-self-approves invariant at the wire level.
+// mcp_catalog_test.go exercises the catalog tool handlers (search_catalog /
+// import_api) against an httptest control plane, following the per-tool
+// patterns of the 1-B/1-C suites: envelope passthrough with the sibling
+// instance stamp, alias tolerance, and the coded soft-error mappings with
+// their recovery pointers.
 
 import (
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -19,18 +17,16 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/jentic/jentic-one/cli/client/generated/control"
 	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 )
 
 // fastAccessServer is stampedTestMCPServer with the poll cadence and the
-// access-loop wait budgets shrunk so pending-path cases are near-instant.
+// catalog wait budgets shrunk so pending-path cases are near-instant.
 func fastAccessServer(t *testing.T) *mcpServer {
 	t.Helper()
 	s := stampedTestMCPServer(t)
 	s.app.SetPollCadence(time.Millisecond, 2*time.Millisecond, time.Millisecond)
 	s.importWaitBudget = 100 * time.Millisecond
-	s.accessPollBudget = 20 * time.Millisecond
 	return s
 }
 
@@ -325,7 +321,7 @@ func TestMCPImportAPI_404IsResolveFailedPointingAtSearchCatalog(t *testing.T) {
 	}
 }
 
-func TestMCPImportAPI_403PointsAtRequestAccessForScope(t *testing.T) {
+func TestMCPImportAPI_403IsOperatorScopeGrant(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
 		_, _ = w.Write([]byte(`{"detail":"requires one of: catalog:import"}`))
@@ -344,11 +340,11 @@ func TestMCPImportAPI_403PointsAtRequestAccessForScope(t *testing.T) {
 	if payload["error_code"] != ux.CodeBrokerDenied {
 		t.Errorf("error_code = %v, want %q (a missing scope is an access gap, not a revoked identity)", payload["error_code"], ux.CodeBrokerDenied)
 	}
-	if payload["next_tool"] != "request_access" {
-		t.Errorf("next_tool = %v, want request_access", payload["next_tool"])
+	if _, has := payload["next_tool"]; has {
+		t.Errorf("next_tool = %v, want none (the scope grant is an operator action, not a tool call)", payload["next_tool"])
 	}
-	if step, _ := payload["actionable_step"].(string); !strings.Contains(step, "catalog:import") {
-		t.Errorf("actionable_step %q must name the catalog:import scope (skill wording)", step)
+	if step, _ := payload["actionable_step"].(string); !strings.Contains(step, "catalog:import") || !strings.Contains(step, "operator") {
+		t.Errorf("actionable_step %q must name the catalog:import scope and route to the operator", step)
 	}
 }
 
@@ -361,320 +357,6 @@ func TestMCPImportAPI_MissingAPIIDIsInvalidParams(t *testing.T) {
 	for _, spelling := range []string{"api_id", "id", "api"} {
 		if err == nil || !strings.Contains(err.Error(), spelling) {
 			t.Errorf("err %v must name the accepted spelling %q", err, spelling)
-		}
-	}
-}
-
-// --- request_access -----------------------------------------------------------
-
-// accessRequestJSON renders a minimal-but-valid AccessRequestResponse body.
-// approve_url is deliberately RELATIVE: the handler must absolutize it onto
-// the environment's base URL (jentic-one#777) before the model sees it.
-func accessRequestJSON(id, status, itemsJSON string) string {
-	return fmt.Sprintf(`{
-		"id": %q, "status": %q, "actor_id": "agent_1", "created_by": "agent_1", "requested_by": "agent_1",
-		"approve_url": "/console/access-requests/%s",
-		"filed_at": "2026-08-31T12:00:00Z", "expires_at": "2026-09-07T12:00:00Z",
-		"items": %s
-	}`, id, status, id, itemsJSON)
-}
-
-// accessControlPlane fakes POST /access-requests + GET /access-requests/{id},
-// recording every request it sees (the never-self-approves assertion reads
-// the log). fileStatus/pollStatus script the lifecycle; fileCode 409 turns
-// the filing into a duplicate-pending collision.
-type accessControlPlane struct {
-	mu         sync.Mutex
-	seen       []string
-	fileBody   []byte
-	fileCode   int
-	fileStatus string
-	pollStatus string
-	itemsJSON  string
-}
-
-func (p *accessControlPlane) handler(t *testing.T) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		p.mu.Lock()
-		p.seen = append(p.seen, r.Method+" "+r.URL.Path)
-		p.mu.Unlock()
-		items := p.itemsJSON
-		if items == "" {
-			items = "[]"
-		}
-		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/access-requests":
-			body, _ := io.ReadAll(r.Body)
-			p.mu.Lock()
-			p.fileBody = body
-			p.mu.Unlock()
-			switch p.fileCode {
-			case http.StatusConflict:
-				w.Header().Set("Content-Type", "application/problem+json")
-				w.WriteHeader(http.StatusConflict)
-				_, _ = w.Write([]byte(`{"title":"duplicate","detail":"a pending request exists","status":409,` +
-					`"existing_request_id":"acr_old","approve_url":"/console/access-requests/acr_old"}`))
-				return
-			case http.StatusForbidden:
-				w.Header().Set("Content-Type", "application/problem+json")
-				w.WriteHeader(http.StatusForbidden)
-				_, _ = w.Write([]byte(`{"detail":"agents of this class may not file access requests"}`))
-				return
-			}
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusAccepted)
-			_, _ = w.Write([]byte(accessRequestJSON("acr_1", p.fileStatus, items)))
-		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/access-requests/"):
-			id := strings.TrimPrefix(r.URL.Path, "/access-requests/")
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(accessRequestJSON(id, p.pollStatus, items)))
-		default:
-			t.Errorf("unexpected control-plane call: %s %s", r.Method, r.URL.Path)
-			w.WriteHeader(http.StatusNotFound)
-		}
-	}
-}
-
-func TestMCPRequestAccess_FilesComposedPlanPendingWithApproveURL(t *testing.T) {
-	plane := &accessControlPlane{fileStatus: statusPending, pollStatus: statusPending}
-	srv := httptest.NewServer(plane.handler(t))
-	defer srv.Close()
-
-	s := fastAccessServer(t)
-	res, err := s.handleRequestAccess(activeCtx(srv.URL), callToolRequest("request_access", `{
-		"provision": ["stripe.com/api"],
-		"auth": ["bearer"],
-		"rules_json": [{"effect":"allow","methods":["GET"],"path":".*"}],
-		"apis": ["github.com/api"],
-		"scopes": ["catalog:import"],
-		"reason": "read invoices for the summary task"
-	}`))
-	if err != nil {
-		t.Fatalf("handleRequestAccess: %v", err)
-	}
-	if res.IsError {
-		t.Fatalf("a pending filing is a normal result, not an error: %s", toolResultText(res))
-	}
-
-	// The wire body: compose()'s exact plan — the 2-item provisioning chain
-	// first (theme-5 phase 3), then the reference bind, then the scope grant —
-	// plus the reason.
-	var wire struct {
-		Reason string `json:"reason"`
-		Items  []struct {
-			ResourceType      string          `json:"resource_type"`
-			Action            string          `json:"action"`
-			ResourceReference map[string]any  `json:"resource_reference"`
-			ResourceID        *string         `json:"resource_id"`
-			Rules             json.RawMessage `json:"rules"`
-		} `json:"items"`
-	}
-	if err := json.Unmarshal(plane.fileBody, &wire); err != nil {
-		t.Fatalf("decode filed body: %v\n%s", err, plane.fileBody)
-	}
-	if wire.Reason != "read invoices for the summary task" {
-		t.Errorf("reason on the wire = %q, want the argument mirrored", wire.Reason)
-	}
-	if len(wire.Items) != 4 {
-		t.Fatalf("items = %d, want the 2-item provision chain + reference bind + scope grant", len(wire.Items))
-	}
-	wantKinds := []string{"credential/provision", "credential/bind", "credential/bind", "scope/grant"}
-	for i, want := range wantKinds {
-		if got := wire.Items[i].ResourceType + "/" + wire.Items[i].Action; got != want {
-			t.Errorf("item %d = %s, want %s (compose() fulfilment order)", i, got, want)
-		}
-	}
-	if ref := wire.Items[0].ResourceReference; ref["security_scheme"] != "bearer" || ref["vendor"] != "stripe.com" {
-		t.Errorf("provision item reference = %v, want the auth type + API stamped on", ref)
-	}
-	if len(wire.Items[1].Rules) == 0 || !strings.Contains(string(wire.Items[1].Rules), `"methods":["GET"]`) {
-		t.Errorf("credential:bind rules = %s, want the proposed rules_json intact (never comma-split)", wire.Items[1].Rules)
-	}
-	if ref := wire.Items[2].ResourceReference; ref["vendor"] != "github.com" {
-		t.Errorf("reference bind = %v, want the apis target filed as a credential bind by reference", ref)
-	}
-	if wire.Items[3].ResourceID == nil || *wire.Items[3].ResourceID != "catalog:import" {
-		t.Errorf("scope item = %+v, want resource_id catalog:import", wire.Items[3])
-	}
-
-	payload := decodeToolJSON(t, res)
-	if payload["schema_version"] != mcpSchemaVersion || payload["id"] != "acr_1" || payload["status"] != statusPending {
-		t.Errorf("envelope = %v, want schema_version/id/status mirrored", payload)
-	}
-	// approve_url absolutized onto the environment base URL, for the HUMAN.
-	if got, _ := payload["approve_url"].(string); got != srv.URL+"/console/access-requests/acr_1" {
-		t.Errorf("approve_url = %q, want it absolutized onto the base URL", got)
-	}
-	instruction, _ := payload["instruction"].(string)
-	if !strings.Contains(instruction, "never approves") || !strings.Contains(instruction, "request_id") {
-		t.Errorf("pending instruction %q must route approval to the human and name the request_id poll", instruction)
-	}
-	if stamp, ok := payload["instance"].(map[string]any); !ok || stamp["backend"] != "local" {
-		t.Errorf("instance stamp = %v, want the fresh identity", payload["instance"])
-	}
-}
-
-// TestMCPRequestAccess_AutoDenialSurfacesInSameResult pins the status-poll
-// half of the tool: a server-side auto-decision landing within the short
-// post-file poll reaches the model in the SAME result, as the coded denial.
-func TestMCPRequestAccess_AutoDenialSurfacesInSameResult(t *testing.T) {
-	plane := &accessControlPlane{
-		fileStatus: statusPending,
-		pollStatus: statusDenied,
-		itemsJSON:  `[{"id":"item_1","resource_type":"credential","action":"bind","status":"denied","decision_reason":"No credential serves API acme/pets; provision one for it first"}]`,
-	}
-	srv := httptest.NewServer(plane.handler(t))
-	defer srv.Close()
-
-	s := fastAccessServer(t)
-	res, err := s.handleRequestAccess(activeCtx(srv.URL), callToolRequest("request_access", `{"apis":["acme/pets"],"reason":"r"}`))
-	if err != nil {
-		t.Fatalf("handleRequestAccess: %v", err)
-	}
-	if !res.IsError {
-		t.Fatalf("a denied request must be an isError result, never look like success")
-	}
-	payload := decodeToolJSON(t, res)
-	if payload["error_code"] != ux.CodeBrokerDenied {
-		t.Errorf("error_code = %v, want %q", payload["error_code"], ux.CodeBrokerDenied)
-	}
-	if step, _ := payload["actionable_step"].(string); !strings.Contains(step, "provision") {
-		t.Errorf("actionable_step %q must teach the provision-vs-bind recovery", step)
-	}
-	request, ok := payload["request"].(map[string]any)
-	if !ok {
-		t.Fatalf("denial must carry the full request for its decision_reason: %v", payload)
-	}
-	items, _ := request["items"].([]any)
-	if len(items) != 1 || !strings.Contains(fmt.Sprint(items[0]), "No credential serves") {
-		t.Errorf("request.items = %v, want the decision_reason relayed", request["items"])
-	}
-}
-
-func TestMCPRequestAccess_DuplicatePendingSingleTargetAttaches(t *testing.T) {
-	plane := &accessControlPlane{fileCode: http.StatusConflict, pollStatus: statusPending}
-	srv := httptest.NewServer(plane.handler(t))
-	defer srv.Close()
-
-	s := fastAccessServer(t)
-	// The legacy "toolkits" spelling rides the deprecated alias — this doubles
-	// as the alias-compat regression while the alias survives (one release).
-	res, err := s.handleRequestAccess(activeCtx(srv.URL), callToolRequest("request_access", `{"toolkits":["acme/pets"]}`))
-	if err != nil {
-		t.Fatalf("handleRequestAccess: %v", err)
-	}
-	if res.IsError {
-		t.Fatalf("a single-target duplicate attaches, like the CLI: %s", toolResultText(res))
-	}
-	payload := decodeToolJSON(t, res)
-	if payload["id"] != "acr_old" || payload["attached_to_existing"] != true {
-		t.Errorf("payload = %v, want the existing request attached and flagged", payload)
-	}
-}
-
-func TestMCPRequestAccess_DuplicatePendingCompositeIsSoftError(t *testing.T) {
-	plane := &accessControlPlane{fileCode: http.StatusConflict}
-	srv := httptest.NewServer(plane.handler(t))
-	defer srv.Close()
-
-	s := fastAccessServer(t)
-	res, err := s.handleRequestAccess(activeCtx(srv.URL),
-		callToolRequest("request_access", `{"apis":["acme/pets"],"scopes":["catalog:import"]}`))
-	if err != nil {
-		t.Fatalf("handleRequestAccess: %v", err)
-	}
-	if !res.IsError {
-		t.Fatalf("a composite collision files NOTHING and must not read as success")
-	}
-	payload := decodeToolJSON(t, res)
-	if payload["error_code"] != ux.CodeResolveFailed {
-		t.Errorf("error_code = %v, want %q", payload["error_code"], ux.CodeResolveFailed)
-	}
-	details, _ := payload["details"].(map[string]any)
-	if details["existing_request_id"] != "acr_old" {
-		t.Errorf("details = %v, want the colliding request id", payload["details"])
-	}
-	if msg, _ := payload["error"].(string); !strings.Contains(msg, "nothing was filed") {
-		t.Errorf("error %q must state that nothing was filed", msg)
-	}
-}
-
-func TestMCPRequestAccess_PollArmReportsApproved(t *testing.T) {
-	plane := &accessControlPlane{pollStatus: statusApproved}
-	srv := httptest.NewServer(plane.handler(t))
-	defer srv.Close()
-
-	s := fastAccessServer(t)
-	res, err := s.handleRequestAccess(activeCtx(srv.URL), callToolRequest("request_access", `{"request_id":"acr_1"}`))
-	if err != nil {
-		t.Fatalf("handleRequestAccess: %v", err)
-	}
-	if res.IsError {
-		t.Fatalf("an approved request is a normal result: %s", toolResultText(res))
-	}
-	payload := decodeToolJSON(t, res)
-	if payload["id"] != "acr_1" || payload["status"] != statusApproved {
-		t.Errorf("payload = %v, want the approved request passed through", payload)
-	}
-	if _, hasInstruction := payload["instruction"]; hasInstruction {
-		t.Errorf("an approved result must not carry the pending approve instruction")
-	}
-	// The poll arm is exactly one GET — no filing, no mutation.
-	for _, call := range plane.seen {
-		if !strings.HasPrefix(call, "GET /access-requests/") {
-			t.Errorf("poll arm made a non-GET call: %s", call)
-		}
-	}
-}
-
-func TestMCPRequestAccess_MissingTargetIsInvalidParams(t *testing.T) {
-	s := fastAccessServer(t)
-	res, err := s.handleRequestAccess(activeCtx("http://127.0.0.1:0"), callToolRequest("request_access", `{}`))
-	if res != nil {
-		t.Fatalf("want a protocol error, got a result: %v", res)
-	}
-	for _, name := range []string{"provision", "apis", "scopes", "request_id"} {
-		if err == nil || !strings.Contains(err.Error(), name) {
-			t.Errorf("err %v must name the parameter %q", err, name)
-		}
-	}
-}
-
-func TestMCPRequestAccess_RequestIDPlusTargetsIsInvalidParams(t *testing.T) {
-	s := fastAccessServer(t)
-	res, err := s.handleRequestAccess(activeCtx("http://127.0.0.1:0"),
-		callToolRequest("request_access", `{"request_id":"acr_1","apis":["acme/pets"]}`))
-	if res != nil {
-		t.Fatalf("want a protocol error, got a result: %v", res)
-	}
-	if err == nil || !strings.Contains(err.Error(), "not both") {
-		t.Fatalf("err = %v, want the either-or invalid-params error", err)
-	}
-}
-
-// TestMCPRequestAccess_NeverSelfApproves pins the §3.2 invariant at the wire
-// level: across the filing arm (with its status short-poll) AND the poll arm,
-// the tool only ever files (POST /access-requests) and reads
-// (GET /access-requests/{id}) — no decide/approve-shaped call exists.
-func TestMCPRequestAccess_NeverSelfApproves(t *testing.T) {
-	plane := &accessControlPlane{fileStatus: statusPending, pollStatus: statusPending}
-	srv := httptest.NewServer(plane.handler(t))
-	defer srv.Close()
-
-	s := fastAccessServer(t)
-	ctx := activeCtx(srv.URL)
-	if res, err := s.handleRequestAccess(ctx, callToolRequest("request_access", `{"apis":["acme/pets"],"reason":"r"}`)); err != nil || res.IsError {
-		t.Fatalf("filing arm: err %v, res %v", err, res)
-	}
-	if res, err := s.handleRequestAccess(ctx, callToolRequest("request_access", `{"request_id":"acr_1"}`)); err != nil || res.IsError {
-		t.Fatalf("poll arm: err %v, res %v", err, res)
-	}
-	if len(plane.seen) == 0 {
-		t.Fatal("the control plane saw no calls")
-	}
-	for _, call := range plane.seen {
-		if call != "POST /access-requests" && !strings.HasPrefix(call, "GET /access-requests/") {
-			t.Errorf("request_access made a call that is neither file nor read: %s", call)
 		}
 	}
 }
@@ -747,10 +429,11 @@ func TestMCPImportAPI_TraversalAPIIDIsInvalidParams(t *testing.T) {
 	}
 }
 
-// TestMCPSearchCatalog_403PointsAtRequestAccessForScope mirrors the import
+// TestMCPSearchCatalog_403IsOperatorScopeGrant mirrors the import
 // mapping: a 403 on GET /catalog is the missing capabilities:read scope — an
-// access gap the agent can close itself — not a revoked identity.
-func TestMCPSearchCatalog_403PointsAtRequestAccessForScope(t *testing.T) {
+// access gap the operator closes with a dashboard grant — not a revoked
+// identity.
+func TestMCPSearchCatalog_403IsOperatorScopeGrant(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
 		_, _ = w.Write([]byte(`{"detail":"requires one of: capabilities:read"}`))
@@ -769,11 +452,11 @@ func TestMCPSearchCatalog_403PointsAtRequestAccessForScope(t *testing.T) {
 	if payload["error_code"] != ux.CodeBrokerDenied {
 		t.Errorf("error_code = %v, want %q", payload["error_code"], ux.CodeBrokerDenied)
 	}
-	if payload["next_tool"] != "request_access" {
-		t.Errorf("next_tool = %v, want request_access", payload["next_tool"])
+	if _, has := payload["next_tool"]; has {
+		t.Errorf("next_tool = %v, want none (the scope grant is an operator action, not a tool call)", payload["next_tool"])
 	}
-	if step, _ := payload["actionable_step"].(string); !strings.Contains(step, "capabilities:read") {
-		t.Errorf("actionable_step %q must name the capabilities:read scope", step)
+	if step, _ := payload["actionable_step"].(string); !strings.Contains(step, "capabilities:read") || !strings.Contains(step, "operator") {
+		t.Errorf("actionable_step %q must name the capabilities:read scope and route to the operator", step)
 	}
 }
 
@@ -802,77 +485,5 @@ func TestMCPSearchCatalog_TransportFailureIsRetryable(t *testing.T) {
 	}
 	if payload["next_tool"] != "get_started" {
 		t.Errorf("next_tool = %v, want get_started", payload["next_tool"])
-	}
-}
-
-// TestMCPRequestAccess_FilingForbiddenIsBrokerDenied: a 403 on the FILING
-// itself must not fall into the generic revoked-identity mapping — and must
-// not point at request_access either (an agent that may not file requests
-// cannot request the right to file them).
-func TestMCPRequestAccess_FilingForbiddenIsBrokerDenied(t *testing.T) {
-	plane := &accessControlPlane{fileCode: http.StatusForbidden}
-	srv := httptest.NewServer(plane.handler(t))
-	defer srv.Close()
-
-	s := fastAccessServer(t)
-	res, err := s.handleRequestAccess(activeCtx(srv.URL), callToolRequest("request_access", `{"apis":["acme/pets"],"reason":"r"}`))
-	if err != nil {
-		t.Fatalf("handleRequestAccess: %v", err)
-	}
-	if !res.IsError {
-		t.Fatalf("want IsError result")
-	}
-	payload := decodeToolJSON(t, res)
-	if payload["error_code"] != ux.CodeBrokerDenied {
-		t.Errorf("error_code = %v, want %q", payload["error_code"], ux.CodeBrokerDenied)
-	}
-	if payload["next_tool"] != "whoami" {
-		t.Errorf("next_tool = %v, want whoami (request_access would be circular here)", payload["next_tool"])
-	}
-	if step, _ := payload["actionable_step"].(string); !strings.Contains(step, "operator") {
-		t.Errorf("actionable_step %q must route to the human operator", step)
-	}
-}
-
-// TestMCPRequestAccess_PollArmRejectsStrayFilingParams pins the poll-arm
-// symmetry: request_id plus ANY filing parameter — a target, a stray reason,
-// or a malformed rules_json — is a confused call the handler must reject, not
-// silently drop.
-func TestMCPRequestAccess_PollArmRejectsStrayFilingParams(t *testing.T) {
-	s := fastAccessServer(t)
-	for name, argsJSON := range map[string]string{
-		"stray reason":        `{"request_id":"acr_1","reason":"please"}`,
-		"stray auth":          `{"request_id":"acr_1","auth":["bearer"]}`,
-		"stray rules_json":    `{"request_id":"acr_1","rules_json":[{"effect":"allow"}]}`,
-		"malformed rules":     `{"request_id":"acr_1","rules_json":42}`,
-		"target and poll mix": `{"request_id":"acr_1","apis":["acme/pets"]}`,
-	} {
-		res, err := s.handleRequestAccess(activeCtx("http://127.0.0.1:0"), callToolRequest("request_access", argsJSON))
-		if res != nil {
-			t.Fatalf("%s: want a protocol error, got a result: %v", name, res)
-		}
-		if err == nil {
-			t.Errorf("%s: want an invalid-params error", name)
-		}
-	}
-}
-
-// TestAbsolutizeApproveURL_SchemeRelativeCleared pins the shared helper's
-// link-hijack guard: a scheme-relative approve_url would resolve onto a
-// FOREIGN host, so it is cleared; genuine relative paths still absolutize and
-// absolute URLs pass through.
-func TestAbsolutizeApproveURL_SchemeRelativeCleared(t *testing.T) {
-	base := "https://control.example"
-	for _, tc := range []struct{ in, want string }{
-		{"//evil.example/console/x", ""},
-		{"/console/access-requests/acr_1", base + "/console/access-requests/acr_1"},
-		{"https://control.example/console/x", "https://control.example/console/x"},
-		{"", ""},
-	} {
-		req := &control.AccessRequestResponse{ApproveUrl: tc.in}
-		absolutizeApproveURL(base, req)
-		if req.ApproveUrl != tc.want {
-			t.Errorf("absolutizeApproveURL(%q) = %q, want %q", tc.in, req.ApproveUrl, tc.want)
-		}
 	}
 }

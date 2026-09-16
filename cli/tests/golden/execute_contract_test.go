@@ -67,7 +67,8 @@ func TestGolden_ExecuteContract(t *testing.T) {
 	// A broker denial carrying a rich agent_directive: every rendering branch
 	// (instruction, run:, open:, candidates, retry-after, stuck?) is frozen.
 	// The wire type is the legacy flag-off no_toolkit_binding — still emitted
-	// by pre-direct-binding brokers — with the surviving --api command copy.
+	// by pre-direct-binding brokers — with a surviving suggested_command
+	// (the disambiguation header form; access requests are retired).
 	brokerDenial403Directive := func(w http.ResponseWriter, _ *http.Request) {
 		w.Header()["Date"] = nil
 		w.Header().Set("Content-Type", "application/problem+json")
@@ -81,12 +82,12 @@ func TestGolden_ExecuteContract(t *testing.T) {
 			"agent_directive": {
 				"strategy": "wait",
 				"parameters": {
-					"suggested_command": "jentic access request --api acme/pets --wait",
+					"suggested_command": "jentic execute --header Jentic-Toolkit-Id=acme/pets ...",
 					"provisioning_url": "https://console.example/connect/acme",
 					"candidates": ["acme/pets", "acme/pets-admin"],
 					"retry_after_seconds": 30
 				},
-				"human_readable_instruction": "You are not bound for 'acme/pets'. File an access request yourself with \u0060jentic access request --api acme/pets --wait\u0060, then ask your operator to approve it — only a human can grant the binding. Once approved, retry this call."
+				"human_readable_instruction": "You are not bound for 'acme/pets'. Ask your operator to bind this agent to the credential serving 'acme/pets' (in the dashboard, or via POST /agents/{agent_id}/credentials) — only a human can grant the binding. Once bound, retry this call."
 			}
 		}`))
 	}
@@ -106,10 +107,9 @@ func TestGolden_ExecuteContract(t *testing.T) {
 				"strategy": "prompt_human",
 				"parameters": {
 					"api": {"vendor": "acme", "name": "pets", "version": "v1"},
-					"api_served": true,
-					"suggested_command": "jentic access request --api acme/pets --wait"
+					"api_served": true
 				},
-				"human_readable_instruction": "You have no credential binding for 'acme/pets'. File an access request yourself with \u0060jentic access request --api acme/pets --wait\u0060, then ask your operator to approve it — only a human can grant the binding (they can also bind directly via POST /agents/{agent_id}/credentials). Once bound, retry this call."
+				"human_readable_instruction": "You have no credential binding for 'acme/pets', but a credential already serves it. Ask your operator to bind this agent to that credential (in the dashboard, or via POST /agents/{agent_id}/credentials) — only a human can grant the binding. Once bound, retry this call."
 			}
 		}`))
 	}

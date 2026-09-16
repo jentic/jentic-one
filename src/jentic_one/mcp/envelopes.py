@@ -42,15 +42,11 @@ CODE_RESOLVE_FAILED = "RESOLVE_FAILED"
 CODE_BROKER_DENIED = "BROKER_DENIED"
 CODE_TRANSPORT_ERROR = "TRANSPORT_ERROR"
 CODE_INTERNAL_ERROR = "INTERNAL_ERROR"
-#: request_access's partially-approved arm (Go: ``ux.CodePartialApproval``) —
-#: some items granted, some not; the model must proceed only with what was
-#: approved. Same wire string on both doors so a model sees one taxonomy.
-CODE_PARTIAL_APPROVAL = "PARTIAL_APPROVAL"
 
 #: error codes whose default recovery pointer is ``get_started`` (Go:
 #: ``softErrorExtra``'s code-keyed mapping). The pointer *spellings* stay the
 #: shared envelope contract (byte-for-byte with the stdio server, which
-#: serves all ten tools), but this mount serves only ``SERVED_TOOLS`` —
+#: serves all nine tools), but this mount serves only ``SERVED_TOOLS`` —
 #: :func:`soft_error_result` drops any pointer that does not resolve in this
 #: lane's ``tools/list`` (#1254): a recovery pointer at a tool the caller
 #: cannot discover or call is a dead end, worse than no pointer.

@@ -146,7 +146,7 @@ func mintKey(creds Credentials) string {
 // RefreshBearerToken drops any cached token and forces a fresh assertion
 // exchange, returning the new bearer value. This is how a caller picks up
 // server-side grant changes that are baked into the token at mint time (scope
-// grants — `jentic access refresh`): a refresh-token rotation would carry the
+// grants): a refresh-token rotation would carry the
 // old scopes forward unchanged, a fresh exchange re-reads them. Static
 // credentials (injected token, jak_* API key) have nothing to re-mint; they are
 // returned as-is, matching BearerToken's resolution order.

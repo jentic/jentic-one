@@ -105,8 +105,8 @@ async def test_single_candidate_no_header_uses_it() -> None:
 
 async def test_zero_candidates_no_header_toolkit_serves_recommends_binding() -> None:
     # A toolkit serves this API; the caller just isn't bound. The directive
-    # recommends the (approvable) binding request in the surviving
-    # access-request vocabulary (`--api`, phase-5c agent contract).
+    # routes the agent to its operator, who grants the binding in the
+    # dashboard (access requests are retired).
     with pytest.raises(ActionDeniedError) as exc:
         await _select(_StubDeriver([], toolkit_serves_api=True), header_toolkit=None)
     assert exc.value.type == "no_toolkit_binding"
@@ -114,9 +114,8 @@ async def test_zero_candidates_no_header_toolkit_serves_recommends_binding() -> 
     assert exc.value.directive is not None
     assert exc.value.directive.strategy == "prompt_human"
     assert exc.value.directive.parameters["toolkit_serves_api"] is True
-    assert exc.value.directive.parameters["suggested_command"] == (
-        "jentic access request --api acme/widgets --wait"
-    )
+    assert "suggested_command" not in exc.value.directive.parameters
+    assert "operator" in exc.value.directive.human_readable_instruction
 
 
 async def test_zero_candidates_no_toolkit_serves_recommends_credential_first() -> None:
@@ -136,11 +135,10 @@ async def test_zero_candidates_no_toolkit_serves_recommends_credential_first() -
 
 
 async def test_no_toolkit_serves_instruction_names_surviving_provision_contract() -> None:
-    # U-03 (phase 5c): the instruction must name only surviving flags/commands —
-    # the `--provision` plan with proposed `--auth`/`--rules-json` — and never a
-    # retired toolkit-management surface. The hint lives in the TEXT only:
-    # `parameters` stays machine-stable so CLI and skill parsing of
-    # `suggested_command`/`toolkit_serves_api` never breaks.
+    # The instruction must route the whole provisioning ask to the operator —
+    # naming the auth type and permission rules to include — and never a
+    # retired command surface. `parameters` stays machine-stable so CLI and
+    # skill parsing of `toolkit_serves_api` never breaks.
     deriver = _StubDeriver([], toolkit_serves_api=False)
     with pytest.raises(ActionDeniedError) as exc:
         await _select(deriver, header_toolkit=None)
@@ -148,12 +146,11 @@ async def test_no_toolkit_serves_instruction_names_surviving_provision_contract(
     assert directive is not None
     instruction = directive.human_readable_instruction
     assert "toolkit" not in instruction.lower()
-    assert "--auth" in instruction
-    assert "--rules-json" in instruction
-    assert directive.parameters["suggested_command"] == (
-        'jentic access request --provision acme/widgets --reason "<why you need this>" --wait'
-    )
-    assert set(directive.parameters) == {"api", "toolkit_serves_api", "suggested_command"}
+    assert "operator" in instruction
+    assert "auth type" in instruction
+    assert "permission rules" in instruction
+    assert "jentic access" not in instruction
+    assert set(directive.parameters) == {"api", "toolkit_serves_api"}
 
 
 async def test_zero_candidates_bound_with_identity_mismatch_points_at_credential() -> None:
@@ -229,17 +226,15 @@ async def test_header_present_but_not_bound_raises_403() -> None:
 
 async def test_header_present_not_bound_and_no_candidates_prompts_human() -> None:
     # The agent named a toolkit but is bound to none at all. When a toolkit does
-    # serve the API it should be told to file the binding request (prompt_human);
-    # it should never be handed a dead-end 403.
+    # serve the API it should be told to ask its operator for the binding
+    # (prompt_human); it should never be handed a dead-end 403.
     with pytest.raises(ActionDeniedError) as exc:
         await _select(_StubDeriver([], toolkit_serves_api=True), header_toolkit="tk_unbound")
     assert exc.value.type == "no_toolkit_binding"
     assert exc.value.directive is not None
     assert exc.value.directive.strategy == "prompt_human"
     assert exc.value.directive.parameters["toolkit_serves_api"] is True
-    assert exc.value.directive.parameters["suggested_command"] == (
-        "jentic access request --api acme/widgets --wait"
-    )
+    assert "operator" in exc.value.directive.human_readable_instruction
 
 
 async def test_header_present_not_bound_and_no_toolkit_serves_recommends_credential_first() -> None:
@@ -294,9 +289,8 @@ def test_no_toolkit_binding_body_carries_prompt_human_directive() -> None:
     body = resp.json()
     assert body["type"] == "no_toolkit_binding"
     assert body["agent_directive"]["strategy"] == "prompt_human"
-    assert body["agent_directive"]["parameters"]["suggested_command"] == (
-        "jentic access request --api acme/widgets --wait"
-    )
+    assert body["agent_directive"]["parameters"]["toolkit_serves_api"] is True
+    assert "operator" in body["agent_directive"]["human_readable_instruction"]
 
 
 def test_no_toolkit_binding_credential_first_directive_and_denial_reason_agree() -> None:
