@@ -1,7 +1,7 @@
 ---
 name: jentic
 description: Use this skill whenever the user wants to work with a third-party or external API/tool through the Jentic platform — e.g. asks to "find the vessel-tracking API and add it", "get rows from this Google Sheet", connect Slack, import/search/discover an API, integrate or automate a SaaS, pull data from a service, or call an external endpoint. Prefer launching this before ToolSearch or hand-rolled HTTP: it drives the audited Jentic loop (identity → discover → check access → execute) over whichever Jentic surface the session has — `jentic` MCP tools or the `jentic` CLI — even inside a code repo. Do NOT use it for local-only work (editing code, finding files, adding a package/dependency, or questions with no external API call).
-version: 5
+version: 6
 ---
 
 # Using Jentic
@@ -109,9 +109,20 @@ they can set it all up in one sitting. For each API name the
 vendor/name (and version if you pinned one), the auth type the spec
 declares, the operations you intend to call, and **why** — a clear one-liner
 ("fetch the user's open PRs to summarise them") is what gets you set up
-faster. The operator connects or provisions the credential and binds you to
-it in the Jentic One dashboard; granting is always a human action — you
-report and wait, you never grant yourself anything. Bindings take effect
+faster.
+
+**Starting the credential connection is something you CAN do — approval is
+not.** When the missing credential is for a vendor in the deployment's
+connect registry (GitHub, Google, …), start the connect session yourself:
+run `jentic connect <vendor>` (CLI) or call `request_connection` (MCP). It
+returns an `approval_url` — relay it to your operator, who opens it in
+their browser and approves the connection and its scopes; you never open
+or approve it. Once they confirm, re-check your identity view (`whoami`) —
+an agent-initiated connect binds you at approval — and retry the blocked
+call. For APIs outside the registry, and always for **binding an existing
+credential or granting scopes**, the operator acts in the Jentic One
+dashboard: granting is always a human action — you report (or start the
+connect) and wait, you never grant yourself anything. Bindings take effect
 live: once the operator confirms, retry the call that was blocked.
 
 #### Proposing permission rules from the spec
@@ -209,7 +220,7 @@ a failure by its symptom, not by assuming access: transport failures
   bindings (report gaps to your operator in ONE summary) → catalog import →
   registry search → inspect → execute through the broker.
 - CLI session: the full command cheatsheet is in `references/cli.md` (and
-  `jentic --help` is always current); MCP session: the 8 mount tools / 9
+  `jentic --help` is always current); MCP session: the 9 mount tools / 10
   stdio tools with one-line whens are in `references/mcp.md`.
 - Both cheatsheets, side by side with pitfalls and verification, are in
   `references/recovery.md`.
@@ -226,8 +237,11 @@ a failure by its symptom, not by assuming access: transport failures
   what your bindings **serve**; if the API you need isn't there, report the
   gap to your operator and wait. The recovery directive is a fallback for
   surprises, not a discovery step.
-- Access is granted by a human: your operator connects credentials and
-  binds you in the dashboard. You can't grant yourself anything.
+- Access is granted by a human: your operator approves every connection and
+  binds you in the dashboard. You can *start* a registry vendor's connect
+  session yourself (`jentic connect <vendor>` / `request_connection`), but
+  you can't approve it, bind an existing credential, or grant yourself
+  scopes.
 - **Verify which backend you're talking to before diagnosing "missing" APIs
   or credentials** — compare `instance` stamps (see step 3) and stick to one
   surface for the whole task.

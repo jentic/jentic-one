@@ -12,7 +12,7 @@ is the map, not the territory.
 Every task against an external API follows the same audited loop:
 
 ```bash
-jentic api GET /me                     # 1. what your bindings already SERVE
+jentic whoami                          # 1. what your bindings already SERVE
 jentic catalog search "<capability>"   # 2. find an importable API (public catalog)
 jentic catalog import <vendor/name>    #    import it into the local registry
 jentic search "<what you want to do>"  # 3. find the operation — each hit gives its METHOD and URL
@@ -22,12 +22,16 @@ jentic execute GET:https://api.example.com/v1/things/{id} --path id=abc   # 5. c
 
 Key behaviours (details and full flag syntax in the skill):
 
-- **Decide access from your bindings (`jentic api GET /me`), don't probe with
-  `execute`.** If nothing you are bound to serves the API, report the gap to
-  your operator in **one summary** covering the whole job (the API, the auth
-  type, the permission rules you read from the spec, and why). A human
-  connects the credential and binds you in the dashboard; you never grant
-  yourself access, and you never see the credential secret.
+- **Decide access from your bindings (`jentic whoami`), don't probe with
+  `execute`.** If nothing you are bound to serves the API and its vendor is
+  in the deployment's connect registry, start the connection yourself with
+  `jentic connect <vendor>` and relay the printed `approval_url` to your
+  operator — a human approves it in the browser; you never approve. For
+  anything else, report the gap to your operator in **one summary**
+  covering the whole job (the API, the auth type, the permission rules you
+  read from the spec, and why); they connect the credential and bind you in
+  the dashboard. You never grant yourself access, and you never see the
+  credential secret.
 - **Import before search.** A fresh registry is empty; `search` returning
   `{"data": []}` means nothing is imported, not that you lack access.
 - **Denials teach you.** A denied `execute` exits 2 and prints an
@@ -59,7 +63,7 @@ imported, no access yet.
 
 ```bash
 # 1. What can I already call? (nothing yet, on a fresh install)
-jentic api GET /me
+jentic whoami
 
 # 2. Find and import the API from the public catalog
 jentic catalog search "crypto prices"
@@ -69,8 +73,10 @@ jentic catalog import coincap-io/coincap-io
 #    "I need coincap-io/coincap-io. Auth type: api_key. Rules:
 #     [{"effect":"allow","methods":["GET"],"path":".*"}].
 #     Reason: read current crypto prices for the user."
+#    (For a vendor in the connect registry you would instead run
+#     `jentic connect <vendor>` and relay the printed approval_url.)
 # → a human connects the credential and binds you in the dashboard; re-check
-#   your bindings (jentic api GET /me) once they confirm.
+#   your bindings (jentic whoami) once they confirm.
 
 # 4. Find the operation — the hit gives you its METHOD and URL
 jentic search "get current asset price"

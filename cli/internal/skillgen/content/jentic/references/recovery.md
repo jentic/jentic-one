@@ -44,9 +44,14 @@ this file adds the lane-specific detail.
 - Never re-send an execute while its job is pending — poll
   `get_execution_result` with the job id; approval happens out-of-band and
   re-sending duplicates the side effect.
-- A 424 `credential_not_provisioned` error is for your **operator** — it
-  carries a `provisioning_url`; relay it so they can connect the account.
-  No tool you can call connects an account.
+- A 424 `credential_not_provisioned` error means no account is connected
+  yet. If the denial's directive carries a `suggested_command` (`jentic
+  connect <key>`), the vendor is in the connect registry: call
+  `request_connection` with that key and relay the returned `approval_url`
+  to your operator. Otherwise relay the directive's `provisioning_url`
+  (when present) — or report the gap — so they can connect the account.
+  Either way a human approves; no tool you can call completes the
+  connection.
 - Don't call `get_started` on the HTTP mount — it isn't there. Its absence
   is a transport tell (you're on the daemon mount), not an outage; don't
   retry it or report it as a failure.
@@ -67,23 +72,35 @@ delivers it as a stderr `agent_directive` plus exit code 2, an MCP session
 as a coded error envelope. The meanings below are surface-independent; the
 CLI delivery mechanics (flags, exit codes) live in
 `references/cli.md` step 2, the MCP envelope caveats in `references/mcp.md`
-step 5. Every recovery below is performed by your **operator** in the
-Jentic One dashboard — your job is to relay the right ask, then retry once
-they confirm.
+step 5. **Approval is always your operator's** — but for the
+credential-*provisioning* denials below you can now start the fix yourself
+when the vendor is in the connect registry: run `jentic connect <vendor>`
+(CLI) or call `request_connection` (MCP), relay the returned `approval_url`
+to your operator, confirm with `whoami` once they approve, then retry.
+Everything else (binding an existing credential, scope grants, rule
+changes) is performed by your operator in the Jentic One dashboard — relay
+the right ask, then retry once they confirm.
 
 - **`no_credential_binding` (403)** — no credential binding of yours covers
   this API. The ask forks on the directive/envelope's `api_served`
   field:
-  - `false` — **no** credential is provisioned for this API at all. Ask
-    your operator to connect or provision a credential for the API and bind
-    you to it; include the auth type and permission rules you read from the
-    spec so they can set it up in one pass.
+  - `false` — **no** credential is provisioned for this API at all. If the
+    directive carries a `suggested_command` (`jentic connect <vendor>`),
+    start the connect session yourself and relay its `approval_url`;
+    otherwise ask your operator to connect or provision a credential for
+    the API and bind you to it — include the auth type and permission
+    rules you read from the spec so they can set it up in one pass.
   - `true` — a credential already serves this API and you just aren't bound
-    to it; ask your operator to bind you to the existing credential.
+    to it; ask your operator to bind you to the existing credential
+    (binding is always theirs — a fresh `jentic connect` also works for a
+    registry vendor, but prefer the existing credential).
 - **`credential_not_provisioned` (424)** — you're bound, but no
-  credential (account) is connected. This is not agent-recoverable; the
-  recovery carries a `provisioning_url` — hand it to
-  your operator to connect the account, then retry.
+  credential (account) is connected. If the directive carries a
+  `suggested_command` (`jentic connect <key>`), the vendor is in the
+  connect registry — start the reconnect yourself (run that command, or
+  call `request_connection` with the key it names) and relay the
+  `approval_url`; otherwise hand the directive's `provisioning_url` to
+  your operator to connect the account. Then retry.
 - **`credential_undecryptable` (424)** — a credential *is* connected, but
   its stored secret can no longer be decrypted (typically the deployment's
   encryption key rotated underneath it, e.g. a reinstall over existing
@@ -114,10 +131,17 @@ they confirm.
   rendered for humans, next to the HTTP API and Broker API references.
 - `jentic context view` — the active context (environment + identity +
   base_url); start here in a CLI session.
-- `jentic api GET /me` — your identity, status, scopes, and credential
+- `jentic whoami` — your identity, status, scopes, and credential
   bindings with the APIs each one **serves** (check this before executing;
-  when access is missing, report the gap to your operator — granting
-  happens in the dashboard, not through a CLI command).
+  it renders the same `GET /me` view `jentic api GET /me` returns). When
+  access is missing, start a registry vendor's connect yourself
+  (`jentic connect <vendor>`) or report the gap to your operator —
+  approval, binding, and scope grants happen in the dashboard.
+- `jentic connect <vendor>` — start a connect session for a registry
+  vendor (e.g. `jentic connect github`): prints the `approval_url` a human
+  approves in the browser (`--scopes`, `--reason` shape the ask; `--wait`
+  polls until connected/failed/expired). You never open or approve the
+  URL yourself.
 - `jentic catalog search "<query>"` / `jentic catalog import <vendor/name>`
   — find and import APIs (import first; `search` only sees imported
   operations).
@@ -165,12 +189,14 @@ they confirm.
 
 ## Quick Reference — MCP session
 
-The mount serves exactly eight tools; the stdio server adds `get_started`.
+The mount serves exactly nine tools; the stdio server adds `get_started`.
 Each maps onto the loop — the one-line whens and the structural facts (the
 `instance` stamp; the CLI verbs that do **not** exist on the mount) are in
 `references/mcp.md`, which is the authoritative lane reference. In short:
-`whoami` (identity + bindings; decide access from it, and report gaps to
-your operator) → `search_catalog` → `import_api`
+`whoami` (identity + bindings; decide access from it) → when a registry
+vendor's credential is missing, `request_connection` (relay the
+`approval_url` to your operator; other gaps you report) → `search_catalog`
+→ `import_api`
 → `search_apis` → `inspect_operation` → `execute` / `execute_read` (prefer
 `execute_read` for reads) → `get_execution_result` (poll jobs; never
 re-send while pending).

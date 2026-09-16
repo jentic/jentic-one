@@ -14,12 +14,12 @@ Two servers expose the same loop; **check `tools/list` to tell them apart**:
   local `jentic mcp` **stdio server** — a machine that has the CLI, so CLI
   recovery *may* also be available (defeasible: `--exclude-tools
   get_started` can hide it there, so treat presence as a strong hint,
-  absence as the reliable direction). The stdio server serves **nine** tools:
-  the eight below plus `get_started`.
+  absence as the reliable direction). The stdio server serves **ten** tools:
+  the nine below plus `get_started`.
 - If `get_started` is **absent**, you are on the daemon's **HTTP `/mcp`
   mount**: **no CLI exists** — never tell the operator to run `jentic …` "on
   this machine"; there is no this-machine. The mount serves exactly the
-  **eight** tools below.
+  **nine** tools below.
 
 Both flavors drive the same loop against the same backend; every tool result
 carries an `instance` stamp (`backend`/`host`/`instance_id`) — your
@@ -60,12 +60,28 @@ invent it.
 
 The decide-first doctrine (see `SKILL.md` step 2) is driven by `whoami`:
 read your bindings and the APIs they serve, and decide up front whether the
-job is coverable. When something is missing, **report the gap to your human
-operator in one complete summary** — the API (vendor/name), the auth type
-the spec declares, the operations you intend to call, your proposed
-permission rules, and why. Granting is always a human action: the operator
-connects or provisions the credential and binds this agent to it in the
-Jentic One dashboard; no tool you can call grants access.
+job is coverable. When a credential is missing for a vendor in the
+deployment's connect registry, **start the connection yourself** with
+`request_connection`:
+
+```
+request_connection {"vendor": "github", "reason": "read open PRs to summarise them"}
+```
+
+It returns `{session_id, approval_url, resolved_flow}` — relay the
+`approval_url` to your human operator, who opens it in their browser and
+approves the connection and its scopes (you cannot open or approve it, and
+the tool never polls). Once they confirm, call `whoami` to see the new
+binding, then retry the blocked call. Optionally shape the ask with
+`requested_scopes` (vendor scope names; write scopes are flagged for the
+approver) and a `reason` the approver sees.
+
+For everything else, **report the gap to your human operator in one
+complete summary** — the API (vendor/name), the auth type the spec
+declares, the operations you intend to call, your proposed permission
+rules, and why. Approval is always a human action, and so are binding an
+existing credential and scope grants: the operator acts in the Jentic One
+dashboard; no tool you can call grants access.
 
 Bindings resolve live per request on the HTTP mount, so once your operator
 confirms, the very next tool call sees the new access — just retry what was
@@ -157,19 +173,27 @@ happens out-of-band, and re-sending duplicates the side effect.
   …). Read those as **operator guidance to relay**, never as tools for you
   to call.
 
-And know the operator-only arms: a `credential_not_provisioned` (424) denial
-carries a `provisioning_url` — relay it to your operator to connect the
-account; there is nothing an MCP tool can do to fix it. The denial taxonomy
+And know the recovery split: a `credential_not_provisioned` (424) or an
+unserved `no_credential_binding` (403) denial is **provisioning-shaped** —
+its envelope points `next_tool` at `request_connection`. When the directive
+carries a `suggested_command` naming the registry key, start the fix
+yourself (`request_connection` with that key) and relay the `approval_url`;
+a denial whose recovery carries only a `provisioning_url` is for your
+operator — relay it so they can connect the account. The denial taxonomy
 (`no_credential_binding`, `credential_undecryptable`,
 `credential_identity_mismatch`,
 `ambiguous_credential_binding` — the per-code meanings are surface-independent
 and live in `references/recovery.md`) applies unchanged — the same codes,
 delivered in the envelope instead of stderr.
 
-## The 8 mount tools (each maps onto the loop)
+## The 9 mount tools (each maps onto the loop)
 
 - `whoami` — your identity, status, scopes, and credential bindings with the
   APIs each one serves; start here and decide access from it.
+- `request_connection` — start a connect session for a registry vendor when
+  no binding serves the API you need; relay the returned `approval_url` to
+  your operator (they approve — you never poll or approve), then confirm
+  with `whoami` and retry.
 - `search_apis` — search the imported registry for operations by
   natural-language query; each hit carries the `operation_id`.
 - `inspect_operation` — one operation's full contract (method, URL,
@@ -187,7 +211,7 @@ delivered in the envelope instead of stderr.
   server reports the same duplicate as a failed dead-letter import; either
   way it's already there).
 
-The stdio server serves these eight plus `get_started` (pre-auth setup
+The stdio server serves these nine plus `get_started` (pre-auth setup
 diagnosis on a CLI machine).
 
 **Structural facts:** every tool result carries an `instance` stamp

@@ -48,7 +48,7 @@ jentic run claude --revoke  ~/work/api   # remove a grant, then exit
 
 Any command that prints the directory tree ends with a one-line reminder of how
 to revoke a grant. `--list-grants` is how the agent's filesystem reach is
-inspected; `jentic api GET /me` covers the API side of "what can I do?".
+inspected; `jentic whoami` covers the API side of "what can I do?".
 
 ### Forwarding arguments to the agent
 
