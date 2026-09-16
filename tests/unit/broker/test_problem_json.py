@@ -124,8 +124,11 @@ def test_no_credential_binding_directive_registry_vendor_suggests_connect() -> N
     <key>``, the registry key, never the API id) and the prose teaches the
     relay loop. Approval and the binding grant stay human in the wording."""
     unserved = no_credential_binding_directive(
-        vendor="github.com", name="api.github.com", version="1.0.0",
-        api_served=False, connect_vendor="github",
+        vendor="github.com",
+        name="api.github.com",
+        version="1.0.0",
+        api_served=False,
+        connect_vendor="github",
     )
     assert unserved.strategy == "prompt_human"
     assert unserved.parameters["suggested_command"] == "jentic connect github"
@@ -135,8 +138,11 @@ def test_no_credential_binding_directive_registry_vendor_suggests_connect() -> N
     assert "approval_url" in instruction
 
     served = no_credential_binding_directive(
-        vendor="github.com", name="api.github.com", version="1.0.0",
-        api_served=True, connect_vendor="github",
+        vendor="github.com",
+        name="api.github.com",
+        version="1.0.0",
+        api_served=True,
+        connect_vendor="github",
     )
     # Served keeps the bind-me-first ask; connect is the alternative.
     assert served.parameters["suggested_command"] == "jentic connect github"
@@ -146,8 +152,11 @@ def test_no_credential_binding_directive_registry_vendor_suggests_connect() -> N
 def test_no_toolkit_binding_directive_registry_vendor_suggests_connect() -> None:
     """The flag-off toolkit twin carries the same agent-initiable leg."""
     unserved = no_toolkit_binding_directive(
-        vendor="github.com", name="api.github.com", version="1.0.0",
-        toolkit_serves_api=False, connect_vendor="github",
+        vendor="github.com",
+        name="api.github.com",
+        version="1.0.0",
+        toolkit_serves_api=False,
+        connect_vendor="github",
     )
     assert unserved.parameters["suggested_command"] == "jentic connect github"
     assert "jentic connect github" in unserved.human_readable_instruction

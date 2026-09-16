@@ -58,9 +58,7 @@ def test_slugged_directive_axes_match_too() -> None:
     """Directives carry the *resolved* (already slugged) identity; the lookup
     canonicalizes both sides, so the pre-slugged form maps identically."""
     assert (
-        connect_vendor_key(
-            _REGISTRY, vendor="github-com", name="github-com-api-github-com"
-        )
+        connect_vendor_key(_REGISTRY, vendor="github-com", name="github-com-api-github-com")
         == "github"
     )
 

@@ -53,12 +53,12 @@ from jentic_one.control.services.integrations.connect_session_service import (
     ConnectSessionService,
 )
 from jentic_one.control.services.integrations.errors import NoOpForFlowError
-from jentic_one.control.web.routers.integrations import _CONNECT_BURST, _CONNECT_RPM
 from jentic_one.control.services.vendors.service import (
     UnknownVendorError,
     UnsupportedFlowError,
     VendorNotConfiguredError,
 )
+from jentic_one.control.web.routers.integrations import _CONNECT_BURST, _CONNECT_RPM
 from jentic_one.mcp import execute as ex
 from jentic_one.mcp.envelopes import (
     CODE_BROKER_DENIED,
@@ -1213,8 +1213,7 @@ async def handle_request_connection(
     reason = args.get("reason", "")
     if len(reason) > _REQUEST_CONNECTION_REASON_MAX:
         raise invalid_params(
-            f"reason must be at most {_REQUEST_CONNECTION_REASON_MAX} characters, "
-            f"got {len(reason)}"
+            f"reason must be at most {_REQUEST_CONNECTION_REASON_MAX} characters, got {len(reason)}"
         )
     try:
         # The route's any-of gate (credentials:connect | credentials:write);
