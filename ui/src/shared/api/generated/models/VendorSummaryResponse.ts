@@ -2,11 +2,10 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
-/**
- * Response from a connect initiation.
- */
-export type ConnectChallengeResponse = {
-    authorize_url: string;
-    state: string;
+export type VendorSummaryResponse = {
+    display_name: string;
+    flow_kinds: Array<string>;
+    key: string;
+    vendor: string;
 };
 

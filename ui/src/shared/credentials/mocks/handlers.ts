@@ -354,7 +354,11 @@ export const credentialsHandlers = [
 		const authorizeUrl = managed
 			? `https://pipedream.com/connect/mock-token?credential=${id}`
 			: `https://provider.example.com/oauth/authorize?credential=${id}&state=mock-state`;
-		return HttpResponse.json({ authorize_url: authorizeUrl, state: 'mock-state' });
+		return HttpResponse.json({
+			kind: 'authorization_code',
+			authorize_url: authorizeUrl,
+			state: 'mock-state',
+		});
 	}),
 
 	// ---------------------------------------------------------------------------
@@ -438,5 +442,12 @@ export const credentialsHandlers = [
 		const spec = catalogSpecStore[String(params.slug)];
 		if (!spec) return new HttpResponse(null, { status: 404 });
 		return HttpResponse.json(spec);
+	}),
+
+	// Verified-vendor registry — surfaces the "one-click sign-in" tiles at the
+	// top of the API picker. Empty by default; wire real fixtures when a test
+	// needs the vendor path.
+	http.get('/vendors', () => {
+		return HttpResponse.json({ data: [] });
 	}),
 ];

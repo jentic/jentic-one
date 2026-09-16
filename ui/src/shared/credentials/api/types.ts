@@ -20,7 +20,6 @@ import {
 	type BasicAuthUpdateRequest,
 	type BearerTokenCreateRequest,
 	type BearerTokenUpdateRequest,
-	type ConnectChallengeResponse,
 	type ConnectRequestBody,
 	type CredentialAgentListResponse,
 	type CredentialAgentResponse,
@@ -44,7 +43,6 @@ export type {
 	BasicAuthUpdateRequest,
 	BearerTokenCreateRequest,
 	BearerTokenUpdateRequest,
-	ConnectChallengeResponse,
 	ConnectRequestBody,
 	CredentialAgentListResponse,
 	CredentialAgentResponse,
@@ -57,6 +55,26 @@ export type {
 	Sigv4CreateRequest,
 	Sigv4UpdateRequest,
 };
+
+// Hand-authored ConnectChallenge shim (the generated
+// `ConnectChallengeResponse` still models only the authorization_code case).
+// The wire response for `POST /credentials/{id}/connect` is a discriminated
+// union tagged by `kind`. Regenerate via `make openapi` once the spec has
+// been re-emitted and this shim can be removed.
+export interface AuthCodeChallengeResponse {
+	kind: 'authorization_code';
+	authorize_url: string;
+	state: string;
+}
+export interface DeviceAuthorizationChallengeResponse {
+	kind: 'device_authorization';
+	user_code: string;
+	verification_uri: string;
+	verification_uri_complete: string | null;
+	poll_interval_seconds: number | null;
+}
+export type ConnectChallengeResponse =
+	AuthCodeChallengeResponse | DeviceAuthorizationChallengeResponse;
 
 /** A single credential as returned by list/get/patch (secrets redacted). */
 export type Credential = CredentialRedactedResponse;
@@ -130,6 +148,8 @@ export interface CredentialDetails {
 	location?: CredentialKeyLocation | string;
 	/** api_key: the header/query param name carrying the key. */
 	field_name?: string;
+	/** oauth2: `authorization_code` / `client_credentials` / `device_code`. */
+	grant_type?: string;
 	/** sigv4: the public AWS access key id (non-secret). */
 	access_key_id?: string;
 	/** sigv4: signing region (e.g. us-east-1). */

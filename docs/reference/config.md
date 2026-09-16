@@ -303,7 +303,9 @@ Credentials subsystem configuration.
 | `credentials.encryption.active_id` | string | `"v1"` | `JENTIC__CREDENTIALS__ENCRYPTION__ACTIVE_ID` |  |
 | `credentials.encryption.entries` | list of EncryptionKey | — | `JENTIC__CREDENTIALS__ENCRYPTION__ENTRIES` |  |
 | `credentials.encryption.entries.<n>.id` | string | *required* | `JENTIC__CREDENTIALS__ENCRYPTION__ENTRIES__<N>__ID` |  |
-| `credentials.encryption.entries.<n>.material` | string (secret) | *required* | `JENTIC__CREDENTIALS__ENCRYPTION__ENTRIES__<N>__MATERIAL` |  |
+| `credentials.encryption.entries.<n>.material` | string (secret) \| null | `null` | `JENTIC__CREDENTIALS__ENCRYPTION__ENTRIES__<N>__MATERIAL` | Base64-encoded key material, inline in the config. |
+| `credentials.encryption.entries.<n>.material_env` | string \| null | `null` | `JENTIC__CREDENTIALS__ENCRYPTION__ENTRIES__<N>__MATERIAL_ENV` | Name of an environment variable holding the base64-encoded key material. |
+| `credentials.encryption.entries.<n>.material_file` | string \| null | `null` | `JENTIC__CREDENTIALS__ENCRYPTION__ENTRIES__<N>__MATERIAL_FILE` | Path to a regular file holding the base64-encoded key material (docker/k8s secret mount, systemd LoadCredential path). |
 | `credentials.providers` | map of DirectOAuth2ProviderConfig \| PipedreamProviderConfig | — | `JENTIC__CREDENTIALS__PROVIDERS` |  |
 | `credentials.providers.<name>.kind` | "direct_oauth2" \| "pipedream" | `"direct_oauth2"` | `JENTIC__CREDENTIALS__PROVIDERS__<NAME>__KIND` |  |
 | `credentials.providers.<name>.redirect_uri` | string | *required* | `JENTIC__CREDENTIALS__PROVIDERS__<NAME>__REDIRECT_URI` |  |
@@ -317,6 +319,33 @@ Credentials subsystem configuration.
 | `credentials.providers.<name>.connect_base_url` | string | `"https://api.pipedream.com/v1"` | `JENTIC__CREDENTIALS__PROVIDERS__<NAME>__CONNECT_BASE_URL` |  |
 | `credentials.connect.state_secret` | string (secret) | `""` | `JENTIC__CREDENTIALS__CONNECT__STATE_SECRET` |  |
 | `credentials.connect.state_ttl_seconds` | integer | `600` | `JENTIC__CREDENTIALS__CONNECT__STATE_TTL_SECONDS` |  |
+
+## `vendors`
+
+Top-level vendor auth registry.
+
+| Key | Type | Default | Env var | Description |
+| --- | ---- | ------- | ------- | ----------- |
+| `vendors.entries` | map of VendorAuthConfig | — | `JENTIC__VENDORS__ENTRIES` |  |
+| `vendors.entries.<name>.vendor` | string | *required* | `JENTIC__VENDORS__ENTRIES__<NAME>__VENDOR` |  |
+| `vendors.entries.<name>.display_name` | string | *required* | `JENTIC__VENDORS__ENTRIES__<NAME>__DISPLAY_NAME` |  |
+| `vendors.entries.<name>.flows` | list of VendorDeviceAuthorizationFlowConfig \| VendorAuthorizationCodeFlowConfig | *required* | `JENTIC__VENDORS__ENTRIES__<NAME>__FLOWS` |  |
+| `vendors.entries.<name>.flows.<n>.kind` | "device_authorization" \| "authorization_code" | `"device_authorization"` | `JENTIC__VENDORS__ENTRIES__<NAME>__FLOWS__<N>__KIND` |  |
+| `vendors.entries.<name>.flows.<n>.client_id` | string | *required* | `JENTIC__VENDORS__ENTRIES__<NAME>__FLOWS__<N>__CLIENT_ID` |  |
+| `vendors.entries.<name>.flows.<n>.authorization_endpoint` | string | *required* | `JENTIC__VENDORS__ENTRIES__<NAME>__FLOWS__<N>__AUTHORIZATION_ENDPOINT` |  |
+| `vendors.entries.<name>.flows.<n>.token_endpoint` | string | *required* | `JENTIC__VENDORS__ENTRIES__<NAME>__FLOWS__<N>__TOKEN_ENDPOINT` |  |
+| `vendors.entries.<name>.flows.<n>.client_secret` | string (secret) | *required* | `JENTIC__VENDORS__ENTRIES__<NAME>__FLOWS__<N>__CLIENT_SECRET` |  |
+| `vendors.entries.<name>.flows.<n>.authorize_url` | string | *required* | `JENTIC__VENDORS__ENTRIES__<NAME>__FLOWS__<N>__AUTHORIZE_URL` |  |
+| `vendors.entries.<name>.flows.<n>.token_url` | string | *required* | `JENTIC__VENDORS__ENTRIES__<NAME>__FLOWS__<N>__TOKEN_URL` |  |
+| `vendors.entries.<name>.scopes` | list of VendorScopeConfig | — | `JENTIC__VENDORS__ENTRIES__<NAME>__SCOPES` |  |
+| `vendors.entries.<name>.scopes.<n>.name` | string | *required* | `JENTIC__VENDORS__ENTRIES__<NAME>__SCOPES__<N>__NAME` |  |
+| `vendors.entries.<name>.scopes.<n>.classification` | "read" \| "write" \| "admin" | `"read"` | `JENTIC__VENDORS__ENTRIES__<NAME>__SCOPES__<N>__CLASSIFICATION` |  |
+| `vendors.entries.<name>.scopes.<n>.default` | boolean | `false` | `JENTIC__VENDORS__ENTRIES__<NAME>__SCOPES__<N>__DEFAULT` |  |
+| `vendors.entries.<name>.scopes.<n>.description` | string | `""` | `JENTIC__VENDORS__ENTRIES__<NAME>__SCOPES__<N>__DESCRIPTION` |  |
+| `vendors.entries.<name>.identity_probe.endpoint` | string | *required* | `JENTIC__VENDORS__ENTRIES__<NAME>__IDENTITY_PROBE__ENDPOINT` |  |
+| `vendors.entries.<name>.identity_probe.method` | "GET" \| "POST" | `"GET"` | `JENTIC__VENDORS__ENTRIES__<NAME>__IDENTITY_PROBE__METHOD` |  |
+| `vendors.entries.<name>.identity_probe.identity_field` | string | *required* | `JENTIC__VENDORS__ENTRIES__<NAME>__IDENTITY_PROBE__IDENTITY_FIELD` |  |
+| `vendors.entries.<name>.identity_probe.display_template` | string | *required* | `JENTIC__VENDORS__ENTRIES__<NAME>__IDENTITY_PROBE__DISPLAY_TEMPLATE` |  |
 
 ## `search`
 

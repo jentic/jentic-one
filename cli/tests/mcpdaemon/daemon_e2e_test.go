@@ -1,6 +1,6 @@
 package mcpdaemon
 
-// daemon_e2e_test.go — the item-9 acceptance boxes over real processes.
+// daemon_e2e_test.go — the agent-driven integration flow acceptance boxes over real processes.
 
 import (
 	"bytes"

@@ -24,6 +24,9 @@ from jentic_one.control.repos import (
     Sigv4CredentialRepository,
     TokenValueCredentialRepository,
 )
+from jentic_one.control.repos.device_authorization_credential_repo import (
+    DeviceAuthorizationCredentialRepository,
+)
 from jentic_one.control.repos.prerequisite_repo import (
     AgentCredentialBindingRow,
     CredentialBoundAgentRow,
@@ -231,30 +234,55 @@ class CredentialService:
                         raise InvalidCredentialInputError(f"Invalid authorize_url: {exc}") from exc
                 grant = payload.grant_type or "client_credentials"
 
-                encrypted_secret: str | None = None
-                if payload.client_secret:
-                    encrypted_secret = encryption.encrypt(payload.client_secret)
-
-                if not provider_obj.managed or payload.client_id:
-                    scope = " ".join(payload.scopes) if payload.scopes else None
-                    await OAuthClientCredentialRepository.create(
+                if grant == "device_code":
+                    # RFC 8628 device flow — public client (no secret), the
+                    # ``authorize_url`` field carries the vendor's
+                    # ``device_authorization_endpoint`` (OpenAPI 3.2's
+                    # ``deviceAuthorizationUrl``). Row lives on
+                    # ``device_authorization_credentials`` alongside the credentials
+                    # written by the connect-session flow so refresh /
+                    # redaction / broker resolution are all uniform.
+                    await DeviceAuthorizationCredentialRepository.create(
                         session,
                         credential_id=credential.id,
-                        token_url=validated_token_url or "",
                         client_id=payload.client_id or "",
-                        encrypted_client_secret=encrypted_secret or "",
-                        authorize_url=validated_authorize_url,
-                        scope=scope,
+                        token_url=validated_token_url or "",
+                        authorization_endpoint=validated_authorize_url or "",
+                        requested_scopes=payload.scopes or [],
                         created_by=identity.sub,
                     )
+                    secret = OAuth2Full(
+                        client_id=payload.client_id or "",
+                        client_secret="",
+                        token_url=payload.token_url or "",
+                        grant_type=grant,
+                        scopes=payload.scopes,
+                    )
+                else:
+                    encrypted_secret: str | None = None
+                    if payload.client_secret:
+                        encrypted_secret = encryption.encrypt(payload.client_secret)
 
-                secret = OAuth2Full(
-                    client_id=payload.client_id or "",
-                    client_secret=payload.client_secret or "",
-                    token_url=payload.token_url or "",
-                    grant_type=grant,
-                    scopes=payload.scopes,
-                )
+                    if not provider_obj.managed or payload.client_id:
+                        scope = " ".join(payload.scopes) if payload.scopes else None
+                        await OAuthClientCredentialRepository.create(
+                            session,
+                            credential_id=credential.id,
+                            token_url=validated_token_url or "",
+                            client_id=payload.client_id or "",
+                            encrypted_client_secret=encrypted_secret or "",
+                            authorize_url=validated_authorize_url,
+                            scope=scope,
+                            created_by=identity.sub,
+                        )
+
+                    secret = OAuth2Full(
+                        client_id=payload.client_id or "",
+                        client_secret=payload.client_secret or "",
+                        token_url=payload.token_url or "",
+                        grant_type=grant,
+                        scopes=payload.scopes,
+                    )
             elif payload.type == CredentialType.NO_AUTH:
                 # A no-auth credential is a marker that the API needs no secret
                 # (e.g. open-meteo). No sub-table row and no secret are stored;
@@ -1097,10 +1125,17 @@ class CredentialService:
             details = BasicAuthRedacted(username=username)
 
         elif wire_type == CredentialType.OAUTH2:
-            occ = credential.oauth_client_credential
             is_auth_code = stored_type == StoredCredentialType.OAUTH2_AUTHORIZATION_CODE
+            is_device_code = stored_type == StoredCredentialType.OAUTH2_DEVICE_CODE
+            # Device-flow credentials live on ``device_authorization_credentials``;
+            # every other OAuth2 variant lives on ``oauth_client_credentials``.
+            # Read from the right relation so the redacted view doesn't
+            # report an empty client_id / a misleading grant_type
+            # (handover follow-up #5).
+            dfc = credential.device_authorization_credential if is_device_code else None
+            occ = None if is_device_code else credential.oauth_client_credential
             connected: bool | None = None
-            if is_auth_code:
+            if is_auth_code or is_device_code:
                 # Managed providers (e.g. Pipedream) complete connect by
                 # stamping `provider_account_ref` without a local token row —
                 # the ref alone means the sign-in finished.
@@ -1119,11 +1154,22 @@ class CredentialService:
                             or token.expires_at is None
                             or token.expires_at > datetime.now(UTC)
                         )
+            grant_type = (
+                "device_code"
+                if is_device_code
+                else "authorization_code"
+                if is_auth_code
+                else "client_credentials"
+            )
             details = OAuth2Redacted(
-                client_id=occ.client_id if occ else "",
-                token_url=occ.token_url if occ else "",
-                grant_type="authorization_code" if is_auth_code else "client_credentials",
-                scopes=occ.scope.split() if occ and occ.scope else None,
+                client_id=(dfc.client_id if dfc else "") or (occ.client_id if occ else ""),
+                token_url=(dfc.token_url if dfc else "") or (occ.token_url if occ else ""),
+                grant_type=grant_type,
+                scopes=(
+                    (dfc.granted_scopes if dfc and dfc.granted_scopes else dfc.requested_scopes)
+                    if dfc
+                    else (occ.scope.split() if occ and occ.scope else None)
+                ),
                 connected=connected,
             )
         elif wire_type == CredentialType.NO_AUTH:
@@ -1182,7 +1228,8 @@ class CredentialService:
                 raise InvalidCredentialInputError("Field 'token_url' is required for oauth2")
             if not payload.client_id:
                 raise InvalidCredentialInputError("Field 'client_id' is required for oauth2")
-            if not payload.client_secret:
+            # Device flow (RFC 8628) is a public-client flow — no secret.
+            if payload.grant_type != "device_code" and not payload.client_secret:
                 raise InvalidCredentialInputError("Field 'client_secret' is required for oauth2")
         elif payload.type == CredentialType.SIGV4:
             if not payload.access_key_id:

@@ -624,6 +624,9 @@ type ConfigSchemaJson struct {
 	// Telemetry corresponds to the JSON schema field "telemetry".
 	Telemetry *TelemetryConfig `json:"telemetry,omitempty,omitzero" yaml:"telemetry,omitempty" mapstructure:"telemetry,omitempty"`
 
+	// Vendors corresponds to the JSON schema field "vendors".
+	Vendors *VendorRegistryConfig `json:"vendors,omitempty,omitzero" yaml:"vendors,omitempty" mapstructure:"vendors,omitempty"`
+
 	// Worker corresponds to the JSON schema field "worker".
 	Worker *WorkerConfig `json:"worker,omitempty,omitzero" yaml:"worker,omitempty" mapstructure:"worker,omitempty"`
 }
@@ -981,13 +984,43 @@ func (j *EncryptionConfig) UnmarshalJSON(value []byte) error {
 }
 
 // A single named encryption key.
+//
+// Key material comes from exactly ONE source:
+//
+//   - “material“      — inline in the config (local dev / vault-templated files),
+//   - “material_env“  — the name of an environment variable holding the key,
+//   - “material_file“ — a regular file to read the key from (docker/k8s secret
+//     mounts, systemd “LoadCredential“ paths). Pipes and “/dev/fd“ sources
+//     are rejected: config may be validated more than once per process, and a
+//     source that cannot be re-read would hang or fail the second load.
+//
+// “material_env“/“material_file“ are resolved once, at config load, into
+// “material“ — consumers keep reading “resolved_material“ and never learn
+// where the bytes came from (the source field is cleared after resolution, so
+// a resolved key re-validates cleanly and never re-reads the environment or
+// the file). Resolution failures (unset variable, unreadable file, empty
+// value) fail validation loudly rather than booting a server that cannot
+// decrypt its own credentials.
 type EncryptionKey struct {
 	// Id corresponds to the JSON schema field "id".
 	Id string `json:"id" yaml:"id" mapstructure:"id"`
 
-	// Material corresponds to the JSON schema field "material".
-	Material string `json:"material" yaml:"material" mapstructure:"material"`
+	// Base64-encoded key material, inline in the config.
+	Material interface{} `json:"material,omitempty,omitzero" yaml:"material,omitempty" mapstructure:"material,omitempty"`
+
+	// Name of an environment variable holding the base64-encoded key material.
+	MaterialEnv interface{} `json:"material_env,omitempty,omitzero" yaml:"material_env,omitempty" mapstructure:"material_env,omitempty"`
+
+	// Path to a regular file holding the base64-encoded key material (docker/k8s
+	// secret mount, systemd LoadCredential path).
+	MaterialFile interface{} `json:"material_file,omitempty,omitzero" yaml:"material_file,omitempty" mapstructure:"material_file,omitempty"`
 }
+
+type EncryptionKeyMaterialEnv_0 *string
+
+type EncryptionKeyMaterialFile_0 *string
+
+type EncryptionKeyMaterial_0 *string
 
 // UnmarshalJSON implements json.Unmarshaler.
 func (j *EncryptionKey) UnmarshalJSON(value []byte) error {
@@ -997,9 +1030,6 @@ func (j *EncryptionKey) UnmarshalJSON(value []byte) error {
 	}
 	if _, ok := raw["id"]; raw != nil && !ok {
 		return fmt.Errorf("field id in EncryptionKey: required")
-	}
-	if _, ok := raw["material"]; raw != nil && !ok {
-		return fmt.Errorf("field material in EncryptionKey: required")
 	}
 	type Plain EncryptionKey
 	var plain Plain
@@ -2519,6 +2549,323 @@ func (j *UpstreamClientConfig) UnmarshalJSON(value []byte) error {
 		plain.WriteTimeoutS = 30.0
 	}
 	*j = UpstreamClientConfig(plain)
+	return nil
+}
+
+// Config entry for one verified vendor.
+//
+// Keyed in `VendorRegistryConfig.entries` by a short slug (e.g. "github").
+type VendorAuthConfig struct {
+	// DisplayName corresponds to the JSON schema field "display_name".
+	DisplayName string `json:"display_name" yaml:"display_name" mapstructure:"display_name"`
+
+	// Flows corresponds to the JSON schema field "flows".
+	Flows []interface{} `json:"flows" yaml:"flows" mapstructure:"flows"`
+
+	// IdentityProbe corresponds to the JSON schema field "identity_probe".
+	IdentityProbe VendorIdentityProbeConfig `json:"identity_probe" yaml:"identity_probe" mapstructure:"identity_probe"`
+
+	// Scopes corresponds to the JSON schema field "scopes".
+	Scopes []VendorScopeConfig `json:"scopes,omitempty,omitzero" yaml:"scopes,omitempty" mapstructure:"scopes,omitempty"`
+
+	// Vendor corresponds to the JSON schema field "vendor".
+	Vendor string `json:"vendor" yaml:"vendor" mapstructure:"vendor"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *VendorAuthConfig) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	if _, ok := raw["display_name"]; raw != nil && !ok {
+		return fmt.Errorf("field display_name in VendorAuthConfig: required")
+	}
+	if _, ok := raw["flows"]; raw != nil && !ok {
+		return fmt.Errorf("field flows in VendorAuthConfig: required")
+	}
+	if _, ok := raw["identity_probe"]; raw != nil && !ok {
+		return fmt.Errorf("field identity_probe in VendorAuthConfig: required")
+	}
+	if _, ok := raw["vendor"]; raw != nil && !ok {
+		return fmt.Errorf("field vendor in VendorAuthConfig: required")
+	}
+	type Plain VendorAuthConfig
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	*j = VendorAuthConfig(plain)
+	return nil
+}
+
+// OAuth 2.0 authorization-code flow settings for a vendor.
+//
+// Included so the vendor registry is flow-generic from day 1 even though
+// phase 1 only wires up device flow. Requires a client secret (confidential
+// client) since the redirect-based flow exchanges the code at the token
+// endpoint.
+type VendorAuthorizationCodeFlowConfig struct {
+	// AuthorizeUrl corresponds to the JSON schema field "authorize_url".
+	AuthorizeUrl string `json:"authorize_url" yaml:"authorize_url" mapstructure:"authorize_url"`
+
+	// ClientId corresponds to the JSON schema field "client_id".
+	ClientId string `json:"client_id" yaml:"client_id" mapstructure:"client_id"`
+
+	// ClientSecret corresponds to the JSON schema field "client_secret".
+	ClientSecret string `json:"client_secret" yaml:"client_secret" mapstructure:"client_secret"`
+
+	// Kind corresponds to the JSON schema field "kind".
+	Kind string `json:"kind,omitempty,omitzero" yaml:"kind,omitempty" mapstructure:"kind,omitempty"`
+
+	// TokenUrl corresponds to the JSON schema field "token_url".
+	TokenUrl string `json:"token_url" yaml:"token_url" mapstructure:"token_url"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *VendorAuthorizationCodeFlowConfig) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	if _, ok := raw["authorize_url"]; raw != nil && !ok {
+		return fmt.Errorf("field authorize_url in VendorAuthorizationCodeFlowConfig: required")
+	}
+	if _, ok := raw["client_id"]; raw != nil && !ok {
+		return fmt.Errorf("field client_id in VendorAuthorizationCodeFlowConfig: required")
+	}
+	if _, ok := raw["client_secret"]; raw != nil && !ok {
+		return fmt.Errorf("field client_secret in VendorAuthorizationCodeFlowConfig: required")
+	}
+	if _, ok := raw["token_url"]; raw != nil && !ok {
+		return fmt.Errorf("field token_url in VendorAuthorizationCodeFlowConfig: required")
+	}
+	type Plain VendorAuthorizationCodeFlowConfig
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	if v, ok := raw["kind"]; !ok || v == nil {
+		plain.Kind = "authorization_code"
+	}
+	if plain.Kind != "authorization_code" {
+		return fmt.Errorf("field %s: must be equal to %s", "kind", "authorization_code")
+	}
+	*j = VendorAuthorizationCodeFlowConfig(plain)
+	return nil
+}
+
+// RFC 8628 device flow settings for a vendor.
+//
+// `client_id` is the platform-shipped OAuth application id (device flow is a
+// public-client flow — no secret). Endpoints are the vendor's device
+// authorization + token endpoints.
+type VendorDeviceAuthorizationFlowConfig struct {
+	// AuthorizationEndpoint corresponds to the JSON schema field
+	// "authorization_endpoint".
+	AuthorizationEndpoint string `json:"authorization_endpoint" yaml:"authorization_endpoint" mapstructure:"authorization_endpoint"`
+
+	// ClientId corresponds to the JSON schema field "client_id".
+	ClientId string `json:"client_id" yaml:"client_id" mapstructure:"client_id"`
+
+	// Kind corresponds to the JSON schema field "kind".
+	Kind string `json:"kind,omitempty,omitzero" yaml:"kind,omitempty" mapstructure:"kind,omitempty"`
+
+	// TokenEndpoint corresponds to the JSON schema field "token_endpoint".
+	TokenEndpoint string `json:"token_endpoint" yaml:"token_endpoint" mapstructure:"token_endpoint"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *VendorDeviceAuthorizationFlowConfig) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	if _, ok := raw["authorization_endpoint"]; raw != nil && !ok {
+		return fmt.Errorf("field authorization_endpoint in VendorDeviceAuthorizationFlowConfig: required")
+	}
+	if _, ok := raw["client_id"]; raw != nil && !ok {
+		return fmt.Errorf("field client_id in VendorDeviceAuthorizationFlowConfig: required")
+	}
+	if _, ok := raw["token_endpoint"]; raw != nil && !ok {
+		return fmt.Errorf("field token_endpoint in VendorDeviceAuthorizationFlowConfig: required")
+	}
+	type Plain VendorDeviceAuthorizationFlowConfig
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	if v, ok := raw["kind"]; !ok || v == nil {
+		plain.Kind = "device_authorization"
+	}
+	if plain.Kind != "device_authorization" {
+		return fmt.Errorf("field %s: must be equal to %s", "kind", "device_authorization")
+	}
+	*j = VendorDeviceAuthorizationFlowConfig(plain)
+	return nil
+}
+
+// Generic identity-echo protocol config for a vendor.
+//
+// After the connect flow completes, the platform calls
+// `{method} {endpoint}` with the freshly minted access token, extracts
+// `identity_field` (dotted JSON path) from the response body, and formats it
+// into `display_template` (Python str.format). The result is stored as
+// `connected_as` and returned to the caller.
+type VendorIdentityProbeConfig struct {
+	// DisplayTemplate corresponds to the JSON schema field "display_template".
+	DisplayTemplate string `json:"display_template" yaml:"display_template" mapstructure:"display_template"`
+
+	// Endpoint corresponds to the JSON schema field "endpoint".
+	Endpoint string `json:"endpoint" yaml:"endpoint" mapstructure:"endpoint"`
+
+	// IdentityField corresponds to the JSON schema field "identity_field".
+	IdentityField string `json:"identity_field" yaml:"identity_field" mapstructure:"identity_field"`
+
+	// Method corresponds to the JSON schema field "method".
+	Method VendorIdentityProbeConfigMethod `json:"method,omitempty,omitzero" yaml:"method,omitempty" mapstructure:"method,omitempty"`
+}
+
+type VendorIdentityProbeConfigMethod string
+
+const VendorIdentityProbeConfigMethodGET VendorIdentityProbeConfigMethod = "GET"
+const VendorIdentityProbeConfigMethodPOST VendorIdentityProbeConfigMethod = "POST"
+
+var enumValues_VendorIdentityProbeConfigMethod = []interface{}{
+	"GET",
+	"POST",
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *VendorIdentityProbeConfigMethod) UnmarshalJSON(value []byte) error {
+	var v string
+	if err := json.Unmarshal(value, &v); err != nil {
+		return err
+	}
+	var ok bool
+	for _, expected := range enumValues_VendorIdentityProbeConfigMethod {
+		if reflect.DeepEqual(v, expected) {
+			ok = true
+			break
+		}
+	}
+	if !ok {
+		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_VendorIdentityProbeConfigMethod, v)
+	}
+	*j = VendorIdentityProbeConfigMethod(v)
+	return nil
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *VendorIdentityProbeConfig) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	if _, ok := raw["display_template"]; raw != nil && !ok {
+		return fmt.Errorf("field display_template in VendorIdentityProbeConfig: required")
+	}
+	if _, ok := raw["endpoint"]; raw != nil && !ok {
+		return fmt.Errorf("field endpoint in VendorIdentityProbeConfig: required")
+	}
+	if _, ok := raw["identity_field"]; raw != nil && !ok {
+		return fmt.Errorf("field identity_field in VendorIdentityProbeConfig: required")
+	}
+	type Plain VendorIdentityProbeConfig
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	if v, ok := raw["method"]; !ok || v == nil {
+		plain.Method = "GET"
+	}
+	*j = VendorIdentityProbeConfig(plain)
+	return nil
+}
+
+// Top-level vendor auth registry.
+type VendorRegistryConfig struct {
+	// Entries corresponds to the JSON schema field "entries".
+	Entries VendorRegistryConfigEntries `json:"entries,omitempty,omitzero" yaml:"entries,omitempty" mapstructure:"entries,omitempty"`
+}
+
+type VendorRegistryConfigEntries map[string]VendorAuthConfig
+
+// A single OAuth scope exposed by the vendor.
+//
+// `classification` drives the review-page UX: read scopes are pre-selected by
+// default; write/admin scopes get a warning flag. `description` is
+// human-facing copy displayed on the review page.
+type VendorScopeConfig struct {
+	// Classification corresponds to the JSON schema field "classification".
+	Classification VendorScopeConfigClassification `json:"classification,omitempty,omitzero" yaml:"classification,omitempty" mapstructure:"classification,omitempty"`
+
+	// Default corresponds to the JSON schema field "default".
+	Default bool `json:"default,omitempty,omitzero" yaml:"default,omitempty" mapstructure:"default,omitempty"`
+
+	// Description corresponds to the JSON schema field "description".
+	Description string `json:"description,omitempty,omitzero" yaml:"description,omitempty" mapstructure:"description,omitempty"`
+
+	// Name corresponds to the JSON schema field "name".
+	Name string `json:"name" yaml:"name" mapstructure:"name"`
+}
+
+type VendorScopeConfigClassification string
+
+const VendorScopeConfigClassificationAdmin VendorScopeConfigClassification = "admin"
+const VendorScopeConfigClassificationRead VendorScopeConfigClassification = "read"
+const VendorScopeConfigClassificationWrite VendorScopeConfigClassification = "write"
+
+var enumValues_VendorScopeConfigClassification = []interface{}{
+	"read",
+	"write",
+	"admin",
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *VendorScopeConfigClassification) UnmarshalJSON(value []byte) error {
+	var v string
+	if err := json.Unmarshal(value, &v); err != nil {
+		return err
+	}
+	var ok bool
+	for _, expected := range enumValues_VendorScopeConfigClassification {
+		if reflect.DeepEqual(v, expected) {
+			ok = true
+			break
+		}
+	}
+	if !ok {
+		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_VendorScopeConfigClassification, v)
+	}
+	*j = VendorScopeConfigClassification(v)
+	return nil
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *VendorScopeConfig) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	if _, ok := raw["name"]; raw != nil && !ok {
+		return fmt.Errorf("field name in VendorScopeConfig: required")
+	}
+	type Plain VendorScopeConfig
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	if v, ok := raw["classification"]; !ok || v == nil {
+		plain.Classification = "read"
+	}
+	if v, ok := raw["default"]; !ok || v == nil {
+		plain.Default = false
+	}
+	if v, ok := raw["description"]; !ok || v == nil {
+		plain.Description = ""
+	}
+	*j = VendorScopeConfig(plain)
 	return nil
 }
 

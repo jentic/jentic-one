@@ -240,6 +240,36 @@ OPENAPI_TAGS: list[dict[str, str]] = [
         ),
     },
     {
+        "name": "Vendors",
+        "description": (
+            "Part of the **Core / Access** bounded context — the platform-curated catalog "
+            "of verified vendors that support agent-initiated OAuth connect flows. Each "
+            "entry describes the OAuth flows available (device_authorization, "
+            "authorization_code) and the scope catalog with read/write classification. "
+            "Vendor entries are seeded from operator config, not user-managed — the API "
+            "surfaces them read-only so the SPA and agents can discover which vendors "
+            "are available and pick a flow at ``:connect`` time."
+        ),
+    },
+    {
+        "name": "Integrations",
+        "description": (
+            "Part of the **Core / Access** bounded context — agent-initiated OAuth "
+            "connect sessions. A caller (agent or UI) begins a session via "
+            "``POST /integrations:connect``, choosing a vendor and requested scope set; "
+            "the platform provisions a pending credential, initiates the vendor's OAuth "
+            "flow (device_authorization or authorization_code depending on the vendor), "
+            "and returns a session id + human-facing challenge (device user_code / "
+            "authorize_url).\n\n"
+            "The initiator polls ``GET /connect-sessions/{id}/status`` until the session "
+            "reaches ``connected`` (tokens vaulted) or a terminal failure. Sessions are "
+            "capped by a TTL; unfinished sessions can be cancelled via "
+            "``POST /connect-sessions/{id}:cancel``. The ``:confirm`` step is a UI-only "
+            "hand-off that binds any pre-declared permission rules to the resulting "
+            "credential."
+        ),
+    },
+    {
         "name": "Access Requests",
         "description": (
             "Actor-agnostic, multi-item access-request surface (Core / Access bounded "
@@ -287,6 +317,22 @@ OPENAPI_TAGS: list[dict[str, str]] = [
             "Sub-resources of an `Api` live under sibling tags: `API Operations` enumerates "
             "the operations exposed by a registered revision; `API Spec` returns the "
             "underlying OpenAPI document for tooling."
+        ),
+    },
+    {
+        "name": "Governed Hosts",
+        "description": (
+            "The caller's own governed host set — the upstream hosts reachable through its "
+            "credential bindings (admin bindings → credential scopes, suspended or inactive "
+            "included → registered APIs), deduplicated and sorted. **Always self-scoped**: "
+            "the set is derived for the authenticated identity; there is no cross-actor or "
+            "admin variant.\n\n"
+            "The response carries a content-derived SHA-256 `digest` (also emitted as a "
+            "strong `ETag`), so integrators — e.g. a native gate scoping traffic "
+            'interception per agent — poll with `If-None-Match: "<digest>"` and receive '
+            "an empty `304` until the host set actually changes. Deliberately unpaginated: "
+            "the set is bounded by the caller's own bindings and the digest covers it "
+            "atomically."
         ),
     },
     {
@@ -642,6 +688,8 @@ X_TAG_GROUPS: list[dict[str, Any]] = [
         "tags": [
             "Credentials",
             "Permission Rule Sets",
+            "Vendors",
+            "Integrations",
             "Access Requests",
         ],
     },
@@ -849,10 +897,15 @@ _TAG_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^/credentials"), "Credentials"),
     (re.compile(r"^/permission-rule-sets"), "Permission Rule Sets"),
     (re.compile(r"^/access-requests"), "Access Requests"),
+    (re.compile(r"^/integrations"), "Integrations"),
+    (re.compile(r"^/connect-sessions"), "Integrations"),
+    (re.compile(r"^/vendors"), "Vendors"),
     (re.compile(r"^/apis/.+/overlays"), "Overlays"),
     (re.compile(r"^/apis/.+/operations$"), "API Operations"),
     (re.compile(r"^/apis/.+/openapi$"), "API Spec"),
     (re.compile(r"^/apis"), "APIs"),
+    # Identity-scoped host digest for integrators (#1278).
+    (re.compile(r"^/governed-hosts$"), "Governed Hosts"),
     # Catalog (Discover) — browse/preview/import + the :refresh verb. Broad
     # ^/catalog is safe: no other surface shares the prefix.
     (re.compile(r"^/catalog"), "Catalog"),

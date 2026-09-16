@@ -84,7 +84,7 @@ func (ChangePasswordRequest) RequiredFields() []string {
 	return []string{"current_password", "new_password"}
 }
 func (ClaimRequest) RequiredFields() []string                { return []string{"token"} }
-func (ConnectChallengeResponse) RequiredFields() []string    { return []string{"authorize_url", "state"} }
+func (ConfirmSessionRequest) RequiredFields() []string       { return []string{"confirmed_scopes"} }
 func (ConsentAgentStatusResponse) RequiredFields() []string  { return []string{"status"} }
 func (CreateAdminRequest) RequiredFields() []string          { return []string{"email", "password"} }
 func (CredentialAgentListResponse) RequiredFields() []string { return []string{"data", "has_more"} }
@@ -131,17 +131,19 @@ func (ExecutionResponse) RequiredFields() []string {
 func (ExecutionStatsResponse) RequiredFields() []string {
 	return []string{"daily_buckets", "success_rate_percent", "top_operations", "total_executions"}
 }
+func (GovernedHostsResponse) RequiredFields() []string { return []string{"data", "digest"} }
 func (HealthResponse) RequiredFields() []string {
 	return []string{"setup_required", "status", "surface"}
 }
 func (InstanceIdentityResponse) RequiredFields() []string {
 	return []string{"backend", "canonical_base_url", "host"}
 }
-func (IntrospectRequest) RequiredFields() []string    { return []string{"token"} }
-func (IntrospectResponse) RequiredFields() []string   { return []string{"active"} }
-func (InviteIssuedResponse) RequiredFields() []string { return []string{"expires_at", "token"} }
-func (JobLinksResponse) RequiredFields() []string     { return []string{"self"} }
-func (JobListResponse) RequiredFields() []string      { return []string{"data", "has_more"} }
+func (IntegrationsConnectRequest) RequiredFields() []string { return []string{"vendor"} }
+func (IntrospectRequest) RequiredFields() []string          { return []string{"token"} }
+func (IntrospectResponse) RequiredFields() []string         { return []string{"active"} }
+func (InviteIssuedResponse) RequiredFields() []string       { return []string{"expires_at", "token"} }
+func (JobLinksResponse) RequiredFields() []string           { return []string{"self"} }
+func (JobListResponse) RequiredFields() []string            { return []string{"data", "has_more"} }
 func (JobResponse) RequiredFields() []string {
 	return []string{"_links", "created_at", "job_id", "kind", "status"}
 }
@@ -219,6 +221,7 @@ func (PermissionResponse) RequiredFields() []string {
 	return []string{"description", "grantable_by_caller", "implies", "name"}
 }
 func (PermissionRuleListResponse) RequiredFields() []string { return []string{"data"} }
+func (PermissionRuleModel) RequiredFields() []string        { return []string{"method", "path"} }
 func (PermissionRuleReadSchema) RequiredFields() []string   { return []string{"effect"} }
 func (PermissionTestRequest) RequiredFields() []string      { return []string{"method", "path"} }
 func (PermissionTestResponse) RequiredFields() []string     { return []string{"allowed", "matched"} }
@@ -303,5 +306,9 @@ func (UserCreatedResponse) RequiredFields() []string {
 func (UserListResponse) RequiredFields() []string { return []string{"data", "has_more"} }
 func (UserResponse) RequiredFields() []string {
 	return []string{"active", "auth_provider", "created_at", "email", "first_name", "id", "invite_state", "last_name", "must_change_password", "name", "permissions"}
+}
+func (VendorListResponse) RequiredFields() []string { return []string{"data"} }
+func (VendorSummaryResponse) RequiredFields() []string {
+	return []string{"display_name", "flow_kinds", "key", "vendor"}
 }
 func (VersionResponse) RequiredFields() []string { return []string{"current", "update_available"} }

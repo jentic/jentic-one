@@ -26,7 +26,7 @@ from jentic_one.auth.web.app import install_on_app as _install_auth_verifier
 from jentic_one.control.services.key_retirement import KeyRetirementService
 from jentic_one.control.services.toolkit_export import ToolkitExportError, ToolkitExportService
 from jentic_one.control.services.toolkit_flattening import Finding, ToolkitFlatteningService
-from jentic_one.shared.config import AppConfig, load_config
+from jentic_one.shared.config import AppConfig, load_config, oneshot_config_source_active
 from jentic_one.shared.context import Context
 from jentic_one.shared.logging import configure_logging
 from jentic_one.shared.metrics import configure_metrics
@@ -34,6 +34,9 @@ from jentic_one.shared.tracing import configure_tracing
 from jentic_one.shared.web.app_factory import SURFACE_MODULES, create_combined_app
 from jentic_one.wiring import build_default_container
 from jentic_one.wiring import install_broker_registry_resolver as _install_broker_registry_resolver
+from jentic_one.wiring import (
+    install_control_catalog_auto_importer as _install_control_catalog_auto_importer,
+)
 
 SURFACE_DB_DEPS: dict[str, set[str]] = {
     # Auth reaches the control DB read-only to resolve toolkit-binding names for
@@ -48,7 +51,13 @@ SURFACE_DB_DEPS: dict[str, set[str]] = {
     # "Access to 'admin' database is not allowed in this context" — the failure
     # mode behind the parts-mode Helm smoke timeouts.
     "control": {"admin"},
-    "registry": {"admin"},
+    # Registry additionally reads the control DB: GET /governed-hosts derives
+    # the caller's credential scopes from control's credentials table, keyed by
+    # the identity's admin agent_credential_bindings (issue #1278), and
+    # ApiService's binding reconciliation touches it opportunistically. Without
+    # it, a standalone registry surface (parts-mode deploy) answers
+    # /governed-hosts with a 500.
+    "registry": {"admin", "control"},
 }
 
 SURFACES_NEEDING_AUTH: set[str] = {"admin", "control", "registry", "broker"}
@@ -89,10 +98,20 @@ def _build_app(ctx: Context, apps: list[str]) -> FastAPI:
             _install_auth_verifier(app, ctx)
         if surface == "broker" and ctx.is_db_allowed("registry"):
             _install_broker_registry_resolver(app, ctx)
+        # Standalone control: enable catalog auto-import only when the process
+        # has registry-DB access (MCP-enabled configs widen the DB deps). A
+        # process without registry DB can't reach the catalog manifest anyway.
+        if surface == "control" and ctx.is_db_allowed("registry"):
+            _install_control_catalog_auto_importer(app, ctx)
         return app
     app = create_combined_app(ctx, apps, container=container)
     if "broker" in apps and ctx.is_db_allowed("registry"):
         _install_broker_registry_resolver(app, ctx)
+    # Combined shape: install the auto-importer whenever control ships in the
+    # same process as the registry, so a connect finishing in this process can
+    # kick off an import in the same process too.
+    if "control" in apps and ctx.is_db_allowed("registry"):
+        _install_control_catalog_auto_importer(app, ctx)
     return app
 
 
@@ -126,6 +145,7 @@ def _serve() -> None:
     # token-mint path; a SQLite registry/control DB under reload would still
     # contend, but that is out of scope here.
     reload_enabled = config.server.reload
+    logging_configured = False
     if reload_enabled and config.databases.admin.backend == "sqlite":
         # Configure logging up front so the warning is emitted in the standard
         # format; the reload branch returns before the single-process path, while
@@ -141,8 +161,24 @@ def _serve() -> None:
         )
         reload_enabled = False
         logging_configured = True
-    else:
-        logging_configured = False
+    if reload_enabled and oneshot_config_source_active():
+        # The reload worker is a separate process that re-loads config from the
+        # environment (see create_app); a one-shot source (pipe / /dev/fd) is
+        # already drained in this process and would hang or fail the worker's
+        # read. Degrade to a single process instead of hanging boot.
+        if not logging_configured:
+            configure_logging(config)
+            logging_configured = True
+        logger = structlog.get_logger(__name__)
+        logger.warning(
+            "reload_disabled_oneshot_config_source",
+            detail=(
+                "server.reload ignored: the config came from a one-shot source "
+                "(pipe / /dev/fd) that a reload worker process cannot re-read; "
+                "running a single worker instead."
+            ),
+        )
+        reload_enabled = False
 
     if reload_enabled:
         uvicorn.run(
