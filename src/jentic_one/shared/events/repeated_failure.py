@@ -27,6 +27,7 @@ from jentic_one.shared.config import SecurityConfig
 from jentic_one.shared.events import emit_event
 from jentic_one.shared.models import ExecutionStatus
 from jentic_one.shared.models.events import EventSeverity, EventType
+from jentic_one.shared.schemas import OperationInfo
 
 logger = structlog.get_logger(__name__)
 
@@ -37,7 +38,7 @@ async def maybe_emit_repeated_failure(
     actor_id: str,
     actor_type: str | None,
     toolkit_id: str | None,
-    operation_id: str | None,
+    operation: OperationInfo | None,
     trace_id: str | None,
     config: SecurityConfig,
     credential_id: str | None = None,
@@ -45,7 +46,11 @@ async def maybe_emit_repeated_failure(
     """Emit ``execution.repeated_failure`` when failures cross the threshold.
 
     Counts failed ``ExecutionRecord`` rows for the ``actor_id`` + consumer axis
-    + ``operation_id`` key within ``execution_repeated_failure_window_s``. The
+    + operation-id key within ``execution_repeated_failure_window_s``. The
+    aggregation key stays the opaque ``operation.id`` (the stable machine key
+    on every record); the human-facing summary renders the operation's
+    ``display`` label (method + path template) instead — the opaque hash only
+    appears there for legacy in-flight jobs that carry no path. The
     consumer axis is ``toolkit_id`` when present (the legacy toolkit path), else
     ``credential_id`` (the direct-binding path, theme-5 Phase 2 — whose
     executions carry no toolkit, so without this fallback the early return
@@ -65,8 +70,9 @@ async def maybe_emit_repeated_failure(
     """
     # An aggregate key needs an operation plus a consumer axis to be meaningful;
     # with neither toolkit nor credential there is nothing to count.
-    if not operation_id or not (toolkit_id or credential_id):
+    if operation is None or not (toolkit_id or credential_id):
         return
+    operation_id = operation.id
 
     # The consumer axis: toolkit takes precedence (legacy path attribution);
     # the direct-binding path keys on the credential instead.
@@ -132,7 +138,7 @@ async def maybe_emit_repeated_failure(
             type=EventType.EXECUTION_REPEATED_FAILURE,
             severity=severity,
             summary=(
-                f"{failure_count} failures for operation {operation_id} "
+                f"{failure_count} failures for operation {operation.display} "
                 f"on {axis_label} in {config.execution_repeated_failure_window_s}s"
             ),
             requires_action=True,

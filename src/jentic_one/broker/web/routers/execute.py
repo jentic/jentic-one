@@ -331,7 +331,7 @@ def _context_from_discovery(
         # discovered API identity by ``select_toolkit`` after discovery,
         # never taken verbatim from the inbound header.
         toolkit_id=None,
-        operation_id=resolved.operation_id,
+        operation=resolved.operation,
         api_vendor=resolved.api.vendor,
         api_name=resolved.api.name,
         api_version=resolved.api.version,
@@ -641,8 +641,8 @@ def _metadata_headers(ctx_req: ExecuteRequestContext, execution_id: str) -> dict
     meta: dict[str, str] = {JenticHeader.EXECUTION_ID.value: execution_id}
     if ctx_req.toolkit_id:
         meta[JenticHeader.TOOLKIT_ID.value] = ctx_req.toolkit_id
-    if ctx_req.operation_id:
-        meta[JenticHeader.OPERATION.value] = ctx_req.operation_id
+    if ctx_req.operation:
+        meta[JenticHeader.OPERATION.value] = ctx_req.operation.id
     if ctx_req.api_vendor:
         meta[JenticHeader.API_VENDOR.value] = ctx_req.api_vendor
     # Credential attribution (#740). Emitted only when the resolver actually
@@ -898,7 +898,7 @@ async def _handle(
             rule_set_id=rule_set_ids.get(selected_credential.credential_id),
             method=method,
             path=urlparse(upstream_url).path,
-            operation_id=resolved.operation_id,
+            operation_id=resolved.operation.id,
         )
         if not evaluation.allowed:
             # Same two-variant deny split as the toolkit path (#578): an empty
@@ -974,7 +974,7 @@ async def _handle(
             toolkit_id=ctx_req.toolkit_id,
             method=method,
             path=urlparse(upstream_url).path,
-            operation_id=resolved.operation_id,
+            operation_id=resolved.operation.id,
             api_vendor=resolved.api.vendor,
         )
         if not evaluation.allowed:
@@ -1257,6 +1257,49 @@ def _replay_response(stored: StoredResponse) -> Response:
     )
 
 
+def _async_job_payload(
+    ctx_req: ExecuteRequestContext,
+    *,
+    execution_id: str,
+    origin: str,
+    selected_credential_id: str | None = None,
+    allowed_credential_ids: list[str] | None = None,
+    body: bytes | None = None,
+) -> dict[str, Any]:
+    """Build the job payload for an async (202) execution.
+
+    Extracted from the enqueue path so the operation dual-write below is
+    unit-testable at the producer: the worker seams (handler forwarding,
+    executor rebuild) each have their own pins, and this is the third leg.
+    """
+    payload: dict[str, Any] = {
+        "execution_id": execution_id,
+        "upstream_url": ctx_req.upstream_url,
+        "method": ctx_req.method,
+        "toolkit_id": ctx_req.toolkit_id,
+        "trace_id": ctx_req.trace_id,
+        "operation": ctx_req.operation.model_dump() if ctx_req.operation else None,
+        # Rolling-deploy shim (#1382): a pre-``operation``-dict worker draining
+        # this job reads only the flat key — without it the record would persist
+        # with operation_id NULL and the repeated-failure detector would skip
+        # it. Drop once no pre-operation-dict workers remain (#1382).
+        "operation_id": ctx_req.operation.id if ctx_req.operation else None,
+        "api_vendor": ctx_req.api_vendor,
+        "api_name": ctx_req.api_name,
+        "api_version": ctx_req.api_version,
+        "origin": origin,
+    }
+    if selected_credential_id is not None:
+        payload["credential_id"] = selected_credential_id
+    if allowed_credential_ids is not None:
+        payload["allowed_credential_ids"] = allowed_credential_ids
+    if ctx_req.pinned_revisions:
+        payload["pinned_revisions"] = ctx_req.pinned_revisions
+    if body:
+        payload["body_b64"] = base64.b64encode(body).decode()
+    return payload
+
+
 async def _handle_async(
     request: Request,
     ctx_req: ExecuteRequestContext,
@@ -1276,26 +1319,14 @@ async def _handle_async(
     execution_id = mint_execution_id()
     body = await _read_request_body(request, ctx_req.method, ctx)
 
-    payload: dict[str, Any] = {
-        "execution_id": execution_id,
-        "upstream_url": ctx_req.upstream_url,
-        "method": ctx_req.method,
-        "toolkit_id": ctx_req.toolkit_id,
-        "trace_id": ctx_req.trace_id,
-        "operation_id": ctx_req.operation_id,
-        "api_vendor": ctx_req.api_vendor,
-        "api_name": ctx_req.api_name,
-        "api_version": ctx_req.api_version,
-        "origin": identity.origin.value,
-    }
-    if selected_credential_id is not None:
-        payload["credential_id"] = selected_credential_id
-    if allowed_credential_ids is not None:
-        payload["allowed_credential_ids"] = allowed_credential_ids
-    if ctx_req.pinned_revisions:
-        payload["pinned_revisions"] = ctx_req.pinned_revisions
-    if body:
-        payload["body_b64"] = base64.b64encode(body).decode()
+    payload = _async_job_payload(
+        ctx_req,
+        execution_id=execution_id,
+        origin=identity.origin.value,
+        selected_credential_id=selected_credential_id,
+        allowed_credential_ids=allowed_credential_ids,
+        body=body,
+    )
 
     async with ctx.admin_db.transaction() as session:
         job_id = await enqueue_job(

@@ -260,3 +260,26 @@ export function apiIdentityTuple(input: {
 	if (vendor && name) return `${vendor}/${name}`;
 	return vendor || name;
 }
+
+/**
+ * Human-readable operation label for an execution record.
+ *
+ * Renders the record's `operation_method` + `operation_path` (the spec's HTTP
+ * method + path template, e.g. "GET /repos/{owner}/{repo}"). Returns null when
+ * the record carries no path (legacy rows) — deliberately NEVER the opaque
+ * `operation_id` (`op_…` hash): it is a machine key, meaningless to humans,
+ * and must not render anywhere in the UI. Callers show their own empty
+ * placeholder ("—") instead. The input is shaped after the wire
+ * `ExecutionResponse` fields so every surface that lists executions (Monitor,
+ * dashboard, agent activity) can pass its row straight through — or map
+ * camelCase fields into this shape.
+ */
+export function formatOperation(row: {
+	operation_path?: string | null;
+	operation_method?: string | null;
+}): string | null {
+	if (!row.operation_path) return null;
+	return row.operation_method
+		? `${row.operation_method} ${row.operation_path}`
+		: row.operation_path;
+}

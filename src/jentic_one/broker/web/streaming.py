@@ -128,8 +128,8 @@ def _metadata_headers(
     }
     if ctx_req.toolkit_id:
         metadata[JenticHeader.TOOLKIT_ID.value] = ctx_req.toolkit_id
-    if ctx_req.operation_id:
-        metadata[JenticHeader.OPERATION.value] = ctx_req.operation_id
+    if ctx_req.operation:
+        metadata[JenticHeader.OPERATION.value] = ctx_req.operation.id
     if ctx_req.api_vendor:
         metadata[JenticHeader.API_VENDOR.value] = ctx_req.api_vendor
     # Credential attribution (#740). Absent when no credential was used, so

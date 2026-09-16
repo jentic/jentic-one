@@ -2623,6 +2623,18 @@ components:
           - type: string
           - type: 'null'
           title: Operation Id
+        operation_method:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: The operation's HTTP method, e.g. GET. Null on records predating the column.
+          title: Operation Method
+        operation_path:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: The operation's spec path template, e.g. /repos/{owner}/{repo}. Null on records predating the column; display surfaces show a placeholder for such rows — the opaque operation_id is a machine key, not a human fallback.
+          title: Operation Path
         origin:
           anyOf:
           - type: string

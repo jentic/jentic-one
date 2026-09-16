@@ -40,6 +40,7 @@ from jentic_one.shared.models import ActorType as ActorTypeEnum
 from jentic_one.shared.models import ExecutionStatus
 from jentic_one.shared.models.actors import origin_or_none
 from jentic_one.shared.models.events import EventSeverity, EventTag, EventType
+from jentic_one.shared.schemas import OperationInfo, operation_from_job_payload
 from jentic_one.shared.url import apply_server_variables
 from jentic_one.shared.url_validation import validate_upstream_url
 
@@ -96,6 +97,10 @@ class ExecutionHandler:
         api_name = payload.get("api_name")
         api_version = payload.get("api_version")
         origin = payload.get("origin")
+        # The repeated-failure detector keys on the operation id and renders the
+        # human identity; fold the payload's dual-written keys (the dict wins,
+        # jobs enqueued before it existed carry only the legacy flat id).
+        operation = operation_from_job_payload(payload)
 
         body: bytes | None = None
         body_b64 = payload.get("body_b64")
@@ -152,6 +157,10 @@ class ExecutionHandler:
                         "execution_id": execution_id,
                         "trace_id": trace_id,
                         "toolkit_id": payload.get("toolkit_id"),
+                        # The resolved operation (id + path template + method)
+                        # as one dict; ``operation_id`` rides alongside for
+                        # jobs enqueued before the ``operation`` key existed.
+                        "operation": payload.get("operation"),
                         "operation_id": payload.get("operation_id"),
                         "api_vendor": api_vendor,
                         "api_name": api_name,
@@ -205,7 +214,7 @@ class ExecutionHandler:
             actor_type=actor_type,
             toolkit_id=payload.get("toolkit_id"),
             credential_id=credential_id,
-            operation_id=payload.get("operation_id"),
+            operation=operation,
             origin=origin,
         )
 
@@ -233,7 +242,7 @@ class ExecutionHandler:
         actor_type: str,
         toolkit_id: str | None = None,
         credential_id: str | None = None,
-        operation_id: str | None = None,
+        operation: OperationInfo | None = None,
         origin: str | None = None,
     ) -> None:
         # The enqueue path persisted the request-derived Origin string in the
@@ -283,7 +292,7 @@ class ExecutionHandler:
                 actor_type=actor_type,
                 toolkit_id=toolkit_id,
                 credential_id=credential_id,
-                operation_id=operation_id,
+                operation=operation,
                 trace_id=event_trace_id,
                 config=self._security_config,
             )

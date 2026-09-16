@@ -14,6 +14,7 @@ from jentic_one.broker.services.execution.service import (
     default_broker,
     run_execution,
 )
+from jentic_one.shared.schemas import OperationInfo
 
 
 class _CircuitOpenRunner(UpstreamRunner):
@@ -33,7 +34,7 @@ def _ctx_req(host: str = "api.example.com") -> ExecuteRequestContext:
         method="GET",
         trace_id="a" * 32,
         toolkit_id="tk_test000000000000000000",
-        operation_id="getThing",
+        operation=OperationInfo(id="getThing"),
         api_vendor="example",
         api_name="api",
         api_version="1.0.0",

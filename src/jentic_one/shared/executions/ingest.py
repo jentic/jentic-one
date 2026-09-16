@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.admin.core.schema.execution_records import ExecutionRecord
 from jentic_one.shared.models import ExecutionStatus
+from jentic_one.shared.schemas import OperationInfo
 
 
 async def record_execution(
@@ -20,7 +21,7 @@ async def record_execution(
     started_at: datetime,
     status: ExecutionStatus,
     duration_ms: int | None = None,
-    operation_id: str | None = None,
+    operation: OperationInfo | None = None,
     api_vendor: str | None = None,
     api_name: str | None = None,
     api_version: str | None = None,
@@ -39,9 +40,20 @@ async def record_execution(
     ``toolkit_id`` is nullable-legacy (theme-5 Phase 2): the legacy toolkit
     path records its mediating toolkit; direct-binding executions pass ``None``
     (their consumer attribution is ``credential_id``).
+
+    ``operation`` carries the resolved operation's identity as one object;
+    it is flattened onto the record's ``operation_id`` / ``operation_path`` /
+    ``operation_method`` columns here (the DB shape stays flat).
     """
     if status not in tuple(ExecutionStatus):
         raise ValueError(f"Only terminal statuses allowed, got: {status!r}")
+
+    # Registry path templates are unbounded ``Text`` while the record column is
+    # ``String(512)`` — truncate defensively so an oversized template can't fail
+    # the flush and lose the whole record (the value is display-only; the join
+    # key stays ``operation_id``). Postgres rejects oversize; SQLite silently
+    # accepts it, so this is the only cross-backend guard.
+    operation_path = operation.path[:512] if operation and operation.path else None
 
     record = ExecutionRecord(
         id=execution_id,
@@ -50,7 +62,9 @@ async def record_execution(
         started_at=started_at,
         status=status,
         duration_ms=duration_ms,
-        operation_id=operation_id,
+        operation_id=operation.id if operation else None,
+        operation_path=operation_path,
+        operation_method=operation.method if operation else None,
         api_vendor=api_vendor,
         api_name=api_name,
         api_version=api_version,

@@ -441,7 +441,11 @@ func parseMethodURL(s string) (method, target string, ok bool) {
 		return "", "", false
 	}
 	switch strings.ToUpper(first) {
-	case "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS":
+	// The full method set OpenAPI ingestion accepts (registry
+	// ingest/parsers/openapi.py HTTP_METHODS) — a discovered TRACE operation's
+	// METHOD:url must resolve here rather than fall through to an opaque-id
+	// lookup that can never match.
+	case "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "TRACE":
 		return strings.ToUpper(first), rest, true
 	default:
 		return "", "", false

@@ -43,6 +43,21 @@ class ExecutionResponse(BaseModel):
     duration_ms: int | None = None
     status: str
     operation_id: str | None = None
+    # Human-readable operation identity. Field descriptions land in the
+    # generated OpenAPI/TS contract, so external clients see the semantics too.
+    operation_path: str | None = Field(
+        default=None,
+        description=(
+            "The operation's spec path template, e.g. /repos/{owner}/{repo}. "
+            "Null on records predating the column; display surfaces show a "
+            "placeholder for such rows — the opaque operation_id is a machine "
+            "key, not a human fallback."
+        ),
+    )
+    operation_method: str | None = Field(
+        default=None,
+        description="The operation's HTTP method, e.g. GET. Null on records predating the column.",
+    )
     api: ApiInfoResponse | None = None
     pinned_revisions: dict[str, Any] | None = None
     http_status: int | None = None

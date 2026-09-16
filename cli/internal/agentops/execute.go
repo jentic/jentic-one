@@ -42,7 +42,7 @@ func ParseMethodPath(target string) (method, path string) {
 	m := strings.ToUpper(target[:idx])
 	switch m {
 	case http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch,
-		http.MethodDelete, http.MethodHead, http.MethodOptions:
+		http.MethodDelete, http.MethodHead, http.MethodOptions, http.MethodTrace:
 		return m, target[idx+1:]
 	default:
 		return "", ""

@@ -23,7 +23,7 @@ from enum import StrEnum
 from typing import Protocol, runtime_checkable
 
 from jentic_one.shared.aws.sigv4 import SigV4Material
-from jentic_one.shared.schemas import APIReference
+from jentic_one.shared.schemas import APIReference, OperationInfo
 
 
 class ErrorOrigin(StrEnum):
@@ -85,7 +85,7 @@ class ExecutionContext:
 
     execution_id: str
     toolkit_id: str | None
-    operation_id: str | None
+    operation: OperationInfo | None
     api: APIReference | None
     trace_id: str
 

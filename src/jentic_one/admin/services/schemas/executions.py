@@ -32,6 +32,10 @@ class ExecutionView(BaseModel):
     duration_ms: int | None = None
     status: str
     operation_id: str | None = None
+    # Human-readable operation identity (path template + HTTP method); None on
+    # rows predating the columns.
+    operation_path: str | None = None
+    operation_method: str | None = None
     api: ApiInfo | None = None
     pinned_revisions: dict[str, Any] | None = None
     http_status: int | None = None

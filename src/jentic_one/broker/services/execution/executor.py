@@ -32,6 +32,7 @@ from jentic_one.shared.jobs.protocols import (
     UpstreamExecResult,
     UpstreamExecutor,
 )
+from jentic_one.shared.schemas import operation_from_job_payload
 
 
 class PipelineExecutor(UpstreamExecutor):
@@ -92,7 +93,7 @@ def _ctx_from_metadata(request: UpstreamExecRequest) -> ExecuteRequestContext:
         # "trace_id is always 32-hex" invariant for any other caller (#903).
         trace_id=valid_trace_id_or_minted(str(meta.get("trace_id") or "")),
         toolkit_id=meta.get("toolkit_id"),
-        operation_id=meta.get("operation_id"),
+        operation=operation_from_job_payload(meta),
         api_vendor=meta.get("api_vendor"),
         api_name=meta.get("api_name"),
         api_version=meta.get("api_version"),

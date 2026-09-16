@@ -106,6 +106,10 @@ def _payload() -> dict[str, Any]:
         "api_vendor": "example",
         "api_name": "api",
         "api_version": "1.0.0",
+        # The resolved operation rides the payload as one dict (plus the
+        # dual-written flat id for pre-dict workers).
+        "operation": {"id": "op_widgets", "path": "/v1/widgets", "method": "GET"},
+        "operation_id": "op_widgets",
     }
 
 
@@ -142,6 +146,13 @@ async def test_async_job_dispatches_through_executor(
     assert req.headers["Cookie"] == "sid=csecret"
     # The execution id from the 202 is threaded through for the executions row.
     assert req.metadata["execution_id"] == "exec_int_1"
+    # The operation dict reaches the executor metadata intact so the record
+    # persists the human-readable identity.
+    assert req.metadata["operation"] == {
+        "id": "op_widgets",
+        "path": "/v1/widgets",
+        "method": "GET",
+    }
 
     # The job completed and the upstream body was persisted as the job result.
     async with admin_db.session() as session:

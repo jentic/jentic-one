@@ -89,7 +89,9 @@ test('the Activity tab feeds per-agent executions and deep-links to Monitor', as
 	await expect(page.getByRole('group', { name: 'Key metrics' }).getByText('1,204')).toBeVisible();
 
 	await page.getByRole('tab', { name: 'Activity' }).click();
-	await expect(page.getByText('github.create_issue')).toBeVisible();
+	// The feed renders the human-readable operation identity (credential ·
+	// METHOD path-template) — never the opaque operation id.
+	await expect(page.getByText('github · POST /repos/{owner}/{repo}/issues')).toBeVisible();
 
 	// The Monitor deep-link carries the actor filter (Monitor's URL contract).
 	// Two links match (back row + feed card) — both share the same href.
@@ -104,7 +106,7 @@ test('the Activity tab feeds per-agent executions and deep-links to Monitor', as
 	// Tab state is deep-linkable (?tab=) and survives reload.
 	await expect(page).toHaveURL(/tab=activity/);
 	await page.reload();
-	await expect(page.getByText('github.create_issue')).toBeVisible();
+	await expect(page.getByText('github · POST /repos/{owner}/{repo}/issues')).toBeVisible();
 });
 
 /**

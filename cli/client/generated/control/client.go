@@ -1923,18 +1923,24 @@ type ExecutionRecordLinks struct {
 // ExecutionResponse Execution record representation in API responses.
 type ExecutionResponse struct {
 	// UnderscoreLinks HATEOAS links for an execution record.
-	UnderscoreLinks ExecutionRecordLinks    `json:"_links"`
-	ActorId         string                  `json:"actor_id"`
-	ActorType       string                  `json:"actor_type"`
-	Api             *ApiInfoResponse        `json:"api,omitempty"`
-	CreatedAt       time.Time               `json:"created_at"`
-	CredentialId    *string                 `json:"credential_id,omitempty"`
-	CredentialName  *string                 `json:"credential_name,omitempty"`
-	DurationMs      *int                    `json:"duration_ms,omitempty"`
-	Error           *string                 `json:"error,omitempty"`
-	ExecutionId     string                  `json:"execution_id"`
-	HttpStatus      *int                    `json:"http_status,omitempty"`
-	OperationId     *string                 `json:"operation_id,omitempty"`
+	UnderscoreLinks ExecutionRecordLinks `json:"_links"`
+	ActorId         string               `json:"actor_id"`
+	ActorType       string               `json:"actor_type"`
+	Api             *ApiInfoResponse     `json:"api,omitempty"`
+	CreatedAt       time.Time            `json:"created_at"`
+	CredentialId    *string              `json:"credential_id,omitempty"`
+	CredentialName  *string              `json:"credential_name,omitempty"`
+	DurationMs      *int                 `json:"duration_ms,omitempty"`
+	Error           *string              `json:"error,omitempty"`
+	ExecutionId     string               `json:"execution_id"`
+	HttpStatus      *int                 `json:"http_status,omitempty"`
+	OperationId     *string              `json:"operation_id,omitempty"`
+
+	// OperationMethod The operation's HTTP method, e.g. GET. Null on records predating the column.
+	OperationMethod *string `json:"operation_method,omitempty"`
+
+	// OperationPath The operation's spec path template, e.g. /repos/{owner}/{repo}. Null on records predating the column; display surfaces show a placeholder for such rows — the opaque operation_id is a machine key, not a human fallback.
+	OperationPath   *string                 `json:"operation_path,omitempty"`
 	Origin          *string                 `json:"origin,omitempty"`
 	PinnedRevisions *map[string]interface{} `json:"pinned_revisions,omitempty"`
 	StartedAt       time.Time               `json:"started_at"`

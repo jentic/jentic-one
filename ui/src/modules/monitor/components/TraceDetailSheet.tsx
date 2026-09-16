@@ -28,6 +28,7 @@ import {
 import { ExecutionStatusPill } from '@/modules/monitor/components/StatusPill';
 import { DetailRow, DetailSection } from '@/modules/monitor/components/Detail';
 import { formatDuration, formatTimestamp } from '@/modules/monitor/lib/format';
+import { formatOperation } from '@/shared/lib';
 import { monitorHref, hasTrace } from '@/modules/monitor/lib/links';
 
 interface TraceDetailSheetProps {
@@ -154,7 +155,7 @@ export function TraceDetailSheet({
 											</div>
 											<DetailRow
 												label="Operation"
-												value={exec.operation_id ?? '—'}
+												value={formatOperation(exec) ?? '—'}
 												mono
 											/>
 											<DetailRow
