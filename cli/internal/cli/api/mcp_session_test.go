@@ -160,14 +160,14 @@ func TestMCPSession_ToolsListWorksWithNoConfig(t *testing.T) {
 	if importTool.Annotations == nil || !importTool.Annotations.IdempotentHint {
 		t.Errorf("import_api must carry idempotentHint (re-import of the same api_id converges)")
 	}
-	if len(names) != 9 {
-		t.Errorf("the stdio server serves exactly 9 tools, got %v", keys(names))
+	if len(names) != 10 {
+		t.Errorf("the stdio server serves exactly 10 tools, got %v", keys(names))
 	}
 }
 
 // TestMCPSession_ReadOnlyWithholdsMutatingTools pins the --read-only contract:
-// exactly execute and import_api lack
-// the read-only annotation, so the flag withholds exactly those two
+// exactly execute, import_api, and request_connection lack
+// the read-only annotation, so the flag withholds exactly those three
 // (execute_read, get_execution_result, and search_catalog stay servable).
 func TestMCPSession_ReadOnlyWithholdsMutatingTools(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
@@ -180,7 +180,7 @@ func TestMCPSession_ReadOnlyWithholdsMutatingTools(t *testing.T) {
 	if err != nil {
 		t.Fatalf("tools/list: %v", err)
 	}
-	withheld := map[string]bool{"execute": true, "import_api": true}
+	withheld := map[string]bool{"execute": true, "import_api": true, "request_connection": true}
 	names := make([]string, 0, len(tools.Tools))
 	for _, tool := range tools.Tools {
 		names = append(names, tool.Name)
@@ -425,8 +425,8 @@ func TestMCPSession_ExcludeToolsFilters(t *testing.T) {
 			t.Errorf("--exclude-tools=whoami must withhold the tool")
 		}
 	}
-	if len(tools.Tools) != 8 {
-		t.Errorf("tools = %d, want 8 after exclusion", len(tools.Tools))
+	if len(tools.Tools) != 9 {
+		t.Errorf("tools = %d, want 9 after exclusion", len(tools.Tools))
 	}
 }
 
