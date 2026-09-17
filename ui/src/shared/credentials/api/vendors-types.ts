@@ -52,10 +52,26 @@ export interface ReviewSession {
 	};
 }
 
+/**
+ * Wire shape for a single agent↔credential permission rule.
+ *
+ * Mirrors the backend's ``PermissionRuleSchema`` (see
+ * ``control/web/schemas/permission_rules.py``): first-match-wins ordered
+ * list, evaluated on ``(method, path, operation_id)`` triples. Any of the
+ * four match conditions being ``null`` means "match anything for this
+ * field"; ``match_mode`` picks how ``path`` is interpreted.
+ *
+ * Backend model-validator forbids a condition-less ``allow`` — a rule
+ * with ``effect=allow`` MUST constrain at least one of methods, path, or
+ * operations.
+ */
 export interface PermissionRule {
-	method: string;
-	path: string;
 	effect: 'allow' | 'deny';
+	methods?: string[] | null;
+	path?: string | null;
+	match_mode?: 'regex' | 'prefix' | 'exact';
+	operations?: string[] | null;
+	comment?: string | null;
 }
 
 export interface ConfirmRequest {
