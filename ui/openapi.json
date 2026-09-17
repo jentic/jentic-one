@@ -2718,7 +2718,7 @@
           },
           "permission_rules": {
             "items": {
-              "$ref": "#/components/schemas/PermissionRuleModel"
+              "$ref": "#/components/schemas/jentic_one__control__web__schemas__permission_rules__PermissionRuleSchema"
             },
             "title": "Permission Rules",
             "type": "array"
@@ -7344,42 +7344,6 @@
           "data"
         ],
         "title": "PermissionRuleListResponse",
-        "type": "object"
-      },
-      "PermissionRuleModel": {
-        "description": "One agent permission rule (allow/deny).",
-        "properties": {
-          "effect": {
-            "default": "allow",
-            "enum": [
-              "allow",
-              "deny"
-            ],
-            "title": "Effect",
-            "type": "string"
-          },
-          "method": {
-            "examples": [
-              "GET",
-              "POST"
-            ],
-            "title": "Method",
-            "type": "string"
-          },
-          "path": {
-            "examples": [
-              "/repos/**",
-              "/repos/*/issues"
-            ],
-            "title": "Path",
-            "type": "string"
-          }
-        },
-        "required": [
-          "method",
-          "path"
-        ],
-        "title": "PermissionRuleModel",
         "type": "object"
       },
       "PermissionRuleReadSchema": {

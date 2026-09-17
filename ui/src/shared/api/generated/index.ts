@@ -161,7 +161,6 @@ export type { OverlayUpdateRequest } from './models/OverlayUpdateRequest';
 export type { PermissionListResponse } from './models/PermissionListResponse';
 export type { PermissionResponse } from './models/PermissionResponse';
 export type { PermissionRuleListResponse } from './models/PermissionRuleListResponse';
-export { PermissionRuleModel } from './models/PermissionRuleModel';
 export { PermissionRuleReadSchema } from './models/PermissionRuleReadSchema';
 export type { Permissions } from './models/Permissions';
 export type { PermissionsPatchRequest } from './models/PermissionsPatchRequest';
