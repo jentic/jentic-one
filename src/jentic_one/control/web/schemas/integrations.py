@@ -6,6 +6,8 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
 
+from jentic_one.control.web.schemas.permission_rules import PermissionRuleSchema
+
 # ---------------------------------------------------------------------------
 # Vendor discovery
 # ---------------------------------------------------------------------------
