@@ -11,7 +11,6 @@ called on the concrete ``AuthCodeFlowHandler`` from
 
 from __future__ import annotations
 
-import re
 import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -209,40 +208,6 @@ def _verify_poll_token(row: ConnectSession, token: str) -> None:
     """Constant-time comparison against the session's poll_token."""
     if not secrets.compare_digest(row.poll_token, token):
         raise InvalidPollTokenError("poll_token mismatch")
-
-
-def _to_binding_rules(permission_rules: list[dict[str, str]]) -> list[dict[str, object]]:
-    """Translate approve-page rules to stored agent-permission-rule dicts.
-
-    The approve page speaks ``{method, path, effect}`` with glob paths
-    (``/**``, ``/repos/*``); stored ``agent_permission_rules`` rows use the
-    canonical binding shape (``methods`` list + ``path`` interpreted per
-    ``match_mode`` — see ``web/schemas/permission_rules.py``). ``/**``
-    (match everything) maps to ``path=None``; any other glob is escaped and
-    its ``**`` / ``*`` wildcards become ``.*`` / ``[^/]*`` under
-    ``match_mode="regex"`` (full-match semantics, same as the broker's
-    evaluator).
-    """
-    rules: list[dict[str, object]] = []
-    for rule in permission_rules:
-        raw_path = (rule.get("path") or "").strip()
-        path: str | None
-        if raw_path in ("", "/**", "**"):
-            path = None
-        else:
-            path = (
-                re.escape(raw_path).replace(re.escape("**"), ".*").replace(re.escape("*"), "[^/]*")
-            )
-        method = rule.get("method")
-        rules.append(
-            {
-                "effect": rule.get("effect", "allow"),
-                "methods": [method] if method else None,
-                "path": path,
-                "match_mode": "regex",
-            }
-        )
-    return rules
 
 
 def _terminal_status(
@@ -470,7 +435,11 @@ class ConnectSessionService:
         session_id: str,
         *,
         confirmed_scopes: list[str],
-        permission_rules: list[dict[str, str]],
+        # Rules arrive already-shaped as ``AgentPermissionRule`` dicts
+        # (``{effect, methods, path, match_mode, operations, comment}``) —
+        # the router validates against ``PermissionRuleSchema`` before we
+        # ever see them, so no shape translation happens here.
+        permission_rules: list[dict[str, object]],
         # Agent to bind the credential to, when the session was opened
         # without a target (user clicks a vendor tile before picking an
         # agent). Ignored when the session already carries an agent_id
@@ -529,7 +498,7 @@ class ConnectSessionService:
                     session,
                     effective_agent_id,
                     row.credential_id,
-                    _to_binding_rules(permission_rules),
+                    permission_rules,
                     created_by=caller_actor_id,
                 )
             elif permission_rules:

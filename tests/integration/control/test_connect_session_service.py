@@ -273,7 +273,13 @@ async def test_confirm_device_authorization_transitions_to_polling_and_seeds_aux
         result = await svc.confirm(
             created.session_id,
             confirmed_scopes=["repo"],
-            permission_rules=[{"method": "GET", "path": "/**", "effect": "allow"}],
+            # Canonical ``AgentPermissionRule`` dict shape — the router
+            # validates ``PermissionRuleSchema`` upstream, and the
+            # service passes the dicts straight through to
+            # ``replace_user_rules``. No glob translation here.
+            permission_rules=[
+                {"effect": "allow", "methods": ["GET"], "path": None, "match_mode": "regex"}
+            ],
             caller_actor_id=_USER_ID,
             caller_actor_type="USER",
         )
