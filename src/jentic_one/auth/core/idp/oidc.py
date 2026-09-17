@@ -12,9 +12,14 @@ from dataclasses import replace
 from urllib.parse import urlencode
 
 import httpx
+import jwt
+import structlog
+from jwt import PyJWKClient
 
-from jentic_one.auth.core.idp.adapter import IdpClaims
+from jentic_one.auth.core.idp.adapter import IdpClaims, TokenExchangeResult
 from jentic_one.shared.config import IdpConfig
+
+logger = structlog.get_logger(__name__)
 
 
 class OidcAdapter:
@@ -67,8 +72,14 @@ class OidcAdapter:
         }
         return f"{self._authorization_endpoint}?{urlencode(params)}"
 
-    async def exchange_code(self, code: str, *, redirect_uri: str) -> dict[str, object]:
-        """Exchange upstream code for tokens, then fetch userinfo."""
+    async def exchange_code(self, code: str, *, redirect_uri: str) -> TokenExchangeResult:
+        """Exchange upstream code for tokens, then fetch userinfo.
+
+        Returns userinfo plus the raw ID token, so provider subclasses that own
+        a trust anchor for the issuer's signing keys can verify the ID token
+        and prefer its claims where the provider does not surface them in
+        userinfo (e.g. Google's ``hd``).
+        """
         async with httpx.AsyncClient(timeout=10.0) as client:
             token_resp = await client.post(
                 self._token_endpoint,
@@ -89,10 +100,24 @@ class OidcAdapter:
                 headers={"Authorization": f"Bearer {access_token}"},
             )
             userinfo_resp.raise_for_status()
-            return userinfo_resp.json()  # type: ignore[no-any-return]
+            userinfo: dict[str, object] = userinfo_resp.json()
 
-    def map_claims(self, userinfo: dict[str, object]) -> IdpClaims:
+        id_token = token_data.get("id_token")
+        id_token_claims = self._verify_id_token(id_token) if isinstance(id_token, str) else {}
+        return TokenExchangeResult(userinfo=userinfo, id_token_claims=id_token_claims)
+
+    def _verify_id_token(self, id_token: str) -> dict[str, object]:
+        """Verify the upstream ID token and return its claims, or ``{}`` if unverified.
+
+        The generic adapter has no configured trust anchor for arbitrary OIDC
+        providers, so it declines to verify. Provider subclasses that ship
+        well-known signing keys (e.g. Google) override this hook.
+        """
+        return {}
+
+    def map_claims(self, exchange: TokenExchangeResult) -> IdpClaims:
         """Map standard OIDC claims to IdpClaims."""
+        userinfo = exchange.userinfo
         return IdpClaims(
             external_subject=str(userinfo.get("sub", "")),
             email=str(userinfo.get("email", "")),
@@ -116,6 +141,16 @@ class GoogleOidcAdapter(OidcAdapter):
     AUTHORIZATION_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth"
     TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
     USERINFO_ENDPOINT = "https://openidconnect.googleapis.com/v1/userinfo"
+    JWKS_URI = "https://www.googleapis.com/oauth2/v3/certs"
+    #: Google accepts both issuers on ID tokens.
+    ACCEPTED_ISSUERS = ("https://accounts.google.com", "accounts.google.com")
+    #: Google signs ID tokens with RS256.
+    SIGNING_ALGORITHMS = ("RS256",)
+
+    #: Shared JWKS client — caches keys in-process, refetches on unknown ``kid``
+    #: (bounded by ``lifespan``) so a Google key rotation is picked up without a
+    #: restart. One instance per process is enough; PyJWKClient is thread-safe.
+    _jwks_client: PyJWKClient = PyJWKClient(JWKS_URI, cache_keys=True, lifespan=300)
 
     def _default_authorization_endpoint(self) -> str:
         return self.AUTHORIZATION_ENDPOINT
@@ -126,12 +161,38 @@ class GoogleOidcAdapter(OidcAdapter):
     def _default_userinfo_endpoint(self) -> str:
         return self.USERINFO_ENDPOINT
 
-    def map_claims(self, userinfo: dict[str, object]) -> IdpClaims:
+    def _verify_id_token(self, id_token: str) -> dict[str, object]:
+        """Verify Google's ID token via the published JWKS and return its claims.
+
+        On any verification failure we return ``{}`` and log — the caller then
+        has no ``hd`` claim available, so a configured hard-gate rejects the
+        login. That's the correct posture: an ID token we can't verify must not
+        be trusted to satisfy a Workspace-only gate.
+        """
+        try:
+            signing_key = self._jwks_client.get_signing_key_from_jwt(id_token)
+            claims: dict[str, object] = jwt.decode(
+                id_token,
+                signing_key.key,
+                algorithms=list(self.SIGNING_ALGORITHMS),
+                audience=self._config.client_id,
+                issuer=list(self.ACCEPTED_ISSUERS),
+                options={"require": ["exp", "iss", "aud"]},
+            )
+            return claims
+        except (jwt.InvalidTokenError, jwt.PyJWKClientError) as exc:
+            logger.warning("google_id_token_verification_failed", error=str(exc))
+            return {}
+
+    def map_claims(self, exchange: TokenExchangeResult) -> IdpClaims:
         """Map Google claims, surfacing the `hd` (hosted-domain) claim.
 
-        `hd` is present only for Google Workspace accounts; it's None for
-        consumer Google accounts. Admission policies use it as a hard gate.
+        Google delivers ``hd`` on the ID token, not (reliably) on userinfo, so
+        the verified ID-token claims are the source of truth; userinfo is only
+        the fallback for backwards compatibility with test fixtures. ``hd`` is
+        present only for Google Workspace accounts and is used by admission
+        policies as a hard gate.
         """
-        base = super().map_claims(userinfo)
-        hd = userinfo.get("hd")
+        base = super().map_claims(exchange)
+        hd = exchange.id_token_claims.get("hd") or exchange.userinfo.get("hd")
         return replace(base, hosted_domain=str(hd) if hd else None)
