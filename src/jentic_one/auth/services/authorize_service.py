@@ -180,8 +180,8 @@ class AuthorizeService:
         if adapter is None:
             raise InvalidGrantError("No external IdP configured")
 
-        userinfo = await adapter.exchange_code(code, redirect_uri=redirect_uri)
-        claims = adapter.map_claims(userinfo)
+        exchange = await adapter.exchange_code(code, redirect_uri=redirect_uri)
+        claims = adapter.map_claims(exchange)
         user_id = await self._resolve_or_create_user(claims)
 
         platform_code = await self._issue_authorization_code(
@@ -209,8 +209,8 @@ class AuthorizeService:
         if adapter is None:
             raise InvalidGrantError("No external IdP configured")
 
-        userinfo = await adapter.exchange_code(code, redirect_uri=redirect_uri)
-        claims = adapter.map_claims(userinfo)
+        exchange = await adapter.exchange_code(code, redirect_uri=redirect_uri)
+        claims = adapter.map_claims(exchange)
         user_id = await self._resolve_or_create_user(claims)
         return user_id, claims.email
 
@@ -233,8 +233,8 @@ class AuthorizeService:
         if adapter is None:
             raise InvalidGrantError("No external IdP configured")
 
-        userinfo = await adapter.exchange_code(code, redirect_uri=redirect_uri)
-        return adapter.map_claims(userinfo)
+        exchange = await adapter.exchange_code(code, redirect_uri=redirect_uri)
+        return adapter.map_claims(exchange)
 
     async def provision_from_claims(self, claims: IdpClaims) -> str:
         """Resolve-or-create a local user from IdP claims. Returns the user_id."""
