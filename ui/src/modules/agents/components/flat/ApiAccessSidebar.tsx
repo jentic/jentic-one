@@ -37,14 +37,12 @@ import { AlertTriangle, ExternalLink, PauseCircle, Pencil, PlayCircle, X } from 
 import {
 	Badge,
 	Button,
-	CascadeDeleteDialog,
 	DangerZone,
 	ErrorAlert,
 	SheetPrimitive,
 	Skeleton,
 	VendorIcon,
 	toast,
-	type CascadeDependentGroup,
 } from '@/shared/ui';
 import { formatTimestamp, timeAgo } from '@/shared/lib/utils';
 import {
@@ -52,6 +50,7 @@ import {
 	useDeleteCredential,
 	useRunConnectFlow,
 } from '@/shared/credentials/api';
+import { CredentialDeleteDialog } from '@/shared/credentials/components/CredentialDeleteDialog';
 import { EditCredentialSheet } from '@/shared/credentials/components/EditCredentialSheet';
 import {
 	useAgentBindingPermissions,
@@ -176,23 +175,11 @@ export function ApiAccessSidebar({
 	const runConnect = useRunConnectFlow();
 	const [connecting, setConnecting] = useState(false);
 
-	// Every agent bound to this credential — the org-delete blast radius.
+	// Every agent bound to this credential — the "Used by" line below, and the
+	// blast radius the delete confirm names (it shares this cached read).
 	// Fetched only while the sidebar is open.
 	const credentialAgents = useCredentialAgents(credentialId ?? undefined, { enabled: open });
 	const boundAgentRows = credentialAgents.data?.data ?? [];
-	const deleteDependents: CascadeDependentGroup[] | undefined = credentialAgents.isSuccess
-		? [
-				{
-					label: 'agent binding',
-					count: boundAgentRows.length,
-					names: boundAgentRows.map((row) =>
-						row.agent_id === agent.id
-							? `${row.agent_name} (this agent)`
-							: row.agent_name,
-					),
-				},
-			]
-		: undefined;
 
 	// Mirrors CredentialsPage/CredentialInventorySheet handleConnect: the
 	// standalone connect keeps the credential whatever the outcome.
@@ -491,15 +478,10 @@ export function ApiAccessSidebar({
 							{/* Danger zone — the two destructive verbs only (suspend is
 							    reversible and lives in the header), in the app's shared
 							    danger-zone grammar: unbind (this agent only) vs delete
-							    (org-wide), visually and textually distinct. The ring is
-							    scoped to THIS surface: in a scrolling sheet the zone has
-							    to announce itself, where a settings page has room to let
-							    it sit quietly. The shared card itself is untouched. */}
-							<section
-								aria-label="Danger zone"
-								data-testid="sidebar-danger-zone"
-								className="ring-danger/30 ring-offset-card rounded-xl ring-1 ring-offset-4"
-							>
+							    (org-wide), visually and textually distinct. The shared
+							    card carries its own danger styling; this wrapper only
+							    names the region. */}
+							<section aria-label="Danger zone" data-testid="sidebar-danger-zone">
 								<DangerZone
 									pending={unbindPending || deleteCredential.isPending}
 									onAction={(key) => {
@@ -564,13 +546,13 @@ export function ApiAccessSidebar({
 
 			{/* Org-wide delete confirm — blast radius NAMES the bound agents. */}
 			{deleteOpen && shown && (
-				<CascadeDeleteDialog
+				<CredentialDeleteDialog
 					open
+					credentialId={shown.credentialId}
+					credentialName={shown.credentialName}
+					currentAgentId={agent.id}
 					onClose={() => setDeleteOpen(false)}
 					onConfirm={confirmDeleteCredential}
-					entityType="credential"
-					entityName={shown.credentialName}
-					dependents={deleteDependents}
 					loading={deleteCredential.isPending}
 					error={deleteCredential.error}
 				/>

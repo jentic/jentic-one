@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Plus } from 'lucide-react';
-import { Button, CascadeDeleteDialog, PageHeader, PageHelp, PageShell, toast } from '@/shared/ui';
+import { Button, PageHeader, PageHelp, PageShell, toast } from '@/shared/ui';
 import {
 	CredentialType,
 	useCredentials,
@@ -17,6 +17,7 @@ import {
 	CreateCredentialFlow,
 	type CreatedCredentialInfo,
 } from '@/shared/credentials/components/CreateCredentialFlow';
+import { CredentialDeleteDialog } from '@/shared/credentials/components/CredentialDeleteDialog';
 import { EditCredentialSheet } from '@/shared/credentials/components/EditCredentialSheet';
 
 /**
@@ -236,12 +237,13 @@ export function CredentialsPage() {
 			/>
 
 			{deleteTarget != null && (
-				<CascadeDeleteDialog
+				// Org-wide delete: the confirm names the agents that lose access.
+				<CredentialDeleteDialog
 					open
+					credentialId={deleteTarget.credential_id}
+					credentialName={deleteTarget.name}
 					onClose={(): void => setDeleteTarget(null)}
 					onConfirm={confirmDelete}
-					entityType="credential"
-					entityName={deleteTarget.name}
 					loading={deleteMutation.isPending}
 					error={deleteMutation.error}
 				/>

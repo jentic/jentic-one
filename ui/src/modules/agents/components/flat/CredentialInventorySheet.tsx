@@ -29,7 +29,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Filter, Key, Plus, X } from 'lucide-react';
 import {
 	Button,
-	CascadeDeleteDialog,
 	EmptyState,
 	RefreshButton,
 	SearchInput,
@@ -59,6 +58,7 @@ import {
 	CreateCredentialFlow,
 	type CreatedCredentialInfo,
 } from '@/shared/credentials/components/CreateCredentialFlow';
+import { CredentialDeleteDialog } from '@/shared/credentials/components/CredentialDeleteDialog';
 import { EditCredentialSheet } from '@/shared/credentials/components/EditCredentialSheet';
 
 const FILTER_OPTIONS: { value: CredentialTypeFilter; label: string }[] = [
@@ -501,12 +501,13 @@ export function CredentialInventorySheet({
 			/>
 
 			{deleteTarget != null && (
-				<CascadeDeleteDialog
+				// Org-wide delete: the confirm names the agents that lose access.
+				<CredentialDeleteDialog
 					open
+					credentialId={deleteTarget.credential_id}
+					credentialName={deleteTarget.name}
 					onClose={(): void => setDeleteTarget(null)}
 					onConfirm={confirmDelete}
-					entityType="credential"
-					entityName={deleteTarget.name}
 					loading={deleteMutation.isPending}
 					error={deleteMutation.error}
 				/>
