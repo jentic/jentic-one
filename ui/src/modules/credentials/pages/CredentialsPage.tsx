@@ -3,9 +3,9 @@ import { Plus } from 'lucide-react';
 import { Button, CascadeDeleteDialog, PageHeader, PageHelp, PageShell, toast } from '@/shared/ui';
 import {
 	CredentialType,
-	runConnectFlow,
 	useCredentials,
 	useDeleteCredential,
+	useRunConnectFlow,
 	type Credential,
 } from '@/shared/credentials/api';
 import { CredentialsList } from '@/shared/credentials/components/CredentialsList';
@@ -14,15 +14,15 @@ import {
 	type CredentialTypeFilter,
 } from '@/shared/credentials/components/CredentialsToolbar';
 import {
-	CreateCredentialDialog,
+	CreateCredentialFlow,
 	type CreatedCredentialInfo,
-} from '@/shared/credentials/components/CreateCredentialDialog';
+} from '@/shared/credentials/components/CreateCredentialFlow';
 import { EditCredentialSheet } from '@/shared/credentials/components/EditCredentialSheet';
 
 /**
- * Credentials module home. Lists stored credentials and hosts the create
- * dialog, edit sheet, and the delete confirmation. Data flows through the
- * module's React Query hooks only.
+ * Credentials module home. Lists stored credentials and hosts the create flow,
+ * edit sheet, and the delete confirmation. Data flows through the module's
+ * React Query hooks only.
  *
  * Note: creation deliberately doesn't echo the raw secret back (no
  * one-time-secret dialog) — echoing a value the user just typed adds friction
@@ -39,6 +39,10 @@ export function CredentialsPage() {
 
 	const { data, isLoading, error, refetch, isFetching } = useCredentials();
 	const deleteMutation = useDeleteCredential();
+	// Cache-aware connect: a successful sign-in invalidates the whole
+	// credentials slice (this page's list AND the drained listAll query the
+	// flat Agents surface joins against), not just the local first page.
+	const runConnect = useRunConnectFlow();
 
 	const credentials = useMemo(() => data?.data ?? [], [data]);
 
@@ -84,11 +88,12 @@ export function CredentialsPage() {
 			}
 		};
 		try {
-			const outcome = await runConnectFlow(credentialId);
+			const outcome = await runConnect(credentialId);
 			switch (outcome.status) {
 				case 'connected':
+					// The connect hook invalidated the credentials slice, which
+					// refetches this page's list along with every other join.
 					toast({ title: 'Connected', variant: 'success' });
-					void refetch();
 					break;
 				case 'redirected':
 					break;
@@ -121,11 +126,10 @@ export function CredentialsPage() {
 	const handleConnect = async (cred: Credential): Promise<void> => {
 		toast({ title: `Opening sign-in for ${cred.name}…` });
 		try {
-			const outcome = await runConnectFlow(cred.credential_id);
+			const outcome = await runConnect(cred.credential_id);
 			switch (outcome.status) {
 				case 'connected':
 					toast({ title: 'Connected', variant: 'success' });
-					void refetch();
 					break;
 				case 'redirected':
 					break;
@@ -205,7 +209,7 @@ export function CredentialsPage() {
 				/>
 			</div>
 
-			<CreateCredentialDialog
+			<CreateCredentialFlow
 				open={createOpen}
 				onClose={(): void => setCreateOpen(false)}
 				onCreated={(info: CreatedCredentialInfo): void => {

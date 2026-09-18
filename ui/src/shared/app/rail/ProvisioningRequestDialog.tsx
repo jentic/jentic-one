@@ -8,7 +8,7 @@
  *   credential:bind       — bind the AGENT to that credential + permission rules
  *
  * The `provision` item is an inert placeholder; a human fulfils it here by
- * CREATING the real credential (reusing the shared CreateCredentialDialog),
+ * CREATING the real credential (reusing the shared CreateCredentialFlow),
  * then this wizard AMENDs the resulting credential id + confirmed rules onto
  * the `credential:bind` item and APPROVES the whole request — the existing
  * bind effect does the real wiring (agent ↔ credential + rules).
@@ -39,8 +39,8 @@ import { AgentBadge } from '@/shared/ui/AgentBadge';
 import { ErrorAlert } from '@/shared/ui/ErrorAlert';
 import { PermissionRuleEditor, type PermissionRuleInput } from '@/shared/ui/PermissionRuleEditor';
 import { useActorDirectory } from '@/shared/hooks';
-import { CreateCredentialDialog } from '@/shared/credentials/components/CreateCredentialDialog';
-import type { CreatedCredentialInfo } from '@/shared/credentials/components/CreateCredentialDialog';
+import { CreateCredentialFlow } from '@/shared/credentials/components/CreateCredentialFlow';
+import type { CreatedCredentialInfo } from '@/shared/credentials/components/CreateCredentialFlow';
 import { CREDENTIAL_TYPE_LABELS, runConnectFlow } from '@/shared/credentials/api';
 import {
 	CredentialType,
@@ -1635,11 +1635,16 @@ export function ProvisioningRequestDialog({
 				</div>
 			</Dialog>
 
-			<CreateCredentialDialog
+			{/* A dialog, not the flow's default drawer: this wizard is itself a
+			    native modal `<dialog>`, which the browser renders in the top
+			    layer above every sheet — a drawer opened from here would be
+			    hidden behind the wizard and unreachable. */}
+			<CreateCredentialFlow
 				open={credentialDialogOpen}
 				onClose={() => setCredentialDialogOpen(false)}
 				onCreated={handleCredentialCreated}
 				initialType={initialCredentialType}
+				surface="dialog"
 			/>
 
 			{/* Cancel-with-orphans confirmation — a styled in-dialog step rather

@@ -1,7 +1,16 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { ArrowLeft, Download, Info, Loader2 } from 'lucide-react';
-import { Button, Dialog, ErrorAlert, Input, Label, Skeleton, toast } from '@/shared/ui';
+import { ArrowLeft, Download, Info, Loader2, X } from 'lucide-react';
+import {
+	Button,
+	Dialog,
+	ErrorAlert,
+	Input,
+	Label,
+	SheetPrimitive,
+	Skeleton,
+	toast,
+} from '@/shared/ui';
 import {
 	CREDENTIAL_TYPE_ORDER,
 	CredentialType,
@@ -44,6 +53,9 @@ import {
 
 export interface CreatedCredentialInfo {
 	credentialId: string;
+	/** The saved label, so a caller that binds this credential can name it
+	 *  rather than reporting an anonymous success. */
+	name: string;
 	type: CredentialType;
 	provider: string;
 	/**
@@ -54,11 +66,24 @@ export interface CreatedCredentialInfo {
 	needsConnect: boolean;
 }
 
-interface CreateCredentialDialogProps {
+interface CreateCredentialFlowProps {
 	open: boolean;
 	onClose: () => void;
 	/** Called once the credential has been successfully created. */
 	onCreated: (info: CreatedCredentialInfo) => void;
+	/**
+	 * Which container the flow renders in.
+	 *
+	 * `'sheet'` (the default) is a side drawer: adding a credential is a step
+	 * taken *from* somewhere — a list, an agent, a setup queue — and a drawer
+	 * keeps that somewhere on screen behind it.
+	 *
+	 * `'dialog'` is for a host that is itself a native modal `<dialog>`. Such a
+	 * dialog renders in the browser's top layer, above every sheet
+	 * (`SheetPrimitive.tsx`), so a drawer opened from inside one would be both
+	 * invisible and unreachable.
+	 */
+	surface?: 'sheet' | 'dialog';
 	/**
 	 * Pre-select this auth type when the dialog opens (the user can still change
 	 * it). Used by the provisioning wizard to honour the agent-declared
@@ -68,12 +93,23 @@ interface CreateCredentialDialogProps {
 	 * the agent's guess.
 	 */
 	initialType?: CredentialType;
+	/**
+	 * Skip the pick step and create a credential for exactly this API.
+	 *
+	 * Used when the caller has already established which API needs a credential
+	 * and changing it would break their flow — the Add-APIs setup queue is
+	 * working through a batch the operator chose in the tray, so the API is not
+	 * the dialog's question to re-ask. Hides the picker, the Back button and the
+	 * summary's `Change` affordance; everything downstream (spec-shaped form,
+	 * catalog import on save) behaves exactly as for a picked API.
+	 */
+	pinnedApi?: SelectedApi;
 }
 
 type Step = 'pick' | 'form';
 
 /**
- * Centered dialog that guides the user through creating a credential.
+ * The guided flow for creating a credential.
  *
  * Two-step flow:
  *  1. **Pick** — search workspace + public catalog, or fall back to manual
@@ -88,24 +124,32 @@ type Step = 'pick' | 'form';
  *  - Otherwise → create directly. Pipedream provider work composes under the
  *    oauth2 branch unchanged.
  *
- * Why a dialog (not the sheet pattern we use for edit): the create flow is a
- * focused, modal task with a wizard shape that benefits from a centred,
- * resizable container. The edit flow stays a sheet because it sits inline
- * with the list and supports quick back-and-forth.
+ * The shell is the only thing `surface` switches: a drawer (default) or a
+ * centred dialog for a host in the top layer. Everything between the header and
+ * the action row — both steps, the spec-shaped form, the reset policy — is one
+ * implementation, so the two surfaces cannot drift apart.
+ *
+ * Neither surface dismisses on a backdrop click. Closing resets the wizard, and
+ * a stray click outside would discard a half-typed secret; Escape, Cancel and
+ * the close control are the deliberate ways out.
  */
-export function CreateCredentialDialog({
+export function CreateCredentialFlow({
 	open,
 	onClose,
 	onCreated,
 	initialType,
-}: CreateCredentialDialogProps) {
-	const [step, setStep] = useState<Step>('pick');
-	const [selectedApi, setSelectedApi] = useState<SelectedApi | null>(null);
+	pinnedApi,
+	surface = 'sheet',
+}: CreateCredentialFlowProps) {
+	const [step, setStep] = useState<Step>(pinnedApi ? 'form' : 'pick');
+	const [selectedApi, setSelectedApi] = useState<SelectedApi | null>(pinnedApi ?? null);
 	const [manualMode, setManualMode] = useState(false);
 	const [type, setType] = useState<CredentialType>(initialType ?? CredentialType.BEARER_TOKEN);
 	/** When non-null, the spec drove the type (UI hides the manual toggle). */
 	const [activeScheme, setActiveScheme] = useState<SchemeOption | null>(null);
-	const [state, setState] = useState<CredentialFormState>(EMPTY_FORM);
+	const [state, setState] = useState<CredentialFormState>(() =>
+		pinnedApi ? seedFormFromSelectedApi(EMPTY_FORM, pinnedApi, false) : EMPTY_FORM,
+	);
 	const [errors, setErrors] = useState<Partial<Record<keyof CredentialFormState, string>>>({});
 	const [serverVarErrors, setServerVarErrors] = useState<Record<string, string>>({});
 	const [oauth2Flows, setOAuth2Flows] = useState<OAuth2FlowDef[]>([]);
@@ -132,6 +176,8 @@ export function CreateCredentialDialog({
 	// controls (the shared Input/Select auto-generate ids, but a label can't
 	// see those, so we own the ids here).
 	const fieldId = useId();
+	/** Names the drawer; the dialog surface derives its own from `title`. */
+	const headingId = `${fieldId}-title`;
 
 	const schemesResult = useApiSchemes(selectedApi);
 	const createMutation = useCreateCredential();
@@ -219,11 +265,13 @@ export function CreateCredentialDialog({
 	};
 
 	const reset = (): void => {
-		setStep('pick');
-		setSelectedApi(null);
+		// A pinned API is the caller's premise, not a user choice, so a reset
+		// returns to that API's empty form rather than to the picker.
+		setStep(pinnedApi ? 'form' : 'pick');
+		setSelectedApi(pinnedApi ?? null);
 		setManualMode(false);
 		setActiveScheme(null);
-		setState(EMPTY_FORM);
+		setState(pinnedApi ? seedFormFromSelectedApi(EMPTY_FORM, pinnedApi, false) : EMPTY_FORM);
 		setErrors({});
 		setServerVarErrors({});
 		setOAuth2Flows([]);
@@ -397,6 +445,9 @@ export function CreateCredentialDialog({
 				});
 				onCreated({
 					credentialId: data.credential.credential_id,
+					// The server's stored label, not the draft field: an empty Name
+					// field is filled in by the backend's default.
+					name: data.credential.name,
 					type,
 					provider: state.provider,
 					// Only authorization-code style grants (which carry an authorize
@@ -450,18 +501,20 @@ export function CreateCredentialDialog({
 
 	const titleSuffix = selectedApi?.label ? ` — ${selectedApi.label}` : '';
 	const title = step === 'pick' ? 'Choose an API' : `Add credential${titleSuffix}`;
-	const subtitle =
-		step === 'pick' ? (
-			<span>
-				<span className="font-mono text-[10px] tracking-widest uppercase">Step 1 of 2</span>{' '}
-				· Pick the API this credential will authenticate against
-			</span>
-		) : (
-			<span>
-				<span className="font-mono text-[10px] tracking-widest uppercase">Step 2 of 2</span>{' '}
-				· Fill in the credential details
-			</span>
-		);
+	// A pinned API removes the pick step, so the step counter would be lying.
+	const subtitle = pinnedApi ? (
+		<span>Fill in the credential details for {pinnedApi.label}</span>
+	) : step === 'pick' ? (
+		<span>
+			<span className="font-mono text-[10px] tracking-widest uppercase">Step 1 of 2</span> ·
+			Pick the API this credential will authenticate against
+		</span>
+	) : (
+		<span>
+			<span className="font-mono text-[10px] tracking-widest uppercase">Step 2 of 2</span> ·
+			Fill in the credential details
+		</span>
+	);
 
 	const goBackToPick = (): void => {
 		setStep('pick');
@@ -471,16 +524,18 @@ export function CreateCredentialDialog({
 	const footer =
 		step === 'form' ? (
 			<>
-				<Button
-					variant="secondary"
-					onClick={goBackToPick}
-					disabled={createMutation.isPending || importMutation.isPending}
-					type="button"
-					className="mr-auto"
-				>
-					<ArrowLeft className="h-4 w-4" />
-					Back
-				</Button>
+				{!pinnedApi && (
+					<Button
+						variant="secondary"
+						onClick={goBackToPick}
+						disabled={createMutation.isPending || importMutation.isPending}
+						type="button"
+						className="mr-auto"
+					>
+						<ArrowLeft className="h-4 w-4" />
+						Back
+					</Button>
+				)}
 				<Button
 					variant="ghost"
 					onClick={onClose}
@@ -501,16 +556,8 @@ export function CreateCredentialDialog({
 			</>
 		) : undefined;
 
-	return (
-		<Dialog
-			open={open}
-			onClose={onClose}
-			title={title}
-			subtitle={subtitle}
-			size={step === 'pick' ? 'lg' : 'xl'}
-			footer={footer}
-			dismissOnBackdrop={false}
-		>
+	const body = (
+		<>
 			{step === 'pick' && (
 				<ApiPicker onSelect={handlePickApi} onManualEntry={handleManualEntry} />
 			)}
@@ -545,15 +592,17 @@ export function CreateCredentialDialog({
 									)}
 								</p>
 							</div>
-							<Button
-								type="button"
-								variant="ghost"
-								size="sm"
-								onClick={goBackToPick}
-								className="text-muted-foreground hover:text-foreground shrink-0 text-xs"
-							>
-								Change
-							</Button>
+							{!pinnedApi && (
+								<Button
+									type="button"
+									variant="ghost"
+									size="sm"
+									onClick={goBackToPick}
+									className="text-muted-foreground hover:text-foreground shrink-0 text-xs"
+								>
+									Change
+								</Button>
+							)}
 						</div>
 					)}
 
@@ -746,7 +795,64 @@ export function CreateCredentialDialog({
 						})()}
 				</form>
 			)}
-		</Dialog>
+		</>
+	);
+
+	if (surface === 'dialog') {
+		return (
+			<Dialog
+				open={open}
+				onClose={onClose}
+				title={title}
+				subtitle={subtitle}
+				size={step === 'pick' ? 'lg' : 'xl'}
+				footer={footer}
+				dismissOnBackdrop={false}
+			>
+				{body}
+			</Dialog>
+		);
+	}
+
+	return (
+		<SheetPrimitive
+			open={open}
+			onClose={onClose}
+			ariaLabelledBy={headingId}
+			dismissOnBackdrop={false}
+			className="sm:w-[640px] xl:w-[760px]"
+		>
+			<div className="flex h-full flex-col">
+				<header className="border-border flex shrink-0 items-start justify-between gap-3 border-b px-5 py-4">
+					<div className="min-w-0">
+						<h2 id={headingId} className="text-foreground text-base font-semibold">
+							{title}
+						</h2>
+						<div className="text-muted-foreground text-xs">{subtitle}</div>
+					</div>
+					<Button
+						variant="ghost"
+						size="sm"
+						aria-label="Close"
+						onClick={onClose}
+						className="text-muted-foreground hover:text-foreground shrink-0"
+					>
+						<X className="h-4 w-4" />
+					</Button>
+				</header>
+
+				<div className="flex-1 overflow-y-auto px-5 py-4">{body}</div>
+
+				{/* The pick step commits by picking, so it carries no action row —
+				    its only footer button would be a Cancel duplicating the
+				    header's close control. */}
+				{footer && (
+					<footer className="border-border flex shrink-0 flex-wrap items-center justify-end gap-2 border-t px-5 py-3">
+						{footer}
+					</footer>
+				)}
+			</div>
+		</SheetPrimitive>
 	);
 }
 

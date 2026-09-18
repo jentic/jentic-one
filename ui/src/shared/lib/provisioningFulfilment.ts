@@ -5,7 +5,7 @@
  * code to reach the API — the credentials *module* can't be imported from
  * shared/). Each step maps to one operator action in the wizard:
  *
- *   (credential created by the reused CreateCredentialDialog — Step 1)
+ *   (credential created by the reused CreateCredentialFlow — Step 1)
  *   createNoAuthCredential — POST /credentials   (auto, for no-auth plans)
  *   amendAccessRequest   — POST .../:amend       (wire the id onto the bind item)
  *   decideAccessRequest  — POST .../:decide      (final approve-all)

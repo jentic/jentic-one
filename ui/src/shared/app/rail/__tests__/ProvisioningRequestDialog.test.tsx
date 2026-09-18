@@ -20,17 +20,18 @@ import type { AccessRequest } from '@/shared/lib/accessRequests';
  * These tests pin that no toolkit endpoint is ever touched.
  */
 
-// The real CreateCredentialDialog is a heavy two-step picker/form; the wizard
+// The real CreateCredentialFlow is a heavy two-step picker/form; the wizard
 // only cares about its `onCreated` callback. Stub it with a one-click
 // stand-in so the create path can be exercised without driving the form.
-vi.mock('@/shared/credentials/components/CreateCredentialDialog', () => ({
-	CreateCredentialDialog: ({
+vi.mock('@/shared/credentials/components/CreateCredentialFlow', () => ({
+	CreateCredentialFlow: ({
 		open,
 		onCreated,
 	}: {
 		open: boolean;
 		onCreated: (info: {
 			credentialId: string;
+			name: string;
 			type: string;
 			provider: string;
 			needsConnect: boolean;
@@ -41,6 +42,7 @@ vi.mock('@/shared/credentials/components/CreateCredentialDialog', () => ({
 				onClick={() =>
 					onCreated({
 						credentialId: 'cred_created_1',
+						name: 'Created credential',
 						type: 'api_key',
 						provider: 'manual',
 						needsConnect: false,
@@ -848,8 +850,11 @@ describe('ProvisioningRequestDialog — adopt existing credentials (#826)', () =
 		);
 		const user = userEvent.setup();
 
+		// The nudge renders as soon as the binding is known; the credential's
+		// name arrives with the credentials query, so the name is asserted
+		// under `waitFor` rather than on the first frame that matches.
 		const nudge = await screen.findByText(/already wired to/i);
-		expect(nudge).toHaveTextContent('Weather key');
+		await waitFor(() => expect(nudge).toHaveTextContent('Weather key'));
 
 		const picker = await screen.findByLabelText(/use an existing credential/i);
 		const options = within(picker).getAllByRole('option');
