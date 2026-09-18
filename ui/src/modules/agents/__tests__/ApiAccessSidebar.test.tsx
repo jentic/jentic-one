@@ -623,7 +623,7 @@ describe('ApiAccessSidebar — the API tile access panel (plan §4.5)', () => {
 		const user = userEvent.setup();
 		renderPage();
 		// The seeded GitHub binding is suspended.
-		await screen.findByText('Binding suspended — not serving calls until resumed.');
+		await screen.findByText('Not serving calls until resumed.');
 
 		const dialog = await openSidebar('GitHub');
 		const inDialog = within(dialog);
@@ -642,9 +642,7 @@ describe('ApiAccessSidebar — the API tile access panel (plan §4.5)', () => {
 			expect(inDialog.queryByTestId('sidebar-suspended-badge')).not.toBeInTheDocument();
 		});
 		await waitFor(() => {
-			expect(
-				screen.queryByText('Binding suspended — not serving calls until resumed.'),
-			).not.toBeInTheDocument();
+			expect(screen.queryByText('Not serving calls until resumed.')).not.toBeInTheDocument();
 		});
 	});
 
@@ -673,9 +671,7 @@ describe('ApiAccessSidebar — the API tile access panel (plan §4.5)', () => {
 		// tile — the seeded GitHub tile carries the same suspended line.
 		const slackTile = tileOpener('Slack').closest('[data-testid="api-tile"]') as HTMLElement;
 		expect(
-			await within(slackTile).findByText(
-				'Binding suspended — not serving calls until resumed.',
-			),
+			await within(slackTile).findByText('Not serving calls until resumed.'),
 		).toBeInTheDocument();
 
 		// Round-trip: resume restores the serving state everywhere.
@@ -688,9 +684,7 @@ describe('ApiAccessSidebar — the API tile access panel (plan §4.5)', () => {
 		).toBeInTheDocument();
 		await waitFor(() => {
 			expect(
-				within(slackTile).queryByText(
-					'Binding suspended — not serving calls until resumed.',
-				),
+				within(slackTile).queryByText('Not serving calls until resumed.'),
 			).not.toBeInTheDocument();
 		});
 	});
@@ -731,7 +725,7 @@ describe('ApiAccessSidebar — the API tile access panel (plan §4.5)', () => {
 		]);
 
 		renderPage();
-		await screen.findByText(/Waiting for a sign-in at stripe\.com/);
+		await screen.findByText(/Sign-in at stripe\.com unfinished/);
 
 		// The tile's own "Finish connecting" line opens the SAME sidebar (the
 		// connect flow lives there) — not a separate popup.

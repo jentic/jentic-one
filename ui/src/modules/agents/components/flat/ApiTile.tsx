@@ -8,6 +8,11 @@
  * operation count beside it, the credential's name, and how that credential is
  * scoped (its rule count).
  *
+ * Every tile is the same height whatever its state: the detail lines under the
+ * credential name live in a slot of fixed height (two single-line rows), because
+ * a grid row sizes to its tallest cell and a state that costs an extra line
+ * would otherwise stretch every tile beside it.
+ *
  * States, which must never render identically:
  *   - Serving: solid border, a quiet `Ready` chip.
  *   - Suspended: the chip reads `Suspended` and a line says what that means
@@ -27,7 +32,7 @@
  * guessed. No invented health, no green "ok"; tints flag only trouble (the
  * zero-rules grant, a pending sign-in).
  */
-import { AlertTriangle, PauseCircle, PlayCircle, Settings2 } from 'lucide-react';
+import { PauseCircle, PlayCircle, Settings2 } from 'lucide-react';
 import { Badge, Button, Card, Tooltip, VendorIcon } from '@/shared/ui';
 import { cn } from '@/shared/lib/utils';
 import type { BindingRuleSummary } from '@/modules/agents/api';
@@ -113,9 +118,11 @@ export function ApiTile({
 				<VendorIcon name={tile.title} vendor={tile.vendor} iconUrl={tile.iconUrl} />
 				<div className="min-w-0 flex-1">
 					<h3 className="truncate text-sm font-semibold">{tile.title}</h3>
-					{identity && (
-						<p className="text-muted-foreground truncate text-xs">{identity}</p>
-					)}
+					{/* Reserved whether or not the registry proves an identity pair,
+					    so an API without one doesn't sit shorter than its neighbours. */}
+					<p className="text-muted-foreground h-[1.125rem] truncate text-xs">
+						{identity}
+					</p>
 				</div>
 				{/* Above the overlay, so these verbs are reachable — and so the
 				    tile advertises that it can be acted on at all. */}
@@ -171,7 +178,7 @@ export function ApiTile({
 			</div>
 
 			<div className="border-border/60 mt-auto space-y-1.5 border-t pt-3">
-				<div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
+				<div className="flex items-center justify-between gap-2">
 					{tile.awaitingConsent ? (
 						<Badge variant="warning" dot>
 							Sign-in needed
@@ -191,45 +198,50 @@ export function ApiTile({
 					)}
 				</div>
 				<p className="truncate text-sm font-medium">{tile.credentialName}</p>
-				{tile.awaitingConsent ? (
-					<div className="space-y-1.5">
-						<p className="text-warning flex items-start gap-1.5 text-xs">
-							<AlertTriangle
-								className="mt-0.5 h-3.5 w-3.5 shrink-0"
-								aria-hidden="true"
-							/>
-							<span>
-								Waiting for a sign-in at {tile.vendor}. Calls through this API fail
-								until the connection completes.
-							</span>
-						</p>
-						<button
-							type="button"
-							className="text-primary relative z-10 cursor-pointer text-xs font-medium hover:underline"
-							onClick={onOpen}
-						>
-							Finish connecting →
-						</button>
-					</div>
-				) : (
-					<>
-						{summary && (
-							<p
-								className={cn(
-									'text-xs',
-									rules?.total === 0 ? 'text-warning' : 'text-muted-foreground',
-								)}
+				{/* A fixed two-line detail slot. A tile's height must not depend on
+				    its state — grid rows size to their tallest cell, so a single
+				    suspended tile would otherwise stretch every tile beside it. The
+				    slot reserves both lines whether they are filled or not, and
+				    every branch renders at most two single-line rows. */}
+				<div
+					className="grid h-[2.25rem] content-start overflow-hidden"
+					data-testid="tile-detail-slot"
+				>
+					{tile.awaitingConsent ? (
+						<>
+							<p className="text-warning truncate text-xs leading-[1.125rem]">
+								Sign-in at {tile.vendor} unfinished — calls fail.
+							</p>
+							<button
+								type="button"
+								className="text-primary relative z-10 w-fit cursor-pointer text-xs leading-[1.125rem] font-medium hover:underline"
+								onClick={onOpen}
 							>
-								{summary}
-							</p>
-						)}
-						{tile.suspended && (
-							<p className="text-muted-foreground text-xs">
-								Binding suspended — not serving calls until resumed.
-							</p>
-						)}
-					</>
-				)}
+								Finish connecting →
+							</button>
+						</>
+					) : (
+						<>
+							{summary && (
+								<p
+									className={cn(
+										'truncate text-xs leading-[1.125rem]',
+										rules?.total === 0
+											? 'text-warning'
+											: 'text-muted-foreground',
+									)}
+								>
+									{summary}
+								</p>
+							)}
+							{tile.suspended && (
+								<p className="text-muted-foreground truncate text-xs leading-[1.125rem]">
+									Not serving calls until resumed.
+								</p>
+							)}
+						</>
+					)}
+				</div>
 			</div>
 		</Card>
 	);

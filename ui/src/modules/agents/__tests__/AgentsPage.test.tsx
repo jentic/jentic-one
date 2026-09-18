@@ -249,9 +249,7 @@ describe('AgentsPage — flat agents surface', () => {
 		expect(screen.getByText('GitHub')).toBeInTheDocument();
 		expect(screen.getByText('GitHub PAT')).toBeInTheDocument();
 		expect(screen.getByText('No rules — all calls blocked')).toBeInTheDocument();
-		expect(
-			screen.getByText('Binding suspended — not serving calls until resumed.'),
-		).toBeInTheDocument();
+		expect(screen.getByText('Not serving calls until resumed.')).toBeInTheDocument();
 	});
 
 	it('deep link ?agent= preselects the agent and its grid', async () => {
@@ -390,7 +388,7 @@ describe('AgentsPage — flat agents surface', () => {
 		await screen.findByText('Slack');
 
 		// The tile names the reason and carries the fix.
-		expect(await screen.findByText(/Waiting for a sign-in at stripe\.com/)).toBeInTheDocument();
+		expect(await screen.findByText(/Sign-in at stripe\.com unfinished/)).toBeInTheDocument();
 		expect(screen.getByRole('button', { name: /Finish connecting/ })).toBeInTheDocument();
 		const tiles = screen.getAllByTestId('api-tile');
 		expect(tiles.filter((t) => t.dataset.notUsable === 'true')).toHaveLength(1);
@@ -915,7 +913,7 @@ describe('AgentsPage — flat agents surface', () => {
 		await screen.findByText('Slack');
 
 		// The page-2 credential's tile is dashed with the honest reason + fix.
-		expect(await screen.findByText(/Waiting for a sign-in at stripe\.com/)).toBeInTheDocument();
+		expect(await screen.findByText(/Sign-in at stripe\.com unfinished/)).toBeInTheDocument();
 		expect(screen.getByRole('button', { name: /Finish connecting/ })).toBeInTheDocument();
 		const tiles = screen.getAllByTestId('api-tile');
 		expect(tiles.filter((t) => t.dataset.notUsable === 'true')).toHaveLength(1);
@@ -1004,7 +1002,7 @@ describe('AgentsPage — flat agents surface', () => {
 
 		// The dashed tile + pill hint render first — the exact state whose
 		// prescribed fix is connecting.
-		expect(await screen.findByText(/Waiting for a sign-in at stripe\.com/)).toBeInTheDocument();
+		expect(await screen.findByText(/Sign-in at stripe\.com unfinished/)).toBeInTheDocument();
 		expect(stripTab('support-agent')).toHaveTextContent('1 to set up');
 
 		// Open the page-level inventory sheet (D20: the trigger lives on the
@@ -1031,9 +1029,7 @@ describe('AgentsPage — flat agents surface', () => {
 		// The fix under test: the surface underneath refreshes — the dashed
 		// tile solidifies and the strip pill's gap hint clears.
 		await waitFor(() => {
-			expect(
-				screen.queryByText(/Waiting for a sign-in at stripe\.com/),
-			).not.toBeInTheDocument();
+			expect(screen.queryByText(/Sign-in at stripe\.com unfinished/)).not.toBeInTheDocument();
 		});
 		expect(stripTab('support-agent')).not.toHaveTextContent('1 to set up');
 		const tiles = screen.getAllByTestId('api-tile');
