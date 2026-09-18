@@ -50,11 +50,11 @@ import {
 	Activity as ActivityIcon,
 	Archive,
 	Ban,
+	Blocks,
 	KeyRound,
-	Plug,
 	Power,
 	Settings,
-	Shield,
+	ShieldCheck,
 } from 'lucide-react';
 import { Button, FooterActionBar, Tooltip, toast } from '@/shared/ui';
 import { cn } from '@/shared/lib/utils';
@@ -123,9 +123,12 @@ export function AgentDock({
 					icon={<KeyRound className="h-5 w-5" />}
 					onClick={() => onOpenSurface('api-key')}
 				/>
+				{/* A checked shield, not a bare one: this sheet is about permissions
+				    GRANTED (scopes, access requests, consents), where a plain shield
+				    reads as generic security beside the key next to it. */}
 				<DockIconButton
 					label="Permissions"
-					icon={<Shield className="h-5 w-5" />}
+					icon={<ShieldCheck className="h-5 w-5" />}
 					onClick={() => onOpenSurface('permissions')}
 				/>
 				<DockIconButton
@@ -133,11 +136,13 @@ export function AgentDock({
 					icon={<ActivityIcon className="h-5 w-5" />}
 					onClick={() => onOpenSurface('activity')}
 				/>
-				{/* MCP before Settings, mirroring the console's tab order. The
-				    Plug icon matches the console MCP tab's iconography. */}
+				{/* MCP before Settings, mirroring the console's tab order. Blocks
+				    is the conventional integration mark — the sheet is how a client
+				    plugs into this agent — and it stays legible at 20px, where a
+				    plug's prongs blur against the power mark on the toggle. */}
 				<DockIconButton
 					label="MCP"
-					icon={<Plug className="h-5 w-5" />}
+					icon={<Blocks className="h-5 w-5" />}
 					onClick={() => onOpenSurface('mcp')}
 				/>
 				<DockIconButton
