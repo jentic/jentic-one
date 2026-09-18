@@ -1,5 +1,6 @@
+import type { ReactNode } from 'react';
 import { Link2, RefreshCw, Settings, Trash2 } from 'lucide-react';
-import { AgentBadge, Badge, Button } from '@/shared/ui';
+import { AgentBadge, Badge, Button, Skeleton } from '@/shared/ui';
 import { apiRefDisplayName } from '@/shared/lib';
 import { CredentialTypeBadge } from './CredentialTypeBadge';
 import {
@@ -7,6 +8,7 @@ import {
 	credentialDetails,
 	formatApiReference,
 	type Credential,
+	type CredentialDetails,
 } from '@/shared/credentials/api';
 import { isManagedProvider } from '@/shared/credentials/config';
 
@@ -15,6 +17,16 @@ interface CredentialCardProps {
 	onEdit: (cred: Credential) => void;
 	onDelete: (cred: Credential) => void;
 	onConnect: (cred: Credential) => void;
+	/**
+	 * How many agents hold this credential. Three-state, because a secret
+	 * nobody uses and a secret whose users can't be counted are different
+	 * facts: `undefined` is still resolving (skeleton), `null` can't be proven
+	 * (the clause is omitted), a number is exact.
+	 */
+	usedByAgentCount?: number | null;
+	/** Calls brokered with this credential over the last 7 days — same
+	 * three-state contract, so a withheld figure never reads as zero traffic. */
+	callsLast7d?: number | null;
 }
 
 /**
@@ -22,9 +34,15 @@ interface CredentialCardProps {
  *
  * Anatomy mirrors the rest of jentic-one's resource cards:
  *
- *   [vendor badge] [name + api ref] ............... [type badge]
- *   [provider · injection hint]
- *   [meta row (added/updated) ......... connect · edit · delete]
+ *   [vendor badge] [name + api name · version] ......... [type badge]
+ *   [where the secret is injected, in plain language]
+ *   [meta row (usage · added) ......... connect · edit · delete]
+ *
+ * The heading wraps rather than truncates (a credential's name is how its
+ * owner finds it, so losing its tail to an ellipsis is worse than a second
+ * line), and the machine tuple — `vendor/name@version` — moves to the card's
+ * `title` attribute, where it stays copyable-adjacent without spending a line
+ * on a string that reads the same for every API of one vendor.
  *
  * The whole card is a click target that opens the edit sheet (a full-card
  * `<button>` sits behind the content). The explicit action buttons
@@ -32,7 +50,14 @@ interface CredentialCardProps {
  * so each control stays independently clickable and focusable without
  * nesting interactive elements inside the overlay button.
  */
-export function CredentialCard({ cred, onEdit, onDelete, onConnect }: CredentialCardProps) {
+export function CredentialCard({
+	cred,
+	onEdit,
+	onDelete,
+	onConnect,
+	usedByAgentCount,
+	callsLast7d,
+}: CredentialCardProps) {
 	const details = credentialDetails(cred);
 	const isOAuth = cred.type === CredentialType.OAUTH2;
 	const managed = isManagedProvider(cred.provider);
@@ -54,12 +79,59 @@ export function CredentialCard({ cred, onEdit, onDelete, onConnect }: Credential
 		}) ||
 		formatApiReference(cred.api);
 
-	const subtitle =
-		cred.type === CredentialType.API_KEY && details.field_name
-			? `${details.field_name} in ${details.location ?? 'header'}`
-			: managed
-				? 'Managed via Pipedream'
-				: cred.provider;
+	// Machine identity, kept as a hover/AT string rather than a rendered line.
+	const tuple = formatApiReference(cred.api);
+	// Line 2 is which API the secret unlocks, in the same `host · version`
+	// grammar the API tiles use. The vendor is printed as stored because it IS
+	// a domain — title-casing it ("Slack.Com") reads as a typo — and the API
+	// name joins it only when it says something `default` doesn't.
+	const apiName = cred.api.name && cred.api.name !== 'default' ? cred.api.name : null;
+	const apiPath = [cred.api.vendor, apiName].filter(Boolean).join('/');
+	const version = cred.api.version ? `v${cred.api.version}` : null;
+	// When the heading IS that identity (a credential with no name of its own,
+	// headed by its derived API name) only the version is left to add.
+	const apiLine =
+		apiPath && apiPath !== title ? [apiPath, version].filter(Boolean).join(' · ') : version;
+
+	const subtitle = authPlacement(cred, details, managed);
+
+	// The meta line, built as clauses so a withheld figure removes itself
+	// instead of leaving a dangling separator. Usage comes before age: who
+	// holds a secret is what decides whether removing it is safe, and how old
+	// it is decides nothing.
+	const meta: { key: string; node: ReactNode }[] = [];
+	if (!cred.active)
+		meta.push({
+			key: 'inactive',
+			node: <span className="text-warning font-medium">Inactive</span>,
+		});
+	if (usedByAgentCount === undefined)
+		meta.push({ key: 'used-by', node: <Skeleton className="h-3 w-24" /> });
+	else if (usedByAgentCount !== null)
+		meta.push({
+			key: 'used-by',
+			node: (
+				<span data-testid="cred-used-by">
+					{usedByAgentCount === 0
+						? 'used by no agents'
+						: `used by ${usedByAgentCount} agent${usedByAgentCount === 1 ? '' : 's'}`}
+				</span>
+			),
+		});
+	if (callsLast7d === undefined)
+		meta.push({ key: 'calls', node: <Skeleton className="h-3 w-16" /> });
+	else if (callsLast7d !== null)
+		meta.push({
+			key: 'calls',
+			node: (
+				<span data-testid="cred-calls-7d">
+					{callsLast7d === 0
+						? 'no calls in 7d'
+						: `${callsLast7d.toLocaleString()} call${callsLast7d === 1 ? '' : 's'} in 7d`}
+				</span>
+			),
+		});
+	meta.push({ key: 'added', node: <span>added {formatDate(cred.created_at)}</span> });
 
 	/** Run an action button's handler without triggering the card-edit click. */
 	const stop =
@@ -72,6 +144,7 @@ export function CredentialCard({ cred, onEdit, onDelete, onConnect }: Credential
 	return (
 		<div
 			data-testid="credential-card"
+			title={tuple}
 			className="group border-border/60 bg-card hover:border-border focus-within:border-primary/50 relative flex h-full min-w-0 flex-col gap-3 overflow-hidden rounded-xl border p-4 text-left transition-all hover:shadow-sm"
 		>
 			{/* Full-card click target → edit, for pointer users. Hidden from the
@@ -87,11 +160,14 @@ export function CredentialCard({ cred, onEdit, onDelete, onConnect }: Credential
 				className="absolute inset-0 z-0 rounded-xl focus:outline-none"
 			/>
 
-			<div className="pointer-events-none relative flex items-center gap-3">
+			<div className="pointer-events-none relative flex items-start gap-3">
 				<AgentBadge id={vendor} name={vendor} kind="API" size="lg" className="rounded-xl" />
 				<div className="min-w-0 flex-1">
-					<div className="flex items-center gap-2">
-						<h3 className="font-heading text-foreground min-w-0 flex-1 truncate text-sm font-semibold">
+					<div className="flex items-start gap-2">
+						{/* Wraps to a second line rather than truncating: the tail of
+						    a credential's name ("… staging" vs "… prod") is often the
+						    only thing telling two cards apart. */}
+						<h3 className="font-heading text-foreground min-w-0 flex-1 text-sm leading-snug font-semibold break-words">
 							{title}
 						</h3>
 						{connected && (
@@ -101,9 +177,9 @@ export function CredentialCard({ cred, onEdit, onDelete, onConnect }: Credential
 						)}
 						<CredentialTypeBadge type={cred.type} />
 					</div>
-					<p className="text-muted-foreground mt-0.5 truncate font-mono text-xs">
-						{formatApiReference(cred.api)}
-					</p>
+					{apiLine && (
+						<p className="text-muted-foreground mt-0.5 truncate text-xs">{apiLine}</p>
+					)}
 				</div>
 			</div>
 
@@ -112,13 +188,13 @@ export function CredentialCard({ cred, onEdit, onDelete, onConnect }: Credential
 			</p>
 
 			<div className="border-border/50 relative mt-auto flex items-center gap-2 border-t pt-3">
-				<div className="text-muted-foreground pointer-events-none flex min-w-0 flex-1 flex-col gap-0.5 text-[11px]">
-					<span className="truncate">
-						{!cred.active && (
-							<span className="text-warning mr-1.5 font-medium">Inactive ·</span>
-						)}
-						added {formatDate(cred.created_at)}
-					</span>
+				<div className="text-muted-foreground pointer-events-none flex min-w-0 flex-1 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px]">
+					{meta.map((clause, i) => (
+						<span key={clause.key} className="inline-flex items-center gap-1.5">
+							{i > 0 && <span aria-hidden="true">·</span>}
+							{clause.node}
+						</span>
+					))}
 				</div>
 
 				<div className="relative z-10 flex shrink-0 items-center gap-1">
@@ -163,6 +239,42 @@ export function CredentialCard({ cred, onEdit, onDelete, onConnect }: Credential
 			</div>
 		</div>
 	);
+}
+
+/**
+ * Where the secret is injected, said the way an operator would say it. The
+ * stored `provider` (`static`) is an implementation word that answers nothing;
+ * what matters on a card is which request part carries the key, because that is
+ * what an upstream 401 is diagnosed against.
+ */
+function authPlacement(cred: Credential, details: CredentialDetails, managed: boolean): string {
+	if (managed) return 'Managed via Pipedream';
+	switch (cred.type) {
+		case CredentialType.API_KEY: {
+			const where = details.location === 'query' ? 'query parameter' : 'header';
+			return details.field_name
+				? `API key in the ${details.field_name} ${where}`
+				: `API key in a request ${where}`;
+		}
+		case CredentialType.BEARER_TOKEN:
+			return 'Bearer token in the Authorization header';
+		case CredentialType.BASIC:
+			return 'Username and password, sent as Basic auth';
+		case CredentialType.OAUTH2:
+			return cred.provider_account_ref
+				? 'OAuth 2.0 — access tokens refreshed automatically'
+				: 'OAuth 2.0 — needs a sign-in before it can be used';
+		case CredentialType.NO_AUTH:
+			return 'No credential — the API is called unauthenticated';
+		case CredentialType.SIGV4: {
+			const region = details.aws_region ? ` (${details.aws_region})` : '';
+			return `AWS SigV4 request signing${region}`;
+		}
+		default:
+			// An unknown type is a backend the UI hasn't caught up with; name the
+			// provider rather than invent a placement it might not have.
+			return cred.provider;
+	}
 }
 
 function formatDate(value: string | null | undefined): string {

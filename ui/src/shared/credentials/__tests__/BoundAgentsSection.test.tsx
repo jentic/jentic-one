@@ -10,7 +10,7 @@ import { EditCredentialSheet } from '@/shared/credentials/components/EditCredent
  * The read-mostly "Bound agents" section inside the edit-credential sheet
  * (theme 5 phase 5a): which agents may use this credential, with suspended
  * state and a link out to each agent's console. Read-only by design — binding
- * management lives on the agent detail Access tab.
+ * management lives on each agent's API sidebar on the Agents surface.
  *
  * `GET /credentials/{id}/agents` is stubbed per-test here (the shared tier
  * must not reach into a feature module's mock store), mirroring the generated

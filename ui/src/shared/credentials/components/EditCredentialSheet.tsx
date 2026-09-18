@@ -231,7 +231,8 @@ export function EditCredentialSheet({
 							)}
 
 							{/* Direct agent bindings (theme 5 phase 5a) — read-only
-							    roster; management lives on each agent's Access tab. */}
+							    roster; management lives on the flat Agents surface
+							    (each agent's API tiles + access sidebar). */}
 							<BoundAgentsSection credentialId={cred.credential_id} open={open} />
 
 							{updateMutation.isError && (

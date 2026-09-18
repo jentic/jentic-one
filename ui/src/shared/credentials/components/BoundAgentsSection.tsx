@@ -5,9 +5,10 @@
  * "everything about this credential" surface, so the section lives here
  * rather than as a new page or a per-row table expandable.
  *
- * Read-only by design: binding/rule management belongs to the agent detail
- * Access tab (BoundCredentialsCard), so each row just shows the agent name,
- * suspended state, bound-at time and links out to the agent's console.
+ * Read-only by design: binding/rule management belongs to each agent's API
+ * sidebar on the Agents surface (ApiAccessSidebar), so each row just shows
+ * the agent name, suspended state, bound-at time and links out to the
+ * agent's console.
  */
 import { Bot, PauseCircle } from 'lucide-react';
 import { AppLink, Badge, ErrorAlert, LoadingState } from '@/shared/ui';
@@ -33,7 +34,7 @@ export function BoundAgentsSection({
 			</p>
 			<p className="text-muted-foreground text-xs">
 				Agents allowed to call APIs with this credential. Manage bindings from each
-				agent&apos;s Access tab.
+				agent&apos;s API tiles on the Agents page.
 			</p>
 
 			{agents.isPending ? (
