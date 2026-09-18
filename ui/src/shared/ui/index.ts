@@ -80,6 +80,9 @@ export { ErrorAlert } from '@/shared/ui/ErrorAlert';
 export { Banner } from '@/shared/ui/Banner';
 export type { BannerProps } from '@/shared/ui/Banner';
 
+export { FooterActionBar, FOOTER_ACTION_BAR_PAGE_PADDING } from '@/shared/ui/FooterActionBar';
+export type { FooterActionBarProps } from '@/shared/ui/FooterActionBar';
+
 export { ErrorBoundary } from '@/shared/ui/ErrorBoundary';
 
 export { DataTable } from '@/shared/ui/DataTable';

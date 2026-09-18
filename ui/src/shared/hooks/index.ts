@@ -1,5 +1,8 @@
 export { useHealth } from '@/shared/hooks/useHealth';
+export { useEagerCursorDrain } from '@/shared/hooks/useEagerCursorDrain';
+export type { EagerCursorDrainSource, DrainedList } from '@/shared/hooks/useEagerCursorDrain';
 export { useDebouncedValue } from '@/shared/hooks/useDebouncedValue';
+export { useHotkey } from '@/shared/hooks/useHotkey';
 export { useMediaQuery } from '@/shared/hooks/useMediaQuery';
 export {
 	usePendingAccessRequestCount,
