@@ -55,10 +55,25 @@ export { default as userEvent } from '@testing-library/user-event';
  * Run axe against a rendered container and assert no critical/serious a11y
  * violations. Uses axe-core directly (browser-mode compatible). Feature PRs
  * call this on every page-level test.
+ *
+ * When a modal overlay is open inside `container`, the audit narrows to the
+ * topmost modal. An overlay test passes `document.body` because the sheet
+ * portals out of the render container, and a `SheetPrimitive` backdrop
+ * deliberately obscures the page behind it (`bg-black/50 backdrop-blur-sm`).
+ * Compositing the page's text under that translucent, blurred scrim makes
+ * axe's colour-contrast result indeterminate — the same text lands in
+ * `violations` or `incomplete` depending on where in the 300ms backdrop
+ * transition the audit happens to run. The modal is the surface under test in
+ * those specs, and the page behind it gets its own no-overlay audit, so
+ * scoping to the modal is both the deterministic and the meaningful check.
  */
 export async function checkA11y(container: Element): Promise<void> {
 	const { default: axe } = await import('axe-core');
-	const results = await axe.run(container);
+	// Topmost = last in DOM order: each overlay portals to the end of <body>,
+	// so a stacked sheet or a native dialog above a sheet audits itself.
+	const modals = container.querySelectorAll<HTMLElement>('[aria-modal="true"], dialog[open]');
+	const target = modals.length > 0 ? modals[modals.length - 1] : container;
+	const results = await axe.run(target);
 	const critical = results.violations.filter(
 		(v) => v.impact === 'critical' || v.impact === 'serious',
 	);
