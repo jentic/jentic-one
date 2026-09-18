@@ -9,7 +9,7 @@ import {
 	isEmptyAllowRule,
 	type PermissionRuleInput,
 } from '@/shared/ui';
-import { ROUTES } from '@/shared/app/routes';
+import { ROUTE_PATHS } from '@/shared/app/routes';
 import { cn } from '@/shared/lib/utils';
 import { CREDENTIAL_TYPE_LABELS } from '@/shared/credentials/api';
 import { useBindAgentCredential, type AgentBindableCredential } from '@/modules/agents/api';
@@ -41,14 +41,19 @@ interface ModeOption {
 	chip: string;
 }
 
+/**
+ * Ordered safest-first: the least-privilege grant leads and is the
+ * pre-selected default; the broadest grant is last and always an explicit
+ * opt-in.
+ */
 const MODE_OPTIONS: ModeOption[] = [
 	{
-		value: 'allow_all',
-		label: 'Allow all operations',
+		value: 'blocked',
+		label: 'Start blocked',
 		description:
-			'One allow rule matching every request — the broadest grant. You can narrow it later from this card.',
-		Icon: ShieldCheck,
-		chip: 'bg-accent-green/10 text-accent-green',
+			'Bind without rules — the broker denies every call until you add rules. Useful to stage a binding.',
+		Icon: ShieldBan,
+		chip: 'bg-muted text-muted-foreground',
 	},
 	{
 		value: 'custom',
@@ -58,12 +63,12 @@ const MODE_OPTIONS: ModeOption[] = [
 		chip: 'bg-accent-blue/10 text-accent-blue',
 	},
 	{
-		value: 'blocked',
-		label: 'Start blocked',
+		value: 'allow_all',
+		label: 'Allow all operations',
 		description:
-			'Bind without rules — the broker denies every call until you add rules. Useful to stage a binding.',
-		Icon: ShieldBan,
-		chip: 'bg-muted text-muted-foreground',
+			'One allow rule matching every request — the broadest grant. You can narrow it later from this card.',
+		Icon: ShieldCheck,
+		chip: 'bg-accent-green/10 text-accent-green',
 	},
 ];
 
@@ -97,7 +102,7 @@ export function BindAgentCredentialDialog({
 	const bindCredential = useBindAgentCredential(agentId);
 
 	const [selected, setSelected] = useState<AgentBindableCredential | null>(null);
-	const [mode, setMode] = useState<AccessMode>('allow_all');
+	const [mode, setMode] = useState<AccessMode>('blocked');
 	const [rules, setRules] = useState<PermissionRuleInput[]>([]);
 
 	const step: 'pick' | 'access' = selected ? 'access' : 'pick';
@@ -111,7 +116,7 @@ export function BindAgentCredentialDialog({
 
 	const reset = () => {
 		setSelected(null);
-		setMode('allow_all');
+		setMode('blocked');
 		setRules([]);
 		bindCredential.reset();
 	};
@@ -168,11 +173,14 @@ export function BindAgentCredentialDialog({
 			{step === 'pick' ? (
 				<div className="space-y-3">
 					<p className="text-muted-foreground text-sm">
-						Pick a credential to bind to this agent. Manage credentials on the{' '}
-						<AppLink href={ROUTES.credentials} className="text-primary font-medium">
-							Credentials
-						</AppLink>{' '}
-						page.
+						Pick a credential to bind to this agent. Manage them in the{' '}
+						<AppLink
+							href={ROUTE_PATHS.credentialInventory()}
+							className="text-primary font-medium"
+						>
+							credential inventory
+						</AppLink>
+						.
 					</p>
 					<AgentCredentialPicker
 						boundIds={boundIds}

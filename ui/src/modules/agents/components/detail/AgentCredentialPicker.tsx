@@ -14,7 +14,7 @@ import { useMemo, useState } from 'react';
 import { motion, type Variants } from 'framer-motion';
 import { ChevronRight, Filter, KeyRound, Link as LinkIcon, SearchX } from 'lucide-react';
 import { AppLink, Badge, EmptyState, ErrorAlert, LoadingState, SearchInput } from '@/shared/ui';
-import { ROUTES } from '@/shared/app/routes';
+import { ROUTE_PATHS } from '@/shared/app/routes';
 import { apiIdentityTuple, apiRefDisplayName } from '@/shared/lib';
 import { CREDENTIAL_TYPE_LABELS } from '@/shared/credentials/api';
 import { useBindableCredentialsForAgent, type AgentBindableCredential } from '@/modules/agents/api';
@@ -112,8 +112,11 @@ export function AgentCredentialPicker({
 					title="No credentials yet"
 					description="Create a credential first, then bind it to this agent."
 					action={
-						<AppLink href={ROUTES.credentials} className="text-primary font-medium">
-							Go to Credentials
+						<AppLink
+							href={ROUTE_PATHS.credentialInventory({ create: true })}
+							className="text-primary font-medium"
+						>
+							Add a credential
 						</AppLink>
 					}
 				/>
