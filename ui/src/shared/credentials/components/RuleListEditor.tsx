@@ -209,94 +209,118 @@ function RulePreviewRow({
 		opTemplates.length > 0 &&
 		!opTemplates.some((tpl) => ruleAppliesToTemplate(rule, tpl)),
 	);
+	const operations = rule.operations ?? [];
 	return (
 		<div
-			className={`bg-background border-border flex items-center gap-2.5 rounded-md border px-2.5 py-1.5 text-xs ${
+			className={`bg-background border-border flex flex-col gap-1 rounded-md border px-2.5 py-1.5 text-xs ${
 				affectsNothing ? 'opacity-60' : ''
 			}`}
 		>
-			<span
-				className={`rounded-md border px-1.5 py-0.5 font-mono text-[10px] tracking-wide uppercase ${effectClass}`}
-			>
-				{rule.effect}
-			</span>
-			<span className="text-foreground font-mono text-[11px]">{methodsLabel}</span>
-			<span className="text-muted-foreground truncate font-mono text-[11px]">
-				{rule.path ?? '/'}
-				{rule.match_mode && rule.match_mode !== 'regex' ? ` (${rule.match_mode})` : ''}
-			</span>
-			{warningLabel && (
-				<Tooltip content={warningLabel}>
-					<span
-						className="text-warning inline-flex items-center gap-1 font-mono text-[10px] uppercase"
-						role="status"
-						aria-label={warningLabel}
-					>
-						<AlertTriangle className="h-3 w-3 shrink-0" />
-						never matches
+			<div className="flex items-center gap-2.5">
+				<span
+					className={`rounded-md border px-1.5 py-0.5 font-mono text-[10px] tracking-wide uppercase ${effectClass}`}
+				>
+					{rule.effect}
+				</span>
+				<span className="text-foreground font-mono text-[11px]">{methodsLabel}</span>
+				<span className="text-muted-foreground truncate font-mono text-[11px]">
+					{rule.path ?? '/'}
+					{rule.match_mode && rule.match_mode !== 'regex' ? ` (${rule.match_mode})` : ''}
+				</span>
+				{warningLabel && (
+					<Tooltip content={warningLabel}>
+						<span
+							className="text-warning inline-flex items-center gap-1 font-mono text-[10px] uppercase"
+							role="status"
+							aria-label={warningLabel}
+						>
+							<AlertTriangle className="h-3 w-3 shrink-0" />
+							never matches
+						</span>
+					</Tooltip>
+				)}
+				{affectsNothing && (
+					<Tooltip content="This rule doesn't match any imported operation. Adjust the path or method to grant the access you intend.">
+						<span
+							className="text-warning inline-flex items-center gap-1 font-mono text-[10px] uppercase"
+							role="status"
+							aria-label="No operations affected"
+						>
+							<AlertTriangle className="h-3 w-3 shrink-0" />
+							no ops affected
+						</span>
+					</Tooltip>
+				)}
+				{isRequested && (
+					<Badge variant="default" className="ml-auto text-[10px]">
+						requested by agent
+					</Badge>
+				)}
+				{(onEdit || onMoveUp || onMoveDown || onDelete) && (
+					<div className="ml-auto flex items-center gap-0.5">
+						{onEdit && (
+							<button
+								type="button"
+								className="text-muted-foreground hover:text-foreground p-0.5"
+								aria-label="Edit rule"
+								onClick={onEdit}
+							>
+								<Pencil className="h-3.5 w-3.5" />
+							</button>
+						)}
+						{onMoveUp && (
+							<button
+								type="button"
+								className="text-muted-foreground hover:text-foreground p-0.5"
+								aria-label="Move rule up"
+								onClick={onMoveUp}
+							>
+								<ArrowUp className="h-3.5 w-3.5" />
+							</button>
+						)}
+						{onMoveDown && (
+							<button
+								type="button"
+								className="text-muted-foreground hover:text-foreground p-0.5"
+								aria-label="Move rule down"
+								onClick={onMoveDown}
+							>
+								<ArrowDown className="h-3.5 w-3.5" />
+							</button>
+						)}
+						{onDelete && (
+							<button
+								type="button"
+								className="text-muted-foreground hover:text-danger p-0.5"
+								aria-label="Delete rule"
+								onClick={onDelete}
+							>
+								<X className="h-3.5 w-3.5" />
+							</button>
+						)}
+					</div>
+				)}
+			</div>
+			{/* Operation-id constraints narrow the rule to specific operations —
+			    the approver MUST see them (and know they survive edits), so they
+			    render as chips under the main row. */}
+			{operations.length > 0 && (
+				<div className="flex flex-wrap items-center gap-1">
+					<span className="text-muted-foreground text-[10px] tracking-wide uppercase">
+						operations
 					</span>
-				</Tooltip>
-			)}
-			{affectsNothing && (
-				<Tooltip content="This rule doesn't match any imported operation. Adjust the path or method to grant the access you intend.">
-					<span
-						className="text-warning inline-flex items-center gap-1 font-mono text-[10px] uppercase"
-						role="status"
-						aria-label="No operations affected"
-					>
-						<AlertTriangle className="h-3 w-3 shrink-0" />
-						no ops affected
-					</span>
-				</Tooltip>
-			)}
-			{isRequested && (
-				<Badge variant="default" className="ml-auto text-[10px]">
-					requested by agent
-				</Badge>
-			)}
-			{(onEdit || onMoveUp || onMoveDown || onDelete) && (
-				<div className="ml-auto flex items-center gap-0.5">
-					{onEdit && (
-						<button
-							type="button"
-							className="text-muted-foreground hover:text-foreground p-0.5"
-							aria-label="Edit rule"
-							onClick={onEdit}
+					{operations.map((op) => (
+						<code
+							key={op}
+							className="border-border bg-muted/40 text-foreground rounded border px-1 py-0.5 font-mono text-[10px]"
 						>
-							<Pencil className="h-3.5 w-3.5" />
-						</button>
-					)}
-					{onMoveUp && (
-						<button
-							type="button"
-							className="text-muted-foreground hover:text-foreground p-0.5"
-							aria-label="Move rule up"
-							onClick={onMoveUp}
-						>
-							<ArrowUp className="h-3.5 w-3.5" />
-						</button>
-					)}
-					{onMoveDown && (
-						<button
-							type="button"
-							className="text-muted-foreground hover:text-foreground p-0.5"
-							aria-label="Move rule down"
-							onClick={onMoveDown}
-						>
-							<ArrowDown className="h-3.5 w-3.5" />
-						</button>
-					)}
-					{onDelete && (
-						<button
-							type="button"
-							className="text-muted-foreground hover:text-danger p-0.5"
-							aria-label="Delete rule"
-							onClick={onDelete}
-						>
-							<X className="h-3.5 w-3.5" />
-						</button>
-					)}
+							{op}
+						</code>
+					))}
 				</div>
+			)}
+			{rule.comment && (
+				<p className="text-muted-foreground text-[11px] italic">{rule.comment}</p>
 			)}
 		</div>
 	);
@@ -318,12 +342,24 @@ function swap<T>(items: T[], i: number, j: number): T[] {
  * wire type so the form can track a ``Set`` of methods and a raw ``path``
  * string without threading nullable list/string juggling through every
  * field. Converted at save time via {@link ruleFromDraft}.
+ *
+ * ``operations`` and ``comment`` are NOT editable in this form, but they
+ * MUST survive the edit round-trip verbatim: dropping an agent-requested
+ * rule's ``operations`` constraint on save would silently WIDEN the
+ * grant (a rule constrained to specific operation ids becomes one that
+ * matches every operation on the path). They're carried on the draft
+ * exactly as found on the source rule and re-emitted by
+ * {@link ruleFromDraft}.
  */
 interface RuleDraft {
 	effect: 'allow' | 'deny';
 	methods: Set<string>;
 	path: string;
 	matchMode: 'regex' | 'prefix' | 'exact';
+	/** Carried verbatim from the source rule — never edited here. */
+	operations?: string[] | null;
+	/** Carried verbatim from the source rule — never edited here. */
+	comment?: string | null;
 }
 
 const EMPTY_RULE_DRAFT: RuleDraft = {
@@ -339,18 +375,26 @@ function ruleDraftFromRule(rule: PermissionRule): RuleDraft {
 		methods: new Set(rule.methods ?? []),
 		path: rule.path ?? '',
 		matchMode: (rule.match_mode ?? 'prefix') as RuleDraft['matchMode'],
+		operations: rule.operations,
+		comment: rule.comment,
 	};
 }
 
 function ruleFromDraft(draft: RuleDraft): PermissionRule {
 	const hasMethods = draft.methods.size > 0;
 	const hasPath = draft.path.trim().length > 0;
-	return {
+	const rule: PermissionRule = {
 		effect: draft.effect,
 		methods: hasMethods ? Array.from(draft.methods) : null,
 		path: hasPath ? draft.path.trim() : null,
 		match_mode: draft.matchMode,
 	};
+	// Re-emit only fields the source rule actually carried, so a rule the
+	// user authored here (no operations/comment) keeps its original wire
+	// shape and the "requested by agent" JSON-identity check stays exact.
+	if (draft.operations !== undefined) rule.operations = draft.operations;
+	if (draft.comment !== undefined) rule.comment = draft.comment;
+	return rule;
 }
 
 /**
@@ -361,7 +405,8 @@ function ruleFromDraft(draft: RuleDraft): PermissionRule {
 function validateDraft(draft: RuleDraft): string | null {
 	const hasMethods = draft.methods.size > 0;
 	const hasPath = draft.path.trim().length > 0;
-	if (draft.effect === 'allow' && !hasMethods && !hasPath) {
+	const hasOperations = (draft.operations?.length ?? 0) > 0;
+	if (draft.effect === 'allow' && !hasMethods && !hasPath && !hasOperations) {
 		return 'An "allow" rule must constrain at least one of methods or path.';
 	}
 	return null;
@@ -561,6 +606,29 @@ function RuleFormBody({
 					<option value="regex">regex</option>
 				</select>
 			</div>
+
+			{/* Operations/comment carried from an agent-requested rule are not
+			    editable here, but they stay visible during the edit so the
+			    approver knows the constraint survives their changes. */}
+			{draft.operations && draft.operations.length > 0 && (
+				<div className="flex flex-wrap items-center gap-1.5">
+					<Label className="text-[11px]">Operations</Label>
+					{draft.operations.map((op) => (
+						<code
+							key={op}
+							className="border-border bg-muted/40 text-foreground rounded border px-1 py-0.5 font-mono text-[10px]"
+						>
+							{op}
+						</code>
+					))}
+					<span className="text-muted-foreground text-[10px]">
+						kept as requested — not editable here
+					</span>
+				</div>
+			)}
+			{draft.comment && (
+				<p className="text-muted-foreground text-[11px] italic">{draft.comment}</p>
+			)}
 
 			{error && <p className="text-danger text-[11px]">{error}</p>}
 		</div>

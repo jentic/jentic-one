@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import {
 	AgentBadge,
+	AppLink,
 	Badge,
 	Button,
 	Checkbox,
@@ -188,13 +189,16 @@ function VendorSelfConnectFlow({
 	const [agentId, setAgentId] = useState<string | null>(preselectedAgentId ?? null);
 
 	const startMutation = useStartIntegrationConnect();
-	const confirmMutation = useConfirmConnectSession(session?.id ?? '');
+	const confirmMutation = useConfirmConnectSession(session?.id ?? '', session?.pollToken ?? '');
 	const cancelMutation = useCancelConnectSession();
 	// Post-``:connect`` we can hydrate ``ReviewSession`` (specifically
 	// ``api_reference``) to feed the rules-page operation-impact preview.
 	// Gated on the session id existing so we don't fire before ``:connect``
-	// returns.
-	const reviewSession = useConnectSession(session?.id, { enabled: !!session?.id });
+	// returns. The review read is poll_token-gated server-side, so the
+	// token from the ``:connect`` response rides along.
+	const reviewSession = useConnectSession(session?.id, session?.pollToken, {
+		enabled: !!session?.id,
+	});
 
 	// Cancellation is fire-and-forget on the unmount cleanup path (the
 	// user closed the dialog or navigated away mid-flow); if we go
@@ -208,21 +212,29 @@ function VendorSelfConnectFlow({
 	// ``:connect`` fires twice and we get two orphaned sessions per open.
 	const connectFiredRef = useRef(false);
 
+	// Fire ``:connect`` — called on mount (below) so the session/
+	// credential/import all exist by the time the user reaches the rules
+	// page, and again from the terminal step's "Try again" so a retry
+	// opens a FRESH session (the failed one was cascade-deleted server-
+	// side and can't be reused).
+	const startConnect = async (): Promise<void> => {
+		try {
+			startMutation.reset();
+			const result = await startMutation.mutateAsync({ vendor: vendor.key });
+			sessionRef.current = { id: result.session_id, pollToken: result.poll_token };
+			setSession({ id: result.session_id, pollToken: result.poll_token });
+		} catch {
+			// surfaced via ErrorAlert on the configure page.
+		}
+	};
+
 	// Fire ``:connect`` on mount so the session/credential/import all
 	// exist by the time the user reaches the rules page — the same
 	// shape the approve flow lands in when the human hits the URL.
 	useEffect(() => {
 		if (connectFiredRef.current) return;
 		connectFiredRef.current = true;
-		void (async () => {
-			try {
-				const result = await startMutation.mutateAsync({ vendor: vendor.key });
-				sessionRef.current = { id: result.session_id, pollToken: result.poll_token };
-				setSession({ id: result.session_id, pollToken: result.poll_token });
-			} catch {
-				// surfaced via ErrorAlert on the configure page.
-			}
-		})();
+		void startConnect();
 		// startMutation is stable across renders (react-query hook); vendor.key
 		// only changes when the parent remounts the flow, at which point the
 		// ref resets naturally.
@@ -246,6 +258,13 @@ function VendorSelfConnectFlow({
 
 	const polling = usePollConnectSessionStatus(session?.id ?? '', session?.pollToken ?? '', {
 		enabled: phase === 'awaiting' && !!session,
+		// Vendors state how often they want to be polled (RFC 8628
+		// ``interval``) — honour it once the challenge is known instead of
+		// hammering at the hook's default cadence.
+		intervalMs:
+			challenge?.kind === 'device_authorization' && challenge.poll_interval_seconds != null
+				? challenge.poll_interval_seconds * 1000
+				: undefined,
 	});
 
 	useEffect(() => {
@@ -404,10 +423,18 @@ function VendorSelfConnectFlow({
 				boundAgentId={agentId}
 				onDone={onDone}
 				onRetry={(): void => {
+					// A retry needs a FRESH session — the failed one was
+					// cascade-deleted server-side. Reset the phase refs so
+					// the unmount cleanup applies to the new session, then
+					// re-fire ``:connect`` directly (the mount effect is
+					// one-shot by design and won't run again).
+					phaseRef.current = 'configure';
+					sessionRef.current = null;
 					setPhase('configure');
 					setSession(null);
 					setChallenge(null);
-					startMutation.reset();
+					confirmMutation.reset();
+					void startConnect();
 				}}
 			/>
 		);
@@ -481,11 +508,13 @@ function VendorSelfConnectFlow({
 					onClick={goToRules}
 					// ``:connect`` fires at mount — wait for the session id
 					// before letting the user advance so the rules page has
-					// something to attach to when it renders. Also require
-					// an agent — the credential must bind to one, and the
-					// server refuses to accept ``agent_id: null`` at
-					// ``:confirm`` because there's nothing to bind against.
-					disabled={selectedScopes.size === 0 || !session || !agentId}
+					// something to attach to when it renders. Scope-less
+					// vendors (empty catalog) proceed with the vendor's
+					// defaults, so the empty-selection gate only applies
+					// when there are scopes to choose from. An agent is NOT
+					// required — ``agent_id`` is optional at ``:confirm``
+					// (connect unbound, bind later via the credentials API).
+					disabled={(scopes.length > 0 && selectedScopes.size === 0) || !session}
 					loading={startMutation.isPending && !session}
 				>
 					Continue
@@ -498,11 +527,14 @@ function VendorSelfConnectFlow({
 /**
  * Agent-selection dropdown on the self-flow configure page. Renders
  * ``agent.name`` — actor IDs are non-obvious identifiers, so surfacing
- * them would only confuse the user. Empty state (no agents in this
- * user's account) shows an inline note pointing at agent-creation.
- * ``disabled`` locks the field to its current value so the "Bind
- * credential" entry from an agent's detail page can pre-select without
- * risk of accidental re-target.
+ * them would only confuse the user. Binding is OPTIONAL: ``agent_id``
+ * is nullable at ``:confirm`` (connect unbound, bind an agent later),
+ * so the dropdown always carries an explicit "no agent" choice and the
+ * empty state (no agents in this user's account) explains that the
+ * user can proceed anyway — with a link to the Agents page for when
+ * they'd rather create one first. ``disabled`` locks the field to its
+ * current value so the "Bind credential" entry from an agent's detail
+ * page can pre-select without risk of accidental re-target.
  */
 function AgentPickerField({
 	agents,
@@ -534,8 +566,13 @@ function AgentPickerField({
 				<Label>Which agent uses this credential?</Label>
 				<div className="border-border bg-muted/30 rounded-lg border border-dashed p-3">
 					<p className="text-muted-foreground text-xs">
-						You don&apos;t have any agents yet. Create one first, then come back to
-						connect the credential.
+						You don&apos;t have any agents yet — you can still connect without one and
+						bind an agent later, or{' '}
+						{/* Router basename adds /app — internal hrefs are basename-relative. */}
+						<AppLink href="/agents" className="text-primary underline">
+							create an agent
+						</AppLink>{' '}
+						first and come back.
 					</p>
 				</div>
 			</div>
@@ -551,9 +588,7 @@ function AgentPickerField({
 				disabled={disabled}
 				className="border-border bg-background text-foreground disabled:text-muted-foreground w-full rounded-md border px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-70"
 			>
-				<option value="" disabled>
-					Select an agent…
-				</option>
+				<option value="">No agent — connect without binding</option>
 				{agents.map((a) => (
 					<option key={a.id} value={a.id}>
 						{a.name}
@@ -581,7 +616,10 @@ function VendorApproveFlow({
 	onBack: () => void;
 	onDone: () => void;
 }) {
-	const sessionQuery = useConnectSession(sessionId);
+	// The review read is poll_token-gated server-side: a missing session
+	// and a token mismatch both come back 403 (no enumeration oracle), so
+	// the error branch below treats any failure as "link no longer valid".
+	const sessionQuery = useConnectSession(sessionId, pollToken);
 	const agents = useAgentsForPicker();
 	const queryClient = useQueryClient();
 
@@ -590,7 +628,7 @@ function VendorApproveFlow({
 	const [rules, setRules] = useState<PermissionRule[] | null>(null);
 	const [challenge, setChallenge] = useState<ConfirmResponse | null>(null);
 
-	const confirmMutation = useConfirmConnectSession(sessionId);
+	const confirmMutation = useConfirmConnectSession(sessionId, pollToken);
 	const cancelMutation = useCancelConnectSession();
 	const phaseRef = useRef<Phase>('configure');
 
@@ -646,6 +684,12 @@ function VendorApproveFlow({
 
 	const polling = usePollConnectSessionStatus(sessionId, pollToken, {
 		enabled: phase === 'awaiting',
+		// Honour the vendor's requested device-flow poll cadence (RFC 8628
+		// ``interval``) once the challenge is known.
+		intervalMs:
+			challenge?.kind === 'device_authorization' && challenge.poll_interval_seconds != null
+				? challenge.poll_interval_seconds * 1000
+				: undefined,
 	});
 
 	useEffect(() => {
@@ -831,7 +875,10 @@ function VendorApproveFlow({
 					type="button"
 					variant="primary"
 					onClick={goToRules}
-					disabled={currentSelection.size === 0}
+					// Scope-less vendors proceed with the vendor's defaults —
+					// only gate on an empty selection when there are scopes
+					// to choose from.
+					disabled={scopes.length > 0 && currentSelection.size === 0}
 				>
 					Continue
 				</Button>

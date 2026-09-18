@@ -46,10 +46,17 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 		throw new IntegrationsApiError('network error', null, err);
 	}
 	if (!response.ok) {
+		// Errors are RFC 9457 problem+json ({type, title, detail, instance, …});
+		// prefer the human-readable ``detail``, fall back to ``title``.
 		let detail: string | undefined;
 		try {
 			const body = await response.json();
-			detail = typeof body?.detail === 'string' ? body.detail : undefined;
+			detail =
+				typeof body?.detail === 'string'
+					? body.detail
+					: typeof body?.title === 'string'
+						? body.title
+						: undefined;
 		} catch {
 			// ignore parse failure — fall back to statusText
 		}
@@ -100,15 +107,32 @@ export async function bindCredentialToAgentBlocked(
 	}
 }
 
-export function getConnectSession(sessionId: string): Promise<ReviewSession> {
-	return request(`/connect-sessions/${encodeURIComponent(sessionId)}`);
+/**
+ * Fetch the review data for a connect session. Gated by the session's
+ * ``poll_token`` capability (it rides the ``:connect`` response for the
+ * self flow and the ``?approve=…&poll_token=…`` approval URL for the
+ * agent-initiated flow). Missing session and token mismatch both surface
+ * as 403 — the backend deliberately doesn't distinguish them (no
+ * session-id enumeration oracle), so callers treat a 403 the way a 404
+ * used to be treated: session gone / terminal.
+ */
+export function getConnectSession(sessionId: string, pollToken: string): Promise<ReviewSession> {
+	const url = `/connect-sessions/${encodeURIComponent(sessionId)}?poll_token=${encodeURIComponent(pollToken)}`;
+	return request(url);
 }
 
+/**
+ * Confirm scopes + rules and kick off the vendor flow. Requires the same
+ * ``poll_token`` capability as the review read (403 on mismatch or missing
+ * session) and shares the ``:connect`` rate bucket (429 possible).
+ */
 export function confirmConnectSession(
 	sessionId: string,
+	pollToken: string,
 	body: ConfirmRequest,
 ): Promise<ConfirmResponse> {
-	return request(`/connect-sessions/${encodeURIComponent(sessionId)}:confirm`, {
+	const url = `/connect-sessions/${encodeURIComponent(sessionId)}:confirm?poll_token=${encodeURIComponent(pollToken)}`;
+	return request(url, {
 		method: 'POST',
 		body: JSON.stringify(body),
 	});

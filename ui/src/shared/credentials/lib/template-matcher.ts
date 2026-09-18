@@ -63,10 +63,10 @@ function escapeRegex(s: string): string {
  *   prefix's segment at that index; placeholder segments accept anything.
  *   Trailing prefix segments past the template's length are treated as
  *   never matching (a longer prefix than the template can't apply).
- * * ``regex`` — probabilistic: generate up to ``REGEX_TRIALS`` samples
- *   from the rule regex and see if any land in the template regex.
- *   RandExp is deterministic when seeded, so this is stable across
- *   renders.
+ * * ``regex`` — structural segment-wise intersection for patterns whose
+ *   slashes are plain top-level separators (the overwhelmingly common
+ *   authoring shape), falling back to deterministic (seeded + memoized)
+ *   sampling for exotic patterns. See ``regexCanIntersectTemplate``.
  */
 export function ruleAppliesToTemplate(rule: PermissionRule, template: string): boolean {
 	if (rule.path == null || rule.path === '') return true;
@@ -75,7 +75,7 @@ export function ruleAppliesToTemplate(rule: PermissionRule, template: string): b
 	if (mode === 'exact') return templateRe.test(rule.path);
 	if (mode === 'prefix') return prefixCanApply(rule.path, template);
 	// regex
-	return regexCanIntersectTemplate(rule.path, templateRe);
+	return regexCanIntersectTemplate(rule.path, template, templateRe);
 }
 
 /**
@@ -116,29 +116,325 @@ function isPlaceholder(segment: string): boolean {
 	return /^\{[^}]+\}$/.test(segment);
 }
 
-/**
- * Randexp-based check: does the rule regex share any concrete string
- * with the template regex? Deterministic seed so the answer doesn't
- * jitter between renders.
- */
+// ---------------------------------------------------------------------------
+// Regex ∩ template intersection
+// ---------------------------------------------------------------------------
+
 const REGEX_TRIALS = 20;
 
-function regexCanIntersectTemplate(rulePattern: string, templateRe: RegExp): boolean {
+// Verdicts are memoized per (rule pattern, template) so repeated renders
+// re-use the answer instead of recomputing (and so the sampling fallback
+// can never flip a verdict between renders).
+const INTERSECT_CACHE_MAX = 2000;
+const intersectCache = new Map<string, boolean>();
+
+/** FNV-1a string hash — seeds the deterministic PRNG below. */
+function hashString(s: string): number {
+	let h = 2166136261;
+	for (let i = 0; i < s.length; i++) {
+		h ^= s.charCodeAt(i);
+		h = Math.imul(h, 16777619);
+	}
+	return h >>> 0;
+}
+
+/** mulberry32 — tiny deterministic PRNG (seed → [0, 1) stream). */
+function mulberry32(seed: number): () => number {
+	let a = seed >>> 0;
+	return () => {
+		a = (a + 0x6d2b79f5) | 0;
+		let t = Math.imul(a ^ (a >>> 15), 1 | a);
+		t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+		return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+	};
+}
+
+/**
+ * A RandExp generator whose randomness is seeded from ``seedKey`` — the
+ * same (pattern, template) pair always yields the same sample sequence,
+ * so sampling-based verdicts are stable across renders.
+ */
+function seededRandExp(re: RegExp, seedKey: string, max: number = 8): RandExp {
+	const gen = new RandExp(re);
+	// Cap generated length so pathological patterns don't wedge the loop
+	// on arbitrarily long outputs.
+	gen.max = max;
+	const rng = mulberry32(hashString(seedKey));
+	gen.randInt = (from: number, to: number) => from + Math.floor(rng() * (to - from + 1));
+	return gen;
+}
+
+/** Strip a leading ``^`` / trailing unescaped ``$`` anchor pair. */
+function stripAnchors(source: string): string {
+	let s = source;
+	while (s.startsWith('^')) s = s.slice(1);
+	while (s.endsWith('$') && !s.endsWith('\\$')) s = s.slice(0, -1);
+	return s;
+}
+
+/**
+ * Split a regex SOURCE into per-path-segment fragments at top-level
+ * literal ``/`` separators (outside classes and groups; ``\/`` counts as
+ * a literal slash too). Returns ``null`` when the pattern can't be
+ * segmented safely — a ``/`` inside a class or group, or a top-level
+ * alternation — in which case the caller falls back to sampling.
+ */
+function splitRegexSegments(source: string): string[] | null {
+	const segments: string[] = [];
+	let current = '';
+	let depth = 0;
+	let inClass = false;
+	for (let i = 0; i < source.length; i++) {
+		const c = source[i];
+		if (c === '\\') {
+			const next = source[i + 1] ?? '';
+			if (next === '/' && depth === 0 && !inClass) {
+				segments.push(current);
+				current = '';
+				i++;
+				continue;
+			}
+			current += c + next;
+			i++;
+			continue;
+		}
+		if (inClass) {
+			if (c === '/') return null; // '/' inside a class — unsafe to segment.
+			if (c === ']') inClass = false;
+			current += c;
+			continue;
+		}
+		if (c === '[') {
+			inClass = true;
+			current += c;
+			continue;
+		}
+		if (c === '(') {
+			depth++;
+			current += c;
+			continue;
+		}
+		if (c === ')') {
+			depth--;
+			current += c;
+			continue;
+		}
+		if (c === '|' && depth === 0) return null; // top-level alternation.
+		if (c === '/') {
+			if (depth !== 0) return null; // '/' inside a group — spans segments.
+			segments.push(current);
+			current = '';
+			continue;
+		}
+		current += c;
+	}
+	segments.push(current);
+	return segments;
+}
+
+function tryCompileAnchored(fragment: string): RegExp | null {
+	try {
+		return new RegExp(`^(?:${fragment})$`);
+	} catch {
+		return null;
+	}
+}
+
+// Slash-free probe strings a segment fragment is tested against when it
+// isn't a plain literal. Deliberately small + generic — covers the common
+// authoring shapes ([a-z-]+, \d+, .*, .+, \w+, version-ish literals).
+const SEGMENT_PROBES: readonly string[] = [
+	'a',
+	'x',
+	'0',
+	'1',
+	'example',
+	'example-name',
+	'hello-world',
+	'v1',
+	'v1.0',
+];
+
+/**
+ * Can ``fragment`` (a slash-free regex source) fully match at least one
+ * NON-EMPTY, slash-free string (i.e. intersect ``[^/]+``)? Literal
+ * fragments are their own witness; everything else is probed with a
+ * small fixed set and then seeded RandExp samples.
+ */
+function fragmentMatchesSomeSegment(fragment: string, seedKey: string): boolean {
+	const re = tryCompileAnchored(fragment);
+	if (re == null) return false;
+	// A pure literal fragment is its own witness.
+	if (/^[\w.~-]+$/.test(fragment)) return re.test(fragment);
+	for (const probe of SEGMENT_PROBES) {
+		if (re.test(probe)) return true;
+	}
+	try {
+		const gen = seededRandExp(new RegExp(fragment), seedKey, 6);
+		for (let i = 0; i < 10; i++) {
+			const s = gen.gen();
+			if (s.length > 0 && !s.includes('/') && re.test(s)) return true;
+		}
+	} catch {
+		// unparseable fragment in isolation — fall through to "no".
+	}
+	return false;
+}
+
+/**
+ * Structural segment-wise intersection of an anchored rule regex with an
+ * op template. Returns ``true``/``false`` when the pattern could be
+ * segmented safely, ``null`` when the caller must fall back to sampling.
+ */
+function structuralIntersect(rulePattern: string, template: string): boolean | null {
+	const ruleSegs = splitRegexSegments(stripAnchors(rulePattern));
+	if (ruleSegs == null) return null;
+	const tParts = splitPath(template);
+	// More top-level slashes than the template has segments — placeholders
+	// are single-segment, so the rule can never fully match an instance.
+	if (ruleSegs.length > tParts.length) return false;
+	// When the rule has FEWER segments than the template, some fragment
+	// must consume slashes to cover the extra segments. If no fragment
+	// can even contain a '/', that's impossible — conclusive miss. The
+	// walk below only models the common shape where the LAST fragment
+	// spans (e.g. ``/repos/.*``); a miss from it is therefore not
+	// conclusive — a middle ``.*`` could span instead — so in the
+	// shorter case failures return ``null`` (fall back to sampling)
+	// rather than a hard "no". With equal segment counts the alignment
+	// is forced (each fragment must stay slash-free to keep the total
+	// slash count right), so both verdicts are exact.
+	const equalLength = ruleSegs.length === tParts.length;
+	if (!equalLength && !ruleSegs.some(fragmentCanContainSlash)) return false;
+	const failVerdict = equalLength ? false : null;
+	for (let i = 0; i < ruleSegs.length; i++) {
+		const isLastRuleSeg = i === ruleSegs.length - 1;
+		const ruleSeg = ruleSegs[i];
+		if (isLastRuleSeg && !equalLength) {
+			// The final rule fragment must span the REMAINING template
+			// segments (slashes included) — e.g. the ``.*`` in ``/repos/.*``
+			// covering ``{owner}/{repo}``. Probe with a concrete instance of
+			// the remainder, then with seeded samples of the fragment.
+			const remainderTemplate = tParts.slice(i).join('/');
+			const remainderProbe = tParts
+				.slice(i)
+				.map((seg) => (isPlaceholder(seg) ? `example-${seg.slice(1, -1)}` : seg))
+				.join('/');
+			const segRe = tryCompileAnchored(ruleSeg);
+			if (segRe == null) return failVerdict;
+			if (segRe.test(remainderProbe)) return true;
+			const remainderRe = templateToRegex(remainderTemplate);
+			try {
+				const gen = seededRandExp(
+					new RegExp(ruleSeg),
+					`${rulePattern}|${template}|tail`,
+					12,
+				);
+				for (let t = 0; t < REGEX_TRIALS; t++) {
+					if (remainderRe.test(gen.gen())) return true;
+				}
+			} catch {
+				return failVerdict;
+			}
+			return failVerdict;
+		}
+		const tSeg = tParts[i];
+		if (isPlaceholder(tSeg)) {
+			// Placeholder segment — the rule fragment must intersect [^/]+.
+			if (!fragmentMatchesSomeSegment(ruleSeg, `${rulePattern}|${template}|${i}`)) {
+				return failVerdict;
+			}
+			continue;
+		}
+		// Fixed segment — the rule fragment must accept the literal.
+		const segRe = tryCompileAnchored(ruleSeg);
+		if (segRe == null || !segRe.test(tSeg)) return failVerdict;
+	}
+	return true;
+}
+
+/**
+ * Heuristic: could ``fragment`` conceivably match a string containing a
+ * ``/``? A fragment built purely from literals and character classes
+ * that exclude ``/`` cannot; anything containing ``.``, ``\D``, ``\S``,
+ * ``\W`` or a negated class without ``/`` might. Errs on the side of
+ * ``true`` (callers use ``false`` to upgrade a miss to a hard "no").
+ */
+function fragmentCanContainSlash(fragment: string): boolean {
+	// ``.`` matches '/', as do \D \S \W and negated classes that don't
+	// re-exclude '/'. A conservative scan: any of those tokens present →
+	// assume it can.
+	if (/(?<!\\)\./.test(fragment)) return true;
+	if (/\\[DSW]/.test(fragment)) return true;
+	// Negated classes: assume they can match '/' unless '/' is listed.
+	const classRe = /\[\^([^\]]*)\]/g;
+	let m: RegExpExecArray | null;
+	while ((m = classRe.exec(fragment)) != null) {
+		if (!m[1].includes('/')) return true;
+	}
+	return false;
+}
+
+/**
+ * Does the rule regex share any concrete request path with the template
+ * regex? Prefers a structural segment-wise intersection (rule fragment
+ * per template segment, ``[^/]+`` per ``{placeholder}``), which is exact
+ * for the common "slashes are separators" authoring shape — including
+ * multi-segment tails like ``/repos/.*`` against
+ * ``/repos/{owner}/{repo}``. Patterns that can't be segmented safely
+ * (slash inside a class/group, top-level alternation) fall back to
+ * probing template-derived instances and then seeded RandExp sampling.
+ * All paths are deterministic (seeded per (rule, template)) and the
+ * verdict is memoized, so it can never flip between renders.
+ */
+function regexCanIntersectTemplate(
+	rulePattern: string,
+	template: string,
+	templateRe: RegExp,
+): boolean {
+	const cacheKey = `${rulePattern}|${template}`;
+	const cached = intersectCache.get(cacheKey);
+	if (cached !== undefined) return cached;
+	const verdict = computeRegexIntersect(rulePattern, template, templateRe);
+	if (intersectCache.size >= INTERSECT_CACHE_MAX) intersectCache.clear();
+	intersectCache.set(cacheKey, verdict);
+	return verdict;
+}
+
+function computeRegexIntersect(rulePattern: string, template: string, templateRe: RegExp): boolean {
 	let ruleRe: RegExp;
 	try {
 		ruleRe = new RegExp(rulePattern);
 	} catch {
 		return false; // Malformed rule regex — already flagged elsewhere.
 	}
-	const gen = new RandExp(ruleRe);
-	// Cap generated length so pathological patterns don't wedge the loop
-	// on arbitrarily long outputs.
-	gen.max = 8;
+	const structural = structuralIntersect(rulePattern, template);
+	if (structural !== null) return structural;
+	// Fallback 1: concrete instances of the TEMPLATE tested against the
+	// rule (anchored, mirroring the enforce-time full-match semantics) —
+	// catches broad rules whose random samples would rarely hit the
+	// template shape.
+	const anchoredRule = tryCompileAnchored(stripAnchors(rulePattern));
+	if (anchoredRule != null) {
+		for (const probe of templateProbes(template)) {
+			if (anchoredRule.test(probe)) return true;
+		}
+	}
+	// Fallback 2: seeded RandExp samples of the rule tested against the
+	// template regex.
+	const gen = seededRandExp(ruleRe, `${rulePattern}|${template}`, 12);
 	for (let i = 0; i < REGEX_TRIALS; i++) {
-		const candidate = gen.gen();
-		if (templateRe.test(candidate)) return true;
+		if (templateRe.test(gen.gen())) return true;
 	}
 	return false;
+}
+
+/** A few concrete instances of a template (placeholders → sample values). */
+function templateProbes(template: string): string[] {
+	const parts = splitPath(template);
+	const fills = ['example', 'a', '1'];
+	return fills.map((fill) =>
+		parts.map((seg) => (isPlaceholder(seg) ? `${fill}-${seg.slice(1, -1)}` : seg)).join('/'),
+	);
 }
 
 /**
@@ -170,16 +466,26 @@ export function generateRuleExamples(
 		const example = fillPrefixExample(rule.path, template);
 		return example ? [example] : [];
 	}
-	// regex — sample via randexp, keep only strings the template accepts.
+	// regex — sample via seeded randexp (deterministic per (rule,
+	// template) so examples don't shuffle between renders), keeping only
+	// strings the template accepts. Template-derived probes come first so
+	// broad rules (whose random samples rarely land in the template
+	// shape) still produce an example.
 	let ruleRe: RegExp;
 	try {
 		ruleRe = new RegExp(rule.path);
 	} catch {
 		return [];
 	}
-	const gen = new RandExp(ruleRe);
-	gen.max = 8;
 	const out = new Set<string>();
+	const anchoredRule = tryCompileAnchored(stripAnchors(rule.path));
+	if (anchoredRule != null) {
+		for (const probe of templateProbes(template)) {
+			if (out.size >= limit) break;
+			if (anchoredRule.test(probe)) out.add(probe);
+		}
+	}
+	const gen = seededRandExp(ruleRe, `${rule.path}|${template}|examples`);
 	for (let i = 0; i < REGEX_TRIALS && out.size < limit; i++) {
 		const candidate = gen.gen();
 		if (templateRe.test(candidate)) out.add(candidate);

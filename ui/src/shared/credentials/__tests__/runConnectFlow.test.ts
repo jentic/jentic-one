@@ -305,6 +305,48 @@ describe('runConnectFlow — device-code branch', () => {
 		expect(cleanupCalls).toBe(1);
 	});
 
+	it('aborting the signal cancels the device poll loop (no timeout)', async () => {
+		// The device dialog's Cancel button aborts the caller-supplied
+		// AbortSignal; the loop must resolve promptly with a ``cancelled``
+		// outcome (NOT run out the timeout and report ``timeout``), and the
+		// render-hook cleanup must still fire so the modal is dismissed.
+		const id = seedDeviceCodeCredential();
+		stubDeviceCodeConnectResponse(id);
+		worker.use(
+			http.get('/credentials/:id', ({ params }) => {
+				if (String(params.id) !== id) return undefined;
+				return HttpResponse.json({
+					credential_id: id,
+					provider_account_ref: null,
+					updated_at: null,
+				} as Partial<CredentialRedactedResponse>);
+			}),
+		);
+
+		const controller = new AbortController();
+		let cleanupCalls = 0;
+		const startedAt = Date.now();
+		const flow = runConnectFlow(id, {
+			pollMs: 60_000, // would run forever without the abort
+			timeoutMs: 120_000,
+			signal: controller.signal,
+			onDeviceAuthorizationChallenge: () => {
+				return () => {
+					cleanupCalls += 1;
+				};
+			},
+		});
+
+		await new Promise((r) => setTimeout(r, 50));
+		controller.abort();
+
+		const outcome = await flow;
+		expect(outcome.status).toBe('cancelled');
+		// Resolved via the abort, not by waiting out pollMs/timeoutMs.
+		expect(Date.now() - startedAt).toBeLessThan(5000);
+		expect(cleanupCalls).toBe(1);
+	});
+
 	it('runs cleanup on timeout too', async () => {
 		const id = seedDeviceCodeCredential();
 		stubDeviceCodeConnectResponse(id);

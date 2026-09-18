@@ -3,7 +3,21 @@ import { http, HttpResponse } from 'msw';
 import { worker } from '@/mocks/browser';
 import { renderWithProviders, screen, userEvent, waitFor, within } from '@/__tests__/test-utils';
 import { VendorConnectFlow } from '@/shared/credentials/components/VendorConnectFlow';
-import type { ReviewSession, VendorAuthCapabilities } from '@/shared/credentials/api/vendors-types';
+import {
+	getConnectSession,
+	startIntegrationConnect,
+} from '@/shared/credentials/api/vendors-client';
+import {
+	getMockConnectSessions,
+	resetConnectSessionsStore,
+	resetCredentialsStore,
+} from '@/shared/credentials/mocks/handlers';
+import type {
+	ConfirmRequest,
+	PermissionRule,
+	ReviewSession,
+	VendorAuthCapabilities,
+} from '@/shared/credentials/api/vendors-types';
 
 /**
  * VendorConnectFlow is the credentials dialog's vendor-approval sub-flow,
@@ -710,10 +724,21 @@ describe('VendorConnectFlow — approve mode', () => {
 		expect(pathInput.value.length).toBeGreaterThan('/r'.length);
 	});
 
-	it('renders an error alert when the approval link is invalid', async () => {
+	it('renders an error alert when the approval link is invalid (403)', async () => {
+		// New wire contract: missing session and poll_token mismatch BOTH
+		// come back 403 problem+json (no session-id enumeration oracle) —
+		// what a 404 used to signal.
 		worker.use(
 			http.get('/connect-sessions/sess_bad', () =>
-				HttpResponse.json({ detail: 'session not found' }, { status: 404 }),
+				HttpResponse.json(
+					{
+						type: 'about:blank',
+						title: 'Forbidden',
+						detail: 'Unknown session or invalid poll token.',
+						status: 403,
+					},
+					{ status: 403 },
+				),
 			),
 		);
 		renderWithProviders(
@@ -725,9 +750,327 @@ describe('VendorConnectFlow — approve mode', () => {
 				onDone={vi.fn()}
 			/>,
 		);
-		// A 404 must NOT crash the review UI — it surfaces as an error
+		// A 403 must NOT crash the review UI — it surfaces as an error
 		// alert with a Close button so the human isn't left on a
 		// half-rendered dialog with no way out.
 		await screen.findByRole('button', { name: /close/i });
+	});
+});
+
+/**
+ * Regression suite for the connect-wizard review findings: the poll_token
+ * wire adaptation (review GET / :confirm are token-gated), the "Try again"
+ * dead end (H1), scope-less vendors (H2), the operations/comment
+ * round-trip in the rules editor (H3), and the no-agents dead end (M2).
+ * The first test drives the wizard end to end through the credentials
+ * module's OWN MSW handlers — no per-test endpoint stubs — so the whole
+ * mocked flow (connect → review → confirm → device code) is exercised
+ * exactly as mocked dev serves it.
+ */
+describe('VendorConnectFlow — connect-wizard regressions', () => {
+	beforeEach(() => {
+		resetConnectSessionsStore();
+		resetCredentialsStore();
+		stubAgents();
+		vi.spyOn(window, 'open').mockReturnValue(null);
+	});
+
+	afterEach(() => {
+		vi.restoreAllMocks();
+		resetConnectSessionsStore();
+		resetCredentialsStore();
+	});
+
+	it('drives the wizard end to end through the module MSW handlers (scope-less vendor, no agent picked)', async () => {
+		renderWithProviders(
+			<VendorConnectFlow mode="self" vendor={vendor} onBack={vi.fn()} onDone={vi.fn()} />,
+		);
+		const user = userEvent.setup();
+
+		// The default capabilities handler advertises no scopes — the
+		// empty-state copy promises the vendor's defaults will be used, so
+		// Continue must NOT stay dead (H2).
+		expect(await screen.findByText(/doesn't expose any scopes/i)).toBeInTheDocument();
+		// No agent is selected either (the picker defaults to "no agent") —
+		// agent_id is optional at :confirm (M2).
+		await waitFor(() =>
+			expect(screen.getByRole('button', { name: /^continue$/i })).not.toBeDisabled(),
+		);
+		await user.click(screen.getByRole('button', { name: /^continue$/i }));
+
+		expect(await screen.findByText(/permission rules/i)).toBeInTheDocument();
+		await user.click(screen.getByRole('button', { name: /skip.*continue/i }));
+
+		// The device challenge from the module's :confirm handler renders —
+		// which also proves the poll_token rode the query string (the
+		// handler 403s without it).
+		expect(await screen.findByText('MOCK-1234')).toBeInTheDocument();
+		const sessions = getMockConnectSessions();
+		expect(sessions).toHaveLength(1);
+		expect(sessions[0].confirmBodies).toHaveLength(1);
+		expect(sessions[0].confirmBodies[0].agent_id ?? null).toBeNull();
+	});
+
+	it('review GET requires the poll_token: 403 with a wrong token, 200 with the right one', async () => {
+		const started = await startIntegrationConnect({ vendor: 'github' });
+		await expect(getConnectSession(started.session_id, 'wrong-token')).rejects.toMatchObject({
+			status: 403,
+		});
+		await expect(getConnectSession('sess_unknown', started.poll_token)).rejects.toMatchObject({
+			status: 403,
+		});
+		const review = await getConnectSession(started.session_id, started.poll_token);
+		expect(review.session_id).toBe(started.session_id);
+	});
+
+	it('"Try again" after a failed sign-in re-fires :connect and re-enables Continue (H1)', async () => {
+		stubCapabilities();
+		let connectCalls = 0;
+		worker.use(
+			http.post('/integrations:connect', () => {
+				connectCalls += 1;
+				return HttpResponse.json(
+					{
+						session_id: `sess_retry_${connectCalls}`,
+						approval_url: `/app/credentials?approve=sess_retry_${connectCalls}&poll_token=tok_retry_${connectCalls}`,
+						poll_token: `tok_retry_${connectCalls}`,
+						resolved_flow: 'device_authorization',
+					},
+					{ status: 201 },
+				);
+			}),
+			http.get('/connect-sessions/:id', ({ params }) =>
+				HttpResponse.json({
+					session_id: String(params.id),
+					state: 'created',
+					vendor_key: 'github',
+					vendor_display_name: 'GitHub',
+					resolved_flow: 'device_authorization',
+					reason: null,
+					requested_by_actor_id: 'usr_alice',
+					scopes: [],
+					requested_permission_rules: [],
+					api_reference: { vendor: 'github-com', name: 'github-com', version: null },
+				}),
+			),
+			http.post('/connect-sessions/:id\\:confirm', () =>
+				HttpResponse.json({
+					kind: 'device_authorization',
+					user_code: 'FAIL-0001',
+					verification_uri: 'https://github.com/login/device',
+					verification_uri_complete: null,
+					poll_interval_seconds: 1,
+				}),
+			),
+			// Every poll reports a terminal failure, driving the wizard to
+			// the terminal step with the "Try again" affordance.
+			http.get('/connect-sessions/:id/status', () =>
+				HttpResponse.json({
+					status: 'failed',
+					connected_as: null,
+					credential_id: null,
+					bound_scopes: null,
+					error_code: 'access_denied',
+				}),
+			),
+		);
+
+		renderWithProviders(
+			<VendorConnectFlow mode="self" vendor={vendor} onBack={vi.fn()} onDone={vi.fn()} />,
+		);
+		const user = userEvent.setup();
+
+		await screen.findByText('read:user');
+		await waitFor(() =>
+			expect(screen.getByRole('button', { name: /^continue$/i })).not.toBeDisabled(),
+		);
+		await user.click(screen.getByRole('button', { name: /^continue$/i }));
+		await user.click(await screen.findByRole('button', { name: /skip.*continue/i }));
+
+		// Polling reports `failed` → terminal step with Try again.
+		expect(await screen.findByText(/sign-in failed/i)).toBeInTheDocument();
+		expect(connectCalls).toBe(1);
+		await user.click(screen.getByRole('button', { name: /try again/i }));
+
+		// Back on the configure step, and a SECOND :connect fired — the old
+		// behaviour left Continue permanently disabled because the mount
+		// effect never re-ran and session stayed null.
+		expect(await screen.findByText('read:user')).toBeInTheDocument();
+		await waitFor(() => expect(connectCalls).toBe(2));
+		await waitFor(() =>
+			expect(screen.getByRole('button', { name: /^continue$/i })).not.toBeDisabled(),
+		);
+	});
+
+	it('the no-agents empty state links to the Agents page and does not block Continue (M2)', async () => {
+		stubCapabilities();
+		worker.use(
+			http.get('/agents', () =>
+				HttpResponse.json({ data: [], has_more: false, next_cursor: null }),
+			),
+		);
+
+		renderWithProviders(
+			<VendorConnectFlow mode="self" vendor={vendor} onBack={vi.fn()} onDone={vi.fn()} />,
+		);
+		const user = userEvent.setup();
+
+		// The empty state explains connect-now-bind-later and links out.
+		expect(await screen.findByText(/connect without one/i)).toBeInTheDocument();
+		const agentsLink = screen.getByRole('link', { name: /create an agent/i });
+		// Basename-relative href — the router basename (/app) is applied at
+		// render time by the real app shell.
+		expect(agentsLink.getAttribute('href')).toMatch(/\/agents$/);
+
+		// Continue enables once :connect returns — no agent required.
+		await screen.findByText('read:user');
+		await waitFor(() =>
+			expect(screen.getByRole('button', { name: /^continue$/i })).not.toBeDisabled(),
+		);
+		await user.click(screen.getByRole('button', { name: /^continue$/i }));
+		expect(await screen.findByText(/permission rules/i)).toBeInTheDocument();
+	});
+
+	it("preserves an agent-requested rule's operations + comment through an edit and on the wire (H3)", async () => {
+		const requestedRule: PermissionRule = {
+			effect: 'allow',
+			methods: ['GET'],
+			path: '/repos',
+			match_mode: 'prefix',
+			operations: ['repos/get'],
+			comment: 'Read-only repo metadata',
+		};
+		const session: ReviewSession = {
+			session_id: 'sess_ops',
+			state: 'created',
+			vendor_key: 'github',
+			vendor_display_name: 'GitHub',
+			resolved_flow: 'device_authorization',
+			requested_by_actor_id: 'agnt_1',
+			scopes: [
+				{
+					name: 'repo',
+					classification: 'write',
+					default: false,
+					requested: true,
+					description: 'Full control',
+				},
+			],
+			reason: null,
+			requested_permission_rules: [requestedRule],
+			api_reference: { vendor: 'github-com', name: 'github-com', version: null },
+		};
+		let confirmBody: ConfirmRequest | null = null;
+		let confirmToken: string | null = null;
+		worker.use(
+			http.get('/connect-sessions/sess_ops', () => HttpResponse.json(session)),
+			http.get('/agents', () =>
+				HttpResponse.json({ data: [], has_more: false, next_cursor: null }),
+			),
+			http.post('/connect-sessions/sess_ops\\:confirm', async ({ request }) => {
+				confirmToken = new URL(request.url).searchParams.get('poll_token');
+				confirmBody = (await request.json()) as ConfirmRequest;
+				return HttpResponse.json({
+					kind: 'device_authorization',
+					user_code: 'OPSX-1234',
+					verification_uri: 'https://github.com/login/device',
+					verification_uri_complete: null,
+					poll_interval_seconds: 1,
+				});
+			}),
+			http.get('/connect-sessions/sess_ops/status', () =>
+				HttpResponse.json({
+					status: 'polling',
+					connected_as: null,
+					credential_id: null,
+					bound_scopes: null,
+					error_code: null,
+				}),
+			),
+		);
+
+		renderWithProviders(
+			<VendorConnectFlow
+				mode="approve"
+				sessionId="sess_ops"
+				pollToken="tok_ops"
+				onBack={vi.fn()}
+				onDone={vi.fn()}
+			/>,
+		);
+		const user = userEvent.setup();
+
+		expect(await screen.findByText('repo')).toBeInTheDocument();
+		await waitFor(() =>
+			expect(screen.getByRole('button', { name: /^continue$/i })).not.toBeDisabled(),
+		);
+		await user.click(screen.getByRole('button', { name: /^continue$/i }));
+		expect(await screen.findByText('Permission rules')).toBeInTheDocument();
+
+		// The operations constraint + comment are visible on the row — the
+		// approver can see exactly what the agent asked for.
+		expect(await screen.findByText('repos/get')).toBeInTheDocument();
+		expect(screen.getByText('Read-only repo metadata')).toBeInTheDocument();
+
+		// Edit the rule's path — the un-editable operations/comment must
+		// survive the round-trip (the old draft dropped them, silently
+		// WIDENING the grant).
+		await user.click(screen.getByRole('button', { name: /edit rule/i }));
+		const pathInput = await screen.findByDisplayValue('/repos');
+		await user.clear(pathInput);
+		await user.type(pathInput, '/issues');
+		await user.click(screen.getByRole('button', { name: /^save$/i }));
+		expect(await screen.findByText(/\/issues\s*\(prefix\)/i)).toBeInTheDocument();
+		expect(screen.getByText('repos/get')).toBeInTheDocument();
+		expect(screen.getByText('Read-only repo metadata')).toBeInTheDocument();
+
+		// Confirm — the wire body still carries the constraint, and the
+		// poll_token rode the query string.
+		await user.click(screen.getByRole('button', { name: /^continue$/i }));
+		await waitFor(() => expect(confirmBody).not.toBeNull());
+		expect(confirmToken).toBe('tok_ops');
+		expect(confirmBody!.permission_rules[0]).toMatchObject({
+			effect: 'allow',
+			path: '/issues',
+			match_mode: 'prefix',
+			operations: ['repos/get'],
+			comment: 'Read-only repo metadata',
+		});
+	});
+
+	it('approve mode: a scope-less session can proceed to the rules page (H2)', async () => {
+		const session: ReviewSession = {
+			session_id: 'sess_noscopes',
+			state: 'created',
+			vendor_key: 'github',
+			vendor_display_name: 'GitHub',
+			resolved_flow: 'device_authorization',
+			requested_by_actor_id: 'agnt_1',
+			scopes: [],
+			reason: null,
+			requested_permission_rules: [],
+			api_reference: { vendor: 'github-com', name: 'github-com', version: null },
+		};
+		worker.use(
+			http.get('/connect-sessions/sess_noscopes', () => HttpResponse.json(session)),
+			http.get('/agents', () =>
+				HttpResponse.json({ data: [], has_more: false, next_cursor: null }),
+			),
+		);
+		renderWithProviders(
+			<VendorConnectFlow
+				mode="approve"
+				sessionId="sess_noscopes"
+				pollToken="tok_ns"
+				onBack={vi.fn()}
+				onDone={vi.fn()}
+			/>,
+		);
+		const user = userEvent.setup();
+		expect(await screen.findByText(/doesn't expose any scopes/i)).toBeInTheDocument();
+		const cont = screen.getByRole('button', { name: /^continue$/i });
+		expect(cont).not.toBeDisabled();
+		await user.click(cont);
+		expect(await screen.findByText('Permission rules')).toBeInTheDocument();
 	});
 });

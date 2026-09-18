@@ -158,10 +158,21 @@ export interface RunConnectOptions {
 	body?: ConnectRequestBody;
 	/** Open the authorize URL in a popup (default) or the same tab. */
 	mode?: 'popup' | 'redirect';
-	/** Poll interval while waiting for the callback to land (ms). */
+	/**
+	 * Poll interval while waiting for the callback to land (ms). When
+	 * omitted, the device-code branch honours the vendor's requested
+	 * cadence (``poll_interval_seconds``, RFC 8628 ``interval``; default
+	 * 3s) and the popup branch polls at 1.5s.
+	 */
 	pollMs?: number;
 	/** Give up waiting after this long (ms). */
 	timeoutMs?: number;
+	/**
+	 * Abort the wait loops from the outside (e.g. the device-code
+	 * dialog's Cancel button). Aborting resolves the flow with a
+	 * ``cancelled`` outcome — no error is thrown.
+	 */
+	signal?: AbortSignal;
 	/**
 	 * Render hook invoked when the begin-connect call returns a device_code
 	 * challenge (RFC 8628). The caller is responsible for showing the
@@ -212,7 +223,7 @@ export async function runConnectFlow(
 	id: string,
 	options: RunConnectOptions = {},
 ): Promise<ConnectOutcome> {
-	const { body, mode = 'popup', pollMs = 1500, timeoutMs = 120_000 } = options;
+	const { body, mode = 'popup', pollMs, timeoutMs = 120_000, signal } = options;
 
 	// Advisory wake-up plumbing (#598). We attach the listener *before* the
 	// connect round-trip so a popup that completes very fast (cached IdP consent)
@@ -262,25 +273,32 @@ export async function runConnectFlow(
 			return !!next.updated_at && next.updated_at !== before?.updated_at;
 		};
 
-		// Sleep up to `pollMs`, but resolve early if an advisory message arrived
-		// (consuming the signal so the next tick sleeps normally again).
-		const waitTick = (): Promise<void> =>
+		// Sleep up to `tickMs`, but resolve early if an advisory message
+		// arrived (consuming the signal so the next tick sleeps normally
+		// again) or the caller aborted (Cancel button).
+		const waitTick = (tickMs: number): Promise<void> =>
 			new Promise<void>((resolve) => {
-				if (signalled) {
+				if (signalled || signal?.aborted) {
 					signalled = false;
 					resolve();
 					return;
 				}
-				const t = setTimeout(() => {
-					wake = null;
-					resolve();
-				}, pollMs);
-				wake = () => {
+				let onAbort: (() => void) | null = null;
+				const settle = (): void => {
 					clearTimeout(t);
 					wake = null;
-					signalled = false;
+					if (onAbort) signal?.removeEventListener('abort', onAbort);
 					resolve();
 				};
+				const t = setTimeout(settle, tickMs);
+				wake = () => {
+					signalled = false;
+					settle();
+				};
+				if (signal) {
+					onAbort = settle;
+					signal.addEventListener('abort', onAbort, { once: true });
+				}
 			});
 
 		if (challenge.kind === 'device_authorization') {
@@ -292,11 +310,17 @@ export async function runConnectFlow(
 			if (!options.onDeviceAuthorizationChallenge) {
 				return { status: 'unsupported_challenge' };
 			}
+			// Honour the vendor's requested poll cadence (RFC 8628
+			// ``interval``) unless the caller pinned one explicitly.
+			const deviceTickMs = pollMs ?? (challenge.poll_interval_seconds ?? 3) * 1000;
 			const cleanup = options.onDeviceAuthorizationChallenge(challenge);
 			try {
 				const deadline = Date.now() + timeoutMs;
 				while (Date.now() < deadline) {
-					await waitTick();
+					await waitTick(deviceTickMs);
+					// User cancelled (the device dialog's Cancel button aborts
+					// the signal) — stop polling, no error.
+					if (signal?.aborted) return { status: 'cancelled' };
 					const next = await getCredential(id).catch(() => null);
 					if (isConnected(next)) {
 						return {
@@ -339,9 +363,14 @@ export async function runConnectFlow(
 		const activePopup = popup;
 
 		const deadline = Date.now() + timeoutMs;
+		const popupTickMs = pollMs ?? 1500;
 
 		while (Date.now() < deadline) {
-			await waitTick();
+			await waitTick(popupTickMs);
+			if (signal?.aborted) {
+				activePopup.close();
+				return { status: 'cancelled' };
+			}
 			const next = await getCredential(id).catch(() => null);
 			if (isConnected(next)) {
 				activePopup.close();

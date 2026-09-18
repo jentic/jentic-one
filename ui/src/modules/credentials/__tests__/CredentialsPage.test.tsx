@@ -78,6 +78,29 @@ describe('CredentialsPage', () => {
 		expect(screen.getByText('GitHub token')).toBeInTheDocument();
 	});
 
+	it('renders a connect-flow pending credential distinctly (Pending sign-in badge)', async () => {
+		// The agent-driven connect flow mints its credential row upfront;
+		// until the vendor round-trip completes the row is a pending shell
+		// (oauth2, details.connected === false). It must be visually
+		// distinguishable from live credentials so abandoned attempts
+		// aren't mistaken for usable ones while awaiting the TTL sweep.
+		resetCredentialsStore([
+			makeMockCredential({
+				credential_id: 'c_pending',
+				name: 'GitHub (connecting…)',
+				type: CredentialType.OAUTH2,
+				provider: 'direct_oauth2',
+				details: { grant_type: 'device_code', connected: false },
+			}),
+			makeMockCredential({ credential_id: 'c_live', name: 'Live token' }),
+		]);
+		renderWithProviders(<CredentialsPage />);
+		expect(await screen.findByText('GitHub (connecting…)')).toBeInTheDocument();
+		expect(screen.getByText('Pending sign-in')).toBeInTheDocument();
+		// The live (non-OAuth) credential carries no pending badge.
+		expect(screen.getAllByText('Pending sign-in')).toHaveLength(1);
+	});
+
 	it('surfaces a load error', async () => {
 		worker.use(createErrorHandler('get', '/credentials', { status: 500 }));
 		renderWithProviders(<CredentialsPage />);

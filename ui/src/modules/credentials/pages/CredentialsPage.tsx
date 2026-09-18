@@ -40,9 +40,13 @@ export function CredentialsPage() {
 	const [editId, setEditId] = useState<string | null>(null);
 	const [stickyEditId, setStickyEditId] = useState<string | null>(null);
 	const [deleteTarget, setDeleteTarget] = useState<Credential | null>(null);
+	// ``cancel`` aborts the in-flight ``runConnectFlow`` device loop so the
+	// dialog's Cancel button actually stops the polling (a ``cancelled``
+	// outcome) instead of leaving it to run out the 120s timeout.
 	const [deviceCodeState, setDeviceCodeState] = useState<{
 		challenge: DeviceAuthorizationChallengeResponse;
 		credentialName: string;
+		cancel: () => void;
 	} | null>(null);
 
 	// Agent-initiated approval landing. When an agent kicks off a connect
@@ -122,10 +126,16 @@ export function CredentialsPage() {
 				// the delete itself fails, which the user can remove manually.
 			}
 		};
+		const controller = new AbortController();
 		try {
 			const outcome = await runConnectFlow(credentialId, {
+				signal: controller.signal,
 				onDeviceAuthorizationChallenge: (challenge) => {
-					setDeviceCodeState({ challenge, credentialName });
+					setDeviceCodeState({
+						challenge,
+						credentialName,
+						cancel: () => controller.abort(),
+					});
 					return () => setDeviceCodeState(null);
 				},
 			});
@@ -172,10 +182,16 @@ export function CredentialsPage() {
 
 	const handleConnect = async (cred: Credential): Promise<void> => {
 		toast({ title: `Opening sign-in for ${cred.name}…` });
+		const controller = new AbortController();
 		try {
 			const outcome = await runConnectFlow(cred.credential_id, {
+				signal: controller.signal,
 				onDeviceAuthorizationChallenge: (challenge) => {
-					setDeviceCodeState({ challenge, credentialName: cred.name });
+					setDeviceCodeState({
+						challenge,
+						credentialName: cred.name,
+						cancel: () => controller.abort(),
+					});
 					return () => setDeviceCodeState(null);
 				},
 			});
@@ -298,7 +314,13 @@ export function CredentialsPage() {
 				open={deviceCodeState != null}
 				challenge={deviceCodeState?.challenge ?? null}
 				credentialName={deviceCodeState?.credentialName ?? ''}
-				onCancel={(): void => setDeviceCodeState(null)}
+				onCancel={(): void => {
+					// Abort the connect flow's poll loop (it resolves with a
+					// ``cancelled`` outcome — no error toast) before dropping
+					// the dialog state.
+					deviceCodeState?.cancel();
+					setDeviceCodeState(null);
+				}}
 			/>
 
 			<EditCredentialSheet

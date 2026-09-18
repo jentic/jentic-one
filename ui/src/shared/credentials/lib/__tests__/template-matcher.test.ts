@@ -76,6 +76,60 @@ describe('ruleAppliesToTemplate', () => {
 		// Wrong root — regex can never satisfy the template.
 		expect(ruleAppliesToTemplate(rule, '/users/{login}')).toBe(false);
 	});
+
+	it('a multi-segment regex tail intersects a placeholder template (/repos/.*)', () => {
+		// Regression: the old unseeded sampler generated random tails that
+		// rarely contained the second '/', so this frequently (and
+		// nondeterministically) reported "grants nothing" for a rule that
+		// grants plenty.
+		const rule = {
+			effect: 'allow' as const,
+			path: '/repos/.*',
+			match_mode: 'regex' as const,
+		};
+		expect(ruleAppliesToTemplate(rule, '/repos/{owner}/{repo}')).toBe(true);
+		expect(ruleAppliesToTemplate(rule, '/repos/{owner}/{repo}/commits')).toBe(true);
+		expect(ruleAppliesToTemplate(rule, '/users/{login}')).toBe(false);
+	});
+
+	it('a middle-spanning regex still intersects (/repos/.*/comments)', () => {
+		const rule = {
+			effect: 'allow' as const,
+			path: '/repos/.*/comments',
+			match_mode: 'regex' as const,
+		};
+		expect(ruleAppliesToTemplate(rule, '/repos/{owner}/{repo}/comments')).toBe(true);
+	});
+
+	it('a single-segment-only regex does NOT span extra template segments', () => {
+		const rule = {
+			effect: 'allow' as const,
+			// [^/]+ can never contain the '/' the extra segment requires.
+			path: '/repos/[^/]+',
+			match_mode: 'regex' as const,
+		};
+		expect(ruleAppliesToTemplate(rule, '/repos/{owner}/{repo}')).toBe(false);
+		expect(ruleAppliesToTemplate(rule, '/repos/{owner}')).toBe(true);
+	});
+
+	it('the regex verdict is deterministic across repeated calls', () => {
+		const rules = [
+			{ effect: 'allow' as const, path: '/repos/.*', match_mode: 'regex' as const },
+			{
+				effect: 'allow' as const,
+				path: '/repos/octocat/[a-z-]+',
+				match_mode: 'regex' as const,
+			},
+			{ effect: 'allow' as const, path: '/users/.*', match_mode: 'regex' as const },
+		];
+		const template = '/repos/{owner}/{repo}';
+		for (const rule of rules) {
+			const first = ruleAppliesToTemplate(rule, template);
+			for (let i = 0; i < 50; i++) {
+				expect(ruleAppliesToTemplate(rule, template)).toBe(first);
+			}
+		}
+	});
 });
 
 describe('generateRuleExamples', () => {

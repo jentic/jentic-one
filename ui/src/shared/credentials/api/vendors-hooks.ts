@@ -33,7 +33,7 @@ import type {
 } from '@/shared/credentials/api/vendors-types';
 
 const KEYS = {
-	session: (id: string) => ['integrations', 'session', id] as const,
+	session: (id: string, token: string) => ['integrations', 'session', id, token] as const,
 	status: (id: string, token: string) => ['integrations', 'status', id, token] as const,
 	vendors: ['integrations', 'vendors'] as const,
 	vendor: (key: string) => ['integrations', 'vendor', key] as const,
@@ -66,20 +66,33 @@ export function useAgentsForPicker() {
 
 export function useConnectSession(
 	sessionId: string | undefined,
+	pollToken: string | undefined,
 	options?: Partial<UseQueryOptions<ReviewSession>>,
 ) {
 	return useQuery<ReviewSession>({
-		queryKey: KEYS.session(sessionId ?? ''),
-		queryFn: () => getConnectSession(sessionId as string),
-		enabled: Boolean(sessionId),
+		queryKey: KEYS.session(sessionId ?? '', pollToken ?? ''),
+		queryFn: () => getConnectSession(sessionId as string, pollToken as string),
+		enabled: Boolean(sessionId) && Boolean(pollToken),
 		staleTime: 5_000,
+		// A 403 means the poll_token doesn't match or the session is gone
+		// (the backend deliberately conflates the two — no enumeration
+		// oracle). Retrying can't fix either, so fail fast; the caller
+		// surfaces "the approval link is no longer valid".
+		retry: (failureCount, error) => {
+			const status = (error as { status?: number | null })?.status;
+			if (typeof status === 'number' && status >= 400 && status < 500) return false;
+			return failureCount < 2;
+		},
 		// Poll while ``api_reference.version`` is null — the catalog import
 		// runs asynchronously, so the value flips from null to a version
 		// string once the import job completes. Once populated, stop
-		// polling so we don't hammer the endpoint for no reason. Callers
-		// that override the query behaviour can still pass their own
-		// ``refetchInterval`` via ``options``.
+		// polling so we don't hammer the endpoint for no reason. Also stop
+		// on 4xx errors (403 = token mismatch / session gone — terminal).
+		// Callers that override the query behaviour can still pass their
+		// own ``refetchInterval`` via ``options``.
 		refetchInterval: (query) => {
+			const status = (query.state.error as { status?: number | null } | null)?.status;
+			if (typeof status === 'number' && status >= 400 && status < 500) return false;
 			const data = query.state.data;
 			if (data?.api_reference?.version) return false;
 			return 2_000;
@@ -88,9 +101,9 @@ export function useConnectSession(
 	});
 }
 
-export function useConfirmConnectSession(sessionId: string) {
+export function useConfirmConnectSession(sessionId: string, pollToken: string) {
 	return useMutation<ConfirmResponse, Error, ConfirmRequest>({
-		mutationFn: (body) => confirmConnectSession(sessionId, body),
+		mutationFn: (body) => confirmConnectSession(sessionId, pollToken, body),
 	});
 }
 
@@ -193,7 +206,7 @@ export function useStartAndConfirmVendorConnect() {
 	return useMutation<StartAndConfirmResult, Error, StartAndConfirmVars>({
 		mutationFn: async ({ permission_rules, ...connect }) => {
 			const started = await startIntegrationConnect(connect);
-			const challenge = await confirmConnectSession(started.session_id, {
+			const challenge = await confirmConnectSession(started.session_id, started.poll_token, {
 				confirmed_scopes: connect.requested_scopes ?? [],
 				permission_rules,
 			});

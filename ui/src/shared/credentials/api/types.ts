@@ -150,6 +150,15 @@ export interface CredentialDetails {
 	field_name?: string;
 	/** oauth2: `authorization_code` / `client_credentials` / `device_code`. */
 	grant_type?: string;
+	/**
+	 * oauth2 (authorization_code / device_code only): whether the
+	 * interactive sign-in completed and is still usable. ``false`` for a
+	 * connect-flow credential that was minted upfront and is still
+	 * awaiting the vendor round-trip — the cards render those as
+	 * pending so they can't be mistaken for live credentials. ``null``/
+	 * absent for other grants.
+	 */
+	connected?: boolean | null;
 	/** sigv4: the public AWS access key id (non-secret). */
 	access_key_id?: string;
 	/** sigv4: signing region (e.g. us-east-1). */
