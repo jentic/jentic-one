@@ -530,7 +530,7 @@ def test_confirm_shares_connect_rate_limit_bucket() -> None:
         namespace="test_integrations_confirm",
     )
     with TestClient(app) as client:
-        payload = {"confirmed_scopes": [], "permission_rules": []}
+        payload: dict[str, list[str]] = {"confirmed_scopes": [], "permission_rules": []}
         params = {"poll_token": "tok"}
         first = client.post("/connect-sessions/sess_1:confirm", params=params, json=payload)
         second = client.post("/connect-sessions/sess_1:confirm", params=params, json=payload)
