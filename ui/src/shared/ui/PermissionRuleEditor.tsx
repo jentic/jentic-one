@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { AlertTriangle, ArrowDown, ArrowUp, Check, Plus, ShieldCheck, Trash2 } from 'lucide-react';
 import { Button } from '@/shared/ui/Button';
 import { Input } from '@/shared/ui/Input';
@@ -14,6 +15,12 @@ import type { PermissionRuleSchema } from '@/shared/api';
  * Lives in `shared/ui` (not a feature module) so every surface that authors
  * binding rules can reuse it — the agent console's rule editor and the
  * provisioning-plan fulfilment wizard both compose it.
+ *
+ * The editor's own verbs (`Add rule`, and `Allow all operations` whenever no
+ * catch-all grant exists yet) share ONE row with the host's commit verbs via
+ * `actionsSlot`, so a sheet never spends two rows on buttons. `beforeActions`
+ * lets the host explain that commit (a pending-changes preview) immediately
+ * above the row it belongs to.
  */
 
 /** Write shape for a permission rule (allow/deny + methods/path/operations). */
@@ -82,12 +89,53 @@ export function cleanPermissionRule(rule: PermissionRuleInput): PermissionRuleIn
 	return out;
 }
 
+/** The catch-all grant, authored in the one shape the backend accepts. */
+function allowAllRule(): PermissionRuleInput {
+	return {
+		effect: 'allow' as PermissionRuleInput['effect'],
+		methods: null,
+		// Explicit catch-all: a condition-less allow is rejected by the
+		// backend (422), so grant broad access via `path: ".*"` instead.
+		path: ALLOW_ALL_PATH,
+		operations: null,
+	};
+}
+
+/**
+ * True when the draft already grants everything — an unconstrained-method
+ * `allow` on the catch-all path. Offering the shortcut again would author a
+ * duplicate rule that can never be reached (first match wins).
+ */
+function grantsEverything(rules: PermissionRuleInput[]): boolean {
+	return rules.some(
+		(rule) =>
+			rule.effect === 'allow' &&
+			!rule.methods?.length &&
+			!rule.operations?.length &&
+			rule.path?.trim() === ALLOW_ALL_PATH,
+	);
+}
+
 export interface PermissionRuleEditorProps {
 	rules: PermissionRuleInput[];
 	onChange: (rules: PermissionRuleInput[]) => void;
+	/**
+	 * The host's own verbs (e.g. Save / Discard), rendered right-aligned on the
+	 * SAME row as the editor's `Add rule`. Omit and the row holds only the
+	 * editor's verbs.
+	 */
+	actionsSlot?: ReactNode;
+	/** Full-width content rendered just above the verb row — e.g. a
+	 * pending-changes preview of what saving would do. */
+	beforeActions?: ReactNode;
 }
 
-export function PermissionRuleEditor({ rules, onChange }: PermissionRuleEditorProps) {
+export function PermissionRuleEditor({
+	rules,
+	onChange,
+	actionsSlot,
+	beforeActions,
+}: PermissionRuleEditorProps) {
 	const update = (index: number, patch: Partial<PermissionRuleInput>) => {
 		onChange(rules.map((rule, i) => (i === index ? { ...rule, ...patch } : rule)));
 	};
@@ -125,28 +173,12 @@ export function PermissionRuleEditor({ rules, onChange }: PermissionRuleEditorPr
 							<p className="text-foreground text-xs font-medium">
 								No rules defined — all operations will be denied by default.
 							</p>
+							{/* The verbs themselves live one row below, where
+							    they stay reachable once rules exist too. */}
 							<p className="text-muted-foreground text-xs">
-								Add at least one Allow rule to grant access.
+								Add a rule below to grant access, or allow all operations in one
+								step.
 							</p>
-							<Button
-								variant="secondary"
-								size="sm"
-								onClick={() =>
-									onChange([
-										{
-											effect: 'allow' as PermissionRuleInput['effect'],
-											methods: null,
-											// Explicit catch-all: a condition-less allow is
-											// rejected by the backend (422), so grant broad
-											// access via `path: ".*"` instead.
-											path: ALLOW_ALL_PATH,
-											operations: null,
-										},
-									])
-								}
-							>
-								<ShieldCheck className="h-4 w-4" /> Allow all operations
-							</Button>
 						</div>
 					</div>
 				</div>
@@ -163,10 +195,15 @@ export function PermissionRuleEditor({ rules, onChange }: PermissionRuleEditorPr
 						data-testid="permission-rule-row"
 						className={
 							invalid
-								? 'border-danger/50 bg-card space-y-2.5 rounded-lg border p-3'
-								: 'border-border bg-card space-y-2.5 rounded-lg border p-3'
+								? 'border-danger/50 bg-card space-y-2 rounded-lg border p-3'
+								: 'border-border bg-card space-y-2 rounded-lg border p-3'
 						}
 					>
+						{/* Line 1 — the decision: effect + match mode compact, the
+						    path pattern taking the remaining width. The selects sit in
+						    fixed-width wrappers because `Select` renders inside a
+						    `w-full` shell — bare in a flex row, each one claims the
+						    full width and stacks the whole line vertically. */}
 						<div className="flex flex-wrap items-center gap-2">
 							{/* The rule's evaluation position — the SAME number the rule
 							    tester's verdict cites, so "#2" always has an anchor. */}
@@ -176,46 +213,89 @@ export function PermissionRuleEditor({ rules, onChange }: PermissionRuleEditorPr
 							>
 								#{index + 1}
 							</span>
-							<Select
-								aria-label="Effect"
-								value={rule.effect}
-								onChange={(e) =>
-									update(index, {
-										effect: e.target.value as PermissionRuleInput['effect'],
-									})
-								}
-								className="w-24"
+							<span className="w-[5.5rem] shrink-0">
+								<Select
+									aria-label="Effect"
+									value={rule.effect}
+									onChange={(e) =>
+										update(index, {
+											effect: e.target.value as PermissionRuleInput['effect'],
+										})
+									}
+									className="px-2 py-1.5"
+								>
+									{PERMISSION_EFFECTS.map((effect: PermissionEffect) => (
+										<option key={effect} value={effect}>
+											{effect === 'allow' ? 'Allow' : 'Deny'}
+										</option>
+									))}
+								</Select>
+							</span>
+							<span className="w-[5.5rem] shrink-0">
+								<Select
+									aria-label="Path match mode"
+									value={mode}
+									onChange={(e) =>
+										update(index, {
+											match_mode: e.target
+												.value as PermissionRuleInput['match_mode'],
+										})
+									}
+									className="px-2 py-1.5"
+								>
+									{PERMISSION_MATCH_MODES.map((m) => (
+										<option key={m.value} value={m.value}>
+											{m.label}
+										</option>
+									))}
+								</Select>
+							</span>
+							{/* Same wrapper trick as the selects: `Input` also renders
+							    inside a `w-full` shell, so `flex-1` must live on a real
+							    flex child or the input claims the whole line. */}
+							<span className="min-w-36 flex-1">
+								<Input
+									aria-label="Path pattern"
+									value={rule.path ?? ''}
+									onChange={(e) => update(index, { path: e.target.value })}
+									placeholder={placeholder}
+									className="px-2.5 py-1.5 font-mono"
+								/>
+							</span>
+						</div>
+						{/* Line 2 — the conditions and the row verbs: method chips on
+						    the left, reorder/delete on the right. */}
+						<div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5">
+							<div
+								className="flex min-w-0 flex-wrap items-center gap-1.5"
+								role="group"
+								aria-label={`Rule ${index + 1} methods — none selected matches any method`}
 							>
-								{PERMISSION_EFFECTS.map((effect: PermissionEffect) => (
-									<option key={effect} value={effect}>
-										{effect === 'allow' ? 'Allow' : 'Deny'}
-									</option>
-								))}
-							</Select>
-							<Select
-								aria-label="Path match mode"
-								value={mode}
-								onChange={(e) =>
-									update(index, {
-										match_mode: e.target
-											.value as PermissionRuleInput['match_mode'],
-									})
-								}
-								className="w-24"
-							>
-								{PERMISSION_MATCH_MODES.map((m) => (
-									<option key={m.value} value={m.value}>
-										{m.label}
-									</option>
-								))}
-							</Select>
-							<Input
-								aria-label="Path pattern"
-								value={rule.path ?? ''}
-								onChange={(e) => update(index, { path: e.target.value })}
-								placeholder={placeholder}
-								className="min-w-40 flex-1 font-mono"
-							/>
+								{HTTP_METHODS.map((method) => {
+									const selected = (rule.methods ?? []).includes(method);
+									return (
+										<button
+											key={method}
+											type="button"
+											onClick={() => toggleMethod(index, method)}
+											aria-pressed={selected}
+											className={
+												selected
+													? 'bg-primary text-background inline-flex items-center gap-1 rounded-md px-2 py-0.5 font-mono text-xs font-semibold'
+													: 'border-border bg-background text-muted-foreground hover:border-primary/50 hover:text-foreground inline-flex items-center gap-1 rounded-md border px-2 py-0.5 font-mono text-xs transition-colors'
+											}
+										>
+											{selected && (
+												<Check className="h-3 w-3" aria-hidden="true" />
+											)}
+											{method}
+										</button>
+									);
+								})}
+								<span className="text-muted-foreground/60 text-[10px]">
+									none = any method
+								</span>
+							</div>
 							<div className="flex shrink-0 items-center">
 								<Button
 									variant="ghost"
@@ -245,52 +325,58 @@ export function PermissionRuleEditor({ rules, onChange }: PermissionRuleEditorPr
 								</Button>
 							</div>
 						</div>
-						<div>
-							<p className="text-muted-foreground mb-1.5 font-mono text-[10px] tracking-wide uppercase">
-								Methods
-								<span className="text-muted-foreground/60 normal-case">
-									{' '}
-									· none selected = any method
-								</span>
-							</p>
-							<div className="flex flex-wrap gap-1.5">
-								{HTTP_METHODS.map((method) => {
-									const selected = (rule.methods ?? []).includes(method);
-									return (
-										<button
-											key={method}
-											type="button"
-											onClick={() => toggleMethod(index, method)}
-											aria-pressed={selected}
-											className={
-												selected
-													? 'bg-primary text-background inline-flex items-center gap-1 rounded-md px-2.5 py-1 font-mono text-xs font-semibold'
-													: 'border-border bg-background text-muted-foreground hover:border-primary/50 hover:text-foreground inline-flex items-center gap-1 rounded-md border px-2.5 py-1 font-mono text-xs transition-colors'
-											}
-										>
-											{selected && (
-												<Check className="h-3 w-3" aria-hidden="true" />
-											)}
-											{method}
-										</button>
-									);
-								})}
-							</div>
-						</div>
 						{invalid && (
-							<p role="alert" className="text-danger flex items-center gap-1 text-xs">
-								<AlertTriangle className="h-3 w-3 shrink-0" />
-								An Allow rule must constrain at least one method, path, or operation
-								— set the path to <code className="font-mono">.*</code> to allow
-								everything.
-							</p>
+							<div
+								role="alert"
+								className="text-danger/90 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs leading-relaxed"
+							>
+								<span className="flex items-start gap-1.5">
+									<AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
+									<span>
+										An Allow rule must constrain at least one method, path, or
+										operation.
+									</span>
+								</span>
+								{/* The fix, not the instruction for it. */}
+								<Button
+									variant="ghost"
+									size="sm"
+									onClick={() => update(index, { path: ALLOW_ALL_PATH })}
+									className="text-danger hover:text-danger h-auto px-1.5 py-0.5 underline"
+								>
+									Use <code className="font-mono">.*</code> to allow everything
+								</Button>
+							</div>
 						)}
 					</div>
 				);
 			})}
-			<Button variant="secondary" size="sm" onClick={add}>
-				<Plus className="h-4 w-4" /> Add rule
-			</Button>
+			{beforeActions}
+
+			{/* One row for every verb: the editor's on the left, the host's
+			    commit pair (when it passes any) on the right. */}
+			<div className="flex flex-wrap items-center justify-between gap-2">
+				<div className="flex flex-wrap items-center gap-2">
+					<Button variant="secondary" size="sm" onClick={add}>
+						<Plus className="h-4 w-4" /> Add rule
+					</Button>
+					{/* Reachable with rules already present, not just from the
+					    empty state — broadening a narrow grant is a normal edit. */}
+					{!grantsEverything(rules) && (
+						<Button
+							variant="ghost"
+							size="sm"
+							onClick={() => onChange([...rules, allowAllRule()])}
+							className="text-muted-foreground hover:text-foreground"
+						>
+							<ShieldCheck className="h-4 w-4" /> Allow all operations
+						</Button>
+					)}
+				</div>
+				{actionsSlot && (
+					<div className="flex flex-wrap items-center gap-2">{actionsSlot}</div>
+				)}
+			</div>
 		</div>
 	);
 }

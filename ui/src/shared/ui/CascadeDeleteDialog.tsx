@@ -230,11 +230,24 @@ export function CascadeDeleteDialog({
 			}
 		>
 			{open ? (
-				<div className="space-y-4">
-					<p id={descriptionId} className="text-foreground text-sm leading-relaxed">
-						<span className="font-semibold">{entityName}</span> will be permanently
-						removed from your workspace. This can&apos;t be undone.
-					</p>
+				<div className="space-y-5">
+					{/* What's being deleted — the entity leads, in the danger
+					    medallion + statement grammar. */}
+					<div className="flex items-start gap-3">
+						<span
+							aria-hidden="true"
+							className="bg-danger/10 text-danger ring-danger/25 flex h-9 w-9 shrink-0 items-center justify-center rounded-full ring-1"
+						>
+							<copy.icon className="h-4 w-4" />
+						</span>
+						<p
+							id={descriptionId}
+							className="text-foreground min-w-0 pt-1.5 text-sm leading-relaxed"
+						>
+							<span className="font-semibold break-words">{entityName}</span> will be
+							permanently removed from your workspace. This can&apos;t be undone.
+						</p>
+					</div>
 
 					{hasDependents ? (
 						<BlastRadius noun={copy.noun} dependents={dependents} />
@@ -245,11 +258,15 @@ export function CascadeDeleteDialog({
 						</div>
 					)}
 
-					<div className="space-y-1.5">
+					{/* The arming gate — set apart as its own step so the eye lands
+					    on it before the footer's destructive verb. */}
+					<div className="border-border/60 space-y-1.5 border-t pt-4">
 						<Label htmlFor={confirmInputId}>
 							Type{' '}
-							<span className="text-foreground font-semibold">{requiredWord}</span> to
-							confirm
+							<span className="text-foreground font-mono font-semibold">
+								{requiredWord}
+							</span>{' '}
+							to confirm
 						</Label>
 						<Input
 							id={confirmInputId}
@@ -258,6 +275,7 @@ export function CascadeDeleteDialog({
 							disabled={loading}
 							autoComplete="off"
 							placeholder={requiredWord}
+							className="font-mono"
 						/>
 					</div>
 
@@ -296,11 +314,11 @@ function BlastRadius({ noun, dependents }: { noun: string; dependents: CascadeDe
 							</span>
 						</div>
 						{group.names && group.names.length > 0 && (
-							<ul className="mt-1 space-y-0.5 pl-[18px]">
+							<ul className="mt-1.5 flex flex-wrap gap-1 pl-[18px]">
 								{group.names.map((name, i) => (
 									<li
 										key={`${group.label}-${i}`}
-										className="text-muted-foreground truncate text-[11px]"
+										className="bg-danger/10 text-foreground/90 max-w-full truncate rounded px-2 py-0.5 text-[11px]"
 									>
 										{name}
 									</li>
