@@ -23559,7 +23559,7 @@
     },
     "/connect-sessions/{session_id}": {
       "get": {
-        "description": "Data the review page needs: vendor display name, resolved flow, the\nscope catalog flagged with default/requested, current state, reason.",
+        "description": "Data the review page needs: vendor display name, resolved flow, the\nscope catalog flagged with default/requested, current state, reason.\n\nGated by the session's ``poll_token`` capability (rides the approval\nURL / the ``:connect`` response) — ``credentials:write`` alone must\nnot read arbitrary sessions' review data. Missing session and token\nmismatch both surface as 403, matching ``/status`` (no session-id\nenumeration oracle).",
         "operationId": "getConnectSession",
         "parameters": [
           {
@@ -23568,6 +23568,17 @@
             "required": true,
             "schema": {
               "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Opaque poll capability",
+            "in": "query",
+            "name": "poll_token",
+            "required": true,
+            "schema": {
+              "description": "Opaque poll capability",
+              "title": "Poll Token",
               "type": "string"
             }
           }
@@ -24007,7 +24018,7 @@
     },
     "/connect-sessions/{session_id}:confirm": {
       "post": {
-        "description": "Called by the review page after the human confirms selections.",
+        "description": "Called by the review page after the human confirms selections.\n\nShares the ``:connect`` per-actor rate bucket — this is the endpoint\nthat actually fires the vendor's device-authorization call, and a\nfailed ``begin`` leaves the session retryable, so it must not be\nfree to hammer during a vendor incident. Gated by ``poll_token``\nlike the review read (403 on mismatch or missing session).",
         "operationId": "confirmConnectSession",
         "parameters": [
           {
@@ -24016,6 +24027,17 @@
             "required": true,
             "schema": {
               "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Opaque poll capability",
+            "in": "query",
+            "name": "poll_token",
+            "required": true,
+            "schema": {
+              "description": "Opaque poll capability",
+              "title": "Poll Token",
               "type": "string"
             }
           }
@@ -38675,7 +38697,7 @@
     },
     "/vendors/{vendor_key}/auth-capabilities": {
       "get": {
-        "description": "Full auth capabilities for one vendor — flows, scopes, classifications.\n\nNever returns client_secret (authorization-code flow's secret is stripped\nat response build time).",
+        "description": "Full auth capabilities for one vendor — flows, scopes, classifications.\n\nNever returns client_secret (authorization-code flow's secret is stripped\nat response build time). ``UnknownVendorError`` maps to a 404 problem\ndetail via the handler registered in ``control/web/app.py``.",
         "operationId": "getAuthCapabilities",
         "parameters": [
           {

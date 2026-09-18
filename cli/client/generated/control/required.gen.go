@@ -221,7 +221,6 @@ func (PermissionResponse) RequiredFields() []string {
 	return []string{"description", "grantable_by_caller", "implies", "name"}
 }
 func (PermissionRuleListResponse) RequiredFields() []string { return []string{"data"} }
-func (PermissionRuleModel) RequiredFields() []string        { return []string{"method", "path"} }
 func (PermissionRuleReadSchema) RequiredFields() []string   { return []string{"effect"} }
 func (PermissionTestRequest) RequiredFields() []string      { return []string{"method", "path"} }
 func (PermissionTestResponse) RequiredFields() []string     { return []string{"allowed", "matched"} }

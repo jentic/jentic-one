@@ -1702,6 +1702,11 @@ components:
       type: object
     ConfirmSessionRequest:
       properties:
+        agent_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Agent Id
         confirmed_scopes:
           items:
             type: string
@@ -1709,7 +1714,7 @@ components:
           type: array
         permission_rules:
           items:
-            $ref: '#/components/schemas/PermissionRuleModel'
+            $ref: '#/components/schemas/jentic_one__control__web__schemas__permission_rules__PermissionRuleSchema'
           title: Permission Rules
           type: array
       required:
@@ -2824,6 +2829,11 @@ components:
             type: string
           - type: 'null'
           title: Reason
+        requested_permission_rules:
+          items:
+            $ref: '#/components/schemas/jentic_one__control__web__schemas__permission_rules__PermissionRuleSchema'
+          title: Requested Permission Rules
+          type: array
         requested_scopes:
           items:
             type: string
@@ -4799,33 +4809,6 @@ components:
       required:
       - data
       title: PermissionRuleListResponse
-      type: object
-    PermissionRuleModel:
-      description: One agent permission rule (allow/deny).
-      properties:
-        effect:
-          default: allow
-          enum:
-          - allow
-          - deny
-          title: Effect
-          type: string
-        method:
-          examples:
-          - GET
-          - POST
-          title: Method
-          type: string
-        path:
-          examples:
-          - /repos/**
-          - /repos/*/issues
-          title: Path
-          type: string
-      required:
-      - method
-      - path
-      title: PermissionRuleModel
       type: object
     PermissionRuleReadSchema:
       description: Permission rule response (includes system fields).
@@ -13267,6 +13250,12 @@ paths:
       description: |-
         Data the review page needs: vendor display name, resolved flow, the
         scope catalog flagged with default/requested, current state, reason.
+
+        Gated by the session's ``poll_token`` capability (rides the approval
+        URL / the ``:connect`` response) — ``credentials:write`` alone must
+        not read arbitrary sessions' review data. Missing session and token
+        mismatch both surface as 403, matching ``/status`` (no session-id
+        enumeration oracle).
       operationId: getConnectSession
       parameters:
       - in: path
@@ -13274,6 +13263,14 @@ paths:
         required: true
         schema:
           title: Session Id
+          type: string
+      - description: Opaque poll capability
+        in: query
+        name: poll_token
+        required: true
+        schema:
+          description: Opaque poll capability
+          title: Poll Token
           type: string
       responses:
         '200':
@@ -13484,7 +13481,14 @@ paths:
       - Integrations
   /connect-sessions/{session_id}:confirm:
     post:
-      description: Called by the review page after the human confirms selections.
+      description: |-
+        Called by the review page after the human confirms selections.
+
+        Shares the ``:connect`` per-actor rate bucket — this is the endpoint
+        that actually fires the vendor's device-authorization call, and a
+        failed ``begin`` leaves the session retryable, so it must not be
+        free to hammer during a vendor incident. Gated by ``poll_token``
+        like the review read (403 on mismatch or missing session).
       operationId: confirmConnectSession
       parameters:
       - in: path
@@ -13492,6 +13496,14 @@ paths:
         required: true
         schema:
           title: Session Id
+          type: string
+      - description: Opaque poll capability
+        in: query
+        name: poll_token
+        required: true
+        schema:
+          description: Opaque poll capability
+          title: Poll Token
           type: string
       requestBody:
         content:
@@ -20514,7 +20526,8 @@ paths:
         Full auth capabilities for one vendor — flows, scopes, classifications.
 
         Never returns client_secret (authorization-code flow's secret is stripped
-        at response build time).
+        at response build time). ``UnknownVendorError`` maps to a 404 problem
+        detail via the handler registered in ``control/web/app.py``.
       operationId: getAuthCapabilities
       parameters:
       - in: path

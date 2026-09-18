@@ -12,19 +12,33 @@ export class IntegrationsService {
      * Get review data for a connect session
      * Data the review page needs: vendor display name, resolved flow, the
      * scope catalog flagged with default/requested, current state, reason.
+     *
+     * Gated by the session's ``poll_token`` capability (rides the approval
+     * URL / the ``:connect`` response) — ``credentials:write`` alone must
+     * not read arbitrary sessions' review data. Missing session and token
+     * mismatch both surface as 403, matching ``/status`` (no session-id
+     * enumeration oracle).
      * @returns any Successful Response
      * @throws ApiError
      */
     public static getConnectSession({
         sessionId,
+        pollToken,
     }: {
         sessionId: string,
+        /**
+         * Opaque poll capability
+         */
+        pollToken: string,
     }): CancelablePromise<any> {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/connect-sessions/{session_id}',
             path: {
                 'session_id': sessionId,
+            },
+            query: {
+                'poll_token': pollToken,
             },
             errors: {
                 400: `Bad Request`,
@@ -121,14 +135,25 @@ export class IntegrationsService {
     /**
      * Confirm scopes + permissions and kick off the vendor flow
      * Called by the review page after the human confirms selections.
+     *
+     * Shares the ``:connect`` per-actor rate bucket — this is the endpoint
+     * that actually fires the vendor's device-authorization call, and a
+     * failed ``begin`` leaves the session retryable, so it must not be
+     * free to hammer during a vendor incident. Gated by ``poll_token``
+     * like the review read (403 on mismatch or missing session).
      * @returns any Successful Response
      * @throws ApiError
      */
     public static confirmConnectSession({
         sessionId,
+        pollToken,
         requestBody,
     }: {
         sessionId: string,
+        /**
+         * Opaque poll capability
+         */
+        pollToken: string,
         requestBody: ConfirmSessionRequest,
     }): CancelablePromise<any> {
         return __request(OpenAPI, {
@@ -136,6 +161,9 @@ export class IntegrationsService {
             url: '/connect-sessions/{session_id}:confirm',
             path: {
                 'session_id': sessionId,
+            },
+            query: {
+                'poll_token': pollToken,
             },
             body: requestBody,
             mediaType: 'application/json',

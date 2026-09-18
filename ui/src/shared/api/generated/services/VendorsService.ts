@@ -34,7 +34,8 @@ export class VendorsService {
      * Full auth capabilities for one vendor — flows, scopes, classifications.
      *
      * Never returns client_secret (authorization-code flow's secret is stripped
-     * at response build time).
+     * at response build time). ``UnknownVendorError`` maps to a 404 problem
+     * detail via the handler registered in ``control/web/app.py``.
      * @returns any Successful Response
      * @throws ApiError
      */

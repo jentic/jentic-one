@@ -735,24 +735,6 @@ func (e OperationResultResponseType) Valid() bool {
 	}
 }
 
-// Defines values for PermissionRuleModelEffect.
-const (
-	PermissionRuleModelEffectAllow PermissionRuleModelEffect = "allow"
-	PermissionRuleModelEffectDeny  PermissionRuleModelEffect = "deny"
-)
-
-// Valid indicates whether the value is a known member of the PermissionRuleModelEffect enum.
-func (e PermissionRuleModelEffect) Valid() bool {
-	switch e {
-	case PermissionRuleModelEffectAllow:
-		return true
-	case PermissionRuleModelEffectDeny:
-		return true
-	default:
-		return false
-	}
-}
-
 // Defines values for PermissionRuleReadSchemaEffect.
 const (
 	PermissionRuleReadSchemaEffectAllow PermissionRuleReadSchemaEffect = "allow"
@@ -1586,8 +1568,9 @@ type ClaimRequest struct {
 
 // ConfirmSessionRequest defines model for ConfirmSessionRequest.
 type ConfirmSessionRequest struct {
-	ConfirmedScopes []string               `json:"confirmed_scopes"`
-	PermissionRules *[]PermissionRuleModel `json:"permission_rules,omitempty"`
+	AgentId         *string                                                          `json:"agent_id,omitempty"`
+	ConfirmedScopes []string                                                         `json:"confirmed_scopes"`
+	PermissionRules *[]JenticOneControlWebSchemasPermissionRulesPermissionRuleSchema `json:"permission_rules,omitempty"`
 }
 
 // ConnectRequestBody Request body for initiating a credential connect flow.
@@ -2035,10 +2018,11 @@ type InstanceIdentityResponseBackend string
 
 // IntegrationsConnectRequest defines model for IntegrationsConnectRequest.
 type IntegrationsConnectRequest struct {
-	AgentId         *string   `json:"agent_id,omitempty"`
-	PreferredFlow   *string   `json:"preferred_flow,omitempty"`
-	Reason          *string   `json:"reason,omitempty"`
-	RequestedScopes *[]string `json:"requested_scopes,omitempty"`
+	AgentId                  *string                                                          `json:"agent_id,omitempty"`
+	PreferredFlow            *string                                                          `json:"preferred_flow,omitempty"`
+	Reason                   *string                                                          `json:"reason,omitempty"`
+	RequestedPermissionRules *[]JenticOneControlWebSchemasPermissionRulesPermissionRuleSchema `json:"requested_permission_rules,omitempty"`
+	RequestedScopes          *[]string                                                        `json:"requested_scopes,omitempty"`
 
 	// Vendor Vendor registry key (e.g. 'github')
 	Vendor string `json:"vendor"`
@@ -2814,20 +2798,6 @@ type PermissionResponse struct {
 type PermissionRuleListResponse struct {
 	Data []PermissionRuleReadSchema `json:"data"`
 }
-
-// PermissionRuleModel One agent permission rule (allow/deny).
-type PermissionRuleModel struct {
-	Effect *PermissionRuleModelEffect `json:"effect,omitempty"`
-
-	// Method Examples: GET, POST
-	Method string `json:"method"`
-
-	// Path Examples: /repos/**, /repos/*/issues
-	Path string `json:"path"`
-}
-
-// PermissionRuleModelEffect defines model for PermissionRuleModel.Effect.
-type PermissionRuleModelEffect string
 
 // PermissionRuleReadSchema Permission rule response (includes system fields).
 type PermissionRuleReadSchema struct {
@@ -3689,6 +3659,12 @@ type PreviewCatalogOperationsParams struct {
 // SnoozeCatalogEntryJSONBody defines parameters for SnoozeCatalogEntry.
 type SnoozeCatalogEntryJSONBody = CatalogSnoozeRequest
 
+// GetConnectSessionParams defines parameters for GetConnectSession.
+type GetConnectSessionParams struct {
+	// PollToken Opaque poll capability
+	PollToken string `form:"poll_token" json:"poll_token"`
+}
+
 // PollConnectSessionStatusParams defines parameters for PollConnectSessionStatus.
 type PollConnectSessionStatusParams struct {
 	// PollToken Opaque poll capability
@@ -3697,6 +3673,12 @@ type PollConnectSessionStatusParams struct {
 
 // CancelConnectSessionParams defines parameters for CancelConnectSession.
 type CancelConnectSessionParams struct {
+	// PollToken Opaque poll capability
+	PollToken string `form:"poll_token" json:"poll_token"`
+}
+
+// ConfirmConnectSessionParams defines parameters for ConfirmConnectSession.
+type ConfirmConnectSessionParams struct {
 	// PollToken Opaque poll capability
 	PollToken string `form:"poll_token" json:"poll_token"`
 }
@@ -5924,8 +5906,14 @@ type ClientInterface interface {
 	// Data the review page needs: vendor display name, resolved flow, the
 	// scope catalog flagged with default/requested, current state, reason.
 	//
+	// Gated by the session's ``poll_token`` capability (rides the approval
+	// URL / the ``:connect`` response) — ``credentials:write`` alone must
+	// not read arbitrary sessions' review data. Missing session and token
+	// mismatch both surface as 403, matching ``/status`` (no session-id
+	// enumeration oracle).
+	//
 	// Corresponds with GET /connect-sessions/{session_id} (the `GetConnectSession` operationId).
-	GetConnectSession(ctx context.Context, sessionId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+	GetConnectSession(ctx context.Context, sessionId string, params *GetConnectSessionParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// PollConnectSessionStatus Poll a connect session's status
 	//
@@ -5956,19 +5944,31 @@ type ClientInterface interface {
 	//
 	// Called by the review page after the human confirms selections.
 	//
+	// Shares the ``:connect`` per-actor rate bucket — this is the endpoint
+	// that actually fires the vendor's device-authorization call, and a
+	// failed ``begin`` leaves the session retryable, so it must not be
+	// free to hammer during a vendor incident. Gated by ``poll_token``
+	// like the review read (403 on mismatch or missing session).
+	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /connect-sessions/{session_id}:confirm (the `ConfirmConnectSession` operationId).
-	ConfirmConnectSessionWithBody(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	ConfirmConnectSessionWithBody(ctx context.Context, sessionId string, params *ConfirmConnectSessionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ConfirmConnectSession Confirm scopes + permissions and kick off the vendor flow
 	//
 	// Called by the review page after the human confirms selections.
 	//
+	// Shares the ``:connect`` per-actor rate bucket — this is the endpoint
+	// that actually fires the vendor's device-authorization call, and a
+	// failed ``begin`` leaves the session retryable, so it must not be
+	// free to hammer during a vendor incident. Gated by ``poll_token``
+	// like the review read (403 on mismatch or missing session).
+	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /connect-sessions/{session_id}:confirm (the `ConfirmConnectSession` operationId).
-	ConfirmConnectSession(ctx context.Context, sessionId string, body ConfirmConnectSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	ConfirmConnectSession(ctx context.Context, sessionId string, params *ConfirmConnectSessionParams, body ConfirmConnectSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ControlHealth Control health
 	//
@@ -7559,7 +7559,8 @@ type ClientInterface interface {
 	// Full auth capabilities for one vendor — flows, scopes, classifications.
 	//
 	// Never returns client_secret (authorization-code flow's secret is stripped
-	// at response build time).
+	// at response build time). ``UnknownVendorError`` maps to a 404 problem
+	// detail via the handler registered in ``control/web/app.py``.
 	//
 	// Corresponds with GET /vendors/{vendor_key}/auth-capabilities (the `GetAuthCapabilities` operationId).
 	GetAuthCapabilities(ctx context.Context, vendorKey string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -9660,9 +9661,15 @@ func (c *Client) RefreshCatalog(ctx context.Context, reqEditors ...RequestEditor
 // Data the review page needs: vendor display name, resolved flow, the
 // scope catalog flagged with default/requested, current state, reason.
 //
+// Gated by the session's “poll_token“ capability (rides the approval
+// URL / the “:connect“ response) — “credentials:write“ alone must
+// not read arbitrary sessions' review data. Missing session and token
+// mismatch both surface as 403, matching “/status“ (no session-id
+// enumeration oracle).
+//
 // Corresponds with GET /connect-sessions/{session_id} (the `GetConnectSession` operationId).
-func (c *Client) GetConnectSession(ctx context.Context, sessionId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetConnectSessionRequest(c.Server, sessionId)
+func (c *Client) GetConnectSession(ctx context.Context, sessionId string, params *GetConnectSessionParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetConnectSessionRequest(c.Server, sessionId, params)
 	if err != nil {
 		return nil, err
 	}
@@ -9722,11 +9729,17 @@ func (c *Client) CancelConnectSession(ctx context.Context, sessionId string, par
 //
 // Called by the review page after the human confirms selections.
 //
+// Shares the “:connect“ per-actor rate bucket — this is the endpoint
+// that actually fires the vendor's device-authorization call, and a
+// failed “begin“ leaves the session retryable, so it must not be
+// free to hammer during a vendor incident. Gated by “poll_token“
+// like the review read (403 on mismatch or missing session).
+//
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /connect-sessions/{session_id}:confirm (the `ConfirmConnectSession` operationId).
-func (c *Client) ConfirmConnectSessionWithBody(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewConfirmConnectSessionRequestWithBody(c.Server, sessionId, contentType, body)
+func (c *Client) ConfirmConnectSessionWithBody(ctx context.Context, sessionId string, params *ConfirmConnectSessionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewConfirmConnectSessionRequestWithBody(c.Server, sessionId, params, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -9741,11 +9754,17 @@ func (c *Client) ConfirmConnectSessionWithBody(ctx context.Context, sessionId st
 //
 // Called by the review page after the human confirms selections.
 //
+// Shares the “:connect“ per-actor rate bucket — this is the endpoint
+// that actually fires the vendor's device-authorization call, and a
+// failed “begin“ leaves the session retryable, so it must not be
+// free to hammer during a vendor incident. Gated by “poll_token“
+// like the review read (403 on mismatch or missing session).
+//
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /connect-sessions/{session_id}:confirm (the `ConfirmConnectSession` operationId).
-func (c *Client) ConfirmConnectSession(ctx context.Context, sessionId string, body ConfirmConnectSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewConfirmConnectSessionRequest(c.Server, sessionId, body)
+func (c *Client) ConfirmConnectSession(ctx context.Context, sessionId string, params *ConfirmConnectSessionParams, body ConfirmConnectSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewConfirmConnectSessionRequest(c.Server, sessionId, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -12685,7 +12704,8 @@ func (c *Client) ListVendors(ctx context.Context, reqEditors ...RequestEditorFn)
 // Full auth capabilities for one vendor — flows, scopes, classifications.
 //
 // Never returns client_secret (authorization-code flow's secret is stripped
-// at response build time).
+// at response build time). “UnknownVendorError“ maps to a 404 problem
+// detail via the handler registered in “control/web/app.py“.
 //
 // Corresponds with GET /vendors/{vendor_key}/auth-capabilities (the `GetAuthCapabilities` operationId).
 func (c *Client) GetAuthCapabilities(ctx context.Context, vendorKey string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -17044,7 +17064,7 @@ func NewRefreshCatalogRequest(server string) (*http.Request, error) {
 }
 
 // NewGetConnectSessionRequest constructs an http.Request for the GetConnectSession method
-func NewGetConnectSessionRequest(server string, sessionId string) (*http.Request, error) {
+func NewGetConnectSessionRequest(server string, sessionId string, params *GetConnectSessionParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -17067,6 +17087,29 @@ func NewGetConnectSessionRequest(server string, sessionId string) (*http.Request
 	queryURL, err := serverURL.Parse(operationPath)
 	if err != nil {
 		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "poll_token", params.PollToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
 	}
 
 	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
@@ -17192,18 +17235,18 @@ func NewCancelConnectSessionRequest(server string, sessionId string, params *Can
 }
 
 // NewConfirmConnectSessionRequest calls the generic ConfirmConnectSession builder with application/json body
-func NewConfirmConnectSessionRequest(server string, sessionId string, body ConfirmConnectSessionJSONRequestBody) (*http.Request, error) {
+func NewConfirmConnectSessionRequest(server string, sessionId string, params *ConfirmConnectSessionParams, body ConfirmConnectSessionJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewConfirmConnectSessionRequestWithBody(server, sessionId, "application/json", bodyReader)
+	return NewConfirmConnectSessionRequestWithBody(server, sessionId, params, "application/json", bodyReader)
 }
 
 // NewConfirmConnectSessionRequestWithBody constructs an http.Request for the ConfirmConnectSession method, with any body, and a specified content type
-func NewConfirmConnectSessionRequestWithBody(server string, sessionId string, contentType string, body io.Reader) (*http.Request, error) {
+func NewConfirmConnectSessionRequestWithBody(server string, sessionId string, params *ConfirmConnectSessionParams, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -17226,6 +17269,29 @@ func NewConfirmConnectSessionRequestWithBody(server string, sessionId string, co
 	queryURL, err := serverURL.Parse(operationPath)
 	if err != nil {
 		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "poll_token", params.PollToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
 	}
 
 	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
@@ -23191,10 +23257,16 @@ type ClientWithResponsesInterface interface {
 	// Data the review page needs: vendor display name, resolved flow, the
 	// scope catalog flagged with default/requested, current state, reason.
 	//
+	// Gated by the session's ``poll_token`` capability (rides the approval
+	// URL / the ``:connect`` response) — ``credentials:write`` alone must
+	// not read arbitrary sessions' review data. Missing session and token
+	// mismatch both surface as 403, matching ``/status`` (no session-id
+	// enumeration oracle).
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /connect-sessions/{session_id} (the `GetConnectSession` operationId).
-	GetConnectSessionWithResponse(ctx context.Context, sessionId string, reqEditors ...RequestEditorFn) (*GetConnectSessionHTTPResp, error)
+	GetConnectSessionWithResponse(ctx context.Context, sessionId string, params *GetConnectSessionParams, reqEditors ...RequestEditorFn) (*GetConnectSessionHTTPResp, error)
 
 	// PollConnectSessionStatusWithResponse Poll a connect session's status
 	//
@@ -23229,19 +23301,31 @@ type ClientWithResponsesInterface interface {
 	//
 	// Called by the review page after the human confirms selections.
 	//
+	// Shares the ``:connect`` per-actor rate bucket — this is the endpoint
+	// that actually fires the vendor's device-authorization call, and a
+	// failed ``begin`` leaves the session retryable, so it must not be
+	// free to hammer during a vendor incident. Gated by ``poll_token``
+	// like the review read (403 on mismatch or missing session).
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /connect-sessions/{session_id}:confirm (the `ConfirmConnectSession` operationId).
-	ConfirmConnectSessionWithBodyWithResponse(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ConfirmConnectSessionHTTPResp, error)
+	ConfirmConnectSessionWithBodyWithResponse(ctx context.Context, sessionId string, params *ConfirmConnectSessionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ConfirmConnectSessionHTTPResp, error)
 
 	// ConfirmConnectSessionWithResponse Confirm scopes + permissions and kick off the vendor flow
 	//
 	// Called by the review page after the human confirms selections.
 	//
+	// Shares the ``:connect`` per-actor rate bucket — this is the endpoint
+	// that actually fires the vendor's device-authorization call, and a
+	// failed ``begin`` leaves the session retryable, so it must not be
+	// free to hammer during a vendor incident. Gated by ``poll_token``
+	// like the review read (403 on mismatch or missing session).
+	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /connect-sessions/{session_id}:confirm (the `ConfirmConnectSession` operationId).
-	ConfirmConnectSessionWithResponse(ctx context.Context, sessionId string, body ConfirmConnectSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*ConfirmConnectSessionHTTPResp, error)
+	ConfirmConnectSessionWithResponse(ctx context.Context, sessionId string, params *ConfirmConnectSessionParams, body ConfirmConnectSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*ConfirmConnectSessionHTTPResp, error)
 
 	// ControlHealthWithResponse Control health
 	//
@@ -24952,7 +25036,8 @@ type ClientWithResponsesInterface interface {
 	// Full auth capabilities for one vendor — flows, scopes, classifications.
 	//
 	// Never returns client_secret (authorization-code flow's secret is stripped
-	// at response build time).
+	// at response build time). ``UnknownVendorError`` maps to a 404 problem
+	// detail via the handler registered in ``control/web/app.py``.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -41549,11 +41634,17 @@ func (c *ClientWithResponses) RefreshCatalogWithResponse(ctx context.Context, re
 // Data the review page needs: vendor display name, resolved flow, the
 // scope catalog flagged with default/requested, current state, reason.
 //
+// Gated by the session's “poll_token“ capability (rides the approval
+// URL / the “:connect“ response) — “credentials:write“ alone must
+// not read arbitrary sessions' review data. Missing session and token
+// mismatch both surface as 403, matching “/status“ (no session-id
+// enumeration oracle).
+//
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /connect-sessions/{session_id} (the `GetConnectSession` operationId).
-func (c *ClientWithResponses) GetConnectSessionWithResponse(ctx context.Context, sessionId string, reqEditors ...RequestEditorFn) (*GetConnectSessionHTTPResp, error) {
-	rsp, err := c.GetConnectSession(ctx, sessionId, reqEditors...)
+func (c *ClientWithResponses) GetConnectSessionWithResponse(ctx context.Context, sessionId string, params *GetConnectSessionParams, reqEditors ...RequestEditorFn) (*GetConnectSessionHTTPResp, error) {
+	rsp, err := c.GetConnectSession(ctx, sessionId, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -41605,11 +41696,17 @@ func (c *ClientWithResponses) CancelConnectSessionWithResponse(ctx context.Conte
 //
 // Called by the review page after the human confirms selections.
 //
+// Shares the “:connect“ per-actor rate bucket — this is the endpoint
+// that actually fires the vendor's device-authorization call, and a
+// failed “begin“ leaves the session retryable, so it must not be
+// free to hammer during a vendor incident. Gated by “poll_token“
+// like the review read (403 on mismatch or missing session).
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /connect-sessions/{session_id}:confirm (the `ConfirmConnectSession` operationId).
-func (c *ClientWithResponses) ConfirmConnectSessionWithBodyWithResponse(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ConfirmConnectSessionHTTPResp, error) {
-	rsp, err := c.ConfirmConnectSessionWithBody(ctx, sessionId, contentType, body, reqEditors...)
+func (c *ClientWithResponses) ConfirmConnectSessionWithBodyWithResponse(ctx context.Context, sessionId string, params *ConfirmConnectSessionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ConfirmConnectSessionHTTPResp, error) {
+	rsp, err := c.ConfirmConnectSessionWithBody(ctx, sessionId, params, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -41620,11 +41717,17 @@ func (c *ClientWithResponses) ConfirmConnectSessionWithBodyWithResponse(ctx cont
 //
 // Called by the review page after the human confirms selections.
 //
+// Shares the “:connect“ per-actor rate bucket — this is the endpoint
+// that actually fires the vendor's device-authorization call, and a
+// failed “begin“ leaves the session retryable, so it must not be
+// free to hammer during a vendor incident. Gated by “poll_token“
+// like the review read (403 on mismatch or missing session).
+//
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /connect-sessions/{session_id}:confirm (the `ConfirmConnectSession` operationId).
-func (c *ClientWithResponses) ConfirmConnectSessionWithResponse(ctx context.Context, sessionId string, body ConfirmConnectSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*ConfirmConnectSessionHTTPResp, error) {
-	rsp, err := c.ConfirmConnectSession(ctx, sessionId, body, reqEditors...)
+func (c *ClientWithResponses) ConfirmConnectSessionWithResponse(ctx context.Context, sessionId string, params *ConfirmConnectSessionParams, body ConfirmConnectSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*ConfirmConnectSessionHTTPResp, error) {
+	rsp, err := c.ConfirmConnectSession(ctx, sessionId, params, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -44144,7 +44247,8 @@ func (c *ClientWithResponses) ListVendorsWithResponse(ctx context.Context, reqEd
 // Full auth capabilities for one vendor — flows, scopes, classifications.
 //
 // Never returns client_secret (authorization-code flow's secret is stripped
-// at response build time).
+// at response build time). “UnknownVendorError“ maps to a 404 problem
+// detail via the handler registered in “control/web/app.py“.
 //
 // Returns a wrapper object for the known response body format(s).
 //
