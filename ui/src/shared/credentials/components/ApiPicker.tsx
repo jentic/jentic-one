@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { motion, type Variants } from 'framer-motion';
-import { ChevronRight, Loader2, PencilLine, Search, SearchX, Sparkles } from 'lucide-react';
+import { Check, ChevronRight, Loader2, PencilLine, Search, SearchX, Sparkles } from 'lucide-react';
 import { AgentBadge, Badge, EmptyState, ErrorAlert, Input, LoadingState } from '@/shared/ui';
 import { useDebouncedValue } from '@/shared/hooks';
 import { apiRefDisplayName } from '@/shared/lib';
+import { cn } from '@/shared/lib/utils';
+import { apiRefKey } from '@/shared/credentials/lib/apiIdentity';
 import {
 	useApis,
 	useCatalog,
@@ -13,8 +15,9 @@ import {
 } from '@/shared/credentials/api';
 
 /**
- * Step 1 of the guided add-credential flow — a debounced search over the
- * combined "workspace + public catalog" API surface.
+ * A debounced search over the combined "workspace + public catalog" API
+ * surface. Used single-select by the guided add-credential flow (a pick is the
+ * commit) and multi-select by the agents surface's Add-APIs tray.
  *
  * Self-contained: owns its own input state, debounce, autofocus, and data
  * fetching. Parents only handle `onSelect` and the "Enter manually" escape.
@@ -26,9 +29,29 @@ import {
  *    types something (the catalog manifest is 10k+ entries).
  */
 export interface ApiPickerProps {
+	/**
+	 * A row was activated. In single-select this is the commit; in multi-select
+	 * (see {@link ApiPickerProps.selectedKeys}) it means "toggle this row".
+	 */
 	onSelect: (api: SelectedApi) => void;
-	/** Escape hatch — drop into the legacy free-text API reference form. */
-	onManualEntry: () => void;
+	/** Escape hatch — drop into the legacy free-text API reference form.
+	 *  Omit to hide the affordance (the tray offers spec upload instead). */
+	onManualEntry?: () => void;
+	/**
+	 * Multi-select mode: the `apiRefKey`s currently picked. Passing this (even
+	 * empty) switches rows from drill-in buttons to checkboxes.
+	 */
+	selectedKeys?: ReadonlySet<string>;
+	/** Rows that cannot be picked, by `apiRefKey`. */
+	disabledKeys?: ReadonlySet<string>;
+	/** Short badge explaining why a `disabledKeys` row is out (e.g. "Already added"). */
+	disabledLabel?: string;
+	/**
+	 * Rendered in the no-results state — the one moment the operator has proved
+	 * the API they want isn't here. The tray passes its spec upload (D6), which
+	 * turns a dead end into the next step.
+	 */
+	emptyAction?: ReactNode;
 }
 
 /** Stagger the result rows in so a fresh search feels responsive, not janky. */
@@ -108,7 +131,14 @@ function catalogToSelected(entry: CatalogEntryResponse): SelectedApi {
 	};
 }
 
-export function ApiPicker({ onSelect, onManualEntry }: ApiPickerProps) {
+export function ApiPicker({
+	onSelect,
+	onManualEntry,
+	selectedKeys,
+	disabledKeys,
+	disabledLabel,
+	emptyAction,
+}: ApiPickerProps) {
 	const [query, setQuery] = useState('');
 	const debouncedQuery = useDebouncedValue(query, 250);
 	const inputRef = useRef<HTMLInputElement>(null);
@@ -178,6 +208,12 @@ export function ApiPicker({ onSelect, onManualEntry }: ApiPickerProps) {
 		catalogRows.length === 0;
 	const isInitialEmpty = !showLoading && !debouncedQuery && localRows.length === 0 && !error;
 
+	// Presence — not emptiness — is what switches the rows into checkbox mode,
+	// so a tray with nothing picked yet still renders checkboxes.
+	const selection: RowSelection | undefined = selectedKeys
+		? { selectedKeys, disabledKeys, disabledLabel }
+		: undefined;
+
 	return (
 		<div className="space-y-4">
 			<div className="flex items-center gap-2">
@@ -195,14 +231,16 @@ export function ApiPicker({ onSelect, onManualEntry }: ApiPickerProps) {
 						<Loader2 className="text-muted-foreground absolute top-1/2 right-3 h-4 w-4 -translate-y-1/2 animate-spin" />
 					)}
 				</div>
-				<button
-					type="button"
-					onClick={onManualEntry}
-					className="text-muted-foreground hover:text-foreground hover:bg-muted/60 inline-flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs transition-colors"
-				>
-					<PencilLine className="h-3.5 w-3.5" />
-					Enter manually
-				</button>
+				{onManualEntry && (
+					<button
+						type="button"
+						onClick={onManualEntry}
+						className="text-muted-foreground hover:text-foreground hover:bg-muted/60 inline-flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs transition-colors"
+					>
+						<PencilLine className="h-3.5 w-3.5" />
+						Enter manually
+					</button>
+				)}
 			</div>
 
 			{error && <ErrorAlert message={error} />}
@@ -223,7 +261,7 @@ export function ApiPicker({ onSelect, onManualEntry }: ApiPickerProps) {
 								key={`${row.api.vendor}/${row.api.name}/${row.api.version}`}
 								variants={ROW_VARIANTS}
 							>
-								<LocalApiRow row={row} onSelect={onSelect} />
+								<LocalApiRow row={row} onSelect={onSelect} selection={selection} />
 							</motion.li>
 						))}
 					</motion.ul>
@@ -237,8 +275,11 @@ export function ApiPicker({ onSelect, onManualEntry }: ApiPickerProps) {
 					</SectionHeading>
 					{localRows.length === 0 && (
 						<p className="text-muted-foreground/80 mb-2 text-xs">
-							Picking a catalog API imports it into your workspace as part of saving
-							this credential.
+							{/* Multi-select hosts save no credential here, and they
+							    tally the import count themselves. */}
+							{selection
+								? 'Picking a catalog API imports it into your workspace.'
+								: 'Picking a catalog API imports it into your workspace as part of saving this credential.'}
 						</p>
 					)}
 					<motion.ul
@@ -249,7 +290,11 @@ export function ApiPicker({ onSelect, onManualEntry }: ApiPickerProps) {
 					>
 						{catalogRows.slice(0, 20).map((entry) => (
 							<motion.li key={entry.api_id} variants={ROW_VARIANTS}>
-								<CatalogRow entry={entry} onSelect={onSelect} />
+								<CatalogRow
+									entry={entry}
+									onSelect={onSelect}
+									selection={selection}
+								/>
 							</motion.li>
 						))}
 					</motion.ul>
@@ -260,7 +305,17 @@ export function ApiPicker({ onSelect, onManualEntry }: ApiPickerProps) {
 				<EmptyState
 					icon={<SearchX className="h-8 w-8" />}
 					title="No APIs found"
-					description={`Nothing matched "${debouncedQuery}". Try a different search, or enter an API manually.`}
+					// Only offer what this host actually has: a picker without
+					// manual entry and without an upload can only suggest a
+					// different search, and promising either would be a lie.
+					description={`Nothing matched "${debouncedQuery}". Try a different search${
+						emptyAction
+							? ', or add it from its OpenAPI spec.'
+							: onManualEntry
+								? ', or enter an API manually.'
+								: '.'
+					}`}
+					action={emptyAction}
 				/>
 			)}
 
@@ -291,83 +346,159 @@ function SectionHeading({ id, children }: { id: string; children: React.ReactNod
 	);
 }
 
-function LocalApiRow({
-	row,
+/** Multi-select wiring, threaded from the props of the same name. */
+interface RowSelection {
+	selectedKeys: ReadonlySet<string>;
+	disabledKeys?: ReadonlySet<string>;
+	disabledLabel?: string;
+}
+
+/**
+ * One result row. Single-select rows are drill-in buttons; multi-select rows
+ * ARE the checkbox — `role="checkbox"` on the row itself, because the row owns
+ * the click and nesting the `Checkbox` primitive would put a `<button>` inside
+ * a `<button>`. Hence the presentational tick below rather than the primitive.
+ */
+function PickerRow({
+	api,
+	badgeKey,
+	meta,
+	trailing,
+	source,
 	onSelect,
+	selection,
 }: {
-	row: ApiResponse;
+	api: SelectedApi;
+	badgeKey: string;
+	/** The machine-identity line under the title. */
+	meta: ReactNode;
+	/** Row-specific trailing content (auth badges, "Imported"). */
+	trailing?: ReactNode;
+	source: 'local' | 'catalog';
 	onSelect: (api: SelectedApi) => void;
+	selection?: RowSelection;
 }) {
-	const selected = localToSelected(row);
-	const badgeKey = `${selected.vendor}/${selected.name}`;
+	const key = apiRefKey(api);
+	const checked = selection ? selection.selectedKeys.has(key) : undefined;
+	const blocked = selection?.disabledKeys?.has(key) ?? false;
 	return (
 		<button
 			type="button"
-			onClick={(): void => onSelect(selected)}
+			role={selection ? 'checkbox' : undefined}
+			aria-checked={selection ? checked : undefined}
+			disabled={blocked}
+			onClick={(): void => onSelect(api)}
 			data-testid="picker-row"
-			data-source="local"
-			className="group hover:border-primary/50 bg-background hover:bg-muted/40 border-border flex w-full items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition-all hover:shadow-sm"
+			data-source={source}
+			className={cn(
+				'group border-border bg-background flex w-full items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition-all',
+				blocked
+					? 'cursor-not-allowed opacity-60'
+					: 'hover:border-primary/50 hover:bg-muted/40 hover:shadow-sm',
+				checked && 'border-primary/60 bg-primary/5',
+			)}
 		>
-			<AgentBadge id={badgeKey} name={selected.label} kind="API" size="sm" />
+			{selection && <TickBox checked={!!checked} />}
+			<AgentBadge id={badgeKey} name={api.label} kind="API" size="sm" />
 			<div className="min-w-0 flex-1">
 				<span className="text-foreground block truncate text-sm font-medium">
-					{selected.label}
+					{api.label}
 				</span>
-				<p className="text-muted-foreground mt-0.5 truncate font-mono text-xs">
-					{selected.vendor}/{selected.name}@{selected.version}
-				</p>
+				<p className="text-muted-foreground mt-0.5 truncate font-mono text-xs">{meta}</p>
 			</div>
-			{selected.securitySchemeTypes && selected.securitySchemeTypes.length > 0 && (
-				<div className="flex shrink-0 gap-1">
-					{selected.securitySchemeTypes.slice(0, 2).map((t) => (
-						<Badge key={t} variant="default" className="text-[10px]">
-							{prettySchemeType(t)}
-						</Badge>
-					))}
-				</div>
+			{blocked && selection?.disabledLabel ? (
+				<Badge variant="default" className="shrink-0 text-[10px]">
+					{selection.disabledLabel}
+				</Badge>
+			) : (
+				trailing
 			)}
-			<ChevronRight className="text-muted-foreground group-hover:text-foreground h-4 w-4 shrink-0 transition-colors" />
+			{!selection && (
+				<ChevronRight className="text-muted-foreground group-hover:text-foreground h-4 w-4 shrink-0 transition-colors" />
+			)}
 		</button>
+	);
+}
+
+/** The tick, drawn to match the `Checkbox` primitive's box. */
+function TickBox({ checked }: { checked: boolean }) {
+	return (
+		<span
+			aria-hidden="true"
+			className={cn(
+				'flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors',
+				checked ? 'border-primary bg-primary' : 'border-border border-2',
+			)}
+		>
+			{checked && <Check className="text-primary-foreground h-3 w-3" />}
+		</span>
+	);
+}
+
+function LocalApiRow({
+	row,
+	onSelect,
+	selection,
+}: {
+	row: ApiResponse;
+	onSelect: (api: SelectedApi) => void;
+	selection?: RowSelection;
+}) {
+	const api = localToSelected(row);
+	const schemes = api.securitySchemeTypes ?? [];
+	return (
+		<PickerRow
+			api={api}
+			badgeKey={`${api.vendor}/${api.name}`}
+			meta={`${api.vendor}/${api.name}@${api.version}`}
+			source="local"
+			onSelect={onSelect}
+			selection={selection}
+			trailing={
+				schemes.length > 0 && (
+					<div className="flex shrink-0 gap-1">
+						{schemes.slice(0, 2).map((t) => (
+							<Badge key={t} variant="default" className="text-[10px]">
+								{prettySchemeType(t)}
+							</Badge>
+						))}
+					</div>
+				)
+			}
+		/>
 	);
 }
 
 function CatalogRow({
 	entry,
 	onSelect,
+	selection,
 }: {
 	entry: CatalogEntryResponse;
 	onSelect: (api: SelectedApi) => void;
+	selection?: RowSelection;
 }) {
-	const selected = catalogToSelected(entry);
-	const badgeKey = `catalog:${selected.apiId ?? selected.label}`;
+	const api = catalogToSelected(entry);
 	return (
-		<button
-			type="button"
-			onClick={(): void => onSelect(selected)}
-			data-testid="picker-row"
-			data-source="catalog"
-			className="group hover:border-primary/50 bg-background hover:bg-muted/40 border-border flex w-full items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition-all hover:shadow-sm"
-		>
-			<AgentBadge id={badgeKey} name={selected.label} kind="API" size="sm" />
-			<div className="min-w-0 flex-1">
-				<span className="text-foreground block truncate text-sm font-medium">
-					{selected.label}
-				</span>
-				<p className="text-muted-foreground mt-0.5 truncate font-mono text-xs">
-					{/* The full machine identity (`nytimes.com/books`), not just the
-					    vendor: two entries whose sub-segments humanise identically must
-					    stay distinguishable, and the user can verify exactly which
-					    api_id a pick will import. */}
-					{selected.apiId}
-				</p>
-			</div>
-			{entry.registered && (
-				<Badge variant="success" className="shrink-0 text-[10px]">
-					Imported
-				</Badge>
-			)}
-			<ChevronRight className="text-muted-foreground group-hover:text-foreground h-4 w-4 shrink-0 transition-colors" />
-		</button>
+		<PickerRow
+			api={api}
+			badgeKey={`catalog:${api.apiId ?? api.label}`}
+			// The full machine identity (`nytimes.com/books`), not just the
+			// vendor: two entries whose sub-segments humanise identically must
+			// stay distinguishable, and the user can verify exactly which
+			// api_id a pick will import.
+			meta={api.apiId}
+			source="catalog"
+			onSelect={onSelect}
+			selection={selection}
+			trailing={
+				entry.registered && (
+					<Badge variant="success" className="shrink-0 text-[10px]">
+						Imported
+					</Badge>
+				)
+			}
+		/>
 	);
 }
 

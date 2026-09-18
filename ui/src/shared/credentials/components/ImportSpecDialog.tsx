@@ -1,6 +1,10 @@
 /**
  * ImportSpecDialog — register a new API by importing an OpenAPI spec.
  *
+ * Shared because uploading a spec belongs wherever a selected API is shown
+ * (D6): the Workspace page's own Import action, and the agents Add-APIs tray,
+ * where "the API I need isn't listed" is a dead end without it.
+ *
  * Scoped to **APIs only**
  * (no Arazzo/workflow kind — that's another module) and wired to jentic-one's
  * **async** import contract: `POST /apis` returns 202 + a job id, then the hook
@@ -29,9 +33,8 @@ import {
 } from 'lucide-react';
 import { Button, Dialog, Input, Textarea } from '@/shared/ui';
 import { cn } from '@/shared/lib/utils';
-import { OptionCardSelector } from '@/modules/workspace/components/OptionCardSelector';
-import { useImportSpec } from '@/modules/workspace/api';
-import type { ImportSource } from '@/modules/workspace/api';
+import { OptionCardSelector } from '@/shared/credentials/components/OptionCardSelector';
+import { useImportSpec, type ImportSource } from '@/shared/credentials/api';
 
 type InputMode = 'url' | 'paste' | 'file';
 
