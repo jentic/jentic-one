@@ -17,7 +17,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import { motion, useReducedMotion } from 'framer-motion';
-import { Archive, Ban, Bot, Clock, Plus, XCircle } from 'lucide-react';
+import { Archive, Ban, Bot, Clock, Plus, Power, XCircle } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { Button, Card, EmptyState, ErrorAlert, Skeleton } from '@/shared/ui';
 import { cn } from '@/shared/lib/utils';
@@ -377,13 +377,26 @@ export function FlatAgentsSection({ createOpen, setCreateOpen, filter }: FlatAge
 // Selected-agent panel — header, stat strip, non-active banner, tile grid
 // ---------------------------------------------------------------------------
 
-/** Copy for the non-active banner. Suspension stops traffic, not editing —
- * so the copy says "not serving traffic", never "read-only". */
-const NON_ACTIVE_COPY: Record<Exclude<ActorStatus, 'active'>, string> = {
-	pending: 'Waiting for approval — not serving traffic. Approve it to let it authenticate.',
-	disabled: 'Disabled — not serving traffic. Its APIs and credentials stay fully editable.',
-	rejected: 'Rejected — not serving traffic.',
-	archived: 'Archived — this agent is retired. Its bindings, grants and consents were swept.',
+/** Copy for the non-active banner: the state as a headline, what it means as a
+ * quiet second line. Suspension stops traffic, not editing — so the copy says
+ * "not serving traffic", never "read-only". */
+const NON_ACTIVE_COPY: Record<Exclude<ActorStatus, 'active'>, { title: string; detail: string }> = {
+	pending: {
+		title: 'Waiting for approval',
+		detail: 'Not serving traffic. Approve it to let it authenticate.',
+	},
+	disabled: {
+		title: 'Disabled',
+		detail: 'Not serving traffic. Its APIs and credentials stay fully editable.',
+	},
+	rejected: {
+		title: 'Rejected',
+		detail: 'Not serving traffic.',
+	},
+	archived: {
+		title: 'Archived',
+		detail: 'This agent is retired. Its bindings, grants and consents were swept.',
+	},
 };
 
 /**
@@ -392,30 +405,34 @@ const NON_ACTIVE_COPY: Record<Exclude<ActorStatus, 'active'>, string> = {
  * one that wants a decision, danger for the refusal, quiet grey for the two
  * that are simply parked. The copy above still says "not serving traffic",
  * never "read-only": the tint is about attention, not editability.
+ *
+ * The tint is carried by the icon's own chip rather than washed across the
+ * whole row, so the banner reads as a titled notice on the page surface
+ * instead of a coloured slab.
  */
 const NON_ACTIVE_BANNER: Record<
 	Exclude<ActorStatus, 'active'>,
-	{ Icon: LucideIcon; shell: string; icon: string }
+	{ Icon: LucideIcon; shell: string; chip: string }
 > = {
 	pending: {
 		Icon: Clock,
-		shell: 'border-warning/40 bg-warning/5',
-		icon: 'text-warning',
+		shell: 'border-warning/40 bg-warning/[0.04]',
+		chip: 'bg-warning/15 text-warning',
 	},
 	disabled: {
 		Icon: Ban,
-		shell: 'border-border bg-muted/50',
-		icon: 'text-muted-foreground',
+		shell: 'border-border bg-muted/40',
+		chip: 'bg-muted-foreground/15 text-muted-foreground',
 	},
 	rejected: {
 		Icon: XCircle,
-		shell: 'border-danger/40 bg-danger/5',
-		icon: 'text-danger',
+		shell: 'border-danger/40 bg-danger/[0.04]',
+		chip: 'bg-danger/15 text-danger',
 	},
 	archived: {
 		Icon: Archive,
 		shell: 'border-border/70 bg-muted/20',
-		icon: 'text-muted-foreground/70',
+		chip: 'bg-muted-foreground/10 text-muted-foreground/70',
 	},
 };
 
@@ -661,22 +678,39 @@ function SelectedAgentPanel({
 					role="status"
 					data-testid={`agent-state-banner-${agent.status}`}
 					className={cn(
-						'flex flex-wrap items-center gap-3 rounded-lg border px-4 py-3',
+						'flex flex-wrap items-center gap-x-3 gap-y-3 rounded-xl border p-3 sm:flex-nowrap',
 						banner.shell,
 					)}
 				>
-					<banner.Icon
-						className={cn('h-4 w-4 shrink-0', banner.icon)}
+					{/* The tint lives in the chip, which gives the icon a size worth
+					    seeing and keeps the row itself close to the page surface. */}
+					<span
 						aria-hidden="true"
-					/>
-					<p className="text-muted-foreground min-w-0 flex-1 text-sm">
-						{NON_ACTIVE_COPY[agent.status]}
-						{agent.status === 'rejected' && agent.denialReason && (
-							<> Reason: {agent.denialReason}</>
+						className={cn(
+							'grid h-8 w-8 shrink-0 place-items-center rounded-lg',
+							banner.chip,
 						)}
-					</p>
+					>
+						<banner.Icon className="h-4 w-4" />
+					</span>
+					<div className="min-w-0 flex-1 space-y-0.5">
+						<p className="text-foreground text-sm leading-tight font-medium">
+							{NON_ACTIVE_COPY[agent.status].title}
+						</p>
+						<p className="text-muted-foreground text-xs leading-snug">
+							{NON_ACTIVE_COPY[agent.status].detail}
+							{agent.status === 'rejected' && agent.denialReason && (
+								<> Reason: {agent.denialReason}</>
+							)}
+						</p>
+					</div>
 					{agent.status === 'pending' && (
-						<Button size="sm" loading={approvePending} onClick={onApprove}>
+						<Button
+							size="sm"
+							loading={approvePending}
+							onClick={onApprove}
+							className="shrink-0"
+						>
 							Approve
 						</Button>
 					)}
@@ -686,7 +720,9 @@ function SelectedAgentPanel({
 							variant="outline"
 							loading={enablePending}
 							onClick={onEnable}
+							className="shrink-0"
 						>
+							<Power className="h-3.5 w-3.5" />
 							Enable
 						</Button>
 					)}

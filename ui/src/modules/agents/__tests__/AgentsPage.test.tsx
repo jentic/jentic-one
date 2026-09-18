@@ -521,13 +521,15 @@ describe('AgentsPage — flat agents surface', () => {
 
 		expect(
 			await screen.findByText(
-				/Disabled — not serving traffic\. Its APIs and credentials stay fully editable\./,
+				/Not serving traffic\. Its APIs and credentials stay fully editable\./,
 			),
 		).toBeInTheDocument();
 
 		await user.click(screen.getByRole('button', { name: 'Enable' }));
 		await waitFor(() => {
-			expect(screen.queryByText(/Disabled — not serving traffic/)).not.toBeInTheDocument();
+			expect(
+				screen.queryByText(/Its APIs and credentials stay fully editable/),
+			).not.toBeInTheDocument();
 		});
 	});
 
@@ -537,7 +539,7 @@ describe('AgentsPage — flat agents surface', () => {
 		await screen.findAllByText('inbox-triage-bot');
 
 		expect(
-			await screen.findByText(/Waiting for approval — not serving traffic/),
+			await screen.findByText(/Not serving traffic\. Approve it to let it authenticate\./),
 		).toBeInTheDocument();
 		expect(await screen.findByRole('button', { name: 'Add APIs' })).toBeDisabled();
 		expect(screen.getByText('Approve this agent before giving it APIs.')).toBeInTheDocument();
@@ -584,7 +586,11 @@ describe('AgentsPage — flat agents surface', () => {
 		renderPage();
 		await screen.findByRole('tab', { name: /retired-bot/ });
 
-		expect(await screen.findByText(/Archived — this agent is retired/)).toBeInTheDocument();
+		expect(
+			await screen.findByText(
+				/This agent is retired\. Its bindings, grants and consents were swept\./,
+			),
+		).toBeInTheDocument();
 		expect(
 			await screen.findByText(
 				'Archiving swept its credential bindings; an archived agent keeps no access.',
@@ -610,7 +616,7 @@ describe('AgentsPage — flat agents surface', () => {
 		expect(stripTab('inbox-triage-bot')).toHaveAttribute('aria-selected', 'true');
 		// D7: the pending agent's panel shows Add-APIs disabled with Approve adjacent.
 		expect(
-			await screen.findByText(/Waiting for approval — not serving traffic/),
+			await screen.findByText(/Not serving traffic\. Approve it to let it authenticate\./),
 		).toBeInTheDocument();
 		expect(await screen.findByRole('button', { name: 'Add APIs' })).toBeDisabled();
 		expect(screen.getByRole('button', { name: 'Approve' })).toBeEnabled();
@@ -1061,7 +1067,7 @@ describe('AgentsPage — flat agents surface', () => {
 		);
 		// Select the OTHER pending agent; its panel owns a plain "Approve".
 		renderPage('/?agent=agnt_pending_2');
-		await screen.findByText(/Waiting for approval — not serving traffic/);
+		await screen.findByText(/Not serving traffic\. Approve it to let it authenticate\./);
 
 		await user.click(
 			within(await findApprovalBanner()).getByRole('button', {
