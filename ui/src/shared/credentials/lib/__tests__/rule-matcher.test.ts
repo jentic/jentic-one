@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { evaluateRules } from '@/shared/credentials/lib/rule-matcher';
 import type { PermissionRule } from '@/shared/credentials/api/vendors-types';
-import fixture from '../../../../../../tests/fixtures/rule-matcher-parity.json';
+import fixture from './rule-matcher-parity.json';
 
 /**
  * Parity test — pins that the TS matcher agrees with the Python side.
- * The shared fixture at ``tests/fixtures/rule-matcher-parity.json`` is
+ * The shared fixture (vendored here from ``tests/fixtures/rule-matcher-parity.json``;
+ * the Docker UI build copies only ``ui/``, so no cross-boundary import) is
  * consumed by both. Any divergence fails CI in both places. See the
  * Python test at ``tests/unit/shared/test_rule_matcher_parity.py`` for
  * the sibling side.

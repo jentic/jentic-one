@@ -29,12 +29,34 @@ from jentic_one.broker.repos.rule_evaluator import (
 )
 from jentic_one.shared.permissions.matching import compile_matcher
 
-_FIXTURE = Path(__file__).resolve().parents[3] / "tests" / "fixtures" / "rule-matcher-parity.json"
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_FIXTURE = _REPO_ROOT / "tests" / "fixtures" / "rule-matcher-parity.json"
+# The TS test reads a vendored copy inside ui/ — the UI Docker build copies
+# only ui/, so it cannot import across the module boundary. Byte-identity is
+# enforced below so the two copies can't drift.
+_UI_VENDORED_FIXTURE = (
+    _REPO_ROOT
+    / "ui"
+    / "src"
+    / "shared"
+    / "credentials"
+    / "lib"
+    / "__tests__"
+    / "rule-matcher-parity.json"
+)
 
 
 def _load_cases() -> list[dict[str, Any]]:
     data = json.loads(_FIXTURE.read_text(encoding="utf-8"))
     return list(data["cases"])
+
+
+def test_ui_vendored_fixture_matches_source() -> None:
+    assert _UI_VENDORED_FIXTURE.read_bytes() == _FIXTURE.read_bytes(), (
+        "The vendored TS parity fixture drifted from tests/fixtures/"
+        "rule-matcher-parity.json. Edit the source fixture and copy it over "
+        "ui/src/shared/credentials/lib/__tests__/rule-matcher-parity.json."
+    )
 
 
 def _compile(rule: dict[str, Any]) -> CompiledRule:
