@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { Plus, X } from 'lucide-react';
 import { Button, Input, Select } from '@/shared/ui';
 import { ruleSummary } from '@/shared/lib';
 import {
@@ -20,6 +21,11 @@ import { toDisplayRules } from '@/modules/agents/components/detail/shared';
  *
  * The verdict evaluates the SAVED rules (what the broker sees at request
  * time), not the editor's unsaved draft — the caption says so.
+ *
+ * One row does the asking (method · path · Test) so the block costs the sidebar
+ * as little height as possible; the optional operation id is a disclosure,
+ * because most bindings grant by path. Collapsing it clears the value — a
+ * hidden field must never influence a verdict.
  */
 
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'] as const;
@@ -29,6 +35,12 @@ export interface AgentBindingRuleTesterProps {
 	credentialId: string;
 	/** The binding's SAVED rules (system rows included), for naming the match. */
 	savedRules: BindingPermissionRule[];
+	/**
+	 * Disable the tester while the host's rule editor holds an unsaved draft —
+	 * the dry-run evaluates the SAVED rules, so a verdict against a stale rule
+	 * set would mislead. The caption names the reason.
+	 */
+	disabled?: boolean;
 }
 
 /** The matched rule resolved to the editor's visible numbering, when possible. */
@@ -54,6 +66,27 @@ function resolveMatch(
 	};
 }
 
+/** Shared chip shell so allow and deny read as the same kind of answer. */
+function VerdictChip({ allowed, children }: { allowed: boolean; children: React.ReactNode }) {
+	return (
+		<p
+			className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs"
+			data-testid="rule-verdict"
+		>
+			<span
+				className={
+					allowed
+						? 'bg-success/15 text-success rounded-md px-2 py-0.5 text-xs font-semibold'
+						: 'bg-danger/15 text-danger rounded-md px-2 py-0.5 text-xs font-semibold'
+				}
+			>
+				{allowed ? 'Allowed' : 'Denied'}
+			</span>{' '}
+			<span className="text-muted-foreground min-w-0">{children}</span>
+		</p>
+	);
+}
+
 function Verdict({
 	result,
 	savedRules,
@@ -62,38 +95,25 @@ function Verdict({
 	savedRules: BindingPermissionRule[];
 }) {
 	if (!result.matched) {
-		return (
-			<p className="text-danger flex items-center gap-1.5 text-xs" data-testid="rule-verdict">
-				<span className="bg-danger h-2 w-2 shrink-0 rounded-full" aria-hidden="true" />
-				Denied — no rule matched (default deny)
-			</p>
-		);
+		return <VerdictChip allowed={false}>— no rule matched (default deny)</VerdictChip>;
 	}
 	const allowed = result.allowed;
 	const { anchor, summary } = resolveMatch(result, savedRules);
 	const effectWord = allowed ? 'allow' : 'deny';
 	return (
-		<p
-			className={`flex flex-wrap items-center gap-1.5 text-xs ${allowed ? 'text-success' : 'text-danger'}`}
-			data-testid="rule-verdict"
-		>
-			<span
-				className={`h-2 w-2 shrink-0 rounded-full ${allowed ? 'bg-success' : 'bg-danger'}`}
-				aria-hidden="true"
-			/>
-			{allowed ? 'Allowed' : 'Denied'}
+		<VerdictChip allowed={allowed}>
 			{result.is_system ? (
-				<> — matched a platform system safety rule</>
+				<>— matched a platform system safety rule</>
 			) : anchor != null ? (
 				<>
-					{' '}
-					— matched rule <span className="font-mono font-semibold">{anchor}</span>
-					{summary ? <span className="text-muted-foreground">· {summary}</span> : null}
+					— matched rule{' '}
+					<span className="text-foreground font-mono font-semibold">{anchor}</span>
+					{summary ? <> · {summary}</> : null}
 				</>
 			) : (
-				<> — matched a {effectWord} rule on this binding</>
+				<>— matched a {effectWord} rule on this binding</>
 			)}
-		</p>
+		</VerdictChip>
 	);
 }
 
@@ -101,13 +121,42 @@ export function AgentBindingRuleTester({
 	agentId,
 	credentialId,
 	savedRules,
+	disabled = false,
 }: AgentBindingRuleTesterProps) {
 	const [method, setMethod] = useState<string>('GET');
 	const [path, setPath] = useState('');
 	const [operationId, setOperationId] = useState('');
+	// Most bindings grant by path, so the operation id is a disclosure. It opens
+	// itself whenever it holds a value, and closing it clears that value.
+	const [operationOpen, setOperationOpen] = useState(false);
 	const test = useTestAgentBindingPermissions(agentId, credentialId);
+	const { reset: resetVerdict } = test;
+
+	// A verdict speaks only for the rules it was run against. Always-mounted
+	// hosts (the API access sidebar) keep this tester alive across saves, so
+	// without a reset the PRE-save verdict would reappear when `disabled`
+	// flips back and `resolveMatch` would re-anchor its `rule_index` against
+	// the NEW savedRules — naming the wrong rule or claiming an outcome the
+	// new rules would reverse. Design choice (belt and braces): drop the
+	// verdict (a) whenever the saved rules change CONTENT — compared by
+	// serialized value, not identity, so a refetch returning identical rules
+	// keeps the verdict — and (b) when `disabled` transitions true→false,
+	// i.e. an edit session ended (covers a discard too: conservatively
+	// cheap, the operator can re-run). The dry-run itself never changes the
+	// saved rules or `disabled`, so a fresh verdict is never cleared by its
+	// own arrival.
+	const savedRulesFingerprint = JSON.stringify(savedRules);
+	const verdictContext = useRef({ savedRulesFingerprint, disabled });
+	useEffect(() => {
+		const prev = verdictContext.current;
+		verdictContext.current = { savedRulesFingerprint, disabled };
+		if (savedRulesFingerprint !== prev.savedRulesFingerprint || (prev.disabled && !disabled)) {
+			resetVerdict();
+		}
+	}, [savedRulesFingerprint, disabled, resetVerdict]);
 
 	const run = () => {
+		if (disabled) return;
 		const trimmed = path.trim();
 		if (!trimmed) return;
 		const op = operationId.trim();
@@ -116,13 +165,15 @@ export function AgentBindingRuleTester({
 
 	return (
 		<div className="border-border/60 bg-card space-y-2 rounded-lg border border-dashed p-3">
-			<div className="flex flex-wrap items-center gap-2">
-				<div className="w-28 shrink-0">
+			{/* The whole question on one line: what method, what path, go. */}
+			<div className="flex items-center gap-2">
+				<div className="w-24 shrink-0">
 					<Select
 						aria-label="HTTP method"
 						value={method}
 						onChange={(e) => setMethod(e.target.value)}
-						className="text-xs"
+						className="px-2 py-1.5 text-xs"
+						disabled={disabled}
 					>
 						{METHODS.map((m) => (
 							<option key={m} value={m}>
@@ -131,28 +182,14 @@ export function AgentBindingRuleTester({
 						))}
 					</Select>
 				</div>
-				<div className="min-w-40 flex-1">
+				<div className="min-w-0 flex-1">
 					<Input
 						aria-label="Request path"
 						value={path}
 						onChange={(e) => setPath(e.target.value)}
 						placeholder="/repos/acme/site/issues"
-						className="font-mono text-xs"
-						onKeyDown={(e) => {
-							if (e.key === 'Enter' && !test.isPending) run();
-						}}
-					/>
-				</div>
-				{/* Operation-scoped rules only fire when the request carries an
-				    operation id — without this input, a binding whose grants are
-				    operation-based would always dry-run to default-deny. */}
-				<div className="w-44 shrink-0">
-					<Input
-						aria-label="Operation ID (optional)"
-						value={operationId}
-						onChange={(e) => setOperationId(e.target.value)}
-						placeholder="operationId (optional)"
-						className="font-mono text-xs"
+						className="px-2.5 py-1.5 font-mono text-xs"
+						disabled={disabled}
 						onKeyDown={(e) => {
 							if (e.key === 'Enter' && !test.isPending) run();
 						}}
@@ -163,22 +200,79 @@ export function AgentBindingRuleTester({
 					size="sm"
 					onClick={run}
 					loading={test.isPending}
-					disabled={!path.trim()}
+					disabled={disabled || !path.trim()}
 				>
 					Test
 				</Button>
 			</div>
+
+			{/* Operation-scoped rules only fire when the request carries an
+			    operation id — without this input, a binding whose grants are
+			    operation-based would always dry-run to default-deny. */}
+			{operationOpen && (
+				<div className="flex items-center gap-2">
+					<div className="min-w-0 flex-1">
+						<Input
+							aria-label="Operation ID (optional)"
+							value={operationId}
+							onChange={(e) => setOperationId(e.target.value)}
+							placeholder="operationId"
+							className="px-2.5 py-1.5 font-mono text-xs"
+							disabled={disabled}
+							autoFocus
+							onKeyDown={(e) => {
+								if (e.key === 'Enter' && !test.isPending) run();
+							}}
+						/>
+					</div>
+					<Button
+						variant="ghost"
+						size="icon"
+						aria-label="Remove operation id"
+						disabled={disabled}
+						onClick={() => {
+							// Clear as well as hide: a value the operator can no
+							// longer see must not change the next verdict.
+							setOperationId('');
+							setOperationOpen(false);
+						}}
+					>
+						<X className="h-4 w-4" />
+					</Button>
+				</div>
+			)}
+
 			{test.isError && (
 				<p className="text-danger text-xs">
 					{test.error instanceof Error ? test.error.message : 'Test failed.'}
 				</p>
 			)}
-			{test.data && <Verdict result={test.data} savedRules={savedRules} />}
-			<p className="text-muted-foreground text-xs">
-				Dry-runs the broker's decision against the <strong>saved</strong> rules — save your
-				draft first, then verify here. Rule numbers match the editor above. Nothing is sent
-				upstream.
-			</p>
+			{!disabled && test.data && <Verdict result={test.data} savedRules={savedRules} />}
+
+			<div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+				{disabled ? (
+					<p className="text-warning text-xs" data-testid="rule-tester-disabled-note">
+						Paused while the editor holds unsaved changes — the dry-run evaluates the{' '}
+						<strong>saved</strong> rules only.
+					</p>
+				) : (
+					<p className="text-muted-foreground text-xs">
+						Dry-runs the broker's decision against the <strong>saved</strong> rules.
+						Nothing is sent upstream.
+					</p>
+				)}
+				{!operationOpen && (
+					<Button
+						variant="ghost"
+						size="sm"
+						disabled={disabled}
+						onClick={() => setOperationOpen(true)}
+						className="text-muted-foreground hover:text-foreground h-auto shrink-0 px-1.5 py-0.5 text-xs"
+					>
+						<Plus className="h-3 w-3" /> operation id
+					</Button>
+				)}
+			</div>
 		</div>
 	);
 }
