@@ -310,7 +310,7 @@ describe('ApiSetupQueue — finishing a batch one API at a time', () => {
 		// The cost of closing is stated before it is paid.
 		expect(
 			screen.getByText(
-				/Closing keeps the APIs already added\. The remaining 2 will be waiting/,
+				/Closing keeps the APIs already added; the remaining 2 wait here for next time\./,
 			),
 		).toBeInTheDocument();
 

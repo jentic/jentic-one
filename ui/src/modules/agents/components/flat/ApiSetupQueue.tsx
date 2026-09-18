@@ -278,30 +278,51 @@ export function ApiSetupQueue({ open, agentId, agentName, items, onClose }: ApiS
 					/>
 				</div>
 
-				<footer className="border-border space-y-2 border-t px-5 py-3">
-					<p className="text-muted-foreground/90 text-xs">{QUEUE_RULES_NOTICE}</p>
-					<div className="flex items-center justify-between gap-3">
-						{/* Progress, not the outcome — the outcome is the done pane's
-						    job, and saying it twice makes neither authoritative. */}
-						<p className="text-muted-foreground text-xs" role="status">
-							{summary.total - summary.unfinished} of {summary.total} done
-						</p>
-						<Button
-							size="sm"
-							variant={summary.done ? 'primary' : 'ghost'}
-							onClick={close}
-						>
-							{summary.done ? 'Done' : 'Close for now'}
-						</Button>
+				{/* A real footer: a progress rail flush with its top edge, then one
+				    row that pairs the count with the only verb here, then one note
+				    line. Every line starts on the same gutter as the body above. */}
+				<footer className="border-border bg-card/60 border-t">
+					<div className="bg-muted h-0.5 w-full" aria-hidden="true">
+						<div
+							className="bg-primary h-full transition-[width] duration-300 ease-out"
+							style={{
+								width: `${summary.total === 0 ? 0 : ((summary.total - summary.unfinished) / summary.total) * 100}%`,
+							}}
+						/>
 					</div>
-					{!summary.done && (
-						// Say what closing costs, so it is a choice rather than a
-						// surprise: finished APIs stay, the rest is still owed.
-						<p className="text-muted-foreground/80 text-xs">
-							Closing keeps the APIs already added. The remaining {summary.unfinished}{' '}
-							will be waiting next time you add APIs.
+					<div className="space-y-1.5 px-5 py-3">
+						<div className="flex items-center justify-between gap-3">
+							{/* Progress, not the outcome — the outcome is the done pane's
+							    job, and saying it twice makes neither authoritative. */}
+							<p
+								className="text-foreground text-xs font-medium tabular-nums"
+								role="status"
+							>
+								{summary.total - summary.unfinished} of {summary.total} done
+							</p>
+							<Button
+								size="sm"
+								variant={summary.done ? 'primary' : 'outline'}
+								onClick={close}
+								className="shrink-0"
+							>
+								{summary.done ? 'Done' : 'Close for now'}
+							</Button>
+						</div>
+						{/* One note, not a stack of them: what an added API can do yet,
+						    and — while anything is unfinished — what closing costs, so
+						    it is a choice rather than a surprise. */}
+						<p className="text-muted-foreground/90 text-xs leading-snug">
+							{QUEUE_RULES_NOTICE}
+							{!summary.done && (
+								<>
+									{' '}
+									Closing keeps the APIs already added; the remaining{' '}
+									{summary.unfinished} wait here for next time.
+								</>
+							)}
 						</p>
-					)}
+					</div>
 				</footer>
 			</div>
 
