@@ -29,6 +29,7 @@ from jentic_one.control.repos.effects_repo import EffectsRepository
 from jentic_one.control.services.credentials.state import consume_callback_state
 from jentic_one.control.services.integrations import identity_echo
 from jentic_one.control.services.integrations.errors import (
+    AgentNotFoundError,
     ConfirmationForbiddenError,
     CredentialMissingCreatorError,
     InvalidPollTokenError,
@@ -48,9 +49,11 @@ from jentic_one.control.services.vendors.service import (
     ResolvedScope,
     VendorRegistryService,
 )
+from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.catalog import CatalogAutoImportProtocol
 from jentic_one.shared.context import Context
 from jentic_one.shared.metrics import get_meter
+from jentic_one.shared.models import ActorType
 from jentic_one.shared.models.api_identity import canonical_credential_scope
 
 _logger = structlog.get_logger(__name__)
@@ -192,15 +195,14 @@ def _require_state(row: ConnectSession, *, expected: str, action: str) -> None:
         raise InvalidStateTransitionError(row.id, row.state, action)
 
 
-def _forbid_self_confirm(row: ConnectSession, caller_actor_type: str) -> None:
+def _forbid_self_confirm(row: ConnectSession, caller_actor_type: ActorType) -> None:
     """Agent-initiated sessions must be confirmed by a human on the review page.
 
-    `caller_actor_type` is one of AGENT/USER/SERVICE_ACCOUNT — derived from the
-    caller's identity, not from the payload.
+    ``caller_actor_type`` comes from the caller's verified identity, not from
+    the payload.
     """
     initiator_is_agent = row.initiator_actor_id.startswith("agnt_")
-    caller_is_agent = caller_actor_type.upper() == "AGENT"
-    if initiator_is_agent and caller_is_agent:
+    if initiator_is_agent and caller_actor_type == ActorType.AGENT:
         raise ConfirmationForbiddenError("agent-initiated sessions cannot be confirmed by an agent")
 
 
@@ -382,8 +384,15 @@ class ConnectSessionService:
 
     # ---- review data ------------------------------------------------------
 
-    async def get_review_data(self, session_id: str) -> ReviewData:
+    async def get_review_data(self, session_id: str, *, poll_token: str) -> ReviewData:
         """Return everything the review page needs to render.
+
+        Gated by the session's ``poll_token`` — session ids travel in
+        approval URLs, so they are not secrets, and the review payload
+        (vendor, scopes, requested rules, initiator) must not be readable
+        by any actor that merely holds ``credentials:write``. Missing
+        session and token mismatch surface identically (mirrors
+        ``get_status`` — no session-id enumeration oracle).
 
         The scope list is the union of the vendor's catalog with the
         initiator's as-requested list — flagged so the UI can highlight
@@ -394,7 +403,8 @@ class ConnectSessionService:
         async with self._ctx.control_db.session() as session:
             row = await ConnectSessionRepository.get_by_id(session, session_id)
             if row is None:
-                raise SessionNotFoundError(session_id)
+                raise InvalidPollTokenError("invalid poll_token")
+            _verify_poll_token(row, poll_token)
             # Pull the credential's api coords so the SPA can call
             # ``/apis/{vendor}/{name}/{version}/operations`` for the
             # rules-page preview. ``api_version`` is nullable — the
@@ -434,6 +444,7 @@ class ConnectSessionService:
         self,
         session_id: str,
         *,
+        poll_token: str,
         confirmed_scopes: list[str],
         # Rules arrive already-shaped as ``AgentPermissionRule`` dicts
         # (``{effect, methods, path, match_mode, operations, comment}``) —
@@ -445,30 +456,25 @@ class ConnectSessionService:
         # agent). Ignored when the session already carries an agent_id
         # — a user cannot silently re-target an existing session.
         agent_id: str | None = None,
-        caller_actor_id: str,
-        caller_actor_type: str,
+        identity: Identity,
     ) -> ConfirmResult:
-        """Confirm scopes + permissions and kick off the vendor-side flow."""
+        """Confirm scopes + permissions and kick off the vendor-side flow.
+
+        Gated by the ``poll_token`` capability like ``get_review_data`` —
+        without it, any actor holding ``credentials:write`` could confirm
+        any session (ids travel in approval URLs) and bind an arbitrary
+        agent. Missing session and token mismatch surface identically.
+        """
         async with self._ctx.control_db.session() as read_session:
             row = await ConnectSessionRepository.get_by_id(read_session, session_id)
-            if row is None:
-                raise SessionNotFoundError(session_id)
+        if row is None:
+            raise InvalidPollTokenError("invalid poll_token")
+        _verify_poll_token(row, poll_token)
 
-        _forbid_self_confirm(row, caller_actor_type)
+        _forbid_self_confirm(row, identity.actor_type)
+        # Friendly pre-check for the common stale-page case; the CAS below
+        # is the authoritative guard against a concurrent confirm.
         _require_state(row, expected="created", action="confirm")
-
-        # Late-bind agent_id: user-initiated sessions are opened without
-        # a target and pick one on the rules-page Continue-click. The
-        # first winner sticks; subsequent ``:confirm`` calls (blocked by
-        # the state guard above) can't re-target. Downstream reads use
-        # ``effective_agent_id`` rather than ``row.agent_id`` so the
-        # binder + rules-write see the freshly-persisted value without
-        # another read round-trip.
-        effective_agent_id = row.agent_id
-        if row.agent_id is None and agent_id is not None:
-            async with self._ctx.control_db.transaction() as ag_session:
-                await ConnectSessionRepository.update_fields(ag_session, row.id, agent_id=agent_id)
-            effective_agent_id = agent_id
 
         flow = self._vendors.resolve_flow(row.vendor, row.resolved_flow)
         try:
@@ -481,11 +487,62 @@ class ConnectSessionService:
         if unknown:
             raise ScopeValidationError(unknown)
 
+        # Late-bind agent_id: user-initiated sessions are opened without
+        # a target and pick one on the rules-page Continue-click. The
+        # write rides the CAS below, so the first winner sticks
+        # atomically. Downstream reads use ``effective_agent_id`` rather
+        # than ``row.agent_id`` so the binder + rules-write see the
+        # freshly-persisted value without another read round-trip.
+        late_bound = row.agent_id is None and agent_id is not None
+        effective_agent_id = row.agent_id if row.agent_id is not None else agent_id
+
+        # The agent named on the session (agent-initiated) or in the
+        # payload (late-bind) has never been validated — it must exist
+        # and be governable by the confirming caller before any binding
+        # or rule write happens in its name.
+        if effective_agent_id is not None:
+            await self._require_agent_binding_allowed(effective_agent_id, identity)
+
+        # CAS ``created`` → ``polling`` BEFORE the vendor call: without
+        # it, two concurrent confirms both pass the stale read above and
+        # both fire the vendor's ``begin`` (TOCTOU). The loser sees
+        # rowcount 0 and gets the same 409 as the stale-page case.
+        cas_fields: dict[str, object] = {"agent_id": effective_agent_id} if late_bound else {}
+        async with self._ctx.control_db.transaction() as cas_session:
+            won = await ConnectSessionRepository.transition_state(
+                cas_session,
+                row.id,
+                to_state="polling",
+                from_states=("created",),
+                **cas_fields,
+            )
+        if not won:
+            async with self._ctx.control_db.session() as recheck_session:
+                current = await ConnectSessionRepository.get_by_id(recheck_session, row.id)
+            raise InvalidStateTransitionError(
+                row.id, current.state if current else "deleted", "confirm"
+            )
+
         # The handler owns the vendor conversation + any flow-specific
         # transient-state write (device_code + expires_at for RFC 8628; the
         # signed state token for auth-code). We only own the flow-agnostic
         # state machine + permission-rule capture below.
-        challenge = await handler.begin(row, flow=flow, confirmed_scopes=confirmed_scopes)
+        try:
+            challenge = await handler.begin(row, flow=flow, confirmed_scopes=confirmed_scopes)
+        except Exception:
+            # A vendor-side ``begin`` failure must leave the session
+            # retryable — roll the CAS back to ``created`` (undoing a
+            # late-bound agent too, so a retry can pick a different one).
+            revert_fields: dict[str, object] = {"agent_id": None} if late_bound else {}
+            async with self._ctx.control_db.transaction() as revert_session:
+                await ConnectSessionRepository.transition_state(
+                    revert_session,
+                    row.id,
+                    to_state="created",
+                    from_states=("polling",),
+                    **revert_fields,
+                )
+            raise
 
         async with self._ctx.control_db.transaction() as session:
             # Persist the approved rules as direct agent-credential binding
@@ -499,7 +556,7 @@ class ConnectSessionService:
                     effective_agent_id,
                     row.credential_id,
                     permission_rules,
-                    created_by=caller_actor_id,
+                    created_by=identity.sub,
                 )
             elif permission_rules:
                 # Operators reading this log line can spot approvals whose
@@ -512,7 +569,6 @@ class ConnectSessionService:
                     rules_count=len(permission_rules),
                     reason="no agent_id on session",
                 )
-            await ConnectSessionRepository.update_fields(session, row.id, state="polling")
 
         if effective_agent_id is not None:
             # Create the admin-DB binding row after the control commit
@@ -526,7 +582,7 @@ class ConnectSessionService:
                     agent_id=effective_agent_id,
                     credential_id=row.credential_id,
                     rule_set_id=None,
-                    created_by=caller_actor_id,
+                    created_by=identity.sub,
                 )
 
         _logger.info(
@@ -545,6 +601,28 @@ class ConnectSessionService:
                 poll_interval_seconds=challenge.poll_interval_seconds,
             )
         return AuthCodeConfirmResult(authorize_url=challenge.authorize_url)
+
+    async def _require_agent_binding_allowed(self, agent_id: str, identity: Identity) -> None:
+        """The target agent must exist and be governable by the confirming caller.
+
+        Cross-DB read (agents live in the admin DB) through the
+        ``EffectsRepository`` seam. Owner-or-admin mirrors the
+        query-scoping conventions: the confirm is about to write
+        ``agent_permission_rules`` and an admin-DB binding in this
+        agent's name, so the caller must own the agent or hold
+        ``org:admin``.
+        """
+        async with self._ctx.admin_db.session() as admin_session:
+            exists, owner_id = await EffectsRepository.get_agent_owner(admin_session, agent_id)
+        if not exists:
+            raise AgentNotFoundError(agent_id)
+        if "org:admin" in identity.permissions:
+            return
+        # An ownerless agent (nullable ``owner_id``) has no owner to match —
+        # only ``org:admin`` may bind in its name. Fail closed.
+        if owner_id is not None and identity.sub == owner_id:
+            return
+        raise ConfirmationForbiddenError(f"agent {agent_id!r} is not owned by the caller")
 
     # ---- status --------------------------------------------------------
 
@@ -957,7 +1035,7 @@ class ConnectSessionService:
         detail: str,
         *,
         error_code: str | None = None,
-    ) -> None:
+    ) -> bool:
         """Log the terminal outcome, then delete the credential + session.
 
         A failed / expired / cancelled session leaves an unusable
@@ -970,11 +1048,37 @@ class ConnectSessionService:
         ``/status`` sees the session vanish and treats the 404 as
         terminal-failed — cleaner than a lingering ``failed`` row it
         would have to garbage-collect later.
+
+        Compare-and-swap guarded: the delete only happens if the session
+        is still live (``created``/``polling``) at the moment of the
+        UPDATE. Without the CAS, a replayed callback URL carrying
+        ``error=access_denied`` — or a second scanner pod whose in-flight
+        poll loses the race against a successful one — would delete an
+        already-``connected`` credential, its vaulted token, and the
+        admin binding. Returns True when this call won the transition.
         """
         async with self._ctx.control_db.session() as read_session:
             row = await ConnectSessionRepository.get_by_id(read_session, session_id)
         if row is None:
-            return
+            return False
+        async with self._ctx.control_db.transaction() as session:
+            won = await ConnectSessionRepository.transition_state(
+                session,
+                session_id,
+                to_state=state,
+                from_states=("created", "polling"),
+                error_code=error_code,
+            )
+            if won:
+                await CredentialRepository.delete(session, row.credential_id)
+        if not won:
+            _logger.info(
+                "connect_session.terminal_skipped",
+                session_id=session_id,
+                requested_state=state,
+                reason="session already terminal or gone",
+            )
+            return False
         _logger.info(
             "connect_session.terminal",
             session_id=session_id,
@@ -995,8 +1099,6 @@ class ConnectSessionService:
                 "outcome": state,
             },
         )
-        async with self._ctx.control_db.transaction() as session:
-            await CredentialRepository.delete(session, row.credential_id)
         if row.agent_id is not None:
             # The control-side ``agent_permission_rules`` rows cascade with
             # the credential; the admin-DB binding row is cross-DB (no FK)
@@ -1009,17 +1111,54 @@ class ConnectSessionService:
                     agent_id=row.agent_id,
                     credential_id=row.credential_id,
                 )
+        return True
+
+    # ---- TTL sweep (scanner-driven, flow-agnostic) ---------------------
+
+    async def expire_stale_sessions(self, *, limit: int = 100) -> int:
+        """Expire live sessions older than the session TTL (scanner tick).
+
+        The device-flow scanner only ever sees sessions with an active
+        device-code aux row, so a session whose initiator never called
+        ``:confirm`` (state ``created``) or whose auth-code popup was
+        abandoned (state ``polling``, callback never fires) has no other
+        expiry driver — it, and the upfront ``pending`` credential row it
+        minted, would leak forever. Each expiry goes through
+        ``_mark_terminal`` (CAS-guarded), so a session that completes
+        between the read and the sweep is left alone. Returns the number
+        of sessions actually expired.
+        """
+        cutoff = datetime.now(UTC) - timedelta(seconds=_SESSION_TTL_SECONDS)
+        async with self._ctx.control_db.session() as read_session:
+            stale_ids = await ConnectSessionRepository.list_stale_live_ids(
+                read_session, older_than=cutoff, limit=limit
+            )
+        expired = 0
+        for session_id in stale_ids:
+            if await self._mark_terminal(session_id, "expired", "session TTL exceeded"):
+                expired += 1
+        return expired
 
     # ---- redirect-based (auth-code / MCP) completion ----------------------
 
-    async def mark_terminal_from_callback(self, session_id: str, error: str) -> None:
+    async def mark_terminal_from_callback(self, *, raw_state: str, error: str) -> str:
         """Mark a session ``failed`` from a callback landing that carried no
         usable code (vendor returned ``error`` or dropped ``code`` entirely).
 
-        Public-surface wrapper around ``_mark_terminal`` so the callback
-        router doesn't need to reach into a private method.
+        Takes the raw signed state (not a pre-decoded session id) and runs
+        the same ``consume_callback_state`` prologue as
+        ``complete_from_callback`` — the error branch must consume the
+        one-shot nonce too, or a captured callback URL with
+        ``error=access_denied`` could be replayed after a successful
+        connect (``_mark_terminal``'s CAS is the second line of defence).
+        Raises ``StateError`` subclasses on decode / replay failures.
+        Returns the session id for the router's log line.
         """
-        await self._mark_terminal(session_id, "failed", error, error_code="callback_error")
+        state = await consume_callback_state(self._ctx, raw_state)
+        if state.session_id is None:
+            raise NoOpForFlowError("callback state missing session id")
+        await self._mark_terminal(state.session_id, "failed", error, error_code="callback_error")
+        return state.session_id
 
     async def cancel_session(self, session_id: str, *, poll_token: str) -> None:
         """User-driven cancellation from the SPA (Cancel button or dialog dismiss).

@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.control.core.schema.connect_sessions import ConnectSession
+
+# The two non-terminal states. A session outside these is frozen — no
+# transition (including the terminal sweep) may touch it.
+LIVE_STATES: tuple[str, ...] = ("created", "polling")
 
 
 class ConnectSessionRepository:
@@ -78,6 +83,63 @@ class ConnectSessionRepository:
         )
         result = await session.execute(stmt)
         return result.scalars().first()
+
+    @staticmethod
+    async def transition_state(
+        session: AsyncSession,
+        session_id: str,
+        *,
+        to_state: str,
+        from_states: tuple[str, ...],
+        **fields: Any,
+    ) -> bool:
+        """Compare-and-swap the session state; extra ``fields`` ride the same UPDATE.
+
+        Returns True when the row was in one of ``from_states`` and the
+        transition (plus any extra field writes) was applied; False when the
+        row is missing or already moved on — the caller must then treat the
+        operation as lost to a concurrent winner and leave the row alone.
+        This is the single line of defence against terminal races (callback
+        replay, multi-pod scanner overlap, concurrent confirms).
+        """
+        stmt = (
+            update(ConnectSession)
+            .where(
+                ConnectSession.id == session_id,
+                ConnectSession.state.in_(from_states),
+            )
+            .values(state=to_state, **fields)
+        )
+        result = await session.execute(stmt)
+        await session.flush()
+        return bool(getattr(result, "rowcount", 0))
+
+    @staticmethod
+    async def list_stale_live_ids(
+        session: AsyncSession,
+        *,
+        older_than: datetime,
+        limit: int,
+    ) -> list[str]:
+        """Return ids of live (``created``/``polling``) sessions created before ``older_than``.
+
+        Feeds the flow-agnostic TTL sweep: sessions whose initiator never
+        confirmed, or whose auth-code popup was abandoned, have no other
+        expiry driver (the device-flow scanner only sees rows with an aux
+        device-code row), so they — and their upfront ``pending`` credential
+        rows — would otherwise leak forever.
+        """
+        stmt = (
+            select(ConnectSession.id)
+            .where(
+                ConnectSession.state.in_(LIVE_STATES),
+                ConnectSession.created_at < older_than,
+            )
+            .order_by(ConnectSession.created_at.asc())
+            .limit(limit)
+        )
+        result = await session.execute(stmt)
+        return [str(row_id) for row_id in result.scalars().all()]
 
     @staticmethod
     async def update_fields(

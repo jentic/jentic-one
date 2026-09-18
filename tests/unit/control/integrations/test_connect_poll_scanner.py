@@ -62,16 +62,19 @@ def _make_context() -> Context:
 async def test_tick_noop_when_no_due_credentials() -> None:
     scanner = ConnectPollScanner(_make_context())
     advance_mock = AsyncMock()
+    sweep_mock = AsyncMock(return_value=0)
     with (
         patch.object(scanner, "_due_credentials", new=AsyncMock(return_value=[])),
         patch("jentic_one.shared.jobs.connect_poll_scanner.ConnectSessionService") as service_cls,
     ):
         service_cls.return_value.advance_polling_target = advance_mock
+        service_cls.return_value.expire_stale_sessions = sweep_mock
         await scanner._tick()
-    # Empty candidate list must skip the service entirely — instantiating
-    # ConnectSessionService for zero work would still open DB txns on
-    # the finalise path for other reasons, which is wasteful.
-    service_cls.assert_not_called()
+    # No device-flow candidates ⇒ no advancement, but the flow-agnostic
+    # TTL sweep still runs — it is the ONLY expiry driver for ``created``
+    # sessions and abandoned auth-code sessions, which by definition have
+    # no device-code aux row for ``_due_credentials`` to find.
+    sweep_mock.assert_awaited_once()
     advance_mock.assert_not_awaited()
 
 
@@ -88,6 +91,7 @@ async def test_tick_advances_each_candidate() -> None:
         patch("jentic_one.shared.jobs.connect_poll_scanner.ConnectSessionService") as service_cls,
     ):
         service_cls.return_value.advance_polling_target = advance_mock
+        service_cls.return_value.expire_stale_sessions = AsyncMock(return_value=0)
         await scanner._tick()
     assert advance_mock.await_count == 3
     assert [call.args[0] for call in advance_mock.await_args_list] == [
@@ -122,6 +126,7 @@ async def test_tick_isolates_per_row_failures() -> None:
         patch("jentic_one.shared.jobs.connect_poll_scanner.ConnectSessionService") as service_cls,
     ):
         service_cls.return_value.advance_polling_target = AsyncMock(side_effect=_fake_advance)
+        service_cls.return_value.expire_stale_sessions = AsyncMock(return_value=0)
         await scanner._tick()
     assert advanced == ["cred_1", "cred_bad", "cred_3"]
 
@@ -152,6 +157,7 @@ async def test_tick_threads_catalog_auto_importer_into_session_service() -> None
         patch("jentic_one.shared.jobs.connect_poll_scanner.ConnectSessionService") as service_cls,
     ):
         service_cls.return_value.advance_polling_target = AsyncMock()
+        service_cls.return_value.expire_stale_sessions = AsyncMock(return_value=0)
         await scanner._tick()
     # Constructed with the importer keyword; the same object identity.
     _, kwargs = service_cls.call_args

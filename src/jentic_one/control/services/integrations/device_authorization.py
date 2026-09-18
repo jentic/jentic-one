@@ -29,12 +29,22 @@ class DeviceAuthorizationError(Exception):
 
 
 class DeviceAuthorizationUpstreamError(DeviceAuthorizationError):
-    """Vendor returned a non-2xx status we didn't expect."""
+    """Vendor returned a non-2xx status we didn't expect.
 
-    def __init__(self, status: int, body: str) -> None:
-        super().__init__(f"vendor returned HTTP {status}: {body[:200]}")
+    Deliberately carries the HTTP status only — never the vendor response
+    body. A vendor answering the poll with a form-encoded 200
+    (``access_token=…``) fails ``.json()`` and would otherwise put a live
+    token into the exception message, one ``str(exc)`` log line away from
+    tokens in logs. ``detail`` is for locally-generated context only (SSRF
+    guard messages), never vendor payload.
+    """
+
+    def __init__(self, status: int, detail: str = "") -> None:
+        message = f"vendor returned HTTP {status}"
+        if detail:
+            message = f"{message}: {detail}"
+        super().__init__(message)
         self.status = status
-        self.body = body
 
 
 @dataclass(slots=True, frozen=True)
@@ -102,11 +112,11 @@ async def begin_device_authorization(
             headers={"Accept": "application/json"},
         )
     if response.status_code != 200:
-        raise DeviceAuthorizationUpstreamError(response.status_code, response.text)
+        raise DeviceAuthorizationUpstreamError(response.status_code)
     try:
         data: dict[str, str | int] = response.json()
     except ValueError as exc:
-        raise DeviceAuthorizationUpstreamError(response.status_code, response.text) from exc
+        raise DeviceAuthorizationUpstreamError(response.status_code, "non-JSON response") from exc
 
     try:
         device_code = str(data["device_code"])
@@ -115,8 +125,9 @@ async def begin_device_authorization(
         expires_in = int(data.get("expires_in", 900))
         interval = int(data.get("interval", 5))
     except (KeyError, ValueError) as exc:
+        # Never echo the parsed body — it carries the device_code.
         raise DeviceAuthorizationUpstreamError(
-            response.status_code, f"malformed response: {data!r}"
+            response.status_code, "malformed device authorization response"
         ) from exc
 
     verification_uri_complete = (
@@ -174,7 +185,9 @@ async def poll_device_authorization(
     try:
         data = response.json() if response.text else {}
     except ValueError as exc:
-        raise DeviceAuthorizationUpstreamError(response.status_code, response.text) from exc
+        # A form-encoded 200 success (access_token=…) lands here — never
+        # carry the body into the exception or a log line.
+        raise DeviceAuthorizationUpstreamError(response.status_code, "non-JSON response") from exc
 
     if response.status_code == 200 and "access_token" in data:
         return PollResult(
@@ -196,9 +209,11 @@ async def poll_device_authorization(
     if error == "expired_token":
         return PollResult(status="expired")
 
+    # Status + error slug only — the raw body of an unexpected response can
+    # contain a live token (see DeviceAuthorizationUpstreamError docstring).
     _logger.warning(
         "device_authorization.unexpected_poll_response",
         status=response.status_code,
-        body_snippet=response.text[:200],
+        error=error or None,
     )
-    raise DeviceAuthorizationUpstreamError(response.status_code, response.text)
+    raise DeviceAuthorizationUpstreamError(response.status_code)

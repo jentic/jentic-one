@@ -308,7 +308,29 @@ async def oauth_callback(
 
     if session_id is not None:
         if error or not code:
-            await session_svc.mark_terminal_from_callback(session_id, error or "no_code_returned")
+            # Pass the raw state so the error branch runs the same
+            # ``consume_callback_state`` prologue (signature verify +
+            # one-shot nonce consume) as the success branch — a replayed
+            # callback URL carrying ``error=access_denied`` must not be
+            # able to terminate (and cascade-delete) a session that
+            # already connected.
+            try:
+                await session_svc.mark_terminal_from_callback(
+                    raw_state=state, error=error or "no_code_returned"
+                )
+            except StateError as exc:
+                _logger.warning(
+                    "oauth_callback.connect_session.state_invalid",
+                    session_id=session_id,
+                    error=str(exc),
+                    error_type=type(exc).__name__,
+                )
+            except Exception as exc:
+                _logger.warning(
+                    "oauth_callback.connect_session_error",
+                    session_id=session_id,
+                    error=str(exc),
+                )
             return _oauth_callback_error()
         try:
             # Pass the raw state so ``complete_from_callback`` runs the

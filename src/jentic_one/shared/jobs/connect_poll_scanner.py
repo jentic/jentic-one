@@ -24,7 +24,6 @@ route, not this scanner — they have no aux row here.
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import structlog
@@ -104,12 +103,18 @@ class ConnectPollScanner:
         picks up the remainder. Each advancement is guarded so one bad
         row doesn't abort the batch.
         """
-        credential_ids = await self._due_credentials()
-        if not credential_ids:
-            return
         service = ConnectSessionService(
             self._ctx, catalog_auto_importer=self._catalog_auto_importer
         )
+        # Flow-agnostic TTL sweep first: sessions stuck in ``created``
+        # (confirm never called) or ``polling`` with no device-code aux row
+        # (abandoned auth-code popup) are invisible to the device-flow
+        # query below — this is their only expiry driver, and it also
+        # cleans up the upfront ``pending`` credential rows they minted.
+        await service.expire_stale_sessions()
+        credential_ids = await self._due_credentials()
+        if not credential_ids:
+            return
         for credential_id in credential_ids:
             try:
                 await service.advance_polling_target(credential_id)
@@ -122,24 +127,27 @@ class ConnectPollScanner:
     async def _due_credentials(self) -> list[str]:
         """Return credential IDs due for a poll tick this cycle.
 
-        Filters to device-flow aux rows with an active ``encrypted_device_code``
-        that hasn't hit the vendor-supplied TTL yet. Both flow entrypoints
-        (connect-session flow, raw credential connect) write to this table
-        during ``DeviceAuthorizationHandler.begin``, and both clear it via
-        ``on_finalise`` on success / ``_mark_terminal`` on failure — so
-        "row present with non-NULL device_code" is a clean, flow-agnostic
-        "is this in flight?" signal. RFC 8628 interval throttling happens
-        per-credential inside ``DeviceAuthorizationHandler.advance`` (via
-        ``last_polled_at``), so we don't try to be clever with the query.
+        Filters to device-flow aux rows with an active ``encrypted_device_code``.
+        Both flow entrypoints (connect-session flow, raw credential connect)
+        write to this table during ``DeviceAuthorizationHandler.begin``, and
+        both clear it via ``on_finalise`` on success / ``_mark_terminal`` on
+        failure — so "row present with non-NULL device_code" is a clean,
+        flow-agnostic "is this in flight?" signal. Rows past their
+        vendor-supplied ``device_code_expires_at`` are deliberately still
+        selected: ``DeviceAuthorizationHandler.advance`` is where the
+        ``expired`` terminal report comes from, and the terminal transition
+        is what clears the aux row — filtering them out here would strand
+        the session in ``polling`` forever (the vendor TTL is typically
+        *shorter* than the session TTL). RFC 8628 interval throttling
+        happens per-credential inside ``DeviceAuthorizationHandler.advance``
+        (via ``last_polled_at``), so we don't try to be clever with the query.
         """
-        now = datetime.now(UTC)
         async with self._ctx.control_db.session() as session:
             stmt = (
                 select(DeviceAuthorizationCredential.id)
                 .where(
                     DeviceAuthorizationCredential.encrypted_device_code.is_not(None),
                     DeviceAuthorizationCredential.device_code_expires_at.is_not(None),
-                    DeviceAuthorizationCredential.device_code_expires_at > now,
                 )
                 .order_by(DeviceAuthorizationCredential.created_at.asc())
                 .limit(_CANDIDATE_LIMIT)

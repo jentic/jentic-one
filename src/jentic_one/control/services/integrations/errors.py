@@ -44,6 +44,14 @@ class AgentRequiredError(ConnectSessionServiceError):
     """Caller is a USER/SA but agent_id was not supplied."""
 
 
+class AgentNotFoundError(ConnectSessionServiceError):
+    """The ``agent_id`` to bind does not exist in the admin DB."""
+
+    def __init__(self, agent_id: str) -> None:
+        super().__init__(f"agent {agent_id!r} not found")
+        self.agent_id = agent_id
+
+
 class NoOpForFlowError(ConnectSessionServiceError):
     """The resolved flow is not yet implemented in phase 1."""
 

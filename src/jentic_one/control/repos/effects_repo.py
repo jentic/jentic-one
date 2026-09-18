@@ -170,6 +170,26 @@ class EffectsRepository:
         return [str(row[0]) for row in result.fetchall()]
 
     @staticmethod
+    async def get_agent_owner(session: AsyncSession, agent_id: str) -> tuple[bool, str | None]:
+        """Return ``(exists, owner_id)`` for an agent via raw SQL (admin DB).
+
+        Cross-DB seam for the connect flow's agent-binding validation: the
+        control-side ``:confirm`` must verify the target agent exists and is
+        owned by the confirming caller before writing the binding, and the
+        broker/control modules may not import admin ORM models. The two
+        axes are separate because ``agents.owner_id`` is nullable — an
+        existing but ownerless agent is ``(True, None)``, not "missing".
+        """
+        result = await session.execute(
+            text("SELECT owner_id FROM agents WHERE id = :agent_id"),
+            {"agent_id": agent_id},
+        )
+        row = result.first()
+        if row is None:
+            return False, None
+        return True, (str(row[0]) if row[0] is not None else None)
+
+    @staticmethod
     async def bind_agent_to_credential(
         session: AsyncSession,
         *,

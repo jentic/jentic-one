@@ -27,14 +27,18 @@ from jentic_one.control.services.integrations.connect_session_service import (
     ScopeView,
     StatusResult,
 )
+from jentic_one.control.services.integrations.device_authorization import (
+    DeviceAuthorizationUpstreamError,
+)
 from jentic_one.control.services.integrations.errors import (
+    AgentNotFoundError,
     ConfirmationForbiddenError,
     InvalidPollTokenError,
     InvalidStateTransitionError,
     ScopeValidationError,
-    SessionNotFoundError,
 )
 from jentic_one.control.services.vendors.service import UnknownVendorError
+from jentic_one.control.web.app import get_exception_handlers
 from jentic_one.control.web.deps import get_connect_session_service
 from jentic_one.control.web.routers import integrations as integrations_router
 from jentic_one.shared.auth.identity import Identity
@@ -61,6 +65,11 @@ def _build_app(*, svc: Any, identity: Identity = _USER_IDENTITY) -> FastAPI:
     """
     app = FastAPI()
     app.include_router(integrations_router.router)
+    # Error → problem-details mapping lives in app-level exception handlers
+    # (control/web/errors.py), so the router contract can only be exercised
+    # with them registered — same wiring as ``create_app``.
+    for exc_class, handler in get_exception_handlers():
+        app.add_exception_handler(exc_class, handler)
     app.dependency_overrides[get_connect_session_service] = lambda: svc
     app.dependency_overrides[shared_deps.resolve_identity] = lambda: identity
     return app
@@ -135,13 +144,13 @@ def test_connect_allows_user_caller_without_agent_id() -> None:
     assert call.kwargs["initiator_actor_id"] == "usr_alice"
 
 
-def test_connect_maps_unknown_vendor_to_400() -> None:
+def test_connect_maps_unknown_vendor_to_404() -> None:
     svc = AsyncMock(spec=ConnectSessionService)
     svc.create_session = AsyncMock(side_effect=UnknownVendorError("nope"))
     app = _build_app(svc=svc, identity=_USER_IDENTITY)
     with TestClient(app) as client:
         resp = client.post("/integrations:connect", json={"vendor": "nope"})
-    assert resp.status_code == 400
+    assert resp.status_code == 404
 
 
 def test_connect_returns_session_id_and_poll_token() -> None:
@@ -205,8 +214,11 @@ def test_get_review_data_returns_scope_catalog() -> None:
     )
     app = _build_app(svc=svc, identity=_USER_IDENTITY)
     with TestClient(app) as client:
-        resp = client.get("/connect-sessions/sess_1")
+        resp = client.get("/connect-sessions/sess_1", params={"poll_token": "tok"})
     assert resp.status_code == 200
+    call = svc.get_review_data.await_args
+    assert call is not None
+    assert call.kwargs["poll_token"] == "tok"
     body = resp.json()
     assert body["vendor_display_name"] == "GitHub"
     assert body["scopes"][0] == {
@@ -218,13 +230,27 @@ def test_get_review_data_returns_scope_catalog() -> None:
     }
 
 
-def test_get_review_data_maps_not_found_to_404() -> None:
+def test_get_review_data_requires_poll_token() -> None:
+    # The review payload is poll_token-gated — a bare GET (no token) must
+    # fail schema validation before the service is ever consulted.
     svc = AsyncMock(spec=ConnectSessionService)
-    svc.get_review_data = AsyncMock(side_effect=SessionNotFoundError("sess_missing"))
     app = _build_app(svc=svc, identity=_USER_IDENTITY)
     with TestClient(app) as client:
-        resp = client.get("/connect-sessions/sess_missing")
-    assert resp.status_code == 404
+        resp = client.get("/connect-sessions/sess_1")
+    assert resp.status_code == 422
+    svc.get_review_data.assert_not_called()
+
+
+def test_get_review_data_maps_invalid_poll_token_uniformly_to_403() -> None:
+    # Missing session and token mismatch both surface as
+    # ``InvalidPollTokenError`` → 403 (no session-id enumeration oracle;
+    # session ids ride approval URLs, so they are not secrets).
+    svc = AsyncMock(spec=ConnectSessionService)
+    svc.get_review_data = AsyncMock(side_effect=InvalidPollTokenError("invalid poll_token"))
+    app = _build_app(svc=svc, identity=_USER_IDENTITY)
+    with TestClient(app) as client:
+        resp = client.get("/connect-sessions/sess_missing", params={"poll_token": "t"})
+    assert resp.status_code == 403
 
 
 # ---------------------------------------------------------------------------
@@ -250,6 +276,7 @@ def test_confirm_device_authorization_serialises_user_code_response() -> None:
     with TestClient(app) as client:
         resp = client.post(
             "/connect-sessions/sess_1:confirm",
+            params={"poll_token": "tok"},
             json={"confirmed_scopes": ["repo"], "permission_rules": []},
         )
     assert resp.status_code == 200
@@ -268,6 +295,7 @@ def test_confirm_authorization_code_serialises_authorize_url_response() -> None:
     with TestClient(app) as client:
         resp = client.post(
             "/connect-sessions/sess_1:confirm",
+            params={"poll_token": "tok"},
             json={"confirmed_scopes": ["scope-a"], "permission_rules": []},
         )
     assert resp.status_code == 200
@@ -283,6 +311,7 @@ def test_confirm_maps_self_confirm_to_403() -> None:
     with TestClient(app) as client:
         resp = client.post(
             "/connect-sessions/sess_1:confirm",
+            params={"poll_token": "tok"},
             json={"confirmed_scopes": [], "permission_rules": []},
         )
     assert resp.status_code == 403
@@ -295,6 +324,7 @@ def test_confirm_maps_invalid_state_to_409() -> None:
     with TestClient(app) as client:
         resp = client.post(
             "/connect-sessions/sess_1:confirm",
+            params={"poll_token": "tok"},
             json={"confirmed_scopes": [], "permission_rules": []},
         )
     assert resp.status_code == 409
@@ -310,6 +340,7 @@ def test_confirm_maps_scope_validation_to_400_with_unknown_scopes() -> None:
     with TestClient(app) as client:
         resp = client.post(
             "/connect-sessions/sess_1:confirm",
+            params={"poll_token": "tok"},
             json={
                 "confirmed_scopes": ["bogus_scope", "other_bogus"],
                 "permission_rules": [],
@@ -419,3 +450,92 @@ def test_connect_rate_limit_returns_429_with_retry_after() -> None:
         assert third.status_code == 429
         assert "Retry-After" in third.headers
         assert int(third.headers["Retry-After"]) >= 1
+
+
+def test_confirm_requires_poll_token_and_forwards_it_with_identity() -> None:
+    # ``:confirm`` is poll_token-gated like the review read — without the
+    # capability, any ``credentials:write`` holder could confirm any
+    # session. The router must also hand the full identity to the service
+    # (agent-ownership validation happens there).
+    svc = AsyncMock(spec=ConnectSessionService)
+    svc.confirm = AsyncMock(
+        return_value=AuthCodeConfirmResult(authorize_url="https://idp.example.com/authorize")
+    )
+    app = _build_app(svc=svc, identity=_USER_IDENTITY)
+    with TestClient(app) as client:
+        bare = client.post(
+            "/connect-sessions/sess_1:confirm",
+            json={"confirmed_scopes": [], "permission_rules": []},
+        )
+        assert bare.status_code == 422
+        svc.confirm.assert_not_called()
+
+        resp = client.post(
+            "/connect-sessions/sess_1:confirm",
+            params={"poll_token": "tok"},
+            json={"confirmed_scopes": [], "permission_rules": []},
+        )
+    assert resp.status_code == 200
+    call = svc.confirm.await_args
+    assert call is not None
+    assert call.kwargs["poll_token"] == "tok"
+    assert call.kwargs["identity"] is _USER_IDENTITY
+
+
+def test_confirm_maps_agent_not_found_to_400() -> None:
+    svc = AsyncMock(spec=ConnectSessionService)
+    svc.confirm = AsyncMock(side_effect=AgentNotFoundError("agnt_ghost"))
+    app = _build_app(svc=svc, identity=_USER_IDENTITY)
+    with TestClient(app) as client:
+        resp = client.post(
+            "/connect-sessions/sess_1:confirm",
+            params={"poll_token": "tok"},
+            json={"confirmed_scopes": [], "permission_rules": [], "agent_id": "agnt_ghost"},
+        )
+    assert resp.status_code == 400
+
+
+def test_confirm_maps_vendor_upstream_error_to_502_retryable() -> None:
+    # A vendor-side ``begin`` failure is not a server fault and not
+    # permanent (the service rolls the session back to ``created``): the
+    # human must see a retryable 502 problem detail, never a raw 500.
+    svc = AsyncMock(spec=ConnectSessionService)
+    svc.confirm = AsyncMock(side_effect=DeviceAuthorizationUpstreamError(404))
+    app = _build_app(svc=svc, identity=_USER_IDENTITY)
+    with TestClient(app) as client:
+        resp = client.post(
+            "/connect-sessions/sess_1:confirm",
+            params={"poll_token": "tok"},
+            json={"confirmed_scopes": [], "permission_rules": []},
+        )
+    assert resp.status_code == 502
+    body = resp.json()
+    assert body["retryable"] is True
+
+
+def test_confirm_shares_connect_rate_limit_bucket() -> None:
+    # ``:confirm`` is the endpoint that actually calls the vendor (device
+    # ``begin``), and a failed begin leaves the session retryable — during
+    # a vendor incident it must not be free to hammer. Same per-actor
+    # bucket as ``:connect``.
+    svc = AsyncMock(spec=ConnectSessionService)
+    svc.confirm = AsyncMock(
+        return_value=AuthCodeConfirmResult(authorize_url="https://idp.example.com/authorize")
+    )
+    app = _build_app(svc=svc, identity=_USER_IDENTITY)
+    app.state.integrations_connect_limiter = RateLimiter(
+        MemoryStateBackend(),
+        default_rpm=1,
+        burst=2,
+        namespace="test_integrations_confirm",
+    )
+    with TestClient(app) as client:
+        payload = {"confirmed_scopes": [], "permission_rules": []}
+        params = {"poll_token": "tok"}
+        first = client.post("/connect-sessions/sess_1:confirm", params=params, json=payload)
+        second = client.post("/connect-sessions/sess_1:confirm", params=params, json=payload)
+        third = client.post("/connect-sessions/sess_1:confirm", params=params, json=payload)
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert third.status_code == 429
+    assert "Retry-After" in third.headers

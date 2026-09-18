@@ -1,28 +1,22 @@
-"""Integration connect-session endpoints."""
+"""Integration connect-session endpoints.
+
+Error mapping is centralised: connect-session, vendor-registry, and
+device-authorization upstream errors are translated to RFC 9457 problem
+details by the handlers registered in ``control/web/app.py`` (see
+``control/web/errors.py``) — routers here raise/propagate, never build
+ad-hoc error ``JSONResponse`` bodies.
+"""
 
 from __future__ import annotations
 
 import structlog
 from fastapi import APIRouter, Depends, Query, Request, Response
 from fastapi.responses import JSONResponse
+from jentic.problem_details import Forbidden
 
 from jentic_one.control.services.integrations.connect_session_service import (
     ConnectSessionService,
     DeviceAuthorizationConfirmResult,
-)
-from jentic_one.control.services.integrations.errors import (
-    ConfirmationForbiddenError,
-    ConnectSessionServiceError,
-    InvalidPollTokenError,
-    InvalidStateTransitionError,
-    NoOpForFlowError,
-    ScopeValidationError,
-    SessionNotFoundError,
-)
-from jentic_one.control.services.vendors.service import (
-    UnknownVendorError,
-    UnsupportedFlowError,
-    VendorNotConfiguredError,
 )
 from jentic_one.control.web.deps import get_connect_session_service
 from jentic_one.control.web.schemas.integrations import (
@@ -50,15 +44,19 @@ router = APIRouter(tags=["Integrations"])
 
 
 # ---------------------------------------------------------------------------
-# Per-actor rate limit for POST /integrations:connect
+# Per-actor rate limit for the vendor-calling endpoints
 # ---------------------------------------------------------------------------
 #
-# Every :connect POST fires the vendor's device-authorization / authorization
-# endpoint. A ``credentials:write`` caller that spams the endpoint can get the
-# platform IP throttled by GitHub / Google / etc., which would fail-fast every
-# legitimate user on the same install. This is a per-actor cap that fires
-# well below any vendor's own throttle: ``_CONNECT_RPM`` sustained requests
-# per minute, ``_CONNECT_BURST`` bucket capacity for a short spike.
+# ``POST /integrations:connect`` and ``POST /connect-sessions/{id}:confirm``
+# both end up firing the vendor's device-authorization / authorization
+# endpoint (`:confirm` is where the device-flow ``begin`` actually happens,
+# and a failed ``begin`` rolls the session back to ``created``, so it is
+# retryable in a tight loop). A ``credentials:write`` caller that spams
+# either endpoint can get the platform IP throttled by GitHub / Google /
+# etc., which would fail-fast every legitimate user on the same install.
+# One shared per-actor bucket caps both, well below any vendor's own
+# throttle: ``_CONNECT_RPM`` sustained requests per minute,
+# ``_CONNECT_BURST`` bucket capacity for a short spike.
 #
 # In-memory only (per-worker) — sufficient for the abuse case (one actor
 # spamming), not a coordinated-cluster limit. If a multi-worker cluster-wide
@@ -80,6 +78,19 @@ def _get_connect_limiter(request: Request) -> RateLimiter:
     )
     request.app.state.integrations_connect_limiter = limiter
     return limiter
+
+
+async def _enforce_connect_rate_limit(request: Request, identity: Identity) -> JSONResponse | None:
+    """Acquire from the shared per-actor bucket; a 429 response when exhausted."""
+    limiter = _get_connect_limiter(request)
+    outcome = await limiter.acquire(identity.sub)
+    if outcome.allowed:
+        return None
+    return JSONResponse(
+        status_code=429,
+        content={"detail": "rate limit exceeded"},
+        headers={**outcome.headers(), "Retry-After": str(outcome.retry_after_s)},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -111,60 +122,31 @@ async def integrations_connect(
     credential connects unbound and an agent can be bound later through
     the credentials API.
     """
-    # Per-actor rate limit — every :connect POST fires the vendor's
-    # authorize/device-authorization endpoint, so a spammy caller can get
-    # the platform IP throttled by the vendor and take out every legit
-    # user on the same install. See ``_get_connect_limiter`` for the
-    # policy knobs.
-    limiter = _get_connect_limiter(request)
-    outcome = await limiter.acquire(identity.sub)
-    if not outcome.allowed:
-        return JSONResponse(
-            status_code=429,
-            content={"detail": "rate limit exceeded"},
-            headers={**outcome.headers(), "Retry-After": str(outcome.retry_after_s)},
-        )
+    limited = await _enforce_connect_rate_limit(request, identity)
+    if limited is not None:
+        return limited
 
     if identity.actor_type == ActorType.AGENT:
         if body.agent_id is not None:
-            return JSONResponse(
-                status_code=403,
-                content={
-                    "detail": (
-                        "agent callers must not pass agent_id — the caller's identity is used"
-                    )
-                },
+            raise Forbidden(
+                detail="agent callers must not pass agent_id — the caller's identity is used",
+                instance="/integrations:connect",
             )
         agent_id: str | None = identity.sub
     else:
         agent_id = body.agent_id or None
 
-    try:
-        created = await svc.create_session(
-            vendor_key=body.vendor,
-            agent_id=agent_id,
-            initiator_actor_id=identity.sub,
-            requested_scopes=body.requested_scopes,
-            requested_permission_rules=[
-                r.model_dump(exclude_none=True) for r in body.requested_permission_rules
-            ],
-            preferred_flow=body.preferred_flow,
-            reason=body.reason,
-        )
-    except UnknownVendorError as exc:
-        return JSONResponse(status_code=400, content={"detail": str(exc)})
-    except UnsupportedFlowError as exc:
-        return JSONResponse(status_code=400, content={"detail": str(exc)})
-    except VendorNotConfiguredError as exc:
-        return JSONResponse(
-            status_code=503,
-            content={"detail": str(exc)},
-        )
-    except NoOpForFlowError as exc:
-        return JSONResponse(
-            status_code=400,
-            content={"detail": str(exc)},
-        )
+    created = await svc.create_session(
+        vendor_key=body.vendor,
+        agent_id=agent_id,
+        initiator_actor_id=identity.sub,
+        requested_scopes=body.requested_scopes,
+        requested_permission_rules=[
+            r.model_dump(exclude_none=True) for r in body.requested_permission_rules
+        ],
+        preferred_flow=body.preferred_flow,
+        reason=body.reason,
+    )
 
     return IntegrationsConnectResponse(
         session_id=created.session_id,
@@ -186,16 +168,20 @@ async def integrations_connect(
 )
 async def get_connect_session(
     session_id: str,
+    poll_token: str = Query(..., description="Opaque poll capability"),
     identity: Identity = get_current_identity(required_permissions=["credentials:write"]),
     svc: ConnectSessionService = Depends(get_connect_session_service),
-) -> ReviewSessionResponse | JSONResponse:
+) -> ReviewSessionResponse:
     """Data the review page needs: vendor display name, resolved flow, the
     scope catalog flagged with default/requested, current state, reason.
+
+    Gated by the session's ``poll_token`` capability (rides the approval
+    URL / the ``:connect`` response) — ``credentials:write`` alone must
+    not read arbitrary sessions' review data. Missing session and token
+    mismatch both surface as 403, matching ``/status`` (no session-id
+    enumeration oracle).
     """
-    try:
-        data = await svc.get_review_data(session_id)
-    except SessionNotFoundError:
-        return JSONResponse(status_code=404, content={"detail": "session not found"})
+    data = await svc.get_review_data(session_id, poll_token=poll_token)
     return ReviewSessionResponse(
         session_id=data.session_id,
         state=data.state,
@@ -241,35 +227,31 @@ async def get_connect_session(
 async def confirm_connect_session(
     session_id: str,
     body: ConfirmSessionRequest,
+    request: Request,
+    poll_token: str = Query(..., description="Opaque poll capability"),
     identity: Identity = get_current_identity(required_permissions=["credentials:write"]),
     svc: ConnectSessionService = Depends(get_connect_session_service),
 ) -> ConfirmSessionResponse | JSONResponse:
-    """Called by the review page after the human confirms selections."""
-    try:
-        result = await svc.confirm(
-            session_id,
-            confirmed_scopes=body.confirmed_scopes,
-            permission_rules=[r.model_dump() for r in body.permission_rules],
-            agent_id=body.agent_id,
-            caller_actor_id=identity.sub,
-            caller_actor_type=str(identity.actor_type),
-        )
-    except SessionNotFoundError:
-        return JSONResponse(status_code=404, content={"detail": "session not found"})
-    except InvalidStateTransitionError as exc:
-        return JSONResponse(status_code=409, content={"detail": str(exc)})
-    except ConfirmationForbiddenError as exc:
-        return JSONResponse(status_code=403, content={"detail": str(exc)})
-    except ScopeValidationError as exc:
-        return JSONResponse(
-            status_code=400,
-            content={"detail": str(exc), "unknown_scopes": exc.unknown},
-        )
-    except NoOpForFlowError as exc:
-        return JSONResponse(status_code=400, content={"detail": str(exc)})
-    except ConnectSessionServiceError as exc:
-        _logger.exception("connect_session.confirm_failed", session_id=session_id)
-        return JSONResponse(status_code=500, content={"detail": str(exc)})
+    """Called by the review page after the human confirms selections.
+
+    Shares the ``:connect`` per-actor rate bucket — this is the endpoint
+    that actually fires the vendor's device-authorization call, and a
+    failed ``begin`` leaves the session retryable, so it must not be
+    free to hammer during a vendor incident. Gated by ``poll_token``
+    like the review read (403 on mismatch or missing session).
+    """
+    limited = await _enforce_connect_rate_limit(request, identity)
+    if limited is not None:
+        return limited
+
+    result = await svc.confirm(
+        session_id,
+        poll_token=poll_token,
+        confirmed_scopes=body.confirmed_scopes,
+        permission_rules=[r.model_dump() for r in body.permission_rules],
+        agent_id=body.agent_id,
+        identity=identity,
+    )
 
     if isinstance(result, DeviceAuthorizationConfirmResult):
         return DeviceAuthorizationConfirmSessionResponse(
@@ -302,16 +284,12 @@ async def poll_connect_session_status(
         required_permissions=["credentials:connect", "credentials:write"]
     ),
     svc: ConnectSessionService = Depends(get_connect_session_service),
-) -> StatusResponse | JSONResponse:
-    try:
-        result = await svc.get_status(session_id, poll_token=poll_token)
-    except InvalidPollTokenError:
-        # ``get_status`` uniformly raises this for both "session missing"
-        # and "poll_token mismatch" — see ``connect_session_service.get_status``.
-        # The uniform 403 is what closes the session-id enumeration oracle;
-        # a 404 branch here would silently reintroduce the split.
-        return JSONResponse(status_code=403, content={"detail": "invalid poll_token"})
-
+) -> StatusResponse:
+    # ``get_status`` uniformly raises ``InvalidPollTokenError`` (→ 403 via
+    # the registered handler) for both "session missing" and "poll_token
+    # mismatch" — the uniform 403 is what closes the session-id
+    # enumeration oracle; a 404 branch would silently reintroduce the split.
+    result = await svc.get_status(session_id, poll_token=poll_token)
     return StatusResponse(
         status=result.status,  # type: ignore[arg-type]
         connected_as=result.connected_as,
@@ -339,7 +317,7 @@ async def cancel_connect_session(
         required_permissions=["credentials:connect", "credentials:write"]
     ),
     svc: ConnectSessionService = Depends(get_connect_session_service),
-) -> Response | JSONResponse:
+) -> Response:
     """Terminate a still-active session at the user's request.
 
     Gated by the same ``poll_token`` capability as ``/status`` — the
@@ -355,8 +333,5 @@ async def cancel_connect_session(
     is fire-and-forget and ``.catch``es the 403, so this doesn't leak
     into the UX.
     """
-    try:
-        await svc.cancel_session(session_id, poll_token=poll_token)
-    except InvalidPollTokenError:
-        return JSONResponse(status_code=403, content={"detail": "invalid poll_token"})
+    await svc.cancel_session(session_id, poll_token=poll_token)
     return Response(status_code=204)

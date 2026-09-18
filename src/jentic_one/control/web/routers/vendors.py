@@ -3,12 +3,8 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends
-from fastapi.responses import JSONResponse
 
-from jentic_one.control.services.vendors.service import (
-    UnknownVendorError,
-    VendorRegistryService,
-)
+from jentic_one.control.services.vendors.service import VendorRegistryService
 from jentic_one.control.web.deps import get_vendor_registry_service
 from jentic_one.control.web.schemas.integrations import (
     VendorAuthCapabilitiesResponse,
@@ -56,16 +52,14 @@ async def get_auth_capabilities(
     vendor_key: str,
     identity: Identity = get_current_identity(required_permissions=["capabilities:read"]),
     svc: VendorRegistryService = Depends(get_vendor_registry_service),
-) -> VendorAuthCapabilitiesResponse | JSONResponse:
+) -> VendorAuthCapabilitiesResponse:
     """Full auth capabilities for one vendor — flows, scopes, classifications.
 
     Never returns client_secret (authorization-code flow's secret is stripped
-    at response build time).
+    at response build time). ``UnknownVendorError`` maps to a 404 problem
+    detail via the handler registered in ``control/web/app.py``.
     """
-    try:
-        entry = svc.get(vendor_key)
-    except UnknownVendorError:
-        return JSONResponse(status_code=404, content={"detail": f"unknown vendor: {vendor_key!r}"})
+    entry = svc.get(vendor_key)
     return VendorAuthCapabilitiesResponse(
         vendor=entry.vendor,
         display_name=entry.display_name,
