@@ -8,12 +8,12 @@ Flow-specific transient state lives on auxiliary tables keyed by
 from __future__ import annotations
 
 from sqlalchemy import ForeignKey, Index, String, Text
-from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
 from jentic_one.shared.db.base import AuditableMixin, ControlBase
 from jentic_one.shared.db.ids import generate_ksuid
+from jentic_one.shared.db.types import json_variant
 
 
 class ConnectSession(AuditableMixin, ControlBase):
@@ -62,7 +62,9 @@ class ConnectSession(AuditableMixin, ControlBase):
     # flow-specific), so it lives on the session row rather than an aux
     # table — that keeps ``get_review_data`` flow-agnostic. Nullable to
     # allow older rows created before this column landed.
-    requested_scopes: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True, default=list)
+    requested_scopes: Mapped[list[str] | None] = mapped_column(
+        json_variant(), nullable=True, default=list
+    )
     # As-requested permission rules from the initiator (typically an agent
     # asking the human owner to approve them). Stored on the session — not
     # written to ``agent_permission_rules`` at ``:connect`` time — because
@@ -71,7 +73,7 @@ class ConnectSession(AuditableMixin, ControlBase):
     # element is an ``AgentPermissionRule`` dict per ``PermissionRuleSchema``:
     # ``{effect, methods, path, match_mode, operations, comment}``.
     requested_permission_rules: Mapped[list[dict[str, object]]] = mapped_column(
-        JSONB, nullable=False, default=list, server_default="[]"
+        json_variant(), nullable=False, default=list, server_default="[]"
     )
     # Identity echo result (e.g. "@octocat"); set on `connected`.
     connected_as: Mapped[str | None] = mapped_column(String(255), nullable=True)

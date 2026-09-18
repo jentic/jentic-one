@@ -25,13 +25,16 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    # JSONB on Postgres, plain JSON on SQLite — the migration-status check
+    # (and the SQLite integration profile) applies this chain to SQLite too.
+    json_type = postgresql.JSONB(astext_type=sa.Text()).with_variant(sa.JSON(), "sqlite")
     op.add_column(
         "connect_sessions",
         sa.Column(
             "requested_permission_rules",
-            postgresql.JSONB(astext_type=sa.Text()),
+            json_type,
             nullable=False,
-            server_default=sa.text("'[]'::jsonb"),
+            server_default=sa.text("'[]'"),
         ),
     )
 
