@@ -1890,6 +1890,7 @@
           "catalog:import",
           "config:read",
           "config:write",
+          "credentials:connect",
           "credentials:read",
           "credentials:write",
           "events:read",
@@ -1916,6 +1917,114 @@
       "summary": "Refresh Catalog",
       "surface": "catalog:refresh",
       "typical_caller": "operator"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "credentials:write": [
+          "credentials:connect",
+          "credentials:read"
+        ]
+      },
+      "method": "GET",
+      "operation_id": "getConnectSession",
+      "path": "/connect-sessions/{session_id}",
+      "public": false,
+      "required_scopes": [
+        "credentials:write"
+      ],
+      "summary": "Get review data for a connect session",
+      "surface": "connect-sessions",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "credentials:connect": [],
+        "credentials:write": [
+          "credentials:connect",
+          "credentials:read"
+        ]
+      },
+      "method": "GET",
+      "operation_id": "pollConnectSessionStatus",
+      "path": "/connect-sessions/{session_id}/status",
+      "public": false,
+      "required_scopes": [
+        "credentials:connect",
+        "credentials:write"
+      ],
+      "summary": "Poll a connect session's status",
+      "surface": "connect-sessions",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "credentials:connect": [],
+        "credentials:write": [
+          "credentials:connect",
+          "credentials:read"
+        ]
+      },
+      "method": "POST",
+      "operation_id": "cancelConnectSession",
+      "path": "/connect-sessions/{session_id}:cancel",
+      "public": false,
+      "required_scopes": [
+        "credentials:connect",
+        "credentials:write"
+      ],
+      "summary": "Cancel an in-flight connect session",
+      "surface": "connect-sessions",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "credentials:write": [
+          "credentials:connect",
+          "credentials:read"
+        ]
+      },
+      "method": "POST",
+      "operation_id": "confirmConnectSession",
+      "path": "/connect-sessions/{session_id}:confirm",
+      "public": false,
+      "required_scopes": [
+        "credentials:write"
+      ],
+      "summary": "Confirm scopes + permissions and kick off the vendor flow",
+      "surface": "connect-sessions",
+      "typical_caller": "any"
     },
     {
       "actor_types": [],
@@ -1968,6 +2077,7 @@
       "group": "Any authenticated actor",
       "implied_scopes": {
         "credentials:write": [
+          "credentials:connect",
           "credentials:read"
         ]
       },
@@ -2033,6 +2143,7 @@
       "group": "Any authenticated actor",
       "implied_scopes": {
         "credentials:write": [
+          "credentials:connect",
           "credentials:read"
         ]
       },
@@ -2083,6 +2194,7 @@
       "group": "Any authenticated actor",
       "implied_scopes": {
         "credentials:write": [
+          "credentials:connect",
           "credentials:read"
         ]
       },
@@ -2158,6 +2270,7 @@
       "group": "Any authenticated actor",
       "implied_scopes": {
         "credentials:write": [
+          "credentials:connect",
           "credentials:read"
         ]
       },
@@ -2183,6 +2296,7 @@
       "group": "Any authenticated actor",
       "implied_scopes": {
         "credentials:write": [
+          "credentials:connect",
           "credentials:read"
         ]
       },
@@ -2233,6 +2347,7 @@
       "group": "Any authenticated actor",
       "implied_scopes": {
         "credentials:write": [
+          "credentials:connect",
           "credentials:read"
         ]
       },
@@ -2258,6 +2373,7 @@
       "group": "Any authenticated actor",
       "implied_scopes": {
         "credentials:write": [
+          "credentials:connect",
           "credentials:read"
         ]
       },
@@ -2283,6 +2399,7 @@
       "group": "Any authenticated actor",
       "implied_scopes": {
         "credentials:write": [
+          "credentials:connect",
           "credentials:read"
         ]
       },
@@ -2538,6 +2655,34 @@
       ],
       "auth_note": null,
       "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "credentials:connect": [],
+        "credentials:write": [
+          "credentials:connect",
+          "credentials:read"
+        ]
+      },
+      "method": "POST",
+      "operation_id": "integrationsConnect",
+      "path": "/integrations:connect",
+      "public": false,
+      "required_scopes": [
+        "credentials:connect",
+        "credentials:write"
+      ],
+      "summary": "Start an integration connect session",
+      "surface": "integrations:connect",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account"
+      ],
+      "auth_note": null,
+      "authenticated": true,
       "group": "Agent-facing (typically agent / service-account)",
       "implied_scopes": {
         "jobs:read": []
@@ -2713,6 +2858,7 @@
           "catalog:import",
           "config:read",
           "config:write",
+          "credentials:connect",
           "credentials:read",
           "credentials:write",
           "events:read",
@@ -2761,6 +2907,7 @@
           "catalog:import",
           "config:read",
           "config:write",
+          "credentials:connect",
           "credentials:read",
           "credentials:write",
           "events:read",
@@ -3155,6 +3302,7 @@
       "group": "Any authenticated actor",
       "implied_scopes": {
         "credentials:write": [
+          "credentials:connect",
           "credentials:read"
         ]
       },
@@ -3180,6 +3328,7 @@
       "group": "Any authenticated actor",
       "implied_scopes": {
         "credentials:write": [
+          "credentials:connect",
           "credentials:read"
         ]
       },
@@ -3230,6 +3379,7 @@
       "group": "Any authenticated actor",
       "implied_scopes": {
         "credentials:write": [
+          "credentials:connect",
           "credentials:read"
         ]
       },
@@ -3255,6 +3405,7 @@
       "group": "Any authenticated actor",
       "implied_scopes": {
         "credentials:write": [
+          "credentials:connect",
           "credentials:read"
         ]
       },
@@ -3988,6 +4139,52 @@
     },
     {
       "actor_types": [
+        "user",
+        "agent",
+        "service_account"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Agent-facing (typically agent / service-account)",
+      "implied_scopes": {
+        "capabilities:read": []
+      },
+      "method": "GET",
+      "operation_id": "listVendors",
+      "path": "/vendors",
+      "public": false,
+      "required_scopes": [
+        "capabilities:read"
+      ],
+      "summary": "List verified vendors",
+      "surface": "vendors",
+      "typical_caller": "agent"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Agent-facing (typically agent / service-account)",
+      "implied_scopes": {
+        "capabilities:read": []
+      },
+      "method": "GET",
+      "operation_id": "getAuthCapabilities",
+      "path": "/vendors/{vendor_key}/auth-capabilities",
+      "public": false,
+      "required_scopes": [
+        "capabilities:read"
+      ],
+      "summary": "Get a vendor's SSO capabilities",
+      "surface": "vendors",
+      "typical_caller": "agent"
+    },
+    {
+      "actor_types": [
         "agent",
         "service_account"
       ],
@@ -4146,6 +4343,7 @@
               "catalog:import",
               "config:read",
               "config:write",
+              "credentials:connect",
               "credentials:read",
               "credentials:write",
               "events:read",
@@ -4172,6 +4370,7 @@
               "catalog:import",
               "config:read",
               "config:write",
+              "credentials:connect",
               "credentials:read",
               "credentials:write",
               "events:read",
@@ -4302,6 +4501,15 @@
         "name": "credentials",
         "scopes": [
           {
+            "action": "connect",
+            "description": "Start and poll an integration connect session (agent-driven SSO). Cannot read tokens or manage other credentials.",
+            "family": "credentials",
+            "implies": [],
+            "implies_transitive": [],
+            "is_superuser": false,
+            "name": "credentials:connect"
+          },
+          {
             "action": "read",
             "description": "Read credential metadata",
             "family": "credentials",
@@ -4315,9 +4523,11 @@
             "description": "Create, update, and delete credentials",
             "family": "credentials",
             "implies": [
+              "credentials:connect",
               "credentials:read"
             ],
             "implies_transitive": [
+              "credentials:connect",
               "credentials:read"
             ],
             "is_superuser": false,
@@ -4738,6 +4948,15 @@
         "name": "config:write"
       },
       {
+        "action": "connect",
+        "description": "Start and poll an integration connect session (agent-driven SSO). Cannot read tokens or manage other credentials.",
+        "family": "credentials",
+        "implies": [],
+        "implies_transitive": [],
+        "is_superuser": false,
+        "name": "credentials:connect"
+      },
+      {
         "action": "read",
         "description": "Read credential metadata",
         "family": "credentials",
@@ -4751,9 +4970,11 @@
         "description": "Create, update, and delete credentials",
         "family": "credentials",
         "implies": [
+          "credentials:connect",
           "credentials:read"
         ],
         "implies_transitive": [
+          "credentials:connect",
           "credentials:read"
         ],
         "is_superuser": false,
@@ -4849,6 +5070,7 @@
           "catalog:import",
           "config:read",
           "config:write",
+          "credentials:connect",
           "credentials:read",
           "credentials:write",
           "events:read",
@@ -4875,6 +5097,7 @@
           "catalog:import",
           "config:read",
           "config:write",
+          "credentials:connect",
           "credentials:read",
           "credentials:write",
           "events:read",
@@ -5002,7 +5225,7 @@
         "name": "users:write"
       }
     ],
-    "total": 30
+    "total": 31
   },
-  "total": 184
+  "total": 191
 }

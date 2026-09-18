@@ -106,6 +106,54 @@ credentials:
         # or:  material_env: JENTIC_ENCRYPTION_KEY_V1
         # or:  material: CHANGE_ME   # pragma: allowlist secret
 
+# Verified vendors with known SSO integrations for the agent-driven
+# integration flow. Each entry describes ONE vendor and one or more
+# OAuth flows the platform can drive on the human's behalf. The
+# ``vendor`` field is the catalog api_id (``{domain}/{sub}`` — see
+# ``registry.services.catalog.manifest_builder``) so a successful
+# connect can auto-import the vendor's OpenAPI spec into the workspace.
+#
+# Two flow shapes are supported today:
+#
+#   * ``device_authorization`` (RFC 8628) — public client, no
+#     client_secret. Requires an OAuth App the operator owns with
+#     device-flow enabled on the vendor side. ``client_id`` is the
+#     platform-shipped identifier; never commit it in-tree if the app
+#     is real — inject via env var (``JENTIC__VENDORS__ENTRIES__...``)
+#     or a local override file kept out of VCS.
+#   * ``authorization_code`` (RFC 6749 §4.1) — confidential client,
+#     ``client_secret`` is a SecretStr. Inject at runtime; never
+#     commit.
+#
+# ``identity_probe`` is the endpoint the platform calls with the fresh
+# access token to compute the ``connected_as`` display string; the
+# access token must carry a scope that authorizes that endpoint.
+#
+# vendors:
+#   entries:
+#     github:
+#       vendor: github.com/api.github.com
+#       display_name: GitHub
+#       flows:
+#         - kind: device_authorization
+#           client_id: "CHANGE_ME"   # your GitHub OAuth App client_id
+#           authorization_endpoint: https://github.com/login/device/code
+#           token_endpoint: https://github.com/login/oauth/access_token
+#       scopes:
+#         - name: "read:user"
+#           classification: read
+#           default: true
+#           description: "Read the authenticated user's profile"
+#         - name: "repo"
+#           classification: write
+#           default: false
+#           description: "Full control of private repositories"
+#       identity_probe:
+#         endpoint: https://api.github.com/user
+#         method: GET
+#         identity_field: login
+#         display_template: "@{login}"
+
 # Shared-state backend for cross-process coordination. The default (memory)
 # keeps rate limiters, consent handles, and circuit state per-process — fine
 # for a single-worker install, but a multi-worker or multi-instance deployment

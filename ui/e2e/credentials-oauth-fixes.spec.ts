@@ -94,7 +94,7 @@ async function openFormForAcmeOAuth(page: Page): Promise<void> {
 	await seedOAuthApi(page);
 
 	await page.getByRole('button', { name: 'Add credential' }).click();
-	await expect(page.getByRole('heading', { name: 'Choose an API' })).toBeVisible();
+	await expect(page.getByRole('heading', { name: 'Add credential' })).toBeVisible();
 
 	// Pick the seeded workspace API (a picker-row button labelled by display name).
 	await page.getByTestId('picker-row').filter({ hasText: 'Acme OAuth' }).first().click();

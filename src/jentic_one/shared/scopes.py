@@ -46,6 +46,9 @@ DEFAULT_AGENT_SCOPES: tuple[str, ...] = (
     "owner:agents:read",
     "owner:credentials:read",
     "owner:access-requests:read",
+    # Lets an agent initiate the agent-driven SSO flow. Narrower than
+    # `credentials:write` — cannot read tokens or manage other credentials.
+    "credentials:connect",
 )
 
 # Scopes an agent may obtain through a self-service ``scope:grant`` access

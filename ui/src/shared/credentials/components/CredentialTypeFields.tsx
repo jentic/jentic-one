@@ -432,20 +432,23 @@ export function CredentialTypeFields({
 					onChange={(e): void => onChange({ clientId: e.target.value })}
 				/>
 			</Field>
-			<Field
-				label="Client secret"
-				required={mode === 'create'}
-				hint={secretHint}
-				error={errors.clientSecret}
-			>
-				<Input
-					type="password"
-					showPasswordToggle
-					autoComplete="off"
-					value={state.clientSecret}
-					onChange={(e): void => onChange({ clientSecret: e.target.value })}
-				/>
-			</Field>
+			{state.grantType.trim() !== 'device_code' && (
+				// Device flow (RFC 8628) is a public-client flow — no secret.
+				<Field
+					label="Client secret"
+					required={mode === 'create'}
+					hint={secretHint}
+					error={errors.clientSecret}
+				>
+					<Input
+						type="password"
+						showPasswordToggle
+						autoComplete="off"
+						value={state.clientSecret}
+						onChange={(e): void => onChange({ clientSecret: e.target.value })}
+					/>
+				</Field>
+			)}
 			{!tokenUrlFromSpec && (
 				<Field label="Token URL" required={mode === 'create'} error={errors.tokenUrl}>
 					<Input
@@ -458,19 +461,32 @@ export function CredentialTypeFields({
 			)}
 			{!authorizeUrlFromSpec && (
 				<Field
-					label="Authorize URL"
-					required={mode === 'create' && state.grantType.trim() === 'authorization_code'}
+					label={
+						state.grantType.trim() === 'device_code'
+							? 'Device authorization URL'
+							: 'Authorize URL'
+					}
+					required={
+						mode === 'create' &&
+						(state.grantType.trim() === 'authorization_code' ||
+							state.grantType.trim() === 'device_code')
+					}
 					error={errors.authorizeUrl}
 				>
 					<Input
 						type="url"
 						value={state.authorizeUrl}
 						onChange={(e): void => onChange({ authorizeUrl: e.target.value })}
-						placeholder="https://provider.com/oauth/authorize"
+						placeholder={
+							state.grantType.trim() === 'device_code'
+								? 'https://provider.com/device/code'
+								: 'https://provider.com/oauth/authorize'
+						}
 					/>
 				</Field>
 			)}
-			{callbackUrl && (
+			{callbackUrl && state.grantType.trim() !== 'device_code' && (
+				// Device flow doesn't use a browser redirect — no callback to whitelist.
 				<Field
 					label="Callback URL"
 					hint="Add this URL to your OAuth app's allowed redirect URIs."

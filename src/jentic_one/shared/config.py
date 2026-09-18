@@ -868,6 +868,123 @@ class CredentialsConfig(BaseModel):
     connect: ConnectConfig = Field(default_factory=ConnectConfig)
 
 
+# ---------------------------------------------------------------------------
+# Vendor auth registry — verified vendors with known SSO integrations.
+#
+# This is the config-seeded catalog of vendors that support the agent-driven
+# integration flow. Each entry describes the OAuth flow(s) available,
+# the OAuth app credentials shipped by the platform, the scope catalog with
+# read/write classification, and a generic identity-echo probe.
+# ---------------------------------------------------------------------------
+
+
+class VendorDeviceAuthorizationFlowConfig(BaseModel):
+    """RFC 8628 device flow settings for a vendor.
+
+    `client_id` is the platform-shipped OAuth application id (device flow is a
+    public-client flow — no secret). Endpoints are the vendor's device
+    authorization + token endpoints.
+    """
+
+    kind: Literal["device_authorization"] = "device_authorization"
+    client_id: str
+    authorization_endpoint: str
+    token_endpoint: str
+
+
+class VendorAuthorizationCodeFlowConfig(BaseModel):
+    """OAuth 2.0 authorization-code flow settings for a vendor.
+
+    Included so the vendor registry is flow-generic from day 1 even though
+    phase 1 only wires up device flow. Requires a client secret (confidential
+    client) since the redirect-based flow exchanges the code at the token
+    endpoint.
+    """
+
+    kind: Literal["authorization_code"] = "authorization_code"
+    client_id: str
+    client_secret: SecretStr
+    authorize_url: str
+    token_url: str
+
+
+VendorFlowConfig = Annotated[
+    VendorDeviceAuthorizationFlowConfig | VendorAuthorizationCodeFlowConfig,
+    Field(discriminator="kind"),
+]
+
+
+class VendorScopeConfig(BaseModel):
+    """A single OAuth scope exposed by the vendor.
+
+    `classification` drives the review-page UX: read scopes are pre-selected by
+    default; write/admin scopes get a warning flag. `description` is
+    human-facing copy displayed on the review page.
+    """
+
+    name: str
+    classification: Literal["read", "write", "admin"] = "read"
+    default: bool = False
+    description: str = ""
+
+
+class VendorIdentityProbeConfig(BaseModel):
+    """Generic identity-echo protocol config for a vendor.
+
+    After the connect flow completes, the platform calls
+    `{method} {endpoint}` with the freshly minted access token, extracts
+    `identity_field` (dotted JSON path) from the response body, and formats it
+    into `display_template` (Python str.format). The result is stored as
+    `connected_as` and returned to the caller.
+    """
+
+    endpoint: str
+    method: Literal["GET", "POST"] = "GET"
+    identity_field: str
+    display_template: str
+
+
+class VendorAuthConfig(BaseModel):
+    """Config entry for one verified vendor.
+
+    Keyed in `VendorRegistryConfig.entries` by a short slug (e.g. "github").
+    """
+
+    # Catalog api_id for this vendor's API (e.g. ``github.com/api.github.com``).
+    # Decomposed at credential-create time via ``canonical_credential_scope``
+    # exactly like a normal catalog import — same api_vendor / api_name /
+    # catalog_api_id fields land on the credential row.
+    vendor: str
+    display_name: str
+    flows: list[VendorFlowConfig]
+    scopes: list[VendorScopeConfig] = Field(default_factory=list)
+    identity_probe: VendorIdentityProbeConfig
+
+    @field_validator("vendor")
+    @classmethod
+    def _vendor_is_domain_slash_name(cls, v: str) -> str:
+        """Require a ``{domain}/{name}`` shape (e.g. ``github.com/api.github.com``).
+
+        Without this check a bare ``vendor`` string (missing the ``/``) silently
+        collapses through ``entry.vendor.split("/", 1)[0]`` and produces a
+        credential ``api_vendor`` that mismatches the broker's per-operation
+        identity check — the mismatch only surfaces on the first connect and is
+        hard to diagnose from the field. Failing loud at config-load is cheaper.
+        """
+        if "/" not in v or v.startswith("/") or v.endswith("/"):
+            raise ValueError(
+                f"vendor {v!r} must be of the form '<domain>/<sub>' "
+                "(e.g. 'github.com/api.github.com')"
+            )
+        return v
+
+
+class VendorRegistryConfig(BaseModel):
+    """Top-level vendor auth registry."""
+
+    entries: dict[str, VendorAuthConfig] = Field(default_factory=dict)
+
+
 class AccessRequestsConfig(BaseModel):
     """Access requests subsystem configuration."""
 
@@ -1580,6 +1697,7 @@ class AppConfig(BaseModel):
     ingest: IngestConfig = Field(default_factory=IngestConfig)
     catalog: CatalogConfig = Field(default_factory=CatalogConfig)
     credentials: CredentialsConfig = Field(default_factory=CredentialsConfig)
+    vendors: VendorRegistryConfig = Field(default_factory=VendorRegistryConfig)
     search: SearchConfig = Field(default_factory=SearchConfig)
     security: SecurityConfig = Field(default_factory=SecurityConfig)
     telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)

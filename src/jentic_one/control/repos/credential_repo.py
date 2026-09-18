@@ -46,6 +46,7 @@ class CredentialRepository:
         provider: str = "static",
         provider_account_ref: str | None = None,
         server_variables: dict[str, str] | None = None,
+        state: str = "connected",
     ) -> Credential:
         credential = Credential(
             type=type,
@@ -59,6 +60,7 @@ class CredentialRepository:
             provider=provider,
             provider_account_ref=provider_account_ref,
             server_variables=server_variables,
+            state=state,
         )
         session.add(credential)
         await session.flush()

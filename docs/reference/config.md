@@ -320,6 +320,33 @@ Credentials subsystem configuration.
 | `credentials.connect.state_secret` | string (secret) | `""` | `JENTIC__CREDENTIALS__CONNECT__STATE_SECRET` |  |
 | `credentials.connect.state_ttl_seconds` | integer | `600` | `JENTIC__CREDENTIALS__CONNECT__STATE_TTL_SECONDS` |  |
 
+## `vendors`
+
+Top-level vendor auth registry.
+
+| Key | Type | Default | Env var | Description |
+| --- | ---- | ------- | ------- | ----------- |
+| `vendors.entries` | map of VendorAuthConfig | — | `JENTIC__VENDORS__ENTRIES` |  |
+| `vendors.entries.<name>.vendor` | string | *required* | `JENTIC__VENDORS__ENTRIES__<NAME>__VENDOR` |  |
+| `vendors.entries.<name>.display_name` | string | *required* | `JENTIC__VENDORS__ENTRIES__<NAME>__DISPLAY_NAME` |  |
+| `vendors.entries.<name>.flows` | list of VendorDeviceAuthorizationFlowConfig \| VendorAuthorizationCodeFlowConfig | *required* | `JENTIC__VENDORS__ENTRIES__<NAME>__FLOWS` |  |
+| `vendors.entries.<name>.flows.<n>.kind` | "device_authorization" \| "authorization_code" | `"device_authorization"` | `JENTIC__VENDORS__ENTRIES__<NAME>__FLOWS__<N>__KIND` |  |
+| `vendors.entries.<name>.flows.<n>.client_id` | string | *required* | `JENTIC__VENDORS__ENTRIES__<NAME>__FLOWS__<N>__CLIENT_ID` |  |
+| `vendors.entries.<name>.flows.<n>.authorization_endpoint` | string | *required* | `JENTIC__VENDORS__ENTRIES__<NAME>__FLOWS__<N>__AUTHORIZATION_ENDPOINT` |  |
+| `vendors.entries.<name>.flows.<n>.token_endpoint` | string | *required* | `JENTIC__VENDORS__ENTRIES__<NAME>__FLOWS__<N>__TOKEN_ENDPOINT` |  |
+| `vendors.entries.<name>.flows.<n>.client_secret` | string (secret) | *required* | `JENTIC__VENDORS__ENTRIES__<NAME>__FLOWS__<N>__CLIENT_SECRET` |  |
+| `vendors.entries.<name>.flows.<n>.authorize_url` | string | *required* | `JENTIC__VENDORS__ENTRIES__<NAME>__FLOWS__<N>__AUTHORIZE_URL` |  |
+| `vendors.entries.<name>.flows.<n>.token_url` | string | *required* | `JENTIC__VENDORS__ENTRIES__<NAME>__FLOWS__<N>__TOKEN_URL` |  |
+| `vendors.entries.<name>.scopes` | list of VendorScopeConfig | — | `JENTIC__VENDORS__ENTRIES__<NAME>__SCOPES` |  |
+| `vendors.entries.<name>.scopes.<n>.name` | string | *required* | `JENTIC__VENDORS__ENTRIES__<NAME>__SCOPES__<N>__NAME` |  |
+| `vendors.entries.<name>.scopes.<n>.classification` | "read" \| "write" \| "admin" | `"read"` | `JENTIC__VENDORS__ENTRIES__<NAME>__SCOPES__<N>__CLASSIFICATION` |  |
+| `vendors.entries.<name>.scopes.<n>.default` | boolean | `false` | `JENTIC__VENDORS__ENTRIES__<NAME>__SCOPES__<N>__DEFAULT` |  |
+| `vendors.entries.<name>.scopes.<n>.description` | string | `""` | `JENTIC__VENDORS__ENTRIES__<NAME>__SCOPES__<N>__DESCRIPTION` |  |
+| `vendors.entries.<name>.identity_probe.endpoint` | string | *required* | `JENTIC__VENDORS__ENTRIES__<NAME>__IDENTITY_PROBE__ENDPOINT` |  |
+| `vendors.entries.<name>.identity_probe.method` | "GET" \| "POST" | `"GET"` | `JENTIC__VENDORS__ENTRIES__<NAME>__IDENTITY_PROBE__METHOD` |  |
+| `vendors.entries.<name>.identity_probe.identity_field` | string | *required* | `JENTIC__VENDORS__ENTRIES__<NAME>__IDENTITY_PROBE__IDENTITY_FIELD` |  |
+| `vendors.entries.<name>.identity_probe.display_template` | string | *required* | `JENTIC__VENDORS__ENTRIES__<NAME>__IDENTITY_PROBE__DISPLAY_TEMPLATE` |  |
+
 ## `search`
 
 Search configuration. The built-in mode is "lexical" (BM25 on SQLite, native full-text on PostgreSQL). `search_mode` is validated against the registered SearchStrategy set at resolve time (`resolve_strategy`), so an unknown mode fails loudly with the available modes for the active dialect rather than at config load. Additional modes (e.g. "semantic", "vector") can be registered via `register_strategy` without editing this schema.

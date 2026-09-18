@@ -39,8 +39,9 @@ test('create a bearer credential via the wizard and see it in the list', async (
 
 	await page.getByRole('button', { name: 'Add credential' }).click();
 
-	// Step 1 is the guided API picker; drop into manual entry to reach the form.
-	await expect(page.getByRole('heading', { name: 'Choose an API' })).toBeVisible();
+	// Step 1 is the guided picker (dialog titled "Add credential"); drop into
+	// manual entry to reach the form.
+	await expect(page.getByRole('heading', { name: 'Add credential' })).toBeVisible();
 	await page.getByRole('button', { name: /Enter manually/i }).click();
 
 	await page.getByPlaceholder('Production API key').fill(name);
@@ -96,7 +97,7 @@ test('create an api_key credential via the wizard (manual entry)', async ({ page
 
 	await page.goto('/app/credentials');
 	await page.getByRole('button', { name: 'Add credential' }).click();
-	await expect(page.getByRole('heading', { name: 'Choose an API' })).toBeVisible();
+	await expect(page.getByRole('heading', { name: 'Add credential' })).toBeVisible();
 	await page.getByRole('button', { name: /Enter manually/i }).click();
 
 	// Manual mode exposes the API-reference fieldset + all four type cards.

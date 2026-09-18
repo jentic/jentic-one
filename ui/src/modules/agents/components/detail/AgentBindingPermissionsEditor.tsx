@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { ArrowUpDown, ChevronDown, FlaskConical, Minus, Plus, Save } from 'lucide-react';
-import { Button, PermissionRuleEditor, cleanPermissionRule, isEmptyAllowRule } from '@/shared/ui';
+import { Button, cleanPermissionRule, isEmptyAllowRule } from '@/shared/ui';
 import { ruleSummary, type PermissionRule as DisplayRule } from '@/shared/lib';
 import {
 	useReplaceAgentBindingPermissions,
@@ -10,6 +10,10 @@ import {
 } from '@/modules/agents/api';
 import { AgentBindingRuleTester } from '@/modules/agents/components/detail/AgentBindingRuleTester';
 import { panelMotion } from '@/modules/agents/components/detail/shared';
+import { RuleListEditor } from '@/shared/credentials/components/RuleListEditor';
+import { useVendorOperations } from '@/shared/credentials/api/vendors-hooks';
+import type { OpsApiReference } from '@/shared/credentials/components/OperationImpactPreview';
+import type { PermissionRule as PreviewPermissionRule } from '@/shared/credentials/api/vendors-types';
 
 /**
  * Inline editor for the permission rules on one direct agent↔credential
@@ -32,6 +36,42 @@ export interface AgentBindingPermissionsEditorProps {
 	credentialLabel: string;
 	initialRules: BindingPermissionRule[];
 	onClose: () => void;
+	/**
+	 * The API the credential is bound against — powers the operation-impact
+	 * preview below the editor so the user sees the DRAFT rules against
+	 * real ops as they edit. When omitted (e.g. binding has no served
+	 * ``ServedApiEntity`` with a version — rare, but possible) the
+	 * preview is skipped.
+	 */
+	apiReference?: OpsApiReference | null;
+}
+
+/**
+ * Adapt a mutable ``PermissionRuleInput`` (agent-module type generated
+ * from ``PermissionRuleSchema``) to the credentials-module ``PermissionRule``
+ * shape the shared ``RuleListEditor`` and ops preview both expect.
+ * Structurally identical for our fields; the explicit narrow avoids a
+ * bare cast so a future divergence in either type is caught at build.
+ */
+function toPreviewRule(rule: PermissionRuleInput): PreviewPermissionRule {
+	return {
+		effect: rule.effect === 'deny' ? 'deny' : 'allow',
+		methods: rule.methods ?? null,
+		path: rule.path ?? null,
+		match_mode: (rule.match_mode as PreviewPermissionRule['match_mode']) ?? undefined,
+		operations: rule.operations ?? null,
+	};
+}
+
+/** Reverse of ``toPreviewRule`` — for saving edits back through the agent-module API. */
+function fromPreviewRule(rule: PreviewPermissionRule): PermissionRuleInput {
+	return {
+		effect: rule.effect as PermissionRuleInput['effect'],
+		methods: rule.methods ?? undefined,
+		path: rule.path ?? undefined,
+		match_mode: (rule.match_mode as PermissionRuleInput['match_mode']) ?? undefined,
+		operations: rule.operations ?? undefined,
+	};
 }
 
 function toInput(rule: BindingPermissionRule): PermissionRuleInput {
@@ -102,12 +142,26 @@ export function AgentBindingPermissionsEditor({
 	credentialLabel,
 	initialRules,
 	onClose,
+	apiReference,
 }: AgentBindingPermissionsEditorProps) {
 	const [rules, setRules] = useState<PermissionRuleInput[]>(() =>
 		initialRules.filter((r) => !r._system).map(toInput),
 	);
 	const [testerOpen, setTesterOpen] = useState(false);
 	const replace = useReplaceAgentBindingPermissions(agentId, credentialId);
+
+	// Feed op paths + templates into the shared editor so autocomplete
+	// and the "no ops affected" warning work identically to the
+	// connect-flow rules page. Reuses the same query key as the row's
+	// ops preview via ``useVendorOperations``.
+	const opsQuery = useVendorOperations(apiReference ?? undefined, {
+		enabled: !!apiReference,
+	});
+	const pathSuggestions = useMemo<readonly string[]>(() => {
+		const rows = opsQuery.data?.data;
+		if (!rows) return [];
+		return Array.from(new Set(rows.map((op) => op.path))).sort();
+	}, [opsQuery.data]);
 
 	const clean = rules.map(cleanRule);
 	// A condition-less `allow` is rejected by the backend (422). Block save and
@@ -149,7 +203,13 @@ export function AgentBindingPermissionsEditor({
 				</p>
 			</div>
 
-			<PermissionRuleEditor rules={rules} onChange={setRules} />
+			<RuleListEditor
+				rules={rules.map(toPreviewRule)}
+				onChange={(next): void => setRules(next.map(fromPreviewRule))}
+				pathSuggestions={pathSuggestions}
+				opTemplates={pathSuggestions}
+				opsLoaded={pathSuggestions.length > 0}
+			/>
 
 			{/* What this save changes — removals first (the security-critical
 			    signal), then additions, each in the platform's rule voice. */}

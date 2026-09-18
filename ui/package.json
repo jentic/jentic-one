@@ -24,6 +24,7 @@
 		"clsx": "^2.1.1",
 		"framer-motion": "^13.2.0",
 		"lucide-react": "^1.43.0",
+		"randexp": "^0.5.3",
 		"react": "^19.2.8",
 		"react-dom": "^19.2.8",
 		"react-markdown": "^10.1.0",

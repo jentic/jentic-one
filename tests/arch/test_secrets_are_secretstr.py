@@ -18,10 +18,20 @@ CONFIG_FILE = SRC_ROOT / "shared" / "config.py"
 
 SECRET_NAME_PARTS = ("secret", "password", "pepper", "token", "key")
 
+# URL/endpoint fields are addressable resources, not secret material — even when
+# the resource itself deals in secrets (e.g. an OAuth ``token_endpoint`` URL).
+# The URL string is logged, embedded in vendor discovery responses, and shown
+# to operators for debugging; typing it ``SecretStr`` would mis-model it and
+# suppress useful diagnostic output. Names ending in one of these suffixes are
+# treated as URL-typed and skipped by the secret-field heuristic.
+URL_LIKE_SUFFIXES = ("_url", "_endpoint", "_uri")
+
 
 def _is_secret_field(name: str) -> bool:
     """Return True if a field name looks like it holds a secret value."""
     lowered = name.lower()
+    if any(lowered.endswith(suffix) for suffix in URL_LIKE_SUFFIXES):
+        return False
     return any(part in lowered for part in SECRET_NAME_PARTS)
 
 
