@@ -1,0 +1,454 @@
+/**
+ * ApiSetupQueue — finishing the batch the Add-APIs tray handed over.
+ *
+ * The state machine has its own unit specs (`setupQueue.test.ts`); these pin the
+ * behaviours that only exist once it is wired to the bind endpoint and the
+ * credential wizard: reuse binding itself with nobody watching, a drop that
+ * says the API is not added rather than deferred (D13), one failed POST in a
+ * sequential batch not taking the others with it, and a mid-way dismissal
+ * handing the remainder back so the flow can be re-entered.
+ */
+import { useState } from 'react';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { http, HttpResponse } from 'msw';
+import { page, userEvent as browserUser } from 'vitest/browser';
+import {
+	renderWithProviders,
+	screen,
+	waitFor,
+	within,
+	userEvent,
+	checkA11y,
+} from '@/__tests__/test-utils';
+import { worker } from '@/mocks/browser';
+import { setToken } from '@/shared/api';
+import {
+	makeMockApi,
+	makeMockCredential,
+	resetApisStore,
+	resetCredentialsStore,
+} from '@/shared/credentials/mocks/handlers';
+import { resetAgentsStore } from '@/modules/agents/mocks/handlers';
+import { CredentialType, type Credential, type SelectedApi } from '@/shared/credentials/api';
+import { ApiSetupQueue } from '@/modules/agents/components/flat/ApiSetupQueue';
+import type { PreflightItem, PreflightOutcome } from '@/modules/agents/lib/apiPreflight';
+
+/** An agent with no seeded bindings, so every bind in these specs is the first. */
+const AGENT_ID = 'agnt_disabled_1';
+
+function makeCredential(over: Partial<Credential> = {}): Credential {
+	return makeMockCredential({
+		credential_id: 'cred_stripe',
+		name: 'Stripe key',
+		type: CredentialType.API_KEY,
+		api: { vendor: 'stripe.com', name: 'main', version: '1.0.0' },
+		...over,
+	});
+}
+
+function makeItem(
+	vendor: string,
+	outcome: PreflightOutcome,
+	over: Partial<PreflightItem> = {},
+): PreflightItem {
+	const api: SelectedApi = {
+		source: 'local',
+		vendor,
+		name: 'main',
+		version: '1.0.0',
+		label: vendor.replace(/\..*$/, ''),
+	};
+	return {
+		key: `${vendor}/main`,
+		api,
+		outcome,
+		candidates: [],
+		importsApi: false,
+		...over,
+	};
+}
+
+/** A `reuse` item pointing at an existing credential. */
+function reuseItem(vendor: string, credentialId: string): PreflightItem {
+	return makeItem(vendor, 'reuse', {
+		candidates: [
+			makeCredential({
+				credential_id: credentialId,
+				name: `${vendor} key`,
+				api: { vendor, name: 'main', version: '1.0.0' },
+			}),
+		],
+	});
+}
+
+/**
+ * Hosts the queue the way the agents surface does: the batch and the open flag
+ * live outside it, so a spec can close mid-way and reopen on the remainder.
+ */
+function QueueHarness({
+	items,
+	onClosed,
+}: {
+	items: PreflightItem[];
+	onClosed?: (remaining: PreflightItem[]) => void;
+}) {
+	const [batch, setBatch] = useState(items);
+	const [open, setOpen] = useState(true);
+	return (
+		<>
+			<button type="button" onClick={(): void => setOpen(true)}>
+				Reopen
+			</button>
+			<ApiSetupQueue
+				open={open}
+				agentId={AGENT_ID}
+				agentName="Support bot"
+				items={batch}
+				onClose={(remaining): void => {
+					setBatch(remaining);
+					setOpen(false);
+					onClosed?.(remaining);
+				}}
+			/>
+		</>
+	);
+}
+
+function progressRows(): HTMLElement[] {
+	return screen.queryAllByTestId('queue-progress-row');
+}
+
+function rowFor(label: string): HTMLElement {
+	const row = progressRows().find((r) => r.textContent?.startsWith(label));
+	if (!row) throw new Error(`No progress row for ${label}. Rows: ${progressRows().length}`);
+	return row;
+}
+
+/** Records every bind POST while still letting the store handler answer. */
+function watchBinds(): { calls: { agentId: string; body: unknown }[] } {
+	const calls: { agentId: string; body: unknown }[] = [];
+	worker.use(
+		http.post('/agents/:id/credentials', async ({ params, request }) => {
+			calls.push({
+				agentId: params.id as string,
+				body: await request.clone().json(),
+			});
+			// Fall through to the store handler, which creates the binding.
+			return undefined;
+		}),
+	);
+	return { calls };
+}
+
+describe('ApiSetupQueue — finishing a batch one API at a time', () => {
+	beforeEach(async () => {
+		await page.viewport(1280, 900);
+		setToken('test-token');
+		resetAgentsStore();
+		resetCredentialsStore([makeCredential()]);
+		resetApisStore([
+			makeMockApi({ vendor: 'stripe.com', name: 'main', displayName: 'stripe' }),
+		]);
+	});
+
+	it('binds reuse picks without ever asking, and reports what it did', async () => {
+		const { calls } = watchBinds();
+		renderWithProviders(
+			<QueueHarness
+				items={[
+					reuseItem('stripe.com', 'cred_stripe'),
+					reuseItem('slack.com', 'cred_slack'),
+				]}
+			/>,
+		);
+
+		// No pane at all — the whole point of the reuse branch.
+		expect(await screen.findByTestId('queue-done-pane')).toBeInTheDocument();
+		expect(screen.queryByTestId('queue-active-pane')).not.toBeInTheDocument();
+		expect(screen.getByText('2 APIs added')).toBeInTheDocument();
+
+		await waitFor(() => expect(calls).toHaveLength(2));
+		expect(calls.map((c) => c.agentId)).toEqual([AGENT_ID, AGENT_ID]);
+		// Least privilege (C1): the binding starts with no rules, and the footer
+		// says so rather than leaving the operator to assume access.
+		expect(calls[0].body).toEqual({ credential_id: 'cred_stripe' });
+		expect(
+			screen.getByText(/Added APIs start with no access rules, so calls are blocked/),
+		).toBeInTheDocument();
+	});
+
+	it('names the credential a silent reuse was bound through', async () => {
+		renderWithProviders(<QueueHarness items={[reuseItem('stripe.com', 'cred_stripe')]} />);
+
+		// The reuse branch shows no pane, so the finished row is the only place the
+		// flow can disclose WHICH credential it picked (C4).
+		await waitFor(() => expect(rowFor('stripe')).toHaveAttribute('data-status', 'added'));
+		expect(rowFor('stripe')).toHaveTextContent('via stripe.com key');
+	});
+
+	it('offers a way past a matched credential that is the wrong account', async () => {
+		const user = userEvent.setup();
+		const production = makeCredential({
+			credential_id: 'cred_prod',
+			name: 'Stripe — Production',
+		});
+		const sandbox = makeCredential({ credential_id: 'cred_sandbox', name: 'Stripe — Sandbox' });
+		renderWithProviders(
+			<QueueHarness
+				items={[makeItem('stripe.com', 'choose', { candidates: [production, sandbox] })]}
+			/>,
+		);
+
+		// A credential matches on API identity, not on account, so "none of these"
+		// has to be answerable without dropping the API — D13 leaves no third way.
+		expect(
+			await screen.findByText(/if none of these 2 should be used for stripe/),
+		).toBeInTheDocument();
+		await user.click(screen.getByRole('button', { name: 'Use a different credential' }));
+
+		expect(
+			await screen.findByText('Fill in the credential details for stripe'),
+		).toBeInTheDocument();
+	});
+
+	it('clears the free reuses before stopping on the item that needs attention', async () => {
+		renderWithProviders(
+			<QueueHarness
+				items={[makeItem('slack.com', 'form'), reuseItem('stripe.com', 'cred_stripe')]}
+			/>,
+		);
+
+		// Pick order put the form first; the queue still banks the reuse first so
+		// it is not stuck behind a form the operator is typing.
+		await waitFor(() => expect(rowFor('stripe')).toHaveAttribute('data-status', 'added'));
+		expect(progressRows()[0].textContent).toMatch(/^stripe/);
+		expect(within(screen.getByTestId('queue-active-pane')).getByText('slack')).toBeVisible();
+		expect(screen.getByText('1 of 2 done')).toBeInTheDocument();
+	});
+
+	it('dropping an item says the API is not added, with no promise of later', async () => {
+		const { calls } = watchBinds();
+		const user = userEvent.setup();
+		renderWithProviders(<QueueHarness items={[makeItem('slack.com', 'form')]} />);
+
+		await user.click(await screen.findByRole('button', { name: 'Not this one' }));
+		const confirm = await screen.findByTestId('queue-drop-confirm');
+		// D13: no deferred state exists, so the copy cannot imply one.
+		expect(confirm).toHaveTextContent("slack won't be added.");
+		expect(confirm.textContent).not.toMatch(/skip|later/i);
+
+		await user.click(screen.getByRole('button', { name: 'Drop slack' }));
+		await waitFor(() => expect(rowFor('slack')).toHaveAttribute('data-status', 'dropped'));
+		expect(rowFor('slack')).toHaveTextContent('Not added');
+		expect(calls).toHaveLength(0);
+		expect(screen.getByText('Nothing was added.')).toBeInTheDocument();
+	});
+
+	it('keeps the item when the drop is declined', async () => {
+		const user = userEvent.setup();
+		renderWithProviders(<QueueHarness items={[makeItem('slack.com', 'form')]} />);
+
+		await user.click(await screen.findByRole('button', { name: 'Not this one' }));
+		await user.click(screen.getByRole('button', { name: 'Keep it' }));
+		await waitFor(() =>
+			expect(screen.queryByTestId('queue-drop-confirm')).not.toBeInTheDocument(),
+		);
+		expect(screen.getByRole('button', { name: 'Add credential' })).toBeEnabled();
+	});
+
+	it('a failed bind is terminal for that item only, and retryable in place', async () => {
+		let failing = true;
+		worker.use(
+			http.post('/agents/:id/credentials', async ({ request }) => {
+				// Clone: falling through leaves the body for the store handler.
+				const body = (await request.clone().json()) as { credential_id: string };
+				if (failing && body.credential_id === 'cred_stripe') {
+					return HttpResponse.json(
+						{ detail: 'Upstream is unavailable.' },
+						{ status: 503 },
+					);
+				}
+				return undefined;
+			}),
+		);
+		const user = userEvent.setup();
+		renderWithProviders(
+			<QueueHarness
+				items={[
+					reuseItem('stripe.com', 'cred_stripe'),
+					reuseItem('slack.com', 'cred_slack'),
+				]}
+			/>,
+		);
+
+		// Sequential POSTs: the failure must not stall the rest of the batch.
+		await waitFor(() => expect(rowFor('stripe')).toHaveAttribute('data-status', 'failed'));
+		await waitFor(() => expect(rowFor('slack')).toHaveAttribute('data-status', 'added'));
+		expect(screen.getByText('1 API added · 1 failed')).toBeInTheDocument();
+
+		failing = false;
+		await user.click(within(rowFor('stripe')).getByRole('button', { name: 'Try again' }));
+		await waitFor(() => expect(rowFor('stripe')).toHaveAttribute('data-status', 'added'));
+		expect(screen.getByText('2 APIs added')).toBeInTheDocument();
+	});
+
+	it('closing mid-way keeps what landed and hands the rest back for re-entry', async () => {
+		const onClosed = vi.fn();
+		const user = userEvent.setup();
+		renderWithProviders(
+			<QueueHarness
+				items={[
+					reuseItem('stripe.com', 'cred_stripe'),
+					makeItem('slack.com', 'form'),
+					makeItem('notion.so', 'form'),
+				]}
+				onClosed={onClosed}
+			/>,
+		);
+
+		await waitFor(() => expect(rowFor('stripe')).toHaveAttribute('data-status', 'added'));
+		// The cost of closing is stated before it is paid.
+		expect(
+			screen.getByText(
+				/Closing keeps the APIs already added\. The remaining 2 will be waiting/,
+			),
+		).toBeInTheDocument();
+
+		await user.click(screen.getByRole('button', { name: 'Close for now' }));
+		expect(onClosed).toHaveBeenCalledTimes(1);
+		expect(onClosed.mock.calls[0][0].map((i: PreflightItem) => i.key)).toEqual([
+			'slack.com/main',
+			'notion.so/main',
+		]);
+
+		// Re-entry resumes the remainder rather than replaying the whole batch.
+		await user.click(screen.getByRole('button', { name: 'Reopen' }));
+		await waitFor(() => expect(progressRows()).toHaveLength(2));
+		expect(screen.getByText('Set up 2 APIs')).toBeInTheDocument();
+	});
+
+	it('asks which credential to use when several cover the API, and binds the choice', async () => {
+		const { calls } = watchBinds();
+		const user = userEvent.setup();
+		const production = makeCredential({
+			credential_id: 'cred_prod',
+			name: 'Stripe — Production',
+		});
+		const sandbox = makeCredential({ credential_id: 'cred_sandbox', name: 'Stripe — Sandbox' });
+		renderWithProviders(
+			<QueueHarness
+				items={[makeItem('stripe.com', 'choose', { candidates: [production, sandbox] })]}
+			/>,
+		);
+
+		const use = await screen.findByRole('button', { name: 'Use this credential' });
+		// Nothing is guessed for the operator: two accounts of one vendor are not
+		// interchangeable, so the commit stays disabled until one is named.
+		expect(use).toBeDisabled();
+
+		await user.click(screen.getByRole('radio', { name: /Stripe — Sandbox/ }));
+		await waitFor(() => expect(use).toBeEnabled());
+		await user.click(use);
+
+		await waitFor(() => expect(calls).toHaveLength(1));
+		expect(calls[0].body).toEqual({ credential_id: 'cred_sandbox' });
+		await waitFor(() => expect(rowFor('stripe')).toHaveAttribute('data-status', 'added'));
+	});
+
+	it('creates a credential for a form item without re-asking which API it is for', async () => {
+		resetApisStore([
+			makeMockApi({
+				vendor: 'acme.com',
+				name: 'main',
+				displayName: 'acme',
+				securitySchemes: ['apiKey'],
+				spec: {
+					openapi: '3.0.0',
+					info: { title: 'Acme', version: '1.0.0' },
+					components: {
+						securitySchemes: {
+							ApiKeyAuth: { type: 'apiKey', in: 'header', name: 'X-Acme-Key' },
+						},
+					},
+				},
+			}),
+		]);
+		const { calls } = watchBinds();
+		const user = userEvent.setup();
+		renderWithProviders(<QueueHarness items={[makeItem('acme.com', 'form')]} />);
+
+		await user.click(await screen.findByRole('button', { name: 'Add credential' }));
+
+		// The API is the queue's premise, not the wizard's question — no pick
+		// step, and no way back to one.
+		expect(
+			await screen.findByText('Fill in the credential details for acme'),
+		).toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: 'Back' })).not.toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: 'Change' })).not.toBeInTheDocument();
+		const nameInput = (await screen.findByPlaceholderText(
+			'Production API key',
+		)) as HTMLInputElement;
+		await waitFor(() => expect(nameInput.value).toBe('acme'));
+
+		// The spec-seeded header name proves the schemes landed — the credential
+		// fields are held behind a skeleton until then.
+		const fieldName = (await screen.findByPlaceholderText('X-Api-Key')) as HTMLInputElement;
+		await waitFor(() => expect(fieldName.value).toBe('X-Acme-Key'));
+
+		const secret = screen
+			.getAllByDisplayValue('')
+			.find((el) => (el as HTMLInputElement).type === 'password') as HTMLInputElement;
+		await user.type(secret, 'sk_acme_123');
+		await user.click(screen.getByRole('button', { name: 'Create credential' }));
+
+		// Created, then bound, without the operator naming the API twice.
+		await waitFor(() => expect(calls).toHaveLength(1));
+		await waitFor(() => expect(rowFor('acme')).toHaveAttribute('data-status', 'added'));
+		expect(screen.getByText('1 API added')).toBeInTheDocument();
+	});
+
+	it('dismissing the stacked credential drawer keeps the queue and its batch', async () => {
+		const closed = vi.fn();
+		const user = userEvent.setup();
+		renderWithProviders(
+			<QueueHarness items={[makeItem('slack.com', 'form')]} onClosed={closed} />,
+		);
+
+		await user.click(await screen.findByRole('button', { name: 'Add credential' }));
+		// The wizard is a drawer stacked over the queue, so both sheets see the
+		// same Escape.
+		await waitFor(() => expect(screen.getAllByTestId('sheet-primitive')).toHaveLength(2));
+
+		await browserUser.keyboard('{Escape}');
+
+		// Only the wizard goes. Closing the queue would hand the batch back to
+		// the host and drop the operator out of a flow they are mid-way through.
+		await waitFor(() => expect(screen.getAllByTestId('sheet-primitive')).toHaveLength(1));
+		expect(closed).not.toHaveBeenCalled();
+		expect(screen.getByRole('button', { name: 'Add credential' })).toBeVisible();
+	});
+
+	it('passes an accessibility audit with a pane, a progress list and a drop confirm', async () => {
+		const user = userEvent.setup();
+		renderWithProviders(
+			<QueueHarness
+				items={[reuseItem('stripe.com', 'cred_stripe'), makeItem('slack.com', 'form')]}
+			/>,
+		);
+
+		await waitFor(() => expect(rowFor('stripe')).toHaveAttribute('data-status', 'added'));
+		await user.click(screen.getByRole('button', { name: 'Not this one' }));
+		await screen.findByTestId('queue-drop-confirm');
+
+		await checkA11y(document.body);
+	});
+
+	it('390px: the pane action and the progress list stay reachable', async () => {
+		await page.viewport(390, 844);
+		renderWithProviders(<QueueHarness items={[makeItem('slack.com', 'form')]} />);
+
+		expect(await screen.findByRole('button', { name: 'Add credential' })).toBeVisible();
+		expect(rowFor('slack')).toBeVisible();
+	});
+});

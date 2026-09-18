@@ -66,6 +66,17 @@ export const ROUTE_PATHS = {
 	 * modules can't import from each other. Monitor's own richer builder is
 	 * `modules/monitor/lib/links`.
 	 */
+	/**
+	 * The org-wide credential inventory, which lives in a sheet on the Agents
+	 * page rather than at a route of its own. `credentials` is the Agents
+	 * page's URL vocabulary (read by `modules/agents/pages/AgentsPage`);
+	 * `credentials=new` also opens the create wizard, so a call-site whose
+	 * label promises a new credential still lands on the form. The builder
+	 * lives here because cross-module links (dashboard, OAuth popup return)
+	 * need it and modules can't import each other.
+	 */
+	credentialInventory: (opts?: { create?: boolean }) =>
+		`${ROUTES.agents}?credentials=${opts?.create === true ? 'new' : '1'}`,
 	monitorExecutions: (filter?: {
 		actorId?: string;
 		actorType?: 'agent' | 'service_account' | 'user';

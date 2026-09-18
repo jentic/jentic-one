@@ -13,7 +13,7 @@
 import type { ComponentType } from 'react';
 import { ArrowUpRight, Bot, Compass, KeyRound, Link2, Rocket } from 'lucide-react';
 import { AppLink, Card } from '@/shared/ui';
-import { ROUTES } from '@/shared/app/routes';
+import { ROUTES, ROUTE_PATHS } from '@/shared/app/routes';
 
 interface SetupStep {
 	href: string;
@@ -31,7 +31,9 @@ export function FirstRunChecklist() {
 			icon: Compass,
 		},
 		{
-			href: ROUTES.credentials,
+			// The inventory lives in a sheet on the Agents page, and this step's
+			// whole job is to produce a credential, so it opens the wizard.
+			href: ROUTE_PATHS.credentialInventory({ create: true }),
 			title: 'Add a credential',
 			description: 'Store the API key or OAuth secret the gateway will inject.',
 			icon: KeyRound,
@@ -45,7 +47,7 @@ export function FirstRunChecklist() {
 		{
 			href: ROUTES.agents,
 			title: 'Bind a credential',
-			description: "Open the agent's Access tab and grant the credential it may use.",
+			description: 'Select the agent on the Agents page and add the APIs it may call.',
 			icon: Link2,
 		},
 	];

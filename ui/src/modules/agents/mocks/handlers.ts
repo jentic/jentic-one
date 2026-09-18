@@ -362,10 +362,34 @@ const PERMISSION_CATALOGUE: ReadonlyArray<{
 	},
 ];
 
+/**
+ * Append extra agents to the seeded fleet (call after `resetAgentsStore`).
+ * Lets specs exercise states the default seed doesn't carry — e.g. an
+ * archived agent, which has no UI path to create quickly.
+ */
+export function seedExtraAgents(
+	rows: Array<Partial<AgentRow> & Pick<AgentRow, 'id' | 'name' | 'status'>>,
+): void {
+	agents.push(...rows.map(seedAgent));
+}
+
 export function resetAgentsStore(): void {
 	agents = [
-		seedAgent({ id: 'agnt_pending_1', name: 'inbox-triage-bot', status: 'pending' }),
-		seedAgent({ id: 'agnt_pending_2', name: 'release-notes-bot', status: 'pending' }),
+		// Distinct registration times so the pending-approval banner's
+		// "longest waiting" pick is observable: the backend serves
+		// `created_at DESC`, so `inbox-triage-bot` (oldest) is the LAST row.
+		seedAgent({
+			id: 'agnt_pending_1',
+			name: 'inbox-triage-bot',
+			status: 'pending',
+			created_at: now(-47),
+		}),
+		seedAgent({
+			id: 'agnt_pending_2',
+			name: 'release-notes-bot',
+			status: 'pending',
+			created_at: now(-12),
+		}),
 		seedAgent({
 			id: 'agnt_active_1',
 			name: 'support-agent',
@@ -458,6 +482,11 @@ export function resetAgentsStore(): void {
 	// (with a rule) and one suspended, rule-less binding — so the mocked dev
 	// card shows the resume affordance AND the zero-rules warning out of the
 	// box. Other agents have none (exercises the empty state).
+	//
+	// The vendors are deliberately split: `github` matches a row in the `/apis`
+	// registry fixture, so that tile resolves real registry metadata (name,
+	// version, operation count); `slack.com` matches nothing, so the other tile
+	// exercises the not-imported fallback. Both paths are on screen in dev.
 	credentialBindings = [
 		seedBinding({
 			agent_id: 'agnt_active_1',
@@ -473,7 +502,7 @@ export function resetAgentsStore(): void {
 			credential_id: 'cred_github_1',
 			name: 'GitHub PAT',
 			suspended: true,
-			serves: [{ api_vendor: 'github.com', api_name: null, api_version: null }],
+			serves: [{ api_vendor: 'github', api_name: null, api_version: null }],
 		}),
 	];
 }
@@ -505,10 +534,14 @@ export function seedOauthGrants(rows: Array<Partial<OAuthGrantRow> & { id: strin
 
 resetAgentsStore();
 
-function paginate<T extends { status: Status }>(rows: T[], url: URL) {
+function paginate<T extends { status: Status; created_at: string }>(rows: T[], url: URL) {
 	const status = url.searchParams.get('status');
 	const filtered = status ? rows.filter((r) => r.status === status) : rows;
-	return HttpResponse.json({ data: filtered, has_more: false, next_cursor: null });
+	// Backend fidelity: `list_all` orders by `created_at DESC` (newest first),
+	// so "longest waiting" is the LAST row of the page — the pending-approval
+	// banner's pick depends on this.
+	const ordered = [...filtered].sort((a, b) => b.created_at.localeCompare(a.created_at));
+	return HttpResponse.json({ data: ordered, has_more: false, next_cursor: null });
 }
 
 const APPROVE: Record<string, Status> = { pending: 'active' };
@@ -1354,6 +1387,15 @@ export const agentsHandlers = [
 	}),
 
 	// ---- Direct agent↔credential bindings (theme 5 phase 5a) ----
+	// Org-wide credential delete CASCADES to the bindings table (the real
+	// backend removes every agent's binding rows with the credential). This
+	// handler only mirrors the cascade into THIS module's store, then falls
+	// through (undefined) to the credentials store's own DELETE handler —
+	// agents registers before credentials in src/mocks/handlers.ts.
+	http.delete('/credentials/:cid', ({ params }) => {
+		credentialBindings = credentialBindings.filter((b) => b.credential_id !== params.cid);
+		return undefined;
+	}),
 	http.get('/agents/:id/credentials', ({ params }) => {
 		const agent = agents.find((a) => a.id === params.id);
 		if (!agent) return new HttpResponse(null, { status: 404 });
