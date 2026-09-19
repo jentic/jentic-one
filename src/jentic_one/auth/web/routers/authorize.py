@@ -2206,12 +2206,14 @@ async def consent_submit(
         logger.warning("oauth_consent_missing_claims", client_id=client_id)
         return RedirectResponse(url="/error?error=invalid_consent", status_code=302)
     else:
+        hosted_domain_raw = claims_data.get("hosted_domain")
         idp_claims = IdpClaims(
             external_subject=str(claims_data.get("external_subject") or ""),
             email=str(claims_data.get("email") or ""),
             email_verified=bool(claims_data.get("email_verified") or False),
             first_name=str(claims_data.get("first_name") or ""),
             last_name=str(claims_data.get("last_name") or ""),
+            hosted_domain=str(hosted_domain_raw) if hosted_domain_raw else None,
         )
         try:
             user_id = await authorize_svc.provision_from_claims(idp_claims)
