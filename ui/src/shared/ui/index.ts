@@ -169,6 +169,7 @@ export {
 	STATUS_LABELS,
 	STATUS_BADGE_VARIANT,
 	STATUS_DOT,
+	STATUS_ICON,
 	toActorStatus,
 } from '@/shared/ui/ActorStatusBadge';
 export type { ActorStatus } from '@/shared/ui/ActorStatusBadge';

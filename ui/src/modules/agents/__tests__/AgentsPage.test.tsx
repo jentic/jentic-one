@@ -656,6 +656,28 @@ describe('AgentsPage — flat agents surface', () => {
 		await waitFor(() => expect(toggle).toHaveTextContent('Serving'));
 	});
 
+	it('crosses out the tabs whose verdict is settled and leaves pending upright', async () => {
+		renderPage();
+		await screen.findAllByText('inbox-triage-bot');
+
+		// `disabled` has no banner, so its tab is the only place the strip states
+		// it: struck through, with a glyph, because a coloured dot alone can't be
+		// read by anyone who hasn't learned the palette.
+		const struck = (name: string) =>
+			getComputedStyle(within(stripTab(name)).getByText(name)).textDecorationLine;
+		expect(struck('legacy-scraper')).toContain('line-through');
+		expect(struck('spammy-bot')).toContain('line-through');
+		// Pending is the one non-active state still in motion — crossing it out
+		// would state the opposite of what is true — and active is unmarked.
+		expect(struck('inbox-triage-bot')).toBe('none');
+		expect(struck('support-agent')).toBe('none');
+		// Each non-active state carries its own glyph; active carries none at all.
+		const glyphs = (name: string) => stripTab(name).querySelectorAll('svg').length;
+		expect(glyphs('legacy-scraper')).toBe(1);
+		expect(glyphs('inbox-triage-bot')).toBe(1);
+		expect(glyphs('support-agent')).toBe(0);
+	});
+
 	it('reads not-serving on every tile of a non-active agent, never Ready', async () => {
 		// The only fixture agent WITH bindings, handed back as disabled: the grid
 		// is what must read inactive (D8), so the tiles carry it themselves.

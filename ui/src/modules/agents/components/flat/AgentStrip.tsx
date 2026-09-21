@@ -36,7 +36,8 @@
  * where the page header and its actions scroll away.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { STATUS_DOT } from '@/shared/ui';
+import { STATUS_ICON } from '@/shared/ui';
+import type { ActorStatus } from '@/shared/ui';
 import { cn } from '@/shared/lib/utils';
 import type { AgentEntity } from '@/modules/agents/api';
 
@@ -46,6 +47,32 @@ const FADE = '1.5rem';
 /** Where the rail pins: directly under the fixed `h-12` TopNavbar. Kept in sync
  * with the `sticky top-12` class below, which the pinned-state observer reads. */
 const STICKY_TOP = 48;
+
+/**
+ * The non-active states whose verdict is in: the agent will not serve, and
+ * nothing is going to change that on its own. Their tabs read struck through,
+ * which is the whole point of the treatment — `pending` is still in motion, so
+ * crossing it out would state the opposite of what is true.
+ */
+const SETTLED_STATUSES: ReadonlySet<ActorStatus> = new Set<ActorStatus>([
+	'rejected',
+	'disabled',
+	'archived',
+]);
+
+/**
+ * Tint for a tab's status glyph. Quieter than the banner's chips — a rail of
+ * tabs is chrome, and one saturated icon per tab would out-shout the names the
+ * rail exists to list — but each state still keeps its own hue so the glyph and
+ * the colour agree.
+ */
+const TAB_STATUS_TINT: Record<ActorStatus, string> = {
+	pending: 'text-warning',
+	active: 'text-success',
+	rejected: 'text-danger/80',
+	disabled: 'text-warning/80',
+	archived: 'text-muted-foreground/60',
+};
 
 /** The mask that fades whichever end still has tabs behind it. */
 function edgeMask(start: boolean, end: boolean): string | undefined {
@@ -183,6 +210,8 @@ export function AgentStrip({
 		const isSelected = agent.id === selectedId;
 		const isServing = agent.status === 'active';
 		const isPending = agent.status === 'pending';
+		const isSettled = SETTLED_STATUSES.has(agent.status);
+		const StatusIcon = STATUS_ICON[agent.status];
 		const gaps = setupGaps.get(agent.id) ?? 0;
 		const apiCount = apiCounts.get(agent.id);
 		return (
@@ -205,18 +234,22 @@ export function AgentStrip({
 						: 'text-muted-foreground hover:text-foreground',
 				)}
 			>
-				{/* Active is the quiet default: only a non-active agent carries a
-				    dot, so the dot itself means "this one is not serving". */}
+				{/* Active is the quiet default: only a non-active agent is marked,
+				    so a mark at all means "this one is not serving". The glyph is
+				    what tells the four states apart — a dot could only differ by
+				    colour, and `disabled` has no banner to fall back on. */}
 				{!isServing && (
-					<span
+					<StatusIcon
 						aria-hidden="true"
-						className={cn(
-							'h-1.5 w-1.5 shrink-0 rounded-full',
-							STATUS_DOT[agent.status],
-						)}
+						className={cn('size-3.5 shrink-0', TAB_STATUS_TINT[agent.status])}
 					/>
 				)}
-				<span>{agent.name}</span>
+				{/* Struck through when the name will not serve and won't change on
+				    its own. `pending` is the one non-active state still in motion,
+				    so it stays upright — the only crossing-out that would be a lie. */}
+				<span className={cn(isSettled && 'line-through decoration-from-font')}>
+					{agent.name}
+				</span>
 				{isPending && <span className="sr-only">(awaiting approval)</span>}
 				{apiCount != null && (
 					<span

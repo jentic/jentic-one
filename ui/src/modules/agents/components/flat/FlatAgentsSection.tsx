@@ -17,9 +17,16 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import { motion, useReducedMotion } from 'framer-motion';
-import { Archive, Bot, Clock, Plus, XCircle } from 'lucide-react';
-import type { LucideIcon } from 'lucide-react';
-import { Button, Card, EmptyState, ErrorAlert, ExpandableText, Skeleton } from '@/shared/ui';
+import { Bot, Plus } from 'lucide-react';
+import {
+	Button,
+	Card,
+	EmptyState,
+	ErrorAlert,
+	ExpandableText,
+	Skeleton,
+	STATUS_ICON,
+} from '@/shared/ui';
 import { cn } from '@/shared/lib/utils';
 import { useEagerCursorDrain, useHotkey } from '@/shared/hooks';
 import {
@@ -412,25 +419,25 @@ type BanneredStatus = Exclude<ActorStatus, 'active' | 'disabled'>;
  * The tint is carried by the icon's own chip rather than washed across the
  * whole row, so the banner reads as a titled notice on the page surface
  * instead of a coloured slab.
+ *
+ * Only the tint is local: the glyph comes from the shared `STATUS_ICON`
+ * vocabulary, so the same state can't be a clock here and something else on the
+ * tab that selected it.
  */
-const NON_ACTIVE_BANNER: Record<BanneredStatus, { Icon: LucideIcon; shell: string; chip: string }> =
-	{
-		pending: {
-			Icon: Clock,
-			shell: 'border-warning/40 bg-warning/[0.04]',
-			chip: 'bg-warning/15 text-warning',
-		},
-		rejected: {
-			Icon: XCircle,
-			shell: 'border-danger/40 bg-danger/[0.04]',
-			chip: 'bg-danger/15 text-danger',
-		},
-		archived: {
-			Icon: Archive,
-			shell: 'border-border/70 bg-muted/20',
-			chip: 'bg-muted-foreground/10 text-muted-foreground/70',
-		},
-	};
+const NON_ACTIVE_BANNER: Record<BanneredStatus, { shell: string; chip: string }> = {
+	pending: {
+		shell: 'border-warning/40 bg-warning/[0.04]',
+		chip: 'bg-warning/15 text-warning',
+	},
+	rejected: {
+		shell: 'border-danger/40 bg-danger/[0.04]',
+		chip: 'bg-danger/15 text-danger',
+	},
+	archived: {
+		shell: 'border-border/70 bg-muted/20',
+		chip: 'bg-muted-foreground/10 text-muted-foreground/70',
+	},
+};
 
 /**
  * The notice above the grid for a state that has something to say: what the
@@ -447,7 +454,8 @@ function StateBanner({
 	onApprove: () => void;
 	approvePending: boolean;
 }) {
-	const { Icon, shell, chip } = NON_ACTIVE_BANNER[status];
+	const { shell, chip } = NON_ACTIVE_BANNER[status];
+	const Icon = STATUS_ICON[status];
 	return (
 		<div
 			role="status"
