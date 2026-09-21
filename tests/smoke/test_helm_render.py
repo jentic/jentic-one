@@ -733,20 +733,31 @@ def test_render_pdb_and_network_policy_cover_enabled_surfaces() -> None:
         "networkPolicy.restrictEgress=true",
     )
     surfaces = {"registry", "admin", "control", "broker", "gateway"}
-    for kind in ("PodDisruptionBudget", "NetworkPolicy"):
-        named = {
-            doc["metadata"]["labels"]["app.kubernetes.io/name"]
-            for doc in docs
-            if doc.get("kind") == kind
-        }
-        assert named == surfaces, kind
+    named = {
+        doc["metadata"]["labels"]["app.kubernetes.io/name"]
+        for doc in docs
+        if doc.get("kind") == "PodDisruptionBudget"
+    }
+    assert named == surfaces
     policies = {
         doc["metadata"]["labels"]["app.kubernetes.io/name"]: doc
         for doc in docs
         if doc.get("kind") == "NetworkPolicy"
     }
+    # The bundled database is policed too — a surface-only set would leave it
+    # reachable from every pod in the cluster — but it gets no budget, being a
+    # single instance over one PVC.
+    assert set(policies) == surfaces | {"postgresql"}
     assert policies["broker"]["spec"]["policyTypes"] == ["Ingress"]
     assert "Egress" in policies["registry"]["spec"]["policyTypes"]
+
+    db = policies["postgresql"]["spec"]
+    assert db["policyTypes"] == ["Ingress"], "the database initiates nothing"
+    (rule,) = db["ingress"]
+    assert rule["from"] == [
+        {"podSelector": {"matchLabels": {"app.kubernetes.io/instance": "jentic"}}}
+    ], "only this release's pods, not allowFromNamespaces"
+    assert rule["ports"] == [{"port": 5432, "protocol": "TCP"}]
 
 
 @pytest.mark.smoke

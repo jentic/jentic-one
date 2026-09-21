@@ -389,11 +389,16 @@ is an OOM-kill, not a slowdown. Do not set the app's memory limit below
   `replicas` above 1: with a single replica there is no spare pod to evict and
   the budget blocks every drain instead.
 - **NetworkPolicy** — `networkPolicy.enabled=true` limits ingress to
-  same-release pods plus the namespaces in `networkPolicy.allowFromNamespaces`
-  (your ingress controller's, typically). Egress is a separate opt-in
+  same-release pods plus the namespaces in `networkPolicy.allowFromNamespaces`.
+  Put your ingress controller's namespace in that list unless it runs in this
+  release's namespace: the policy denies it otherwise and every route answers
+  502. The bundled database gets a policy of its own that admits **only** this
+  release's pods — `allowFromNamespaces` does not widen it, so a backup or DBA
+  workload elsewhere needs its own policy (Kubernetes unions policies selecting
+  the same pod, so yours adds to the chart's). Egress is a separate opt-in
   (`restrictEgress`) and never applies to the broker, whose whole function is
-  calling third-party APIs. Both are no-ops on a cluster whose CNI does not
-  enforce policies — check yours before relying on them.
+  calling third-party APIs. All of it is a no-op on a cluster whose CNI does not
+  enforce policies — check yours before relying on it.
 
 ## Observability
 

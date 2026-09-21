@@ -17,6 +17,9 @@ the operator's behalf, so a default-deny egress policy breaks the data plane by
 design rather than by accident. When it is turned on, the broker keeps
 unrestricted egress and the other surfaces get DNS, the database, and whatever
 `networkPolicy.extraEgress` allows.
+
+The bundled Postgres gets its own policy at the bottom of this file, because it
+is the one pod whose allowed callers are fully knowable from the chart.
 */ -}}
 {{- if .Values.networkPolicy.enabled }}
 {{- $dbPort := (index .Values.global.databases "registry").port | default 5432 }}
@@ -95,5 +98,48 @@ spec:
     {{- end }}
   {{- end }}
 {{- end }}
+{{- end }}
+{{- if .Values.postgresql.enabled }}
+---
+{{- /*
+The bundled database, which is the whole point of enabling this: without a policy
+selecting it, a cluster-wide `networkPolicy.enabled=true` still leaves the DB
+reachable from every pod in the cluster.
+
+Its callers are exactly the pods of this release — the surfaces and the migrate
+Job, which carries the same instance label — so this needs no knob:
+`allowFromNamespaces` deliberately does NOT apply here (the namespace an ingress
+controller lives in has no business reaching Postgres), and a backup or DBA
+workload outside the release gets its own policy from the operator. Kubernetes
+unions NetworkPolicies selecting the same pod, so that policy adds to this one
+rather than replacing it.
+
+Ingress-only, and not gated on `restrictEgress`: the database initiates nothing,
+so an egress policy here would only add a way to break it.
+*/ -}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-postgresql
+  labels:
+    app.kubernetes.io/name: postgresql
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: postgresql
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ .Release.Name }}
+      ports:
+        {{- /* Same value the surfaces' egress rule allows, so the two halves of
+        a restricted install always agree. */}}
+        - port: {{ $dbPort }}
+          protocol: TCP
 {{- end }}
 {{- end }}

@@ -100,8 +100,12 @@ helm install jentic deploy/helm/jentic-one \
   enable it above `replicas: 1` — at one replica a budget has no spare pod to
   give up and blocks node drains outright.
 - **NetworkPolicy** restricts ingress to same-release pods plus
-  `networkPolicy.allowFromNamespaces`. Egress is a separate switch
-  (`restrictEgress`) and never applies to the broker.
+  `networkPolicy.allowFromNamespaces`. The bundled database is policed too, but
+  only ever admits this release's pods — `allowFromNamespaces` does not widen it.
+  Egress is a separate switch (`restrictEgress`) and never applies to the broker.
+  With an ingress controller in front, list its namespace in
+  `allowFromNamespaces` unless it runs in the release's own namespace; otherwise
+  the policy denies it and every route answers 502.
 
 ## Local cluster workflow
 
