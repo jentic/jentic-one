@@ -49,6 +49,23 @@ func ParseMethodPath(target string) (method, path string) {
 	}
 }
 
+// ensureExecutableMethod rejects a resolved method the broker's proxy route does
+// not serve. TRACE belongs to the OpenAPI method set the registry ingests, so it
+// is discoverable and `jentic inspect` reads its contract — but the broker must
+// never proxy it: TRACE echoes the request back, which would reflect the
+// credentials the broker injects into the response body. Fail here so the agent
+// gets a coded resolve error locally instead of an opaque 405 from the data plane.
+func ensureExecutableMethod(method, target string) error {
+	if method != http.MethodTrace {
+		return nil
+	}
+	return &ux.CodedError{
+		Code:       ux.CodeResolveFailed,
+		Msg:        fmt.Sprintf("operation %q is a TRACE operation, which cannot be executed", target),
+		Actionable: fmt.Sprintf("jentic inspect %q", target),
+	}
+}
+
 // ResolveOperation resolves an execute target to its method and destination:
 // METHOD:/path short-circuits to a broker-relative Operation with no network
 // call; METHOD:URL (absolute) and opaque operation_ids resolve via the
@@ -56,6 +73,9 @@ func ParseMethodPath(target string) (method, path string) {
 // coded RESOLVE_FAILED so the caller's exit taxonomy maps them to exit 2.
 func ResolveOperation(ctx context.Context, ins Inspector, target, revision string) (*Operation, error) {
 	if method, path := ParseMethodPath(target); method != "" {
+		if err := ensureExecutableMethod(method, target); err != nil {
+			return nil, err
+		}
 		return &Operation{Method: method, Path: path}, nil
 	}
 
@@ -91,6 +111,9 @@ func ResolveOperation(ctx context.Context, ins Inspector, target, revision strin
 	// execute_read GET/HEAD gate, BuildRequest, logging — assumes the
 	// canonical uppercase form.
 	op.Method = strings.ToUpper(op.Method)
+	if err := ensureExecutableMethod(op.Method, target); err != nil {
+		return nil, err
+	}
 	return &op, nil
 }
 

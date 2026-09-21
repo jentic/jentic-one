@@ -282,3 +282,46 @@ func TestTransportFailurePreSend(t *testing.T) {
 		})
 	}
 }
+
+// traceInspector is the minimal Inspector that resolves any target to a TRACE
+// operation, standing in for a registry hit whose spec declares a TRACE method.
+type traceInspector struct{}
+
+func (traceInspector) Inspect(_ context.Context, _, _, _ string) ([]byte, error) {
+	return []byte(`{"method":"trace","url":"https://api.example.com/v1/debug"}`), nil
+}
+
+// TestResolveOperationRejectsTrace pins that a TRACE operation fails to resolve
+// for execute in BOTH target forms — the broker-relative METHOD:/path
+// short-circuit and the inspected absolute form. The broker's proxy route does
+// not serve TRACE, and it must not: TRACE echoes the request back, which would
+// reflect the credentials the broker injects. The failure therefore belongs
+// locally as a coded RESOLVE_FAILED (exit 2), not as a 405 from the data plane.
+func TestResolveOperationRejectsTrace(t *testing.T) {
+	cases := []struct {
+		name   string
+		target string
+		ins    Inspector
+	}{
+		{"broker-relative short-circuit", "TRACE:/v1/debug", nil},
+		{"inspected absolute form", "traceDebug", traceInspector{}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			op, err := ResolveOperation(context.Background(), tc.ins, tc.target, "")
+			if op != nil {
+				t.Fatalf("ResolveOperation(%q) returned an operation %+v, want none", tc.target, op)
+			}
+			var coded *ux.CodedError
+			if !errors.As(err, &coded) {
+				t.Fatalf("ResolveOperation(%q) error = %T (%v), want *ux.CodedError", tc.target, err, err)
+			}
+			if coded.Code != ux.CodeResolveFailed {
+				t.Errorf("code = %q, want %q", coded.Code, ux.CodeResolveFailed)
+			}
+			if coded.Actionable == "" {
+				t.Error("actionable step is empty; the agent needs the inspect recovery path")
+			}
+		})
+	}
+}
