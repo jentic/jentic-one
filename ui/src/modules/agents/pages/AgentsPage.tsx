@@ -17,8 +17,10 @@
  *
  * The header's filter and `New agent` are page-level too, and the page owns
  * the surface's keyboard map: `/` focuses the filter, `n` opens the create
- * sheet, `a` (bound by the flat section, which owns that verb) adds APIs —
- * all advertised by the shortcut bar at the page foot.
+ * sheet, `a` (bound by the flat section, which owns that verb) adds APIs. The
+ * map is documented in `PageHelp`, where the rest of the surface's explanation
+ * lives — a permanent strip across the page foot costs every operator screen
+ * height forever to state something each of them needs to read once.
  *
  * Because the inventory is a sheet and not a route, cross-module links reach
  * it through `?credentials` (`=new` to land on the create wizard), built by
@@ -33,7 +35,6 @@ import {
 	Button,
 	FOOTER_ACTION_BAR_PAGE_PADDING,
 	Kbd,
-	KeyboardShortcutsBar,
 	PageShell,
 	PageHeader,
 	PageHelp,
@@ -41,11 +42,10 @@ import {
 	type KeyboardShortcut,
 } from '@/shared/ui';
 import { useHotkey } from '@/shared/hooks';
-import { cn } from '@/shared/lib/utils';
 import { FlatAgentsSection } from '@/modules/agents/components/flat/FlatAgentsSection';
 import { CredentialInventorySheet } from '@/modules/agents/components/flat/CredentialInventorySheet';
 
-/** The surface's whole keyboard map, advertised at the page foot. */
+/** The surface's whole keyboard map, listed on demand in `PageHelp`. */
 const SHORTCUTS: KeyboardShortcut[] = [
 	{ keys: ['a'], label: 'add API' },
 	{ keys: ['n'], label: 'new agent' },
@@ -88,7 +88,7 @@ export default function AgentsPage() {
 		// The surface mounts the fixed AgentDock (`FooterActionBar`), so the
 		// page container pads its bottom to keep the last row of tiles clear of
 		// the dock — and, below `md`, of the bottom nav (risk O2).
-		<PageShell className={cn(FOOTER_ACTION_BAR_PAGE_PADDING, 'md:pb-32')}>
+		<PageShell className={FOOTER_ACTION_BAR_PAGE_PADDING}>
 			<PageHeader
 				title="Agents"
 				subtitle="Approve, deny, and govern agents across their lifecycle."
@@ -147,6 +147,7 @@ export default function AgentsPage() {
 									),
 								},
 							]}
+							shortcuts={SHORTCUTS}
 						/>
 					</>
 				}
@@ -168,11 +169,6 @@ export default function AgentsPage() {
 					setInventoryWantsCreate(false);
 				}}
 			/>
-
-			{/* The keys this surface binds, stated once at its foot. The dock
-			    lifts itself above this strip; the page's extra bottom padding
-			    keeps the last row of tiles clear of both. */}
-			<KeyboardShortcutsBar shortcuts={SHORTCUTS} leadingSlot="Agents" />
 		</PageShell>
 	);
 }

@@ -371,16 +371,26 @@ describe('AgentsPage — flat agents surface', () => {
 		expect(screen.getByText('No agents match your filter.')).toBeInTheDocument();
 	});
 
-	it('advertises its keyboard map and honours a / n while nothing owns the keys', async () => {
+	it('states its whole keyboard map in the page help, not in a permanent strip', async () => {
+		// The map is documented where the surface explains itself, so no key is a
+		// secret — and no strip across the page foot spends every operator's
+		// screen height restating what each of them reads once.
 		const user = userEvent.setup();
 		renderPage('/?agent=agnt_active_1');
 		await screen.findByText('Slack');
 
-		// The bar states the whole map, so no key is a secret.
-		const bar = within(screen.getByTestId('keyboard-shortcuts-bar'));
+		expect(screen.queryByTestId('keyboard-shortcuts-bar')).not.toBeInTheDocument();
+		await user.click(screen.getByTestId('page-help-trigger'));
+		const help = within(await screen.findByTestId('page-help-shortcuts'));
 		for (const label of ['add API', 'new agent', 'search', 'close']) {
-			expect(bar.getByText(label)).toBeInTheDocument();
+			expect(help.getByText(label)).toBeInTheDocument();
 		}
+	});
+
+	it('honours a / n while nothing owns the keys', async () => {
+		const user = userEvent.setup();
+		renderPage('/?agent=agnt_active_1');
+		await screen.findByText('Slack');
 
 		// `a` opens the Add-APIs tray for the selected agent…
 		await user.keyboard('a');

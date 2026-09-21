@@ -673,8 +673,8 @@ function SelectedAgentPanel({
 	// operator to choose them a second time.
 	const openAddApis = (): void => setAddStep(queueBatch.length > 0 ? 'queue' : 'tray');
 
-	// `a` is the surface's one creative shortcut (the bar at the page foot
-	// advertises it). Bound only while the verb is actually available, so it
+	// `a` is the surface's one creative shortcut (the page's help panel lists
+	// it). Bound only while the verb is actually available, so it
 	// never fires a no-op on an agent that cannot be given APIs, and never
 	// stacks a second tray over the one already open.
 	useHotkey('a', openAddApis, canBind && addStep === 'closed');

@@ -96,14 +96,7 @@ export function AgentDock({
 		// would sit the pill visually off-centre against the tiles above it.
 		// Sizing tracks the webapp ToolkitDock: a comfortably padded pill —
 		// ~20px icons with breathing room, not a razor-slim strip.
-		// The page also mounts the shortcut bar, which owns the bottom edge from
-		// `md` up (`z-30`, full width) — so from there the dock lifts clear of
-		// it. tailwind-merge keeps this `md:bottom-*` over the primitive's.
-		<FooterActionBar
-			floating
-			anchorToContainer
-			className="gap-2 px-4 py-2 md:bottom-[calc(env(safe-area-inset-bottom)+3rem)]"
-		>
+		<FooterActionBar floating anchorToContainer className="gap-2 px-4 py-2">
 			<motion.div
 				role="group"
 				aria-label={`Actions for ${agent.name}`}
