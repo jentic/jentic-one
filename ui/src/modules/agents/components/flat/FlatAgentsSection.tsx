@@ -119,10 +119,28 @@ export function FlatAgentsSection({ createOpen, setCreateOpen, filter }: FlatAge
 
 	// D10: the selected agent lives in the URL — `?agent=<id>` — so a selection
 	// survives refresh and is shareable. An unknown/absent id falls back to the
-	// first agent without rewriting the URL.
+	// first agent; when the param is ABSENT the effect below writes the fallback
+	// back into the URL, so the bare landing and the first tab click read the
+	// same and copying the URL at any moment links to what is visible.
+	// `replace`, because normalising the address is not a place the operator
+	// went — Back must still leave the page. An UNKNOWN id is left alone: right
+	// after creating an agent the param names an id the roster hasn't refetched
+	// yet, and rewriting it would clobber that selection before it can land.
 	const [searchParams, setSearchParams] = useSearchParams();
 	const agentParam = searchParams.get('agent');
 	const selected = agents.find((a) => a.id === agentParam) ?? agents[0] ?? null;
+	const fallbackId = agentParam == null ? (selected?.id ?? null) : null;
+	useEffect(() => {
+		if (fallbackId == null) return;
+		setSearchParams(
+			(prev) => {
+				const next = new URLSearchParams(prev);
+				next.set('agent', fallbackId);
+				return next;
+			},
+			{ replace: true },
+		);
+	}, [fallbackId, setSearchParams]);
 
 	function selectAgent(id: string) {
 		setSearchParams(

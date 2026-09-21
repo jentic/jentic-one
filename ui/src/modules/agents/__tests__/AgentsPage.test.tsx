@@ -232,6 +232,18 @@ describe('AgentsPage — flat agents surface', () => {
 		expect(screen.queryByTestId('strip-pending-divider')).not.toBeInTheDocument();
 	});
 
+	it('writes the fallback selection into the URL on a bare landing', async () => {
+		// The address bar always names the agent on screen: landing without
+		// `?agent=` selects the first tab AND says so, so the bare landing and
+		// the first click read the same and any copied URL is a real deep link.
+		renderPage('/');
+		await screen.findAllByText('inbox-triage-bot');
+
+		// First tab is the newest pending agent (decisions first, newest first).
+		expect(stripTab('release-notes-bot')).toHaveAttribute('aria-selected', 'true');
+		expect(screen.getByTestId('location-search')).toHaveTextContent('agent=agnt_pending_2');
+	});
+
 	it('selecting a pill switches the surface in place and writes ?agent=', async () => {
 		const user = userEvent.setup();
 		renderPage();
