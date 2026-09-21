@@ -668,14 +668,15 @@ describe('AgentsPage — flat agents surface', () => {
 		expect(struck('legacy-scraper')).toContain('line-through');
 		expect(struck('spammy-bot')).toContain('line-through');
 		// Pending is the one non-active state still in motion — crossing it out
-		// would state the opposite of what is true — and active is unmarked.
+		// would state the opposite of what is true — and active still serves.
 		expect(struck('inbox-triage-bot')).toBe('none');
 		expect(struck('support-agent')).toBe('none');
-		// Each non-active state carries its own glyph; active carries none at all.
+		// Every state carries exactly one glyph, active included, so all five
+		// labels start at the same left edge.
 		const glyphs = (name: string) => stripTab(name).querySelectorAll('svg').length;
-		expect(glyphs('legacy-scraper')).toBe(1);
-		expect(glyphs('inbox-triage-bot')).toBe(1);
-		expect(glyphs('support-agent')).toBe(0);
+		for (const name of ['legacy-scraper', 'inbox-triage-bot', 'support-agent', 'spammy-bot']) {
+			expect(glyphs(name)).toBe(1);
+		}
 	});
 
 	it('reads not-serving on every tile of a non-active agent, never Ready', async () => {

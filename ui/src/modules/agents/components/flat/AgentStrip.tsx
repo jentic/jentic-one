@@ -5,8 +5,9 @@
  *
  * Grammar: quiet text tabs inside one low-contrast rail — the selected tab is
  * a subtle filled slab, not a loud chip — each carrying a muted count of the
- * APIs that agent reaches. A status dot is drawn only for a NON-ACTIVE agent
- * (active is the quiet default, so the dot means "look at this one"), plus a
+ * APIs that agent reaches. Every tab leads with its lifecycle glyph (the shared
+ * `STATUS_ICON` vocabulary, so a state looks the same here as in the notice
+ * about it) and a name struck through once the verdict is settled, plus a
  * "· N to set up" hint when bound credentials are still waiting on an OAuth
  * sign-in.
  *
@@ -68,7 +69,9 @@ const SETTLED_STATUSES: ReadonlySet<ActorStatus> = new Set<ActorStatus>([
  */
 const TAB_STATUS_TINT: Record<ActorStatus, string> = {
 	pending: 'text-warning',
-	active: 'text-success',
+	// Quietest of the five: it is on most tabs most of the time, so it marks
+	// "running" without competing with the marks that want a decision.
+	active: 'text-success/70',
 	rejected: 'text-danger/80',
 	disabled: 'text-warning/80',
 	archived: 'text-muted-foreground/60',
@@ -208,7 +211,6 @@ export function AgentStrip({
 
 	function renderTab(agent: AgentEntity) {
 		const isSelected = agent.id === selectedId;
-		const isServing = agent.status === 'active';
 		const isPending = agent.status === 'pending';
 		const isSettled = SETTLED_STATUSES.has(agent.status);
 		const StatusIcon = STATUS_ICON[agent.status];
@@ -229,21 +231,29 @@ export function AgentStrip({
 				className={cn(
 					'flex shrink-0 snap-start items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm whitespace-nowrap transition-colors duration-150',
 					'focus-visible:ring-ring focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:outline-none',
+					// The selected tab RISES out of the rail: a solid surface a step
+					// lighter than the rail's own wash, outlined so its edges are
+					// stated rather than implied. The theme is dark-only, so the
+					// elevation cues that work on paper don't work here — a drop
+					// shadow is black on near-black, and the page surface itself
+					// reads as a hole punched in the rail rather than a raised chip.
 					isSelected
-						? 'bg-background text-foreground font-medium shadow-sm'
-						: 'text-muted-foreground hover:text-foreground',
+						? 'bg-muted ring-border/70 text-foreground font-semibold ring-1'
+						: // …and the unselected tabs have to recede for the rise to
+							// register: `--muted-foreground` is #E4EAEB in this theme,
+							// a hair off white, so it needs dimming to read as
+							// secondary at all.
+							'text-muted-foreground/65 hover:text-foreground hover:bg-muted/50',
 				)}
 			>
-				{/* Active is the quiet default: only a non-active agent is marked,
-				    so a mark at all means "this one is not serving". The glyph is
-				    what tells the four states apart — a dot could only differ by
-				    colour, and `disabled` has no banner to fall back on. */}
-				{!isServing && (
-					<StatusIcon
-						aria-hidden="true"
-						className={cn('size-3.5 shrink-0', TAB_STATUS_TINT[agent.status])}
-					/>
-				)}
+				{/* Every state gets its own glyph, active included: the shape is
+				    what tells the five apart (a dot could only differ by colour,
+				    and `disabled` has no banner to fall back on), and filling the
+				    slot on every tab keeps all five labels on one left edge. */}
+				<StatusIcon
+					aria-hidden="true"
+					className={cn('size-3.5 shrink-0', TAB_STATUS_TINT[agent.status])}
+				/>
 				{/* Struck through when the name will not serve and won't change on
 				    its own. `pending` is the one non-active state still in motion,
 				    so it stays upright — the only crossing-out that would be a lie. */}
@@ -255,7 +265,7 @@ export function AgentStrip({
 					<span
 						className={cn(
 							'text-xs tabular-nums',
-							isSelected ? 'text-muted-foreground' : 'text-muted-foreground/70',
+							isSelected ? 'text-muted-foreground' : 'text-muted-foreground/50',
 						)}
 					>
 						{apiCount}
