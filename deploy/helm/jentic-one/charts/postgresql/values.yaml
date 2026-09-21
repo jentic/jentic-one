@@ -33,6 +33,22 @@ primary:
     # templates/pg-init-configmap.yaml in the umbrella chart).
     scriptsConfigMap: ""
 
+# Raised from the image's default of 100, which the chart's own topologies
+# exceed: every surface opens a pool per database (databases.*.pool_max
+# defaults to 10, three databases), so each process can hold ~30 connections.
+# Combined mode (app + broker) reaches ~60, and parts mode (registry + admin +
+# control + broker) ~120 — over the default before any replica is added or the
+# migration Job connects.
+#
+# 200 covers parts mode with headroom for the migrate hook and a second replica.
+# It is also why the memory limit below is 2Gi: each backend costs a few MB of
+# private memory on top of shared_buffers, so a full 200 needs more than the
+# 1Gi that suffices at 100. Raise both together, or neither.
+#
+# A managed database with a connection pooler is still the production answer —
+# see docs/installation/helm.md.
+maxConnections: 200
+
 persistence:
   enabled: true
   size: 8Gi
@@ -45,4 +61,5 @@ resources:
     memory: 256Mi
   limits:
     cpu: "1"
-    memory: 1Gi
+    # Sized for maxConnections above — see the arithmetic there.
+    memory: 2Gi

@@ -10,6 +10,7 @@ RUN python3.12 -m venv /opt/venv && \
     rm /tmp/*.whl
 ENV PATH="/opt/venv/bin:${PATH}"
 
-USER jentic
+# Numeric so kubelet can verify runAsNonRoot (see python-base.Dockerfile).
+USER 10001
 ENV JENTIC__APPS=broker
 CMD ["python", "-m", "jentic_one"]

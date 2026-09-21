@@ -15,6 +15,7 @@ ENV PATH="/opt/venv/bin:${PATH}"
 # non-root process can create database files (a root-owned volume cannot).
 RUN mkdir -p /data && chown jentic:jentic /data
 
-USER jentic
+# Numeric so kubelet can verify runAsNonRoot (see python-base.Dockerfile).
+USER 10001
 ENV JENTIC__APPS=registry,admin,control,auth
 CMD ["python", "-m", "jentic_one"]
