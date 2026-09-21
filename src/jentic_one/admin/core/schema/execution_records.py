@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Index, SmallInteger, String, text
+from sqlalchemy import BigInteger, Index, SmallInteger, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
@@ -53,13 +53,14 @@ class ExecutionRecord(AuditableMixin, AdminBase):
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     operation_id: Mapped[str | None] = mapped_column(String(512), nullable=True)
     # Human-readable operation identity, nullable in three cases: rows predating
-    # these columns, legacy in-flight jobs that carried only ``operation_id``,
+    # these columns, legacy in-flight jobs that carry only ``operation_id``,
     # and executions where discovery resolved no operation at all (then all
     # three operation_* columns are NULL). ``operation_path`` is the spec's path
-    # template (e.g. ``/repos/{owner}/{repo}``), truncated to 512 at the write
-    # seam (``record_execution``) because the registry source is unbounded Text;
+    # template (e.g. ``/repos/{owner}/{repo}``); it mirrors its unbounded
+    # registry source (``operations.path``, Text) so no write seam has to
+    # truncate and no backend silently disagrees about the limit.
     # ``operation_method``'s width mirrors registry ``operations.method``.
-    operation_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    operation_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     operation_method: Mapped[str | None] = mapped_column(String(10), nullable=True)
     api_vendor: Mapped[str | None] = mapped_column(String(128), nullable=True)
     api_name: Mapped[str | None] = mapped_column(String(128), nullable=True)

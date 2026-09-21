@@ -1,9 +1,10 @@
 """add operation path and method to execution_records
 
-Nullable-legacy adds: ``operation_path`` (the spec's path template, truncated to
-512 at the write seam) and ``operation_method`` (width mirrors registry
-``operations.method``). Nullable because historical rows and legacy in-flight
-job payloads carry only ``operation_id`` — no backfill, no lock concern.
+Nullable-legacy adds: ``operation_path`` (the spec's path template, Text to
+mirror its unbounded registry source ``operations.path``) and
+``operation_method`` (width mirrors registry ``operations.method``). Nullable
+because historical rows and legacy in-flight job payloads carry only
+``operation_id`` — no backfill, no lock concern.
 Deliberately unindexed: nothing filters or groups by these columns (list
 filters use toolkit/trace/status/api/actor; monitoring groups by
 ``operation_id``); they are display-only.
@@ -26,7 +27,7 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    op.add_column("execution_records", sa.Column("operation_path", sa.String(512), nullable=True))
+    op.add_column("execution_records", sa.Column("operation_path", sa.Text(), nullable=True))
     op.add_column("execution_records", sa.Column("operation_method", sa.String(10), nullable=True))
 
 

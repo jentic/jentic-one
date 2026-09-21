@@ -168,17 +168,17 @@ async def test_streaming_execution_without_operation_persists_null_trio(
 
 
 @pytest.mark.asyncio
-async def test_oversized_operation_path_is_truncated_not_fatal(
+async def test_oversized_operation_path_is_persisted_whole(
     admin_db: DatabaseSession,
     ctx_req: ExecuteRequestContext,
 ) -> None:
-    """A path template longer than the 512-char column truncates at the write
-    seam instead of failing the flush — the registry source column is unbounded
-    Text, so without the guard a successful execution would lose its record."""
+    """A long path template persists intact: ``operation_path`` mirrors its
+    unbounded registry source (``operations.path``, Text), so no width limit can
+    fail the flush and lose a successful execution's record."""
     execution_id = "integ-stream-exec-004"
-    long_name = "/v1/" + "x" * 600
+    long_path = "/v1/" + "x" * 600
     ctx_req = ctx_req.model_copy(
-        update={"operation": OperationInfo(id="getData", path=long_name, method="GET")}
+        update={"operation": OperationInfo(id="getData", path=long_path, method="GET")}
     )
 
     async with admin_db.transaction() as session:
@@ -200,5 +200,5 @@ async def test_oversized_operation_path_is_truncated_not_fatal(
             await session.execute(select(ExecutionRecord).where(ExecutionRecord.id == execution_id))
         ).scalar_one()
 
-    assert record.operation_path == long_name[:512]
+    assert record.operation_path == long_path
     assert record.operation_method == "GET"
