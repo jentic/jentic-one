@@ -623,7 +623,7 @@ describe('ApiAccessSidebar — the API tile access panel (plan §4.5)', () => {
 		const user = userEvent.setup();
 		renderPage();
 		// The seeded GitHub binding is suspended.
-		await screen.findByText('Not serving calls until resumed.');
+		await screen.findByText('Suspended · not serving');
 
 		const dialog = await openSidebar('GitHub');
 		const inDialog = within(dialog);
@@ -642,7 +642,7 @@ describe('ApiAccessSidebar — the API tile access panel (plan §4.5)', () => {
 			expect(inDialog.queryByTestId('sidebar-suspended-badge')).not.toBeInTheDocument();
 		});
 		await waitFor(() => {
-			expect(screen.queryByText('Not serving calls until resumed.')).not.toBeInTheDocument();
+			expect(screen.queryByText('Suspended · not serving')).not.toBeInTheDocument();
 		});
 	});
 
@@ -670,9 +670,7 @@ describe('ApiAccessSidebar — the API tile access panel (plan §4.5)', () => {
 		// …and the tile underneath tells the same story. Scoped to the Slack
 		// tile — the seeded GitHub tile carries the same suspended line.
 		const slackTile = tileOpener('Slack').closest('[data-testid="api-tile"]') as HTMLElement;
-		expect(
-			await within(slackTile).findByText('Not serving calls until resumed.'),
-		).toBeInTheDocument();
+		expect(await within(slackTile).findByText('Suspended · not serving')).toBeInTheDocument();
 
 		// Round-trip: resume restores the serving state everywhere.
 		await user.click(resumeButton);
@@ -684,7 +682,7 @@ describe('ApiAccessSidebar — the API tile access panel (plan §4.5)', () => {
 		).toBeInTheDocument();
 		await waitFor(() => {
 			expect(
-				within(slackTile).queryByText('Not serving calls until resumed.'),
+				within(slackTile).queryByText('Suspended · not serving'),
 			).not.toBeInTheDocument();
 		});
 	});

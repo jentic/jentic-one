@@ -17,7 +17,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import { motion, useReducedMotion } from 'framer-motion';
-import { Archive, Ban, Bot, Clock, Plus, Power, XCircle } from 'lucide-react';
+import { Archive, Bot, Clock, Plus, XCircle } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { Button, Card, EmptyState, ErrorAlert, Skeleton } from '@/shared/ui';
 import { cn } from '@/shared/lib/utils';
@@ -40,7 +40,6 @@ import {
 	useApproveAgent,
 	useDenyAgent,
 	useDisableAgent,
-	useEnableAgent,
 	useArchiveAgent,
 	useUnbindAgentCredential,
 	useResumeAgentCredentialBinding,
@@ -153,7 +152,6 @@ export function FlatAgentsSection({ createOpen, setCreateOpen, filter }: FlatAge
 	const approve = useApproveAgent();
 	const deny = useDenyAgent();
 	const disable = useDisableAgent();
-	const enable = useEnableAgent();
 	const archive = useArchiveAgent();
 	const [confirm, setConfirm] = useState<PendingConfirm>(null);
 	// The dock's sheet surfaces (API key / activity / permissions / MCP /
@@ -304,8 +302,6 @@ export function FlatAgentsSection({ createOpen, setCreateOpen, filter }: FlatAge
 					onCloseTile={() => setOpenTileKey(null)}
 					onApprove={() => approve.mutate(selected.id)}
 					approvePending={approve.isPending && approve.variables === selected.id}
-					onEnable={() => enable.mutate(selected.id)}
-					enablePending={enable.isPending && enable.variables === selected.id}
 					autoOpenAddApis={addApisFor === selected.id}
 					onAutoOpenAddApisConsumed={clearAddApisFor}
 				/>
@@ -377,17 +373,21 @@ export function FlatAgentsSection({ createOpen, setCreateOpen, filter }: FlatAge
 // Selected-agent panel — header, stat strip, non-active banner, tile grid
 // ---------------------------------------------------------------------------
 
-/** Copy for the non-active banner: the state as a headline, what it means as a
+/**
+ * Copy for the non-active banner: the state as a headline, what it means as a
  * quiet second line. Suspension stops traffic, not editing — so the copy says
- * "not serving traffic", never "read-only". */
-const NON_ACTIVE_COPY: Record<Exclude<ActorStatus, 'active'>, { title: string; detail: string }> = {
+ * "not serving traffic", never "read-only".
+ *
+ * `disabled` has NO banner. It is the one non-active state that carries no
+ * information a notice could add: the tile family reads not-serving on its own
+ * (dashed, `Not serving` chips) and the dock's red toggle is both the statement
+ * and the way back. The three states that stay are the ones with something to
+ * say — a decision to take, a reason to read, a sweep to explain.
+ */
+const NON_ACTIVE_COPY: Record<BanneredStatus, { title: string; detail: string }> = {
 	pending: {
 		title: 'Waiting for approval',
 		detail: 'Not serving traffic. Approve it to let it authenticate.',
-	},
-	disabled: {
-		title: 'Disabled',
-		detail: 'Not serving traffic. Its APIs and credentials stay fully editable.',
 	},
 	rejected: {
 		title: 'Rejected',
@@ -399,42 +399,89 @@ const NON_ACTIVE_COPY: Record<Exclude<ActorStatus, 'active'>, { title: string; d
 	},
 };
 
+/** The non-active states that still warrant a banner (see `NON_ACTIVE_COPY`). */
+type BanneredStatus = Exclude<ActorStatus, 'active' | 'disabled'>;
+
 /**
- * Per-state banner treatment (D8/D9): the four non-active states must never
- * read identically, so each carries its own icon and tint — urgency for the
- * one that wants a decision, danger for the refusal, quiet grey for the two
- * that are simply parked. The copy above still says "not serving traffic",
- * never "read-only": the tint is about attention, not editability.
+ * Per-state banner treatment (D8/D9): the states must never read identically,
+ * so each carries its own icon and tint — urgency for the one that wants a
+ * decision, danger for the refusal, quiet grey for the one that is simply
+ * retired. The copy above still says "not serving traffic", never "read-only":
+ * the tint is about attention, not editability.
  *
  * The tint is carried by the icon's own chip rather than washed across the
  * whole row, so the banner reads as a titled notice on the page surface
  * instead of a coloured slab.
  */
-const NON_ACTIVE_BANNER: Record<
-	Exclude<ActorStatus, 'active'>,
-	{ Icon: LucideIcon; shell: string; chip: string }
-> = {
-	pending: {
-		Icon: Clock,
-		shell: 'border-warning/40 bg-warning/[0.04]',
-		chip: 'bg-warning/15 text-warning',
-	},
-	disabled: {
-		Icon: Ban,
-		shell: 'border-border bg-muted/40',
-		chip: 'bg-muted-foreground/15 text-muted-foreground',
-	},
-	rejected: {
-		Icon: XCircle,
-		shell: 'border-danger/40 bg-danger/[0.04]',
-		chip: 'bg-danger/15 text-danger',
-	},
-	archived: {
-		Icon: Archive,
-		shell: 'border-border/70 bg-muted/20',
-		chip: 'bg-muted-foreground/10 text-muted-foreground/70',
-	},
-};
+const NON_ACTIVE_BANNER: Record<BanneredStatus, { Icon: LucideIcon; shell: string; chip: string }> =
+	{
+		pending: {
+			Icon: Clock,
+			shell: 'border-warning/40 bg-warning/[0.04]',
+			chip: 'bg-warning/15 text-warning',
+		},
+		rejected: {
+			Icon: XCircle,
+			shell: 'border-danger/40 bg-danger/[0.04]',
+			chip: 'bg-danger/15 text-danger',
+		},
+		archived: {
+			Icon: Archive,
+			shell: 'border-border/70 bg-muted/20',
+			chip: 'bg-muted-foreground/10 text-muted-foreground/70',
+		},
+	};
+
+/**
+ * The notice above the grid for a state that has something to say: what the
+ * state is, what it means for traffic, and — for pending — the decision itself.
+ */
+function StateBanner({
+	status,
+	denialReason,
+	onApprove,
+	approvePending,
+}: {
+	status: BanneredStatus;
+	denialReason: string | null;
+	onApprove: () => void;
+	approvePending: boolean;
+}) {
+	const { Icon, shell, chip } = NON_ACTIVE_BANNER[status];
+	return (
+		<div
+			role="status"
+			data-testid={`agent-state-banner-${status}`}
+			className={cn(
+				'flex flex-wrap items-center gap-x-3 gap-y-3 rounded-xl border p-3 sm:flex-nowrap',
+				shell,
+			)}
+		>
+			{/* The tint lives in the chip, which gives the icon a size worth
+			    seeing and keeps the row itself close to the page surface. */}
+			<span
+				aria-hidden="true"
+				className={cn('grid h-8 w-8 shrink-0 place-items-center rounded-lg', chip)}
+			>
+				<Icon className="h-4 w-4" />
+			</span>
+			<div className="min-w-0 flex-1 space-y-0.5">
+				<p className="text-foreground text-sm leading-tight font-medium">
+					{NON_ACTIVE_COPY[status].title}
+				</p>
+				<p className="text-muted-foreground text-xs leading-snug">
+					{NON_ACTIVE_COPY[status].detail}
+					{status === 'rejected' && denialReason && <> Reason: {denialReason}</>}
+				</p>
+			</div>
+			{status === 'pending' && (
+				<Button size="sm" loading={approvePending} onClick={onApprove} className="shrink-0">
+					Approve
+				</Button>
+			)}
+		</div>
+	);
+}
 
 /**
  * Copy for an agent that reaches no API yet, per state.
@@ -468,8 +515,6 @@ interface SelectedAgentPanelProps {
 	onCloseTile: () => void;
 	onApprove: () => void;
 	approvePending: boolean;
-	onEnable: () => void;
-	enablePending: boolean;
 	/** This agent was just created and its APIs are the next step (requirement 4). */
 	autoOpenAddApis: boolean;
 	/** Spend the signal, so re-selecting this agent later does not reopen the tray. */
@@ -488,8 +533,6 @@ function SelectedAgentPanel({
 	onCloseTile,
 	onApprove,
 	approvePending,
-	onEnable,
-	enablePending,
 	autoOpenAddApis,
 	onAutoOpenAddApisConsumed,
 }: SelectedAgentPanelProps) {
@@ -606,7 +649,11 @@ function SelectedAgentPanel({
 				? null
 				: { at: executionsQuery.data.items[0]?.startedAt ?? null };
 
-	const banner = agent.status === 'active' ? null : NON_ACTIVE_BANNER[agent.status];
+	// Serving is the tile family's own state, and `disabled` says it there rather
+	// than in a banner (see `NON_ACTIVE_COPY`).
+	const serving = agent.status === 'active';
+	const bannerStatus: BanneredStatus | null =
+		agent.status === 'active' || agent.status === 'disabled' ? null : agent.status;
 
 	const isArchived = agent.status === 'archived';
 	// D9: a non-active agent stays fully editable — only pending (cannot
@@ -673,60 +720,13 @@ function SelectedAgentPanel({
 				<p className="text-muted-foreground text-sm">{agent.description}</p>
 			)}
 
-			{agent.status !== 'active' && banner && (
-				<div
-					role="status"
-					data-testid={`agent-state-banner-${agent.status}`}
-					className={cn(
-						'flex flex-wrap items-center gap-x-3 gap-y-3 rounded-xl border p-3 sm:flex-nowrap',
-						banner.shell,
-					)}
-				>
-					{/* The tint lives in the chip, which gives the icon a size worth
-					    seeing and keeps the row itself close to the page surface. */}
-					<span
-						aria-hidden="true"
-						className={cn(
-							'grid h-8 w-8 shrink-0 place-items-center rounded-lg',
-							banner.chip,
-						)}
-					>
-						<banner.Icon className="h-4 w-4" />
-					</span>
-					<div className="min-w-0 flex-1 space-y-0.5">
-						<p className="text-foreground text-sm leading-tight font-medium">
-							{NON_ACTIVE_COPY[agent.status].title}
-						</p>
-						<p className="text-muted-foreground text-xs leading-snug">
-							{NON_ACTIVE_COPY[agent.status].detail}
-							{agent.status === 'rejected' && agent.denialReason && (
-								<> Reason: {agent.denialReason}</>
-							)}
-						</p>
-					</div>
-					{agent.status === 'pending' && (
-						<Button
-							size="sm"
-							loading={approvePending}
-							onClick={onApprove}
-							className="shrink-0"
-						>
-							Approve
-						</Button>
-					)}
-					{agent.status === 'disabled' && (
-						<Button
-							size="sm"
-							variant="outline"
-							loading={enablePending}
-							onClick={onEnable}
-							className="shrink-0"
-						>
-							<Power className="h-3.5 w-3.5" />
-							Enable
-						</Button>
-					)}
-				</div>
+			{bannerStatus && (
+				<StateBanner
+					status={bannerStatus}
+					denialReason={agent.denialReason}
+					onApprove={onApprove}
+					approvePending={approvePending}
+				/>
 			)}
 
 			{/* One band for the whole API story: the heading carries the number
@@ -790,12 +790,12 @@ function SelectedAgentPanel({
 			) : (
 				<div
 					className={cn(
-						// D8: a non-active agent's TILE FAMILY reads inactive — the
-						// band, its verb and the dock stay full strength, and every
-						// control here stays clickable. Desaturating (not dimming)
-						// greys the vendor marks and status chips while leaving the
-						// text at full contrast.
-						agent.status !== 'active' && 'saturate-[.35]',
+						// D8: a non-active agent's TILE FAMILY is what reads inactive
+						// — dashed and recessed per tile (see `ApiTile`), desaturated
+						// as a set so the vendor marks grey out with it. The band, its
+						// verb and the dock stay full strength, and every control here
+						// stays clickable: not serving is not read-only.
+						!serving && 'saturate-[.35]',
 					)}
 				>
 					<div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
@@ -810,6 +810,7 @@ function SelectedAgentPanel({
 								}
 								onResume={() => resumeBinding.mutate(tile.credentialId)}
 								bindingPending={pendingBindingCredentialId === tile.credentialId}
+								agentServing={serving}
 								expanded={openTileKey === tile.key}
 								sidebarId={API_ACCESS_SIDEBAR_ID}
 							/>

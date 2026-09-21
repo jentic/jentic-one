@@ -249,7 +249,45 @@ describe('AgentsPage — flat agents surface', () => {
 		expect(screen.getByText('GitHub')).toBeInTheDocument();
 		expect(screen.getByText('GitHub PAT')).toBeInTheDocument();
 		expect(screen.getByText('No rules — all calls blocked')).toBeInTheDocument();
-		expect(screen.getByText('Not serving calls until resumed.')).toBeInTheDocument();
+		expect(screen.getByText('Suspended · not serving')).toBeInTheDocument();
+	});
+
+	it('says each identity once — a credential named after its API drops off the tile', async () => {
+		// The vendor mark, the title and the meta line would otherwise print the
+		// same word three times on one tile. A credential that names something
+		// else is a fact, and keeps its place.
+		resetCredentialsStore([
+			makeMockCredential({
+				credential_id: 'cred_slack_1',
+				name: 'Slack',
+				type: CredentialType.BEARER_TOKEN,
+				api: { vendor: 'slack.com', name: 'default', version: '1.0.0' },
+			}),
+			makeMockCredential({
+				credential_id: 'cred_github_1',
+				name: 'GitHub PAT',
+				type: CredentialType.BEARER_TOKEN,
+				api: { vendor: 'github.com', name: 'default', version: '1.0.0' },
+			}),
+		]);
+		renderPage('/?agent=agnt_active_1');
+
+		const slackTile = (await screen.findByText('Slack')).closest(
+			'[data-testid="api-tile"]',
+		) as HTMLElement;
+		expect(within(slackTile).getAllByText('Slack')).toHaveLength(1);
+		const githubTile = screen
+			.getByText('GitHub')
+			.closest('[data-testid="api-tile"]') as HTMLElement;
+		expect(within(githubTile).getByText('GitHub PAT')).toBeInTheDocument();
+
+		// Every tile still stands the same height: what the suspension means
+		// rides beside its chip rather than on a row the others reserve empty.
+		expect(within(githubTile).getByText('Suspended · not serving')).toBeInTheDocument();
+		const heights = screen
+			.getAllByTestId('api-tile')
+			.map((tile) => Math.round(tile.getBoundingClientRect().height));
+		expect(new Set(heights).size).toBe(1);
 	});
 
 	it('deep link ?agent= preselects the agent and its grid', async () => {
@@ -514,23 +552,47 @@ describe('AgentsPage — flat agents surface', () => {
 		expect(screen.getByText(/Each API gets a credential in this flow/)).toBeInTheDocument();
 	});
 
-	it('mutes a disabled agent with not-serving-traffic copy and a live Enable', async () => {
+	it('says disabled on the surface itself — no banner — and re-enables from the dock', async () => {
 		const user = userEvent.setup();
 		renderPage('/?agent=agnt_disabled_1');
 		await screen.findAllByText('inbox-triage-bot');
 
-		expect(
-			await screen.findByText(
-				/Not serving traffic\. Its APIs and credentials stay fully editable\./,
-			),
-		).toBeInTheDocument();
+		// Disabled is the one non-active state that carries no notice: the dock's
+		// red toggle is both the statement and the way back, and the grid says it
+		// per tile (the spec below). A banner here would only repeat them.
+		const toggle = await screen.findByTestId('dock-serving-toggle');
+		expect(toggle).toHaveTextContent('Not serving');
+		expect(screen.queryByTestId('agent-state-banner-disabled')).not.toBeInTheDocument();
+		expect(screen.queryByText(/Not serving traffic\./)).not.toBeInTheDocument();
 
-		await user.click(screen.getByRole('button', { name: 'Enable' }));
-		await waitFor(() => {
-			expect(
-				screen.queryByText(/Its APIs and credentials stay fully editable/),
-			).not.toBeInTheDocument();
-		});
+		// D9: not serving is never read-only — the toggle itself is live.
+		await user.click(screen.getByRole('button', { name: /^Enable legacy-scraper/ }));
+		await waitFor(() => expect(toggle).toHaveTextContent('Serving'));
+	});
+
+	it('reads not-serving on every tile of a non-active agent, never Ready', async () => {
+		// The only fixture agent WITH bindings, handed back as disabled: the grid
+		// is what must read inactive (D8), so the tiles carry it themselves.
+		worker.use(
+			http.get('*/agents', () =>
+				HttpResponse.json({
+					data: [{ ...agentRow('agnt_active_1', 'support-agent'), status: 'disabled' }],
+					has_more: false,
+					next_cursor: null,
+				}),
+			),
+		);
+		renderPage('/?agent=agnt_active_1');
+		await screen.findByText('Slack');
+
+		const tiles = screen.getAllByTestId('api-tile');
+		expect(tiles).toHaveLength(2);
+		expect(tiles.every((tile) => tile.dataset.notServing === 'true')).toBe(true);
+		// No green claim anywhere on a grid that serves nothing; the suspended
+		// binding keeps its own chip, which outranks the agent-level state.
+		expect(screen.queryByText('Ready')).not.toBeInTheDocument();
+		const chips = tiles.map((tile) => within(tile).getByTestId('tile-status-chip').textContent);
+		expect(chips.sort()).toEqual(['Not serving', 'Suspended · not serving']);
 	});
 
 	it('blocks Add APIs with a reason on a pending agent and approves from the banner', async () => {
