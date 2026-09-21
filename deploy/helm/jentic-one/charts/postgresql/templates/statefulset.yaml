@@ -34,6 +34,28 @@ keep the subchart self-contained): AWS Marketplace validates charts with bare
 `helm lint`/`helm template`, so the guard must not fire in offline renders —
 `lookup` only returns data against a live cluster (install/upgrade).
 */ -}}
+{{- /*
+Non-string password guard (mirrors charts/common's common.assert-string-password,
+inlined for the same self-containment reason): YAML types unquoted scalars
+before Helm sees them, so `password: 0123456789` arrives as a number and renders
+as `1.23456789e+08` — the server would be initialised with a password the
+operator never typed, and the service pods (whose own guard fires on the same
+value) could never agree with it. Only reachable when a password was supplied,
+so bare lint/template never hit it.
+*/ -}}
+{{- define "postgresql.assert-string-password" -}}
+{{- if not (kindIs "string" .value) -}}
+{{- fail (printf "%s must be quoted in your values file — YAML parsed it as a %s, so it renders as %q rather than the value you typed. Write it as a quoted string: %s: \"...\"" .path (kindOf .value) (printf "%v" .value) .path) -}}
+{{- end -}}
+{{- end -}}
+{{- if .Values.auth.password -}}
+{{- include "postgresql.assert-string-password" (dict "value" .Values.auth.password "path" "postgresql.auth.password") -}}
+{{- end -}}
+{{- range $surface, $db := .Values.global.databases -}}
+{{- if $db.password -}}
+{{- include "postgresql.assert-string-password" (dict "value" $db.password "path" (printf "global.databases.%s.password" $surface)) -}}
+{{- end -}}
+{{- end -}}
 {{- $password := .Values.auth.password -}}
 {{- if and (not $password) (not $secretsOn) -}}
 {{- if or (lookup "v1" "ServiceAccount" .Release.Namespace "default") (lookup "v1" "Namespace" "" "") -}}
@@ -67,6 +89,12 @@ spec:
       containers:
         - name: postgresql
           image: {{ $image | quote }}
+          {{- /*
+          The official image's entrypoint forwards trailing args to `postgres`,
+          so this is the supported way to override a setting without shipping a
+          postgresql.conf. See values.yaml for why the default is not 100.
+          */}}
+          args: ["-c", "max_connections={{ .Values.maxConnections }}"]
           securityContext:
             runAsUser: 999
             runAsGroup: 999

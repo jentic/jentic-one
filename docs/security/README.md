@@ -127,9 +127,10 @@ warrants:
    Linux capabilities, `no-new-privileges`; prefer rootless Docker. The
    published image already runs as a non-root user; the rest is deployment
    flags (`--read-only --cap-drop ALL --security-opt no-new-privileges` on
-   Docker). The Helm chart does not yet set a `securityContext` on the
-   application pods — on Kubernetes, apply your own via a mutating policy or
-   a chart patch until it does.
+   Docker). On Kubernetes the Helm chart does this by default — every
+   application pod ships `runAsNonRoot` at uid 10001, a read-only root
+   filesystem, `allowPrivilegeEscalation: false` and `capabilities.drop: [ALL]`
+   ([chart docs](../../deploy/helm/README.md#pod-hardening)).
 6. **TLS everywhere**, terminated at a reverse proxy.
 7. **Network segmentation** between the agent and Jentic One/DB (host firewall,
    Kubernetes NetworkPolicy, or cloud security groups).

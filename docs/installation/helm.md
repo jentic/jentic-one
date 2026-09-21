@@ -6,7 +6,7 @@ chart with one subchart per service (`app`, `broker`, `registry`, `admin`,
 `control`) plus an optional bundled PostgreSQL. The chart can be zero-touch:
 with generated secrets enabled, every secret (credential-encryption keyset,
 JWT signing secret, database passwords) is created on first install and
-reused on every upgrade, and migrations run as a post-install hook.
+reused on every upgrade, and migrations run as a Helm hook.
 
 The chart is smoke-tested in CI on kind, in all modes, post-merge and as a
 release gate. Two constraints to know up front (the
@@ -83,14 +83,13 @@ uv run python -m tools.deploy up --mode combined
 The zero-touch shape: no passwords or further configuration at install time.
 Secrets are generated on first install and reused verbatim on every upgrade;
 the bundled database's init script creates the schemas and roles; migrations
-run as a post-install/post-upgrade hook.
+run as a post-install hook on first install and a **pre-upgrade** hook
+thereafter.
 
 ```bash
 helm install jentic ./deploy/helm/jentic-one \
   --namespace jentic-one --create-namespace \
   --timeout 30m \
-  --set app.extraEnv.JENTIC_ENV=production \
-  --set broker.extraEnv.JENTIC_ENV=production \
   --set global.appSecrets.generate=true \
   --set postgresql.enabled=true \
   --set global.postgresql.enabled=true \
@@ -103,11 +102,14 @@ helm install jentic ./deploy/helm/jentic-one \
 
 (`broker.enabled=true` is required — the umbrella chart ships the broker off.
 Both services run the one published image; `JENTIC__APPS=broker` makes the
-second one the broker. `JENTIC_ENV=production` is load-bearing: without it
-the config layer falls back to development mode, where missing secrets are
-silently generated per-process instead of refusing to boot — sessions die on
-every pod restart and the surfaces disagree, with no error. `global.image.tag`
-pins every subchart's tag in one place. `--timeout 30m` matters because the
+second one the broker. Every service pod gets `JENTIC_ENV=production` from
+`global.jenticEnv`, which is load-bearing: in development mode the config layer
+silently generates missing secrets per-process instead of refusing to boot, so
+sessions die on every pod restart and the surfaces disagree with no error. Only
+set `global.jenticEnv=development` for a throwaway cluster that supplies none of
+the secrets. `global.image.tag` pins every subchart's tag in one place; omit it
+and each subchart falls back to its own `appVersion`, which matches the chart
+version you vendored. `--timeout 30m` matters because the
 migrate hook runs *inside* Helm's timeout — the default is 5 minutes, after
 which Helm marks the release failed while the Job keeps running; the next
 `helm upgrade` retry then deletes the still-running hook Job mid-migration
@@ -183,16 +185,37 @@ a port-forward `localhost` URL:
 jentic register --url <app URL> --broker-url <broker URL>
 ```
 
-Both services speak plain HTTP on port 8000 in-cluster — terminate TLS at
-your ingress, routing UI/control traffic to the `app` Service and execution
-traffic to the `broker` Service. The chart ships **no** Ingress resource and
-no `ingress.*` values — you bring your own manifest, pointing at the
-`<release>-app` and `<release>-broker` Services on port 8000. Agents need
-both URLs. Behind that ingress, also set
-`auth.oauth_rate_limit.trusted_proxies` in the config file to the ingress
-pods' socket IPs: the pre-auth rate limiter keys on client IP, and with the
-default (empty) list every client shares the ingress's one bucket. Then walk
-through
+Both services speak plain HTTP on port 8000 in-cluster — terminate TLS at your
+ingress, routing UI/control traffic to the `app` Service and execution traffic
+to the `broker` Service. Agents need both URLs.
+
+The chart can render the Ingress for you (`ingress.enabled=true`, off by
+default). It routes to the release's HTTP entry point — the `app` Service in
+this combined shape — so the broker needs a second host naming its own service:
+
+```bash
+helm upgrade jentic ./deploy/helm/jentic-one … \
+  --set ingress.enabled=true \
+  --set ingress.className=nginx \
+  --set ingress.hosts[0].host=jentic.example.com \
+  --set ingress.hosts[1].host=broker.example.com \
+  --set ingress.hosts[1].paths[0].path=/ \
+  --set ingress.hosts[1].paths[0].pathType=Prefix \
+  --set ingress.hosts[1].paths[0].service=broker \
+  --set app.extraEnv.JENTIC__AUTH__OAUTH_RATE_LIMIT__TRUSTED_PROXIES=10.0.0.0/8 \
+  --set ingress.tls[0].secretName=jentic-tls \
+  --set ingress.tls[0].hosts[0]=jentic.example.com
+```
+
+That last `extraEnv` is **required**, and the install fails without it. The
+pre-auth OAuth rate limiter keys on the client IP, so behind an ingress every
+request arrives from the controller's address and all clients share one bucket —
+a single noisy caller then rate-limits your whole fleet out of `/authorize`. Set
+it to the ingress controller's pod CIDR or IPs (or
+`ingress.skipTrustedProxiesCheck=true` if you enforce rate limits upstream of
+the cluster). Bringing your own Ingress manifest instead works the same way:
+point it at the `<release>-app` and `<release>-broker` Services on port 8000,
+and set the same key. Then walk through
 the [first brokered call](../guides/first-call.md).
 
 ## External database (production)
@@ -356,7 +379,21 @@ is an OOM-kill, not a slowdown. Do not set the app's memory limit below
   before scaling out. Multi-replica app surfaces are not part of the CI
   smoke matrix.
 - **Bundled PostgreSQL** — a single-instance StatefulSet, dev/eval-grade by
-  design; HA means an external managed database (below).
+  design; HA means an external managed database (below). Its connection ceiling
+  is already raised to 200 (`postgresql.maxConnections`) because three pools per
+  process exhausts the image's default of 100 well before you run out of CPU;
+  raising replicas means raising this and the subchart's memory limit together.
+- **PodDisruptionBudgets** — `podDisruptionBudget.enabled=true` renders one per
+  enabled surface at `minAvailable: 1`, so node drains and cluster upgrades
+  cannot take a surface fully offline. Turn it on only *after* raising
+  `replicas` above 1: with a single replica there is no spare pod to evict and
+  the budget blocks every drain instead.
+- **NetworkPolicy** — `networkPolicy.enabled=true` limits ingress to
+  same-release pods plus the namespaces in `networkPolicy.allowFromNamespaces`
+  (your ingress controller's, typically). Egress is a separate opt-in
+  (`restrictEgress`) and never applies to the broker, whose whole function is
+  calling third-party APIs. Both are no-ops on a cluster whose CNI does not
+  enforce policies — check yours before relying on them.
 
 ## Observability
 
@@ -386,13 +423,13 @@ annotations are covered in the
    `--reuse-values` when you're changing nothing but the tag). On the
    bundled-DB path the migrate hook re-runs automatically — inside
    `--timeout`, hence the explicit value; the Helm default of 5 minutes can
-   `SIGTERM` a long migration mid-run on a populated database. Also know
-   the hook is `post-upgrade`: the **new pods roll out first and serve on
-   the old schema until the migrate Job finishes** — new-release code is
-   expected to tolerate the previous schema for that window; for a
-   zero-surprise upgrade on a populated database, scale to 0 first or
-   upgrade in a maintenance window. Against an
-   external database, re-run migrations first (see above).
+   `SIGTERM` a long migration mid-run on a populated database. The hook is
+   `pre-upgrade`, so the migration completes **before** the Deployments roll:
+   new pods never serve against the old schema, and a failed migration aborts
+   the upgrade with the old pods still running the schema they were built for.
+   Budget for that: on a populated database the release is unavailable for the
+   length of the migration, so upgrade in a window. Against an external
+   database, re-run migrations first (see above).
 
 Generated secrets are never rotated by an upgrade, and `helm uninstall`
 intentionally keeps the `jentic-app-secrets` Secret (and the Postgres PVC) so
@@ -409,4 +446,4 @@ rolling forward to a fixed release — the full contract:
 | `broker` pod `ImagePullBackOff` | `broker.image.repository` still the local-build default (`jentic-one/broker`) — point it at the published image + `JENTIC__APPS=broker`, or at an image you built and pushed (steps 1–2) |
 | Agent approved but token exchange fails `invalid_grant` | `JENTIC__AUTH__CANONICAL_BASE_URL` unset or differs from the registered `--url` (step 3) |
 | Fresh install against an external Postgres has no tables | The migrate hook renders only on the bundled-DB path — run migrations yourself (External database) |
-| `FATAL: sorry, too many clients already` (Postgres log), apps intermittently failing to connect | Each app/broker process opens pools into all three databases; the bundled `postgres` image defaults to `max_connections=100`, which two processes can exhaust — keep replicas at 1, raise `max_connections`, or front an external database with a pooler |
+| `FATAL: sorry, too many clients already` (Postgres log), apps intermittently failing to connect | Each app/broker process opens a pool into all three databases (~30 connections). The chart sets `postgresql.maxConnections: 200`, which covers every bundled topology with headroom — raise it (and `postgresql.resources.limits.memory` with it) if you scale replicas up, or front an external database with a connection pooler |

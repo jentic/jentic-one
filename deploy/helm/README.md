@@ -30,18 +30,78 @@ and smoke-test workflow.
   subchart doesn't set `JENTIC__APPS=broker` itself, so running it on the
   published app image needs `broker.extraEnv.JENTIC__APPS=broker` (the AWS
   Marketplace overlay does exactly that).
-- No `securityContext` on any application pod (no `runAsNonRoot`,
-  `readOnlyRootFilesystem`, or `capabilities.drop`) — only the bundled
-  Postgres StatefulSet sets one. Hardening per
-  [docs/security/README.md](../../docs/security/README.md) currently means
-  patching the chart or applying a cluster policy.
-- No Ingress, NetworkPolicy, PodDisruptionBudget, HorizontalPodAutoscaler,
-  or anti-affinity anywhere in the chart — TLS termination and HA shaping
-  are yours to bring.
-- `global.observability.logging.{format,level}` are dead values (see
-  Observability below).
-- Omitting `global.image.tag` (and per-service tags) silently falls back to
-  `:latest` — no warning is printed, despite the comment in `_image.tpl`.
+- No pod anti-affinity, and no HorizontalPodAutoscaler. Both are deliberate
+  non-goals rather than gaps: CPU-based autoscaling on IO-bound API surfaces
+  scales on the wrong signal, and `replicas` plus a cluster autoscaler (or a
+  KEDA/custom-metrics HPA the operator owns) covers the same ground without the
+  chart guessing thresholds. Spread constraints likewise depend on the cluster's
+  topology labels — add either via a post-renderer or a wrapper chart.
+- Egress restriction (`networkPolicy.restrictEgress`) exempts the broker
+  entirely. Its job is calling arbitrary third-party APIs, so the chart cannot
+  narrow its egress; do that with a cluster-level policy that enumerates the
+  upstreams you actually allow.
+
+## Pod hardening
+
+Every service subchart ships a hardened default, so a plain `helm install`
+already satisfies the Restricted Pod Security Standard:
+
+| Values key                             | Default                                      |
+| -------------------------------------- | -------------------------------------------- |
+| `<svc>.podSecurityContext`             | `runAsNonRoot`, uid/gid/fsGroup 10001, `seccompProfile: RuntimeDefault` |
+| `<svc>.securityContext`                | same uid/gid, `allowPrivilegeEscalation: false`, `readOnlyRootFilesystem: true`, `capabilities.drop: [ALL]` |
+
+Two coupling points to know before overriding these:
+
+- **The uid is pinned in the images, not just the chart.** `deploy/docker/*` end
+  in `USER 10001` because the kubelet can only verify `runAsNonRoot` against a
+  numeric `USER` — a named user makes the check unenforceable. Changing
+  `runAsUser` without rebuilding the image gives a pod that cannot read its own
+  files.
+- **`readOnlyRootFilesystem: true` implies a writable `/tmp`**, which the
+  templates mount as an `emptyDir` whenever the flag is on. A surface that needs
+  another writable path (a semantic/vector search cache, say) needs its own
+  volume, not just the flag turned off.
+
+The `gateway` subchart runs `nginxinc/nginx-unprivileged` at uid 101 for the
+same reason: stock `nginx` starts its master as root and writes
+`/var/run/nginx.pid`, which neither `runAsNonRoot` nor a read-only root allows.
+
+A `helm template` cannot prove any of this works — only that it renders. The
+kind matrix (`up --mode combined|parts|broker` plus `smoke`) is what catches a
+container that starts and then fails on its first write.
+
+## Cluster shaping: Ingress, PDB, NetworkPolicy
+
+Three optional resources, all `enabled: false` by default because turning any of
+them on changes what an existing release owns:
+
+```bash
+helm install jentic deploy/helm/jentic-one \
+  --set ingress.enabled=true \
+  --set ingress.className=nginx \
+  --set ingress.hosts[0].host=jentic.example.com \
+  --set app.extraEnv.JENTIC__AUTH__OAUTH_RATE_LIMIT__TRUSTED_PROXIES=10.0.0.0/8
+```
+
+- **Ingress** is release-scoped, not per-subchart: paths route to whichever
+  service fronts the release (the `gateway` in parts mode, `app` in combined),
+  because the gateway's nginx config already owns the prefix-to-surface map. A
+  path entry can name its own `service`/`port` to split traffic.
+- **The trusted-proxies requirement is not optional.** `ingress.enabled=true`
+  fails the install unless every enabled auth-serving surface knows which proxy
+  addresses to trust — behind an ingress controller the OAuth rate limiters
+  otherwise key every request on the controller's IP, so one caller locks the
+  whole fleet out of `/authorize`. Set
+  `<svc>.extraEnv.JENTIC__AUTH__OAUTH_RATE_LIMIT__TRUSTED_PROXIES` (or the same
+  key in a mounted config file), or `ingress.skipTrustedProxiesCheck=true` if
+  you rate-limit upstream of the cluster.
+- **PodDisruptionBudget** is per enabled surface at `minAvailable: 1`. Only
+  enable it above `replicas: 1` — at one replica a budget has no spare pod to
+  give up and blocks node drains outright.
+- **NetworkPolicy** restricts ingress to same-release pods plus
+  `networkPolicy.allowFromNamespaces`. Egress is a separate switch
+  (`restrictEgress`) and never applies to the broker.
 
 ## Local cluster workflow
 
@@ -200,12 +260,11 @@ sidecar; see [`_logging.tpl`](jentic-one/charts/common/templates/_logging.tpl)
 and [`_otel-sidecar.tpl`](jentic-one/charts/common/templates/_otel-sidecar.tpl).
 
 - `OTEL_SERVICE_NAME` (`<release>-<chart>`, e.g. `jentic-broker`) is
-  injected into every service pod. The template also injects `LOG_FORMAT`
-  and `LOG_LEVEL`, but **nothing in the application reads them** — the real
-  knobs are the config keys `runtime.log_level` and `runtime.debug` (via
-  `extraEnv`: `JENTIC__RUNTIME__LOG_LEVEL`, `JENTIC__RUNTIME__DEBUG`); the
-  chart values `global.observability.logging.{format,level}` are dead. The
-  defaults coincide (JSON at info), which is why this goes unnoticed.
+  injected into every service pod.
+- `global.observability.logging.level` sets `JENTIC__RUNTIME__LOG_LEVEL` on
+  every service pod, and only when non-empty — an always-on env var would
+  outrank the same key in a mounted config file. `runtime.debug` has no chart
+  value; set it through `extraEnv.JENTIC__RUNTIME__DEBUG`.
 - With `global.observability.otel.enabled=true`, each pod gets an OTel
   Collector sidecar receiving OTLP gRPC on `localhost:4317` and exporting to
   the configured endpoint:

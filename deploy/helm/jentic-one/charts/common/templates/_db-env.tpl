@@ -16,6 +16,13 @@ Password source, in order of precedence:
 
 Host/port/name/schema are not secrets and stay plain values.
 See docs/installation/helm.md "Secrets".
+
+Passwords must be YAML strings. An unquoted digit-only password is parsed as a
+number and renders as its Go float form (`0123456789` -> `1.23456789e+08`), so
+the pod would authenticate with a password nobody typed; the kindIs guard
+below turns that into an install-time error instead. It only fires on a
+password the operator actually supplied, so bare `helm lint`/`helm template`
+(which set none) never reach it.
 */ -}}
 {{- define "common.db-env" -}}
 {{- $pgHost := printf "%s-postgresql" .Release.Name -}}
@@ -31,6 +38,7 @@ See docs/installation/helm.md "Secrets".
   value: {{ $db.user | quote }}
 - name: JENTIC__DATABASES__{{ upper $surface }}__PASSWORD
 {{- if $db.password }}
+{{- include "common.assert-string-password" (dict "value" $db.password "path" (printf "global.databases.%s.password" $surface)) }}
   value: {{ $db.password | quote }}
 {{- else if (include "common.app-secrets.enabled" $ctx) }}
   valueFrom:

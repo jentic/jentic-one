@@ -17,9 +17,17 @@ spec:
         app.kubernetes.io/name: gateway
         app.kubernetes.io/instance: {{ .Release.Name }}
     spec:
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: nginx
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           ports:
             - containerPort: 8000
               protocol: TCP
@@ -41,7 +49,21 @@ spec:
             - name: nginx-conf
               mountPath: /etc/nginx/conf.d
               readOnly: true
+            {{- if (.Values.securityContext).readOnlyRootFilesystem }}
+            - name: cache
+              mountPath: /var/cache/nginx
+            - name: tmp
+              mountPath: /tmp
+            {{- end }}
       volumes:
         - name: nginx-conf
           configMap:
             name: {{ .Release.Name }}-gateway-conf
+        {{- if (.Values.securityContext).readOnlyRootFilesystem }}
+        # nginx keeps its proxy cache here and, in the unprivileged image, its
+        # pid file in /tmp — both writes a read-only root filesystem blocks.
+        - name: cache
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+        {{- end }}
