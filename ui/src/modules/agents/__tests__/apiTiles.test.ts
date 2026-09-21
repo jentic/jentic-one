@@ -143,32 +143,41 @@ describe('composeApiTiles', () => {
 		expect(tiles.map((t) => t.title)).toEqual(['Slack Admin']);
 	});
 
-	it('prints the API name over the vendor, and the host beside it', () => {
-		// The registry's own identity pair: a display name (else the api name)
-		// as the title, the real domain underneath. Falling back to the vendor
-		// for both would print the same string twice.
+	it('titles a tile with the shared humaniser and puts the domain beside it', () => {
+		// The title is the SAME friendly name the credential picker and the
+		// workspace cards show for this API — never the raw registry slug — and
+		// the real domain is the line underneath it.
 		const named = makeApi({
-			vendor: 'github',
-			name: 'github-api',
+			vendor: 'github-com',
+			name: 'github-com-issues-api',
 			version: '1.1.4',
 			host: 'github.com',
 		});
-		const binding = makeBinding({ serves: [{ vendor: 'github', name: null, version: null }] });
+		const binding = makeBinding({
+			serves: [{ vendor: 'github-com', name: null, version: null }],
+		});
 		const [tile] = composeApiTiles([binding], [makeCredential()], [named]);
-		expect(tile).toMatchObject({ title: 'github-api', host: 'github.com', version: '1.1.4' });
+		expect(tile).toMatchObject({ title: 'Issues Api', host: 'github.com', version: '1.1.4' });
 
-		// No display name and no host: the api name still beats the vendor,
-		// and the vendor is the honest domain the registry can prove.
-		const bare = makeApi({ vendor: 'github', name: 'github-api', host: null });
-		const [fallback] = composeApiTiles([binding], [makeCredential()], [bare]);
-		expect(fallback).toMatchObject({ title: 'github-api', host: 'github' });
+		// A user-set label wins over the humanised tuple, and with no host the
+		// vendor is the honest domain the registry can prove.
+		const labelled = makeApi({
+			vendor: 'github-com',
+			name: 'main',
+			host: null,
+			display_name: 'GitHub',
+		});
+		const [fallback] = composeApiTiles([binding], [makeCredential()], [labelled]);
+		expect(fallback).toMatchObject({ title: 'GitHub', host: 'github-com' });
 	});
 
 	it('still renders a tile when the served API is not in the workspace registry', () => {
 		const tiles = composeApiTiles([makeBinding()], [makeCredential()], []);
 		expect(tiles).toHaveLength(1);
+		// Only the machine tuple is known here, so the humaniser titles it and
+		// the vendor stands in for the domain line.
 		expect(tiles[0]).toMatchObject({
-			title: 'slack.com',
+			title: 'Slack.Com',
 			host: 'slack.com',
 			operationCount: null,
 		});

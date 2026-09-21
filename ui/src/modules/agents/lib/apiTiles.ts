@@ -14,6 +14,7 @@
  * composition, the not-usable predicate, and the stat math are unit-testable
  * without a DOM or MSW.
  */
+import { apiRefDisplayName } from '@/shared/lib';
 import { CredentialType, type ApiResponse, type Credential } from '@/shared/credentials/api';
 import type { CredentialBindingEntity, ServedApiEntity } from '@/modules/agents/api/types';
 
@@ -21,7 +22,8 @@ import type { CredentialBindingEntity, ServedApiEntity } from '@/modules/agents/
 export interface ApiTileModel {
 	/** Stable render key — binding id + the resolved API identity. */
 	key: string;
-	/** Display title: the workspace API's display name, else its registry name. */
+	/** Friendly display title — the same name the credential picker, the
+	 * workspace cards and the API detail heading show for this API. */
 	title: string;
 	/** The domain line under the title (e.g. `github.com`), falling back to the
 	 * vendor when the registry knows no host. */
@@ -163,10 +165,13 @@ export function composeApiTiles(
 		};
 
 		if (api == null) {
-			// Not imported into this workspace — render from the reference.
+			// Not imported into this workspace — render from the reference, which
+			// carries only the machine tuple, so the shared humaniser titles it.
 			tiles.push({
 				...base,
-				title: served.name ?? served.vendor,
+				title:
+					apiRefDisplayName({ vendor: served.vendor, name: served.name }) ||
+					served.vendor,
 				host: served.vendor,
 				iconUrl: null,
 				vendor: served.vendor,
@@ -175,12 +180,19 @@ export function composeApiTiles(
 			});
 			continue;
 		}
-		// The registry's own identity pair: the API's name is the title and its
-		// host is the domain line. Falling back to the vendor for BOTH would
-		// print the same string twice.
+		// The registry's own identity pair: the friendly name is the title and
+		// the host is the domain line. The title comes from the SAME helper the
+		// credential picker and the workspace cards use, so one API cannot read
+		// `Ably` where it was added and `ably-io` here.
 		tiles.push({
 			...base,
-			title: api.display_name ?? api.api.name,
+			title:
+				apiRefDisplayName({
+					displayName: api.display_name,
+					catalogApiId: api.catalog_api_id,
+					vendor: api.api.vendor,
+					name: api.api.name,
+				}) || api.api.name,
 			host: api.api.host ?? api.api.vendor,
 			iconUrl: api.icon_url ?? null,
 			vendor: api.api.vendor,

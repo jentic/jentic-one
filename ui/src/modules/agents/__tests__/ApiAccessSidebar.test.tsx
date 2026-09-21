@@ -730,7 +730,9 @@ describe('ApiAccessSidebar — the API tile access panel (plan §4.5)', () => {
 		// The tile's own "Finish connecting" line opens the SAME sidebar (the
 		// connect flow lives there) — not a separate popup.
 		await user.click(screen.getByRole('button', { name: /Finish connecting/ }));
-		const dialog = await screen.findByRole('dialog', { name: 'stripe.com' });
+		// Named by the tile's friendly title (the shared humaniser's), not the
+		// raw vendor slug the binding stores.
+		const dialog = await screen.findByRole('dialog', { name: 'Stripe.Com' });
 		const inDialog = within(dialog);
 
 		const affordance = await inDialog.findByTestId('sidebar-connect-affordance');
