@@ -47,6 +47,14 @@ interface CredentialsListProps {
 	};
 }
 
+/**
+ * What a host that makes no usage reads offers: nothing, stated as nothing.
+ * `undefined` on those props means "still resolving" and draws a skeleton, so a
+ * host with no such read must say `null` — otherwise its cards pulse forever
+ * waiting for a figure nobody is fetching.
+ */
+const NO_USAGE = { usedByAgentCount: null, callsLast7d: null } as const;
+
 /** The credentials grid body: skeleton → error → empty → staggered cards. */
 export function CredentialsList({
 	credentials,
@@ -107,6 +115,7 @@ export function CredentialsList({
 						onEdit={onEdit}
 						onDelete={onDelete}
 						onConnect={onConnect}
+						{...NO_USAGE}
 						{...usageFor?.(cred)}
 					/>
 				</motion.div>
