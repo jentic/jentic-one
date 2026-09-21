@@ -168,9 +168,10 @@ export const handlers = [
 	...agentsHandlers,
 	// Credentials registers before Discover so its guided-picker `/catalog`
 	// handler (which falls through when its store is empty) gets a chance to
-	// respond before Discover's static `/catalog` fixtures. Only `/catalog`
-	// ordering is load-bearing — Discover defines no `/apis` handler, so the
-	// `/apis` fallback comes from `dashboardHandlers` further down regardless.
+	// respond before Discover's static `/catalog` fixtures. Its `/apis` handler
+	// falls through the same way, so in mocked dev `GET /apis` is answered by
+	// the workspace registry below — the one fixture whose list agrees with the
+	// detail, operations and revision endpoints behind it.
 	...credentialsHandlers,
 	...discoverHandlers,
 	...dashboardHandlers,

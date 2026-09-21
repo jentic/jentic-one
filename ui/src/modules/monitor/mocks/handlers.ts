@@ -252,6 +252,48 @@ const USAGE_TOP: Record<string, Array<Record<string, unknown>>> = {
 			avg_ms: 240,
 			trend: [2, 3, 2, 4, 3, 2, 3, 2, 3, 4, 2, 2],
 		},
+		// Keys mirroring the credentials store's dev seed, so the "N calls in 7d"
+		// figure on a credential card resolves for some secrets and honestly
+		// reads "no calls in 7d" for the rest (the card only says zero because
+		// this list comes back shorter than the requested top-N, which proves
+		// the absence). Kept below the rows above so the busiest credentials —
+		// and the Dashboard's top-usage table — are unchanged.
+		{
+			key: 'cred_slack_1',
+			label: 'cred_slack_1',
+			total: 28,
+			success: 27,
+			failed: 1,
+			avg_ms: 260,
+			trend: [2, 2, 3, 2, 3, 2, 2, 3, 2, 3, 2, 2],
+		},
+		{
+			key: 'cred_github_1',
+			label: 'cred_github_1',
+			total: 19,
+			success: 15,
+			failed: 4,
+			avg_ms: 610,
+			trend: [1, 2, 1, 2, 2, 1, 2, 2, 1, 2, 2, 1],
+		},
+		{
+			key: 'cred_stripe_1',
+			label: 'cred_stripe_1',
+			total: 24,
+			success: 24,
+			failed: 0,
+			avg_ms: 395,
+			trend: [2, 2, 2, 3, 2, 2, 2, 2, 2, 2, 2, 1],
+		},
+		{
+			key: 'cred_nyt_1',
+			label: 'cred_nyt_1',
+			total: 7,
+			success: 7,
+			failed: 0,
+			avg_ms: 180,
+			trend: [1, 0, 1, 1, 0, 1, 0, 1, 1, 0, 1, 0],
+		},
 	],
 	agent: [
 		{

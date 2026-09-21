@@ -128,7 +128,56 @@ const showcaseApi = {
 	},
 };
 
-const APIS = [stripeApi, adyenApi, bigApi, showcaseApi];
+/**
+ * The two APIs the agents fixtures bind credentials to (`github` and
+ * `slack.com`). They live here because this is the registry the whole app reads
+ * `GET /apis` from: without them an agent's API tiles fall back to the bare
+ * machine tuple — no friendly name, no version, no operation count — while the
+ * Workspace list they came from can't show them at all.
+ */
+const githubApi = {
+	api: apiRef('github', 'github-api', '1.1.4', 'api.github.com'),
+	display_name: 'GitHub',
+	description: 'Repositories, issues, and pull requests.',
+	icon_url: null,
+	current_revision_id: 'rev_github_live',
+	revision_count: 1,
+	operation_count: 3,
+	security_schemes: ['bearer'],
+	source: 'local',
+	registered: true,
+	created_at: '2026-02-18T14:00:00Z',
+	updated_at: '2026-07-01T08:00:00Z',
+	_links: {
+		self: `/apis/github/github-api/1.1.4`,
+		revisions: `/apis/github/github-api/1.1.4/revisions`,
+		current_revision: `/apis/github/github-api/1.1.4/revisions/rev_github_live`,
+		import: null,
+	},
+};
+
+const slackApi = {
+	api: apiRef('slack.com', 'web-api', '1.0.0', 'slack.com'),
+	display_name: 'Slack',
+	description: 'Messaging, channels, and users.',
+	icon_url: null,
+	current_revision_id: 'rev_slack_live',
+	revision_count: 1,
+	operation_count: 3,
+	security_schemes: ['bearer'],
+	source: 'local',
+	registered: true,
+	created_at: '2026-03-02T09:00:00Z',
+	updated_at: null,
+	_links: {
+		self: `/apis/slack.com/web-api/1.0.0`,
+		revisions: `/apis/slack.com/web-api/1.0.0/revisions`,
+		current_revision: `/apis/slack.com/web-api/1.0.0/revisions/rev_slack_live`,
+		import: null,
+	},
+};
+
+const APIS = [stripeApi, adyenApi, bigApi, showcaseApi, githubApi, slackApi];
 
 const BIG_OPERATIONS = Array.from({ length: 60 }, (_, i) => ({
 	operation_id: `Op${i}`,
@@ -174,6 +223,80 @@ const STRIPE_OPERATIONS = [
 		tags: ['balance'],
 		deprecated: true,
 		revision_id: 'rev_stripe_live',
+		_links: {},
+	},
+];
+
+/** Operations for the two agent-bound APIs, so their detail pages read as
+ * themselves rather than borrowing Stripe's charge endpoints. */
+const GITHUB_OPERATIONS = [
+	{
+		operation_id: 'ReposGet',
+		method: 'get',
+		path: '/repos/{owner}/{repo}',
+		name: 'Get a repository',
+		description: null,
+		tags: ['repos'],
+		deprecated: false,
+		revision_id: 'rev_github_live',
+		_links: {},
+	},
+	{
+		operation_id: 'IssuesListForRepo',
+		method: 'get',
+		path: '/repos/{owner}/{repo}/issues',
+		name: 'List repository issues',
+		description: null,
+		tags: ['issues'],
+		deprecated: false,
+		revision_id: 'rev_github_live',
+		_links: {},
+	},
+	{
+		operation_id: 'IssuesCreate',
+		method: 'post',
+		path: '/repos/{owner}/{repo}/issues',
+		name: 'Create an issue',
+		description: null,
+		tags: ['issues'],
+		deprecated: false,
+		revision_id: 'rev_github_live',
+		_links: {},
+	},
+];
+
+const SLACK_OPERATIONS = [
+	{
+		operation_id: 'ChatPostMessage',
+		method: 'post',
+		path: '/chat.postMessage',
+		name: 'Send a message to a channel',
+		description: null,
+		tags: ['chat'],
+		deprecated: false,
+		revision_id: 'rev_slack_live',
+		_links: {},
+	},
+	{
+		operation_id: 'ConversationsList',
+		method: 'get',
+		path: '/conversations.list',
+		name: 'List channels',
+		description: null,
+		tags: ['conversations'],
+		deprecated: false,
+		revision_id: 'rev_slack_live',
+		_links: {},
+	},
+	{
+		operation_id: 'UsersInfo',
+		method: 'get',
+		path: '/users.info',
+		name: 'Get a user',
+		description: null,
+		tags: ['users'],
+		deprecated: false,
+		revision_id: 'rev_slack_live',
 		_links: {},
 	},
 ];
@@ -261,6 +384,12 @@ const REVISIONS: Record<string, ReturnType<typeof revision>[]> = {
 		revision('adyen/pos-terminal-management-api/1', 'rev_adyen_draft', 'draft', false, 5),
 	],
 	'bigco/big-api/1': [revision('bigco/big-api/1', 'rev_big_live', 'published', true, 60)],
+	'github/github-api/1.1.4': [
+		revision('github/github-api/1.1.4', 'rev_github_live', 'published', true, 3, 'catalog'),
+	],
+	'slack.com/web-api/1.0.0': [
+		revision('slack.com/web-api/1.0.0', 'rev_slack_live', 'published', true, 3, 'catalog'),
+	],
 	[KS_KEY]: KS_REVISIONS,
 };
 
@@ -797,7 +926,11 @@ export const workspaceHandlers = [
 				? BIG_OPERATIONS
 				: key === KS_KEY
 					? KS_OPERATIONS
-					: STRIPE_OPERATIONS;
+					: key === 'github/github-api/1.1.4'
+						? GITHUB_OPERATIONS
+						: key === 'slack.com/web-api/1.0.0'
+							? SLACK_OPERATIONS
+							: STRIPE_OPERATIONS;
 		return HttpResponse.json(paginate(ops, cursor, limit));
 	}),
 

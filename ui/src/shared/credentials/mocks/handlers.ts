@@ -98,6 +98,143 @@ export function makeMockCredential(overrides: Partial<Credential> = {}): Credent
 	};
 }
 
+/**
+ * The vault as an operator would find it after a few weeks of use — the seed
+ * mocked dev starts from.
+ *
+ * Every row is here to put one distinguishable state on screen at once, so the
+ * surfaces that read this store (the Credentials page, the inventory sheet, an
+ * agent's API tiles, the bound-agents roster) can be walked without first
+ * creating anything:
+ *
+ *   - `cred_slack_1` / `cred_github_1` are the two ids the agents fixture binds
+ *     to `agnt_active_1`, so the tiles, the roster and this list agree on one
+ *     set of secrets. They are also the only **bound** rows, which is what
+ *     gives the inventory's `Unbound (N)` filter something to subtract.
+ *   - all five credential types appear, so the type filter never lands on an
+ *     empty result, and each one's plain-language auth placement is legible: a
+ *     key in a header, a key in a query parameter, Basic, both OAuth states
+ *     (managed-and-connected vs awaiting its first sign-in), and SigV4.
+ *   - `cred_zendesk_legacy` is deactivated, so the `Inactive` clause shows.
+ *
+ * `resetCredentialsStore()` with no seed still empties the store, so tests that
+ * want an empty vault (or their own fixtures) are unaffected by this.
+ */
+function devCredentialsSeed(): Credential[] {
+	const base = {
+		provider: 'static',
+		active: true,
+		provider_account_ref: null,
+		updated_at: null,
+	} as const;
+	return [
+		{
+			...base,
+			credential_id: 'cred_slack_1',
+			name: 'Slack bot token',
+			type: CredentialType.BEARER_TOKEN,
+			api: { vendor: 'slack.com', name: 'default', version: '1.0.0' },
+			catalog_api_id: 'slack.com',
+			details: { hint: '••••xoxb' },
+			created_at: '2026-03-02T09:12:00Z',
+		},
+		{
+			...base,
+			credential_id: 'cred_github_1',
+			name: 'GitHub PAT',
+			type: CredentialType.BEARER_TOKEN,
+			api: { vendor: 'github', name: 'github-api', version: '1.1.4' },
+			catalog_api_id: 'github.com',
+			details: { hint: '••••ghp7' },
+			created_at: '2026-02-18T14:40:00Z',
+			updated_at: '2026-07-01T08:05:00Z',
+		},
+		{
+			...base,
+			credential_id: 'cred_stripe_1',
+			name: 'Stripe live key',
+			type: CredentialType.API_KEY,
+			api: { vendor: 'stripe', name: 'stripe-api', version: '2024-01-01' },
+			catalog_api_id: 'stripe.com',
+			details: { location: 'header', field_name: 'X-Api-Key', hint: '••••4242' },
+			created_at: '2026-01-21T11:02:00Z',
+		},
+		{
+			...base,
+			credential_id: 'cred_nyt_1',
+			name: 'NYT article search key',
+			type: CredentialType.API_KEY,
+			api: { vendor: 'nytimes.com', name: 'article_search', version: '1.0.0' },
+			catalog_api_id: 'nytimes.com/article_search',
+			details: { location: 'query', field_name: 'api-key', hint: '••••9f1c' },
+			created_at: '2026-05-09T16:30:00Z',
+		},
+		{
+			...base,
+			credential_id: 'cred_bigco_1',
+			name: 'BigCo reporting service account',
+			type: CredentialType.BASIC,
+			api: { vendor: 'bigco', name: 'big-api', version: '1' },
+			details: { hint: 'svc-reporting / ••••' },
+			created_at: '2026-04-14T07:55:00Z',
+		},
+		{
+			...base,
+			credential_id: 'cred_sheets_1',
+			name: 'Google Sheets (Pipedream)',
+			type: CredentialType.OAUTH2,
+			provider: 'pipedream',
+			// A managed grant that has been through Connect: the card reads
+			// "Managed via Pipedream" and carries the Connected badge.
+			provider_account_ref: 'apn_mock_sheets',
+			api: { vendor: 'googleapis.com', name: 'sheets', version: 'v4' },
+			details: { connected: true, scopes: ['spreadsheets.readonly'] },
+			created_at: '2026-06-01T10:15:00Z',
+			updated_at: '2026-08-22T09:00:00Z',
+		},
+		{
+			...base,
+			credential_id: 'cred_zoom_1',
+			name: 'Zoom OAuth app',
+			type: CredentialType.OAUTH2,
+			provider: 'direct_oauth2',
+			// Stored but never signed in, so the sign-in-needed path is on screen
+			// (and the card's Connect button is the primary action).
+			api: { vendor: 'zoom.us', name: 'default', version: '2.0.0' },
+			details: {
+				client_id: 'zoom-client-6f2a',
+				token_url: 'https://zoom.us/oauth/token',
+				grant_type: 'authorization_code',
+				scopes: ['meeting:read', 'user:read'],
+				connected: false,
+			},
+			created_at: '2026-08-30T13:20:00Z',
+		},
+		{
+			...base,
+			credential_id: 'cred_aws_1',
+			name: 'AWS reporting signer',
+			type: CredentialType.SIGV4,
+			api: { vendor: 'amazonaws.com', name: 's3', version: '2006-03-01' },
+			details: { aws_region: 'eu-west-1', aws_access_key_id: 'AKIA••••7QDX' },
+			created_at: '2026-02-02T08:00:00Z',
+		},
+		{
+			...base,
+			credential_id: 'cred_zendesk_legacy',
+			name: 'Retired Zendesk token',
+			type: CredentialType.BEARER_TOKEN,
+			active: false,
+			api: { vendor: 'zendesk.com', name: 'support', version: '2.0.0' },
+			details: { hint: '••••zd44' },
+			created_at: '2025-11-11T12:00:00Z',
+			updated_at: '2026-07-19T15:45:00Z',
+		},
+	];
+}
+
+resetCredentialsStore(devCredentialsSeed());
+
 // ---------------------------------------------------------------------------
 // Guided picker store: workspace APIs + their served OpenAPI specs, public
 // catalog entries, and the canned specs we serve when the credential form

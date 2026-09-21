@@ -112,35 +112,6 @@ export const dashboardExecutions = [
 	},
 ];
 
-export const dashboardApis = [
-	{
-		api: { vendor: 'stripe', name: 'stripe-api', version: '2024-01-01', host: 'stripe.com' },
-		display_name: 'Stripe',
-		description: 'Payments APIs.',
-		icon_url: null,
-		current_revision_id: 'rev_1',
-		revision_count: 1,
-		operation_count: 412,
-		security_schemes: ['bearer'],
-		created_at: minutesAgo(5000),
-		updated_at: minutesAgo(100),
-		_links: { self: '/apis/stripe/stripe-api/2024-01-01' },
-	},
-	{
-		api: { vendor: 'github', name: 'github-api', version: '1.1.4', host: 'github.com' },
-		display_name: 'GitHub',
-		description: 'GitHub REST API.',
-		icon_url: null,
-		current_revision_id: 'rev_2',
-		revision_count: 1,
-		operation_count: 900,
-		security_schemes: ['bearer'],
-		created_at: minutesAgo(5000),
-		updated_at: minutesAgo(200),
-		_links: { self: '/apis/github/github-api/1.1.4' },
-	},
-];
-
 interface DashboardAccessRequestItem {
 	id: string;
 	resource_type: string;
@@ -320,9 +291,13 @@ export const dashboardHandlers = [
 		HttpResponse.json({ data: dashboardExecutions, has_more: false, next_cursor: null }),
 	),
 
-	http.get('/apis', () =>
-		HttpResponse.json({ data: dashboardApis, has_more: false, next_cursor: null }),
-	),
+	// NO `/apis` handler here, deliberately. The Dashboard reads it only for a
+	// catalog-size figure, while the Workspace module owns the registry fixture
+	// that its own list, detail, operations and revision endpoints all agree
+	// with — and `dashboardHandlers` registers EARLIER in the root table, so a
+	// list here would shadow that richer registry first-match-wins and leave
+	// mocked dev with APIs whose detail pages 404. The empty-catalog case (the
+	// first-run checklist) is installed per-test via `worker.use(...)`.
 ];
 
 /* ------------------------------------------------------------------ */

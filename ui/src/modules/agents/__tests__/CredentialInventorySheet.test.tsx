@@ -54,11 +54,9 @@ function headerTrigger() {
 }
 
 describe('CredentialInventorySheet — page-level org-wide inventory (D20)', () => {
-	beforeEach(async () => {
-		await page.viewport(1280, 900);
-		setToken('test-token');
-		resetAgentsStore();
-		resetCredentialsStore([
+	/** The two secrets the agents fixture binds, by the ids it binds them under. */
+	function inventorySeed() {
+		return [
 			makeMockCredential({
 				credential_id: 'cred_slack_1',
 				name: 'Slack bot token',
@@ -71,7 +69,14 @@ describe('CredentialInventorySheet — page-level org-wide inventory (D20)', () 
 				type: CredentialType.BEARER_TOKEN,
 				api: { vendor: 'github.com', name: 'default', version: '1.0.0' },
 			}),
-		]);
+		];
+	}
+
+	beforeEach(async () => {
+		await page.viewport(1280, 900);
+		setToken('test-token');
+		resetAgentsStore();
+		resetCredentialsStore(inventorySeed());
 		resetApisStore([]);
 	});
 
@@ -321,6 +326,22 @@ describe('CredentialInventorySheet — page-level org-wide inventory (D20)', () 
 	});
 
 	describe('the cards’ usage figures', () => {
+		beforeEach(() => {
+			// A third secret on top of the two bound ones, chosen because the
+			// mocked usage leaderboard says nothing about it: its card is where
+			// "no calls in 7d" has to be PROVEN off a complete list rather than
+			// assumed from an absence.
+			resetCredentialsStore([
+				...inventorySeed(),
+				makeMockCredential({
+					credential_id: 'cred_quiet_1',
+					name: 'Unused backup key',
+					type: CredentialType.API_KEY,
+					api: { vendor: 'stripe.com', name: 'default', version: '1.0.0' },
+				}),
+			]);
+		});
+
 		/**
 		 * The inventory card for a credential. Scoped to the sheet: the same
 		 * credential name is also printed on the API tiles of the surface
@@ -375,13 +396,19 @@ describe('CredentialInventorySheet — page-level org-wide inventory (D20)', () 
 					within(cardFor('Slack bot token')).getByTestId('cred-used-by'),
 				).toHaveTextContent('used by 1 agent'),
 			);
-			// The seeded leaderboard is shorter than the limit, so a credential
-			// absent from it provably had no traffic.
+			// A credential the leaderboard names carries its own figure. The
+			// number itself is the mock's to scale against the request window,
+			// so what is pinned here is that the id resolved to a count at all.
 			await waitFor(() =>
 				expect(
 					within(cardFor('Slack bot token')).getByTestId('cred-calls-7d'),
-				).toHaveTextContent('no calls in 7d'),
+				).toHaveTextContent(/^[\d,]+ calls? in 7d$/),
 			);
+			// …and because that list came back shorter than the limit, a
+			// credential missing from it provably had no traffic at all.
+			expect(
+				within(cardFor('Unused backup key')).getByTestId('cred-calls-7d'),
+			).toHaveTextContent('no calls in 7d');
 		});
 
 		it('withholds the call figure when the leaderboard came back truncated', async () => {
