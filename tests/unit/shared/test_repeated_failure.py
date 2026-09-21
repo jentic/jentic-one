@@ -12,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 from typing import cast
 
 import pytest
-from sqlalchemy import Table
+from sqlalchemy import String, Table
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
@@ -182,6 +182,26 @@ async def test_summary_falls_back_to_the_id_for_legacy_operations(
     events = await _repeated_events(session)
     assert len(events) == 1
     assert _OPERATION in events[0].summary
+
+
+async def test_summary_fits_the_event_column_for_a_long_path(session: AsyncSession) -> None:
+    """The operation label cannot overflow ``Event.summary``: the registry path
+    template it renders is unbounded Text, and Postgres rejecting the INSERT
+    would abort the caller's transaction and discard the execution record
+    already flushed into it. SQLite accepts any width, so assert the bound."""
+    summary_width = cast(String, Event.__table__.c.summary.type).length
+    assert summary_width is not None, "Event.summary must be a bounded String column"
+    config = SecurityConfig(execution_repeated_failure_threshold=5)
+    await _add_failures(session, 5)
+    await _emit(
+        session,
+        config,
+        operation=OperationInfo(id=_OPERATION, path="/v1/" + "x" * 900, method="GET"),
+    )
+
+    events = await _repeated_events(session)
+    assert len(events) == 1
+    assert len(events[0].summary) <= summary_width
 
 
 async def test_repeated_calls_within_window_dedup(session: AsyncSession) -> None:

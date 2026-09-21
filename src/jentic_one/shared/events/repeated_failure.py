@@ -31,6 +31,13 @@ from jentic_one.shared.schemas import OperationInfo
 
 logger = structlog.get_logger(__name__)
 
+# The operation label is the only unbounded value interpolated into the event
+# summary: it comes from the registry's ``operations.path`` (Text), while
+# ``Event.summary`` is ``String(512)``. Bound it at the same width the other
+# emitters use for their variable part — an oversized INSERT here would abort the
+# caller's transaction and take the already-flushed ExecutionRecord with it.
+_MAX_OPERATION_LABEL_LEN = 128
+
 
 async def maybe_emit_repeated_failure(
     session: AsyncSession,
@@ -138,7 +145,8 @@ async def maybe_emit_repeated_failure(
             type=EventType.EXECUTION_REPEATED_FAILURE,
             severity=severity,
             summary=(
-                f"{failure_count} failures for operation {operation.display} "
+                f"{failure_count} failures for operation "
+                f"{operation.display[:_MAX_OPERATION_LABEL_LEN]} "
                 f"on {axis_label} in {config.execution_repeated_failure_window_s}s"
             ),
             requires_action=True,
