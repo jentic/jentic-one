@@ -8,9 +8,10 @@
  * operation count beside it, and one meta line naming the credential and how it
  * is scoped (its rule count).
  *
- * Each identity is said once. The mark and the title already name the API, so
- * the meta line drops a credential whose name is that same identity, and the
- * `host` line drops a domain the title is only a humanisation of.
+ * Each identity is said once. The tile states the API twice at most — as the
+ * title, and as the host when that is a different string — so the meta line
+ * drops a credential whose name echoes either of them, and the `host` line
+ * drops a domain the title is only a humanisation of.
  *
  * Every tile is the same height whatever its state: the meta line is a slot of
  * fixed height (one row), because a grid row sizes to its tallest cell and a
@@ -113,12 +114,16 @@ export function ApiTile({
 	]
 		.filter(Boolean)
 		.join(' · ');
-	// The credential is named only when it adds a fact. A secret called
-	// `PredictHQ` under a tile titled `PredictHQ` is the API's name printed a
-	// third time (mark, title, then this) — one identity, said once.
-	const credentialLabel = sameIdentity(tile.credentialName, tile.title)
-		? null
-		: tile.credentialName;
+	// The credential is named only when it adds a fact. It is measured against
+	// BOTH names the tile prints, because a generically-named spec makes them
+	// different strings: a secret called `PredictHQ` repeats the title, and one
+	// called `aboutwayfair.com` repeats the host line of a tile titled `Openapi`.
+	// Either way it is the API's own identity said twice.
+	const credentialLabel =
+		sameIdentity(tile.credentialName, tile.title) ||
+		sameIdentity(tile.credentialName, tile.host)
+			? null
+			: tile.credentialName;
 	// What the access IS, beside the status chip.
 	const capability = [
 		tile.authLabel,

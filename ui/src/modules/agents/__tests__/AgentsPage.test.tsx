@@ -290,6 +290,43 @@ describe('AgentsPage — flat agents surface', () => {
 		expect(new Set(heights).size).toBe(1);
 	});
 
+	it('drops a credential named after the API’s host, not just after its title', async () => {
+		// A generically-named spec leaves the domain reaching the tile only as the
+		// host line, so the title and the host are different strings and matching
+		// the title alone lets the domain through twice. Both are the API's own
+		// identity, so a credential echoing either of them adds nothing.
+		resetCredentialsStore([
+			makeMockCredential({
+				credential_id: 'cred_slack_1',
+				name: 'slack.com',
+				type: CredentialType.BEARER_TOKEN,
+				api: { vendor: 'slack.com', name: 'default', version: '1.0.0' },
+			}),
+			makeMockCredential({
+				credential_id: 'cred_github_1',
+				name: 'GitHub PAT',
+				type: CredentialType.BEARER_TOKEN,
+				api: { vendor: 'github.com', name: 'default', version: '1.0.0' },
+			}),
+		]);
+		renderPage('/?agent=agnt_active_1');
+
+		const slackTile = (await screen.findByText('Slack')).closest(
+			'[data-testid="api-tile"]',
+		) as HTMLElement;
+		// The identity line still states the host; the detail line no longer
+		// repeats it under the guise of a credential name.
+		expect(slackTile).toHaveTextContent('slack.com · v1.0.0');
+		expect(within(slackTile).getByTestId('tile-detail-slot')).not.toHaveTextContent(
+			'slack.com',
+		);
+
+		const githubTile = screen
+			.getByText('GitHub')
+			.closest('[data-testid="api-tile"]') as HTMLElement;
+		expect(within(githubTile).getByText('GitHub PAT')).toBeInTheDocument();
+	});
+
 	it('deep link ?agent= preselects the agent and its grid', async () => {
 		renderPage('/?agent=agnt_active_1');
 		await screen.findAllByText('inbox-triage-bot');
