@@ -49,6 +49,7 @@
  */
 import { PauseCircle, PlayCircle, Settings2 } from 'lucide-react';
 import { Badge, Button, Card, Tooltip, VendorIcon } from '@/shared/ui';
+import { formatApiVersion } from '@/shared/lib';
 import { cn } from '@/shared/lib/utils';
 import type { BindingRuleSummary } from '@/modules/agents/api';
 import type { ApiTileModel } from '@/modules/agents/lib/apiTiles';
@@ -110,7 +111,7 @@ export function ApiTile({
 	// stack the same word twice.
 	const identity = [
 		sameIdentity(tile.host, tile.title) ? null : tile.host,
-		tile.version && `v${tile.version}`,
+		formatApiVersion(tile.version),
 	]
 		.filter(Boolean)
 		.join(' · ');

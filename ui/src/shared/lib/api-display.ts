@@ -237,6 +237,22 @@ export function apiRefDisplayName(input: {
 }
 
 /**
+ * A version string as it reads on a card or tile.
+ *
+ * Registry versions arrive in two shapes: a bare number or date
+ * (`1.1.4`, `2024-01-01`), which needs the `v` to read as a version at all,
+ * and a vendor's own already-prefixed label (`v4`, `2023-10-16.beta`), which
+ * must not collect a second one — `vv4` reads as a typo about our own data.
+ * Returns `null` for an absent/blank version so callers can drop the clause.
+ */
+export function formatApiVersion(version: string | null | undefined): string | null {
+	const v = version?.trim();
+	if (!v) return null;
+	// Already a version label: `v` (or `V`) immediately followed by a digit.
+	return /^v\d/i.test(v) ? v : `v${v}`;
+}
+
+/**
  * Raw machine-identity subtitle. The persisted catalog slug wins verbatim —
  * it IS the machine identity (`nytimes.com/article_search`) and is what the
  * user saw when they picked the API. Legacy rows join `vendor/name`, dropping

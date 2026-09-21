@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { Link2, RefreshCw, Settings, Trash2 } from 'lucide-react';
 import { AgentBadge, Badge, Button, Skeleton } from '@/shared/ui';
-import { apiRefDisplayName } from '@/shared/lib';
+import { apiRefDisplayName, formatApiVersion } from '@/shared/lib';
 import { CredentialTypeBadge } from './CredentialTypeBadge';
 import {
 	CredentialType,
@@ -87,7 +87,7 @@ export function CredentialCard({
 	// name joins it only when it says something `default` doesn't.
 	const apiName = cred.api.name && cred.api.name !== 'default' ? cred.api.name : null;
 	const apiPath = [cred.api.vendor, apiName].filter(Boolean).join('/');
-	const version = cred.api.version ? `v${cred.api.version}` : null;
+	const version = formatApiVersion(cred.api.version);
 	// When the heading IS that identity (a credential with no name of its own,
 	// headed by its derived API name) only the version is left to add.
 	const apiLine =
