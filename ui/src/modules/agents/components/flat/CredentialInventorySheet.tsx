@@ -498,6 +498,12 @@ export function CredentialInventorySheet({
 				open={editId != null}
 				onClose={(): void => setEditId(null)}
 				onAfterClose={(): void => setStickyEditId(null)}
+				// A bound-agent link lands on the surface this sheet is covering,
+				// so following one closes the whole stack down to it.
+				onNavigateAway={(): void => {
+					setEditId(null);
+					onClose();
+				}}
 			/>
 
 			{deleteTarget != null && (

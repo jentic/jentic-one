@@ -520,6 +520,13 @@ export function ApiAccessSidebar({
 				credentialId={credentialId}
 				open={editOpen}
 				onClose={() => setEditOpen(false)}
+				// The bound-agent roster links to an agent's tab on the surface
+				// behind this sidebar — including a DIFFERENT agent — so following
+				// one closes the sheet and the sidebar over it.
+				onNavigateAway={() => {
+					setEditOpen(false);
+					onClose();
+				}}
 			/>
 
 			{/* Unbind confirm — the app's standard confirm-dialog pattern (a

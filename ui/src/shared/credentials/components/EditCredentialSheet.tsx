@@ -25,6 +25,13 @@ interface EditCredentialSheetProps {
 	open: boolean;
 	onClose: () => void;
 	onAfterClose?: () => void;
+	/**
+	 * An in-app link inside the sheet was followed in this tab. Hosts stacked
+	 * over the link's destination pass a dismissal here (see
+	 * `BoundAgentsSection`); hosts on a route of their own unmount anyway and
+	 * pass nothing.
+	 */
+	onNavigateAway?: () => void;
 }
 
 /**
@@ -38,6 +45,7 @@ export function EditCredentialSheet({
 	open,
 	onClose,
 	onAfterClose,
+	onNavigateAway,
 }: EditCredentialSheetProps) {
 	const headingId = 'edit-credential-sheet-title';
 	const nameId = useId();
@@ -233,7 +241,11 @@ export function EditCredentialSheet({
 							{/* Direct agent bindings (theme 5 phase 5a) — read-only
 							    roster; management lives on the flat Agents surface
 							    (each agent's API tiles + access sidebar). */}
-							<BoundAgentsSection credentialId={cred.credential_id} open={open} />
+							<BoundAgentsSection
+								credentialId={cred.credential_id}
+								open={open}
+								onNavigateAway={onNavigateAway}
+							/>
 
 							{updateMutation.isError && (
 								<ErrorAlert message={updateMutation.error} />
