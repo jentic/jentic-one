@@ -50,13 +50,12 @@ import {
 	Activity as ActivityIcon,
 	Archive,
 	Ban,
-	Blocks,
 	KeyRound,
 	Power,
 	Settings,
 	ShieldCheck,
 } from 'lucide-react';
-import { Button, FooterActionBar, Tooltip, toast } from '@/shared/ui';
+import { Button, FooterActionBar, McpIcon, Tooltip, toast } from '@/shared/ui';
 import { cn } from '@/shared/lib/utils';
 import { ServingRefreshError, useSetAgentServing, type AgentEntity } from '@/modules/agents/api';
 
@@ -136,13 +135,13 @@ export function AgentDock({
 					icon={<ActivityIcon className="h-5 w-5" />}
 					onClick={() => onOpenSurface('activity')}
 				/>
-				{/* MCP before Settings, mirroring the console's tab order. Blocks
-				    is the conventional integration mark — the sheet is how a client
-				    plugs into this agent — and it stays legible at 20px, where a
-				    plug's prongs blur against the power mark on the toggle. */}
+				{/* MCP before Settings, mirroring the console's tab order. The
+				    protocol's OWN mark, not a generic integration glyph: anyone who
+				    has wired an MCP client recognises it instantly, which no
+				    substitute achieved. */}
 				<DockIconButton
 					label="MCP"
-					icon={<Blocks className="h-5 w-5" />}
+					icon={<McpIcon className="h-5 w-5" />}
 					onClick={() => onOpenSurface('mcp')}
 				/>
 				<DockIconButton

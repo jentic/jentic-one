@@ -128,6 +128,9 @@ export type { KeyboardShortcut, KeyboardShortcutsBarProps } from '@/shared/ui/Ke
 export { JenticLogo } from '@/shared/ui/Logo';
 export type { JenticLogoProps } from '@/shared/ui/Logo';
 
+export { McpIcon } from '@/shared/ui/McpIcon';
+export type { McpIconProps } from '@/shared/ui/McpIcon';
+
 export {
 	useDismissable,
 	useViewportClamp,
