@@ -534,6 +534,34 @@ describe('AgentsPage — flat agents surface', () => {
 		expect(screen.queryByTestId('stat-last-activity')).not.toBeInTheDocument();
 	});
 
+	it('keeps a long description to one clamped line so the grid never moves', async () => {
+		const long =
+			'This agent handles support tickets end to end. '.repeat(8) +
+			'And it keeps going well past any sensible width.';
+		worker.use(
+			http.get('*/agents', () =>
+				HttpResponse.json({
+					data: [{ ...agentRow('agnt_active_1', 'support-agent'), description: long }],
+					has_more: false,
+					next_cursor: null,
+				}),
+			),
+		);
+		renderPage('/?agent=agnt_active_1');
+		await screen.findByText('Slack');
+
+		// Free text of any length sits between the selector and the content, so
+		// it is clamped to one line (the rest is one hover away, and the dock's
+		// Settings sheet holds it in full). Browser mode gives real layout, so
+		// the single line is measurable rather than inferred from a class.
+		const line = screen.getByText(long);
+		expect(line).toHaveClass('truncate');
+		const lineHeight = parseFloat(getComputedStyle(line).lineHeight);
+		expect(line.getBoundingClientRect().height).toBeLessThan(lineHeight * 2);
+		// Overflowing text is reachable by keyboard, not just by pointer.
+		expect(line).toHaveAttribute('tabindex', '0');
+	});
+
 	// --- Empty state / non-active treatment ---------------------------------
 
 	it('shows the can-reach-nothing empty state and opens the Add-APIs tray', async () => {

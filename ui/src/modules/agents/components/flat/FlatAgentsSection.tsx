@@ -19,7 +19,7 @@ import { useSearchParams } from 'react-router';
 import { motion, useReducedMotion } from 'framer-motion';
 import { Archive, Bot, Clock, Plus, XCircle } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import { Button, Card, EmptyState, ErrorAlert, Skeleton } from '@/shared/ui';
+import { Button, Card, EmptyState, ErrorAlert, Skeleton, TruncateWithTooltip } from '@/shared/ui';
 import { cn } from '@/shared/lib/utils';
 import { useEagerCursorDrain, useHotkey } from '@/shared/hooks';
 import {
@@ -715,9 +715,18 @@ function SelectedAgentPanel({
 			{/* Identity lives in the strip's selected tab and the APIs band
 			    below — the header repeats neither (the owner's 4×-name
 			    critique), so the agent's own description is all it carries.
-			    The section's aria-label still names the agent. */}
+			    The section's aria-label still names the agent.
+
+			    ONE clamped line, never a paragraph: this is free text of any
+			    length sitting between the selector and the content, so an
+			    unclamped block moves the whole grid down by however much the
+			    operator typed — the same class of defect as a tile whose height
+			    depends on its state. The rest is one hover away, and the dock's
+			    Settings sheet holds (and edits) the full text. */}
 			{agent.description && (
-				<p className="text-muted-foreground text-sm">{agent.description}</p>
+				<TruncateWithTooltip className="text-muted-foreground text-sm">
+					{agent.description}
+				</TruncateWithTooltip>
 			)}
 
 			{bannerStatus && (
