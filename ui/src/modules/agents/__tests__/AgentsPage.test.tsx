@@ -581,7 +581,8 @@ describe('AgentsPage — flat agents surface', () => {
 		expect(screen.queryByTestId('stat-last-activity')).not.toBeInTheDocument();
 	});
 
-	it('keeps a long description to one clamped line so the grid never moves', async () => {
+	it('holds a long description to one line until the reader asks for the rest', async () => {
+		const user = userEvent.setup();
 		const long =
 			'This agent handles support tickets end to end. '.repeat(8) +
 			'And it keeps going well past any sensible width.';
@@ -598,15 +599,25 @@ describe('AgentsPage — flat agents surface', () => {
 		await screen.findByText('Slack');
 
 		// Free text of any length sits between the selector and the content, so
-		// it is clamped to one line (the rest is one hover away, and the dock's
-		// Settings sheet holds it in full). Browser mode gives real layout, so
-		// the single line is measurable rather than inferred from a class.
+		// it starts at one line: the grid's position is not decided by how much
+		// the operator typed. Browser mode gives real layout, so the line count
+		// is measurable rather than inferred from a class.
 		const line = screen.getByText(long);
-		expect(line).toHaveClass('truncate');
 		const lineHeight = parseFloat(getComputedStyle(line).lineHeight);
 		expect(line.getBoundingClientRect().height).toBeLessThan(lineHeight * 2);
-		// Overflowing text is reachable by keyboard, not just by pointer.
-		expect(line).toHaveAttribute('tabindex', '0');
+
+		// The rest is one click away, and going back is the same click.
+		const more = screen.getByRole('button', { name: 'Show more' });
+		await user.click(more);
+		await waitFor(() =>
+			expect(line.getBoundingClientRect().height).toBeGreaterThan(lineHeight * 2),
+		);
+		const less = screen.getByRole('button', { name: 'Show less' });
+		expect(less).toHaveAttribute('aria-expanded', 'true');
+		await user.click(less);
+		await waitFor(() =>
+			expect(line.getBoundingClientRect().height).toBeLessThan(lineHeight * 2),
+		);
 	});
 
 	// --- Empty state / non-active treatment ---------------------------------
