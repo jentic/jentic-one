@@ -36,7 +36,7 @@
  * pinned): the selection stays reachable while scrolling a long tile grid,
  * where the page header and its actions scroll away.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { STATUS_ICON } from '@/shared/ui';
 import type { ActorStatus } from '@/shared/ui';
 import { cn } from '@/shared/lib/utils';
@@ -152,6 +152,35 @@ export function AgentStrip({
 		return () => obs.disconnect();
 	}, [syncEdges, ordered.length]);
 
+	// The selection marker — the teal wash AND its underline — is ONE element
+	// owned by the rail, not styling on each tab: a single element can slide
+	// from the old tab to the new one, so a selection change reads as movement
+	// — the eye follows the slab to where it landed — instead of a repaint it
+	// has to go looking for. The underline is a CHILD of the sliding slab, so
+	// the two share one geometry and cannot travel at different speeds.
+	// Measured off the selected tab and re-measured when anything that can
+	// move or widen a tab changes (the roster/filter through `ordered`, the
+	// async count and setup-gap hints through their maps).
+	const [marker, setMarker] = useState<{
+		left: number;
+		top: number;
+		width: number;
+		height: number;
+	} | null>(null);
+	useLayoutEffect(() => {
+		const tab = selectedId ? tabRefs.current.get(selectedId) : null;
+		if (!tab) {
+			setMarker(null);
+			return;
+		}
+		setMarker({
+			left: tab.offsetLeft,
+			top: tab.offsetTop,
+			width: tab.offsetWidth,
+			height: tab.offsetHeight,
+		});
+	}, [selectedId, ordered, setupGaps, apiCounts]);
+
 	// Keep the selected tab in view: selection also arrives from elsewhere (the
 	// approval banner's Review, an `?agent=` deep link), where nothing focuses
 	// the tab. Scrolls the rail ONLY — never an ancestor, so the page keeps its
@@ -229,17 +258,18 @@ export function AgentStrip({
 				tabIndex={isSelected ? 0 : -1}
 				onClick={() => onSelect(agent.id)}
 				className={cn(
-					'flex shrink-0 snap-start items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm whitespace-nowrap transition-colors duration-150',
+					// `relative` lifts every tab above the sliding selection marker
+					// (a positioned earlier sibling), so the slab paints BEHIND the
+					// tab's text rather than tinting it through the wash.
+					'relative flex shrink-0 snap-start items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm whitespace-nowrap transition-colors duration-150',
 					'focus-visible:ring-ring focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:outline-none',
-					// The selected tab RISES out of the rail: a solid surface a step
-					// lighter than the rail's own wash, outlined so its edges are
-					// stated rather than implied. The theme is dark-only, so the
-					// elevation cues that work on paper don't work here — a drop
-					// shadow is black on near-black, and the page surface itself
-					// reads as a hole punched in the rail rather than a raised chip.
+					// The selected tab carries no background of its own — the rail's
+					// sliding marker (rendered once by the scroller, below) IS the
+					// wash and the underline. The tab only states its text: full
+					// strength and semibold when selected…
 					isSelected
-						? 'bg-muted ring-border/70 text-foreground font-semibold ring-1'
-						: // …and the unselected tabs have to recede for the rise to
+						? 'text-foreground font-semibold'
+						: // …and the unselected tabs have to recede for the marker to
 							// register: `--muted-foreground` is #E4EAEB in this theme,
 							// a hair off white, so it needs dimming to read as
 							// secondary at all.
@@ -299,11 +329,36 @@ export function AgentStrip({
 					onScroll={syncEdges}
 					style={mask ? { maskImage: mask, WebkitMaskImage: mask } : undefined}
 					className={cn(
-						'flex min-w-0 snap-x items-center gap-0.5 overflow-x-auto px-1.5 py-1',
+						// `relative` anchors the sliding selection marker, which then
+						// lives in the scroll content and travels with it.
+						'relative flex min-w-0 snap-x items-center gap-0.5 overflow-x-auto px-1.5 py-1',
 						// One row at every width — the rail scrolls, it never wraps.
 						'[scrollbar-width:none] flex-nowrap [&::-webkit-scrollbar]:hidden',
 					)}
 				>
+					{/* The selection marker: the teal wash with its brand underline
+					    inside, sliding as one piece from tab to tab. First child and
+					    positioned, with the (also positioned) tabs after it in DOM
+					    order, so it paints behind their text. The underline starts at
+					    the NAME's left edge — never under the status glyph, whose job
+					    is status, not selection — so the two vocabularies keep their
+					    own pixels. Its left inset is the tab's own geometry summed:
+					    px-2.5 (10px) + the size-3.5 glyph (14px) + gap-1.5 (6px). */}
+					{marker && (
+						<span
+							aria-hidden="true"
+							data-testid="strip-selection-marker"
+							className="bg-primary/15 ring-primary/30 pointer-events-none absolute rounded-md ring-1 transition-[left,top,width,height] duration-200 ease-out motion-reduce:transition-none"
+							style={{
+								left: marker.left,
+								top: marker.top,
+								width: marker.width,
+								height: marker.height,
+							}}
+						>
+							<span className="bg-primary absolute right-2.5 bottom-0.5 left-[30px] h-0.5 rounded-full" />
+						</span>
+					)}
 					{visible.pending.length > 0 && (
 						<>
 							{/* Group opener — visual only (the sr-only tab suffix
