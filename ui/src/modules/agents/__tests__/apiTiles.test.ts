@@ -250,6 +250,29 @@ describe('tileStats / agentSetupGapCount', () => {
 		expect(stats).toEqual({ configured: 1, needsSetup: 0, operations: 0 });
 	});
 
+	it('withholds the operations figure when no usable tile proves a count', () => {
+		// A binding whose API the registry does not describe: the tile renders,
+		// but nothing states how many operations it exposes. A `0` would claim
+		// the agent can call nothing, so the figure is withheld instead.
+		const stats = tileStats(composeApiTiles([makeBinding()], [makeCredential()], []));
+		expect(stats).toEqual({ configured: 1, needsSetup: 0, operations: null });
+	});
+
+	it('sums the counts it has when only some tiles withhold theirs', () => {
+		const apis = [
+			makeApi({ vendor: 'slack.com', display_name: 'Slack', operation_count: 100 }),
+		];
+		const bindings = [
+			makeBinding({ id: 'acb_known' }),
+			makeBinding({
+				id: 'acb_unknown',
+				serves: [{ vendor: 'unlisted.example', name: null, version: null }],
+			}),
+		];
+		const stats = tileStats(composeApiTiles(bindings, [makeCredential()], apis));
+		expect(stats).toEqual({ configured: 2, needsSetup: 0, operations: 100 });
+	});
+
 	it('counts a multi-API credential as one setup gap', () => {
 		const credentials = [
 			makeCredential({

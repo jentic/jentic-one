@@ -225,23 +225,43 @@ export interface ApiTileStats {
 	configured: number;
 	/** Tiles waiting on an OAuth sign-in. */
 	needsSetup: number;
-	/** Total operations exposed by usable tiles with known registry metadata. */
-	operations: number;
+	/**
+	 * Operations the agent can actually call right now: summed over tiles that
+	 * are usable AND not paused, because a suspended binding's operations are
+	 * unreachable however many the registry lists for it.
+	 *
+	 * `null` when no tile proves a count while at least one withholds it — a
+	 * `0` there would read as "this agent can call nothing", when the truth is
+	 * that the registry told us nothing about what it can call.
+	 */
+	operations: number | null;
 }
 
 export function tileStats(tiles: ApiTileModel[]): ApiTileStats {
 	let configured = 0;
 	let needsSetup = 0;
 	let operations = 0;
+	// Whether the sum rests on anything, and whether anything is missing from
+	// it — together they decide if `0` is a fact or a shrug.
+	let counted = false;
+	let withheld = false;
 	for (const tile of tiles) {
 		if (tile.awaitingConsent) {
 			needsSetup += 1;
 			continue;
 		}
 		configured += 1;
-		if (tile.operationCount != null && !tile.suspended) operations += tile.operationCount;
+		// A pause is a deliberate exclusion, not a missing fact: it must not
+		// make the whole figure unprovable.
+		if (tile.suspended) continue;
+		if (tile.operationCount == null) {
+			withheld = true;
+			continue;
+		}
+		operations += tile.operationCount;
+		counted = true;
 	}
-	return { configured, needsSetup, operations };
+	return { configured, needsSetup, operations: withheld && !counted ? null : operations };
 }
 
 /**

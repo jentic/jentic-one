@@ -2,7 +2,7 @@
  * AgentStatStrip — the selected agent's vitals as ONE quiet meta line under
  * the `APIs · N` heading, reading as a sentence rather than a figure board:
  *
- *   2 configured · 1 to set up · 181 operations · 2 credentials ·
+ *   2 configured · 1 to set up · 181 operations reachable · 2 credentials ·
  *   1,204 calls in 7d · 99% success · last used 2m ago
  *
  * The heading carries the number that matters (how many APIs this agent
@@ -77,10 +77,16 @@ export function AgentStatStrip({
 				tone: 'warning',
 			});
 		}
-		clauses.push({
-			key: 'operations',
-			text: access && `${access.operations.toLocaleString()} operations`,
-		});
+		// "reachable" is load-bearing: the figure excludes paused bindings, so a
+		// line reading `0 operations` beside a tile advertising 900 of them would
+		// look like a contradiction rather than the pause it is. An unprovable
+		// count (nothing known, something withheld) drops the clause.
+		if (access?.operations !== null) {
+			clauses.push({
+				key: 'operations',
+				text: access && `${access.operations.toLocaleString()} operations reachable`,
+			});
+		}
 	}
 	if (credentialCount !== null) {
 		clauses.push({
