@@ -916,8 +916,22 @@ export function formatFailurePillCount(count: number): string {
 	return n > 99 ? '99+' : String(n);
 }
 
+/**
+ * Left-edge stripe class for a rail row, keyed by severity.
+ *
+ * CRITICAL and ERROR share the danger colour (both are failures — see
+ * `RailEventRow`'s `isCritical` background tint) but CRITICAL renders a
+ * doubled-width stripe. Before this, the two tiers were pixel-identical on
+ * the rail (`border-l-danger` for both, `border-l-2` from the row's base
+ * class) — an operator had no way to tell "one failure" from "this failure
+ * pattern crossed the critical threshold" without opening the row (issue
+ * #907). Relies on `cn`'s `tailwind-merge` to let `border-l-4` win over the
+ * row's base `border-l-2` (later class in the merge wins on the same
+ * property group) — do not reorder the row's `cn(...)` call without
+ * preserving that.
+ */
 export function severityStripeClass(s: StreamSeverity): string {
-	if (s === 'critical') return 'border-l-danger';
+	if (s === 'critical') return 'border-l-4 border-l-danger';
 	if (s === 'error') return 'border-l-danger';
 	if (s === 'warning') return 'border-l-warning';
 	return 'border-l-primary';
