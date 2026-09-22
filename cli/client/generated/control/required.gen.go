@@ -15,13 +15,13 @@ func (ActorListResponse) RequiredFields() []string   { return []string{"data", "
 func (ActorSummaryResponse) RequiredFields() []string {
 	return []string{"active", "actor_type", "created_at", "id", "name"}
 }
-func (AgentCreateRequest) RequiredFields() []string { return []string{"name"} }
-func (AgentListResponse) RequiredFields() []string  { return []string{"data", "has_more"} }
+func (AgentCreateRequest) RequiredFields() []string       { return []string{"name"} }
+func (AgentListResponse) RequiredFields() []string        { return []string{"data", "has_more"} }
+func (AgentPermissionsRequest) RequiredFields() []string  { return []string{"permissions"} }
+func (AgentPermissionsResponse) RequiredFields() []string { return []string{"permissions"} }
 func (AgentResponse) RequiredFields() []string {
 	return []string{"created_at", "id", "name", "registered_by", "status"}
 }
-func (AgentScopesRequest) RequiredFields() []string     { return []string{"scopes"} }
-func (AgentScopesResponse) RequiredFields() []string    { return []string{"scopes"} }
 func (ApiImportLinksResponse) RequiredFields() []string { return []string{"self"} }
 func (ApiImportRequest) RequiredFields() []string       { return []string{"sources"} }
 func (ApiImportResponse) RequiredFields() []string      { return []string{"_links", "job_id", "status"} }
@@ -143,13 +143,13 @@ func (McpConfigRegistrationResponse) RequiredFields() []string {
 	return []string{"recorded", "runtime"}
 }
 func (MeAgent) RequiredFields() []string {
-	return []string{"id", "name", "scopes", "status", "token_scopes", "toolkit_bindings"}
+	return []string{"id", "name", "permissions", "status", "token_permissions", "toolkit_bindings"}
 }
 func (MeServiceAccount) RequiredFields() []string {
-	return []string{"id", "name", "registered_by", "scopes", "status", "token_scopes"}
+	return []string{"id", "name", "permissions", "registered_by", "status", "token_permissions"}
 }
 func (MeUser) RequiredFields() []string {
-	return []string{"admin", "email", "id", "must_change_password", "name", "scopes", "status"}
+	return []string{"admin", "email", "id", "must_change_password", "name", "permissions", "status"}
 }
 func (NoAuthCreateRequest) RequiredFields() []string          { return []string{"api", "name", "type"} }
 func (NoteApiReference) RequiredFields() []string             { return []string{"name", "vendor", "version"} }

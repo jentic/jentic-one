@@ -318,7 +318,7 @@ API. The PR stays open — do not close it; this is not a fork.
 > Two things follow from this:
 > - **Confirm is an operator action** and requires the `overlays:confirm` permission (not
 >   `apis:write`). Contributors *submit* overlays; an operator reviews and *confirms*. Use a
->   token with `overlays:confirm` (an `org:admin` token also works — it implies the scope) for
+>   token with `overlays:confirm` (an `org:admin` token also works — it implies the permission) for
 >   the confirm call below, or ask an operator to confirm.
 > - **Verify locally first.** Because confirm rewrites what the platform serves, treat the local
 >   apply as the real verification of the fix: confirm, then re-download the spec and diff it
@@ -346,7 +346,7 @@ plane (default `http://127.0.0.1:8000`).
 # It targets whatever install your active context points at; use
 # `--context <name>` to pick another. Submit needs apis:write; confirm needs
 # overlays:confirm (an org:admin identity satisfies both) — if your agent
-# identity lacks a scope, ask your operator to grant it (dashboard) or have an
+# identity lacks a permission, ask your operator to grant it (dashboard) or have an
 # operator run the confirm step.
 
 # Resolve the registry identity for the catalog entry you imported. The registry slugifies
@@ -441,7 +441,7 @@ print('overlay_id:', (mine[0]['data'].get('overlay_id') if mine else None))"
 **Reacting to `catalog.update_available`** (adopt upstream — your fix is upstream now, or the
 change is unrelated and you no longer need the overlay): re-import the catalog entry. A plain
 re-import adopts the upstream spec and **settles the event** automatically. This needs
-`catalog:import` (an `apis:write` scope implies it):
+`catalog:import` (an `apis:write` permission implies it):
 
 ```
 jentic api POST "/catalog/<api_id>:import" -d '{}'
@@ -457,7 +457,8 @@ is an operator call with two clean options — **never** hand-edit around it:
    catalog entry over a *live confirmed overlay* is doubly gated: the `:import` route itself
    requires **`catalog:import`**, and superseding the overlay additionally requires
    **`overlays:confirm`** (because it discards an operator's fix). So the caller needs **both**
-   scopes — an `org:admin` identity satisfies both by implication; `overlays:confirm` *alone* is
+   permissions — an `org:admin` identity satisfies both by implication; `overlays:confirm` *alone*
+   is
    rejected by the route guard before the supersede is even evaluated. An authorized re-import
    auto-deprecates the overlay and serves the fresh upstream in one step; a caller with
    `catalog:import` but **not** `overlays:confirm` is **refused** (403 `overlay_supersede_forbidden`)
@@ -466,7 +467,7 @@ is an operator call with two clean options — **never** hand-edit around it:
 ```
 # Authorized adopt-upstream. Run under a context whose identity holds BOTH catalog:import
 # and overlays:confirm (org:admin implies both) — e.g. `--context <operator>`, or ask an
-# operator to run it if your agent identity lacks the scopes. The platform detects the live
+# operator to run it if your agent identity lacks the permissions. The platform detects the live
 # overlay and supersedes it because you hold overlays:confirm; the same call by a
 # catalog:import-only identity returns 403.
 jentic api POST "/catalog/<api_id>:import" -d '{}'
@@ -499,5 +500,5 @@ retained (overlay `confirmed`, divergence flagged but not hidden).
   `catalog.update_conflicts_overlay`, adopt upstream via a scoped re-import or deliberately keep the
   overlay — never edit the served spec by hand to paper over the divergence. Adopting upstream over
   a live confirmed overlay requires **both** `catalog:import` (route) and `overlays:confirm`
-  (supersede) — i.e. an `org:admin` token or both scopes; the platform refuses with a 403 (not a
+  (supersede) — i.e. an `org:admin` token or both permissions; the platform refuses with a 403 (not a
   silent revert) if you lack `overlays:confirm`.

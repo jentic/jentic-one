@@ -27,7 +27,7 @@ this file adds the lane-specific detail.
   registry and importing a cataloged API need no grant — an approved agent
   already holds `apis:read` and `catalog:import` by default. (Importing
   arbitrary URL/inline specs via `POST /apis` is the only import path that
-  needs `apis:write`.) Don't invent other "catalog read" scopes; they're
+  needs `apis:write`.) Don't invent other "catalog read" permissions; they're
   rejected.
 - The `operation_id` from the registry search resolves directly; the id
   from `catalog show` is the spec `operationId` (inspect resolves it via a
@@ -131,12 +131,12 @@ the right ask, then retry once they confirm.
   rendered for humans, next to the HTTP API and Broker API references.
 - `jentic context view` — the active context (environment + identity +
   base_url); start here in a CLI session.
-- `jentic whoami` — your identity, status, scopes, and credential
+- `jentic whoami` — your identity, status, permissions, and credential
   bindings with the APIs each one **serves** (check this before executing;
   it renders the same `GET /me` view `jentic api GET /me` returns). When
   access is missing, start a registry vendor's connect yourself
   (`jentic connect <vendor>`) or report the gap to your operator —
-  approval, binding, and scope grants happen in the dashboard.
+  approval, binding, and permission grants happen in the dashboard.
 - `jentic connect <vendor>` — start a connect session for a registry
   vendor (e.g. `jentic connect github`): prints the `approval_url` a human
   approves in the browser (`--scopes`, `--reason` shape the ask; `--wait`
@@ -211,7 +211,7 @@ re-send while pending).
 
 ## Verification — MCP session
 
-- `whoami` answers with your identity (id, status, scopes, bindings) and an
+- `whoami` answers with your identity (id, status, permissions, bindings) and an
   `instance` stamp.
 - After `import_api`, `search_apis` finds operations from that API.
 - A known-allowed `execute_read` returns a 2xx response body.

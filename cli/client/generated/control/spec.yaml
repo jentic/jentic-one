@@ -128,7 +128,7 @@ components:
           minLength: 1
           title: Name
           type: string
-        scopes:
+        permissions:
           anyOf:
           - items:
               maxLength: 64
@@ -138,7 +138,7 @@ components:
             maxItems: 100
             type: array
           - type: 'null'
-          title: Scopes
+          title: Permissions
       required:
       - name
       title: AgentCreateRequest
@@ -188,6 +188,34 @@ components:
           - type: 'null'
           title: Owner Id
       title: AgentPatchRequest
+      type: object
+    AgentPermissionsRequest:
+      description: Request body for replacing an agent's permissions.
+      properties:
+        permissions:
+          items:
+            maxLength: 64
+            minLength: 1
+            pattern: ^[a-zA-Z0-9_:./-]+$
+            type: string
+          maxItems: 100
+          title: Permissions
+          type: array
+      required:
+      - permissions
+      title: AgentPermissionsRequest
+      type: object
+    AgentPermissionsResponse:
+      description: Response containing an agent's current permissions.
+      properties:
+        permissions:
+          items:
+            type: string
+          title: Permissions
+          type: array
+      required:
+      - permissions
+      title: AgentPermissionsResponse
       type: object
     AgentResponse:
       description: Agent representation in API responses.
@@ -255,34 +283,6 @@ components:
       - status
       - created_at
       title: AgentResponse
-      type: object
-    AgentScopesRequest:
-      description: Request body for replacing an agent's scopes.
-      properties:
-        scopes:
-          items:
-            maxLength: 64
-            minLength: 1
-            pattern: ^[a-zA-Z0-9_:./-]+$
-            type: string
-          maxItems: 100
-          title: Scopes
-          type: array
-      required:
-      - scopes
-      title: AgentScopesRequest
-      type: object
-    AgentScopesResponse:
-      description: Response containing an agent's current scopes.
-      properties:
-        scopes:
-          items:
-            type: string
-          title: Scopes
-          type: array
-      required:
-      - scopes
-      title: AgentScopesResponse
       type: object
     ApiImportLinksResponse:
       description: Hypermedia links for an import response.
@@ -2727,18 +2727,18 @@ components:
           - type: string
           - type: 'null'
           title: Parent Agent Id
-        scopes:
+        permissions:
           items:
             type: string
-          title: Scopes
+          title: Permissions
           type: array
         status:
           title: Status
           type: string
-        token_scopes:
+        token_permissions:
           items:
             type: string
-          title: Token Scopes
+          title: Token Permissions
           type: array
         toolkit_bindings:
           items:
@@ -2754,8 +2754,8 @@ components:
       - id
       - name
       - status
-      - scopes
-      - token_scopes
+      - permissions
+      - token_permissions
       - toolkit_bindings
       title: MeAgent
       type: object
@@ -2778,21 +2778,21 @@ components:
         name:
           title: Name
           type: string
+        permissions:
+          items:
+            type: string
+          title: Permissions
+          type: array
         registered_by:
           title: Registered By
           type: string
-        scopes:
-          items:
-            type: string
-          title: Scopes
-          type: array
         status:
           title: Status
           type: string
-        token_scopes:
+        token_permissions:
           items:
             type: string
-          title: Token Scopes
+          title: Token Permissions
           type: array
         type:
           const: service_account
@@ -2803,8 +2803,8 @@ components:
       - id
       - name
       - status
-      - scopes
-      - token_scopes
+      - permissions
+      - token_permissions
       - registered_by
       title: MeServiceAccount
       type: object
@@ -2826,10 +2826,10 @@ components:
         name:
           title: Name
           type: string
-        scopes:
+        permissions:
           items:
             type: string
-          title: Scopes
+          title: Permissions
           type: array
         status:
           title: Status
@@ -2845,7 +2845,7 @@ components:
       - email
       - admin
       - status
-      - scopes
+      - permissions
       - must_change_password
       title: MeUser
       type: object
@@ -6013,7 +6013,7 @@ components:
         - **Agents** — `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer` with a JWT assertion signed by the key registered via `POST /register` (the JWT is the *assertion*, not the resulting access token).
         - **Users** — `grant_type=authorization_code` (interactive) or `grant_type=password`; refresh either with `grant_type=refresh_token`.
 
-        Per-endpoint scope and actor-type requirements are not modelled in this document (OpenAPI cannot faithfully express the OR-of-scopes / `org:admin` bypass / service-layer enforcement); see `GET /reference/endpoints.json` for the authoritative authorization reference.
+        Per-endpoint permission and actor-type requirements are not modelled in this document (OpenAPI cannot faithfully express the OR-of-permissions / `org:admin` bypass / service-layer enforcement); see `GET /reference/endpoints.json` for the authoritative authorization reference.
       scheme: bearer
       type: http
 info:
@@ -7767,7 +7767,7 @@ paths:
         Archive an agent — terminal-but-kept.
 
         The row is retained for history, but the action is not reversible and
-        the agent's authority is swept: scope grants, credential bindings, and
+        the agent's authority is swept: permission grants, credential bindings, and
         OAuth consent grants are revoked. For the reversible kill switch use
         ``:disable`` / ``:enable`` instead.
       operationId: archiveAgent
@@ -8566,10 +8566,10 @@ paths:
       summary: List agent OAuth grants
       tags:
       - Agents
-  /agents/{agent_id}/scopes:
+  /agents/{agent_id}/permissions:
     get:
-      description: List scopes granted to an agent.
-      operationId: getAgentScopes
+      description: List permissions granted to an agent.
+      operationId: getAgentPermissions
       parameters:
       - in: path
         name: agent_id
@@ -8582,7 +8582,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AgentScopesResponse'
+                $ref: '#/components/schemas/AgentPermissionsResponse'
           description: Successful Response
         '400':
           content:
@@ -8628,12 +8628,12 @@ paths:
           description: Service Unavailable
       security:
       - BearerAuth: []
-      summary: Get Agent Scopes
+      summary: Get Agent Permissions
       tags:
       - Agents
     put:
-      description: Replace all scopes for an agent.
-      operationId: replaceAgentScopes
+      description: Replace all permissions for an agent.
+      operationId: replaceAgentPermissions
       parameters:
       - in: path
         name: agent_id
@@ -8645,14 +8645,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/AgentScopesRequest'
+              $ref: '#/components/schemas/AgentPermissionsRequest'
         required: true
       responses:
         '200':
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AgentScopesResponse'
+                $ref: '#/components/schemas/AgentPermissionsResponse'
           description: Successful Response
         '400':
           content:
@@ -8698,7 +8698,7 @@ paths:
           description: Service Unavailable
       security:
       - BearerAuth: []
-      summary: Replace Agent Scopes
+      summary: Replace Agent Permissions
       tags:
       - Agents
   /agents/{agent_id}:approve:
@@ -8784,7 +8784,7 @@ paths:
         ``allow_expired_password=True`` is intentional (matching ``GET /agents/{id}``):
         claiming is an onboarding step a brand-new user may hit before they have
         rotated a temporary password, so a must-change-password state must not block
-        it. The claim only sets ownership — it grants no scopes and cannot act as the
+        it. The claim only sets ownership — it grants no permissions and cannot act as the
         agent — so allowing it under an expired password is low-risk.
       operationId: claimAgent
       parameters:
@@ -18892,11 +18892,11 @@ tags:
 
     One reserved superpower short-circuits individual checks in code: `org:admin` (full deployment-wide access, granted via direct DB action). It is not enumerated to non-holders by `GET /permissions`, and is rejected by `PUT /users/{user_id}/permissions` from any caller who doesn't already hold it.
 
-    The same vocabulary is used for `User.permissions` — coarse JWT-embedded scopes — so the catalogue below covers user assignment. The per-binding fine-grained `PermissionRule[]` (the inner PBAC tier) lives separately on the direct agent↔credential bindings under the `Credentials` tag.
+    The same vocabulary is used for `User.permissions` — the coarse set embedded in the JWT — so the catalogue below covers user assignment. The per-binding fine-grained `PermissionRule[]` (the inner PBAC tier) lives separately on the direct agent↔credential bindings under the `Credentials` tag.
   name: Permissions
 - description: Operational endpoints for service health and platform tooling. Not part of any bounded context — surfaced here so orchestrators and load balancers have a stable probe target.
   name: System
-- description: Identity introspection for the calling principal (human, agent, or service account) — `GET /me` returns the resolved subject, scopes, and permissions behind the presented token.
+- description: Identity introspection for the calling principal (human, agent, or service account) — `GET /me` returns the resolved subject and its permissions behind the presented token.
   name: Identity
 - description: Agent actors — autonomous principals that call the Broker. Covers the agent lifecycle (list, read, approve / deny, enable / disable, archive) and the credentials directly bound to each agent.
   name: Agents

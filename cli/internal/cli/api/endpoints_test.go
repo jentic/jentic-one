@@ -5,7 +5,7 @@ import (
 )
 
 const sampleReference = `{
-  "schema": "jentic.endpoint-scope-tree/v1",
+  "schema": "jentic.endpoint-permission-tree/v1",
   "total": 4,
   "endpoints": [
     {
@@ -14,7 +14,7 @@ const sampleReference = `{
       "summary": "List Agents",
       "public": false,
       "actor_types": ["user"],
-      "required_scopes": ["agents:read"],
+      "required_permissions": ["agents:read"],
       "typical_caller": "operator"
     },
     {
@@ -23,7 +23,7 @@ const sampleReference = `{
       "summary": "Execute Capability",
       "public": false,
       "actor_types": ["agent"],
-      "required_scopes": [],
+      "required_permissions": [],
       "typical_caller": "agent"
     },
     {
@@ -32,7 +32,7 @@ const sampleReference = `{
       "summary": "Create Credential",
       "public": false,
       "actor_types": ["user", "agent"],
-      "required_scopes": [],
+      "required_permissions": [],
       "typical_caller": "any"
     },
     {
@@ -57,8 +57,8 @@ func TestParseEndpoints(t *testing.T) {
 		byPath[ep.Method+" "+ep.Path] = ep
 	}
 
-	if got := byPath["GET /agents"]; len(got.Scopes) != 1 || got.Scopes[0] != "agents:read" {
-		t.Errorf("/agents scopes = %v, want [agents:read]", got.Scopes)
+	if got := byPath["GET /agents"]; len(got.Permissions) != 1 || got.Permissions[0] != "agents:read" {
+		t.Errorf("/agents permissions = %v, want [agents:read]", got.Permissions)
 	}
 	if got := byPath["GET /agents"]; got.TypicalCaller != "operator" {
 		t.Errorf("/agents typical caller = %q, want operator", got.TypicalCaller)
@@ -74,7 +74,7 @@ func TestEndpointGroup(t *testing.T) {
 		ep   endpoint
 		want string
 	}{
-		{"operator", endpoint{TypicalCaller: "operator", Scopes: []string{"agents:read"}}, groupOperator},
+		{"operator", endpoint{TypicalCaller: "operator", Permissions: []string{"agents:read"}}, groupOperator},
 		{"agent", endpoint{TypicalCaller: "agent"}, groupAgent},
 		{"any", endpoint{TypicalCaller: "any"}, groupAny},
 		{"unstamped-any", endpoint{ActorTypes: []string{"user"}}, groupAny},
@@ -91,11 +91,11 @@ func TestEndpointGroup(t *testing.T) {
 
 func TestFilterEndpoints(t *testing.T) {
 	eps := []endpoint{
-		{Method: "GET", Path: "/a", ActorTypes: []string{"user"}, Scopes: []string{"agents:read"}},
-		{Method: "GET", Path: "/b", ActorTypes: []string{"agent"}, Scopes: []string{"capabilities:execute"}},
+		{Method: "GET", Path: "/a", ActorTypes: []string{"user"}, Permissions: []string{"agents:read"}},
+		{Method: "GET", Path: "/b", ActorTypes: []string{"agent"}, Permissions: []string{"capabilities:execute"}},
 	}
 	if got := filterEndpoints(eps, "agents:read", ""); len(got) != 1 || got[0].Path != "/a" {
-		t.Errorf("scope filter = %v, want only /a", got)
+		t.Errorf("permission filter = %v, want only /a", got)
 	}
 	if got := filterEndpoints(eps, "", "agent"); len(got) != 1 || got[0].Path != "/b" {
 		t.Errorf("actor filter = %v, want only /b", got)

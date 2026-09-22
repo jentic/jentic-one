@@ -993,8 +993,8 @@ components:
     Forbidden:
       description: |
         Caller authenticated but not entitled to execute — most often a
-        token lacking the required `capabilities:execute` scope
-        (`type: insufficient_scope`), attempting to pin a `draft`
+        token lacking the required `capabilities:execute` permission
+        (`type: insufficient_scope`, the RFC 6750 code), attempting to pin a `draft`
         revision they don't own, using a credential they aren't bound to
         (`no_credential_binding`), or being denied by a binding's
         permission rules. Body is RFC 9457 `application/problem+json`.
@@ -1173,7 +1173,7 @@ components:
           is identity-provider-agnostic: the IdP, federation strategy, and
           token-issuance flow are deployment concerns outside this spec.
 
-        Every protected operation requires the `capabilities:execute` scope,
+        Every protected operation requires the `capabilities:execute` permission,
         whatever the credential format. Authorization beyond "may execute"
         (agent-credential bindings, permission rules, revision pinning) is
         enforced per-request and is not modelled here.
