@@ -19,24 +19,12 @@ interface ExpandableTextProps {
 }
 
 /**
- * Free text of unknown length, clamped by default and expanded on request.
+ * Free text of unknown length, clamped by default and expanded on request, so a
+ * typed paragraph can't hand the page's vertical rhythm to whoever filled the field.
  *
- * Text an operator typed can be a phrase or a paragraph, so laying it out at
- * its natural height hands the page's vertical rhythm to whoever filled the
- * field. It is clamped to a fixed line budget instead, and the rest is one
- * click away — the layout moves only when a reader asks it to, and it grows
- * into place rather than jumping, so the shift reads as their own doing.
- *
- * The toggle appears only when text is actually cut off, measured from live
- * layout rather than guessed from length: a `ResizeObserver` re-measures on
- * reflow, so a description that fits at desktop width grows a button when the
- * column narrows. While expanded the cut-off verdict is held, because an
- * expanded element never overflows and would otherwise retract its own toggle.
- *
- * Both heights come from the clamped paragraph itself — `clientHeight` is the
- * line budget, `scrollHeight` the whole text — so the animation has two real
- * numbers to travel between and the clamp keeps its ellipsis. They are kept
- * current by the same observer, so a reflow mid-read resizes rather than clips.
+ * The toggle appears only when the text is actually cut off, measured from live
+ * layout by a `ResizeObserver` and held while expanded — an expanded element never
+ * overflows, and would otherwise retract its own toggle.
  */
 export function ExpandableText({ children, lines = 2, className }: ExpandableTextProps) {
 	const [expanded, setExpanded] = useState(false);

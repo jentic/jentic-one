@@ -35,11 +35,9 @@ interface CredentialsListProps {
 	 */
 	columns?: 2 | 3;
 	/**
-	 * Per-credential usage figures for the cards' meta line. A resolver rather
-	 * than maps, because each figure is three-state (resolving / unprovable /
-	 * exact) and only the host knows which — the truncation gate on a top-N
-	 * usage list, say, is the host's to apply. Omit it and the cards carry no
-	 * usage clauses at all, which is what a host with no such reads should show.
+	 * Per-credential usage figures for the cards' meta line. A resolver rather than
+	 * maps, because each figure is three-state (resolving / unprovable / exact) and
+	 * only the host knows which. Omit it and the cards carry no usage clauses.
 	 */
 	usageFor?: (cred: Credential) => {
 		usedByAgentCount?: number | null;

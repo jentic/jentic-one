@@ -17,10 +17,9 @@
  *   - Settings  → the copyable agent id + editable metadata (PATCH
  *                 /agents/{id}) + danger zone hosting the terminal Archive
  *
- * The Access tab is retired (redesign step 7): credential bindings and their
- * rules live on the flat Agents surface's API sidebar (`ApiAccessSidebar`);
- * the tab's non-credential cards (scopes, access requests, connected
- * clients) move behind their own dock destination (plan §4.7, D4).
+ * There is no Access tab: credential bindings and their rules live on the flat
+ * Agents surface's API sidebar, and the non-credential cards (scopes, access
+ * requests, connected clients) sit behind the dock's Permissions verb.
  *
  * The active tab lives in `?tab=` (like Monitor's lenses) so every view is
  * shareable and back-button friendly. Activity/KPI sources are admin-gated:

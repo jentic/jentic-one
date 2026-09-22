@@ -1,23 +1,10 @@
 /**
- * AddApisTray — step 1 of the Add-APIs flow (plan §4.4): pick APIs, see what
- * they will actually cost, hand the batch to the setup queue.
+ * AddApisTray — step 1 of the Add-APIs flow: pick APIs (via the shared
+ * `ApiPicker`), see what they will cost, hand the batch to the setup queue.
  *
- * Multi-select is the point. The old one-API-at-a-time bind dialog made giving
- * an agent five APIs five round trips through the same wizard; here the
- * operator picks the whole set, and the tray preflights each pick as reuse /
- * one sign-in click / pick-which-credential / needs-a-new-credential and
- * tallies the classes. Because there is no `Skip for now` (D13) — every API
- * that reaches an agent leaves this flow with a credential — that tally is the
- * flow's honesty contract: the real cost is on screen before anything commits.
- *
- * The picker itself is `shared/credentials/ApiPicker` in its multi-select mode
- * (same workspace + catalog merge, same debounce, same auto-shaped labels), so
- * this file owns only the selection set, the preflight, and the copy.
- *
- * Reset policy (dialog-state-lifecycle): a wizard's draft survives dismissal —
- * the queue is the only way an API arrives, so an operator who closes the tray
- * mid-way must find their remaining picks where they left them. The selection
- * clears on commit, and whenever the selected agent changes.
+ * Each pick is preflighted as reuse / one sign-in click / pick-which-credential /
+ * needs-a-new-credential, so the cost is on screen before anything commits. The
+ * selection survives a dismissal and clears on commit or an agent change.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Plus, Upload, X } from 'lucide-react';
@@ -55,10 +42,7 @@ export interface AddApisTrayProps {
 	agentName: string;
 	/** The agent's existing bindings — they say which APIs it already reaches. */
 	bindings: CredentialBindingEntity[];
-	/**
-	 * Hand the preflighted batch on to the setup queue. Receives only the
-	 * actionable items (already-attached picks are dropped), in pick order.
-	 */
+	/** Hand the preflighted batch on — actionable items only, in pick order. */
 	onContinue: (items: PreflightItem[]) => void;
 }
 
@@ -72,18 +56,13 @@ export function AddApisTray({
 }: AddApisTrayProps) {
 	const headingId = 'add-apis-tray-title';
 	const [picks, setPicks] = useState<SelectedApi[]>([]);
-	/**
-	 * Spec upload (D6). First-class here because "the API I need isn't in the
-	 * catalog" is otherwise a dead end in the middle of the flow — the operator
-	 * would have to abandon their picks, go to the Workspace, import, and start
-	 * over. A successful import invalidates the picker's list, so the new API is
-	 * searchable without leaving the tray; the picks are untouched.
-	 */
+	/** Spec upload. First-class here because "the API I need isn't in the catalog"
+	 * is otherwise a dead end mid-flow; a successful import invalidates the picker's
+	 * list, so the new API is searchable without leaving the tray. */
 	const [uploadOpen, setUploadOpen] = useState(false);
 
-	// Seed-from-props: the draft belongs to ONE agent, so it resets when the
-	// agent changes — never on an `open` flip, which would discard the picks a
-	// dismissal is meant to preserve.
+	// The draft belongs to ONE agent, so it resets when the agent changes — never
+	// on an `open` flip, which would discard picks a dismissal must preserve.
 	const lastAgentIdRef = useRef(agentId);
 	useEffect(() => {
 		if (lastAgentIdRef.current !== agentId) {
@@ -92,10 +71,8 @@ export function AddApisTray({
 		}
 	}, [agentId]);
 
-	// Preflight reads the WHOLE credential list: classifying against a
-	// first-page-only list would call an existing credential "needs a new
-	// credential" and quietly turn a free reuse into a form. The tally is
-	// withheld until the drain completes, and says so if it failed.
+	// Preflight reads the WHOLE credential list: a first-page-only list would call
+	// an existing credential "needs a new credential" and turn reuse into a form.
 	const credentialsSource = useAllCredentials();
 	const providersQuery = useProviders();
 	const managedOAuthAvailable = useMemo(
@@ -116,11 +93,9 @@ export function AddApisTray({
 
 	const selectedKeys = useMemo(() => new Set(picks.map(apiRefKey)), [picks]);
 
-	// Rows the agent already reaches, so they render as "Already added" instead
-	// of inviting a duplicate bind. Only bindings with a concrete API name can
-	// be enumerated as keys; a vendor-wildcard binding is caught after the fact
-	// by the preflight's `attached` outcome, which the list below labels and the
-	// commit excludes.
+	// Rows the agent already reaches, so they render as "Already added" instead of
+	// inviting a duplicate bind. Only bindings naming a concrete API are
+	// enumerable; a vendor wildcard is caught by the preflight's `attached`.
 	const attachedKeys = useMemo(() => {
 		const keys = new Set<string>();
 		for (const binding of bindings) {
@@ -168,9 +143,8 @@ export function AddApisTray({
 						<h2 id={headingId} className="text-foreground text-base font-semibold">
 							Add APIs
 						</h2>
-						{/* D13 stated up front, not discovered at the end: there is
-						    no "set up later", because an API with no credential has
-						    nowhere to be stored. */}
+						{/* Stated up front, not discovered at the end: an API with no credential
+						    has nowhere to be stored. */}
 						<p className="text-muted-foreground text-xs">
 							Pick what {agentName} should be able to call. Each API gets a credential
 							in this flow — nothing is set up later.
@@ -262,9 +236,8 @@ export function AddApisTray({
 								? 'Nothing selected yet.'
 								: `${picks.length} selected${tally.attached > 0 ? `, ${tally.attached} already added` : ''}`}
 						</p>
-						{/* Always reachable, not only from the no-results state: an
-						    operator who knows the API isn't catalogued shouldn't have to
-						    search for nothing first (D6). */}
+						{/* Always reachable, not only from no-results: an operator who knows the
+						    API isn't catalogued shouldn't have to search first. */}
 						<Button
 							variant="ghost"
 							size="sm"
@@ -292,8 +265,7 @@ export function AddApisTray({
 			</div>
 
 			{/* Inside the sheet, like the queue's credential wizard: a native
-			    `<dialog>` renders in the top layer, so it sits over the tray while
-			    the tray keeps owning the picks behind it. */}
+			    `<dialog>` renders in the top layer, over the tray that owns the picks. */}
 			<ImportSpecDialog open={uploadOpen} onClose={(): void => setUploadOpen(false)} />
 		</SheetPrimitive>
 	);

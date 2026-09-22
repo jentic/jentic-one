@@ -78,12 +78,9 @@ export const ROUTE_PATHS = {
 	credentialInventory: (opts?: { create?: boolean }) =>
 		`${ROUTES.agents}?credentials=${opts?.create === true ? 'new' : '1'}`,
 	/**
-	 * One agent AS SELECTED on the flat Agents surface — its tab in the strip,
-	 * with its API tiles below. `agent` is that page's URL vocabulary (read by
-	 * `modules/agents/pages/AgentsPage`), so this is the address of an agent for
-	 * every caller that wants to show one: the surface carries what the
-	 * per-agent console holds, and reaches it without leaving the fleet.
-	 * `ROUTE_PATHS.agent` still addresses that console for a direct URL.
+	 * One agent AS SELECTED on the flat Agents surface — the address of an agent for
+	 * any caller that wants to show one. `ROUTE_PATHS.agent` still addresses the
+	 * per-agent console for a direct URL.
 	 */
 	agentTab: (agentId: string) => `${ROUTES.agents}?agent=${encodeURIComponent(agentId)}`,
 	monitorExecutions: (filter?: {

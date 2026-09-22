@@ -630,10 +630,8 @@ export async function replaceServiceAccountScopes(
 // ---------------------------------------------------------------------------
 // Actor usage (GET /monitoring/usage)
 //
-// The same aggregate the Monitor page and the enterprise console read, sliced
-// per actor for the detail page's KPI strip and Activity chart. The endpoint
-// is gated on `org:admin`; a 403 is an expected outcome for non-admin
-// operators, not an error — the caller renders no stats.
+// Gated on `org:admin`; a 403 is an expected outcome for non-admin operators,
+// not an error — the caller renders no stats.
 // ---------------------------------------------------------------------------
 
 /** One time bucket of an actor's execution volume. */
@@ -657,23 +655,18 @@ export interface ActorUsageDetail {
 }
 
 /**
- * One actor's usage over the trailing `sinceDays` window — the detail page's
- * KPI strip and Activity chart. `agent_id` is the endpoint's (misnamed) actor
- * filter: the backend maps it onto `actor_id`, so it works for service
- * accounts too. Returns `null` on 403 — the viewer isn't an admin and the
- * caller renders no stats — never an error.
+ * One actor's usage over the trailing `sinceDays` window. `agent_id` is the
+ * endpoint's (misnamed) actor filter, so it works for service accounts too.
+ * Returns `null` on 403 — the viewer isn't an admin — never an error.
  */
 export async function fetchActorUsageDetail(
 	actorId: string,
 	sinceDays = 7,
 ): Promise<ActorUsageDetail | null> {
 	try {
-		// Window bounds ceiled to the next minute: the backend's aggregate uses
-		// a strict `started_at < until`, so a floored/now bound hides the
-		// current partial minute (#913, the volume chart must never trail the
-		// executions feed); a fixed until also keeps the window an exact
-		// multiple of the bucket tier and the server cache key stable for a
-		// whole minute (a per-second `since` defeated it entirely).
+		// Window bounds ceiled to the next minute: the aggregate uses a strict
+		// `started_at < until`, so a now-bound hides the current partial minute, and a
+		// fixed `until` keeps the server's cache key stable for a whole minute.
 		const until = (Math.floor(Date.now() / 60_000) + 1) * 60;
 		const res = await MonitoringService.getUsageStats({
 			since: until - sinceDays * 86400,
@@ -700,40 +693,30 @@ export async function fetchActorUsageDetail(
 	}
 }
 
-/**
- * The aggregate's hard ceiling on `top` rows (`top_limit` is validated
- * `ge=1, le=50`), so the credential leaderboard is the widest the endpoint
- * will answer — and the reason a result can be truncated at all.
- */
+/** The aggregate's hard ceiling on `top` rows (`top_limit` is `ge=1, le=50`) —
+ * the widest leaderboard the endpoint answers, and why a result can truncate. */
 const CREDENTIAL_USAGE_TOP_LIMIT = 50;
 
 /** Per-credential call volume over one window, plus whether it is exhaustive. */
 export interface CredentialUsageTotals {
 	/** Credential id → calls brokered in the window. */
 	totals: ReadonlyMap<string, number>;
-	/**
-	 * True when the leaderboard was NOT truncated, which is the only case in
-	 * which a missing credential proves "no traffic". While false, a credential
-	 * absent from `totals` is unknown — not zero — and its figure must be
-	 * withheld rather than printed as `0`.
-	 */
+	/** True when the leaderboard was NOT truncated, the only case in which a
+	 * missing credential proves "no traffic" rather than "unknown". */
 	complete: boolean;
 }
 
 /**
- * Call volume per credential over the trailing `sinceDays` window — the figure
- * the credential inventory's cards carry. Grouped server-side, so this is ONE
- * request for the whole inventory rather than one per card. Returns `null` on
- * 403 (the viewer isn't an admin): the cards then carry no volume at all, which
- * is the honest answer, never an error.
+ * Call volume per credential over the trailing `sinceDays` window, grouped
+ * server-side — ONE request for the whole inventory. Returns `null` on 403: the
+ * cards then carry no volume at all, which is the honest answer.
  */
 export async function fetchCredentialUsageTotals(
 	sinceDays = 7,
 ): Promise<CredentialUsageTotals | null> {
 	try {
-		// Same minute-ceiled bounds as `fetchActorUsageDetail`: a strict
-		// `started_at < until` would otherwise hide the current partial minute,
-		// and a stable `until` keeps the server's cache key alive for a minute.
+		// Same minute-ceiled bounds as `fetchActorUsageDetail`, for the same reasons:
+		// the strict `started_at < until`, and a cache key that lives for a minute.
 		const until = (Math.floor(Date.now() / 60_000) + 1) * 60;
 		const res = await MonitoringService.getUsageStats({
 			since: until - sinceDays * 86400,

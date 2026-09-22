@@ -3,14 +3,9 @@
 // and the spec hook keep a stable internal contract — components/pages should
 // import from `./apis-hooks`, never these wrappers directly.
 //
-// All of these endpoints already exist in jentic-one (`/apis`, `/catalog`, the
-// per-API `/openapi`, the catalog `:import` action, and `/jobs/{id}`) and are
-// re-exported by the `@/shared/api` facade with Bearer-JWT applied.
-//
 // Spec import (`POST /apis` + the job poll) lives here rather than in a feature
 // module because uploading a spec is an action on every surface that shows a
-// selected API — the Workspace page and the agents Add-APIs tray (D6) — and a
-// module cannot import a sibling's dialog.
+// selected API, and a module cannot import a sibling's dialog.
 import {
 	ApiError,
 	ApIsService,
@@ -97,10 +92,9 @@ export type ImportSource =
 	| { type: 'inline'; content: string; filename: string };
 
 /**
- * Surface the server's `detail` rather than the transport's status text: an
- * import rejection ("unsupported OpenAPI version", "vendor already registered")
- * is the only thing the operator can act on, and the dialog renders the thrown
- * message verbatim.
+ * Surface the server's `detail` rather than the transport's status text: an import
+ * rejection ("unsupported OpenAPI version") is the only thing the operator can act
+ * on, and the dialog renders the thrown message verbatim.
  */
 function toImportError(error: unknown, fallback: string): Error {
 	if (error instanceof ApiError) {
@@ -112,12 +106,9 @@ function toImportError(error: unknown, fallback: string): Error {
 }
 
 /**
- * Enqueue an import of one or more spec sources via `POST /apis`.
- *
- * Async: the backend resolves + ingests server-side and returns 202 with a job
- * id. The caller polls {@link getJob} until terminal. Maps the UI
- * {@link ImportSource} union onto the generated `ApiSourceUrl | ApiSourceInline`
- * wire shapes.
+ * Enqueue an import of one or more spec sources via `POST /apis`. Async: the
+ * backend ingests server-side and returns 202 with a job id, which the caller
+ * polls via {@link getJob} until terminal.
  */
 export async function importSources(sources: ImportSource[]): Promise<ImportJob> {
 	try {

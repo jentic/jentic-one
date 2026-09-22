@@ -237,13 +237,10 @@ export function apiRefDisplayName(input: {
 }
 
 /**
- * A version string as it reads on a card or tile.
- *
- * Registry versions arrive in two shapes: a bare number or date
- * (`1.1.4`, `2024-01-01`), which needs the `v` to read as a version at all,
- * and a vendor's own already-prefixed label (`v4`, `2023-10-16.beta`), which
- * must not collect a second one — `vv4` reads as a typo about our own data.
- * Returns `null` for an absent/blank version so callers can drop the clause.
+ * A version string as it reads on a card or tile. Registry versions arrive bare
+ * (`1.1.4`, `2024-01-01`) and need the `v`, or already prefixed (`v4`), which must
+ * not collect a second one. `null` for a blank version, so callers can drop the
+ * clause.
  */
 export function formatApiVersion(version: string | null | undefined): string | null {
 	const v = version?.trim();

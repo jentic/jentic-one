@@ -1,26 +1,10 @@
 /**
- * PendingApprovalBanner — the flat surface's approval callout, above the agent
- * strip (plan §4.10, D15 + D16). An agent that self-registers via
- * `jentic register` leaves a person blocked in a terminal; this banner is what
- * gets them unblocked, so it must stay prominent without owning a table.
+ * PendingApprovalBanner — the flat surface's approval callout. An agent that
+ * self-registers via `jentic register` leaves a person blocked in a terminal.
  *
- * One banner names the LONGEST-waiting pending agent — the backend orders
- * `list_all` by `created_at DESC`, so that is the LAST row of the (fully
- * drained) pending list, picked deliberately — and shows a live elapsed wait
- * ("waiting 4m") so the human cost is visible (D16). The clock is a local
- * ~30s display tick recomputed from `created_at` on every render (no drift
- * after a tab sleep); it is NOT a shortened refetch interval. Extra pending
- * agents fold into an "and N more waiting" count rather than stacking banners
- * (risk O8). While the pending list is still a floor (`atLeast` — the cursor
- * drain is incomplete or a later page failed) the banner stays honest: it
- * names the longest-waiting agent LOADED SO FAR (still a real, decidable
- * agent — D17 keeps the surface functional) and hedges the count as "N+ more
- * waiting", exactly like the nav badge's "N+".
- *
- * Actions keep the old band's one-click triage: `Review` selects the agent in
- * the strip (its panel shows Approve adjacent, D7), `Approve` fires
- * immediately, `Deny` routes to the page's reason-required dialog. When
- * nothing is pending the component renders NOTHING — zero reserved space (O8).
+ * One banner names the longest-waiting pending agent with a live elapsed wait; the
+ * rest fold into "and N more waiting". While the list is still a floor the count
+ * hedges as "N+". Nothing pending renders NOTHING.
  */
 import { useEffect, useReducer } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
@@ -32,9 +16,8 @@ interface PendingApprovalBannerProps {
 	/** Pending rows in backend order (`created_at DESC` — newest first),
 	 * flattened across every drained cursor page. */
 	pending: AgentEntity[];
-	/** The pending list is a floor (drain incomplete or a later page failed):
-	 * hedge the "and N more waiting" count as "N+" and treat the pick as the
-	 * longest-waiting loaded SO FAR, not a proven superlative. */
+	/** The pending list is a floor: hedge the count as "N+" and treat the pick as
+	 * the longest-waiting loaded so far, not a proven superlative. */
 	atLeast: boolean;
 	/** Select the agent in the strip (`?agent=<id>`) for review. */
 	onReview: (id: string) => void;
@@ -45,12 +28,9 @@ interface PendingApprovalBannerProps {
 	approvePendingId: string | null;
 }
 
-/**
- * Honest elapsed-wait copy across magnitudes. Below a minute the display tick
- * (~30s) cannot honestly animate seconds, so it says "under a minute" instead
- * of a frozen seconds figure; from minutes up it reuses the shared `timeAgo`
- * magnitudes ("4m", "3h", "2d", …).
- */
+/** Elapsed-wait copy. Below a minute the ~30s display tick cannot honestly
+ * animate seconds, so it says "under a minute"; from minutes up it reuses the
+ * shared `timeAgo` magnitudes. */
 export function waitingLabel(createdAt: string): string {
 	const ms = Date.parse(createdAt);
 	if (Number.isNaN(ms)) return 'waiting';
@@ -69,23 +49,18 @@ export function PendingApprovalBanner({
 }: PendingApprovalBannerProps) {
 	const reducedMotion = useReducedMotion();
 
-	// Trust but verify: the query asks for `status=pending`, and the filter
-	// keeps a stale or overridden response from ever naming a non-pending
-	// agent (no flash of wrong content while caches settle).
+	// Trust but verify: the query asks for `status=pending`, and the filter keeps a
+	// stale response from ever naming a non-pending agent.
 	const rows = pending.filter((a) => a.status === 'pending');
 
-	// Longest-waiting = the LAST row. The backend serves ONE `created_at DESC`
-	// sequence through the cursor, so every page-N+1 row is older than every
-	// page-N row and the flattened drained list stays DESC end to end — the
-	// last row is the oldest loaded. Only when the list is complete is that
-	// provably the longest-waiting overall; while it is a floor (`atLeast`)
-	// it is the longest-waiting so far, and the copy below hedges the count.
+	// Longest-waiting = the LAST row: the backend serves one `created_at DESC`
+	// sequence through the cursor, so the flattened list stays DESC end to end.
+	// Provably the overall longest only once the list is complete.
 	const longest = rows.length > 0 ? rows[rows.length - 1] : undefined;
 	const others = rows.length - 1;
 
-	// Honesty (D17): "and N more waiting" only claims what the data proves.
-	// A floor hedges as "N+" (mirroring the nav badge); a floor with nothing
-	// else loaded still says "more" — the incomplete drain proves more exist.
+	// "and N more waiting" only claims what the data proves: a floor hedges as
+	// "N+", and a floor with nothing else loaded still says "more".
 	const moreWaiting = atLeast
 		? others > 0
 			? `and ${others}+ more waiting`
@@ -94,10 +69,8 @@ export function PendingApprovalBanner({
 			? `and ${others} more waiting`
 			: null;
 
-	// D16 live clock: a local display tick. The label recomputes from
-	// `created_at` on each render, so a slept tab snaps to the truth on the
-	// next tick instead of accumulating drift. Cleaned up on unmount and torn
-	// down entirely while nothing is pending.
+	// A local display tick; the label recomputes from `created_at` on each render,
+	// so a slept tab snaps to the truth instead of accumulating drift.
 	const [, tick] = useReducer((n: number) => n + 1, 0);
 	const hasPending = Boolean(longest);
 	useEffect(() => {

@@ -252,12 +252,9 @@ const USAGE_TOP: Record<string, Array<Record<string, unknown>>> = {
 			avg_ms: 240,
 			trend: [2, 3, 2, 4, 3, 2, 3, 2, 3, 4, 2, 2],
 		},
-		// Keys mirroring the credentials store's dev seed, so the "N calls in 7d"
-		// figure on a credential card resolves for some secrets and honestly
-		// reads "no calls in 7d" for the rest (the card only says zero because
-		// this list comes back shorter than the requested top-N, which proves
-		// the absence). Kept below the rows above so the busiest credentials —
-		// and the Dashboard's top-usage table — are unchanged.
+		// Keys mirroring the credentials dev seed, so a card's "N calls in 7d" resolves
+		// for some secrets and reads "no calls in 7d" for the rest — the card only says
+		// zero because this list comes back shorter than the top-N asked for.
 		{
 			key: 'cred_slack_1',
 			label: 'cred_slack_1',

@@ -1,14 +1,8 @@
 /**
  * AgentProvenance — where an agent came from and who vouched for it:
- * registration, approval, owner and parent agent.
- *
- * This is the one read-only block the flat surface has no other home for, so
- * it is a component rather than inline markup: the flat surface's Settings
- * sheet and the console's Overview tab render the SAME block, and neither can
- * drift from the other.
- *
- * Every row is omitted when its fact is absent (an unapproved agent has no
- * approver) — the grid never prints a label with nothing under it.
+ * registration, approval, owner and parent agent. One component because the flat
+ * surface's Settings sheet and the console's Overview tab render the same block.
+ * A row is omitted when its fact is absent — an unapproved agent has no approver.
  */
 import { ActorLabel } from '@/shared/ui';
 import { formatTimestamp } from '@/shared/lib/utils';

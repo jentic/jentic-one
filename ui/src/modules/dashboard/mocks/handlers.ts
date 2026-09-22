@@ -291,13 +291,10 @@ export const dashboardHandlers = [
 		HttpResponse.json({ data: dashboardExecutions, has_more: false, next_cursor: null }),
 	),
 
-	// NO `/apis` handler here, deliberately. The Dashboard reads it only for a
-	// catalog-size figure, while the Workspace module owns the registry fixture
-	// that its own list, detail, operations and revision endpoints all agree
-	// with — and `dashboardHandlers` registers EARLIER in the root table, so a
-	// list here would shadow that richer registry first-match-wins and leave
-	// mocked dev with APIs whose detail pages 404. The empty-catalog case (the
-	// first-run checklist) is installed per-test via `worker.use(...)`.
+	// NO `/apis` handler here, deliberately: the Dashboard reads it only for a
+	// catalog-size figure, and `dashboardHandlers` registers EARLIER than the
+	// Workspace module's richer registry fixture, which first-match-wins would
+	// shadow. The empty-catalog case is installed per-test via `worker.use(...)`.
 ];
 
 /* ------------------------------------------------------------------ */

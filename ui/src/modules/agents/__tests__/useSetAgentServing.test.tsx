@@ -1,12 +1,8 @@
 /**
- * useSetAgentServing — the dock serving toggle's mutation. Pins the
- * refresh-failure contract around cancellation: a roster refetch that was
- * merely SUPERSEDED (TanStack's CancelledError — another invalidation or
- * refetch took over the lists query, e.g. a concurrent approve/enable/
- * disable) must resolve as full success, because the replacement fetch is
- * refreshing the very view the mutation awaited. Only a real refetch
- * failure may surface as ServingRefreshError ("the fleet view could not
- * refresh") — that branch is covered by the AgentDock suite.
+ * useSetAgentServing — the dock serving toggle's mutation. Pins the cancellation
+ * contract: a roster refetch that was merely SUPERSEDED (TanStack's
+ * CancelledError) resolves as full success, since the replacement fetch refreshes
+ * the view the mutation awaited. Only a real failure is a ServingRefreshError.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { useState } from 'react';
@@ -61,10 +57,8 @@ describe('useSetAgentServing — superseded roster refetch', () => {
 		worker.use(
 			http.get('/agents', async () => {
 				agentsCalls += 1;
-				// Call 1: the harness's initial roster read. Call 2: the
-				// mutation's awaited refetch — held open so a competing
-				// refetch can supersede (cancel) it. Call 3: the superseding
-				// fetch, which resolves normally.
+				// Call 2 is the mutation's awaited refetch, held open so a competing
+				// refetch can supersede (cancel) it; call 3 is the superseding fetch.
 				if (agentsCalls === 2) await hang;
 				return HttpResponse.json({ data: [], has_more: false, next_cursor: null });
 			}),
@@ -77,10 +71,8 @@ describe('useSetAgentServing — superseded roster refetch', () => {
 		// The write has landed and the mutation's refetch is in flight (hung).
 		await waitFor(() => expect(agentsCalls).toBe(2));
 
-		// A competing invalidation supersedes the in-flight refetch: TanStack
-		// cancels it (CancelledError) and starts a replacement fetch that
-		// completes fine — exactly the concurrent-mutation shape approve/
-		// enable/disable produce against the same lists key.
+		// A competing invalidation supersedes the in-flight refetch: TanStack cancels it
+		// (CancelledError) and starts a replacement that completes fine.
 		await queryClient.invalidateQueries({ queryKey: agentsKeysForTest.lists() });
 
 		// The write is fully successful — never "the fleet view could not

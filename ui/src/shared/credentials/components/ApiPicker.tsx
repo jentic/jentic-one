@@ -29,28 +29,20 @@ import {
  *    types something (the catalog manifest is 10k+ entries).
  */
 export interface ApiPickerProps {
-	/**
-	 * A row was activated. In single-select this is the commit; in multi-select
-	 * (see {@link ApiPickerProps.selectedKeys}) it means "toggle this row".
-	 */
+	/** A row was activated: the commit in single-select, a toggle in multi-select. */
 	onSelect: (api: SelectedApi) => void;
 	/** Escape hatch — drop into the legacy free-text API reference form.
 	 *  Omit to hide the affordance (the tray offers spec upload instead). */
 	onManualEntry?: () => void;
-	/**
-	 * Multi-select mode: the `apiRefKey`s currently picked. Passing this (even
-	 * empty) switches rows from drill-in buttons to checkboxes.
-	 */
+	/** Multi-select mode: the `apiRefKey`s currently picked. Passing this — even
+	 * empty — switches rows from drill-in buttons to checkboxes. */
 	selectedKeys?: ReadonlySet<string>;
 	/** Rows that cannot be picked, by `apiRefKey`. */
 	disabledKeys?: ReadonlySet<string>;
 	/** Short badge explaining why a `disabledKeys` row is out (e.g. "Already added"). */
 	disabledLabel?: string;
-	/**
-	 * Rendered in the no-results state — the one moment the operator has proved
-	 * the API they want isn't here. The tray passes its spec upload (D6), which
-	 * turns a dead end into the next step.
-	 */
+	/** Rendered in the no-results state, the one moment the operator has proved the
+	 * API they want isn't here. The tray passes its spec upload. */
 	emptyAction?: ReactNode;
 }
 
@@ -208,8 +200,7 @@ export function ApiPicker({
 		catalogRows.length === 0;
 	const isInitialEmpty = !showLoading && !debouncedQuery && localRows.length === 0 && !error;
 
-	// Presence — not emptiness — is what switches the rows into checkbox mode,
-	// so a tray with nothing picked yet still renders checkboxes.
+	// Presence, not emptiness, switches the rows into checkbox mode.
 	const selection: RowSelection | undefined = selectedKeys
 		? { selectedKeys, disabledKeys, disabledLabel }
 		: undefined;
@@ -483,10 +474,8 @@ function CatalogRow({
 		<PickerRow
 			api={api}
 			badgeKey={`catalog:${api.apiId ?? api.label}`}
-			// The full machine identity (`nytimes.com/books`), not just the
-			// vendor: two entries whose sub-segments humanise identically must
-			// stay distinguishable, and the user can verify exactly which
-			// api_id a pick will import.
+			// The full machine identity, not just the vendor: two entries whose
+			// sub-segments humanise identically must stay distinguishable.
 			meta={api.apiId}
 			source="catalog"
 			onSelect={onSelect}

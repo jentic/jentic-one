@@ -1,51 +1,10 @@
 /**
- * ApiTile — one API on the flat Agents surface.
+ * ApiTile — one API on the flat Agents surface; the credential serving it is a
+ * property line on the tile, not a card of its own.
  *
- * The tile is the API; the credential that serves it is a property line on
- * the tile (underneath, it is still a binding). Reading top to bottom: the
- * vendor mark and the API's own identity (`name`, then `host · version`), a
- * hairline, then what the access is — a status chip with the auth type and
- * operation count beside it, and one meta line naming the credential and how it
- * is scoped (its rule count).
- *
- * Each identity is said once. The tile states the API twice at most — as the
- * title, and as the host when that is a different string — so the meta line
- * drops a credential whose name echoes either of them, and the `host` line
- * drops a domain the title is only a humanisation of.
- *
- * Every tile is the same height whatever its state: the meta line is a slot of
- * fixed height (one row), because a grid row sizes to its tallest cell and a
- * state that costs an extra line would otherwise stretch every tile beside it.
- * Each state chip therefore carries its own consequence in its own text, rather
- * than a row the other tiles reserve empty.
- *
- * A DASHED border is the family-wide mark of "no calls are flowing through this
- * tile", and its tint says whose fault that is: amber when this API itself wants
- * attention (an unfinished sign-in), neutral when the agent above it simply is
- * not serving. That is what makes a non-active agent's grid read as inactive at
- * a glance rather than as a normal grid under a notice.
- *
- * States, which must never render identically:
- *   - Serving: solid border, a quiet `Ready` chip.
- *   - The agent is not serving: neutral dashed border, a muted `Not serving`
- *     chip in place of `Ready` — every control stays live, because a
- *     non-serving agent is still fully editable.
- *   - Suspended: the chip reads `Suspended · not serving` — pausing is
- *     reversible, so nothing here shouts. It outranks the agent-level state:
- *     resuming this binding is a separate thing left to do.
- *   - Not usable yet: the credential exists but cannot serve traffic — an
- *     OAuth sign-in that hasn't completed. Dashed amber border, the reason
- *     named, and a "Finish connecting" affordance.
- *
- * Two explicit actions ride in the top-right — pause/resume this binding, and
- * open its access panel — because nothing else on a tile says that it is
- * interactive. They sit above the stretched overlay (`relative z-10`) that
- * makes the whole tile open the same panel for pointer users.
- *
- * Honesty contract: every fact is derived from reads the surface already holds
- * — never a per-tile fetch — and an unprovable fact is omitted rather than
- * guessed. No invented health, no green "ok"; tints flag only trouble (the
- * zero-rules grant, a pending sign-in).
+ * A dashed border means no calls are flowing, and its tint says why: amber for an
+ * unfinished sign-in on this API, neutral when the agent above it is not serving.
+ * A suspension outranks the agent-level state.
  */
 import { PauseCircle, PlayCircle, Settings2 } from 'lucide-react';
 import { Badge, Button, Card, Tooltip, VendorIcon } from '@/shared/ui';
@@ -56,9 +15,8 @@ import type { ApiTileModel } from '@/modules/agents/lib/apiTiles';
 
 interface ApiTileProps {
 	tile: ApiTileModel;
-	/** Effect breakdown of the operator rules on the tile's binding;
-	 * undefined while unknown (loading or a failed read) — the summary line
-	 * is omitted rather than guessed. */
+	/** Effect breakdown of the operator rules on the tile's binding; undefined while
+	 * unknown, where the summary line is omitted rather than guessed. */
 	rules: BindingRuleSummary | undefined;
 	/** Open the access sidebar for this tile's binding. */
 	onOpen: () => void;
@@ -105,21 +63,16 @@ export function ApiTile({
 	sidebarId,
 }: ApiTileProps) {
 	const summary = grantSummary(rules);
-	// The registry's identity pair. The host is dropped when the title is only a
-	// humanisation of it (`slack.com` → `Slack.Com`), which is what an API with
-	// no separate domain and no friendly name resolves to — printing both would
-	// stack the same word twice.
+	// The host is dropped when the title is only a humanisation of it (`slack.com` →
+	// `Slack.Com`), which would stack the same word twice.
 	const identity = [
 		sameIdentity(tile.host, tile.title) ? null : tile.host,
 		formatApiVersion(tile.version),
 	]
 		.filter(Boolean)
 		.join(' · ');
-	// The credential is named only when it adds a fact. It is measured against
-	// BOTH names the tile prints, because a generically-named spec makes them
-	// different strings: a secret called `PredictHQ` repeats the title, and one
-	// called `aboutwayfair.com` repeats the host line of a tile titled `Openapi`.
-	// Either way it is the API's own identity said twice.
+	// The credential is named only when it adds a fact, measured against BOTH names
+	// the tile prints — a generically-titled spec can repeat the host.
 	const credentialLabel =
 		sameIdentity(tile.credentialName, tile.title) ||
 		sameIdentity(tile.credentialName, tile.host)
@@ -140,9 +93,8 @@ export function ApiTile({
 			data-not-serving={!agentServing || undefined}
 			className={cn(
 				'focus-within:ring-ring/50 hover:border-primary/50 relative flex h-full flex-col gap-3 p-4 transition-colors focus-within:ring-2',
-				// Neutral dash + a recessed surface: the tile is intact and
-				// editable, it just isn't carrying calls. An unfinished sign-in
-				// still tints the dash amber — that one is asking for something.
+				// Neutral dash: the tile is intact and editable, it just isn't carrying
+				// calls. An unfinished sign-in tints the dash amber instead.
 				!agentServing && 'border-border bg-muted/25 border-dashed',
 				tile.awaitingConsent && 'border-warning/60 border-dashed',
 			)}
@@ -223,18 +175,15 @@ export function ApiTile({
 
 			<div className="border-border/60 mt-auto space-y-1.5 border-t pt-3">
 				<div className="flex items-center justify-between gap-2">
-					{/* Exactly one chip, in precedence order: an unfinished sign-in
-					    outranks a pause, which outranks the agent's own state. Each chip
-					    carries its own consequence, so no state costs a line of its own
-					    and no tile pays height for a state it isn't in. */}
+					{/* Exactly one chip, in precedence order: an unfinished sign-in outranks a
+					    pause, which outranks the agent's own state. */}
 					{tile.awaitingConsent ? (
 						<Badge variant="warning" dot data-testid="tile-status-chip">
 							Sign-in needed
 						</Badge>
 					) : tile.suspended ? (
-						// Muted, not tinted: a pause is a state, not a fault. It ranks
-						// above the agent's own state — resuming this binding is its own
-						// outstanding thing to do.
+						// Muted, not tinted: a pause is a state, not a fault, and it ranks
+						// above the agent's own state.
 						<Badge
 							className="bg-muted text-muted-foreground border-border"
 							dot
@@ -261,11 +210,8 @@ export function ApiTile({
 						<span className="text-muted-foreground truncate text-xs">{capability}</span>
 					)}
 				</div>
-				{/* A fixed ONE-line detail slot. A tile's height must not depend on
-				    its state — grid rows size to their tallest cell, so a state that
-				    costs an extra line would stretch every tile beside it. The line
-				    is reserved whether or not it is filled, and every branch renders
-				    a single row. */}
+				{/* A fixed ONE-line detail slot: grid rows size to their tallest cell, so an
+				    extra line here would stretch every tile beside it. */}
 				<div
 					className="flex h-[1.125rem] items-center gap-1.5 overflow-hidden"
 					data-testid="tile-detail-slot"

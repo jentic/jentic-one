@@ -17,15 +17,10 @@ interface CredentialCardProps {
 	onEdit: (cred: Credential) => void;
 	onDelete: (cred: Credential) => void;
 	onConnect: (cred: Credential) => void;
-	/**
-	 * How many agents hold this credential. Three-state, because a secret
-	 * nobody uses and a secret whose users can't be counted are different
-	 * facts: `undefined` is still resolving (skeleton), `null` can't be proven
-	 * (the clause is omitted), a number is exact.
-	 */
+	/** How many agents hold this credential: `undefined` still resolving
+	 * (skeleton), `null` unprovable (the clause is omitted), a number exact. */
 	usedByAgentCount?: number | null;
-	/** Calls brokered with this credential over the last 7 days — same
-	 * three-state contract, so a withheld figure never reads as zero traffic. */
+	/** Calls brokered with this credential over the last 7 days — same contract. */
 	callsLast7d?: number | null;
 }
 
@@ -37,12 +32,6 @@ interface CredentialCardProps {
  *   [vendor badge] [name + api name · version] ......... [type badge]
  *   [where the secret is injected, in plain language]
  *   [meta row (usage · added) ......... connect · edit · delete]
- *
- * The heading wraps rather than truncates (a credential's name is how its
- * owner finds it, so losing its tail to an ellipsis is worse than a second
- * line), and the machine tuple — `vendor/name@version` — moves to the card's
- * `title` attribute, where it stays copyable-adjacent without spending a line
- * on a string that reads the same for every API of one vendor.
  *
  * The whole card is a click target that opens the edit sheet (a full-card
  * `<button>` sits behind the content). The explicit action buttons
@@ -81,10 +70,8 @@ export function CredentialCard({
 
 	// Machine identity, kept as a hover/AT string rather than a rendered line.
 	const tuple = formatApiReference(cred.api);
-	// Line 2 is which API the secret unlocks, in the same `host · version`
-	// grammar the API tiles use. The vendor is printed as stored because it IS
-	// a domain — title-casing it ("Slack.Com") reads as a typo — and the API
-	// name joins it only when it says something `default` doesn't.
+	// Line 2 is which API the secret unlocks, in the `host · version` grammar the
+	// tiles use. The vendor prints as stored because it IS a domain.
 	const apiName = cred.api.name && cred.api.name !== 'default' ? cred.api.name : null;
 	const apiPath = [cred.api.vendor, apiName].filter(Boolean).join('/');
 	const version = formatApiVersion(cred.api.version);
@@ -95,10 +82,8 @@ export function CredentialCard({
 
 	const subtitle = authPlacement(cred, details, managed);
 
-	// The meta line, built as clauses so a withheld figure removes itself
-	// instead of leaving a dangling separator. Usage comes before age: who
-	// holds a secret is what decides whether removing it is safe, and how old
-	// it is decides nothing.
+	// Clauses, so a withheld figure removes itself instead of leaving a dangling
+	// separator. Usage leads: who holds a secret decides whether removing it is safe.
 	const meta: { key: string; node: ReactNode }[] = [];
 	if (!cred.active)
 		meta.push({
@@ -164,9 +149,8 @@ export function CredentialCard({
 				<AgentBadge id={vendor} name={vendor} kind="API" size="lg" className="rounded-xl" />
 				<div className="min-w-0 flex-1">
 					<div className="flex items-start gap-2">
-						{/* Wraps to a second line rather than truncating: the tail of
-						    a credential's name ("… staging" vs "… prod") is often the
-						    only thing telling two cards apart. */}
+						{/* Wraps rather than truncates: the tail of a name ("… staging" vs
+						    "… prod") is often the only thing telling two cards apart. */}
 						<h3 className="font-heading text-foreground min-w-0 flex-1 text-sm leading-snug font-semibold break-words">
 							{title}
 						</h3>
@@ -241,12 +225,9 @@ export function CredentialCard({
 	);
 }
 
-/**
- * Where the secret is injected, said the way an operator would say it. The
- * stored `provider` (`static`) is an implementation word that answers nothing;
- * what matters on a card is which request part carries the key, because that is
- * what an upstream 401 is diagnosed against.
- */
+/** Where the secret is injected, said the way an operator would say it — the
+ * stored `provider` (`static`) answers nothing an upstream 401 is diagnosed
+ * against. */
 function authPlacement(cred: Credential, details: CredentialDetails, managed: boolean): string {
 	if (managed) return 'Managed via Pipedream';
 	switch (cred.type) {

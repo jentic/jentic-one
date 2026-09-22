@@ -22,10 +22,9 @@ import { toDisplayRules } from '@/modules/agents/components/detail/shared';
  * The verdict evaluates the SAVED rules (what the broker sees at request
  * time), not the editor's unsaved draft — the caption says so.
  *
- * One row does the asking (method · path · Test) so the block costs the sidebar
- * as little height as possible; the optional operation id is a disclosure,
- * because most bindings grant by path. Collapsing it clears the value — a
- * hidden field must never influence a verdict.
+ * One row does the asking (method · path · Test); the optional operation id is a
+ * disclosure, and collapsing it clears the value — a hidden field must never
+ * influence a verdict.
  */
 
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'] as const;
@@ -35,11 +34,9 @@ export interface AgentBindingRuleTesterProps {
 	credentialId: string;
 	/** The binding's SAVED rules (system rows included), for naming the match. */
 	savedRules: BindingPermissionRule[];
-	/**
-	 * Disable the tester while the host's rule editor holds an unsaved draft —
-	 * the dry-run evaluates the SAVED rules, so a verdict against a stale rule
-	 * set would mislead. The caption names the reason.
-	 */
+	/** Disable the tester while the host's editor holds an unsaved draft — the
+	 * dry-run evaluates SAVED rules, so a verdict against a stale set would
+	 * mislead. The caption names the reason. */
 	disabled?: boolean;
 }
 
@@ -126,25 +123,14 @@ export function AgentBindingRuleTester({
 	const [method, setMethod] = useState<string>('GET');
 	const [path, setPath] = useState('');
 	const [operationId, setOperationId] = useState('');
-	// Most bindings grant by path, so the operation id is a disclosure. It opens
-	// itself whenever it holds a value, and closing it clears that value.
+	// The disclosure opens itself whenever it holds a value; closing clears it.
 	const [operationOpen, setOperationOpen] = useState(false);
 	const test = useTestAgentBindingPermissions(agentId, credentialId);
 	const { reset: resetVerdict } = test;
 
-	// A verdict speaks only for the rules it was run against. Always-mounted
-	// hosts (the API access sidebar) keep this tester alive across saves, so
-	// without a reset the PRE-save verdict would reappear when `disabled`
-	// flips back and `resolveMatch` would re-anchor its `rule_index` against
-	// the NEW savedRules — naming the wrong rule or claiming an outcome the
-	// new rules would reverse. Design choice (belt and braces): drop the
-	// verdict (a) whenever the saved rules change CONTENT — compared by
-	// serialized value, not identity, so a refetch returning identical rules
-	// keeps the verdict — and (b) when `disabled` transitions true→false,
-	// i.e. an edit session ended (covers a discard too: conservatively
-	// cheap, the operator can re-run). The dry-run itself never changes the
-	// saved rules or `disabled`, so a fresh verdict is never cleared by its
-	// own arrival.
+	// A verdict speaks only for the rules it was run against, and an always-mounted
+	// host keeps this tester alive across saves. So drop it when the saved rules
+	// change CONTENT (compared by value) or when an edit session ends.
 	const savedRulesFingerprint = JSON.stringify(savedRules);
 	const verdictContext = useRef({ savedRulesFingerprint, disabled });
 	useEffect(() => {
@@ -165,7 +151,6 @@ export function AgentBindingRuleTester({
 
 	return (
 		<div className="border-border/60 bg-card space-y-2 rounded-lg border border-dashed p-3">
-			{/* The whole question on one line: what method, what path, go. */}
 			<div className="flex items-center gap-2">
 				<div className="w-24 shrink-0">
 					<Select
@@ -206,9 +191,8 @@ export function AgentBindingRuleTester({
 				</Button>
 			</div>
 
-			{/* Operation-scoped rules only fire when the request carries an
-			    operation id — without this input, a binding whose grants are
-			    operation-based would always dry-run to default-deny. */}
+			{/* Operation-scoped rules only fire when the request carries an operation id,
+			    which would otherwise always dry-run to default-deny. */}
 			{operationOpen && (
 				<div className="flex items-center gap-2">
 					<div className="min-w-0 flex-1">
@@ -231,8 +215,7 @@ export function AgentBindingRuleTester({
 						aria-label="Remove operation id"
 						disabled={disabled}
 						onClick={() => {
-							// Clear as well as hide: a value the operator can no
-							// longer see must not change the next verdict.
+							// Clear as well as hide: an invisible value must not change the next verdict.
 							setOperationId('');
 							setOperationOpen(false);
 						}}

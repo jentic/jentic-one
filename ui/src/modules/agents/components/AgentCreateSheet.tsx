@@ -1,14 +1,10 @@
 /**
- * AgentCreateSheet — slide-over form to create an agent manually.
+ * AgentCreateSheet — slide-over form to create an agent manually. Fields reset
+ * only after a successful create; a dismissal preserves the draft.
  *
- * A Sheet (not a Dialog) keeps the list context visible while filling the
- * form. Fields reset only after a successful create; a dismissal preserves
- * the draft.
- *
- * Creating flows straight into the Add-APIs step: an agent with no credential
- * bound can authenticate but every call it makes fails, so "created" is not a
- * finished state. `Create empty` stays available, de-emphasised, for the
- * operator who is only reserving an identity.
+ * Creating flows straight into the Add-APIs step: an agent with nothing bound can
+ * authenticate but every call it makes fails, so "created" is not a finished
+ * state. `Create empty` stays available, de-emphasised, for reserving an identity.
  */
 import { useEffect, useRef, useState } from 'react';
 import { Button, Input, Label, Textarea, SheetPrimitive } from '@/shared/ui';

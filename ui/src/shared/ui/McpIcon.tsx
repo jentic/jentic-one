@@ -1,11 +1,7 @@
 /**
- * The Model Context Protocol mark — the official MCP logo, inlined the same way
- * `Logo.tsx` inlines the Jentic mark (no icon set ships it, and a generic
- * "integration" glyph is what made the dock's MCP verb unreadable).
- *
- * Drawn from the MIT-licensed `@lobehub/icons` static SVG of the protocol's own
- * mark: two filled strokes on a 24×24 box, `currentColor` throughout, so it
- * inherits weight and tint from whatever control hosts it.
+ * The Model Context Protocol mark, inlined the same way `Logo.tsx` inlines the
+ * Jentic mark (no icon set ships it). Drawn from the MIT-licensed `@lobehub/icons`
+ * SVG: two filled strokes on a 24×24 box, `currentColor` throughout.
  */
 const MCP_PATHS = [
 	'M15.688 2.343a2.588 2.588 0 00-3.61 0l-9.626 9.44a.863.863 0 01-1.203 0 .823.823 0 010-1.18l9.626-9.44a4.313 4.313 0 016.016 0 4.116 4.116 0 011.204 3.54 4.3 4.3 0 013.609 1.18l.05.05a4.115 4.115 0 010 5.9l-8.706 8.537a.274.274 0 000 .393l1.788 1.754a.823.823 0 010 1.18.863.863 0 01-1.203 0l-1.788-1.753a1.92 1.92 0 010-2.754l8.706-8.538a2.47 2.47 0 000-3.54l-.05-.049a2.588 2.588 0 00-3.607-.003l-7.172 7.034-.002.002-.098.097a.863.863 0 01-1.204 0 .823.823 0 010-1.18l7.273-7.133a2.47 2.47 0 00-.003-3.537z',

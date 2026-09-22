@@ -1,13 +1,8 @@
 /**
- * FooterActionBar layout pins — the fixed-bottom primitive must coexist with
- * the mobile `BottomNavbar` (`fixed bottom-0`, `z-50`, `h-16` + safe-area):
- *
- *  - below `md` it sits ABOVE the nav's height, never under it;
- *  - at `md`+ (nav hidden) it owns the true bottom of the viewport;
- *  - its z-index stays below the nav's 50 so nav overlays win the stack.
- *
- * Chromium reports `env(safe-area-inset-bottom)` as 0, so the computed
- * offsets below are the no-notch values of the `calc()` expressions.
+ * FooterActionBar layout pins — the bar must coexist with the mobile
+ * `BottomNavbar`: above the nav below `md`, owning the bottom edge at `md`+, and
+ * always below its `z-50`. Chromium reports `env(safe-area-inset-bottom)` as 0, so
+ * the expected offsets are the no-notch values of the `calc()` expressions.
  */
 import { describe, it, expect } from 'vitest';
 import { page } from 'vitest/browser';

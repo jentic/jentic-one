@@ -172,8 +172,6 @@ export interface Overlay {
 	deprecateHref: string | null;
 }
 
-// Spec-import and job-poll shapes (`ImportJob`, `JobStatus`, `ImportSource`)
-// live in `@/shared/credentials/api` — the import dialog is shared, because
-// uploading a spec is an action on every surface that shows a selected API.
-// Re-exported below so this module's own call sites keep one import path.
+// Spec-import and job-poll shapes live in `@/shared/credentials/api` — the import
+// dialog is shared. Re-exported so this module's call sites keep one import path.
 export type { ImportJob, JobStatus, ImportSource } from '@/shared/credentials/api';

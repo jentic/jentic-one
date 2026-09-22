@@ -1,12 +1,8 @@
 /**
- * CreateCredentialFlow — the shell `surface` switches, and nothing else.
- *
- * The wizard's own behaviour (picker, spec-shaped form, submit path) is covered
- * where it is exercised end to end: `CredentialsPage`, `ApiSetupQueue` and
- * `CredentialInventorySheet`. These specs pin the two containers — that a drawer
- * is the default, that a host in the browser's top layer can ask for a centred
- * dialog instead, and that neither hands a stray backdrop click the power to
- * discard a half-typed secret.
+ * CreateCredentialFlow — the shell `surface` switches, and nothing else; the
+ * wizard's own behaviour is covered where it runs end to end (`CredentialsPage`,
+ * `ApiSetupQueue`, `CredentialInventorySheet`). Pins the drawer default, the
+ * top-layer host's centred dialog, and that no backdrop click discards a draft.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { userEvent as browserUser } from 'vitest/browser';

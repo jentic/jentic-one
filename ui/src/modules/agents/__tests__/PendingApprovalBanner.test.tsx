@@ -106,8 +106,7 @@ describe('PendingApprovalBanner', () => {
 		);
 		renderBanner(rows, { atLeast: true });
 		const banner = screen.getByRole('region', { name: 'Awaiting approval' });
-		// The longest-waiting agent LOADED SO FAR stays named and actionable
-		// (functionality over polish, D17)…
+		// The longest-waiting agent LOADED SO FAR stays named and actionable…
 		expect(banner).toHaveTextContent('oldest-so-far-bot');
 		expect(screen.getByRole('button', { name: 'Approve oldest-so-far-bot' })).toBeEnabled();
 		// …but the fold-in count never claims an exact tally the still-draining
@@ -166,7 +165,7 @@ describe('PendingApprovalBanner', () => {
 		});
 	});
 
-	// --- D16 live elapsed wait -----------------------------------------------
+	// --- Live elapsed wait ---------------------------------------------------
 
 	it('formats the wait honestly across magnitudes', () => {
 		vi.useFakeTimers();

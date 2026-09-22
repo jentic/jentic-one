@@ -23,10 +23,8 @@ import { panelMotion } from '@/modules/agents/components/detail/shared';
  * first-match-wins, a pure reorder is also a change — dirtiness is
  * order-sensitive and reorders get their own pending-changes line.
  *
- * The dirty flag is surfaced to the host via `onDirtyChange` so companions
- * (the broker dry-run tester, which evaluates SAVED rules) can disable
- * themselves while a draft diverges — the editor owns the diff, hosts must
- * not recompute it.
+ * `onDirtyChange` reports that dirtiness to the host so the dry-run tester, which
+ * evaluates SAVED rules, can disable itself while a draft diverges.
  */
 export interface AgentBindingPermissionsEditorProps {
 	agentId: string;
@@ -34,9 +32,8 @@ export interface AgentBindingPermissionsEditorProps {
 	credentialLabel: string;
 	initialRules: BindingPermissionRule[];
 	/**
-	 * Dismiss affordance: renders a Cancel button and is called after a
-	 * successful save. Omit for always-open hosts (the API access sidebar) —
-	 * they get a "Discard changes" reset instead and stay mounted after save.
+	 * Dismiss affordance: renders a Cancel button and is called after a successful
+	 * save. Omit for always-open hosts — they get a "Discard changes" reset instead.
 	 */
 	onClose?: () => void;
 	/** Reports the live draft-vs-saved dirtiness (order-sensitive). */
@@ -147,16 +144,9 @@ export function AgentBindingPermissionsEditor({
 		onDirtyChange?.(dirty);
 	}, [dirty, onDirtyChange]);
 
-	// Retract the report when the editor UNMOUNTS — the editor is the single
-	// source of truth for its own dirtiness, and hosts render it
-	// conditionally (the API access sidebar swaps it for an ErrorAlert when
-	// the permissions query flips to error): without this cleanup a dirty
-	// draft that disappears leaves the host's flag stuck true, permanently
-	// disabling the tester over "unsaved changes" in an editor that no
-	// longer exists. Ref-forwarded callback so the cleanup sees the LATEST
-	// handler without re-running on identity changes; a strict-mode
-	// mount→cleanup→remount cycle is safe (the dirty effect above re-reports
-	// on the remount).
+	// Retract the report when the editor UNMOUNTS: hosts render it conditionally, and
+	// a dirty draft that disappears would otherwise leave the host's flag stuck true,
+	// disabling the tester over an editor that no longer exists.
 	const onDirtyChangeRef = useRef(onDirtyChange);
 	useEffect(() => {
 		onDirtyChangeRef.current = onDirtyChange;
@@ -189,11 +179,8 @@ export function AgentBindingPermissionsEditor({
 				</p>
 			</div>
 
-			{/* The editor owns the verb row, so the commit pair rides in it —
-			    `Add rule` / `Allow all` on the left, Save / Discard on the right —
-			    and the pending-changes preview (removals first, the
-			    security-critical signal, then additions, each in the platform's
-			    rule voice) sits directly above the row it explains. */}
+			{/* The editor owns the verb row, so the commit pair rides in it, with the
+			    pending-changes preview directly above the row it explains. */}
 			<PermissionRuleEditor
 				rules={rules}
 				onChange={setRules}

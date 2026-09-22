@@ -100,25 +100,10 @@ export function makeMockCredential(overrides: Partial<Credential> = {}): Credent
 
 /**
  * The vault as an operator would find it after a few weeks of use — the seed
- * mocked dev starts from.
- *
- * Every row is here to put one distinguishable state on screen at once, so the
- * surfaces that read this store (the Credentials page, the inventory sheet, an
- * agent's API tiles, the bound-agents roster) can be walked without first
- * creating anything:
- *
- *   - `cred_slack_1` / `cred_github_1` are the two ids the agents fixture binds
- *     to `agnt_active_1`, so the tiles, the roster and this list agree on one
- *     set of secrets. They are also the only **bound** rows, which is what
- *     gives the inventory's `Unbound (N)` filter something to subtract.
- *   - all five credential types appear, so the type filter never lands on an
- *     empty result, and each one's plain-language auth placement is legible: a
- *     key in a header, a key in a query parameter, Basic, both OAuth states
- *     (managed-and-connected vs awaiting its first sign-in), and SigV4.
- *   - `cred_zendesk_legacy` is deactivated, so the `Inactive` clause shows.
- *
- * `resetCredentialsStore()` with no seed still empties the store, so tests that
- * want an empty vault (or their own fixtures) are unaffected by this.
+ * mocked dev starts from. `cred_slack_1` / `cred_github_1` are the ids the agents
+ * fixture binds, and the only bound rows, so the inventory's `Unbound (N)` has
+ * something to subtract; all five credential types appear; `cred_zendesk_legacy`
+ * is deactivated. `resetCredentialsStore()` with no seed still empties the store.
  */
 function devCredentialsSeed(): Credential[] {
 	const base = {

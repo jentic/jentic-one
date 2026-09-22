@@ -478,15 +478,10 @@ export function resetAgentsStore(): void {
 			can_revoke: false,
 		},
 	];
-	// Direct credential bindings: agnt_active_1 carries one healthy binding
-	// (with a rule) and one suspended, rule-less binding — so the mocked dev
-	// card shows the resume affordance AND the zero-rules warning out of the
-	// box. Other agents have none (exercises the empty state).
-	//
-	// The vendors are deliberately split: `github` matches a row in the `/apis`
-	// registry fixture, so that tile resolves real registry metadata (name,
-	// version, operation count); `slack.com` matches nothing, so the other tile
-	// exercises the not-imported fallback. Both paths are on screen in dev.
+	// Direct credential bindings: agnt_active_1 carries one healthy binding (with a
+	// rule) and one suspended, rule-less one, so dev shows the resume affordance and
+	// the zero-rules warning out of the box. The vendors are split on purpose —
+	// `github` resolves against the `/apis` fixture, `slack.com` matches nothing.
 	credentialBindings = [
 		seedBinding({
 			agent_id: 'agnt_active_1',
@@ -1386,12 +1381,10 @@ export const agentsHandlers = [
 		return new HttpResponse(null, { status: 204 });
 	}),
 
-	// ---- Direct agent↔credential bindings (theme 5 phase 5a) ----
-	// Org-wide credential delete CASCADES to the bindings table (the real
-	// backend removes every agent's binding rows with the credential). This
-	// handler only mirrors the cascade into THIS module's store, then falls
-	// through (undefined) to the credentials store's own DELETE handler —
-	// agents registers before credentials in src/mocks/handlers.ts.
+	// ---- Direct agent↔credential bindings ----
+	// A credential delete CASCADES to the bindings table, so this mirrors the cascade
+	// into THIS module's store and falls through (undefined) to the credentials
+	// store's own DELETE handler — agents registers first in src/mocks/handlers.ts.
 	http.delete('/credentials/:cid', ({ params }) => {
 		credentialBindings = credentialBindings.filter((b) => b.credential_id !== params.cid);
 		return undefined;

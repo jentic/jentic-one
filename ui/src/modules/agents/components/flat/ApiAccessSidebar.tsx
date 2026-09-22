@@ -1,36 +1,10 @@
 /**
- * ApiAccessSidebar — everything about one API tile's access, in one panel
- * (plan §4.5). Opens when a tile on the flat Agents surface is clicked and
- * holds, for that API's resolved credential+binding:
+ * ApiAccessSidebar — everything about one API tile's access in one panel: the
+ * resolved credential (read view + Edit), its permission rules, and the rule
+ * tester, disabled while the editor holds an unsaved draft.
  *
- *   1. The credential — a read view plus an "Edit credential" affordance
- *      that stacks the existing EditCredentialSheet (OAuth stays read-only
- *      after creation; write-only secrets are never revealed — both already
- *      enforced by the shared machinery this rehosts).
- *   2. The permission rules — the existing AgentBindingPermissionsEditor,
- *      keyed by (agent, credential). When the binding serves MORE than one
- *      API, a blast-radius note names the other affected APIs: rules are
- *      per-credential, not per-tile.
- *   3. The rule tester — the existing AgentBindingRuleTester, DISABLED while
- *      the editor holds an unsaved draft (the editor reports its own diff
- *      via `onDirtyChange`; nothing is recomputed here). The dry-run
- *      evaluates saved broker policy only; nothing goes upstream.
- *
- * Two distinct destructive verbs (never conflated):
- *   - UNBIND — `DELETE /agents/{id}/credentials/{cid}` (purge): this agent
- *     only; the credential survives for everyone else.
- *   - DELETE CREDENTIAL — `DELETE /credentials/{id}`: org-wide; the confirm
- *     names every agent bound to it (`GET /credentials/{id}/agents`).
- *
- * Suspend/resume (the reversible cut-off) sits in the HEADER beside the
- * status line — it is safe (rules survive, resume restores access), so it
- * never shares a section with the destructive verbs. Dashed
- * (awaiting-consent) tiles open this same
- * sidebar — the "Finish connecting" flow lives here (D13: every attached API
- * has a real binding; there is no empty-rules branch).
- *
- * No invented health (risk O7): the panel states only what the binding and
- * the credential's redacted state can prove.
+ * Unbind (this agent only) and Delete credential (org-wide) are never conflated.
+ * Suspend/resume is the reversible cut-off, so it sits in the header.
  */
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { AlertTriangle, ExternalLink, PauseCircle, Pencil, PlayCircle, X } from 'lucide-react';
@@ -64,13 +38,9 @@ import { AgentBindingRuleTester } from '@/modules/agents/components/detail/Agent
 import { ConfirmDialog } from '@/modules/agents/components/confirm/ConfirmDialog';
 import type { ApiTileModel } from '@/modules/agents/lib/apiTiles';
 
-/**
- * The sheet's scrolling body, with a bottom fade shown only while content
- * continues below it. The panel's most consequential section (the danger zone)
- * is its last, so "there is more down here" has to be visible rather than
- * assumed — and the fade must disappear at the end, or it would imply content
- * that isn't there.
- */
+/** The sheet's scrolling body, with a bottom fade shown only while content
+ * continues below it — the panel's most consequential section is its last. The
+ * fade must vanish at the end, or it implies content that isn't there. */
 function ScrollFadeBody({ children }: { children: ReactNode }) {
 	const scroller = useRef<HTMLDivElement | null>(null);
 	const content = useRef<HTMLDivElement | null>(null);
@@ -115,17 +85,11 @@ function ScrollFadeBody({ children }: { children: ReactNode }) {
 
 export interface ApiAccessSidebarProps {
 	agent: AgentEntity;
-	/**
-	 * The clicked tile, resolved live by the host — null once the tile is
-	 * gone (unbound elsewhere / agent switched). The sidebar keeps a sticky
-	 * copy so the exit animation doesn't render an empty shell.
-	 */
+	/** The clicked tile, resolved live by the host — null once the tile is gone. The
+	 * sidebar keeps a sticky copy so the exit animation isn't an empty shell. */
 	tile: ApiTileModel | null;
-	/**
-	 * Titles of the OTHER tiles sharing this tile's binding — the blast
-	 * radius. Rules are keyed by (agent, credential): editing them here
-	 * affects every API this credential serves.
-	 */
+	/** Titles of the OTHER tiles sharing this binding — the blast radius. Rules are
+	 * keyed by (agent, credential), so editing them here affects all of them. */
 	siblingApiTitles: string[];
 	open: boolean;
 	onClose: () => void;
@@ -153,10 +117,8 @@ export function ApiAccessSidebar({
 	// The editor's live draft-vs-saved dirtiness — gates the tester.
 	const [rulesDirty, setRulesDirty] = useState(false);
 
-	// Nested overlays. The edit sheet is a SECOND SheetPrimitive: its Escape
-	// must not also tear down this sidebar (same guard as
-	// CredentialInventorySheet). The confirms are native <dialog>s —
-	// SheetPrimitive itself yields Escape to them.
+	// The edit sheet is a SECOND SheetPrimitive: its Escape must not tear down this
+	// sidebar. The confirms are native `<dialog>`s, which SheetPrimitive yields to.
 	const [editOpen, setEditOpen] = useState(false);
 	const [deleteOpen, setDeleteOpen] = useState(false);
 	const [unbindOpen, setUnbindOpen] = useState(false);
@@ -175,9 +137,8 @@ export function ApiAccessSidebar({
 	const runConnect = useRunConnectFlow();
 	const [connecting, setConnecting] = useState(false);
 
-	// Every agent bound to this credential — the "Used by" line below, and the
-	// blast radius the delete confirm names (it shares this cached read).
-	// Fetched only while the sidebar is open.
+	// Every agent bound to this credential — the "Used by" line and the delete
+	// confirm's blast radius, off one cached read. Only while the sidebar is open.
 	const credentialAgents = useCredentialAgents(credentialId ?? undefined, { enabled: open });
 	const boundAgentRows = credentialAgents.data?.data ?? [];
 
@@ -232,12 +193,8 @@ export function ApiAccessSidebar({
 		if (!credentialId) return;
 		deleteCredential.mutate(credentialId, {
 			onSuccess: () => {
-				// The delete hook refreshes the credentials slice; the agents-
-				// side binding caches must refresh too. Org-wide scope: the
-				// delete removes the binding from EVERY bound agent, and the
-				// flat surface keeps every agent's binding query mounted (strip
-				// gap hints) — a this-agent-only invalidation would leave the
-				// other agents' tiles/hints stale until reload.
+				// The delete hook refreshes the credentials slice; the agents-side binding caches
+				// must too. Org-wide scope: the delete removes the binding from EVERY bound agent.
 				invalidateBindingSurfaces(credentialId, 'credential');
 				toast({ title: 'Credential deleted', variant: 'success' });
 				setDeleteOpen(false);
@@ -303,10 +260,8 @@ export function ApiAccessSidebar({
 									</p>
 								</div>
 							</div>
-							{/* Suspend/resume — the reversible cut-off. It lives HERE,
-							    not in the danger zone: pausing is safe (rules survive,
-							    resume restores access), so it sits with the status line
-							    where it's visible without scrolling. */}
+							{/* Suspend/resume lives HERE, not in the danger zone: pausing is safe (rules
+							    survive, resume restores access), so it sits with the status line. */}
 							<div className="flex shrink-0 items-center gap-1.5">
 								{shown.suspended ? (
 									<Button
@@ -390,14 +345,11 @@ export function ApiAccessSidebar({
 											<span title={formatTimestamp(shown.boundAt)}>
 												{timeAgo(shown.boundAt)}
 											</span>
-											{/* The credential's own age: its last update
-											    (a rotation or edit) when one happened,
-											    else its creation. Omitted when the org
-											    row is unreachable. */}
+											{/* The credential's last update when one happened, else
+											    its creation. Omitted when the org row is unreachable. */}
 											{credentialAge && <> · {credentialAge}</>}
-											{/* The blast radius of editing or revoking
-											    this secret, from the read this sidebar
-											    already makes for the cascade confirm. */}
+											{/* The blast radius of editing or revoking this secret,
+											    from the read the cascade confirm already makes. */}
 											{credentialAgents.isSuccess && (
 												<> · used by {usedByLabel}</>
 											)}
@@ -435,9 +387,8 @@ export function ApiAccessSidebar({
 								</p>
 							)}
 
-							{/* 2 — The permission rules (rehosted editor, keyed by
-							    agent+credential so a different tile never inherits a
-							    stale draft). */}
+							{/* 2 — The permission rules, keyed by agent+credential so a
+							    different tile never inherits a stale draft. */}
 							<section aria-label="Permission rules" className="space-y-3">
 								{permissions.isPending ? (
 									<div role="status" aria-live="polite" aria-busy="true">
@@ -475,12 +426,8 @@ export function ApiAccessSidebar({
 								/>
 							</section>
 
-							{/* Danger zone — the two destructive verbs only (suspend is
-							    reversible and lives in the header), in the app's shared
-							    danger-zone grammar: unbind (this agent only) vs delete
-							    (org-wide), visually and textually distinct. The shared
-							    card carries its own danger styling; this wrapper only
-							    names the region. */}
+							{/* The two destructive verbs only — unbind (this agent) vs delete (org-wide).
+							    The shared card carries the danger styling; this wrapper names the region. */}
 							<section aria-label="Danger zone" data-testid="sidebar-danger-zone">
 								<DangerZone
 									pending={unbindPending || deleteCredential.isPending}
@@ -520,19 +467,16 @@ export function ApiAccessSidebar({
 				credentialId={credentialId}
 				open={editOpen}
 				onClose={() => setEditOpen(false)}
-				// The bound-agent roster links to an agent's tab on the surface
-				// behind this sidebar — including a DIFFERENT agent — so following
-				// one closes the sheet and the sidebar over it.
+				// The bound-agent roster links to an agent's tab on the surface behind this
+				// sidebar — possibly a DIFFERENT agent — so following one closes both.
 				onNavigateAway={() => {
 					setEditOpen(false);
 					onClose();
 				}}
 			/>
 
-			{/* Unbind confirm — the app's standard confirm-dialog pattern (a
-			    stateless confirm, so conditional mounting is the sanctioned
-			    lifecycle). Names the agent and states both blast radii: the
-			    binding and its rules go, the credential survives elsewhere. */}
+			{/* A stateless confirm, so conditional mounting is the sanctioned lifecycle.
+			    States both blast radii: the binding and its rules go, the credential stays. */}
 			{unbindOpen && shown && (
 				<ConfirmDialog
 					open

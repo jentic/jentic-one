@@ -1,48 +1,10 @@
 /**
- * AgentDock — the fixed-bottom action dock for the selected agent (plan §4.2,
- * D3), built on the shared `FooterActionBar` floating-pill primitive. It
- * carries the agent's verbs: the serving toggle (enable/disable — or Approve
- * for a pending agent), API key, Permissions (platform scopes / access
- * requests / connected clients — plan §4.7, D4), Activity, MCP (the console
- * MCP tab's config + session history, rehosted), Settings (the console
- * Settings tab's identity form + danger zone, rehosted, plus the agent's
- * provenance), and Archive.
- * The dock is agent-scoped ONLY (D20): every verb speaks for the selected
- * agent, so the org-wide credential inventory opens from the page-level
- * control on the Agents page header instead — dock = this agent; page
- * level = org-wide.
+ * AgentDock — the fixed-bottom action dock for the selected agent, built on the
+ * shared `FooterActionBar` pill. Its verbs are agent-scoped; the org credential
+ * inventory opens from the page header instead.
  *
- * Presentation: a compact pill centred on the page content column (via
- * `FooterActionBar`'s `anchorToContainer` — the shell's collapsible rail makes
- * viewport-centring sit visibly off-centre at `xl+`). The dock renders the
- * webapp ToolkitDock shape exactly: one state toggle, a divider, bare icon
- * verbs — no agent name or status badge (the pill strip and panel header
- * already say who is selected; the group's `aria-label` keeps that identity
- * in the a11y tree). Every verb except the serving toggle is icon-only at
- * every breakpoint; the shared `Tooltip` plus an aria-label carry each verb's
- * name. The toggle keeps its short state label — it is the primary verb and
- * must read as a toggle at a glance.
- *
- * Serving-toggle behaviour is ported from jentic-webapp's ToolkitDock:
- *   - an in-flight double-click guard (a second click while the mutation is
- *     in flight is a no-op);
- *   - an Undo affordance on the deactivate toast (one click re-enables);
- *   - a distinct "the write landed but the grid didn't refresh" branch
- *     (`ServingRefreshError`) that never mis-reports the toggle as failed.
- *
- * State semantics (D7/D8/D9, risk O5):
- *   - `active`/`disabled` render the live toggle — disabled means "not
- *     serving traffic", never "read-only"; every other verb stays available.
- *   - `pending` renders Approve in the toggle position (its lifecycle verb).
- *   - `rejected` has no serving verb at all.
- *   - `archived` is irreversible: no live-looking toggle, no Archive verb —
- *     only the read affordances (API key trail, Permissions history,
- *     Activity, MCP session history, Settings read-only), with copy
- *     naming the state. Permissions stays in the reduced set deliberately:
- *     archive sweeps the scope grants and OAuth consents, but the sheet is
- *     the only surface left that can show the agent's filed access requests
- *     and revoked consents — it renders as history, never as a grant invite
- *     (the sheet gates the scope editor off for archived).
+ * `pending` renders Approve in the toggle position, `rejected` has no serving
+ * verb, and `archived` keeps only the read affordances.
  */
 import { useState } from 'react';
 import { useReducedMotion, motion } from 'framer-motion';
@@ -60,7 +22,7 @@ import { cn } from '@/shared/lib/utils';
 import { ServingRefreshError, useSetAgentServing, type AgentEntity } from '@/modules/agents/api';
 
 /** The dock surfaces a verb can open (hosted by the flat surface's sheets).
- * All agent-scoped (D20) — the org-wide inventory is a page-level surface. */
+ * All agent-scoped — the org-wide inventory is a page-level surface. */
 export type AgentDockSurface = 'api-key' | 'permissions' | 'activity' | 'mcp' | 'settings';
 
 export interface AgentDockProps {
@@ -91,11 +53,8 @@ export function AgentDock({
 	const isArchived = agent.status === 'archived';
 
 	return (
-		// Anchored to the page content column (not the viewport): the app shell
-		// docks a collapsible rail beside `<main>` at `xl+`, so viewport-centring
-		// would sit the pill visually off-centre against the tiles above it.
-		// Sizing tracks the webapp ToolkitDock: a comfortably padded pill —
-		// ~20px icons with breathing room, not a razor-slim strip.
+		// Anchored to the page content column, not the viewport: the shell's collapsible
+		// rail at `xl+` would sit a viewport-centred pill off-centre.
 		<FooterActionBar floating anchorToContainer className="gap-2 px-4 py-2">
 			<motion.div
 				role="group"
@@ -115,9 +74,7 @@ export function AgentDock({
 					icon={<KeyRound className="h-5 w-5" />}
 					onClick={() => onOpenSurface('api-key')}
 				/>
-				{/* A checked shield, not a bare one: this sheet is about permissions
-				    GRANTED (scopes, access requests, consents), where a plain shield
-				    reads as generic security beside the key next to it. */}
+				{/* A checked shield: this sheet is about permissions GRANTED. */}
 				<DockIconButton
 					label="Permissions"
 					icon={<ShieldCheck className="h-5 w-5" />}
@@ -128,10 +85,8 @@ export function AgentDock({
 					icon={<ActivityIcon className="h-5 w-5" />}
 					onClick={() => onOpenSurface('activity')}
 				/>
-				{/* MCP before Settings, mirroring the console's tab order. The
-				    protocol's OWN mark, not a generic integration glyph: anyone who
-				    has wired an MCP client recognises it instantly, which no
-				    substitute achieved. */}
+				{/* MCP before Settings, mirroring the console's tab order, with the
+				    protocol's own mark rather than a generic integration glyph. */}
 				<DockIconButton
 					label="MCP"
 					icon={<McpIcon className="h-5 w-5" />}
@@ -165,10 +120,8 @@ export function AgentDock({
 	);
 }
 
-/**
- * One icon verb: icon-only at every breakpoint — the tooltip and aria-label
- * carry the name (the serving toggle is the only labelled control).
- */
+/** One icon verb: icon-only at every breakpoint — the tooltip and aria-label
+ * carry the name. */
 function DockIconButton({
 	label,
 	icon,
@@ -214,9 +167,8 @@ function ServingVerb({
 		case 'disabled':
 			return <ServingToggle agent={agent} />;
 		case 'pending':
-			// A pending agent's lifecycle verb IS approval — that's its toggle
-			// position (D7). Shares the mutation with the panel banner, so the
-			// two buttons load together.
+			// A pending agent's lifecycle verb IS approval. Shares the mutation with the
+			// panel banner, so the two buttons load together.
 			return (
 				<Button
 					size="sm"
@@ -248,24 +200,12 @@ function ServingVerb({
 	}
 }
 
-/**
- * The enable/disable toggle, with ToolkitDock's ported interaction grammar
- * (double-click guard, Undo-on-deactivate, refresh-failure branch — see the
- * file docblock). Copy: a disabled agent is "not serving" — not read-only.
- */
+/** The enable/disable toggle. Copy: a disabled agent is "not serving" — not
+ * read-only. */
 function ServingToggle({ agent }: { agent: AgentEntity }) {
 	const setServing = useSetAgentServing();
-	// The dock is mounted once and NOT keyed by agent, so this component
-	// instance survives selection changes. All in-flight bookkeeping is
-	// therefore scoped by agent id — a bare boolean would keep rendering a
-	// false loading state (and no-op clicks) on agent B's toggle while agent
-	// A's slow mutation (it awaits the fleet refetch) is still in flight.
-	// The set closes the gap between the click and TanStack's `isPending`
-	// flush (the ToolkitDock double-click guard, per-id), and the `variables`
-	// check keeps the Undo-toast mutation — which bypasses this set — showing
-	// on its own agent's control only. Mutations for DIFFERENT agents are
-	// independent and may overlap freely; only the SAME agent's toggle
-	// no-ops while its own mutation runs.
+	// The dock is mounted once and NOT keyed by agent, so in-flight bookkeeping is
+	// scoped by agent id — a bare boolean would load agent B's toggle for A's write.
 	const [inFlightIds, setInFlightIds] = useState<ReadonlySet<string>>(() => new Set());
 	const togglePending =
 		inFlightIds.has(agent.id) ||
@@ -318,9 +258,8 @@ function ServingToggle({ agent }: { agent: AgentEntity }) {
 				});
 			}
 		} catch (error) {
-			// The write landed but the roster refetch failed — the agent IS in
-			// its new state; only the grid may be stale. Never claim the whole
-			// toggle failed (the ToolkitDock "refresh failed" branch).
+			// The write landed but the roster refetch failed — the agent IS in its new
+			// state; only the grid may be stale.
 			if (error instanceof ServingRefreshError) {
 				toast({
 					title: error.message,
