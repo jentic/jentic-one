@@ -2,7 +2,7 @@
 
 Credential-binding *selection* happens in the handler (see ``routers/execute``):
 it needs the discovered API identity, which is only known after discovery.
-These dependencies do auth + scope only; the handler derives bindings through
+These dependencies do auth + permission only; the handler derives bindings through
 the injected ``get_credential_deriver`` provider.
 """
 
@@ -177,7 +177,7 @@ def get_agent_rule_evaluator(request: Request) -> AgentRuleEvaluatorProtocol:
 
 
 async def require_execute_within_rate_limit(request: Request) -> Identity:
-    """Auth + scope, then enforce the per-caller rate limit keyed on ``sub``.
+    """Auth + permission, then enforce the per-caller rate limit keyed on ``sub``.
 
     Enforced here — a post-auth dependency — because the actor isn't resolved at
     admission time (the admission middleware runs before auth). The limiter lives on

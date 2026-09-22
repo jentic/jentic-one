@@ -27,7 +27,7 @@ REFERENCE_PATH = "/reference/endpoints.json"
 def _reference_payload(app: Any) -> dict[str, Any]:
     """Build (and cache on app.state) the reference payload for this app.
 
-    The join introspects routes + the curated scope map, which is stable for the
+    The join introspects routes + the curated permission map, which is stable for the
     lifetime of the process, so it is computed once and cached.
     """
     cached = getattr(app.state, "endpoint_reference_payload", None)

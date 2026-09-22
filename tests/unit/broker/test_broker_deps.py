@@ -1,9 +1,9 @@
-"""Unit tests for broker web deps — token validation + execute-scope enforcement.
+"""Unit tests for broker web deps — token validation + execute-permission enforcement.
 
 Binding enforcement lives in the execute handler (after discovery), not in
 ``deps.py``. These
 tests cover only what the dependency still owns: authenticate + require the
-execute scope.
+execute permission.
 """
 
 from __future__ import annotations
@@ -68,7 +68,7 @@ def _create_test_app(resolver_return: Identity | object | None = _SENTINEL) -> T
     return TestClient(app, raise_server_exceptions=False)
 
 
-def test_returns_200_with_valid_token_and_scope() -> None:
+def test_returns_200_with_valid_token_and_permission() -> None:
     client = _create_test_app()
     resp = client.post("/execute", headers={"Authorization": "Bearer at_valid"})
     assert resp.status_code == 200
@@ -104,7 +104,7 @@ def test_returns_401_with_inactive_token() -> None:
     assert resp.status_code == 401
 
 
-def test_returns_403_with_insufficient_scope() -> None:
+def test_returns_403_without_execute_permission() -> None:
     client = _create_test_app(resolver_return=_make_identity(permissions=["read:only"]))
     resp = client.post("/execute", headers={"Authorization": "Bearer at_limited"})
     assert resp.status_code == 403

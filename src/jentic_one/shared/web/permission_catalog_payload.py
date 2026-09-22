@@ -1,19 +1,20 @@
-"""Conceptual scope catalogue — the *meaning* of every permission scope.
+"""Conceptual permission catalogue — the *meaning* of every permission.
 
 The endpoint reference (:mod:`jentic_one.shared.web.endpoint_reference`) answers
-"which scope does this endpoint need?". This module answers the complementary,
-conceptual question the docs SPA needs: "what does each scope *mean*, and how do
-scopes relate to one another?".
+"which permission does this endpoint need?". This module answers the
+complementary, conceptual question the docs SPA needs: "what does each permission
+*mean*, and how do permissions relate to one another?".
 
-It is built directly from :data:`jentic_one.admin.core.permissions.ALL_PERMISSIONS`
-(the single source of truth), so the catalogue can never drift from the
-enforced permission set. For each scope it exposes:
+It is built directly from
+:data:`jentic_one.shared.auth.permission_catalog.ALL_PERMISSIONS` (the single
+source of truth), so the catalogue can never drift from the enforced permission
+set. For each permission it exposes:
 
 - ``description`` — the human-readable meaning (from the ``Permission`` entry).
 - ``family`` — the resource prefix (``agents``, ``credentials``, ``owner`` …),
-  derived from the scope string, used to group the visual tree.
+  derived from the permission string, used to group the visual tree.
 - ``action`` — the verb suffix (``read`` / ``write`` / ``execute`` / ``admin``).
-- ``implies`` — the *direct* child scopes (one hop).
+- ``implies`` — the *direct* child permissions (one hop).
 - ``implies_transitive`` — the full transitive closure (sorted), so the UI can
   show "holding this grants …" without re-deriving the graph client-side.
 
@@ -31,8 +32,9 @@ from jentic_one.shared.auth.permission_catalog import (
     compute_implies_transitive,
 )
 
-#: Schema identifier for the scope-catalogue section (bump on a breaking change).
-SCOPE_CATALOG_SCHEMA = "jentic.scope-catalog/v1"
+#: Schema identifier for the permission-catalogue section (bump on a breaking
+#: change).
+PERMISSION_CATALOG_SCHEMA = "jentic.permission-catalog/v1"
 
 #: Human-readable label for each known family prefix. Anything not listed falls
 #: back to a title-cased version of the prefix, so a new family still renders.
@@ -90,31 +92,31 @@ _FAMILY_ORDER: tuple[str, ...] = (
 )
 
 
-def _family_of(scope: str) -> str:
-    """The resource-family prefix of a scope (the part before the first ``:``)."""
-    return scope.split(":", 1)[0]
+def _family_of(permission: str) -> str:
+    """The resource-family prefix of a permission (the part before the first ``:``)."""
+    return permission.split(":", 1)[0]
 
 
-def _action_of(scope: str) -> str:
-    """The action suffix of a scope (``read`` / ``write`` / ``execute`` / ``admin``).
+def _action_of(permission: str) -> str:
+    """The action suffix of a permission (``read`` / ``write`` / ``execute`` / ``admin``).
 
-    For ``owner:<resource>:read`` style scopes the trailing segment is the
+    For ``owner:<resource>:read`` style permissions the trailing segment is the
     action; for ``org:admin`` it is ``admin``; for ``agents:read`` it is ``read``.
     """
-    return scope.rsplit(":", 1)[-1]
+    return permission.rsplit(":", 1)[-1]
 
 
-def build_scope_catalog() -> dict[str, Any]:
-    """Build the conceptual scope catalogue from the permission source of truth.
+def build_permission_catalog() -> dict[str, Any]:
+    """Build the conceptual permission catalogue from the source of truth.
 
     Returns a JSON-serialisable dict with a ``schema`` marker, the ordered list
-    of ``families`` (each with its scopes), and a flat ``scopes`` list (so a
-    consumer can index by name without walking families).
+    of ``families`` (each with its permissions), and a flat ``permissions`` list
+    (so a consumer can index by name without walking families).
     """
-    scopes: list[dict[str, Any]] = []
+    permissions: list[dict[str, Any]] = []
     for name, perm in ALL_PERMISSIONS.items():
         family = _family_of(name)
-        scopes.append(
+        permissions.append(
             {
                 "name": name,
                 "description": perm.description,
@@ -123,34 +125,34 @@ def build_scope_catalog() -> dict[str, Any]:
                 "implies": sorted(perm.implies),
                 "implies_transitive": sorted(compute_implies_transitive(name)),
                 # org:admin is also a hard runtime superpower (deps.py short-circuit),
-                # so flag it: it can reach every scope-gated endpoint regardless of
-                # the literal implication graph.
+                # so flag it: it can reach every permission-gated endpoint regardless
+                # of the literal implication graph.
                 "is_superuser": name == ORG_ADMIN,
             }
         )
 
     by_family: dict[str, list[dict[str, Any]]] = {}
-    for scope in scopes:
-        by_family.setdefault(scope["family"], []).append(scope)
+    for permission in permissions:
+        by_family.setdefault(permission["family"], []).append(permission)
 
     def family_sort_key(fam: str) -> int:
         return _FAMILY_ORDER.index(fam) if fam in _FAMILY_ORDER else len(_FAMILY_ORDER)
 
     families: list[dict[str, Any]] = []
     for fam in sorted(by_family, key=family_sort_key):
-        members = sorted(by_family[fam], key=lambda s: (s["action"] != "admin", s["name"]))
+        members = sorted(by_family[fam], key=lambda p: (p["action"] != "admin", p["name"]))
         families.append(
             {
                 "name": fam,
                 "label": _FAMILY_LABELS.get(fam, fam.replace("-", " ").title()),
                 "blurb": _FAMILY_BLURBS.get(fam, ""),
-                "scopes": members,
+                "permissions": members,
             }
         )
 
     return {
-        "schema": SCOPE_CATALOG_SCHEMA,
-        "total": len(scopes),
+        "schema": PERMISSION_CATALOG_SCHEMA,
+        "total": len(permissions),
         "families": families,
-        "scopes": sorted(scopes, key=lambda s: s["name"]),
+        "permissions": sorted(permissions, key=lambda p: p["name"]),
     }

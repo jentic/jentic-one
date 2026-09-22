@@ -1,6 +1,6 @@
-"""Unit + drift tests for the conceptual scope catalogue.
+"""Unit + drift tests for the conceptual permission catalogue.
 
-The catalogue (``GET /reference/endpoints.json`` ``scopes`` section, and the
+The catalogue (``GET /reference/endpoints.json`` ``permissions`` section, and the
 committed ``docs/reference/endpoints.json``) is built from
 ``ALL_PERMISSIONS`` so it can never diverge from the enforced permission set.
 These tests pin that invariant and the derived shape the docs SPA relies on.
@@ -18,35 +18,35 @@ from jentic_one.shared.auth.permission_catalog import (
     OWNER_RESOURCES_READ,
     RETIRED_PERMISSIONS,
 )
-from jentic_one.shared.web.scope_catalog import (
-    SCOPE_CATALOG_SCHEMA,
-    build_scope_catalog,
+from jentic_one.shared.web.permission_catalog_payload import (
+    PERMISSION_CATALOG_SCHEMA,
+    build_permission_catalog,
 )
 
 
 @pytest.mark.arch
 def test_catalog_covers_every_permission() -> None:
-    """Every grantable permission appears exactly once in the flat scope list."""
-    catalog = build_scope_catalog()
-    names = [s["name"] for s in catalog["scopes"]]
+    """Every grantable permission appears exactly once in the flat permission list."""
+    catalog = build_permission_catalog()
+    names = [p["name"] for p in catalog["permissions"]]
     assert sorted(names) == sorted(ALL_PERMISSIONS)
-    assert len(names) == len(set(names)), "no scope may appear twice"
-    assert catalog["schema"] == SCOPE_CATALOG_SCHEMA
+    assert len(names) == len(set(names)), "no permission may appear twice"
+    assert catalog["schema"] == PERMISSION_CATALOG_SCHEMA
     assert catalog["total"] == len(ALL_PERMISSIONS)
 
 
 @pytest.mark.arch
 def test_descriptions_match_source_of_truth() -> None:
-    catalog = build_scope_catalog()
-    for scope in catalog["scopes"]:
-        assert scope["description"] == ALL_PERMISSIONS[scope["name"]].description
+    catalog = build_permission_catalog()
+    for permission in catalog["permissions"]:
+        assert permission["description"] == ALL_PERMISSIONS[permission["name"]].description
 
 
 @pytest.mark.arch
 def test_implications_match_permission_map() -> None:
     """Direct + transitive implications mirror the permission definitions."""
-    catalog = build_scope_catalog()
-    by_name = {s["name"]: s for s in catalog["scopes"]}
+    catalog = build_permission_catalog()
+    by_name = {p["name"]: p for p in catalog["permissions"]}
     for name, perm in ALL_PERMISSIONS.items():
         assert by_name[name]["implies"] == sorted(perm.implies)
         assert by_name[name]["implies_transitive"] == sorted(compute_implies_transitive(name))
@@ -54,8 +54,8 @@ def test_implications_match_permission_map() -> None:
 
 @pytest.mark.arch
 def test_family_and_action_derivation() -> None:
-    catalog = build_scope_catalog()
-    by_name = {s["name"]: s for s in catalog["scopes"]}
+    catalog = build_permission_catalog()
+    by_name = {p["name"]: p for p in catalog["permissions"]}
     assert by_name["org:admin"]["family"] == "org"
     assert by_name["org:admin"]["action"] == "admin"
     assert by_name["org:admin"]["is_superuser"] is True
@@ -66,29 +66,29 @@ def test_family_and_action_derivation() -> None:
 
 
 @pytest.mark.arch
-def test_families_partition_scopes() -> None:
-    """Every scope belongs to exactly one family, and families hold every scope."""
-    catalog = build_scope_catalog()
-    flat = {s["name"] for s in catalog["scopes"]}
-    in_families = {s["name"] for fam in catalog["families"] for s in fam["scopes"]}
+def test_families_partition_permissions() -> None:
+    """Every permission belongs to exactly one family, and families hold them all."""
+    catalog = build_permission_catalog()
+    flat = {p["name"] for p in catalog["permissions"]}
+    in_families = {p["name"] for fam in catalog["families"] for p in fam["permissions"]}
     assert flat == in_families
     for fam in catalog["families"]:
         assert fam["label"]
-        for scope in fam["scopes"]:
-            assert scope["family"] == fam["name"]
+        for permission in fam["permissions"]:
+            assert permission["family"] == fam["name"]
 
 
 @pytest.mark.arch
-def test_admin_scope_sorts_first_in_its_family() -> None:
+def test_admin_permission_sorts_first_in_its_family() -> None:
     """org:admin (the superuser) leads its family for prominent display."""
-    catalog = build_scope_catalog()
+    catalog = build_permission_catalog()
     org = next(f for f in catalog["families"] if f["name"] == "org")
-    assert org["scopes"][0]["name"] == "org:admin"
+    assert org["permissions"][0]["name"] == "org:admin"
 
 
 @pytest.mark.arch
-def test_default_agent_scopes_are_catalogued() -> None:
-    """Every scope granted to a default agent must exist in the catalogue."""
+def test_default_agent_permissions_are_catalogued() -> None:
+    """Every permission granted to a default agent must exist in the catalogue."""
     missing = set(DEFAULT_AGENT_PERMISSIONS) - set(ALL_PERMISSIONS)
     assert not missing, (
         f"DEFAULT_AGENT_PERMISSIONS references uncatalogued permissions: {sorted(missing)}"
@@ -97,9 +97,9 @@ def test_default_agent_scopes_are_catalogued() -> None:
 
 @pytest.mark.arch
 def test_catalog_import_family_and_implications() -> None:
-    """The catalog:import scope forms its own family and wires the expected graph."""
-    catalog = build_scope_catalog()
-    by_name = {s["name"]: s for s in catalog["scopes"]}
+    """The catalog:import permission forms its own family and wires the expected graph."""
+    catalog = build_permission_catalog()
+    by_name = {p["name"]: p for p in catalog["permissions"]}
     catalog_import = by_name["catalog:import"]
     assert catalog_import["family"] == "catalog"
     assert catalog_import["action"] == "import"
@@ -115,8 +115,8 @@ def test_catalog_import_family_and_implications() -> None:
 @pytest.mark.arch
 def test_overlays_confirm_family_and_implications() -> None:
     """overlays:confirm forms its own family and implies apis:read."""
-    catalog = build_scope_catalog()
-    by_name = {s["name"]: s for s in catalog["scopes"]}
+    catalog = build_permission_catalog()
+    by_name = {p["name"]: p for p in catalog["permissions"]}
     confirm = by_name["overlays:confirm"]
     assert confirm["family"] == "overlays"
     assert confirm["action"] == "confirm"
@@ -132,7 +132,7 @@ def test_overlays_confirm_family_and_implications() -> None:
 
 @pytest.mark.arch
 def test_owner_shared_constants_are_catalogued() -> None:
-    """Every OWNER_* shared scope constant must be a key in ALL_PERMISSIONS."""
+    """Every OWNER_* shared permission constant must be a key in ALL_PERMISSIONS."""
     owner_constants = {
         OWNER_CREDENTIALS_READ,
         OWNER_AGENTS_READ,
@@ -143,9 +143,9 @@ def test_owner_shared_constants_are_catalogued() -> None:
 
 
 @pytest.mark.arch
-def test_retired_scopes_stay_out_of_the_catalogue() -> None:
-    """Retired scopes (theme-5 toolkits, theme-7 access requests, theme-8 service
-    accounts) never reappear.
+def test_retired_permissions_stay_out_of_the_catalogue() -> None:
+    """Retired permissions (theme-5 toolkits, theme-7 access requests, theme-8
+    service accounts) never reappear.
 
     They are tolerated on stored-grant re-validation (``RETIRED_PERMISSIONS``) but
     must not be grantable, defaulted, or implied — reintroducing one here would
@@ -153,15 +153,15 @@ def test_retired_scopes_stay_out_of_the_catalogue() -> None:
     """
     assert not RETIRED_PERMISSIONS & set(ALL_PERMISSIONS)
     assert not RETIRED_PERMISSIONS & set(DEFAULT_AGENT_PERMISSIONS)
-    catalog = build_scope_catalog()
-    assert not RETIRED_PERMISSIONS & {s["name"] for s in catalog["scopes"]}
+    catalog = build_permission_catalog()
+    assert not RETIRED_PERMISSIONS & {p["name"] for p in catalog["permissions"]}
 
 
 @pytest.mark.arch
 def test_service_account_family_is_gone_from_the_catalogue() -> None:
     """Theme-8 Phase 2: no ``service-accounts`` family, permission, or implication survives."""
-    catalog = build_scope_catalog()
+    catalog = build_permission_catalog()
     assert "service-accounts" not in {f["name"] for f in catalog["families"]}
-    by_name = {s["name"]: s for s in catalog["scopes"]}
+    by_name = {p["name"]: p for p in catalog["permissions"]}
     assert not [n for n in by_name if "service-accounts" in n]
     assert not [n for n in by_name["org:admin"]["implies_transitive"] if "service-accounts" in n]

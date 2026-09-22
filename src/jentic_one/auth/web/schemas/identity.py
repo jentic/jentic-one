@@ -42,11 +42,11 @@ class MeUser(BaseModel):
     email: str
     admin: bool
     status: str
-    # For users `scopes` stays the token's permissions: users re-authenticate
-    # interactively, so the token view is effectively live (no long-lived
-    # programmatic token to drift from grants the way agents' tokens do — see
-    # #673).
-    scopes: list[str]
+    # For users this is the token's permission set rather than a live grant read:
+    # users re-authenticate interactively, so the token view is effectively live
+    # (no long-lived programmatic token to drift from grants the way
+    # agents/service accounts have — see #673).
+    permissions: list[str]
     must_change_password: bool
 
 
@@ -57,14 +57,15 @@ class MeAgent(BaseModel):
     id: str
     name: str
     status: str
-    # Scopes the agent currently holds in `actor_permission_grants` (the source of
-    # truth an approver grants against), so whoami reflects an approved grant
-    # immediately — independent of when the presented token was minted (#673).
-    scopes: list[str]
-    # Scopes baked into the presented bearer token at mint time. When this is a
-    # strict subset of `scopes`, a grant has landed that the current token can't
-    # yet exercise; the agent should refresh/re-mint to pick it up.
-    token_scopes: list[str]
+    # Permissions the agent currently holds in `actor_permission_grants` (the
+    # source of truth an approver grants against), so whoami reflects an approved
+    # grant immediately — independent of when the presented token was minted
+    # (#673).
+    permissions: list[str]
+    # Permissions baked into the presented bearer token at mint time. When this is
+    # a strict subset of `permissions`, a grant has landed that the current token
+    # can't yet exercise; the agent should refresh/re-mint to pick it up.
+    token_permissions: list[str]
     parent_agent_id: str | None = None
     approved_by: str | None = None
     # Direct agent↔credential bindings (theme 5). The toolkit_bindings block
