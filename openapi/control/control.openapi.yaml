@@ -1710,11 +1710,13 @@ components:
         confirmed_scopes:
           items:
             type: string
+          maxItems: 100
           title: Confirmed Scopes
           type: array
         permission_rules:
           items:
             $ref: '#/components/schemas/jentic_one__control__web__schemas__permission_rules__PermissionRuleSchema'
+          maxItems: 100
           title: Permission Rules
           type: array
       required:
@@ -2832,11 +2834,13 @@ components:
         requested_permission_rules:
           items:
             $ref: '#/components/schemas/jentic_one__control__web__schemas__permission_rules__PermissionRuleSchema'
+          maxItems: 100
           title: Requested Permission Rules
           type: array
         requested_scopes:
           items:
             type: string
+          maxItems: 100
           title: Requested Scopes
           type: array
         vendor:

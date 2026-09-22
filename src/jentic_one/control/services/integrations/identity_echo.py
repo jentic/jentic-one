@@ -85,9 +85,13 @@ async def echo_identity(
             f"identity probe response missing field: {probe.identity_field!r}"
         )
     try:
-        display = probe.display_template.format_map({probe.identity_field: raw, "value": raw})
-        # Also support the field's leaf name as a top-level format key so
-        # templates like "@{login}" work for `identity_field: "login"`.
+        # Format keys the template can reference:
+        #   * every top-level response field ("@{login}", "{name} ({email})"),
+        #   * ``value`` — the extracted ``identity_field`` value, as a stable
+        #     shorthand for templates that don't care which leaf produced it.
+        # The dotted ``identity_field`` itself is intentionally not exposed
+        # as a format key: ``str.format_map`` treats ``.`` as attribute
+        # access, so "user.login" can't be a lookup key anyway.
         display = probe.display_template.format_map(
             {**_flatten_body_for_template(body), "value": raw}
         )

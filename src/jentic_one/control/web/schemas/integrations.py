@@ -47,27 +47,27 @@ class VendorListResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class PermissionRuleModel(BaseModel):
-    """One agent permission rule (allow/deny)."""
-
-    method: str = Field(examples=["GET", "POST"])
-    path: str = Field(examples=["/repos/**", "/repos/*/issues"])
-    effect: Literal["allow", "deny"] = "allow"
-
-
 class IntegrationsConnectRequest(BaseModel):
     vendor: str = Field(description="Vendor registry key (e.g. 'github')")
     # Required for USER/SA callers, ignored for AGENT callers.
     agent_id: str | None = Field(default=None)
-    requested_scopes: list[str] = Field(default_factory=list)
+    # Cap mirrors the sister ``/credentials`` endpoints — a scope list
+    # deep enough to spam a scope-classification pass in the worker is a
+    # cheap DoS surface if left unbounded. 100 is well above any real
+    # vendor's scope catalog.
+    requested_scopes: list[str] = Field(default_factory=list, max_length=100)
     preferred_flow: str | None = Field(default=None)
     reason: str | None = Field(default=None, max_length=1024)
     # As-requested permission rules — typically the initiating agent's ask,
     # rendered on the review page as pre-filled rows the human owner can
     # accept / edit / drop before ``:confirm`` persists the final set.
     # Captured on the session row; never bound to
-    # ``agent_permission_rules`` until ``:confirm``.
-    requested_permission_rules: list[PermissionRuleSchema] = Field(default_factory=list)
+    # ``agent_permission_rules`` until ``:confirm``. Bound the list so the
+    # session row (and the eventual binding write) cannot be inflated by
+    # an unauthenticated ``:connect`` caller.
+    requested_permission_rules: list[PermissionRuleSchema] = Field(
+        default_factory=list, max_length=100
+    )
 
 
 class IntegrationsConnectResponse(BaseModel):
@@ -128,8 +128,13 @@ class ReviewSessionResponse(BaseModel):
 
 
 class ConfirmSessionRequest(BaseModel):
-    confirmed_scopes: list[str]
-    permission_rules: list[PermissionRuleSchema] = Field(default_factory=list)
+    # Caps mirror ``IntegrationsConnectRequest`` — the eventual write
+    # touches the same broker classification and binding paths, so leaving
+    # them unbounded here would defeat the ``:connect`` cap. 100 is far
+    # above any real vendor's scope catalog or a sane per-binding rule
+    # count.
+    confirmed_scopes: list[str] = Field(max_length=100)
+    permission_rules: list[PermissionRuleSchema] = Field(default_factory=list, max_length=100)
     # Selected at the rules-page Continue-click when the session was
     # opened without a target agent (user starts a session by clicking a
     # vendor tile, then picks the agent to bind on the way through).

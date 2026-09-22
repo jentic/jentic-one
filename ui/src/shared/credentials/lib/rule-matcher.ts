@@ -42,6 +42,14 @@ interface PathMatcher {
 // Kept in step with the Python side's ``_PLACEHOLDER_RE``.
 const PLACEHOLDER_RE = /\{[^}/]+\}/g;
 
+// Nested-unbounded-quantifier catastrophic-backtracking guard —
+// mirrors ``_REDOS_CATASTROPHIC_RE`` in the Python matcher. Kept
+// in lockstep so a rule the server would reject at save time also
+// surfaces as invalid in the rules editor's live preview (rather
+// than shipping to the backend and failing 422). See the Python
+// side for the shape rationale.
+const REDOS_CATASTROPHIC_RE = /[+*][^)]*\)\s*[+*?]/;
+
 function hasPlaceholders(path: string): boolean {
 	return path.includes('{') && PLACEHOLDER_RE.test(path);
 }
@@ -76,6 +84,11 @@ function compileMatcher(path: string | null | undefined, mode: MatchMode): PathM
 		return { mode, literal: null, pattern: null, never: true };
 	}
 	if (mode === 'regex') {
+		if (REDOS_CATASTROPHIC_RE.test(path)) {
+			// Backend refuses this at save time; mirror the fail-closed
+			// verdict so the ops-preview grid stays honest.
+			return { mode: 'regex', literal: null, pattern: null, never: true };
+		}
 		try {
 			return { mode, literal: null, pattern: new RegExp(path), never: false };
 		} catch {
@@ -189,7 +202,7 @@ export function evaluateRules(
  * rule isn't doing anything. Mirrors the fail-closed branches in
  * ``compileMatcher``.
  */
-export type RuleValidityIssue = 'invalid-regex' | 'empty-regex';
+export type RuleValidityIssue = 'invalid-regex' | 'empty-regex' | 'unsafe-regex';
 
 export function ruleValidityIssue(rule: PermissionRule): RuleValidityIssue | null {
 	// The regex mode is where silent failure is most likely — an empty
@@ -199,6 +212,7 @@ export function ruleValidityIssue(rule: PermissionRule): RuleValidityIssue | nul
 	if ((rule.match_mode ?? 'regex') !== 'regex') return null;
 	if (rule.path == null) return null;
 	if (rule.path === '') return 'empty-regex';
+	if (REDOS_CATASTROPHIC_RE.test(rule.path)) return 'unsafe-regex';
 	try {
 		new RegExp(rule.path);
 		return null;

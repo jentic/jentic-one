@@ -2713,6 +2713,7 @@
             "items": {
               "type": "string"
             },
+            "maxItems": 100,
             "title": "Confirmed Scopes",
             "type": "array"
           },
@@ -2720,6 +2721,7 @@
             "items": {
               "$ref": "#/components/schemas/jentic_one__control__web__schemas__permission_rules__PermissionRuleSchema"
             },
+            "maxItems": 100,
             "title": "Permission Rules",
             "type": "array"
           }
@@ -4375,6 +4377,7 @@
             "items": {
               "$ref": "#/components/schemas/jentic_one__control__web__schemas__permission_rules__PermissionRuleSchema"
             },
+            "maxItems": 100,
             "title": "Requested Permission Rules",
             "type": "array"
           },
@@ -4382,6 +4385,7 @@
             "items": {
               "type": "string"
             },
+            "maxItems": 100,
             "title": "Requested Scopes",
             "type": "array"
           },

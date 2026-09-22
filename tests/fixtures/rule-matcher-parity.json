@@ -385,6 +385,44 @@
         "operation_id": null
       },
       "allowed": false
+    },
+    {
+      "name": "catastrophic regex (a+)+ → fail-closed",
+      "rules": [
+        {
+          "effect": "allow",
+          "methods": [
+            "GET"
+          ],
+          "path": "^(a+)+$",
+          "match_mode": "regex"
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "path": "aaaaaaaaaaX",
+        "operation_id": null
+      },
+      "allowed": false
+    },
+    {
+      "name": "catastrophic regex ([^/]+)* → fail-closed even on happy input",
+      "rules": [
+        {
+          "effect": "allow",
+          "methods": [
+            "GET"
+          ],
+          "path": "/repos/([^/]+)*",
+          "match_mode": "regex"
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "path": "/repos/octocat",
+        "operation_id": null
+      },
+      "allowed": false
     }
   ]
 }

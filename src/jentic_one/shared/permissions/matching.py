@@ -44,7 +44,27 @@ MATCH_MODES: tuple[MatchMode, ...] = ("regex", "prefix", "exact")
 MAX_PATTERN_LENGTH: int = 1000
 """Save- and enforce-time cap; matches the ``VARCHAR(1000)`` on ``path``."""
 
-PathValidationCode = Literal["invalid_regex", "pattern_too_long", "empty_path", "unknown_mode"]
+PathValidationCode = Literal[
+    "invalid_regex",
+    "pattern_too_long",
+    "empty_path",
+    "unknown_mode",
+    "unsafe_regex",
+]
+
+# ReDoS guard — nested unbounded quantifiers are the classic catastrophic-
+# backtracking shape (``(a+)+``, ``(a*)*``, ``(.+)+``, ``([^/]+)+``, …).
+# Python's ``re`` engine holds the GIL and offers no per-match timeout, so
+# a well-formed but exponentially-backtracking pattern accepted at save
+# time can freeze a broker worker at enforce time. We refuse patterns
+# where an unbounded quantifier (``+`` / ``*``) directly precedes a
+# closing paren that is itself followed by another unbounded quantifier
+# or ``?`` — the shape underlying every classic ReDoS in our surface.
+# Safer patterns (``[^/]+/[^/]+``, ``/repos/.*``, ``(?:foo|bar)+``) don't
+# nest quantifiers this way and pass through unaffected. The check is
+# coarse and can false-positive on legitimate but ambiguous patterns like
+# ``(a+b)+``; users can rewrite as ``[ab]+`` or non-nested equivalents.
+_REDOS_CATASTROPHIC_RE: re.Pattern[str] = re.compile(r"[+*][^)]*\)\s*[+*?]")
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,6 +157,16 @@ def _check(path: str | None, mode: str) -> PathValidationError | None:
                 reason=f"invalid regex: {exc.msg} (at position {exc.pos})"
                 if exc.pos is not None
                 else f"invalid regex: {exc.msg}",
+            )
+        if _REDOS_CATASTROPHIC_RE.search(path):
+            return PathValidationError(
+                code="unsafe_regex",
+                reason=(
+                    "regex contains nested unbounded quantifiers "
+                    "(e.g. (x+)+, (x*)*, (x+)*) which can cause catastrophic "
+                    "backtracking; rewrite without nesting or use prefix/exact "
+                    "mode with {name} placeholders"
+                ),
             )
     return None
 
