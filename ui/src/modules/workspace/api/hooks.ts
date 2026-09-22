@@ -39,13 +39,13 @@ import type {
 	ApiOperation,
 	ApiRevision,
 	CursorPage,
-	JobStatus,
 	Overlay,
 	WorkspaceApi,
 } from '@/modules/workspace/api/types';
 // The job poll is shared with the spec import (which is itself shared, so the
-// Add-APIs tray can upload a spec) — one wrapper, two callers.
-import { getJob } from '@/shared/credentials/api';
+// Add-APIs tray can upload a spec) — one loop, two callers, one reading of the
+// backend's terminal-status vocabulary.
+import { jobSucceeded, pollJobToTerminal } from '@/shared/credentials/api';
 import { sharedQueryKeys } from '@/shared/api';
 
 /** Stable query-key roots so callers/tests can target invalidation precisely. */
@@ -538,10 +538,6 @@ export function useDeleteApi() {
 	});
 }
 
-const JOB_POLL_INTERVAL_MS = 1500;
-const JOB_POLL_TIMEOUT_MS = 60_000;
-const TERMINAL_STATUSES = new Set(['succeeded', 'failed', 'cancelled', 'error']);
-
 /**
  * Re-import a catalog-backed API to adopt an upstream spec update (Flow-3).
  *
@@ -561,8 +557,9 @@ export function useReimportFromCatalog(key: ApiKey) {
 	const [isReimporting, setIsReimporting] = useState(false);
 	const activeRef = useRef(true);
 
-	// Flip the guard on unmount so an in-flight poll loop stops touching state
-	// (and breaks out at the next interval) instead of warning post-unmount.
+	// Flip the guard on unmount so ONLY the `isReimporting` write below is skipped —
+	// the poll and the invalidations must still finish, or navigating away mid-import
+	// leaves the API's detail and revision caches stale.
 	useEffect(() => {
 		activeRef.current = true;
 		return () => {
@@ -581,20 +578,18 @@ export function useReimportFromCatalog(key: ApiKey) {
 					description: `Pulling the latest spec from the public catalog (job ${job.jobId}). This can take a moment.`,
 				});
 
-				const deadline = Date.now() + JOB_POLL_TIMEOUT_MS;
-				let status: JobStatus = { jobId: job.jobId, status: job.status, error: null };
-				while (!TERMINAL_STATUSES.has(status.status) && Date.now() < deadline) {
-					await new Promise((resolve) => setTimeout(resolve, JOB_POLL_INTERVAL_MS));
-					if (!activeRef.current) break;
-					status = await getJob(job.jobId);
-				}
+				const status = await pollJobToTerminal({
+					jobId: job.jobId,
+					status: job.status,
+					error: null,
+				});
 
 				// Only invalidate once the job has actually landed the new revision;
 				// otherwise the API re-reads stale and the "Update available" badge
 				// stays lit (the bug this poll fixes). A timeout without a terminal
 				// state still invalidates as a best effort — the next fetch is at
 				// worst as stale as before.
-				if (status.status === 'succeeded') {
+				if (jobSucceeded(status)) {
 					toast({
 						variant: 'success',
 						title: 'Re-import complete',

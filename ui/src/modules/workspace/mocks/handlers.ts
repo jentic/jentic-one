@@ -129,11 +129,9 @@ const showcaseApi = {
 };
 
 /**
- * The two APIs the agents fixtures bind credentials to (`github` and
- * `slack.com`). They live here because this is the registry the whole app reads
- * `GET /apis` from: without them an agent's API tiles fall back to the bare
- * machine tuple — no friendly name, no version, no operation count — while the
- * Workspace list they came from can't show them at all.
+ * The two APIs the agents fixtures bind credentials to (`github` and `slack.com`).
+ * They live in this registry because it is the one the app reads `GET /apis` from:
+ * without them an agent's API tiles fall back to the bare machine tuple.
  */
 const githubApi = {
 	api: apiRef('github', 'github-api', '1.1.4', 'api.github.com'),
@@ -962,11 +960,12 @@ export const workspaceHandlers = [
 
 	http.get(`/jobs/:jobId`, ({ params }) => {
 		const jobId = String(params.jobId);
-		const job = jobs.get(jobId) ?? { status: 'succeeded', error: null, polls: 99 };
-		// Transition to succeeded after the first poll so the happy path resolves
-		// quickly in dev/tests without hanging on a fake "queued" forever.
+		const job = jobs.get(jobId) ?? { status: 'completed', error: null, polls: 99 };
+		// Transition to `completed` — the backend's own terminal success spelling
+		// (`shared/models/jobs.py`) — after the first poll, so the happy path
+		// resolves quickly in dev/tests without hanging on a fake "queued" forever.
 		job.polls += 1;
-		if (job.polls >= 1 && job.status === 'queued') job.status = 'succeeded';
+		if (job.polls >= 1 && job.status === 'queued') job.status = 'completed';
 		jobs.set(jobId, job);
 		return HttpResponse.json({
 			job_id: jobId,

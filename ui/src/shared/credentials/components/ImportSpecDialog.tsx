@@ -2,13 +2,13 @@
  * ImportSpecDialog — register a new API by importing an OpenAPI spec.
  *
  * Shared because uploading a spec belongs wherever a selected API is shown
- * (D6): the Workspace page's own Import action, and the agents Add-APIs tray,
+ * — the Workspace page's own Import action, and the agents Add-APIs tray,
  * where "the API I need isn't listed" is a dead end without it.
  *
  * Scoped to **APIs only**
  * (no Arazzo/workflow kind — that's another module) and wired to jentic-one's
  * **async** import contract: `POST /apis` returns 202 + a job id, then the hook
- * polls `/jobs/{id}` to a terminal state. On `succeeded` we toast + close; on
+ * polls `/jobs/{id}` to a terminal state. On `completed` we toast + close; on
  * `failed` we keep the dialog open and surface the job's `error` inline (e.g.
  * the backend embeddings-extra gap verified against the live backend).
  *
@@ -34,7 +34,7 @@ import {
 import { Button, Dialog, Input, Textarea } from '@/shared/ui';
 import { cn } from '@/shared/lib/utils';
 import { OptionCardSelector } from '@/shared/credentials/components/OptionCardSelector';
-import { useImportSpec, type ImportSource } from '@/shared/credentials/api';
+import { jobSucceeded, useImportSpec, type ImportSource } from '@/shared/credentials/api';
 
 type InputMode = 'url' | 'paste' | 'file';
 
@@ -175,7 +175,7 @@ export function ImportSpecDialog({ open, onClose }: ImportSpecDialogProps) {
 
 		try {
 			const job = await importSpec([source]);
-			if (job.status === 'succeeded') {
+			if (jobSucceeded(job)) {
 				resetDraft();
 				onClose();
 				return;

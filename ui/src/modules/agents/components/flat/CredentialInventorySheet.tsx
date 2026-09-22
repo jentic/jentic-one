@@ -1,29 +1,11 @@
 /**
- * CredentialInventorySheet — the org-wide credential inventory (D1 as
- * amended by D20, plan §4.6) opened from the page-level Credentials control
- * on the Agents page header (the dock is agent-scoped only; page level is
- * where org-wide surfaces live). The whole kit already
- * lives in `shared/credentials/` (list, create wizard, edit sheet, delete
- * confirm, connect flow), so this sheet is pure composition — the handlers
- * mirror `CredentialsPage` so behaviour can't drift while both surfaces are
- * live.
+ * CredentialInventorySheet — the org-wide credential inventory, opened from the
+ * page header because the dock is agent-scoped. The kit lives in
+ * `shared/credentials/`, so this sheet is composition.
  *
- * It also owns the **Unbound** filter: a credential no agent is bound to
- * appears on no agent's screen, so this inventory is its only home. "Unbound"
- * is proved by inverting the whole fleet's bindings — the reads the agents
- * surface already holds in cache — and withheld entirely while that join
- * cannot prove it, because an incomplete join can only under-count bindings,
- * i.e. present a live, in-use secret as unused.
- *
- * Container notes:
- *  - The page's sticky `CredentialsToolbar` is page chrome (it pins under
- *    the TopNavbar); inside a sheet its offsets are wrong, so the sheet
- *    renders the same Filter affordance from the same primitives instead
- *    (`SearchInput` + `SegmentedToggle`, per the status-and-filter rule).
- *  - The delete confirm is a native modal dialog — `SheetPrimitive` yields
- *    Escape to it while it's open. The create flow and the edit sheet each
- *    stack as a second `SheetPrimitive`, so closing THIS sheet is guarded
- *    while either is open so their Escape doesn't cascade.
+ * It owns the Unbound filter: a credential no agent is bound to appears on no
+ * agent's screen. Unbound is proved by inverting the whole fleet's bindings, and
+ * withheld while that join cannot prove it.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Filter, Key, Plus, X } from 'lucide-react';
@@ -41,13 +23,14 @@ import {
 	useAgents,
 	useAgentsCredentialBindings,
 	useCredentialUsageTotals,
+	useInvalidateCredentialBindingSurfaces,
 	useRefreshFleetCredentialBindings,
 } from '@/modules/agents/api';
 import {
 	CREDENTIAL_TYPE_LABELS,
 	CREDENTIAL_TYPE_ORDER,
 	CredentialType,
-	useCredentials,
+	useAllCredentials,
 	useDeleteCredential,
 	useRunConnectFlow,
 	type Credential,
@@ -79,10 +62,8 @@ export function CredentialInventorySheet({
 }: {
 	open: boolean;
 	onClose: () => void;
-	/**
-	 * Open onto the create wizard — for a caller whose own label promised a new
-	 * credential (`?credentials=new`, the dashboard's "Add a credential").
-	 */
+	/** Open onto the create wizard — for a caller whose own label promised a new
+	 * credential. */
 	autoOpenCreate?: boolean;
 }) {
 	const headingId = 'credential-inventory-sheet-title';
@@ -96,8 +77,7 @@ export function CredentialInventorySheet({
 	const [deleteTarget, setDeleteTarget] = useState<Credential | null>(null);
 
 	// Spent once per opening: cancelling the wizard leaves the operator in the
-	// inventory, which is a legitimate place to be — reopening it would trap
-	// them in a form they just dismissed.
+	// inventory, and reopening it would trap them in a form they just dismissed.
 	const createSignalSpent = useRef(false);
 	useEffect(() => {
 		if (!open) {
@@ -109,25 +89,20 @@ export function CredentialInventorySheet({
 		setCreateOpen(true);
 	}, [open, autoOpenCreate]);
 
-	const { data, isLoading, error, refetch, isFetching } = useCredentials();
+	// Every page, not just the first: the header promises "Every credential in this
+	// workspace", and the Unbound count is taken over the whole inventory.
+	const credentialsSource = useAllCredentials();
 	const deleteMutation = useDeleteCredential();
-	// Cache-aware connect: a successful sign-in invalidates the whole
-	// credentials slice, so the flat surface's tile grid / strip hints
-	// (joined off the separate drained listAll query) refresh along with
-	// this sheet's own list.
+	// No agent id: this sheet is the ORG-wide inventory, and every sweep it needs
+	// is the `'credential'` scope, which is agent-agnostic by construction.
+	const invalidateBindingSurfaces = useInvalidateCredentialBindingSurfaces(null);
+	// A successful sign-in invalidates the whole credentials slice, so the flat
+	// surface's tiles and strip hints refresh along with this sheet's list.
 	const runConnect = useRunConnectFlow();
 
-	// Which credentials the fleet actually uses, by inverting every agent's
-	// binding list — the same reads the agents surface already made, so this
-	// costs no extra round-trip and never fans out to a per-credential
-	// `GET /credentials/{id}/agents`. Archived agents are rightly outside the
-	// join: archiving sweeps their bindings.
-	//
-	// All of it is gated on `open`: the host mounts this sheet for the whole
-	// life of the page, and a closed sheet has no question to answer — it must
-	// not drain the roster or fan out N binding reads behind the operator's
-	// back, nor run a second drain against the one the surface below already
-	// has in flight.
+	// Which credentials the fleet uses, by inverting every agent's binding list — the
+	// same reads the agents surface already made. Archived agents are outside the
+	// join: archiving sweeps their bindings. Gated on `open`.
 	const fleet = useAgents({ status: 'all', enabled: open });
 	const {
 		fetchNextPage,
@@ -152,19 +127,15 @@ export function CredentialInventorySheet({
 	const bindingsByAgent = useAgentsCredentialBindings(open ? fleetAgentIds : []);
 	const refreshFleetBindings = useRefreshFleetCredentialBindings();
 
-	// Credential id → how many agents hold it. `null` = cannot be proved, which
-	// is NOT the same as "nothing is bound". A partial fleet or a missing
-	// bindings list can only make a bound credential look unbound — the one
-	// error that invites deleting a secret something is using — so the filter
-	// withholds its answer instead.
+	// Credential id → how many agents hold it. `null` = cannot be proved, which is
+	// NOT "nothing is bound": a partial fleet makes a bound credential look unbound.
 	const agentsPerCredential = useMemo(() => {
 		if (fleetPending || hasNextPage || fleetError) return null;
 		if (fleetAgentIds.some((id) => !bindingsByAgent.has(id))) return null;
 		const counts = new Map<string, number>();
 		for (const bindings of bindingsByAgent.values()) {
 			// One agent counts once per credential even when it holds several
-			// bindings to it: the figure answers "how many agents", not "how
-			// many bindings".
+			// bindings: the figure answers "how many agents", not "how many bindings".
 			for (const credentialId of new Set(bindings.map((b) => b.credentialId))) {
 				counts.set(credentialId, (counts.get(credentialId) ?? 0) + 1);
 			}
@@ -172,23 +143,18 @@ export function CredentialInventorySheet({
 		return counts;
 	}, [fleetPending, hasNextPage, fleetError, fleetAgentIds, bindingsByAgent]);
 	const unboundUnknown = bindingFilter === 'unbound' && agentsPerCredential == null;
-	// The roster drain is the one phase that is provably still in flight; a
-	// bindings list that never arrives is indistinguishable from one still on
-	// the way, so anything past the drain omits the figure rather than leaving
-	// a skeleton pulsing over data that may never come.
+	// The roster drain is the one phase provably still in flight, so anything past it
+	// omits the figure rather than pulsing a skeleton forever.
 	const fleetJoinLoading = fleetPending || hasNextPage || isFetchingNextPage;
 
-	const credentials = useMemo(() => data?.data ?? [], [data]);
+	const credentials = credentialsSource.items;
 
-	// How many credentials no agent uses — the same gate: a count is only
-	// offered when the fleet join can prove it, never estimated from a partial
-	// one. Counted over the whole inventory, not the search-narrowed view, so
-	// the number answers "how many are sitting unused" rather than "how many of
-	// what I'm looking at".
+	// Counted over the whole inventory, not the search-narrowed view, so the
+	// inventory drain must be whole too — not merely the fleet join.
 	const unboundCount = useMemo(() => {
-		if (agentsPerCredential == null) return null;
+		if (agentsPerCredential == null || !credentialsSource.complete) return null;
 		return credentials.filter((c) => !agentsPerCredential.has(c.credential_id)).length;
-	}, [agentsPerCredential, credentials]);
+	}, [agentsPerCredential, credentialsSource.complete, credentials]);
 	const bindingFilterOptions = useMemo(
 		() => [
 			{ value: 'any' as BindingFilter, label: 'Any agent' },
@@ -215,11 +181,8 @@ export function CredentialInventorySheet({
 		});
 	}, [credentials, search, typeFilter, bindingFilter, agentsPerCredential]);
 
-	// The cards' two usage figures, resolved per credential. Both are
-	// three-state, and the gates differ: the fleet count is exact or withheld,
-	// while the call volume comes off a top-N leaderboard — so a credential
-	// missing from a TRUNCATED list is unknown (omit), and only missing from a
-	// complete one proves zero traffic.
+	// Both usage figures are three-state with different gates: the fleet count is
+	// exact or withheld; a credential missing from a TRUNCATED top-N is unknown.
 	const usage = useCredentialUsageTotals(open);
 	const usageFor = useCallback(
 		(cred: Credential) => ({
@@ -236,11 +199,8 @@ export function CredentialInventorySheet({
 		[agentsPerCredential, fleetJoinLoading, usage.isLoading, usage.data],
 	);
 
-	// The nested edit sheet and create flow are each a second SheetPrimitive:
-	// their Escape/backdrop must not also tear down the inventory (every
-	// sheet's document-level Escape handler fires on the same keydown, so the
-	// guard reads the still-unflushed state). The delete confirm needs no guard
-	// — SheetPrimitive itself yields Escape to an open native modal `<dialog>`.
+	// The nested sheets each have a document-level Escape handler firing on the same
+	// keydown, so the guard reads still-unflushed state. The delete confirm needs none.
 	const nestedSheetOpen = editId != null || createOpen;
 	const guardedClose = (): void => {
 		if (nestedSheetOpen) return;
@@ -252,10 +212,8 @@ export function CredentialInventorySheet({
 		setEditId(cred.credential_id);
 	};
 
-	// Mirrors CredentialsPage.handleConnectAfterCreate: an OAuth credential
-	// that never completes its first sign-in is unusable, so an abandoned /
-	// timed-out / failed handshake discards it. `redirected` must NOT clean
-	// up — the user is mid-flow in this tab.
+	// Mirrors CredentialsPage.handleConnectAfterCreate: an abandoned OAuth handshake
+	// discards the credential. `redirected` must NOT clean up — the user is mid-flow.
 	const handleConnectAfterCreate = async (credentialId: string): Promise<void> => {
 		toast({ title: 'Opening sign-in…' });
 		const discard = async (): Promise<void> => {
@@ -330,8 +288,12 @@ export function CredentialInventorySheet({
 
 	const confirmDelete = (): void => {
 		if (!deleteTarget) return;
-		deleteMutation.mutate(deleteTarget.credential_id, {
+		const credentialId = deleteTarget.credential_id;
+		deleteMutation.mutate(credentialId, {
 			onSuccess: () => {
+				// The delete hook refreshes the credentials slice only, but the surface behind
+				// keeps a binding query per agent — org-wide scope, since every agent loses it.
+				invalidateBindingSurfaces(credentialId, 'credential');
 				toast({ title: 'Credential deleted', variant: 'success' });
 				setDeleteTarget(null);
 			},
@@ -374,10 +336,8 @@ export function CredentialInventorySheet({
 					</header>
 
 					<div className="border-border flex flex-wrap items-center gap-2 border-b px-5 py-3">
-						{/* Risk 6: a credential bound to zero agents is reachable from
-						    no agent's screen, so this inventory is the only place it
-						    can be found — which makes this the sheet's one unique
-						    power, and it leads the toolbar with the weight to match. */}
+						{/* A credential bound to zero agents is reachable from no agent's screen —
+						    the sheet's one unique power, so it leads the toolbar. */}
 						<div className="flex shrink-0 items-center gap-2">
 							<span className="text-foreground text-xs font-semibold">Used by</span>
 							<SegmentedToggle<BindingFilter>
@@ -395,7 +355,7 @@ export function CredentialInventorySheet({
 							icon={<Filter className="h-3.5 w-3.5" />}
 							placeholder="Filter credentials…"
 							aria-label="Filter credentials"
-							disabled={!isLoading && credentials.length === 0}
+							disabled={!credentialsSource.isPending && credentials.length === 0}
 							className="min-w-40 flex-1"
 						/>
 						<SegmentedToggle<CredentialTypeFilter>
@@ -406,16 +366,15 @@ export function CredentialInventorySheet({
 							ariaLabel="Filter by credential type"
 						/>
 						<RefreshButton
-							onRefresh={(): void => void refetch()}
-							pending={isFetching}
+							onRefresh={credentialsSource.refresh}
+							pending={credentialsSource.isFetching}
 						/>
 					</div>
 
 					<div className="flex-1 overflow-y-auto px-5 py-4">
 						{unboundUnknown ? (
-							// Withheld, not guessed: the list would read as "these
-							// are used by nobody", and the operator's next move on
-							// that reading is to delete them.
+							// Withheld, not guessed: the list would read as "used by nobody",
+							// and the next move on that reading is to delete them.
 							<div
 								role="status"
 								className="border-border bg-muted/40 flex flex-wrap items-center gap-3 rounded-lg border px-4 py-3"
@@ -440,8 +399,8 @@ export function CredentialInventorySheet({
 						) : (
 							<CredentialsList
 								credentials={filtered}
-								isLoading={isLoading}
-								error={error as Error | null}
+								isLoading={credentialsSource.isPending}
+								error={credentialsSource.error}
 								onAdd={(): void => setCreateOpen(true)}
 								onEdit={openEdit}
 								onDelete={setDeleteTarget}
@@ -473,9 +432,8 @@ export function CredentialInventorySheet({
 				</div>
 			</SheetPrimitive>
 
-			{/* Conditionally mounted (LifecycleDialogs pattern): the wizard's
-			    provider/API text must not sit in the DOM of the host surface
-			    while it is closed. */}
+			{/* Conditionally mounted: the wizard's provider/API text must not sit in
+			    the host surface's DOM while it is closed. */}
 			{createOpen && (
 				<CreateCredentialFlow
 					open

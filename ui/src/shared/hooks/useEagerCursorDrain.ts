@@ -1,10 +1,7 @@
 import { useEffect } from 'react';
 
-/**
- * The slice of a TanStack `useInfiniteQuery` result the drain effect needs.
- * Structural (not the full query object) so callers can pass the query result
- * directly or a hand-built shim in tests.
- */
+/** The slice of a TanStack `useInfiniteQuery` result the drain effect needs.
+ * Structural, so tests can pass a hand-built shim. */
 export interface EagerCursorDrainSource {
 	hasNextPage: boolean;
 	isFetchingNextPage: boolean;
@@ -14,17 +11,10 @@ export interface EagerCursorDrainSource {
 }
 
 /**
- * Eagerly drain a cursor-paginated infinite query: whenever another page
- * exists and no fetch is in flight, request it — until the roster is
- * complete. For surfaces with no "Load more" affordance (a pill strip, a
- * join source) that need the full list.
- *
- * Guarded against the TanStack v5 failure mode: a failed `fetchNextPage`
- * (after retries) puts the query in error state while `hasNextPage` stays
- * true and `isFetchingNextPage` returns false — an unguarded effect would
- * re-fire forever, hammering the endpoint. The drain stops while `isError`
- * is set; the caller renders a retry affordance whose `fetchNextPage()`
- * clears the error state on success, which resumes the drain naturally.
+ * Eagerly drain a cursor-paginated infinite query: request the next page whenever
+ * one exists and nothing is in flight, for surfaces with no "Load more". The drain
+ * stops while `isError` is set — a failed `fetchNextPage` leaves `hasNextPage` true
+ * and `isFetchingNextPage` false, so an unguarded effect would re-fire forever.
  */
 export function useEagerCursorDrain({
 	hasNextPage,
@@ -39,12 +29,8 @@ export function useEagerCursorDrain({
 }
 
 /**
- * Return contract for a hooks-layer "all pages" list read built on
- * {@link useEagerCursorDrain}. Deliberately NOT the raw infinite-query
- * result: consumers get the flattened rows plus exactly the drain facts an
- * honest surface needs — `complete` (every page loaded successfully; until
- * then the list may be missing rows, so derived states must not be
- * asserted) and `retry` (resume after a failed page).
+ * Return contract for a hooks-layer "all pages" read: the flattened rows plus
+ * `complete` (until then, derived states must not be asserted) and `retry`.
  */
 export interface DrainedList<T> {
 	/** Every row loaded so far, flattened across pages (memoised). */
@@ -57,4 +43,9 @@ export interface DrainedList<T> {
 	complete: boolean;
 	/** Retry after a failure; a success resumes the eager drain. */
 	retry: () => void;
+	/** Re-read every page already loaded, for a surface with a refresh verb.
+	 * Distinct from {@link retry}, which resumes a stalled drain. */
+	refresh: () => void;
+	/** A read is in flight — any page, first or subsequent. Drives a spinner. */
+	isFetching: boolean;
 }

@@ -26,6 +26,7 @@ import type {
 	ConnectChallengeResponse,
 	ConnectRequestBody,
 	CredentialAgentListResponse,
+	CredentialAgentResponse,
 	CredentialCreateRequest,
 	CredentialCreateResponse,
 	CredentialListResponse,
@@ -38,14 +39,9 @@ import { updateCredential } from './client';
 export const credentialKeys = {
 	all: ['credentials'] as const,
 	list: (params: ListCredentialsParams = {}) => ['credentials', 'list', params] as const,
-	/**
-	 * Every page of the credentials list ({@link useAllCredentials}). Its own
-	 * key — an infinite query cannot share a cache entry with the plain
-	 * {@link useCredentials} query (different cache shapes) — but nested
-	 * under the same `['credentials', 'list', …]` prefix so the existing
-	 * `credentialKeys.all` invalidations (create / update / delete) sweep it
-	 * without any call-site change.
-	 */
+	/** Every page of {@link useAllCredentials} — its own key (an infinite query
+	 * can't share one with {@link useCredentials}) but under the same
+	 * `['credentials', 'list', …]` prefix so existing invalidations sweep it. */
 	listAll: () => ['credentials', 'list', 'all-pages'] as const,
 	detail: (id: string) => ['credentials', 'detail', id] as const,
 	/**
@@ -56,6 +52,10 @@ export const credentialKeys = {
 	 * never shows a binding the agent side just changed.
 	 */
 	agents: (id: string) => ['credentials', 'agents', id] as const,
+	/** Every page of {@link useAllCredentialAgents} — own key for the same reason
+	 * as {@link credentialKeys.listAll}, under the same prefix so the agents
+	 * module's bind/unbind invalidations sweep it. */
+	agentsAll: (id: string) => ['credentials', 'agents', id, 'all-pages'] as const,
 };
 
 /**
@@ -87,16 +87,10 @@ export function useCredentials(
 }
 
 /**
- * EVERY credential in the workspace — the cursor pages drained eagerly
- * (pagination policy owned here, like the first-page {@link useCredentials}).
- *
- * For client-side join consumers (the flat Agents surface composes
- * agent → binding → credential tiles): joining against a first-page-only
- * list silently drops the auth label and awaiting-consent detection of any
- * credential past page 1. `complete` is true only when every page loaded
- * successfully — until then the join may not assert credential-derived
- * states it cannot prove. `retry` refetches the first page when nothing
- * loaded, else the failed next page; success resumes the drain.
+ * EVERY credential in the workspace — the cursor pages drained eagerly, for
+ * consumers that join against credentials rather than list them. `complete` is
+ * true only when every page loaded; until then the join may not assert
+ * credential-derived states like the auth label or awaiting-consent.
  */
 export function useAllCredentials(): DrainedList<CredentialRedactedResponse> {
 	const query = useInfiniteQuery({
@@ -114,6 +108,7 @@ export function useAllCredentials(): DrainedList<CredentialRedactedResponse> {
 		if (isError && !data) void refetch();
 		else void fetchNextPage();
 	}, [isError, data, refetch, fetchNextPage]);
+	const refresh = useCallback(() => void refetch(), [refetch]);
 
 	return {
 		items,
@@ -121,6 +116,8 @@ export function useAllCredentials(): DrainedList<CredentialRedactedResponse> {
 		error: query.error,
 		complete: query.isSuccess && !query.hasNextPage,
 		retry,
+		refresh,
+		isFetching: query.isFetching,
 	};
 }
 
@@ -149,6 +146,46 @@ export function useCredentialAgents(
 		queryFn: () => listCredentialAgents(id as string),
 		enabled: (opts.enabled ?? true) && !!id,
 	});
+}
+
+/**
+ * EVERY agent bound to a credential. Separate from the first-page
+ * {@link useCredentialAgents} because the delete confirm states a COUNT, and on
+ * `limit=50` a credential bound to 88 agents would read as 50. `complete` is
+ * false until every page lands, so the caller can withhold the figure.
+ */
+export function useAllCredentialAgents(
+	id: string | undefined,
+	opts: { enabled?: boolean } = {},
+): DrainedList<CredentialAgentResponse> {
+	const enabled = (opts.enabled ?? true) && !!id;
+	const query = useInfiniteQuery({
+		queryKey: credentialKeys.agentsAll(id ?? '__none__'),
+		queryFn: ({ pageParam }): Promise<CredentialAgentListResponse> =>
+			listCredentialAgents(id as string, { cursor: pageParam }),
+		initialPageParam: null as string | null,
+		getNextPageParam: (last) => (last.has_more ? (last.next_cursor ?? null) : null),
+		enabled,
+	});
+	useEagerCursorDrain(query);
+
+	const { data, isError, refetch, fetchNextPage } = query;
+	const items = useMemo(() => data?.pages.flatMap((page) => page.data) ?? [], [data]);
+	const retry = useCallback(() => {
+		if (isError && !data) void refetch();
+		else void fetchNextPage();
+	}, [isError, data, refetch, fetchNextPage]);
+	const refresh = useCallback(() => void refetch(), [refetch]);
+
+	return {
+		items,
+		isPending: query.isPending,
+		error: query.error,
+		complete: query.isSuccess && !query.hasNextPage,
+		retry,
+		refresh,
+		isFetching: query.isFetching,
+	};
 }
 
 /** Create a credential. The one-time `secret` is on the resolved value. */
@@ -361,19 +398,10 @@ export async function runConnectFlow(
 }
 
 /**
- * {@link runConnectFlow} bound to the query cache — the hooks-layer entry
- * point for view code (CredentialsPage, the dock's inventory sheet).
- *
- * A completed sign-in changes credential state that OTHER surfaces join
- * against (the flat Agents surface's dashed "waiting for sign-in" tiles and
- * "N to set up" strip hints read the drained {@link useAllCredentials}
- * query), so a successful connect must invalidate the whole `credentials`
- * cache slice — a caller-local `refetch()` of one first-page query would
- * leave those joins stale. `timeout` also invalidates: the handshake may
- * have landed just after we stopped watching, so a re-read is the honest
- * move. `cancelled` did a final authoritative read inside the flow and found
- * no connection, and `redirected` means this document is navigating away —
- * neither has anything to refresh.
+ * {@link runConnectFlow} bound to the query cache — the hooks-layer entry point for
+ * view code. A completed sign-in changes state other surfaces join against, so it
+ * invalidates the whole `credentials` slice; `timeout` invalidates too, since the
+ * handshake may have landed just after we stopped watching.
  */
 export function useRunConnectFlow(): (
 	id: string,
@@ -395,8 +423,7 @@ export function useRunConnectFlow(): (
 export type { ListCredentialsParams } from './client';
 export * from './types';
 
-// Drained-list return contract of `useAllCredentials` / `useAllApis` — re-
-// exported so join consumers can type their props off this module's surface.
+// Drained-list return contract of the `useAll*` hooks, for join consumers.
 export type { DrainedList } from '@/shared/hooks/useEagerCursorDrain';
 
 export {
@@ -412,15 +439,15 @@ export {
 	type UseImportSpec,
 } from './apis-hooks';
 
-// Spec-import wire shapes — the import dialog builds an `ImportSource` and
-// reads a terminal `JobStatus`, so both cross the hooks boundary.
+// Spec-import wire shapes — the import dialog builds one and reads the other.
 export type { ImportJob, ImportSource, JobStatus } from './apis';
 
-// The `/jobs/{id}` poll, exported from the data tier rather than wrapped in a
-// hook: async-import callers drive their own poll loop and decide what a
-// terminal state means. Feature-module HOOKS may import it (the Workspace
-// module's catalog re-import does); view code must not.
+// The `/jobs/{id}` poll: async-import callers drive their own loop. Feature-module
+// HOOKS may import it; view code must not.
 export { getJob } from './apis';
+
+// The job poll and its success test, shared with the workspace catalog re-import.
+export { jobSucceeded, pollJobToTerminal } from './apis-hooks';
 
 // Re-export the API/catalog response models so view code can stay within the
 // module boundary (the lint rule blocks direct `@/shared/api` imports).

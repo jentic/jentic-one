@@ -45,13 +45,9 @@ export const apiPickerKeys = {
 	apisList: () => ['credentials', 'apis', 'list'] as const,
 	catalogList: () => ['credentials', 'catalog', 'list'] as const,
 	apis: (vendor: string | null) => [...apiPickerKeys.apisList(), { vendor }] as const,
-	/**
-	 * Every page of the workspace API list ({@link useAllApis}). Its own key —
-	 * an infinite query cannot share a cache entry with the plain
-	 * {@link useApis} query — but nested under the `apisList()` prefix so the
-	 * existing import invalidation ({@link useImportCatalogEntry}) sweeps it
-	 * without any call-site change.
-	 */
+	/** Every page of {@link useAllApis} — its own key (an infinite query cannot
+	 * share one with {@link useApis}) but under the `apisList()` prefix so import
+	 * invalidation sweeps it. */
 	apisAll: () => [...apiPickerKeys.apisList(), 'all-pages'] as const,
 	apiSpec: (vendor: string, name: string, version: string) =>
 		['credentials', 'apis', 'spec', vendor, name, version] as const,
@@ -93,16 +89,10 @@ export function useApis(params: { vendor?: string | null } = {}): UseQueryResult
 }
 
 /**
- * EVERY workspace API — the cursor pages drained eagerly (pagination policy
- * owned here, like the first-page {@link useApis}).
- *
- * For client-side join consumers (the flat Agents surface resolves each
- * binding's served APIs against this registry): joining against a
- * first-page-only list drops any imported API past page 1 into the honest
- * but wrong "not imported" fallback tile. `complete` is true only when
- * every page loaded successfully — until then the join may not assert
- * registry-derived states. `retry` refetches the first page when nothing
- * loaded, else the failed next page; success resumes the drain.
+ * EVERY workspace API — the cursor pages drained eagerly, for consumers that
+ * join against the registry rather than list it. `complete` is true only when
+ * every page loaded; until then a join may not assert registry-derived states,
+ * or an imported API past page 1 lands in the "not imported" fallback tile.
  */
 export function useAllApis(): DrainedList<ApiResponse> {
 	const query = useInfiniteQuery({
@@ -119,6 +109,7 @@ export function useAllApis(): DrainedList<ApiResponse> {
 		if (isError && !data) void refetch();
 		else void fetchNextPage();
 	}, [isError, data, refetch, fetchNextPage]);
+	const refresh = useCallback(() => void refetch(), [refetch]);
 
 	return {
 		items,
@@ -126,6 +117,8 @@ export function useAllApis(): DrainedList<ApiResponse> {
 		error: query.error,
 		complete: query.isSuccess && !query.hasNextPage,
 		retry,
+		refresh,
+		isFetching: query.isFetching,
 	};
 }
 
@@ -254,7 +247,46 @@ export function useImportCatalogEntry() {
 
 const JOB_POLL_INTERVAL_MS = 1500;
 const JOB_POLL_TIMEOUT_MS = 60_000;
-const TERMINAL_STATUSES = new Set(['succeeded', 'failed', 'cancelled', 'error']);
+
+/** Job states the backend never advances past, spelled as its `JobStatus` enum
+ * serialises them — any other spelling polls a finished job until the timeout. */
+const TERMINAL_JOB_STATUSES = new Set(['completed', 'failed', 'cancelled', 'dead_letter']);
+
+/** The one terminal state that means the job did the work it was queued for. */
+export function jobSucceeded(status: JobStatus): boolean {
+	return status.status === 'completed';
+}
+
+/**
+ * Poll `/jobs/{id}` to a terminal state or the deadline, returning the last status
+ * read. A failed *read* is not a failed job — a transient 5xx, or `apis:write`
+ * without `jobs:read` — so a rejected poll runs on to the deadline.
+ */
+export async function pollJobToTerminal(initial: JobStatus): Promise<JobStatus> {
+	const deadline = Date.now() + JOB_POLL_TIMEOUT_MS;
+	let status = initial;
+	let readError: string | null = null;
+
+	while (!TERMINAL_JOB_STATUSES.has(status.status) && Date.now() < deadline) {
+		await new Promise((resolve) => setTimeout(resolve, JOB_POLL_INTERVAL_MS));
+		try {
+			status = await getJob(status.jobId);
+			readError = null;
+		} catch (error: unknown) {
+			readError = error instanceof Error ? error.message : String(error);
+		}
+	}
+
+	// Timed out having never managed to read the job: say that, rather than
+	// letting the caller render the stale `queued` as a verdict on the import.
+	if (!TERMINAL_JOB_STATUSES.has(status.status) && readError) {
+		return {
+			...status,
+			error: `Couldn't check the import job (${readError}). The import may still be running.`,
+		};
+	}
+	return status;
+}
 
 export interface UseImportSpec {
 	importSpec: (sources: ImportSource[]) => Promise<JobStatus>;
@@ -262,27 +294,18 @@ export interface UseImportSpec {
 }
 
 /**
- * Enqueue a spec import via `POST /apis` and poll the job to a terminal state.
- *
- * Import is async: 202 returns a job id, then we poll `/jobs/{id}` until
- * `succeeded`/`failed`. The caller gets the terminal `JobStatus` rather than a
- * thrown error on failure, so the dialog can stay open and show the job's own
- * `error` (per the dialog state-lifecycle convention) instead of losing a
- * pasted spec to a toast.
- *
- * A successful import materialises a new workspace API, so it invalidates both
- * the Workspace list (`sharedQueryKeys.workspaceApis` — owned by that module,
- * reachable from here) and the picker's own list slice. The second one is what
- * makes the uploaded API appear in the Add-APIs tray the operator uploaded it
- * from; without it they would upload a spec and still not find the API.
+ * Enqueue a spec import and poll the job to a terminal state. Returns the terminal
+ * `JobStatus` rather than throwing, so the dialog can show the job's own `error`
+ * instead of losing a pasted spec to a toast. Invalidates both the Workspace list
+ * and the picker's slice, so the new API is findable where it was uploaded.
  */
 export function useImportSpec(): UseImportSpec {
 	const queryClient = useQueryClient();
 	const [isImporting, setIsImporting] = useState(false);
 	const activeRef = useRef(true);
 
-	// Flip the guard on unmount so an in-flight poll loop stops touching state
-	// (and breaks out at the next interval) instead of warning post-unmount.
+	// Flip the guard on unmount so only the `isImporting` write below is skipped —
+	// the poll and the invalidations must still finish, or the API lists go stale.
 	useEffect(() => {
 		activeRef.current = true;
 		return () => {
@@ -295,16 +318,13 @@ export function useImportSpec(): UseImportSpec {
 			setIsImporting(true);
 			try {
 				const job = await importSources(sources);
-				const deadline = Date.now() + JOB_POLL_TIMEOUT_MS;
-				let status: JobStatus = { jobId: job.jobId, status: job.status, error: null };
+				const status = await pollJobToTerminal({
+					jobId: job.jobId,
+					status: job.status,
+					error: null,
+				});
 
-				while (!TERMINAL_STATUSES.has(status.status) && Date.now() < deadline) {
-					await new Promise((resolve) => setTimeout(resolve, JOB_POLL_INTERVAL_MS));
-					if (!activeRef.current) break;
-					status = await getJob(job.jobId);
-				}
-
-				if (status.status === 'succeeded') {
+				if (jobSucceeded(status)) {
 					toast({
 						variant: 'success',
 						title: 'API imported',

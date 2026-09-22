@@ -1,11 +1,8 @@
 /**
  * CredentialInventorySheet — the page-level org-wide inventory trigger and
- * sheet (D20). The dock is agent-scoped only, so the wallet verb lives on
- * the Agents page header; the sheet itself (presentation, nested-overlay
- * Escape behaviour, focus restore) is unchanged from its dock-hosted days.
- * The sheet's list/create/edit/delete internals keep their own coverage in
- * `shared/credentials`; these specs pin the trigger's placement, the
- * org-wide scope, reachability without a fleet, and the 390px viewport.
+ * sheet. The sheet's list/create/edit/delete internals keep their own coverage
+ * in `shared/credentials`; these specs pin the trigger's placement, the org-wide
+ * scope, reachability without a fleet, and the 390px viewport.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { http, HttpResponse } from 'msw';
@@ -53,7 +50,7 @@ function headerTrigger() {
 	return screen.getByRole('button', { name: 'Credentials' });
 }
 
-describe('CredentialInventorySheet — page-level org-wide inventory (D20)', () => {
+describe('CredentialInventorySheet — page-level org-wide inventory', () => {
 	/** The two secrets the agents fixture binds, by the ids it binds them under. */
 	function inventorySeed() {
 		return [
@@ -103,7 +100,7 @@ describe('CredentialInventorySheet — page-level org-wide inventory (D20)', () 
 		expect(sheet.getByText('GitHub PAT')).toBeInTheDocument();
 		expect(sheet.getByRole('button', { name: /Add credential/ })).toBeEnabled();
 
-		await checkA11y(document.body);
+		await checkA11y(document.body, { modal: true });
 	});
 
 	it('stays reachable with an empty fleet — the inventory is not agent-scoped', async () => {
@@ -188,9 +185,7 @@ describe('CredentialInventorySheet — page-level org-wide inventory (D20)', () 
 			// A caller whose own label promised a form ("Add a credential") gets
 			// the form, not a list with a button on it.
 			expect(await screen.findByRole('dialog', { name: /Choose an API/ })).toBeVisible();
-			// And it arrives as a drawer stacked on the inventory, not as a
-			// centred modal over it: adding a credential is a step taken from the
-			// inventory, which stays behind it.
+			// And as a drawer stacked on the inventory, not a centred modal over it.
 			await waitFor(() => expect(screen.getAllByTestId('sheet-primitive')).toHaveLength(2));
 			expect(document.querySelector('dialog[open]')).toBeNull();
 
@@ -280,18 +275,16 @@ describe('CredentialInventorySheet — page-level org-wide inventory (D20)', () 
 
 			await user.click(within(toggle()).getByRole('button', { name: /^Unbound/ }));
 
-			// Both seeded credentials are bound, so the answer is "none", and the
-			// copy has to be about the filter — not "No credentials stored",
-			// which would be a false claim about the inventory.
+			// Both seeded credentials are bound, so the copy has to be about the filter —
+			// not "No credentials stored", a false claim about the inventory.
 			expect(await sheet.findByText('Every credential is in use')).toBeInTheDocument();
 			expect(sheet.queryByText('No credentials stored')).not.toBeInTheDocument();
 		});
 
 		it("withholds the answer while a single agent's bindings are missing", async () => {
 			seedWithOrphan();
-			// One agent's bindings never arrive. An incomplete join can only
-			// under-count, so every credential that agent holds would be listed
-			// as unused — the one error that invites deleting a live secret.
+			// One agent's bindings never arrive. An incomplete join can only under-count,
+			// so a credential that agent holds would be listed as unused.
 			worker.use(
 				http.get('/agents/:id/credentials', ({ params }) =>
 					params.id === 'agnt_disabled_1'
@@ -327,10 +320,8 @@ describe('CredentialInventorySheet — page-level org-wide inventory (D20)', () 
 
 	describe('the cards’ usage figures', () => {
 		beforeEach(() => {
-			// A third secret on top of the two bound ones, chosen because the
-			// mocked usage leaderboard says nothing about it: its card is where
-			// "no calls in 7d" has to be PROVEN off a complete list rather than
-			// assumed from an absence.
+			// A third secret the mocked usage leaderboard says nothing about: its card is
+			// where "no calls in 7d" has to be proven off a complete list.
 			resetCredentialsStore([
 				...inventorySeed(),
 				makeMockCredential({
@@ -342,11 +333,8 @@ describe('CredentialInventorySheet — page-level org-wide inventory (D20)', () 
 			]);
 		});
 
-		/**
-		 * The inventory card for a credential. Scoped to the sheet: the same
-		 * credential name is also printed on the API tiles of the surface
-		 * underneath.
-		 */
+		/** The inventory card for a credential — scoped to the sheet, since the same
+		 * name is also printed on the API tiles underneath. */
 		function cardFor(name: string): HTMLElement {
 			const heading = within(screen.getByTestId('sheet-primitive')).getByText(name);
 			const card = heading.closest('[data-testid="credential-card"]');
@@ -354,11 +342,8 @@ describe('CredentialInventorySheet — page-level org-wide inventory (D20)', () 
 			return card as HTMLElement;
 		}
 
-		/**
-		 * A `top` list at the endpoint's `top_limit` ceiling, i.e. truncated —
-		 * none of its rows is a seeded credential, so every card's volume is
-		 * *unknown* rather than zero.
-		 */
+		/** A `top` list at the endpoint's ceiling, i.e. truncated — no row is a seeded
+		 * credential, so every card's volume is *unknown* rather than zero. */
 		function truncatedUsage() {
 			const until = Math.floor(Date.now() / 1000);
 			return {
@@ -396,9 +381,8 @@ describe('CredentialInventorySheet — page-level org-wide inventory (D20)', () 
 					within(cardFor('Slack bot token')).getByTestId('cred-used-by'),
 				).toHaveTextContent('used by 1 agent'),
 			);
-			// A credential the leaderboard names carries its own figure. The
-			// number itself is the mock's to scale against the request window,
-			// so what is pinned here is that the id resolved to a count at all.
+			// A credential the leaderboard names carries its own figure; what is pinned is
+			// that the id resolved to a count at all.
 			await waitFor(() =>
 				expect(
 					within(cardFor('Slack bot token')).getByTestId('cred-calls-7d'),
