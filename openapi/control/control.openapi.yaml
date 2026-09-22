@@ -2397,22 +2397,6 @@ components:
       - checks
       title: EvaluationResponse
       type: object
-    EventAcknowledgeRequest:
-      description: Request body for acknowledging an event.
-      properties:
-        acknowledged:
-          title: Acknowledged
-          type: boolean
-        note:
-          anyOf:
-          - maxLength: 2000
-            type: string
-          - type: 'null'
-          title: Note
-      required:
-      - acknowledged
-      title: EventAcknowledgeRequest
-      type: object
     EventLinks:
       description: HAL-style links for an event.
       properties:
@@ -2464,20 +2448,6 @@ components:
       properties:
         _links:
           $ref: '#/components/schemas/EventLinks'
-        acknowledged:
-          title: Acknowledged
-          type: boolean
-        acknowledged_at:
-          anyOf:
-          - format: date-time
-            type: string
-          - type: 'null'
-          title: Acknowledged At
-        acknowledged_by:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Acknowledged By
         actor_id:
           anyOf:
           - type: string
@@ -2526,7 +2496,6 @@ components:
       - severity
       - summary
       - requires_action
-      - acknowledged
       - created_at
       - _links
       title: EventResponse
@@ -14522,14 +14491,6 @@ paths:
           - type: 'null'
           title: Requires Action
       - in: query
-        name: acknowledged
-        required: false
-        schema:
-          anyOf:
-          - type: boolean
-          - type: 'null'
-          title: Acknowledged
-      - in: query
         name: from
         required: false
         schema:
@@ -14832,76 +14793,6 @@ paths:
       security:
       - BearerAuth: []
       summary: Get Event
-      tags:
-      - Events
-    patch:
-      description: Acknowledge an event.
-      operationId: acknowledgeEvent
-      parameters:
-      - in: path
-        name: event_id
-        required: true
-        schema:
-          title: Event Id
-          type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/EventAcknowledgeRequest'
-        required: true
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/EventResponse'
-          description: Successful Response
-        '400':
-          content:
-            application/problem+json:
-              example: *id001
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Bad Request
-        '401':
-          content:
-            application/problem+json:
-              example: *id005
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unauthorized
-        '403':
-          content:
-            application/problem+json:
-              example: *id006
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Forbidden
-        '422':
-          content:
-            application/problem+json:
-              example: *id002
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unprocessable Entity
-        '500':
-          content:
-            application/problem+json:
-              example: *id003
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Internal Server Error
-        '503':
-          content:
-            application/problem+json:
-              example: *id004
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Service Unavailable
-      security:
-      - BearerAuth: []
-      summary: Acknowledge Event
       tags:
       - Events
   /executions:

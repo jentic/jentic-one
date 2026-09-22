@@ -4,7 +4,7 @@
  * A single tabbed page with four lenses over platform activity:
  *   - Executions  the execution trace log (+ trace detail)
  *   - Jobs        the async job queue (+ job detail, cancel)
- *   - Events      platform events with a live SSE stream + acknowledge
+ *   - Events      platform events with a live SSE stream
  *   - Audit       the audit log = actor lens; deep-links into the others
  *
  * The active tab is held in the `?tab=` search param so it's deep-linkable and
@@ -127,7 +127,7 @@ export default function MonitorPage() {
 							},
 							{
 								heading: 'Events & Audit',
-								body: 'Events streams platform events live (toggle Go live) and lets you acknowledge ones that need action. Audit is the org-admin actor log — who did what — and is where execution/job actor attribution lives.',
+								body: 'Events streams platform events live (toggle Go live) and flags the ones that need action. Audit is the org-admin actor log — who did what — and is where execution/job actor attribution lives.',
 							},
 						]}
 					/>

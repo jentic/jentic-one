@@ -266,7 +266,7 @@ const PERMISSION_CATALOGUE: ReadonlyArray<{
 	},
 	{
 		name: 'events:write',
-		description: 'Acknowledge and manage platform events',
+		description: 'Manage platform events',
 		implies: ['events:read'],
 		grantable_by_caller: true,
 	},
@@ -874,9 +874,6 @@ function mcpSessionEvent(opts: {
 }) {
 	return {
 		_links: { self: `/events/${opts.id}` },
-		acknowledged: false,
-		acknowledged_at: null,
-		acknowledged_by: null,
 		actor_id: opts.actorId,
 		actor_type: 'agent',
 		created_at: now(-opts.minutesAgo),

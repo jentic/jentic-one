@@ -84,8 +84,8 @@ export { eventSeverityIcon } from '@/shared/lib/eventSeverity';
 // Narrow, module-consumable slices of the agent-stream data layer (NOT the
 // rail's React components): the HAL-link id parser (so Monitor's Events
 // drill-in and the rail parse links with the same rules) and the
-// provider-optional stream hook (so Monitor's acknowledge mutation can sync
-// the rail's in-memory copy when the shell's stream is mounted, and no-op in
+// provider-optional stream hook (so Monitor can read the rail's in-memory feed
+// when the shell's stream is mounted, and no-op in
 // tests/embedded surfaces where it isn't).
 export { idFromLink, useAgentStreamOptional } from '@/shared/lib/agentStream';
 

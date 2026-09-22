@@ -10,7 +10,6 @@ from sqlalchemy import delete
 
 from jentic_one.admin.core.schema.events import Event
 from jentic_one.admin.repos import EventRepository
-from jentic_one.admin.services.errors import EventNotFoundError
 from jentic_one.shared.db.session import DatabaseSession
 
 pytestmark = pytest.mark.integration
@@ -66,44 +65,8 @@ async def test_create_and_get_by_id(admin_db: DatabaseSession, clean_events: Non
         assert loaded.severity == "error"
         assert loaded.summary == "Something broke"
         assert loaded.requires_action is True
-        assert loaded.acknowledged is False
         assert loaded.trace_id == "abc123def456789012345678"
         assert loaded.data == {"key": "value"}
-
-
-async def test_acknowledge(admin_db: DatabaseSession, clean_events: None) -> None:
-    async with admin_db.session() as session:
-        event = await EventRepository.create(
-            session,
-            type="alert.triggered",
-            severity="warning",
-            summary="High latency",
-            requires_action=True,
-            created_by="usr_test",
-        )
-        await session.commit()
-        event_id = event.id
-
-    async with admin_db.session() as session:
-        acked = await EventRepository.acknowledge(
-            session,
-            event_id,
-            acknowledged_by="usr_test00000000000000000",
-            acknowledgement_note="Looking into it",
-        )
-        await session.commit()
-        assert acked.acknowledged is True
-        assert acked.acknowledged_at is not None
-        assert acked.acknowledged_by == "usr_test00000000000000000"
-        assert acked.acknowledgement_note == "Looking into it"
-
-
-async def test_acknowledge_not_found(admin_db: DatabaseSession, clean_events: None) -> None:
-    async with admin_db.session() as session:
-        with pytest.raises(EventNotFoundError):
-            await EventRepository.acknowledge(
-                session, "evt_nonexistent000000000", acknowledged_by="usr_x"
-            )
 
 
 async def test_list_all_with_filters(admin_db: DatabaseSession, clean_events: None) -> None:

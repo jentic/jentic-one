@@ -10,8 +10,8 @@
  *   GET  /access-requests/{id}           — fetch items (we need their ids)
  *   POST /access-requests/{id}:decide    — approve/deny each item (+ reason)
  *
- * Acknowledging the *event* (`PATCH /events/{id}`, see `railEvents.ts`) only
- * dismisses the notification; it does not decide the request. Deny carries a
+ * The `access_request.filed` event is a notification only; resolving it locally
+ * in the rail does not decide the request. Deny carries a
  * `decision_reason`, which is how the human's "no, because…" reaches the agent
  * (the agent reads it back off the request's `decision_reason` / status).
  *

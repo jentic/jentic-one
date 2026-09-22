@@ -3,7 +3,6 @@
  *
  * Backs the rail's real `/events` contract in mocked (Mode A) dev + tests:
  *   GET   /events                        → backlog page (cursor-paginated)
- *   PATCH /events/{id}                    → acknowledge, returns the updated row
  *   GET   /events/stream                  → SSE; emits the seeded backlog then idles
  *   GET   /access-requests/{id}           → the request behind a filed event
  *   POST  /access-requests/{id}:decide    → approve/deny items (records the call)
@@ -21,9 +20,6 @@ interface EventRow {
 	detail: string | null;
 	created_at: string;
 	requires_action: boolean;
-	acknowledged: boolean;
-	acknowledged_at: string | null;
-	acknowledged_by: string | null;
 	trace_id: string | null;
 	data: Record<string, unknown>;
 	_links: {
@@ -43,9 +39,6 @@ function seed(
 		detail: null,
 		created_at: ago(10),
 		requires_action: false,
-		acknowledged: false,
-		acknowledged_at: null,
-		acknowledged_by: null,
 		trace_id: null,
 		data: {},
 		_links: { self: `/events/${over.event_id}` },
@@ -307,13 +300,11 @@ export const railEventsHandlers = [
 		const severities = url.searchParams.getAll('severity');
 		const eventTypes = url.searchParams.getAll('event_type');
 		const requiresAction = url.searchParams.get('requires_action');
-		const acknowledged = url.searchParams.get('acknowledged');
 		const filtered = events.filter((e) => {
 			if (severities.length && !severities.includes(e.severity)) return false;
 			if (eventTypes.length && !eventTypes.includes(e.type)) return false;
 			if (requiresAction != null && String(e.requires_action) !== requiresAction)
 				return false;
-			if (acknowledged != null && String(e.acknowledged) !== acknowledged) return false;
 			return true;
 		});
 		const sorted = [...filtered].sort(
@@ -327,17 +318,6 @@ export const railEventsHandlers = [
 			has_more: nextIdx < sorted.length,
 			next_cursor: nextIdx < sorted.length ? slice[slice.length - 1]?.event_id : null,
 		});
-	}),
-	http.patch('/events/:id', async ({ params, request }) => {
-		const body = (await request.json().catch(() => ({}))) as {
-			acknowledged?: boolean;
-			note?: string | null;
-		};
-		const row = events.find((e) => e.event_id === params.id);
-		if (!row) return new HttpResponse(null, { status: 404 });
-		row.acknowledged = body.acknowledged ?? true;
-		row.acknowledged_at = row.acknowledged ? new Date().toISOString() : null;
-		return HttpResponse.json(row);
 	}),
 	// SSE — emit a heartbeat (which the client must ignore) + the current backlog
 	// as `data:` frames, then keep the stream open.

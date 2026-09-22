@@ -20,10 +20,10 @@ import {
 	kindForType,
 	matchesToastScope,
 	primaryDestinationFor,
+	recentFailureCount,
 	severityForWire,
 	severityStripeClass,
 	streamDayKey,
-	unacknowledgedFailureCount,
 	useAgentStream,
 	RAIL_COLLAPSED_STORAGE_KEY,
 	TOAST_SCOPE_STORAGE_KEY,
@@ -63,7 +63,6 @@ function wireEvent(
 ): EventResponse {
 	return {
 		_links: { self: `/events/${over.event_id}` },
-		acknowledged: false,
 		created_at: new Date().toISOString(),
 		requires_action: false,
 		severity: 'info' as EventResponse['severity'],
@@ -83,7 +82,7 @@ function makeEvent(partial: Partial<StreamEvent>): StreamEvent {
 		tokens: {},
 		links: {},
 		requiresAction: false,
-		acknowledged: false,
+		resolved: false,
 		groupKey: 'execution:execution.completed:',
 	};
 	return { ...base, ...partial };
@@ -221,20 +220,23 @@ describe('agentStream — wire adaptation + pure helpers', () => {
 		expect(isFailureSeverity('info')).toBe(false);
 	});
 
-	it('unacknowledgedFailureCount counts only unacked error/critical (#671)', () => {
+	it('recentFailureCount counts error/critical failures in the window (#671)', () => {
 		const events = [
 			makeEvent({ id: 'e1', severity: 'error' }),
 			makeEvent({ id: 'c1', severity: 'critical' }),
-			makeEvent({ id: 'e2', severity: 'error', acknowledged: true }),
+			makeEvent({ id: 'e2', severity: 'error' }),
 			makeEvent({ id: 'w1', severity: 'warning' }),
 			makeEvent({ id: 'i1', severity: 'info' }),
 		];
-		expect(unacknowledgedFailureCount(events)).toBe(2);
-		expect(unacknowledgedFailureCount([])).toBe(0);
-		// Acknowledging every failure drops the count to zero.
-		expect(unacknowledgedFailureCount(events.map((e) => ({ ...e, acknowledged: true })))).toBe(
-			0,
-		);
+		expect(recentFailureCount(events)).toBe(3);
+		expect(recentFailureCount([])).toBe(0);
+		// Non-failure severities never contribute to the count.
+		expect(
+			recentFailureCount([
+				makeEvent({ id: 'w2', severity: 'warning' }),
+				makeEvent({ id: 'i2', severity: 'info' }),
+			]),
+		).toBe(0);
 	});
 
 	it('formatFailurePillCount caps at 99+ and clamps pathological inputs', () => {
@@ -356,13 +358,13 @@ describe('agentStream — wire adaptation + pure helpers', () => {
 			true,
 		);
 		expect(inlineActionsFor(ev).find((a) => a.kind === 'deny')?.requiresReason).toBe(true);
-		// Acknowledged → no decision actions.
-		expect(inlineActionsFor({ ...ev, acknowledged: true }).map((a) => a.kind)).not.toContain(
+		// Resolved (local optimistic flip) → no decision actions.
+		expect(inlineActionsFor({ ...ev, resolved: true }).map((a) => a.kind)).not.toContain(
 			'view_request',
 		);
 	});
 
-	it('inlineActionsFor falls back to Acknowledge for action-required non-decision events', () => {
+	it('inlineActionsFor deep-links an action-required execution.failed to its execution', () => {
 		const ev = makeEvent({
 			type: 'execution.failed',
 			kind: 'execution',
@@ -370,10 +372,13 @@ describe('agentStream — wire adaptation + pure helpers', () => {
 			requiresAction: true,
 			tokens: { execution_id: 'exec_1' },
 		});
-		expect(inlineActionsFor(ev).map((a) => a.kind)).toContain('acknowledge');
+		const kinds = inlineActionsFor(ev).map((a) => a.kind);
+		// No decision action exists for a failed run; the row offers a passive
+		// deep-link into the execution (acknowledgement was removed).
+		expect(kinds).toEqual(['view_execution']);
 	});
 
-	it('inlineActionsFor offers Acknowledge (not decide) for a filed event lacking a request id', () => {
+	it('inlineActionsFor offers no decision action for a filed event lacking a request id', () => {
 		const ev = makeEvent({
 			type: 'access_request.filed',
 			kind: 'access_request',
@@ -382,8 +387,9 @@ describe('agentStream — wire adaptation + pure helpers', () => {
 			tokens: {},
 		});
 		const kinds = inlineActionsFor(ev).map((a) => a.kind);
-		expect(kinds).toContain('acknowledge');
-		expect(kinds).not.toContain('approve');
+		// Without a request id there is nothing to view/decide, and acknowledgement
+		// is gone — the row surfaces no inline action at all.
+		expect(kinds).toEqual([]);
 	});
 
 	it('adaptEvent resolves agent_id from the top-level actor for agent.* events', () => {
@@ -438,7 +444,7 @@ describe('agentStream — wire adaptation + pure helpers', () => {
 		expect(unguarded.tokens.agent_id).toBeUndefined();
 	});
 
-	it('inlineActionsFor offers Review + Acknowledge for a self-registered agent', () => {
+	it('inlineActionsFor offers Review for a self-registered agent', () => {
 		const ev = makeEvent({
 			type: 'agent.self_registered',
 			kind: 'agent',
@@ -448,15 +454,15 @@ describe('agentStream — wire adaptation + pure helpers', () => {
 		const actions = inlineActionsFor(ev);
 		const kinds = actions.map((a) => a.kind);
 		expect(kinds).toContain('view_agent');
-		expect(kinds).toContain('acknowledge');
 		// Review deep-links to the agent's approval page.
 		const review = actions.find((a) => a.kind === 'view_agent');
 		expect(review?.label).toBe('Review');
 		expect(review?.href?.(ev)).toBe('/agents/agt_42');
-		// Once acknowledged the row keeps only the passive deep-link.
-		const acked = inlineActionsFor({ ...ev, acknowledged: true });
-		expect(acked.map((a) => a.kind)).toEqual(['view_agent']);
-		expect(acked[0]?.label).toBe('View agent');
+		// Once resolved (local optimistic flip) the row keeps only the passive
+		// deep-link.
+		const resolved = inlineActionsFor({ ...ev, resolved: true });
+		expect(resolved.map((a) => a.kind)).toEqual(['view_agent']);
+		expect(resolved[0]?.label).toBe('View agent');
 	});
 
 	it('primaryDestinationFor routes agent events to the agent page', () => {
@@ -706,25 +712,18 @@ describe('AgentRail — shell-mounted live surface', () => {
 		);
 	});
 
-	it('shows a failure pill for unacknowledged failures and clears it once acknowledged (#671)', async () => {
-		const user = userEvent.setup();
+	it('shows a failure pill counting recent failures (#671)', async () => {
 		renderRail(<AgentRail />);
 		await screen.findByText('Agent rail');
-		// The seeded backlog has exactly one unacknowledged failure (the critical
-		// execution.failed) → the pill reads "1 unacknowledged failure".
+		// The seeded backlog has exactly one failure (the critical
+		// execution.failed) → the pill reads "1 failure in recent activity".
 		const pill = await screen.findByRole('button', {
-			name: /1 unacknowledged failure in recent activity. Show failures./i,
+			name: /1 failure in recent activity. Show failures./i,
 		});
 		expect(pill).toBeInTheDocument();
-
-		// Acknowledge the failure → the count drops to zero and the pill disappears.
-		const ack = screen.getAllByRole('button', { name: 'Acknowledge' })[0];
-		await user.click(ack);
-		await waitFor(() =>
-			expect(
-				screen.queryByRole('button', { name: /unacknowledged failure/i }),
-			).not.toBeInTheDocument(),
-		);
+		// Acknowledgement was removed, so the pill is a window-scoped "recent
+		// activity" signal that stays put — there is no per-event clear control.
+		expect(screen.queryByRole('button', { name: 'Acknowledge' })).not.toBeInTheDocument();
 	});
 
 	it('focuses the feed on failures when the failure pill is clicked (#671)', async () => {
@@ -736,7 +735,7 @@ describe('AgentRail — shell-mounted live surface', () => {
 
 		await user.click(
 			await screen.findByRole('button', {
-				name: /unacknowledged failure in recent activity. Show failures./i,
+				name: /failure in recent activity. Show failures./i,
 			}),
 		);
 
@@ -769,7 +768,7 @@ describe('AgentRail — shell-mounted live surface', () => {
 		// operator's search or kind filters.
 		await user.click(
 			screen.getByRole('button', {
-				name: /unacknowledged failure in recent activity. Show failures./i,
+				name: /failure in recent activity. Show failures./i,
 			}),
 		);
 
@@ -808,9 +807,6 @@ describe('AgentRail — shell-mounted live surface', () => {
 			detail: 'boom',
 			created_at: new Date().toISOString(),
 			requires_action: true,
-			acknowledged: false,
-			acknowledged_at: null,
-			acknowledged_by: null,
 			trace_id: 'tr_solo',
 			data: { execution_id: 'exec_solo' },
 			_links: { self: '/events/evt_only_failure' },
@@ -897,9 +893,6 @@ describe('AgentRail — shell-mounted live surface', () => {
 			detail: 'boom',
 			created_at: new Date().toISOString(),
 			requires_action: true,
-			acknowledged: false,
-			acknowledged_at: null,
-			acknowledged_by: null,
 			trace_id: 'tr_ttl',
 			data: { execution_id: 'exec_ttl' },
 			_links: { self: '/events/evt_ttl_failure' },
@@ -978,17 +971,6 @@ describe('AgentRail — shell-mounted live surface', () => {
 		);
 		await screen.findByRole('button', { name: 'Dismiss toast' });
 	}, 20000);
-
-	it('acknowledges a seeded action-required event → row flips to Acked', async () => {
-		const user = userEvent.setup();
-		renderRail(<AgentRail />);
-		// The seeded backlog has multiple action-required events; acknowledge the
-		// first (the critical execution failure).
-		await screen.findByText(/Execution failed: slack\.postMessage/i);
-		const ack = screen.getAllByRole('button', { name: 'Acknowledge' })[0];
-		await user.click(ack);
-		await waitFor(() => expect(screen.getAllByText('Acked').length).toBeGreaterThanOrEqual(1));
-	});
 
 	it('approves a filed access request via the View dialog → records per-item approve decisions', async () => {
 		const user = userEvent.setup();
@@ -1208,7 +1190,7 @@ describe('rail — oauth additions (3a-5, phase-3a §4.8)', () => {
 		expect(kindForType('oauth_grant.revoked')).toBe('oauth');
 	});
 
-	it('inlineActionsFor offers Review (→ Settings queue) + Acknowledge for a DCR registration', () => {
+	it('inlineActionsFor offers Review (→ Settings queue) for a DCR registration', () => {
 		const ev = makeEvent({
 			type: 'oauth_client.registered',
 			kind: 'oauth',
@@ -1221,9 +1203,8 @@ describe('rail — oauth additions (3a-5, phase-3a §4.8)', () => {
 		expect(review?.label).toBe('Review');
 		// The D7 approve/deny verbs live on the Settings approval queue tab.
 		expect(review?.href?.(ev)).toBe('/settings?tab=queue');
-		expect(actions.map((a) => a.kind)).toContain('acknowledge');
-		// Once settled the actionable slot goes passive.
-		expect(inlineActionsFor({ ...ev, acknowledged: true }).map((a) => a.kind)).not.toContain(
+		// Once resolved (local optimistic flip) the actionable slot goes passive.
+		expect(inlineActionsFor({ ...ev, resolved: true }).map((a) => a.kind)).not.toContain(
 			'view_oauth_queue',
 		);
 	});

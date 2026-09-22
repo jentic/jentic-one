@@ -517,15 +517,14 @@ class CatalogService:
                 severity=EventSeverity.INFO,
                 summary=self._update_summary(event_class, spec, conflict_overlay_id),
                 # Actionable: an operator can resolve it by re-importing the upstream spec
-                # (one-click in the UI / `jentic catalog outdated` + import in the CLI),
-                # which the ImportHandler settles via ``settle_actionable_events`` keyed on
-                # this ``api_id``. A catalog re-import that adopts the upstream also drops the
-                # API out of the outdated set (the served revision's digest now equals the
-                # notified one), so the badge/count clear even if the settle is missed. Caveat:
+                # (one-click in the UI / `jentic catalog outdated` + import in the CLI). A
+                # catalog re-import that adopts the upstream drops the API out of the
+                # outdated set (the served revision's digest now equals the notified one),
+                # so the badge/count clear. Caveat:
                 # when the served revision is a *manually PUBLISHED* one (not a catalog import),
                 # a catalog re-import is blocked by ``ix_api_revisions_one_active`` — the
                 # operator must archive/replace the published revision to resolve; until then
-                # the outdated flag correctly stays lit and the settle only clears the inbox.
+                # the outdated flag correctly stays lit.
                 requires_action=True,
                 created_by=None,
                 data={

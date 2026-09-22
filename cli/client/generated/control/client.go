@@ -1862,12 +1862,6 @@ type EvaluationResponse struct {
 	Checks     []EvaluationCheckResponse `json:"checks"`
 }
 
-// EventAcknowledgeRequest Request body for acknowledging an event.
-type EventAcknowledgeRequest struct {
-	Acknowledged bool    `json:"acknowledged"`
-	Note         *string `json:"note,omitempty"`
-}
-
 // EventLinks HAL-style links for an event.
 type EventLinks struct {
 	Action    *string `json:"action,omitempty"`
@@ -1887,9 +1881,6 @@ type EventListResponse struct {
 type EventResponse struct {
 	// UnderscoreLinks HAL-style links for an event.
 	UnderscoreLinks EventLinks              `json:"_links"`
-	Acknowledged    bool                    `json:"acknowledged"`
-	AcknowledgedAt  *time.Time              `json:"acknowledged_at,omitempty"`
-	AcknowledgedBy  *string                 `json:"acknowledged_by,omitempty"`
 	ActorId         *string                 `json:"actor_id,omitempty"`
 	ActorType       *string                 `json:"actor_type,omitempty"`
 	CreatedAt       time.Time               `json:"created_at"`
@@ -3676,7 +3667,6 @@ type ListEventsParams struct {
 	EventType      *[]string        `form:"event_type,omitempty" json:"event_type,omitempty"`
 	Severity       *[]EventSeverity `form:"severity,omitempty" json:"severity,omitempty"`
 	RequiresAction *bool            `form:"requires_action,omitempty" json:"requires_action,omitempty"`
-	Acknowledged   *bool            `form:"acknowledged,omitempty" json:"acknowledged,omitempty"`
 	From           *time.Time       `form:"from,omitempty" json:"from,omitempty"`
 	To             *time.Time       `form:"to,omitempty" json:"to,omitempty"`
 	TraceId        *string          `form:"trace_id,omitempty" json:"trace_id,omitempty"`
@@ -3948,9 +3938,6 @@ type AttachAgentCredentialRuleSetJSONRequestBody = RuleSetAttachRequest
 
 // ConnectCredentialJSONRequestBody defines body for ConnectCredential for application/json ContentType.
 type ConnectCredentialJSONRequestBody = ConnectRequestBody
-
-// AcknowledgeEventJSONRequestBody defines body for AcknowledgeEvent for application/json ContentType.
-type AcknowledgeEventJSONRequestBody = EventAcknowledgeRequest
 
 // LoginSubmitFormdataRequestBody defines body for LoginSubmit for application/x-www-form-urlencoded ContentType.
 type LoginSubmitFormdataRequestBody = BodyLoginSubmit
@@ -6106,24 +6093,6 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /events/{event_id} (the `GetEvent` operationId).
 	GetEvent(ctx context.Context, eventId string, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// AcknowledgeEventWithBody Acknowledge Event
-	//
-	// Acknowledge an event.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with PATCH /events/{event_id} (the `AcknowledgeEvent` operationId).
-	AcknowledgeEventWithBody(ctx context.Context, eventId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// AcknowledgeEvent Acknowledge Event
-	//
-	// Acknowledge an event.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with PATCH /events/{event_id} (the `AcknowledgeEvent` operationId).
-	AcknowledgeEvent(ctx context.Context, eventId string, body AcknowledgeEventJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListExecutions List Executions
 	//
@@ -9989,44 +9958,6 @@ func (c *Client) StreamEvents(ctx context.Context, params *StreamEventsParams, r
 // Corresponds with GET /events/{event_id} (the `GetEvent` operationId).
 func (c *Client) GetEvent(ctx context.Context, eventId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetEventRequest(c.Server, eventId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// AcknowledgeEventWithBody Acknowledge Event
-//
-// Acknowledge an event.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with PATCH /events/{event_id} (the `AcknowledgeEvent` operationId).
-func (c *Client) AcknowledgeEventWithBody(ctx context.Context, eventId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewAcknowledgeEventRequestWithBody(c.Server, eventId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// AcknowledgeEvent Acknowledge Event
-//
-// Acknowledge an event.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with PATCH /events/{event_id} (the `AcknowledgeEvent` operationId).
-func (c *Client) AcknowledgeEvent(ctx context.Context, eventId string, body AcknowledgeEventJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewAcknowledgeEventRequest(c.Server, eventId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -17552,18 +17483,6 @@ func NewListEventsRequest(server string, params *ListEventsParams) (*http.Reques
 
 		}
 
-		if params.Acknowledged != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "acknowledged", *params.Acknowledged, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
 		if params.From != nil {
 
 			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "from", *params.From, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
@@ -17833,53 +17752,6 @@ func NewGetEventRequest(server string, eventId string) (*http.Request, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	return req, nil
-}
-
-// NewAcknowledgeEventRequest calls the generic AcknowledgeEvent builder with application/json body
-func NewAcknowledgeEventRequest(server string, eventId string, body AcknowledgeEventJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewAcknowledgeEventRequestWithBody(server, eventId, "application/json", bodyReader)
-}
-
-// NewAcknowledgeEventRequestWithBody constructs an http.Request for the AcknowledgeEvent method, with any body, and a specified content type
-func NewAcknowledgeEventRequestWithBody(server string, eventId string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "event_id", eventId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/events/%s", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPatch, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -22785,24 +22657,6 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /events/{event_id} (the `GetEvent` operationId).
 	GetEventWithResponse(ctx context.Context, eventId string, reqEditors ...RequestEditorFn) (*GetEventHTTPResp, error)
-
-	// AcknowledgeEventWithBodyWithResponse Acknowledge Event
-	//
-	// Acknowledge an event.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with PATCH /events/{event_id} (the `AcknowledgeEvent` operationId).
-	AcknowledgeEventWithBodyWithResponse(ctx context.Context, eventId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AcknowledgeEventHTTPResp, error)
-
-	// AcknowledgeEventWithResponse Acknowledge Event
-	//
-	// Acknowledge an event.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with PATCH /events/{event_id} (the `AcknowledgeEvent` operationId).
-	AcknowledgeEventWithResponse(ctx context.Context, eventId string, body AcknowledgeEventJSONRequestBody, reqEditors ...RequestEditorFn) (*AcknowledgeEventHTTPResp, error)
 
 	// ListExecutionsWithResponse List Executions
 	//
@@ -32682,89 +32536,6 @@ func (r GetEventHTTPResp) ContentType() string {
 	return ""
 }
 
-type AcknowledgeEventHTTPResp struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *EventResponse
-	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
-	ApplicationproblemJSON400 *ProblemDetail
-	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
-	ApplicationproblemJSON401 *ProblemDetail
-	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
-	ApplicationproblemJSON403 *ProblemDetail
-	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
-	ApplicationproblemJSON422 *ProblemDetail
-	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
-	ApplicationproblemJSON500 *ProblemDetail
-	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
-	ApplicationproblemJSON503 *ProblemDetail
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r AcknowledgeEventHTTPResp) GetJSON200() *EventResponse {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
-func (r AcknowledgeEventHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
-	return r.ApplicationproblemJSON400
-}
-
-// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
-func (r AcknowledgeEventHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
-	return r.ApplicationproblemJSON401
-}
-
-// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
-func (r AcknowledgeEventHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
-	return r.ApplicationproblemJSON403
-}
-
-// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
-func (r AcknowledgeEventHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
-	return r.ApplicationproblemJSON422
-}
-
-// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
-func (r AcknowledgeEventHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
-	return r.ApplicationproblemJSON500
-}
-
-// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
-func (r AcknowledgeEventHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
-	return r.ApplicationproblemJSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r AcknowledgeEventHTTPResp) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r AcknowledgeEventHTTPResp) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r AcknowledgeEventHTTPResp) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r AcknowledgeEventHTTPResp) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
 type ListExecutionsHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -40606,36 +40377,6 @@ func (c *ClientWithResponses) GetEventWithResponse(ctx context.Context, eventId 
 		return nil, err
 	}
 	return ParseGetEventHTTPResp(rsp)
-}
-
-// AcknowledgeEventWithBodyWithResponse Acknowledge Event
-//
-// Acknowledge an event.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with PATCH /events/{event_id} (the `AcknowledgeEvent` operationId).
-func (c *ClientWithResponses) AcknowledgeEventWithBodyWithResponse(ctx context.Context, eventId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AcknowledgeEventHTTPResp, error) {
-	rsp, err := c.AcknowledgeEventWithBody(ctx, eventId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseAcknowledgeEventHTTPResp(rsp)
-}
-
-// AcknowledgeEventWithResponse Acknowledge Event
-//
-// Acknowledge an event.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with PATCH /events/{event_id} (the `AcknowledgeEvent` operationId).
-func (c *ClientWithResponses) AcknowledgeEventWithResponse(ctx context.Context, eventId string, body AcknowledgeEventJSONRequestBody, reqEditors ...RequestEditorFn) (*AcknowledgeEventHTTPResp, error) {
-	rsp, err := c.AcknowledgeEvent(ctx, eventId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseAcknowledgeEventHTTPResp(rsp)
 }
 
 // ListExecutionsWithResponse List Executions
@@ -49565,74 +49306,6 @@ func ParseGetEventHTTPResp(rsp *http.Response) (*GetEventHTTPResp, error) {
 	}
 
 	response := &GetEventHTTPResp{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest EventResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON422 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON503 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseAcknowledgeEventHTTPResp parses an HTTP response from a AcknowledgeEventWithResponse call
-func ParseAcknowledgeEventHTTPResp(rsp *http.Response) (*AcknowledgeEventHTTPResp, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &AcknowledgeEventHTTPResp{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}

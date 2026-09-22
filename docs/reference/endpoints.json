@@ -2389,31 +2389,6 @@
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Operator-facing (typically a human operator / admin)",
-      "implied_scopes": {
-        "events:write": [
-          "events:read"
-        ]
-      },
-      "method": "PATCH",
-      "operation_id": "acknowledgeEvent",
-      "path": "/events/{event_id}",
-      "public": false,
-      "required_scopes": [
-        "events:write"
-      ],
-      "summary": "Acknowledge Event",
-      "surface": "events",
-      "typical_caller": "operator"
-    },
-    {
-      "actor_types": [
-        "user",
-        "agent",
-        "service_account"
-      ],
-      "auth_note": null,
-      "authenticated": true,
       "group": "Agent-facing (typically agent / service-account)",
       "implied_scopes": {
         "executions:read": []
@@ -4457,7 +4432,7 @@
           },
           {
             "action": "write",
-            "description": "Acknowledge and manage platform events",
+            "description": "Manage platform events",
             "family": "events",
             "implies": [
               "events:read"
@@ -4770,7 +4745,7 @@
       },
       {
         "action": "write",
-        "description": "Acknowledge and manage platform events",
+        "description": "Manage platform events",
         "family": "events",
         "implies": [
           "events:read"
@@ -5004,5 +4979,5 @@
     ],
     "total": 30
   },
-  "total": 184
+  "total": 183
 }

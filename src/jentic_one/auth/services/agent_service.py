@@ -46,7 +46,7 @@ from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.db import DatabaseIntegrityError
-from jentic_one.shared.events import emit_event_best_effort, settle_actionable_events
+from jentic_one.shared.events import emit_event_best_effort
 from jentic_one.shared.models import ActorStatus, ActorType, ActorVerb
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.pagination import Page, decode_cursor_str, encode_cursor
@@ -137,11 +137,9 @@ class AgentService:
                 actor_type=identity.actor_type.value,
             )
             if status is ActorStatus.PENDING:
-                # Same actionable event as the /register door (actor = the
-                # AGENT, so approve()/deny()'s _settle_registration_alerts
-                # finds and acknowledges it) — without this the registration
-                # would never surface in the admins' queue and the awaiting
-                # page would poll forever.
+                # Same actionable event as the /register door — surfaces the
+                # self-registration in the admins' queue so the awaiting page
+                # stops polling once an admin approves/denies.
                 await emit_event_best_effort(
                     session,
                     type=EventType.AGENT_SELF_REGISTERED,
@@ -208,36 +206,6 @@ class AgentService:
         view.has_api_key = has_key
         return view
 
-    async def _settle_registration_alerts(
-        self, session: AsyncSession, agent_id: str, *, acknowledged_by: str
-    ) -> None:
-        """Acknowledge outstanding ``agent.self_registered`` alerts for the agent.
-
-        Self-registration files a ``requires_action`` event so operators are
-        prompted to review. Approving/denying IS that review, so leaving the
-        alert live would keep a stale "awaits approval" row (with a working
-        Review button) on the rail and dashboard forever. Best-effort like the
-        emit itself: alert bookkeeping must never roll back the decision.
-
-        The body runs inside a SAVEPOINT: on PostgreSQL a statement error
-        aborts the whole transaction, so a bare try/except here would swallow
-        the exception but leave the outer transaction poisoned — the decision's
-        commit would then fail anyway. Rolling back just the nested block keeps
-        the "never roll back the decision" promise for DB-level failures too.
-        """
-        try:
-            async with session.begin_nested():
-                await settle_actionable_events(
-                    session,
-                    event_type=EventType.AGENT_SELF_REGISTERED,
-                    acknowledged_by=acknowledged_by,
-                    acknowledgement_note="registration decided",
-                    actor_id=agent_id,
-                    actor_type=ActorType.AGENT.value,
-                )
-        except Exception:
-            logger.warning("settle_registration_alerts_failed", agent_id=agent_id, exc_info=True)
-
     async def approve(self, agent_id: str, *, identity: Identity) -> AgentView:
         async with self._ctx.admin_db.transaction() as session:
             await self._check_transition(session, agent_id, ActorVerb.APPROVE)
@@ -288,7 +256,6 @@ class AgentService:
                 actor_id=identity.sub,
                 actor_type=identity.actor_type.value,
             )
-            await self._settle_registration_alerts(session, agent_id, acknowledged_by=identity.sub)
         return AgentView.model_validate(agent)
 
     async def claim(self, agent_id: str, *, token: str, identity: Identity) -> AgentView:
@@ -388,7 +355,6 @@ class AgentService:
                 actor_id=identity.sub,
                 actor_type=identity.actor_type.value,
             )
-            await self._settle_registration_alerts(session, agent_id, acknowledged_by=identity.sub)
         return AgentView.model_validate(agent)
 
     async def disable(self, agent_id: str, *, identity: Identity) -> None:

@@ -1,4 +1,4 @@
-"""Events router — list, get, acknowledge, and SSE stream."""
+"""Events router — list, get, and SSE stream."""
 
 from __future__ import annotations
 
@@ -14,7 +14,6 @@ from jentic_one.admin.services.errors import InvalidInputError
 from jentic_one.admin.services.event_service import EventService
 from jentic_one.admin.services.event_stream_service import EventStreamService
 from jentic_one.admin.services.schemas.events import (
-    EventAcknowledgePayload,
     EventFilter,
     EventView,
     Heartbeat,
@@ -24,7 +23,6 @@ from jentic_one.admin.web.deps import (
     get_event_stream_service,
 )
 from jentic_one.admin.web.schemas.events import (
-    EventAcknowledgeRequest,
     EventLinks,
     EventListResponse,
     EventResponse,
@@ -62,9 +60,6 @@ def _event_response(view: EventView, request: Request) -> EventResponse:
         severity=EventSeverity(view.severity),
         summary=view.summary,
         requires_action=view.requires_action,
-        acknowledged=view.acknowledged,
-        acknowledged_at=view.acknowledged_at,
-        acknowledged_by=view.acknowledged_by,
         created_at=view.created_at,
         trace_id=view.trace_id,
         detail=view.detail,
@@ -83,7 +78,6 @@ async def list_events(
     event_type: list[str] | None = Query(default=None, alias="event_type"),
     severity: list[EventSeverity] | None = Query(default=None),
     requires_action: bool | None = None,
-    acknowledged: bool | None = None,
     from_dt: datetime | None = Query(default=None, alias="from"),
     to_dt: datetime | None = Query(default=None, alias="to"),
     trace_id: str | None = None,
@@ -98,7 +92,6 @@ async def list_events(
             event_type=event_type,
             severity=severity,
             requires_action=requires_action,
-            acknowledged=acknowledged,
             from_dt=from_dt,
             to_dt=to_dt,
             trace_id=trace_id,
@@ -181,21 +174,4 @@ async def get_event(
 ) -> EventResponse:
     """Get an event by ID."""
     view = await event_svc.get_by_id(event_id)
-    return _event_response(view, request)
-
-
-@router.patch("/events/{event_id}")
-async def acknowledge_event(
-    event_id: str,
-    request: Request,
-    body: EventAcknowledgeRequest,
-    identity: Identity = get_current_identity(required_permissions=["events:write"]),
-    event_svc: EventService = Depends(get_event_service),
-) -> EventResponse:
-    """Acknowledge an event."""
-    view = await event_svc.acknowledge(
-        event_id,
-        payload=EventAcknowledgePayload(acknowledged=body.acknowledged, note=body.note),
-        identity=identity,
-    )
     return _event_response(view, request)

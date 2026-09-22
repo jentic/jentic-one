@@ -220,7 +220,7 @@ describe('OAuth clients surface (via SettingsPage)', () => {
 		// gets its rail settle from the `oauth_client.approved` event, so the
 		// deny mutation must mirror it locally via the stream context. Mount the
 		// section INSIDE the provider with the actionable registration in the
-		// backlog and watch the row acknowledge on deny success.
+		// backlog and watch the row resolve on deny success.
 		const registered: EventResponse = {
 			_links: { self: '/events/evt_oauth_registered' },
 			event_id: 'evt_oauth_registered',
@@ -228,7 +228,6 @@ describe('OAuth clients surface (via SettingsPage)', () => {
 			severity: 'info' as EventResponse['severity'],
 			summary: 'OAuth client registered: Cursor',
 			requires_action: true,
-			acknowledged: false,
 			created_at: new Date().toISOString(),
 			// The internal admin-row id — the deny mutation's settle key.
 			data: { oauth_client_id: 'oac_pending_1' },
@@ -241,7 +240,7 @@ describe('OAuth clients surface (via SettingsPage)', () => {
 		function SettleProbe() {
 			const { events } = useAgentStream();
 			const row = events.find((e) => e.type === 'oauth_client.registered');
-			return <div data-testid="registered-acked">{row ? String(row.acknowledged) : ''}</div>;
+			return <div data-testid="registered-resolved">{row ? String(row.resolved) : ''}</div>;
 		}
 		const user = userEvent.setup();
 		renderWithProviders(
@@ -253,7 +252,9 @@ describe('OAuth clients surface (via SettingsPage)', () => {
 			{ route: '/settings?tab=queue' },
 		);
 		await screen.findByText('Cursor');
-		await expect.poll(() => screen.getByTestId('registered-acked').textContent).toBe('false');
+		await expect
+			.poll(() => screen.getByTestId('registered-resolved').textContent)
+			.toBe('false');
 
 		await user.click(screen.getByRole('button', { name: 'Deny' }));
 		const dialog = await screen.findByRole('dialog');
@@ -261,7 +262,7 @@ describe('OAuth clients surface (via SettingsPage)', () => {
 
 		expect(await screen.findByText('Cursor denied')).toBeInTheDocument();
 		// The mutation's onSuccess settled the stream row locally.
-		await expect.poll(() => screen.getByTestId('registered-acked').textContent).toBe('true');
+		await expect.poll(() => screen.getByTestId('registered-resolved').textContent).toBe('true');
 	});
 
 	it('keeps the deny reason draft across a casual dismiss (dialog-state rule)', async () => {

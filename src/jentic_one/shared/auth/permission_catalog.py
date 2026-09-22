@@ -127,7 +127,7 @@ ALL_PERMISSIONS: dict[str, Permission] = {
     ),
     EVENTS_WRITE: Permission(
         name=EVENTS_WRITE,
-        description="Acknowledge and manage platform events",
+        description="Manage platform events",
         implies=frozenset({EVENTS_READ}),
     ),
     EVENTS_READ: Permission(

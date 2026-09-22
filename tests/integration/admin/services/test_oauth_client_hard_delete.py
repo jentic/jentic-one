@@ -296,11 +296,12 @@ async def test_delete_unknown_id_raises_not_found(
         await svc.delete("oac_missing", identity=_ADMIN)
 
 
-async def test_delete_pending_dcr_client_settles_actionable_event(
+async def test_delete_pending_dcr_client_leaves_registration_event(
     queue_policy_context: Context, clean_tables: None
 ) -> None:
-    """Deleting a pending DCR client acknowledges its live approval-queue
-    alert — the dashboard must not prompt a decision on a dead row."""
+    """Deleting a pending DCR client leaves its registration event intact —
+    events are an append-only history, not a settleable inbox (acknowledgement
+    was removed)."""
     dcr = OAuthDcrService(queue_policy_context)
     result = await dcr.register(
         client_name="doomed-mcp-client",
@@ -330,8 +331,7 @@ async def test_delete_pending_dcr_client_settles_actionable_event(
             .all()
         )
     assert len(events) == 1
-    assert events[0].acknowledged is True
-    assert events[0].acknowledged_by == _ADMIN.sub
+    assert events[0].requires_action is True
 
 
 async def test_dcr_reregister_after_delete_mints_new_pending_row(

@@ -47,7 +47,7 @@ const KIND_LABEL = STREAM_KIND_LABEL;
 type Toast = StreamEvent & { addedAt: number; assertive: boolean };
 
 export function ToastHost() {
-	const { latest, acknowledge } = useAgentStream();
+	const { latest } = useAgentStream();
 	const navigate = useNavigate();
 	const [toasts, setToasts] = useState<Toast[]>([]);
 	const [scope, setScope] = useState<ToastScope>(() => readToastScope());
@@ -145,14 +145,9 @@ export function ToastHost() {
 			dismiss(toast.id);
 			return;
 		}
-		if (action.href && !action.acknowledges) {
+		if (action.href) {
 			const target = action.href(toast);
 			if (target) navigate(target);
-			dismiss(toast.id);
-			return;
-		}
-		if (action.acknowledges) {
-			void acknowledge(toast.id);
 			dismiss(toast.id);
 		}
 	}
@@ -272,7 +267,7 @@ function ToastCard({
 							{actions.map((action) => (
 								<Button
 									key={action.kind}
-									variant={action.kind === 'acknowledge' ? 'primary' : 'ghost'}
+									variant={action.kind === 'view_request' ? 'primary' : 'ghost'}
 									size="sm"
 									onClick={() => onAction(action)}
 									className="h-7 px-2.5 text-[11px]"

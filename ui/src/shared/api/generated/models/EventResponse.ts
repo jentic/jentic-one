@@ -9,9 +9,6 @@ import type { EventSeverity } from './EventSeverity';
  */
 export type EventResponse = {
     _links: EventLinks;
-    acknowledged: boolean;
-    acknowledged_at?: (string | null);
-    acknowledged_by?: (string | null);
     actor_id?: (string | null);
     actor_type?: (string | null);
     created_at: string;

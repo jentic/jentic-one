@@ -13,7 +13,6 @@ export {
 	useJob,
 	useCancelJob,
 	useEvents,
-	useAcknowledgeEvent,
 	useEventStream,
 	useAudit,
 	useActorForTrace,

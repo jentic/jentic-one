@@ -84,7 +84,6 @@ export type { EffectivePermission } from './models/EffectivePermission';
 export type { ErrorItem } from './models/ErrorItem';
 export type { EvaluationCheckResponse } from './models/EvaluationCheckResponse';
 export type { EvaluationResponse } from './models/EvaluationResponse';
-export type { EventAcknowledgeRequest } from './models/EventAcknowledgeRequest';
 export type { EventLinks } from './models/EventLinks';
 export type { EventListResponse } from './models/EventListResponse';
 export type { EventResponse } from './models/EventResponse';

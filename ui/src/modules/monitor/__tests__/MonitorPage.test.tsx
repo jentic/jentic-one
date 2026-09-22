@@ -265,7 +265,7 @@ describe('MonitorPage', () => {
 		).toBeInTheDocument();
 	});
 
-	it('switches to the Events tab and acknowledges an action event', async () => {
+	it('switches to the Events tab and flags an action-required event', async () => {
 		const user = userEvent.setup();
 		renderMonitor();
 		await screen.findByText('POST /v1/charges');
@@ -273,10 +273,10 @@ describe('MonitorPage', () => {
 		await user.click(screen.getByRole('tab', { name: 'Events' }));
 
 		expect(await screen.findByText('Execution failed: github-api')).toBeInTheDocument();
-		const ackButton = screen.getByRole('button', { name: 'Acknowledge' });
-		await user.click(ackButton);
-
-		expect(await screen.findByText('Event acknowledged')).toBeInTheDocument();
+		// Acknowledgement was removed: actionable events are flagged with a
+		// "Needs action" badge rather than offering an Acknowledge control.
+		expect(screen.getAllByText('Needs action').length).toBeGreaterThanOrEqual(1);
+		expect(screen.queryByRole('button', { name: 'Acknowledge' })).not.toBeInTheDocument();
 	});
 
 	it('switches to the Audit tab (actor lens) and shows actors', async () => {
@@ -570,7 +570,7 @@ describe('Monitor inter-linking', () => {
 
 	it('Events row → an event with no execution/trace is not clickable (#617)', async () => {
 		// evt_2 (import.completed) carries only trace_aaaaaaaa via its top-level
-		// trace_id — so it IS clickable; assert the acknowledged/info evt_2 with a
+		// trace_id — so it IS clickable; assert an info evt_2 with a
 		// stripped trace is inert by pointing the events feed at a payload with no
 		// trace at all.
 		worker.use(
@@ -579,9 +579,6 @@ describe('Monitor inter-linking', () => {
 					data: [
 						{
 							_links: { self: '/events/evt_x' },
-							acknowledged: false,
-							acknowledged_at: null,
-							acknowledged_by: null,
 							created_at: new Date().toISOString(),
 							data: {},
 							detail: 'A configuration warning with no execution.',
@@ -624,9 +621,6 @@ describe('Monitor inter-linking', () => {
 								job: null,
 								action: null,
 							},
-							acknowledged: false,
-							acknowledged_at: null,
-							acknowledged_by: null,
 							created_at: new Date().toISOString(),
 							data: {},
 							detail: 'Upstream 401 from api.example.com',

@@ -39,7 +39,7 @@ import {
 	buildTraceBundle,
 	formatFailurePillCount,
 	readToastScope,
-	unacknowledgedFailureCount,
+	recentFailureCount,
 	useAgentStream,
 	writeToastScope,
 } from '@/shared/lib/agentStream';
@@ -74,7 +74,6 @@ export function AgentRail() {
 		events,
 		latest,
 		status,
-		acknowledge,
 		decide,
 		resolveEvent,
 		loadOlderEvents,
@@ -120,8 +119,8 @@ export function AgentRail() {
 	const [kinds, setKinds] = useState<Set<StreamEvent['kind']>>(() => new Set());
 
 	// Pause snapshot — when paused, we freeze *which* events are visible (by id)
-	// at pause time, but keep reading their live objects from the provider so an
-	// acknowledge's optimistic flip still reflects while paused. The feed just
+	// at pause time, but keep reading their live objects from the provider so a
+	// decision's optimistic resolve still reflects while paused. The feed just
 	// stops admitting *new* events.
 	const [frozenIds, setFrozenIds] = useState<Set<string> | null>(null);
 
@@ -195,9 +194,9 @@ export function AgentRail() {
 		setKinds(new Set());
 	}
 
-	// The rail's persistent failure badge counts unacknowledged error/critical
+	// The rail's persistent failure badge counts recent error/critical
 	// events; clicking it focuses the feed on exactly those (#671).
-	const failureCount = useMemo(() => unacknowledgedFailureCount(events), [events]);
+	const failureCount = useMemo(() => recentFailureCount(events), [events]);
 	function focusFailures() {
 		setCollapsed(false);
 		// Unfreeze so a failure that arrived while paused/hovering actually enters
@@ -241,7 +240,7 @@ export function AgentRail() {
 
 	function handleAction(eventId: string, action: InlineActionSpec, reason?: string) {
 		// Pure navigation actions: navigate, skip the RPC.
-		if (action.href && !action.acknowledges && !action.decides) {
+		if (action.href && !action.decides) {
 			const ev = renderEvents.find((e) => e.id === eventId);
 			const target = ev ? action.href(ev) : null;
 			if (target) navigate(target);
@@ -250,10 +249,6 @@ export function AgentRail() {
 		// Access-request decision (approve/deny via :decide).
 		if (action.decides) {
 			void decide(eventId, action.decides, reason);
-			return;
-		}
-		if (action.acknowledges) {
-			void acknowledge(eventId);
 		}
 	}
 
@@ -305,12 +300,12 @@ export function AgentRail() {
 					{failureCount > 0 && (
 						<Tooltip
 							interactiveChild
-							content={`${failureCount} unacknowledged failure${failureCount === 1 ? '' : 's'} in recent activity`}
+							content={`${failureCount} failure${failureCount === 1 ? '' : 's'} in recent activity`}
 						>
 							<button
 								type="button"
 								onClick={() => focusFailures()}
-								aria-label={`${failureCount} unacknowledged failure${failureCount === 1 ? '' : 's'} in recent activity. Expand and show failures.`}
+								aria-label={`${failureCount} failure${failureCount === 1 ? '' : 's'} in recent activity. Expand and show failures.`}
 								className="border-danger/40 bg-danger/10 text-danger hover:bg-danger/20 flex flex-col items-center gap-0.5 rounded-full border px-1 py-1 text-[9px] font-bold tabular-nums transition-colors"
 							>
 								<TriangleAlert className="h-3 w-3" />

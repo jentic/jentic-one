@@ -6,7 +6,6 @@
  * in `agentStream.tsx` and the rail components go through here.
  *
  *   GET   /events           — backlog (filter + cursor)            → listEvents
- *   PATCH /events/{id}       — acknowledge an event                 → acknowledgeEvent
  *   GET   /events/stream     — live SSE (Bearer header, fetch-stream)→ streamEvents
  *
  * The SSE call is hand-rolled over `fetch` + `ReadableStream` because the
@@ -19,7 +18,6 @@ import {
 	EventsService,
 	ApiError,
 	getToken,
-	type EventAcknowledgeRequest,
 	type EventListResponse,
 	type EventResponse,
 	type EventSeverity,
@@ -57,7 +55,6 @@ export interface ListEventsParams {
 	eventType?: string[] | null;
 	severity?: EventSeverity[] | null;
 	requiresAction?: boolean | null;
-	acknowledged?: boolean | null;
 	from?: string | null;
 	to?: string | null;
 	traceId?: string | null;
@@ -72,7 +69,6 @@ export async function listEvents(params: ListEventsParams = {}): Promise<EventLi
 			eventType: params.eventType ?? null,
 			severity: params.severity ?? null,
 			requiresAction: params.requiresAction ?? null,
-			acknowledged: params.acknowledged ?? null,
 			from: params.from ?? null,
 			to: params.to ?? null,
 			traceId: params.traceId ?? null,
@@ -81,18 +77,6 @@ export async function listEvents(params: ListEventsParams = {}): Promise<EventLi
 		});
 	} catch (error) {
 		throw toRailError(error, 'Failed to load events.');
-	}
-}
-
-/** Acknowledge an event (`PATCH /events/{id}`) — the rail's one real action. */
-export async function acknowledgeEvent(
-	eventId: string,
-	requestBody: EventAcknowledgeRequest = { acknowledged: true },
-): Promise<EventResponse> {
-	try {
-		return await EventsService.acknowledgeEvent({ eventId, requestBody });
-	} catch (error) {
-		throw toRailError(error, 'Failed to acknowledge the event.');
 	}
 }
 

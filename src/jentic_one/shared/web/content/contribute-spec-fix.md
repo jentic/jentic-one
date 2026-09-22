@@ -425,7 +425,7 @@ print('update_available:', a.get('update_available'))"
 # operator identity has it. Use `--context <operator>` if your agent identity lacks it.)
 jentic api GET /events \
   --query event_type=catalog.update_conflicts_overlay \
-  --query requires_action=true --query acknowledged=false \
+  --query requires_action=true \
   | python3 -c "import json,sys; \
 evs=json.load(sys.stdin).get('data', []); \
 mine=[e for e in evs if (e.get('data') or {}).get('spec_url')=='$SRC']; \
