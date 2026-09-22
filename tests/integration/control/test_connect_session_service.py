@@ -52,6 +52,7 @@ from jentic_one.control.services.integrations.flow_handlers.device_authorization
     DeviceAuthorizationHandler,
 )
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.auth.permission_catalog import OWNER_CREDENTIALS_READ
 from jentic_one.shared.config import (
     DirectOAuth2ProviderConfig,
     VendorAuthConfig,
@@ -63,7 +64,6 @@ from jentic_one.shared.config import (
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.models import ActorType
-from jentic_one.shared.scopes import OWNER_CREDENTIALS_READ
 
 pytestmark = pytest.mark.integration
 

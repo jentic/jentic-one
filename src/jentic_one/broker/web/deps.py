@@ -24,6 +24,7 @@ from jentic_one.broker.services.auth import CompositeTokenValidator
 from jentic_one.broker.services.idempotency import SharedStateIdempotencyStore
 from jentic_one.shared.auth.errors import TokenValidationError
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.auth.permission_catalog import BROKER_EXECUTE_PERMISSION
 from jentic_one.shared.broker.protocols import (
     AgentRuleEvaluatorProtocol,
     CredentialDeriverProtocol,
@@ -36,7 +37,6 @@ from jentic_one.shared.events.mcp_session import SESSION_ID_HEADER, schedule_mcp
 from jentic_one.shared.metrics import get_meter
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.resilience import RateLimiter
-from jentic_one.shared.scopes import BROKER_EXECUTE_SCOPE
 from jentic_one.shared.web.auth import extract_credential
 from jentic_one.shared.web.deps import derive_origin
 
@@ -134,19 +134,23 @@ async def require_broker_identity(request: Request) -> Identity:
     return resolved
 
 
-async def require_execute_scope(request: Request) -> Identity:
-    """Authenticate and require the broker execute scope (no toolkit logic here)."""
+async def require_execute_permission(request: Request) -> Identity:
+    """Authenticate and require the broker execute permission (no toolkit logic here)."""
     resolved = await require_broker_identity(request)
 
-    # Every executing actor carries BROKER_EXECUTE_SCOPE via actor_scope_grants —
-    # including the successor agents the theme-5 Phase 4 retirement job cut for
-    # jntc_live_ toolkit keys (the job grants exactly this scope). Anything
-    # beyond "may execute" is gated by the permission rules in the handler,
-    # not by scopes.
-    if BROKER_EXECUTE_SCOPE not in resolved.permissions:
+    # Every executing actor carries BROKER_EXECUTE_PERMISSION via
+    # actor_permission_grants — including the successor agents the theme-5
+    # Phase 4 retirement job cut for jntc_live_ toolkit keys (the job grants
+    # exactly this permission). Anything beyond "may execute" is gated by the
+    # permission rules in the handler, not by the grant.
+    #
+    # The refusal keeps OAuth2's registered vocabulary on the wire:
+    # ``insufficient_scope`` is the RFC 6750 error code, so the problem type and
+    # its detail stay in scope terms even though the check is on a permission.
+    if BROKER_EXECUTE_PERMISSION not in resolved.permissions:
         _record_auth_failure(resolved.sub, request)
         raise Forbidden(
-            detail=f"Insufficient scope: '{BROKER_EXECUTE_SCOPE}' required",
+            detail=f"Insufficient scope: '{BROKER_EXECUTE_PERMISSION}' required",
             instance=request.url.path,
             type="insufficient_scope",
         )
@@ -178,10 +182,10 @@ async def require_execute_within_rate_limit(request: Request) -> Identity:
     Enforced here — a post-auth dependency — because the actor isn't resolved at
     admission time (the admission middleware runs before auth). The limiter lives on
     ``app.state``; when rate limiting is disabled it is ``None`` and this is a
-    pure pass-through of ``require_execute_scope``. A deny surfaces directly as a
+    pure pass-through of ``require_execute_permission``. A deny surfaces directly as a
     ``429`` carrying ``RateLimit-*`` + ``Retry-After`` (we are at the web edge).
     """
-    resolved = await require_execute_scope(request)
+    resolved = await require_execute_permission(request)
 
     limiter: RateLimiter | None = getattr(request.app.state, "broker_rate_limiter", None)
     if limiter is None:

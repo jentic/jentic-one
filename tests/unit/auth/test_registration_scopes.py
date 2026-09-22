@@ -40,35 +40,35 @@ def _valid_jwks() -> dict[str, Any]:
     }
 
 
-@patch("jentic_one.auth.services.registration_service.ActorScopeGrantRepository")
+@patch("jentic_one.auth.services.registration_service.ActorPermissionGrantRepository")
 @patch("jentic_one.auth.services.registration_service.AgentRepository")
 async def test_dcr_with_scope_creates_grants(
-    mock_repo: MagicMock, mock_scope_repo: MagicMock
+    mock_repo: MagicMock, mock_permission_repo: MagicMock
 ) -> None:
     ctx = _make_ctx()
     agent = MagicMock()
     agent.id = "agnt_dcr1"
     agent.status = "pending"
     mock_repo.create_dcr = AsyncMock(return_value=agent)
-    mock_scope_repo.grant = AsyncMock()
+    mock_permission_repo.grant = AsyncMock()
 
     svc = RegistrationService(ctx)
     await svc.register("my-agent", _valid_jwks(), scope="capabilities:execute agents:write")
 
-    assert mock_scope_repo.grant.call_count == 2
-    calls = mock_scope_repo.grant.call_args_list
-    assert calls[0].kwargs["scope"] == "capabilities:execute"
+    assert mock_permission_repo.grant.call_count == 2
+    calls = mock_permission_repo.grant.call_args_list
+    assert calls[0].kwargs["permission"] == "capabilities:execute"
     assert calls[0].kwargs["actor_id"] == "agnt_dcr1"
     assert calls[0].kwargs["actor_type"] == "agent"
     assert calls[0].kwargs["granted_by"] is None
     assert calls[0].kwargs["created_by"] == "dcr"
-    assert calls[1].kwargs["scope"] == "agents:write"
+    assert calls[1].kwargs["permission"] == "agents:write"
 
 
-@patch("jentic_one.auth.services.registration_service.ActorScopeGrantRepository")
+@patch("jentic_one.auth.services.registration_service.ActorPermissionGrantRepository")
 @patch("jentic_one.auth.services.registration_service.AgentRepository")
 async def test_dcr_without_scope_no_grants(
-    mock_repo: MagicMock, mock_scope_repo: MagicMock
+    mock_repo: MagicMock, mock_permission_repo: MagicMock
 ) -> None:
     ctx = _make_ctx()
     agent = MagicMock()
@@ -79,13 +79,13 @@ async def test_dcr_without_scope_no_grants(
     svc = RegistrationService(ctx)
     await svc.register("my-agent", _valid_jwks())
 
-    mock_scope_repo.grant.assert_not_called()
+    mock_permission_repo.grant.assert_not_called()
 
 
-@patch("jentic_one.auth.services.registration_service.ActorScopeGrantRepository")
+@patch("jentic_one.auth.services.registration_service.ActorPermissionGrantRepository")
 @patch("jentic_one.auth.services.registration_service.AgentRepository")
 async def test_dcr_with_empty_scope_no_grants(
-    mock_repo: MagicMock, mock_scope_repo: MagicMock
+    mock_repo: MagicMock, mock_permission_repo: MagicMock
 ) -> None:
     ctx = _make_ctx()
     agent = MagicMock()
@@ -96,4 +96,4 @@ async def test_dcr_with_empty_scope_no_grants(
     svc = RegistrationService(ctx)
     await svc.register("my-agent", _valid_jwks(), scope="")
 
-    mock_scope_repo.grant.assert_not_called()
+    mock_permission_repo.grant.assert_not_called()

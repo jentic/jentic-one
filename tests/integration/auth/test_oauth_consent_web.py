@@ -22,7 +22,7 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import delete, select
 
-from jentic_one.admin.core.schema.actor_scope_grants import ActorScopeGrant
+from jentic_one.admin.core.schema.actor_permission_grants import ActorPermissionGrant
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.audit import AuditEntry
 from jentic_one.admin.core.schema.events import Event
@@ -32,11 +32,11 @@ from jentic_one.admin.repos import ExternalIdentityRepository
 from jentic_one.auth.services.agent_service import AgentService
 from jentic_one.auth.web.routers import authorize
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.auth.permission_catalog import DEFAULT_AGENT_PERMISSIONS
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import ActorStatus, ActorType
 from jentic_one.shared.models.actors import Origin
 from jentic_one.shared.models.audit import AuditAction
-from jentic_one.shared.scopes import DEFAULT_AGENT_SCOPES
 from jentic_one.shared.state.backend import MemoryStateBackend
 from tests.integration.auth.seeds import (
     CLIENT_ID,
@@ -314,7 +314,7 @@ async def test_inline_agent_create_end_to_end(
     walks GET consent → create form → POST /oauth/consent/agent → re-entered
     consent with the new agent pre-selected → approve, all on one handle
     family. Asserts the real rows: agent (ACTIVE, owned by the consenting
-    user), DEFAULT_AGENT_SCOPES grants, the REGISTER audit entry, and the
+    user), DEFAULT_AGENT_PERMISSIONS grants, the REGISTER audit entry, and the
     final consent grant bound to the new agent."""
     ctx = integration_context
     owner_id = await seed_user(ctx, "usr_w_p4creator")
@@ -365,12 +365,12 @@ async def test_inline_agent_create_end_to_end(
                 assert agent_row.registered_by == owner_id
                 scope_rows = (
                     await session.execute(
-                        select(ActorScopeGrant.scope).where(
-                            ActorScopeGrant.actor_id == created_agent_id
+                        select(ActorPermissionGrant.permission).where(
+                            ActorPermissionGrant.actor_id == created_agent_id
                         )
                     )
                 ).scalars()
-                assert set(scope_rows) == set(DEFAULT_AGENT_SCOPES)
+                assert set(scope_rows) == set(DEFAULT_AGENT_PERMISSIONS)
                 audit_rows = (
                     await session.execute(
                         select(AuditEntry).where(
@@ -402,7 +402,7 @@ async def test_inline_agent_create_end_to_end(
             grants = await _grant_rows_for_agent(ctx, created_agent_id)
             assert len(grants) == 1
             assert grants[0].user_id == owner_id
-            # requested ∩ allowlist ∩ DEFAULT_AGENT_SCOPES (openid stripped):
+            # requested ∩ allowlist ∩ DEFAULT_AGENT_PERMISSIONS (openid stripped):
             # apis:read is a default agent scope, apis:write is not.
             assert list(grants[0].scopes) == ["apis:read"]
     finally:
@@ -593,8 +593,8 @@ async def test_inline_agent_create_pending_arm_end_to_end(
                 scope_rows = list(
                     (
                         await session.execute(
-                            select(ActorScopeGrant.scope).where(
-                                ActorScopeGrant.actor_id == agent_id
+                            select(ActorPermissionGrant.permission).where(
+                                ActorPermissionGrant.actor_id == agent_id
                             )
                         )
                     ).scalars()
@@ -650,13 +650,13 @@ async def test_inline_agent_create_pending_arm_end_to_end(
                 scopes_after_approve = set(
                     (
                         await session.execute(
-                            select(ActorScopeGrant.scope).where(
-                                ActorScopeGrant.actor_id == agent_id
+                            select(ActorPermissionGrant.permission).where(
+                                ActorPermissionGrant.actor_id == agent_id
                             )
                         )
                     ).scalars()
                 )
-            assert scopes_after_approve == set(DEFAULT_AGENT_SCOPES)
+            assert scopes_after_approve == set(DEFAULT_AGENT_PERMISSIONS)
 
             # --- the continue leg: consent with the agent pre-selected ------
             resp = await client.get(str(config["continue_url"]))

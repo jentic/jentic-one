@@ -340,7 +340,7 @@ def test_create_happy_path_creates_agent_and_reenters_consent(
     mock_agent_svc_cls: MagicMock,
 ) -> None:
     """Happy path: agent created as the consenting user with default scopes
-    (scopes=None → DEFAULT_AGENT_SCOPES in the service), then a 303 back into
+    (scopes=None → DEFAULT_AGENT_PERMISSIONS in the service), then a 303 back into
     GET /oauth/consent where the single new agent renders pre-selected."""
     client, backend, ctx = _make_app()
     _seed_consent_handle(backend)

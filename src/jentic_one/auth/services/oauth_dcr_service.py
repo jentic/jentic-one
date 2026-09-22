@@ -27,6 +27,7 @@ from jentic_one.admin.services.errors import InvalidInputError
 from jentic_one.admin.services.oauth_client_service import _validate_redirect_uris
 from jentic_one.auth.services.errors import InvalidClientMetadataError
 from jentic_one.shared.audit import record_audit
+from jentic_one.shared.auth.permission_catalog import MCP_TOOL_SCOPES
 from jentic_one.shared.context import Context
 from jentic_one.shared.events import emit_event_best_effort
 from jentic_one.shared.models.actors import Origin
@@ -38,7 +39,6 @@ from jentic_one.shared.models.oauth_clients import (
     OAuthRegistrationSource,
     TokenEndpointAuthMethod,
 )
-from jentic_one.shared.scopes import MCP_TOOL_SCOPES
 
 #: RFC 7591 grant types this door accepts. Anything else is rejected —
 #: notably ``client_credentials`` (not served by the token endpoint at all

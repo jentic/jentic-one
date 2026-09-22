@@ -1,7 +1,7 @@
 """Theme-8 Phase 1 — the service-account → agent migration job.
 
 Converts every service account into a successor **agent** (copy-then-sweep,
-N1): the SA's stored scope grants, toolkit/credential bindings, and API-key
+N1): the SA's stored permission grants, toolkit/credential bindings, and API-key
 digest are COPIED onto a raw-SQL-minted successor agent, the SA's opaque
 sessions are revoked (H-1), and the row is stamped
 (``migrated_to_actor_id`` + ``migrated_at``) — all in one admin transaction
@@ -18,7 +18,7 @@ Disposition (OQ-1, rev 5): ``active`` → full migration (successor
 ``pending``/``rejected``/``archived`` → skip-but-stamp (no successor; stamp
 value ``skipped``). Successor creation is raw SQL — never
 ``AgentService.create()``/``approve()`` (F1: both default-grant
-``DEFAULT_AGENT_SCOPES``; a zero-grant SA must yield a zero-grant
+``DEFAULT_AGENT_PERMISSIONS``; a zero-grant SA must yield a zero-grant
 successor).
 
 Idempotency: the stamp short-circuits re-runs, so the boot job runs on every
@@ -120,7 +120,7 @@ class ServiceAccountMigrationOutcome:
     #: "not computed": the ``--diff-only`` preview of an already-stamped row,
     #: whose re-run copies nothing new but whose historical counts are not
     #: reconstructed — never a misleading zero.
-    stored_scope_count: int | None = 0
+    stored_permission_count: int | None = 0
     toolkit_binding_count: int | None = 0
     credential_binding_count: int | None = 0
     #: Control-DB ``agent_permission_rules`` rows copied sva_ → agnt_ (H2).
@@ -150,7 +150,7 @@ class ServiceAccountMigrationOutcome:
 class _PreviewCounts:
     """What a real run would copy/revoke for one unstamped SA (``--diff-only``)."""
 
-    stored_scopes: int = 0
+    stored_permissions: int = 0
     toolkit_bindings: int = 0
     credential_bindings: int = 0
     permission_rules: int = 0
@@ -283,14 +283,14 @@ class ServiceAccountMigrationService:
         no successor — only their token revocation is counted.
         """
         _label, successor_status = self._disposition(row.status)
-        scopes = toolkit_bindings = credential_bindings = rules = 0
+        permissions = toolkit_bindings = credential_bindings = rules = 0
         async with self._ctx.admin_db.session() as session:
             access, refresh = await ServiceAccountMigrationRepository.count_revocable_tokens(
                 session, service_account_id=row.id
             )
             if successor_status is not None:
                 (
-                    scopes,
+                    permissions,
                     toolkit_bindings,
                     credential_bindings,
                 ) = await ServiceAccountMigrationRepository.count_copy_candidates(
@@ -305,7 +305,7 @@ class ServiceAccountMigrationService:
                 )
             rules = sum(by_binding.values())
         return _PreviewCounts(
-            stored_scopes=scopes,
+            stored_permissions=permissions,
             toolkit_bindings=toolkit_bindings,
             credential_bindings=credential_bindings,
             permission_rules=rules,
@@ -327,7 +327,7 @@ class ServiceAccountMigrationService:
                 successor_agent_id=(
                     None if row.migrated_to_actor_id == SKIPPED_STAMP else row.migrated_to_actor_id
                 ),
-                stored_scope_count=None,
+                stored_permission_count=None,
                 toolkit_binding_count=None,
                 credential_binding_count=None,
                 permission_rule_count=None,
@@ -340,7 +340,7 @@ class ServiceAccountMigrationService:
         return ServiceAccountMigrationOutcome(
             service_account_id=row.id,
             outcome=label,
-            stored_scope_count=None if c is None else c.stored_scopes,
+            stored_permission_count=None if c is None else c.stored_permissions,
             toolkit_binding_count=None if c is None else c.toolkit_bindings,
             credential_binding_count=None if c is None else c.credential_bindings,
             permission_rule_count=None if c is None else c.permission_rules,
@@ -446,7 +446,7 @@ class ServiceAccountMigrationService:
         label = "failed"
         successor_status: str | None = None
         agent_id: str | None = None
-        stored_scopes = toolkit_bindings = credential_bindings = 0
+        stored_permissions = toolkit_bindings = credential_bindings = 0
         access_revoked = refresh_revoked = 0
 
         try:
@@ -476,8 +476,10 @@ class ServiceAccountMigrationService:
                         status=successor_status,
                         api_key_hash=current.api_key_hash,
                     )
-                    stored_scopes = await ServiceAccountMigrationRepository.copy_scope_grants(
-                        session, service_account_id=row.id, agent_id=agent_id
+                    stored_permissions = (
+                        await ServiceAccountMigrationRepository.copy_permission_grants(
+                            session, service_account_id=row.id, agent_id=agent_id
+                        )
                     )
                     (
                         toolkit_bindings,
@@ -529,7 +531,7 @@ class ServiceAccountMigrationService:
                         target_id=agent_id,
                         actor_type=_AUDIT_ACTOR_TYPE,
                         actor_id=_AUDIT_ACTOR_ID,
-                        after={"copied_scope_count": stored_scopes},
+                        after={"copied_scope_count": stored_permissions},
                         reason="theme8_sa_migration_grant_copy",
                         origin=Origin.SYSTEM.value,
                     )
@@ -615,7 +617,7 @@ class ServiceAccountMigrationService:
             service_account_id=current.id,
             outcome="failed" if sync_error is not None else label,
             successor_agent_id=agent_id,
-            stored_scope_count=stored_scopes,
+            stored_permission_count=stored_permissions,
             toolkit_binding_count=toolkit_bindings,
             credential_binding_count=credential_bindings,
             permission_rule_count=rules_copied,

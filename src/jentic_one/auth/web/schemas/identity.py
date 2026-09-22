@@ -68,7 +68,7 @@ class MeAgent(BaseModel):
     id: str
     name: str
     status: str
-    # Scopes the agent currently holds in `actor_scope_grants` (the source of
+    # Scopes the agent currently holds in `actor_permission_grants` (the source of
     # truth an approver grants against), so whoami reflects an approved grant
     # immediately — independent of when the presented token was minted (#673).
     scopes: list[str]
@@ -96,7 +96,7 @@ class MeServiceAccount(BaseModel):
     id: str
     name: str
     status: str
-    # Live grants from `actor_scope_grants` (same source of truth as agents), so
+    # Live grants from `actor_permission_grants` (same source of truth as agents), so
     # whoami reflects an approved grant immediately regardless of when the token
     # was minted (#673).
     scopes: list[str]

@@ -19,7 +19,7 @@ from jentic_one.admin.core.permissions import (
 )
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.repos import (
-    ActorScopeGrantRepository,
+    ActorPermissionGrantRepository,
     AgentRepository,
     AuthorizationCodeRepository,
     ExternalIdentityRepository,
@@ -84,7 +84,7 @@ class AgentConsentOption:
     """One row of the agent-picker consent page.
 
     ``scopes`` is the agent's *live* scope set (its current
-    ``actor_scope_grants``) — the consent page intersects it with the request
+    ``actor_permission_grants``) — the consent page intersects it with the request
     per candidate, and the submit path recomputes server-side (the browser's
     selection is never trusted for scope math).
     """
@@ -282,14 +282,14 @@ class AuthorizeService:
                 filters=[Agent.status == ActorStatus.ACTIVE.value],
             )
             # One batch query for every candidate's live scopes (a
-            # avoids a per-agent actor_scope_grants round-trip, run twice
+            # avoids a per-agent actor_permission_grants round-trip, run twice
             # because the submit path re-runs this predicate).
-            grants = await ActorScopeGrantRepository.list_for_actors(
+            grants = await ActorPermissionGrantRepository.list_for_actors(
                 session, [agent.id for agent in agents], actor_type=ActorType.AGENT.value
             )
             scopes_by_agent: dict[str, set[str]] = {}
             for grant in grants:
-                scopes_by_agent.setdefault(grant.actor_id, set()).add(grant.scope)
+                scopes_by_agent.setdefault(grant.actor_id, set()).add(grant.permission)
             return [
                 AgentConsentOption(
                     id=agent.id,

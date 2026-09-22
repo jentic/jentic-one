@@ -26,8 +26,8 @@ from jentic_one.control.scoping.filters import (
     register_access_filter_provider,
 )
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.auth.permission_catalog import OWNER_CREDENTIALS_READ
 from jentic_one.shared.models import ActorType
-from jentic_one.shared.scopes import OWNER_CREDENTIALS_READ
 
 
 def _identity(

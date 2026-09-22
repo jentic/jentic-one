@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import structlog
 
 from jentic_one.shared.auth.identity import Identity
@@ -10,6 +12,34 @@ from jentic_one.shared.context import Context
 from jentic_one.shared.models import ActorType
 
 logger = structlog.get_logger(__name__)
+
+
+def scopes_to_permissions(scopes: Sequence[object]) -> list[str]:
+    """Translate OAuth2 scopes carried on a token into internal permissions.
+
+    **The** place where this deployment's OAuth2 wire vocabulary crosses into its
+    internal authorization vocabulary. A token minted by this deployment's
+    authorization server carries its grant as scopes — in the ``scopes`` claim of a
+    JWT, or in the ``access_tokens.scopes`` snapshot behind an opaque token;
+    everything downstream of verification — route guards,
+    :class:`~jentic_one.shared.auth.identity.Identity`, query scoping — reasons in
+    permissions only. Callers: :func:`verify_token` below and
+    :class:`jentic_one.broker.repos.token_resolver.InProcessTokenResolver`.
+
+    Two other places depend on the same identity without converting through here:
+    :data:`jentic_one.shared.auth.permission_catalog.MCP_TOOL_SCOPES` (an OAuth2
+    ceiling defined as a permission baseline) and
+    :func:`jentic_one.auth.web.routers.authorize._scope_to_permission_description`
+    (consent copy looked up in the permission catalogue). Changing the translation
+    here means revisiting both.
+
+    The translation is identity today: the two formats use the same colon-form
+    strings, so a scope *is* a permission name. Keeping it a named function means
+    the day they diverge (a scope prefix, an audience qualifier, a coarser wire
+    grant) there is exactly one function to change rather than an inlined
+    ``list(...)`` to find.
+    """
+    return [str(s) for s in scopes]
 
 
 async def resolve_permissions_for_actor(
@@ -91,12 +121,13 @@ async def verify_token(token: str, *, secret: str, ctx: Context) -> Identity:
             ctx, actor_type, sub, parent_actor_id
         )
 
-    # Merge scopes from claims into permissions (scopes are now unified)
+    # A token minted by this deployment's own authorization server carries its
+    # grant as OAuth2 scopes; fold them into the permission set the rest of the
+    # platform enforces on. Order-preserving dedup so a scope that duplicates a
+    # resolved permission does not appear twice on the Identity.
     scopes_raw = claims.get("scopes")
     if isinstance(scopes_raw, list):
-        scope_strings = [str(s) for s in scopes_raw]
-        merged = list(dict.fromkeys(permissions + scope_strings))
-        permissions = merged
+        permissions = list(dict.fromkeys(permissions + scopes_to_permissions(scopes_raw)))
 
     return Identity(
         sub=sub,

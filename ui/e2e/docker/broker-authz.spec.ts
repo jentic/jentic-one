@@ -7,7 +7,7 @@ import { provisionAdminOwnedAgent } from './agent-flow';
  *
  * The broker's /execute path requires the caller's token to carry
  * `capabilities:execute` (BROKER_EXECUTE_SCOPE). The AUTHORIZATION SOURCE OF
- * TRUTH is the agent's scope grants (actor_scope_grants), read at token-mint
+ * TRUTH is the agent's scope grants (actor_permission_grants), read at token-mint
  * time. That source is fully testable here via the public scope API (the
  * endpoints that landed with #517): an agent granted the scope has it; an agent
  * not granted it does not. These are the assertions that decide whether a

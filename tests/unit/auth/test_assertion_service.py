@@ -69,13 +69,13 @@ def _make_active_agent(jwks: dict[str, Any]) -> MagicMock:
     return agent
 
 
-@patch("jentic_one.auth.services.assertion_service.ActorScopeGrantRepository")
+@patch("jentic_one.auth.services.assertion_service.ActorPermissionGrantRepository")
 @patch("jentic_one.auth.services.assertion_service.AgentRepository")
 @patch("jentic_one.auth.services.assertion_service.TokenService")
 async def test_verify_and_exchange_happy_path(
     mock_token_svc_cls: MagicMock,
     mock_agent_repo: MagicMock,
-    mock_scope_repo: MagicMock,
+    mock_permission_repo: MagicMock,
 ) -> None:
     ctx = _make_ctx()
     private_key, jwks = _generate_keypair()
@@ -83,8 +83,8 @@ async def test_verify_and_exchange_happy_path(
     mock_agent_repo.get_by_id_for_update = AsyncMock(return_value=agent)
 
     grant = MagicMock()
-    grant.scope = "read"
-    mock_scope_repo.list_for_actor = AsyncMock(return_value=[grant])
+    grant.permission = "read"
+    mock_permission_repo.list_for_actor = AsyncMock(return_value=[grant])
 
     token_svc_instance = MagicMock()
     token_svc_instance.issue_pair = AsyncMock(return_value=("at_new", "rt_new"))
@@ -200,19 +200,19 @@ async def test_verify_rejects_wrong_audience(mock_agent_repo: MagicMock) -> None
         await svc.verify_and_exchange(assertion)
 
 
-@patch("jentic_one.auth.services.assertion_service.ActorScopeGrantRepository")
+@patch("jentic_one.auth.services.assertion_service.ActorPermissionGrantRepository")
 @patch("jentic_one.auth.services.assertion_service.AgentRepository")
 @patch("jentic_one.auth.services.assertion_service.TokenService")
 async def test_verify_rejects_replayed_jti(
     mock_token_svc_cls: MagicMock,
     mock_agent_repo: MagicMock,
-    mock_scope_repo: MagicMock,
+    mock_permission_repo: MagicMock,
 ) -> None:
     ctx = _make_ctx()
     private_key, jwks = _generate_keypair()
     agent = _make_active_agent(jwks)
     mock_agent_repo.get_by_id_for_update = AsyncMock(return_value=agent)
-    mock_scope_repo.list_for_actor = AsyncMock(return_value=[])
+    mock_permission_repo.list_for_actor = AsyncMock(return_value=[])
 
     token_svc_instance = MagicMock()
     token_svc_instance.issue_pair = AsyncMock(return_value=("at_1", "rt_1"))

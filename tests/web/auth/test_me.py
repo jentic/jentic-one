@@ -19,7 +19,7 @@ from jentic_one.admin.core.schema.user_permission_grants import UserPermissionGr
 from jentic_one.admin.core.schema.user_secrets import UserSecret
 from jentic_one.admin.core.schema.users import User
 from jentic_one.admin.repos import (
-    ActorScopeGrantRepository,
+    ActorPermissionGrantRepository,
     AgentCredentialBindingRepository,
     AgentRepository,
     AgentToolkitBindingRepository,
@@ -195,11 +195,11 @@ async def approved_agent_id(
         )
         # A live scope grant the presented token won't carry — exercises #673:
         # /me must reflect current grants, not just the token's baked-in scopes.
-        await ActorScopeGrantRepository.grant(
+        await ActorPermissionGrantRepository.grant(
             session,
             actor_id=agent.id,
             actor_type="agent",
-            scope="capabilities:read",
+            permission="capabilities:read",
             granted_by=admin_user_id,
             created_by="usr_test",
         )
@@ -239,7 +239,7 @@ async def approved_agent_id(
         await session.execute(
             delete(AgentCredentialBinding).where(AgentCredentialBinding.agent_id == agent.id)
         )
-        await ActorScopeGrantRepository.revoke_all(session, agent.id)
+        await ActorPermissionGrantRepository.revoke_all(session, agent.id)
         await session.execute(delete(Agent).where(Agent.id == agent.id))
         await session.commit()
     async with ctx.control_db.session() as session:
@@ -285,12 +285,12 @@ async def approved_sa_id(
                 created_by="usr_test",
             )
         )
-        # A live scope grant — /me must reflect current grants (#673).
-        await ActorScopeGrantRepository.grant(
+        # A live permission grant — /me must reflect current grants (#673).
+        await ActorPermissionGrantRepository.grant(
             session,
             actor_id=sa.id,
             actor_type="service_account",
-            scope="capabilities:read",
+            permission="capabilities:read",
             granted_by=admin_user_id,
             created_by="usr_test",
         )
@@ -298,7 +298,7 @@ async def approved_sa_id(
     yield sa_id
 
     async with ctx.admin_db.session() as session:
-        await ActorScopeGrantRepository.revoke_all(session, sa_id)
+        await ActorPermissionGrantRepository.revoke_all(session, sa_id)
         await session.execute(
             delete(ServiceAccountCredential).where(
                 ServiceAccountCredential.service_account_id == sa_id
@@ -361,7 +361,7 @@ def test_me_agent(web_context: Context, approved_agent_id: str) -> None:
     assert body["id"] == approved_agent_id
     assert body["name"] == "me-test-agent"
     assert body["status"] == "active"
-    # scopes reflect the *live* actor_scope_grants (the grant from the fixture),
+    # scopes reflect the *live* actor_permission_grants (the grant from the fixture),
     # not the token's baked-in scopes — this is the #673 fix. token_scopes
     # carries the presented token's view so a stale-grant gap is detectable.
     assert body["scopes"] == ["capabilities:read"]
@@ -424,7 +424,7 @@ async def test_me_agent_opaque_token_surfaces_minted_scopes(
     # verifier must surface it (pre-fix this came back [] and every
     # capabilities:read-gated call 403'd).
     assert body["token_scopes"] == ["capabilities:read"]
-    # scopes still reflects the live actor_scope_grants.
+    # scopes still reflects the live actor_permission_grants.
     assert body["scopes"] == ["capabilities:read"]
 
 

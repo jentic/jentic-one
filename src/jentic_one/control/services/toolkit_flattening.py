@@ -72,7 +72,7 @@ logger = structlog.get_logger(__name__)
 _AUDIT_ACTOR_TYPE = "system:job"
 
 #: The only scope a converted ``jntc_live_`` holder should carry (Phase 4).
-_EXECUTE_SCOPE = "capabilities:execute"
+_EXECUTE_PERMISSION = "capabilities:execute"
 
 
 def _iso(value: dt.datetime | None) -> str | None:
@@ -170,7 +170,7 @@ class _Snapshot:
     toolkit_keys: list[Any]
     actor_ids: set[str]
     existing_pairs: dict[tuple[str, str], str | None]
-    scopes_by_actor: dict[str, list[str]]
+    permissions_by_actor: dict[str, list[str]]
 
 
 @dataclass
@@ -234,7 +234,9 @@ class ToolkitFlatteningService:
             existing_pairs = await FlatteningAdminRepository.list_direct_binding_pairs(
                 admin_session
             )
-            scopes_by_actor = await FlatteningAdminRepository.list_scopes_by_actor(admin_session)
+            permissions_by_actor = await FlatteningAdminRepository.list_permissions_by_actor(
+                admin_session
+            )
 
         toolkit_map = {t.id: t for t in toolkits}
         credential_map = {c.id: c for c in credentials}
@@ -269,7 +271,7 @@ class ToolkitFlatteningService:
             toolkit_keys=toolkit_keys,
             actor_ids=actor_ids,
             existing_pairs=existing_pairs,
-            scopes_by_actor=scopes_by_actor,
+            permissions_by_actor=permissions_by_actor,
         )
 
     @staticmethod
@@ -384,18 +386,18 @@ class ToolkitFlatteningService:
                     )
                 )
             if key.migrated_actor_id is not None:
-                scopes = snapshot.scopes_by_actor.get(key.migrated_actor_id, [])
-                excess = sorted(s for s in scopes if s != _EXECUTE_SCOPE)
+                permissions = snapshot.permissions_by_actor.get(key.migrated_actor_id, [])
+                excess = sorted(p for p in permissions if p != _EXECUTE_PERMISSION)
                 if excess:
                     findings.append(
                         Finding(
-                            "scope_exceeds_execute",
+                            "permission_exceeds_execute",
                             {
                                 "service_account_id": key.migrated_actor_id,
                                 "key_id": key.id,
                                 "toolkit_id": key.toolkit_id,
-                                "scopes": sorted(scopes),
-                                "excess_scopes": excess,
+                                "permissions": sorted(permissions),
+                                "excess_permissions": excess,
                             },
                         )
                     )

@@ -20,8 +20,8 @@ from jentic_one.broker.core.token_validation import CachedTokenValidator
 from jentic_one.broker.services.auth import DualTokenValidator, JwtTokenValidator, JwtVerifier
 from jentic_one.broker.web.deps import RequireToolkitAccess
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.auth.permission_catalog import BROKER_EXECUTE_PERMISSION
 from jentic_one.shared.models import ActorType
-from jentic_one.shared.scopes import BROKER_EXECUTE_SCOPE
 
 _JWT_SECRET = "broker-deps-test-secret-32-bytes-long!!"  # pragma: allowlist secret
 
@@ -36,7 +36,7 @@ def _make_identity(
     return Identity(
         sub=sub,
         actor_type=actor_type,
-        permissions=permissions or [BROKER_EXECUTE_SCOPE],
+        permissions=permissions or [BROKER_EXECUTE_PERMISSION],
         expires_at=datetime.now(UTC) + timedelta(hours=1),
         active=active,
     )

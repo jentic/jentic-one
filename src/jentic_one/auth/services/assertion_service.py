@@ -7,7 +7,7 @@ from typing import Any
 
 import jwt
 
-from jentic_one.admin.repos.actor_scope_grant_repo import ActorScopeGrantRepository
+from jentic_one.admin.repos.actor_permission_grant_repo import ActorPermissionGrantRepository
 from jentic_one.admin.repos.agent_repo import AgentRepository
 from jentic_one.auth.services.errors import InvalidGrantError
 from jentic_one.auth.services.token_service import TokenService
@@ -72,7 +72,7 @@ class AssertionService:
     async def verify_and_exchange(self, assertion: str) -> tuple[str, str, list[str]]:
         """Verify a JWT assertion and return (access_token, refresh_token, scopes).
 
-        ``scopes`` is the agent's live ``actor_scope_grants`` set stamped on
+        ``scopes`` is the agent's live ``actor_permission_grants`` set stamped on
         the minted pair, returned so the token endpoint can report the
         effective scope per RFC 6749 §5.1.
         """
@@ -147,10 +147,10 @@ class AssertionService:
             if not jti or not self._jti_cache.check_and_insert(jti):
                 raise InvalidGrantError(_INVALID)
 
-            grants = await ActorScopeGrantRepository.list_for_actor(
+            grants = await ActorPermissionGrantRepository.list_for_actor(
                 session, agent.id, actor_type=ActorType.AGENT
             )
-            scopes = [g.scope for g in grants]
+            scopes = [g.permission for g in grants]
 
             await record_audit(
                 session,

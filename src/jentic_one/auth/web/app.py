@@ -32,12 +32,12 @@ from jentic_one.shared.auth.api_key_resolver import (
     ApiKeyResolver,
 )
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.auth.permission_catalog import OIDC_PASSTHROUGH_SCOPES
 from jentic_one.shared.auth.verify import resolve_permissions_for_actor, verify_token
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.errors import DatabaseUnavailableError
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.pagination import InvalidCursorError
-from jentic_one.shared.scopes import OIDC_PASSTHROUGH_SCOPES
 from jentic_one.shared.state import build_state_backend
 from jentic_one.shared.state.factory import BackendKind
 from jentic_one.shared.web.app_factory import create_surface_app
@@ -151,7 +151,7 @@ def _make_auth_verifier(ctx: Context) -> Any:
             )
             if resolved.actor_type == ActorType.AGENT:
                 # The access-token row carries the scopes minted from the agent's
-                # live actor_scope_grants (TokenService.issue_pair via the
+                # live actor_permission_grants (TokenService.issue_pair via the
                 # jwt-bearer exchange). Trust those as the agent's permissions:
                 # the AGENT branch of resolve_permissions_for_actor is an
                 # unimplemented stub that returns [], which silently drops every

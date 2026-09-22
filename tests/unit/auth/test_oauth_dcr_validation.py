@@ -16,7 +16,7 @@ from jentic_one.auth.services.oauth_dcr_service import (
     _dedupe_rank,
     _validate_metadata,
 )
-from jentic_one.shared.scopes import MCP_TOOL_SCOPES
+from jentic_one.shared.auth.permission_catalog import MCP_TOOL_SCOPES
 
 _VALID_URIS = ["https://client.example.com/callback"]
 

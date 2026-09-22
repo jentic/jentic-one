@@ -35,7 +35,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from jentic_one.shared.scopes import BROKER_EXECUTE_SCOPE
+from jentic_one.shared.auth.permission_catalog import BROKER_EXECUTE_PERMISSION
 from jentic_one.shared.web.endpoint_scopes import build_operation_auth_map, implied_scopes
 from jentic_one.shared.web.openapi_meta import PUBLIC_OPERATION_IDS
 from jentic_one.shared.web.scope_catalog import build_scope_catalog
@@ -52,7 +52,7 @@ _HTTP_METHODS = ("get", "post", "put", "patch", "delete")
 _AGENT_ACTORS: tuple[str, ...] = ("agent",)
 
 #: The broker's only unauthenticated routes (liveness / readiness probes); every
-#: other broker route is the execute proxy and requires BROKER_EXECUTE_SCOPE.
+#: other broker route is the execute proxy and requires BROKER_EXECUTE_PERMISSION.
 _BROKER_PUBLIC_PATHS: frozenset[str] = frozenset({"/health", "/ready"})
 
 #: The broker's authenticated data-plane route — the catch-all execute proxy. Its
@@ -210,8 +210,8 @@ def _declared_broker_endpoints() -> list[Endpoint]:
             authenticated=True,
             public=False,
             actor_types=list(_AGENT_ACTORS),
-            required_scopes=[BROKER_EXECUTE_SCOPE],
-            implied_scopes=implied_scopes([BROKER_EXECUTE_SCOPE]),
+            required_scopes=[BROKER_EXECUTE_PERMISSION],
+            implied_scopes=implied_scopes([BROKER_EXECUTE_PERMISSION]),
             typical_caller="agent",
         )
         for method in _BROKER_PROXY_METHODS
@@ -222,8 +222,8 @@ def _declared_broker_endpoints() -> list[Endpoint]:
 def _annotate_broker(broker: list[Endpoint]) -> None:
     """Stamp the broker execute-proxy route's enforced scope (its spec lacks the auth map).
 
-    The broker proxy (:data:`_BROKER_PROXY_PATH`) enforces BROKER_EXECUTE_SCOPE via
-    RequireToolkitAccess (broker/web/deps.require_execute_scope); its hand-curated
+    The broker proxy (:data:`_BROKER_PROXY_PATH`) enforces BROKER_EXECUTE_PERMISSION via
+    RequireToolkitAccess (broker/web/deps.require_execute_permission); its hand-curated
     spec does not carry scope metadata, so annotate that specific data-plane route
     to keep the reference code-true. The liveness/readiness probes are the broker's
     only public routes.
@@ -237,8 +237,8 @@ def _annotate_broker(broker: list[Endpoint]) -> None:
         if ep.path == _BROKER_PROXY_PATH and not ep.required_scopes:
             ep.authenticated = True
             ep.public = False
-            ep.required_scopes = [BROKER_EXECUTE_SCOPE]
-            ep.implied_scopes = implied_scopes([BROKER_EXECUTE_SCOPE])
+            ep.required_scopes = [BROKER_EXECUTE_PERMISSION]
+            ep.implied_scopes = implied_scopes([BROKER_EXECUTE_PERMISSION])
             ep.actor_types = ep.actor_types or list(_AGENT_ACTORS)
             ep.typical_caller = ep.typical_caller or "agent"
 

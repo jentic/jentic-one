@@ -272,11 +272,11 @@ class ApiKeyResolver:
 
     async def _load_permissions(self, actor_id: str, actor_type: ActorType) -> list[str]:
         stmt = text(
-            "SELECT scope FROM actor_scope_grants"
+            "SELECT permission FROM actor_permission_grants"
             " WHERE actor_id = :actor_id AND actor_type = :actor_type"
         )
         async with self._admin_db.session() as session:
             result = await session.execute(
                 stmt, {"actor_id": actor_id, "actor_type": actor_type.value}
             )
-            return [row.scope for row in result.all()]
+            return [row.permission for row in result.all()]

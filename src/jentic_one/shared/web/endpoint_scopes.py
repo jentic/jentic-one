@@ -47,9 +47,11 @@ import structlog
 from fastapi import FastAPI
 from fastapi.routing import APIRoute
 
-from jentic_one.shared.auth.permission_catalog import compute_implies_transitive
+from jentic_one.shared.auth.permission_catalog import (
+    DEFAULT_AGENT_PERMISSIONS,
+    compute_implies_transitive,
+)
 from jentic_one.shared.models.actors import ActorType
-from jentic_one.shared.scopes import DEFAULT_AGENT_SCOPES
 
 _log = structlog.get_logger(__name__)
 
@@ -111,7 +113,7 @@ _PROGRAMMATIC_ACTORS: frozenset[str] = frozenset({ActorType.AGENT.value})
 
 #: Scopes an agent is granted by default — endpoints needing only these are
 #: *typically* called by agents.
-_AGENT_DEFAULT_SCOPES: frozenset[str] = frozenset(DEFAULT_AGENT_SCOPES)
+_AGENT_DEFAULT_SCOPES: frozenset[str] = frozenset(DEFAULT_AGENT_PERMISSIONS)
 
 #: Scopes that are typically held by a human operator / admin console rather than
 #: an autonomous agent (agents are never granted these by default).
@@ -125,7 +127,7 @@ _OPERATOR_SCOPES: frozenset[str] = frozenset(
         "audit:read",
         "events:write",
         # Confirming an overlay rewrites the served spec — a human operator action,
-        # never an agent default (excluded from DEFAULT_AGENT_SCOPES).
+        # never an agent default (excluded from DEFAULT_AGENT_PERMISSIONS).
         "overlays:confirm",
     }
 )

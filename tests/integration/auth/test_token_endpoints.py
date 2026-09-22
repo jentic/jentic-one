@@ -11,14 +11,14 @@ from sqlalchemy import delete
 from sqlalchemy.exc import OperationalError
 
 from jentic_one.admin.core.schema.access_tokens import AccessToken
-from jentic_one.admin.core.schema.actor_scope_grants import ActorScopeGrant
+from jentic_one.admin.core.schema.actor_permission_grants import ActorPermissionGrant
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.refresh_tokens import RefreshToken
 from jentic_one.admin.core.schema.service_accounts import ServiceAccount
 from jentic_one.admin.core.schema.users import User
 from jentic_one.admin.repos import (
     AccessTokenRepository,
-    ActorScopeGrantRepository,
+    ActorPermissionGrantRepository,
     AgentRepository,
     UserRepository,
 )
@@ -44,7 +44,7 @@ async def clean_tokens(integration_context: Context) -> AsyncGenerator[None, Non
         async with integration_context.admin_db.session() as session:
             await session.execute(delete(AccessToken))
             await session.execute(delete(RefreshToken))
-            await session.execute(delete(ActorScopeGrant))
+            await session.execute(delete(ActorPermissionGrant))
             await session.execute(delete(Agent).where(Agent.created_by == _SEED_MARKER))
             await session.execute(
                 delete(ServiceAccount).where(ServiceAccount.created_by == _SEED_MARKER)
@@ -241,18 +241,18 @@ async def test_resolve_access_token(
     """resolve_access_token returns an Identity whose scopes reflect *live* grants.
 
     Long-lived agent tokens (an access+refresh pair) resolve scopes from the
-    actor's current ``ActorScopeGrant`` rows, so a scope change is reflected
+    actor's current ``ActorPermissionGrant`` rows, so a scope change is reflected
     immediately. Seed the grant that a real ``issue_pair`` would have derived
     from.
     """
     owner_id = await _seed_user(integration_context, "usr_resolve_owner")
     agent_id = await _seed_agent(integration_context, owner_id=owner_id)
     async with integration_context.admin_db.session() as session:
-        await ActorScopeGrantRepository.grant(
+        await ActorPermissionGrantRepository.grant(
             session,
             actor_id=agent_id,
             actor_type=ActorType.AGENT,
-            scope="execute",
+            permission="execute",
             granted_by="usr_test",
             created_by="usr_test",
         )
@@ -277,11 +277,11 @@ async def test_resolve_reflects_scope_grant_without_remint(
     owner_id = await _seed_user(integration_context, "usr_scope_owner")
     agent_id = await _seed_agent(integration_context, owner_id=owner_id)
     async with integration_context.admin_db.session() as session:
-        await ActorScopeGrantRepository.grant(
+        await ActorPermissionGrantRepository.grant(
             session,
             actor_id=agent_id,
             actor_type=ActorType.AGENT,
-            scope="apis:read",
+            permission="apis:read",
             granted_by="usr_owner",
             created_by="usr_owner",
         )
@@ -294,11 +294,11 @@ async def test_resolve_reflects_scope_grant_without_remint(
 
     # Owner grants apis:write after the token was minted.
     async with integration_context.admin_db.session() as session:
-        await ActorScopeGrantRepository.grant(
+        await ActorPermissionGrantRepository.grant(
             session,
             actor_id=agent_id,
             actor_type=ActorType.AGENT,
-            scope="apis:write",
+            permission="apis:write",
             granted_by="usr_owner",
             created_by="usr_owner",
         )
@@ -318,11 +318,11 @@ async def test_resolve_reflects_scope_revocation_without_remint(
     agent_id = await _seed_agent(integration_context, owner_id=owner_id)
     async with integration_context.admin_db.session() as session:
         for scope in ("apis:read", "apis:write"):
-            await ActorScopeGrantRepository.grant(
+            await ActorPermissionGrantRepository.grant(
                 session,
                 actor_id=agent_id,
                 actor_type=ActorType.AGENT,
-                scope=scope,
+                permission=scope,
                 granted_by="usr_owner",
                 created_by="usr_owner",
             )
@@ -333,7 +333,9 @@ async def test_resolve_reflects_scope_revocation_without_remint(
     )
 
     async with integration_context.admin_db.session() as session:
-        await ActorScopeGrantRepository.revoke(session, actor_id=agent_id, scope="apis:write")
+        await ActorPermissionGrantRepository.revoke(
+            session, actor_id=agent_id, permission="apis:write"
+        )
         await session.commit()
 
     resolved = await token_service.resolve_access_token(access)

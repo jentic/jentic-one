@@ -168,8 +168,8 @@ _LIST_AGENT_IDS = text("SELECT id FROM agents")
 
 _LIST_SERVICE_ACCOUNT_IDS = text("SELECT id FROM service_accounts")
 
-_LIST_SCOPES_FOR_ACTORS = text(
-    "SELECT actor_id, scope FROM actor_scope_grants ORDER BY actor_id, scope"
+_LIST_PERMISSIONS_FOR_ACTORS = text(
+    "SELECT actor_id, permission FROM actor_permission_grants ORDER BY actor_id, permission"
 )
 
 _INSERT_CREDENTIAL_BINDING = text(
@@ -217,13 +217,13 @@ class FlatteningAdminRepository:
         return {str(i) for i in agents} | {str(i) for i in service_accounts}
 
     @staticmethod
-    async def list_scopes_by_actor(session: AsyncSession) -> dict[str, list[str]]:
-        """All scope grants grouped by actor id (converted-identity report read)."""
-        rows = (await session.execute(_LIST_SCOPES_FOR_ACTORS)).all()
-        scopes: dict[str, list[str]] = {}
+    async def list_permissions_by_actor(session: AsyncSession) -> dict[str, list[str]]:
+        """All permission grants grouped by actor id (converted-identity report read)."""
+        rows = (await session.execute(_LIST_PERMISSIONS_FOR_ACTORS)).all()
+        permissions: dict[str, list[str]] = {}
         for row in rows:
-            scopes.setdefault(str(row.actor_id), []).append(str(row.scope))
-        return scopes
+            permissions.setdefault(str(row.actor_id), []).append(str(row.permission))
+        return permissions
 
     @staticmethod
     async def insert_credential_binding(

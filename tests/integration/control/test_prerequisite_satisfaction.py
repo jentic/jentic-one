@@ -30,7 +30,7 @@ async def seed_admin_rows(admin_db: DatabaseSession) -> AsyncGenerator[None, Non
     async def _cleanup() -> None:
         async with admin_db.session() as session:
             await session.execute(
-                text("DELETE FROM actor_scope_grants WHERE actor_id = :aid"),
+                text("DELETE FROM actor_permission_grants WHERE actor_id = :aid"),
                 {"aid": _AGENT_ID},
             )
             await session.execute(

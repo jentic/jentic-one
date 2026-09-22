@@ -120,13 +120,13 @@ from jentic_one.shared.auth.permission_catalog import (
     ALL_PERMISSIONS,
     CREDENTIALS_READ,
     CREDENTIALS_WRITE,
+    OIDC_PASSTHROUGH_SCOPES,
     compute_implies_transitive,
 )
 from jentic_one.shared.context import Context
 from jentic_one.shared.db import DatabaseIntegrityError
 from jentic_one.shared.models import ActorStatus, ActorType
 from jentic_one.shared.models.oauth_clients import OAuthClientApprovalStatus, OAuthConsentModel
-from jentic_one.shared.scopes import OIDC_PASSTHROUGH_SCOPES
 from jentic_one.shared.web import get_current_identity
 from jentic_one.shared.web.deps import derive_origin, get_ctx
 from jentic_one.shared.web.sensitive import SENSITIVE
@@ -1605,6 +1605,13 @@ def _scope_to_permission_description(scope: str) -> str | None:
     Returns None for scopes that should not be displayed (e.g. openid).
     Falls back to the permission catalog description for platform scopes,
     or a generic label for completely unknown scopes.
+
+    A vocabulary crossing point: the argument is a scope off the authorization
+    request, the result describes the permission the user is about to grant. The
+    lookup into :data:`ALL_PERMISSIONS` works because the two formats are the same
+    colon-form strings — see
+    :func:`jentic_one.shared.auth.verify.scopes_to_permissions`, the other place
+    that depends on that identity.
     """
     if scope in _HIDDEN_SCOPES:
         return None
@@ -2497,7 +2504,7 @@ async def consent_agent_create(
         create_status = ActorStatus.ACTIVE if can_create_active else ActorStatus.PENDING
         # Owner is ALWAYS the consenting user resolved from the server-side
         # handle — the form carries no owner input. Scopes=None applies the
-        # platform's DEFAULT_AGENT_SCOPES on the ACTIVE arm, exactly like the
+        # platform's DEFAULT_AGENT_PERMISSIONS on the ACTIVE arm, exactly like the
         # SPA path (the PENDING arm defers scopes to approve(), exactly like
         # /register); the service records the same REGISTER audit +
         # agent.created event either way.

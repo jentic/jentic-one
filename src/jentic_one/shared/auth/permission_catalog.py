@@ -1,31 +1,36 @@
 """Static permission catalogue and implication map (tier-neutral).
 
-Home of the permission *data* — the `Permission` dataclass, the `ALL_PERMISSIONS`
-catalogue, the derived `IMPLICATION_MAP`, and the pure `compute_effective` /
-`compute_implies_transitive` expansion helpers. It lives in ``shared/auth`` (not
-``admin``) so any tier can expand grants through the implication map without a
-layering inversion: ``shared`` callers (``shared/web/deps.py``,
-``shared/web/scope_catalog.py``, ``shared/web/endpoint_scopes.py``,
-``shared/auth/permissions.py``) and non-web service callers alike import from here
-rather than reaching up into the admin tier (#938).
+Home of the permission *data* — the permission name constants, the `Permission`
+dataclass, the `ALL_PERMISSIONS` catalogue, the derived `IMPLICATION_MAP`, and the
+pure `compute_effective` / `compute_implies_transitive` expansion helpers. It lives
+in ``shared/auth`` (not ``admin``) so any tier can expand grants through the
+implication map without a layering inversion: ``shared`` callers
+(``shared/web/deps.py``, ``shared/web/scope_catalog.py``,
+``shared/web/endpoint_scopes.py``, ``shared/auth/permissions.py``) and non-web
+service callers alike import from here rather than reaching up into the admin tier
+(#938). The broker is the reason the constants are tier-neutral: it cannot import
+from admin, so the permission strings it shares with admin are defined here.
 
 ``admin.core.permissions`` re-exports everything here for backward compatibility,
 so existing ``from jentic_one.admin.core.permissions import …`` call sites keep
 working unchanged; admin stays the documented home for permission *concepts*, the
-data just lives in shared. This module depends only on ``shared/scopes.py`` — no
-admin-tier import — which is what lets the ``test_shared_does_not_import_admin_permissions``
-arch guard pass unconditionally.
+data just lives in shared. This module has no admin-tier import, which is what lets
+the ``test_shared_does_not_import_admin_permissions`` arch guard pass
+unconditionally.
+
+**Vocabulary.** A *permission* is what an actor may do — the thing stored in
+``actor_permission_grants``, carried on ``Identity.permissions``, and enforced by
+route guards. A *scope* is the same string travelling over this deployment's own
+OAuth2/OIDC plane. Constants named ``*_SCOPES`` below are therefore deliberate:
+they describe the OAuth2 wire surface, not internal authorization. The two formats
+are identical today, and the places that would break if they ever diverged are
+:data:`MCP_TOOL_SCOPES` here and
+:func:`jentic_one.shared.auth.verify.scopes_to_permissions`.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-
-from jentic_one.shared.scopes import (
-    OWNER_AGENTS_READ,
-    OWNER_CREDENTIALS_READ,
-    OWNER_RESOURCES_READ,
-)
 
 CAPABILITIES_EXECUTE = "capabilities:execute"
 CAPABILITIES_READ = "capabilities:read"
@@ -54,6 +59,78 @@ CONFIG_WRITE = "config:write"
 OAUTH_CLIENTS_READ = "oauth-clients:read"
 OAUTH_CLIENTS_WRITE = "oauth-clients:write"
 ORG_ADMIN = "org:admin"
+
+OWNER_CREDENTIALS_READ = "owner:credentials:read"
+OWNER_AGENTS_READ = "owner:agents:read"
+OWNER_RESOURCES_READ = "owner:resources:read"
+
+#: The permission every executing actor must hold for the broker data plane. An
+#: alias rather than a second literal: the broker's requirement *is*
+#: ``capabilities:execute``, and the named form is what broker and reference code
+#: read so the requirement is greppable by intent.
+BROKER_EXECUTE_PERMISSION = CAPABILITIES_EXECUTE
+
+#: Permissions retired from the catalogue. Stored grants — user permission rows and
+#: agent ``actor_permission_grants`` — still carry these strings, so every validation
+#: path that rejects unknown permissions must accept-and-ignore members of this set:
+#: a re-submit of a stored grant must never 422 just because it predates the
+#: retirement. Holding a retired permission grants nothing (no route requires it and
+#: the implication map no longer expands it).
+#:
+#: - The toolkit permissions retired in theme-5 Phase 5b (the toolkit management
+#:   surface is gone; authorization runs on the agent↔credential axis); they —
+#:   and the stored strings — are swept in Phase 6b.
+#: - ``owner:access-requests:read`` retired in theme 7 (the access-request flow
+#:   is gone; nothing is left to delegate reads over).
+#: - The service-account permissions retired in theme-8 Phase 2 (the
+#:   service-account surface is gone; every SA was migrated to a successor agent
+#:   in Phase 1). Stored strings are swept with the Phase-4 table drops.
+RETIRED_PERMISSIONS: frozenset[str] = frozenset(
+    {
+        "toolkits:read",
+        "toolkits:write",
+        "owner:toolkits:read",
+        "owner:access-requests:read",
+        "service-accounts:read",
+        "service-accounts:write",
+        "owner:service-accounts:read",
+    }
+)
+
+#: The permission baseline every new agent is granted.
+DEFAULT_AGENT_PERMISSIONS: tuple[str, ...] = (
+    CAPABILITIES_EXECUTE,
+    CAPABILITIES_READ,
+    APIS_READ,
+    CATALOG_IMPORT,
+    EXECUTIONS_READ,
+    JOBS_READ,
+    EVENTS_READ,
+    OWNER_RESOURCES_READ,
+    OWNER_AGENTS_READ,
+    OWNER_CREDENTIALS_READ,
+    # Lets an agent initiate the agent-driven SSO flow. Narrower than
+    # `credentials:write` — cannot read tokens or manage other credentials.
+    CREDENTIALS_CONNECT,
+)
+
+#: OIDC scopes passed through this deployment's own authorization server without
+#: being treated as authorization grants. OAuth2 plane — genuinely scopes.
+OIDC_PASSTHROUGH_SCOPES: frozenset[str] = frozenset({"openid", "email", "profile"})
+
+#: Server-side cap for the `scope` a client claims at the anonymous DCR front
+#: door (POST /oauth-clients): a DCR-registered client's `allowed_scopes` ceiling is
+#: always ⊆ this set — never unrestricted. It is the MCP tool surface expressed as
+#: scopes, which is exactly the default agent baseline: DCR clients are
+#: `consent_model='agent'` (D6), so a grant's effective scopes are further
+#: intersected with the bound agent's live permissions at consent. The OAuth
+#: discovery documents (`scopes_supported`) must advertise this same set.
+#:
+#: This assignment is the scope↔permission identity in constant form: an OAuth2-plane
+#: ceiling defined as the internal permission baseline. It and
+#: :func:`jentic_one.shared.auth.verify.scopes_to_permissions` are the two places
+#: that break if the two formats ever diverge.
+MCP_TOOL_SCOPES: frozenset[str] = frozenset(DEFAULT_AGENT_PERMISSIONS)
 
 
 @dataclass(frozen=True)
@@ -254,10 +331,14 @@ def compute_effective(grants: set[str]) -> set[str]:
     return effective
 
 
-#: Public surface re-exported verbatim by the ``admin.core.permissions`` shim. The
-#: ``OWNER_*`` scope constants are intentionally excluded — their canonical home is
-#: ``shared.scopes`` and callers import them from there, not via this catalogue. Kept
+#: Public surface re-exported verbatim by the ``admin.core.permissions`` shim. Kept
 #: in sync with the shim's ``__all__`` (asserted by test_permission_catalog).
+#:
+#: The ``OWNER_*`` delegated-read permissions, the collections
+#: (``DEFAULT_AGENT_PERMISSIONS``, ``RETIRED_PERMISSIONS``) and the OAuth2-plane sets
+#: (``MCP_TOOL_SCOPES``, ``OIDC_PASSTHROUGH_SCOPES``) are intentionally excluded from
+#: the admin shim: they are tier-neutral by construction and callers import them from
+#: this module directly.
 __all__ = [
     "AGENTS_READ",
     "AGENTS_WRITE",
