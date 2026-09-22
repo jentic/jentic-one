@@ -52,7 +52,7 @@ describe('PendingApprovalBanner', () => {
 		vi.useRealTimers();
 	});
 
-	// --- Zero-pending: no reserved space (risk O8) ---------------------------
+	// --- Zero-pending: no reserved space -------------------------------------
 
 	it('renders nothing at all when no agent is pending', () => {
 		const { container } = renderBanner([]);

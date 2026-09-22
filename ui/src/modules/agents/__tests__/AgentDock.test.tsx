@@ -1,8 +1,8 @@
 /**
  * AgentDock — the fixed bottom action dock. Covers the verb set per lifecycle
- * state, the ported ToolkitDock behaviours (double-click guard,
- * Undo-on-deactivate, "succeeded but the grid didn't refresh"), the sheets it
- * opens, archive wording, tooltips, a11y and the 390px viewport.
+ * state, the in-flight guards (double-click, Undo-on-deactivate, "succeeded
+ * but the grid didn't refresh"), the sheets it opens, archive wording,
+ * tooltips, a11y and the 390px viewport.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { http, HttpResponse, delay } from 'msw';
@@ -143,7 +143,7 @@ describe('AgentDock — fixed bottom action dock', () => {
 		expect(dock.getByRole('button', { name: 'Settings' })).toBeEnabled();
 	});
 
-	// --- Ported ToolkitDock behaviours --------------------------------------
+	// --- In-flight and refresh guards ----------------------------------------
 
 	it('double-click guard: a second click while in flight is a no-op', async () => {
 		let calls = 0;

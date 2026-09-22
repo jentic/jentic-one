@@ -118,7 +118,7 @@ describe('FooterActionBar', () => {
 			// …which is measurably NOT the viewport centre.
 			expect(Math.abs(barCenter - 640)).toBeGreaterThan(100);
 		});
-		// Vertical behaviour is unchanged: still fixed above the bottom edge.
+		// Vertical placement is anchor-independent: fixed above the bottom edge.
 		const style = getComputedStyle(el);
 		expect(style.position).toBe('fixed');
 		expect(style.bottom).toBe('12px');

@@ -146,8 +146,8 @@ describe('AgentsPage — flat agents surface', () => {
 		renderPage();
 		await screen.findAllByText('inbox-triage-bot');
 
-		// The segmented toggle is gone: no tab switch to a service-accounts
-		// roster, and no roster create button. The strip is the only tablist.
+		// No segmented toggle, no service-accounts roster, no roster create
+		// button: the strip is the only tablist.
 		expect(screen.queryByRole('button', { name: 'Service accounts' })).not.toBeInTheDocument();
 		expect(
 			screen.queryByRole('button', { name: 'New service account' }),
@@ -220,7 +220,7 @@ describe('AgentsPage — flat agents surface', () => {
 		renderPage();
 		await screen.findByRole('tab', { name: /solo-active-bot/ });
 
-		// Zero reserved space (risk O8): no banner region, no group furniture.
+		// Zero reserved space: no banner region, no group furniture.
 		expect(
 			screen.queryByRole('region', { name: /Awaiting approval/i }),
 		).not.toBeInTheDocument();
@@ -320,8 +320,8 @@ describe('AgentsPage — flat agents surface', () => {
 		const slackTile = (await screen.findByText('Slack')).closest(
 			'[data-testid="api-tile"]',
 		) as HTMLElement;
-		// The identity line still states the host; the detail line no longer
-		// repeats it under the guise of a credential name.
+		// The identity line states the host; the detail line does not repeat
+		// it under the guise of a credential name.
 		expect(slackTile).toHaveTextContent('slack.com · v1.0.0');
 		expect(within(slackTile).getByTestId('tile-detail-slot')).not.toHaveTextContent(
 			'slack.com',

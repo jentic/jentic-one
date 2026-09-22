@@ -191,7 +191,7 @@ function ServingVerb({
 				</span>
 			);
 		case 'archived':
-			// Irreversible — never render a live-looking toggle (risk O5).
+			// Irreversible — never render a live-looking toggle.
 			return (
 				<span className="text-muted-foreground px-1 text-xs" data-testid="dock-state-note">
 					Archived — retired, read-only here
