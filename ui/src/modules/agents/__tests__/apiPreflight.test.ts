@@ -1,12 +1,8 @@
 /**
  * Unit specs for the Add-APIs preflight — the classification rules the tray's
- * tally rests on (plan §4.4). No DOM, no MSW: plain functions over the
- * credential list and the agent's bindings.
- *
- * The rules that carry the most weight here are the negative ones: identity
- * matching must not collapse two accounts of the same vendor into one silent
- * reuse, must not exclude a credential for looking unhealthy (D2b), and must
- * not promise "one click" for a cost it cannot prove.
+ * tally rests on. The negative rules carry the most weight: identity matching must
+ * not collapse two accounts of one vendor into a silent reuse, must not exclude a
+ * credential for looking unhealthy, and must not promise "one click" unprovably.
  */
 import { describe, it, expect } from 'vitest';
 import {
@@ -66,13 +62,24 @@ function inputs(over: Partial<PreflightInputs> = {}): PreflightInputs {
 }
 
 describe('credentialCoversApi', () => {
-	it('matches on vendor/name, ignoring version', () => {
-		const credential = makeCredential({
+	it('treats a pinned version as pinned, and an absent one as spanning revisions', () => {
+		// The broker resolves a binding with `credential_covers`, where a pinned
+		// version is pinned. Calling a cross-revision match "reuse" here would
+		// bind a credential the broker then refuses with an identity mismatch.
+		const pinned = makeCredential({
 			api: { vendor: 'stripe.com', name: 'main', version: '2.0.0' },
 		});
-		// A spec revision is the same API reached with the same account — a
-		// version-strict match would call an obvious reuse a new credential.
-		expect(credentialCoversApi(credential, makePick({ version: '1.0.0' }))).toBe(true);
+		expect(credentialCoversApi(pinned, makePick({ version: '1.0.0' }))).toBe(false);
+		expect(credentialCoversApi(pinned, makePick({ version: '2.0.0' }))).toBe(true);
+
+		// A credential meant to span revisions carries no version. The backend stores
+		// NULL and serialises it as `""`, so the empty string must read as "any
+		// revision".
+		const spanning = makeCredential({
+			api: { vendor: 'stripe.com', name: 'main', version: '' },
+		});
+		expect(credentialCoversApi(spanning, makePick({ version: '1.0.0' }))).toBe(true);
+		expect(credentialCoversApi(spanning, makePick({ version: '2.0.0' }))).toBe(true);
 	});
 
 	it('does not match on vendor alone', () => {
@@ -118,11 +125,10 @@ describe('preflightApi', () => {
 		expect(item.candidates).toHaveLength(1);
 	});
 
-	it('does not filter reuse candidates on health (D2b)', () => {
-		// `active: false` is the closest thing to "looks broken" a redacted
-		// credential exposes. It must still count: we cannot reliably detect
-		// broken (D2a), so filtering on it blocks valid reuse while implying the
-		// survivors are fine.
+	it('does not filter reuse candidates on health', () => {
+		// `active: false` is the closest thing to "looks broken" a redacted credential
+		// exposes. It must still count: we cannot detect broken, so filtering on it
+		// blocks valid reuse while implying the survivors are fine.
 		const item = preflightApi(
 			makePick(),
 			inputs({ credentials: [makeCredential({ active: false })] }),
@@ -208,7 +214,7 @@ describe('preflightApi', () => {
 		).toBe('form');
 	});
 
-	it('flags an unregistered catalog pick as an import (D5)', () => {
+	it('flags an unregistered catalog pick as an import', () => {
 		const fresh = makePick({ source: 'catalog', registered: false, apiId: 'stripe.com' });
 		const already = makePick({ source: 'catalog', registered: true, apiId: 'stripe.com' });
 		expect(preflightApi(fresh, inputs()).importsApi).toBe(true);
@@ -216,10 +222,11 @@ describe('preflightApi', () => {
 		expect(preflightApi(makePick({ source: 'local' }), inputs()).importsApi).toBe(false);
 	});
 
-	it('keys each item by its vendor/name identity', () => {
+	it('keys each item by its canonical vendor/name identity', () => {
 		const pick = makePick({ vendor: 'GitHub.com', name: 'Main' });
 		expect(preflightApi(pick, inputs()).key).toBe(apiRefKey(pick));
-		expect(preflightApi(pick, inputs()).key).toBe('github.com/main');
+		// Slug form, so a raw domain and its stored spelling key alike.
+		expect(preflightApi(pick, inputs()).key).toBe('github-com/main');
 	});
 });
 

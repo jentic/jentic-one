@@ -68,10 +68,10 @@ import {
 	isPlanGranted,
 	planChains,
 	planDenialReason,
-	slugifyApiField,
 	type PlanApiReference,
 	type PlanChain,
 } from '@/shared/lib/provisioningPlan';
+import { slugifyApiField } from '@/shared/lib/apiSlug';
 import { createNoAuthCredential, discardPlanCredential } from '@/shared/lib/provisioningFulfilment';
 
 type Step = 'credential' | 'rules' | 'review' | 'done';

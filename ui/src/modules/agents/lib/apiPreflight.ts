@@ -1,31 +1,20 @@
 /**
- * Add-APIs preflight — the pure data layer behind the tray's tally (plan §4.4).
- *
- * Because there is no `Skip for now` (D13), every API the operator picks must
- * end the flow with a credential. That makes the path longer than a skip-based
- * one, and the only thing that keeps it short is telling the truth up front:
- * each pick is classified by what it will actually cost, and the tray tallies
- * the classes so the real cost is visible BEFORE anything is committed.
- *
- * Everything here is a pure function over lists the surface already fetches
- * (the org credential list, the agent's bindings), so the classification rules
- * are unit-testable without a DOM or MSW.
+ * Add-APIs preflight — the pure data layer behind the tray's tally. There is no
+ * `Skip for now`, so every pick must end with a credential; each is classified by
+ * what it will cost and the tray tallies the classes before anything is committed.
  */
 import type { Credential, SelectedApi } from '@/shared/credentials/api';
-import { apiRefKey } from '@/shared/credentials/lib/apiIdentity';
+import { apiRefKey, apiScopeCovers } from '@/shared/credentials/lib/apiIdentity';
 import { credentialAwaitsConsent } from '@/modules/agents/lib/apiTiles';
 import type { CredentialBindingEntity, ServedApiEntity } from '@/modules/agents/api/types';
 
 /**
- * What a pick will cost, worst-to-best understood as work for the operator.
+ * What a pick will cost, worst-to-best as work for the operator.
  *
- * - `attached` — this agent already reaches the API. Nothing to do, and
- *   re-binding would duplicate; the tray blocks the pick instead of queueing it.
- * - `reuse` — exactly one existing org credential covers the API. Bind it and
- *   move on; no queue step at all. This is the branch the whole flow leans on.
+ * - `attached` — this agent already reaches the API; the tray blocks the pick.
+ * - `reuse` — exactly one org credential covers it. Bind and move on.
  * - `oauth` — one sign-in click finishes it.
- * - `choose` — several org credentials cover the API, so the queue must ask
- *   which one. Cheap, but not free, and never silently guessed.
+ * - `choose` — several org credentials cover it, so the queue asks which.
  * - `form` — needs a new credential typed in.
  */
 export type PreflightOutcome = 'attached' | 'reuse' | 'oauth' | 'choose' | 'form';
@@ -35,17 +24,13 @@ export interface PreflightItem {
 	key: string;
 	api: SelectedApi;
 	outcome: PreflightOutcome;
-	/**
-	 * Org credentials whose API identity covers this pick, in list order.
-	 * One for `reuse`, several for `choose`, and for `oauth` the single
-	 * unconnected credential whose sign-in is the remaining click. Empty when
-	 * the pick needs a brand-new credential.
-	 */
+	/** Org credentials whose identity covers this pick, in list order: one for
+	 * `reuse`, several for `choose`, the unconnected one for `oauth`. */
 	candidates: Credential[];
 	/** `attached` only: the credential the agent already reaches this API
 	 *  through, so the row can say which binding is in the way. */
 	attachedVia?: string;
-	/** True when accepting this pick imports the API into the workspace (D5). */
+	/** True when accepting this pick imports the API into the workspace. */
 	importsApi: boolean;
 }
 
@@ -55,63 +40,36 @@ export interface PreflightInputs {
 	/** The agent's existing bindings, whose `serves` entries say which APIs it
 	 *  already reaches (and through which credential). */
 	bindings: CredentialBindingEntity[];
-	/**
-	 * A managed OAuth provider is configured on this server, so a brand-new
-	 * oauth2 credential is a sign-in click rather than a client-credentials
-	 * form. Read from `GET /credentials/providers`.
-	 */
+	/** A managed OAuth provider is configured, so a new oauth2 credential is a
+	 * sign-in click rather than a client-credentials form. */
 	managedOAuthAvailable: boolean;
 }
 
-/**
- * Does a binding's served reference already cover this pick?
- *
- * `served.name == null` is the vendor wildcard (the binding serves every API of
- * that vendor). Version is ignored for the same reason {@link apiRefKey}
- * ignores it — a revision is the same API. Comparison is normalised because a
- * pick's vendor can arrive from a workspace row (the backend's exact casing) or
- * from a catalog slug (lower-cased), and the two must still meet.
- */
+/** Does a binding's served reference already cover this pick? Delegates to
+ * {@link apiScopeCovers} — two comparators is how a pick reads `Already added`
+ * while the grid draws no tile for it. */
 function servedCoversPick(served: ServedApiEntity, api: SelectedApi): boolean {
-	const norm = (s: string): string => s.trim().toLowerCase();
-	if (norm(served.vendor) !== norm(api.vendor)) return false;
-	return served.name == null || norm(served.name) === norm(api.name);
+	return apiScopeCovers(served, api);
 }
 
 /**
- * Does an org credential cover this API?
- *
- * Match on API IDENTITY, and never on vendor alone: "Stripe — Production" and
- * "Stripe — Sandbox" are not interchangeable. Both would match here, which is
- * correct — two matches is the `choose` case, and the queue asks.
- *
- * Catalog identity wins when both sides recorded one: two different catalog
- * slugs are two different APIs even if their vendor/name humanise alike. When
- * either side has no slug we fall back to `vendor/name`.
- *
- * Health is NOT a filter (D2b). We cannot reliably detect a broken credential
- * (D2a), so filtering on it would block valid reuse while implying the
- * survivors are healthy.
+ * Does an org credential cover this API? Match on API IDENTITY, never vendor
+ * alone: "Stripe — Production" and "Stripe — Sandbox" are not interchangeable.
+ * Two matches is the `choose` case. Health is NOT a filter — it cannot be
+ * reliably detected, and filtering on it would imply the survivors are healthy.
  */
 export function credentialCoversApi(credential: Credential, api: SelectedApi): boolean {
 	if (credential.catalog_api_id && api.apiId) {
 		return credential.catalog_api_id.trim().toLowerCase() === api.apiId.trim().toLowerCase();
 	}
-	return apiRefKey(credential.api) === apiRefKey(api);
+	return apiScopeCovers(credential.api, api);
 }
 
 /**
  * Can a brand-new credential for this API be finished with a sign-in click
- * instead of a form?
- *
- * Only when the spec says OAuth 2.0 is the sole scheme AND the server has a
- * managed provider configured (the provider owns the vendor client, so the
- * operator consents and nothing is typed). Direct OAuth2 still needs client id,
- * secret and URLs — that is a form.
- *
- * The check is deliberately conservative: a catalog pick carries no scheme hint
- * until its spec is fetched, so it lands in `form`. Over-stating the cost is
- * safe here; under-stating it is the thing that makes the tally worthless.
+ * instead of a form? Only when the spec says OAuth 2.0 is the sole scheme AND a
+ * managed provider is configured. A catalog pick carries no scheme hint until its
+ * spec is fetched, so it lands in `form` — under-stating the cost is worse.
  */
 function newCredentialIsOneClick(api: SelectedApi, managedOAuthAvailable: boolean): boolean {
 	if (!managedOAuthAvailable) return false;
@@ -142,9 +100,8 @@ export function preflightApi(api: SelectedApi, inputs: PreflightInputs): Preflig
 		return { key, api, outcome: 'choose', candidates, importsApi };
 	}
 	if (candidates.length === 1) {
-		// An OAuth credential whose interactive sign-in never completed is the
-		// one not-usable state a redacted credential can prove. It is still a
-		// legitimate reuse — it just costs the consent click it never got.
+		// An OAuth credential whose sign-in never completed is still legitimate reuse —
+		// it just costs the consent click it never got.
 		const outcome = credentialAwaitsConsent(candidates[0]) ? 'oauth' : 'reuse';
 		return { key, api, outcome, candidates, importsApi };
 	}
@@ -172,7 +129,7 @@ export interface PreflightTally {
 	/** Picks that need a stop in the setup queue — everything except `reuse`
 	 *  (bound straight through) and `attached` (already there). */
 	queued: number;
-	/** Catalog picks that will be imported into the workspace (D5). */
+	/** Catalog picks that will be imported into the workspace. */
 	imports: number;
 	/** Picks that can actually be acted on — `attached` excluded. */
 	actionable: number;
@@ -209,11 +166,8 @@ export const PREFLIGHT_LABELS: Record<PreflightOutcome, string> = {
 	form: 'Needs a new credential',
 };
 
-/**
- * The tally lines, in the order the tray shows them: cheapest first, so the
- * cost of the batch reads as a slope rather than a list. Only non-zero lines
- * are rendered.
- */
+/** The tally lines, cheapest first, so the cost of the batch reads as a slope.
+ * Only non-zero lines are rendered. */
 export const PREFLIGHT_TALLY_ORDER: readonly PreflightOutcome[] = [
 	'reuse',
 	'oauth',

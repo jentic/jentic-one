@@ -1,12 +1,9 @@
 /**
- * AddApisTray — the multi-select Add-APIs step and its preflight tally.
- *
- * The classification rules have their own unit specs (`apiPreflight.test.ts`);
- * these pin the behaviours that only exist once the rules meet a rendered
- * picker: rows that toggle instead of committing, a tally that stays honest
- * while the credential list is still draining, picks that survive a dismissal
- * because there is no `Skip for now` to fall back on (D13), and an
- * already-reached API that cannot be queued for a duplicate bind.
+ * AddApisTray — the multi-select Add-APIs step and its preflight tally. The
+ * classification rules have their own unit specs (`apiPreflight.test.ts`); these
+ * pin what needs a rendered picker: rows that toggle instead of committing, a
+ * tally that stays honest while the credential list drains, and an already-reached
+ * API that cannot be queued twice.
  */
 import { useState } from 'react';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -67,11 +64,8 @@ function makeBinding(over: Partial<CredentialBindingEntity> = {}): CredentialBin
 	};
 }
 
-/**
- * Hosts the tray the way the agents surface does: the open/close flag and the
- * selected agent live outside it, so a spec can dismiss, reopen, and switch
- * agents and watch what the draft does.
- */
+/** Hosts the tray the way the agents surface does: the open flag and the
+ * selected agent live outside it, so a spec can dismiss, reopen and switch. */
 function TrayHarness({
 	bindings = [],
 	onContinue = (): void => {},
@@ -133,7 +127,7 @@ describe('AddApisTray — multi-select picks and the preflight tally', () => {
 		renderWithProviders(<TrayHarness />);
 		await row(/Stripe/);
 		// The flow is longer than a skip-based one; saying so before the first
-		// pick is what keeps it honest (D13).
+		// pick is what keeps it honest.
 		expect(screen.getByText(/nothing is set up later/)).toBeInTheDocument();
 	});
 
@@ -262,7 +256,7 @@ describe('AddApisTray — multi-select picks and the preflight tally', () => {
 		await user.click(screen.getByRole('button', { name: 'Add 1 API' }));
 		expect(onContinue).toHaveBeenCalledTimes(1);
 		expect(onContinue.mock.calls[0][0]).toEqual([
-			expect.objectContaining({ key: 'stripe.com/main', outcome: 'reuse' }),
+			expect.objectContaining({ key: 'stripe-com/main', outcome: 'reuse' }),
 		]);
 		// Committing hands the picks to the queue, so the draft is spent.
 		await waitFor(() => expect(selectionRows()).toHaveLength(0));
@@ -281,8 +275,8 @@ describe('AddApisTray — multi-select picks and the preflight tally', () => {
 		await user.click(screen.getByRole('button', { name: 'Continue' }));
 		const items = onContinue.mock.calls[0][0] as PreflightItem[];
 		expect(items.map((i) => [i.key, i.outcome])).toEqual([
-			['slack.com/main', 'form'],
-			['stripe.com/main', 'reuse'],
+			['slack-com/main', 'form'],
+			['stripe-com/main', 'reuse'],
 		]);
 		// The queue binds the reuse without re-reading the credential list.
 		expect(items[1].candidates.map((c) => c.credential_id)).toEqual(['cred_stripe']);
@@ -309,7 +303,7 @@ describe('AddApisTray — multi-select picks and the preflight tally', () => {
 		expect(selectionRows()).toHaveLength(0);
 	});
 
-	it('flags a catalog pick as an import into the workspace (D5)', async () => {
+	it('flags a catalog pick as an import into the workspace', async () => {
 		resetApisStore([WORKSPACE_APIS[0]], [makeMockCatalogEntry({ apiId: 'notion.so' })]);
 		const user = userEvent.setup();
 		renderWithProviders(<TrayHarness />);
@@ -335,7 +329,7 @@ describe('AddApisTray — multi-select picks and the preflight tally', () => {
 			'nothing-matches-this',
 		);
 		expect(await screen.findByText('No APIs found')).toBeInTheDocument();
-		// The one moment the operator has PROVED the API is not catalogued (D6).
+		// The one moment the operator has PROVED the API is not catalogued.
 		expect(screen.getByText(/or add it from its OpenAPI spec/)).toBeInTheDocument();
 		expect(screen.getAllByRole('button', { name: 'Upload an API' }).length).toBeGreaterThan(0);
 	});
@@ -348,7 +342,7 @@ describe('AddApisTray — multi-select picks and the preflight tally', () => {
 		await waitFor(() => expect(selectionRows()).toHaveLength(1));
 
 		// Without this, "the API I need isn't listed" means abandoning the batch,
-		// importing on the Workspace page, and starting the flow over (D6).
+		// importing on the Workspace page, and starting the flow over.
 		await user.click(screen.getByRole('button', { name: 'Upload an API' }));
 		// Visibility, not presence: a native `<dialog>` is always mounted and
 		// `showModal()` is what reveals it.
@@ -369,7 +363,7 @@ describe('AddApisTray — multi-select picks and the preflight tally', () => {
 		await user.click(await row(/Slack/));
 		await waitFor(() => expect(tallyLines()).toHaveLength(2));
 
-		await checkA11y(document.body);
+		await checkA11y(document.body, { modal: true });
 	});
 
 	it('390px: rows and the commit button stay reachable', async () => {
