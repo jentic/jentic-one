@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import { ScopePanel } from '@/modules/docs/components/ScopePanel';
+import { PermissionPanel } from '@/modules/docs/components/PermissionPanel';
 import type { ReferenceEndpoint } from '@/modules/docs/api/types';
 
 function endpoint(overrides: Partial<ReferenceEndpoint> = {}): ReferenceEndpoint {
@@ -13,8 +13,8 @@ function endpoint(overrides: Partial<ReferenceEndpoint> = {}): ReferenceEndpoint
 		authenticated: true,
 		public: false,
 		actor_types: [],
-		required_scopes: [],
-		implied_scopes: {},
+		required_permissions: [],
+		implied_permissions: {},
 		auth_note: null,
 		typical_caller: null,
 		group: 'Agents',
@@ -22,12 +22,12 @@ function endpoint(overrides: Partial<ReferenceEndpoint> = {}): ReferenceEndpoint
 	};
 }
 
-describe('ScopePanel', () => {
-	it('renders required scopes and the advisory typical caller', () => {
+describe('PermissionPanel', () => {
+	it('renders required permissions and the advisory typical caller', () => {
 		render(
-			<ScopePanel
+			<PermissionPanel
 				endpoint={endpoint({
-					required_scopes: ['agents:read', 'agents:write'],
+					required_permissions: ['agents:read', 'agents:write'],
 					typical_caller: 'operator',
 				})}
 			/>,
@@ -39,15 +39,15 @@ describe('ScopePanel', () => {
 	});
 
 	it('renders a public notice when not authenticated', () => {
-		render(<ScopePanel endpoint={endpoint({ authenticated: false, public: true })} />);
+		render(<PermissionPanel endpoint={endpoint({ authenticated: false, public: true })} />);
 		expect(screen.getByText(/no authentication required/i)).toBeInTheDocument();
 	});
 
 	it('renders an auth note when present', () => {
 		render(
-			<ScopePanel
+			<PermissionPanel
 				endpoint={endpoint({
-					required_scopes: ['broker:execute'],
+					required_permissions: ['broker:execute'],
 					typical_caller: 'agent',
 					auth_note: 'Requires a provisioned upstream credential.',
 				})}
@@ -56,20 +56,20 @@ describe('ScopePanel', () => {
 		expect(screen.getByText(/provisioned upstream credential/i)).toBeInTheDocument();
 	});
 
-	it('renders the implied-scope closure when present', () => {
+	it('renders the implied-permission closure when present', () => {
 		render(
-			<ScopePanel
+			<PermissionPanel
 				endpoint={endpoint({
-					required_scopes: ['admin'],
-					implied_scopes: { admin: ['agents:read', 'agents:write'] },
+					required_permissions: ['admin'],
+					implied_permissions: { admin: ['agents:read', 'agents:write'] },
 				})}
 			/>,
 		);
 		expect(screen.getByText(/Implies/i)).toBeInTheDocument();
 	});
 
-	it('shows the no-specific-scope notice for an authenticated-but-unscoped op', () => {
-		render(<ScopePanel endpoint={endpoint({ required_scopes: [] })} />);
-		expect(screen.getByText(/no specific scope/i)).toBeInTheDocument();
+	it('shows the no-specific-permission notice for an authenticated-but-unpermissiond op', () => {
+		render(<PermissionPanel endpoint={endpoint({ required_permissions: [] })} />);
+		expect(screen.getByText(/no specific permission/i)).toBeInTheDocument();
 	});
 });

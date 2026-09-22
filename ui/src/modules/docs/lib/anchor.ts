@@ -6,7 +6,7 @@
  * in-page links all jump to those ids via `scrollToAnchor`. Our reference
  * payload keys endpoints by `(method, path)`, so `indexReference` builds the
  * `(method, path)` → `ReferenceEndpoint` lookup the renderer uses to enrich
- * each operation with its scope/actor data.
+ * each operation with its permission/actor data.
  */
 import type { ReferenceEndpoint, ReferencePayload } from '@/modules/docs/api/types';
 
@@ -97,9 +97,10 @@ export function scrollToAnchor(id: string, opts: { settleMs?: number } = {}): vo
  *
  * The reference is fetched as untyped JSON. A malformed-but-200 payload (an old
  * or buggy server) can omit array/object fields the components iterate over;
- * `required_scopes.map(...)` or `Object.entries(implied_scopes)` would then
- * throw and blank the whole route. Normalizing once at the boundary means every
- * downstream consumer (ScopePanel, AuthChip, scope tree) gets safe defaults
+ * `required_permissions.map(...)` or `Object.entries(implied_permissions)` would
+ * then throw and blank the whole route. Normalizing once at the boundary means
+ * every downstream consumer (PermissionPanel, AuthChip, permission tree) gets
+ * safe defaults
  * without scattering `?? []` everywhere — a bad field degrades to "empty"
  * instead of crashing.
  */
@@ -107,10 +108,12 @@ function normalizeEndpoint(endpoint: ReferenceEndpoint): ReferenceEndpoint {
 	return {
 		...endpoint,
 		actor_types: Array.isArray(endpoint.actor_types) ? endpoint.actor_types : [],
-		required_scopes: Array.isArray(endpoint.required_scopes) ? endpoint.required_scopes : [],
-		implied_scopes:
-			endpoint.implied_scopes && typeof endpoint.implied_scopes === 'object'
-				? endpoint.implied_scopes
+		required_permissions: Array.isArray(endpoint.required_permissions)
+			? endpoint.required_permissions
+			: [],
+		implied_permissions:
+			endpoint.implied_permissions && typeof endpoint.implied_permissions === 'object'
+				? endpoint.implied_permissions
 				: {},
 	};
 }

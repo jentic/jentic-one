@@ -1,5 +1,5 @@
 /**
- * TierLadder — the cascade graphic for scope tiers.
+ * TierLadder — the cascade graphic for permission tiers.
  *
  * A left-to-right flow (Admin → Write → Execute → Read) that makes the core
  * mental model obvious at a glance: holding a broader tier *grants* every
@@ -52,7 +52,7 @@ export function TierLadder() {
 	return (
 		<div className="border-border bg-card/40 rounded-xl border p-4">
 			<p className="text-foreground/55 mb-3 text-xs">
-				Scopes are tiered. A broader tier{' '}
+				Permissions are tiered. A broader tier{' '}
 				<strong className="text-foreground/80">grants</strong> every narrower one, so you
 				only assign the highest level a caller needs.
 			</p>

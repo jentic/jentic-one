@@ -13,7 +13,7 @@ import { ActorAuditPanel } from '@/modules/agents/components/detail/ActorAuditPa
 import { AgentSettingsPanel } from '@/modules/agents/components/detail/AgentSettingsPanel';
 import { AgentProvenance } from '@/modules/agents/components/detail/AgentProvenance';
 import { McpPanel, McpSessionsCard } from '@/modules/agents/components/detail/McpPanel';
-import { ScopesCard } from '@/modules/agents/components/ScopesCard';
+import { PermissionsCard } from '@/modules/agents/components/PermissionsCard';
 import { ConnectedClientsCard } from '@/modules/agents/components/detail/ConnectedClientsCard';
 
 /** Shared chrome: header with title/subtitle + close, scrollable body. */
@@ -159,7 +159,11 @@ export function AgentPermissionsSheet({
 							what remains below is history.
 						</p>
 					)}
-					<ScopesCard actorId={agent.id} actorName={agent.name} canEdit={!isArchived} />
+					<PermissionsCard
+						actorId={agent.id}
+						actorName={agent.name}
+						canEdit={!isArchived}
+					/>
 					<ConnectedClientsCard agentId={agent.id} agentName={agent.name} />
 				</div>
 			</DockSheetFrame>

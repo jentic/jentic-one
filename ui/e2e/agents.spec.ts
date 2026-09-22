@@ -93,6 +93,7 @@ async function openSelectedAgent(page: Page): Promise<void> {
 }
 
 /**
+/**
  * The selected agent's vitals and activity: the stat strip reads the per-actor
  * usage aggregate, and the dock's Activity sheet shows THIS agent's executions
  * with a Monitor deep link pre-filtered by actor.
@@ -144,40 +145,42 @@ test('rename an agent from the Settings sheet round-trips to the strip', async (
 });
 
 /**
- * Scopes flow (#615): grant a platform permission via the Scopes editor, save
- * (full-list PUT), and verify the chip renders and survives reopening. The scopes
- * card lives in the selected agent's dock, behind the Permissions verb.
+ * Permissions flow (#615): grant a platform permission via the Permissions
+ * editor, save (full-list PUT), and verify the chip renders and survives
+ * reopening. The permissions card lives in the selected agent's dock, behind the
+ * Permissions verb.
  */
-test('grant a scope to an agent via the Scopes editor', async ({ page }) => {
+test('grant a permission to an agent via the Permissions editor', async ({ page }) => {
 	await openSelectedAgent(page);
 
 	await page.getByRole('button', { name: 'Permissions' }).click();
 	const sheet = page.getByRole('dialog', { name: 'Permissions' });
 
-	const scopeList = sheet.getByRole('list', { name: 'Granted scopes' });
-	await expect(scopeList.getByText('capabilities:execute')).toBeVisible();
-	await expect(scopeList.getByText('credentials:read')).toHaveCount(0);
+	const permissionList = sheet.getByRole('list', { name: 'Granted permissions' });
+	await expect(permissionList.getByText('capabilities:execute')).toBeVisible();
+	await expect(permissionList.getByText('credentials:read')).toHaveCount(0);
 
 	// The editor is a second dialog stacked on the sheet, so both are named
 	// rather than matched as "the dialog".
-	await sheet.getByRole('button', { name: 'Edit scopes for support-agent' }).click();
-	const editor = page.getByRole('dialog', { name: /Edit scopes/ });
-	await editor.getByLabel('Search scopes').fill('credentials:read');
+	await sheet.getByRole('button', { name: 'Edit permissions for support-agent' }).click();
+	const editor = page.getByRole('dialog', { name: /Edit permissions/ });
+	await editor.getByLabel('Search permissions').fill('credentials:read');
 	// `exact` avoids colliding with `owner:credentials:read`, which the search
 	// substring-matches too.
 	await editor.getByRole('checkbox', { name: 'credentials:read', exact: true }).click();
-	await editor.getByRole('button', { name: 'Save scopes' }).click();
+	await editor.getByRole('button', { name: 'Save permissions' }).click();
 
 	// New grant renders as a chip immediately (cache seeded from the PUT response).
-	await expect(scopeList.getByText('credentials:read', { exact: true })).toBeVisible();
-	// The synthetic non-catalogue scope the agent already held (legacy:orphaned:read
-	// is absent from /permissions) must survive the save untouched.
-	await expect(scopeList.getByText('legacy:orphaned:read', { exact: true })).toBeVisible();
+	await expect(permissionList.getByText('credentials:read', { exact: true })).toBeVisible();
+	// The synthetic non-catalogue permission the agent already held
+	// (legacy:orphaned:read is absent from /permissions) must survive the save
+	// untouched.
+	await expect(permissionList.getByText('legacy:orphaned:read', { exact: true })).toBeVisible();
 
-	// Reopen the editor → the saved scope reads back as already selected.
-	await sheet.getByRole('button', { name: 'Edit scopes for support-agent' }).click();
-	const reopened = page.getByRole('dialog', { name: /Edit scopes/ });
-	await reopened.getByLabel('Search scopes').fill('credentials:read');
+	// Reopen the editor → the saved permission reads back as already selected.
+	await sheet.getByRole('button', { name: 'Edit permissions for support-agent' }).click();
+	const reopened = page.getByRole('dialog', { name: /Edit permissions/ });
+	await reopened.getByLabel('Search permissions').fill('credentials:read');
 	await expect(
 		reopened.getByRole('checkbox', { name: 'credentials:read', exact: true }),
 	).toBeChecked();
