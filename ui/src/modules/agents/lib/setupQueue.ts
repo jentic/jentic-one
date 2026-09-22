@@ -1,34 +1,15 @@
 /**
- * Setup-queue state — the pure layer behind the Add-APIs queue (plan §4.4).
- *
- * The queue takes the tray's preflighted batch and walks it one API at a time
- * until every item is finished or dropped. There is no `Skip for now` (D13), so
- * the two things this layer has to get exactly right are ORDER and TERMINALITY:
- *
- *  - Order: `reuse` items bypass the pane entirely and are bound first. That is
- *    the mechanic that collapses most of the work, so they must not queue up
- *    behind a form the operator is still typing.
- *  - Terminality: an item is `added` or `dropped`, or it failed and can be
- *    retried. Anything that never reached one of those is UNFINISHED, and the
- *    host has to hand it back on re-entry — the queue is the only way an API
- *    arrives, so a dismissal cannot quietly lose it.
- *
- * Framework-free, so both rules are unit-testable without a DOM.
+ * Setup-queue state — the pure layer behind the Add-APIs queue, which walks the
+ * tray's preflighted batch one API at a time. There is no `Skip for now`, so
+ * `reuse` items are bound first (they must not queue behind a form being typed)
+ * and an unsettled item is handed back on re-entry rather than lost.
  */
 import type { Credential, SelectedApi } from '@/shared/credentials/api';
 import type { PreflightItem, PreflightOutcome } from '@/modules/agents/lib/apiPreflight';
 
-/**
- * Where one API is in the queue.
- *
- * - `waiting` — not reached yet.
- * - `active` — the pane is on this item (or it is next to be auto-bound).
- * - `working` — a request is in flight for it.
- * - `added` — bound to the agent. Terminal.
- * - `dropped` — the operator declined it, so the API is NOT attached. Terminal.
- * - `failed` — a request failed. Terminal for advancement, but retryable: a
- *   partial failure must not stall the items behind it.
- */
+/** Where one API is in the queue: `active` = the pane is on it, `working` = a
+ * request is in flight, `added`/`dropped` are terminal, `failed` is retryable but
+ * not walked past. */
 export type QueueStatus = 'waiting' | 'active' | 'working' | 'added' | 'dropped' | 'failed';
 
 export interface QueueEntry {
@@ -38,18 +19,13 @@ export interface QueueEntry {
 	outcome: PreflightOutcome;
 	/** Org credentials that cover this API, from the preflight. */
 	candidates: Credential[];
-	/** Accepting this item imports the API into the workspace (D5). */
+	/** Accepting this item imports the API into the workspace. */
 	importsApi: boolean;
 	status: QueueStatus;
 	/** The credential this item ended up bound through. */
 	credentialId?: string;
-	/**
-	 * That credential's label, shown on the finished row.
-	 *
-	 * A `reuse` item is bound without ever showing a pane, so without the name
-	 * the operator is told an API was added and never which of their credentials
-	 * the flow chose for it. Naming it is what keeps the silent path honest.
-	 */
+	/** That credential's label, shown on the finished row. A `reuse` item binds
+	 * without a pane, so without it the operator is never told which was chosen. */
 	credentialName?: string;
 	/** Why it failed, shown on the row next to `Try again`. */
 	error?: string;
@@ -58,9 +34,17 @@ export interface QueueEntry {
 	note?: string;
 }
 
-/** Statuses the queue no longer advances past. */
+/** Statuses the queue no longer ADVANCES past — a failure must not stall the
+ * items behind it. Not the same question as {@link isResolved}. */
 export function isTerminal(status: QueueStatus): boolean {
 	return status === 'added' || status === 'dropped' || status === 'failed';
+}
+
+/** Statuses that SETTLE what happens to the API: attached (`added`), or the
+ * operator was told it would not be (`dropped`). `failed` is absent — nobody
+ * chose it, so the item is still outstanding work. */
+export function isResolved(status: QueueStatus): boolean {
+	return status === 'added' || status === 'dropped';
 }
 
 /** Does this item need the operator in a pane, or can it be bound outright? */
@@ -68,13 +52,8 @@ export function needsPane(outcome: PreflightOutcome): boolean {
 	return outcome !== 'reuse';
 }
 
-/**
- * Build the queue from the tray's batch.
- *
- * `reuse` items come first — they need no attention, so binding them up front
- * is what makes a mostly-reuse batch feel like one click. Everything else keeps
- * the operator's pick order.
- */
+/** Build the queue from the tray's batch. `reuse` items come first, so a
+ * mostly-reuse batch feels like one click. */
 export function buildQueue(items: PreflightItem[]): QueueEntry[] {
 	const entry = (item: PreflightItem): QueueEntry => ({
 		key: item.key,
@@ -104,11 +83,8 @@ export function patchEntry(
 	return entries.map((e) => (e.key === key ? { ...e, ...patch } : e));
 }
 
-/**
- * Put the active item into `active` so the pane and the progress list agree on
- * which row is live. Pure and idempotent: it returns the same array when
- * nothing needs moving, so it is safe to run on every render.
- */
+/** Put the active item into `active` so the pane and the progress list agree.
+ * Pure and idempotent, so it is safe to run on every render. */
 export function markActive(entries: QueueEntry[]): QueueEntry[] {
 	const active = activeEntry(entries);
 	if (!active || active.status !== 'waiting') return entries;
@@ -124,10 +100,13 @@ export interface QueueSummary {
 	added: number;
 	dropped: number;
 	failed: number;
-	/** Items with no terminal state yet — what re-entry has to resume. */
+	/** Items not yet walked — still `waiting`, `active` or `working`. */
 	unfinished: number;
 	total: number;
-	/** Every item reached a terminal state. */
+	/** Items the host hands back on close: the unwalked ones plus the failures — the
+	 * figure the progress bar and the "N wait here for next time" note read. */
+	remaining: number;
+	/** Nothing is left to hand back — every API is attached or declined. */
 	done: boolean;
 }
 
@@ -142,7 +121,16 @@ export function queueSummary(entries: QueueEntry[]): QueueSummary {
 		else if (e.status === 'failed') failed += 1;
 		else unfinished += 1;
 	}
-	return { added, dropped, failed, unfinished, total: entries.length, done: unfinished === 0 };
+	const remaining = unfinished + failed;
+	return {
+		added,
+		dropped,
+		failed,
+		unfinished,
+		total: entries.length,
+		remaining,
+		done: remaining === 0,
+	};
 }
 
 /** The one-line outcome, e.g. `2 APIs added · 1 dropped`. Empty when nothing happened. */
@@ -156,27 +144,18 @@ export function queueSummaryLine(summary: QueueSummary): string {
 	return parts.join(' · ');
 }
 
-/**
- * What dropping an item means, in the operator's words.
- *
- * Without a skip path (D13) a drop is not "later" — the API is simply not
- * attached, and the copy has to say so before anyone waits for it to come back.
- */
+/** What dropping an item means, in the operator's words. Without a skip path a
+ * drop is not "later": the API is simply not attached. */
 export function dropWarning(label: string): string {
 	return `${label} won't be added.`;
 }
 
-/**
- * The unfinished items, back in `PreflightItem` shape so the host can stash
- * them and reopen the queue on the remainder.
- *
- * The preflight facts (candidates, import flag) are the ones the tray computed
- * for this batch; they are re-derived by the tray on a fresh pass, so resuming
- * from them is correct for as long as the batch is in flight.
- */
+/** The items still owed to the operator, back in `PreflightItem` shape so the
+ * host can reopen the queue on the remainder. Filtered on {@link isResolved},
+ * not {@link isTerminal}: a failed item dropped here is lost silently. */
 export function unfinishedItems(entries: QueueEntry[]): PreflightItem[] {
 	return entries
-		.filter((e) => !isTerminal(e.status))
+		.filter((e) => !isResolved(e.status))
 		.map((e) => ({
 			key: e.key,
 			api: e.api,
@@ -196,12 +175,7 @@ export const QUEUE_STATUS_LABELS: Record<QueueStatus, string> = {
 	failed: 'Failed',
 };
 
-/**
- * What a freshly added API can actually do — stated because it is not what an
- * operator assumes. A binding is created with no rules (least privilege, C1),
- * which is the broker's default-deny state, so the agent reaches the API only
- * once rules exist. The tile says the same thing ("No rules — all calls
- * blocked"); the queue says it at the moment it becomes true.
- */
+/** What a freshly added API can do — a binding is created with no rules, the
+ * broker's default-deny state, so the agent reaches it only once rules exist. */
 export const QUEUE_RULES_NOTICE =
 	'Added APIs start with no access rules, so calls are blocked until you add rules on the API.';

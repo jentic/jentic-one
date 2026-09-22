@@ -1,60 +1,40 @@
 /**
  * API-tile composition — the pure data layer behind the flat Agents surface.
  *
- * The surface renders "the APIs this agent can reach" as a tile grid, but the
- * backend has no such read: a tile is derived client-side from three sources
- * the app already fetches —
- *
- *   agent → its direct bindings (`GET /agents/{id}/credentials`)
- *         → the org credential each binding wraps (`GET /credentials`)
- *         → the workspace APIs each binding's `serves` entries resolve to
- *           (`GET /apis`).
- *
- * Everything here is a pure function over those three lists so the
- * composition, the not-usable predicate, and the stat math are unit-testable
- * without a DOM or MSW.
+ * The backend has no "APIs this agent can reach" read, so a tile is derived from
+ * three lists the app already fetches: the agent's bindings, the org credential
+ * each wraps, and the workspace APIs its `serves` entries resolve to.
  */
 import { apiRefDisplayName } from '@/shared/lib';
 import { CredentialType, type ApiResponse, type Credential } from '@/shared/credentials/api';
+import { apiScopeCovers } from '@/shared/credentials/lib/apiIdentity';
 import type { CredentialBindingEntity, ServedApiEntity } from '@/modules/agents/api/types';
 
 /** One tile on the grid: the API is the card, the credential is a line on it. */
 export interface ApiTileModel {
 	/** Stable render key — binding id + the resolved API identity. */
 	key: string;
-	/** Friendly display title — the same name the credential picker, the
-	 * workspace cards and the API detail heading show for this API. */
 	title: string;
-	/** The domain line under the title (e.g. `github.com`), falling back to the
-	 * vendor when the registry knows no host. */
+	/** Domain line under the title, falling back to the vendor. */
 	host: string;
-	/** Workspace icon when the API is imported; null falls back to initials. */
 	iconUrl: string | null;
 	vendor: string;
-	/** API version from the workspace registry; null when not imported. */
+	/** Null when the API is not imported into the workspace. */
 	version: string | null;
-	/** Human auth-type label derived from the credential (`OAuth 2.0`, …). */
 	authLabel: string | null;
-	/** Operation count from the workspace registry; null when not imported. */
+	/** Null when the API is not imported into the workspace. */
 	operationCount: number | null;
-	/** The binding behind this tile — the sidebar's join key back to the
-	 * agent's binding list (one binding can fan out to several tiles). */
+	/** One binding can fan out to several tiles. */
 	bindingId: string;
 	credentialId: string;
 	credentialName: string;
-	/** When the credential was created; null when its org row is unreachable. */
+	/** Null when the credential's org row is unreachable. */
 	credentialCreatedAt: string | null;
-	/** When the credential was last updated (rotation or edit); null when it
-	 * never was, or when its org row is unreachable. */
 	credentialUpdatedAt: string | null;
-	/** When the binding was created (`bound_at`). */
 	boundAt: string;
-	/** The binding is soft-suspended — excluded by the broker until resumed. */
+	/** Soft-suspended — the broker excludes the binding until resumed. */
 	suspended: boolean;
-	/**
-	 * The credential exists but cannot serve traffic yet (OAuth interactive
-	 * sign-in not completed). Drives the dashed treatment.
-	 */
+	/** OAuth sign-in not completed. Drives the dashed treatment. */
 	awaitingConsent: boolean;
 }
 
@@ -69,14 +49,8 @@ const AUTH_TILE_LABEL: Partial<Record<string, string>> = {
 };
 
 /**
- * True when the credential exists but is not usable yet: an OAuth 2.0
- * authorization-code credential whose interactive sign-in has not completed.
- *
- * This is the only not-usable case the credential's own redacted state can
- * prove: `details.connected` is served for authorization-code grants (false
- * until the consent round-trip lands, true afterwards) and is null/absent for
- * every other grant and type. Revoked-upstream / failing-refresh states never
- * reach the client, so no other case may render as "not usable".
+ * True when an OAuth 2.0 authorization-code credential's sign-in has not
+ * completed — the only not-usable case a redacted credential can prove.
  */
 export function credentialAwaitsConsent(credential: Credential | undefined): boolean {
 	if (!credential || credential.type !== CredentialType.OAUTH2) return false;
@@ -85,28 +59,14 @@ export function credentialAwaitsConsent(credential: Credential | undefined): boo
 	return details.grant_type === 'authorization_code' && details.connected === false;
 }
 
-/** Does a workspace API row satisfy a binding's served-API reference?
- * `name`/`version` null means "covers all names/versions" (wildcard). */
+/** Does a workspace API row satisfy a binding's served-API reference? The two
+ * value spaces differ in casing, so a hand-rolled `===` would disagree. */
 function servedMatchesApi(served: ServedApiEntity, api: ApiResponse): boolean {
-	return (
-		api.api.vendor === served.vendor &&
-		(served.name == null || api.api.name === served.name) &&
-		(served.version == null || api.api.version === served.version)
-	);
+	return apiScopeCovers(served, api.api);
 }
 
-/**
- * Every (binding, resolved API) pair the grid draws a tile for, de-duplicated
- * on the tile's render key.
- *
- * One binding can serve several APIs (wildcards): each resolved workspace API
- * is its own identity. A served reference that matches nothing in the registry
- * is still an identity — built from the reference itself — because the binding
- * is real even when the API's metadata isn't imported here.
- *
- * Shared by the tile composition and the strip's per-agent count, so the count
- * on a tab can never disagree with the number of tiles behind it.
- */
+/** Every (binding, resolved API) pair the grid draws a tile for, deduped on the
+ * render key. A reference matching nothing in the registry still yields one. */
 function* tileIdentities(
 	bindings: CredentialBindingEntity[],
 	apis: ApiResponse[],
@@ -137,10 +97,7 @@ function* tileIdentities(
 	}
 }
 
-/**
- * Compose the tile list for one agent from its bindings, the org credential
- * list, and the workspace API registry.
- */
+/** Compose the tile list for one agent. */
 export function composeApiTiles(
 	bindings: CredentialBindingEntity[],
 	credentials: Credential[],
@@ -155,7 +112,8 @@ export function composeApiTiles(
 			key,
 			bindingId: binding.id,
 			credentialId: binding.credentialId,
-			credentialName: binding.name ?? credential?.name ?? binding.credentialId,
+			// `||`, not `??`: an empty name would print a blank line here.
+			credentialName: binding.name || credential?.name || binding.credentialId,
 			credentialCreatedAt: credential?.created_at ?? null,
 			credentialUpdatedAt: credential?.updated_at ?? null,
 			boundAt: binding.boundAt,
@@ -165,8 +123,7 @@ export function composeApiTiles(
 		};
 
 		if (api == null) {
-			// Not imported into this workspace — render from the reference, which
-			// carries only the machine tuple, so the shared humaniser titles it.
+			// Not imported here — render from the reference's machine tuple.
 			tiles.push({
 				...base,
 				title:
@@ -180,10 +137,8 @@ export function composeApiTiles(
 			});
 			continue;
 		}
-		// The registry's own identity pair: the friendly name is the title and
-		// the host is the domain line. The title comes from the SAME helper the
-		// credential picker and the workspace cards use, so one API cannot read
-		// `Ably` where it was added and `ably-io` here.
+		// Titled by the shared helper, so one API can't read `Ably` in the picker and
+		// `ably-io` here.
 		tiles.push({
 			...base,
 			title:
@@ -204,13 +159,7 @@ export function composeApiTiles(
 	return tiles.sort((a, b) => a.title.localeCompare(b.title));
 }
 
-/**
- * How many APIs an agent reaches — the figure on its tab in the strip.
- *
- * Counted over the same identities `composeApiTiles` builds tiles from (and
- * needing no credential join), so the tab's count is exactly the number of
- * tiles the grid will show for that agent.
- */
+/** How many APIs an agent reaches — the count on its tab in the strip. */
 export function agentApiCount(
 	bindings: CredentialBindingEntity[] | undefined,
 	apis: ApiResponse[],
@@ -221,38 +170,29 @@ export function agentApiCount(
 
 /** Stat-summary math for the grid's side column. */
 export interface ApiTileStats {
-	/** Tiles whose credential is usable (not awaiting consent). */
 	configured: number;
-	/** Tiles waiting on an OAuth sign-in. */
+	/** Sign-ins owed, per credential — one clears all of its tiles. */
 	needsSetup: number;
-	/**
-	 * Operations the agent can actually call right now: summed over tiles that
-	 * are usable AND not paused, because a suspended binding's operations are
-	 * unreachable however many the registry lists for it.
-	 *
-	 * `null` when no tile proves a count while at least one withholds it — a
-	 * `0` there would read as "this agent can call nothing", when the truth is
-	 * that the registry told us nothing about what it can call.
-	 */
+	/** Null when no tile proves a count and at least one withholds it. */
 	operations: number | null;
+	/** `operations` is a floor: some tiles withheld their count. Renders as `N+`. */
+	operationsAtLeast: boolean;
 }
 
 export function tileStats(tiles: ApiTileModel[]): ApiTileStats {
 	let configured = 0;
-	let needsSetup = 0;
 	let operations = 0;
-	// Whether the sum rests on anything, and whether anything is missing from
-	// it — together they decide if `0` is a fact or a shrug.
+	// Deduped: several tiles can share one sign-in.
+	const awaiting = new Set<string>();
 	let counted = false;
 	let withheld = false;
 	for (const tile of tiles) {
 		if (tile.awaitingConsent) {
-			needsSetup += 1;
+			awaiting.add(tile.credentialId);
 			continue;
 		}
 		configured += 1;
-		// A pause is a deliberate exclusion, not a missing fact: it must not
-		// make the whole figure unprovable.
+		// A pause is a deliberate exclusion, not a missing fact.
 		if (tile.suspended) continue;
 		if (tile.operationCount == null) {
 			withheld = true;
@@ -261,14 +201,15 @@ export function tileStats(tiles: ApiTileModel[]): ApiTileStats {
 		operations += tile.operationCount;
 		counted = true;
 	}
-	return { configured, needsSetup, operations: withheld && !counted ? null : operations };
+	return {
+		configured,
+		needsSetup: awaiting.size,
+		operations: withheld && !counted ? null : operations,
+		operationsAtLeast: withheld && counted,
+	};
 }
 
-/**
- * How many of an agent's bound credentials are not usable yet — the strip
- * pill's "N to set up" hint. Counted per credential (a wildcard binding that
- * fans out to several tiles is still one sign-in to finish).
- */
+/** Bound credentials not usable yet — the strip's "N to set up" hint. */
 export function agentSetupGapCount(
 	bindings: CredentialBindingEntity[] | undefined,
 	credentials: Credential[],

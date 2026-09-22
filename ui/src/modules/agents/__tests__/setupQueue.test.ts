@@ -1,11 +1,8 @@
 /**
- * Unit specs for the setup queue's state machine (plan §4.4).
- *
- * The two rules worth pinning without a DOM are the ones that decide whether the
- * flow is honest: `reuse` items must be bound before anything that needs the
- * operator's attention (otherwise "reuse bypasses the queue" is a lie), and an
- * item that never reached a terminal state must come back out of the queue so
- * re-entry can finish it — there is no `Skip for now` to absorb a lost pick (D13).
+ * Unit specs for the setup queue's state machine. The two rules worth pinning
+ * without a DOM: `reuse` items must be bound before anything needing attention
+ * (otherwise "reuse bypasses the queue" is a lie), and a non-terminal item must
+ * come back out so re-entry can finish it — there is no `Skip for now`.
  */
 import { describe, it, expect } from 'vitest';
 import {
@@ -207,16 +204,30 @@ describe('queueSummary', () => {
 			dropped: 1,
 			failed: 1,
 			unfinished: 1,
+			// The failure is owed back alongside the unwalked item.
+			remaining: 2,
 			total: 4,
 			done: false,
 		});
 	});
 
-	it('is done only when every item reached a terminal state', () => {
+	it('is done only when every item is attached or declined', () => {
 		let entries = buildQueue([makeItem('stripe.com', 'reuse')]);
 		expect(queueSummary(entries).done).toBe(false);
 		entries = patchEntry(entries, 'stripe.com/main', { status: 'added' });
 		expect(queueSummary(entries).done).toBe(true);
+	});
+
+	it('is NOT done while an item is failed — a failure is outstanding work', () => {
+		// The footer reads `Done` off this flag and suppresses the "the remaining N
+		// wait here" note, so counting a failure as finished is what lets an API the
+		// operator picked vanish on close.
+		let entries = buildQueue([makeItem('stripe.com', 'reuse'), makeItem('github.com', 'form')]);
+		entries = patchEntry(entries, 'stripe.com/main', { status: 'added' });
+		entries = patchEntry(entries, 'github.com/main', { status: 'failed', error: 'nope' });
+		const summary = queueSummary(entries);
+		expect(summary.done).toBe(false);
+		expect(summary.remaining).toBe(1);
 	});
 });
 
@@ -229,6 +240,7 @@ describe('queueSummaryLine', () => {
 				dropped: 0,
 				failed: 0,
 				unfinished: 0,
+				remaining: 0,
 				total: 1,
 				done: true,
 			}),
@@ -239,8 +251,9 @@ describe('queueSummaryLine', () => {
 				dropped: 1,
 				failed: 1,
 				unfinished: 0,
+				remaining: 1,
 				total: 4,
-				done: true,
+				done: false,
 			}),
 		).toBe('2 APIs added · 1 dropped · 1 failed');
 	});
@@ -248,7 +261,7 @@ describe('queueSummaryLine', () => {
 
 describe('dropWarning', () => {
 	it('says the API is simply not added, with no promise of later', () => {
-		// D13: there is no deferred state to fall into, so the copy cannot imply one.
+		// There is no deferred state to fall into, so the copy cannot imply one.
 		expect(dropWarning('Stripe')).toBe("Stripe won't be added.");
 	});
 });
@@ -272,9 +285,19 @@ describe('unfinishedItems', () => {
 		expect(remaining[1].candidates).toHaveLength(2);
 	});
 
-	it('excludes failures — a retry is offered in place, not on re-entry', () => {
+	it('includes failures — `Try again` dies with the sheet, so they are owed back', () => {
+		// Nobody chose the failure and the in-place retry is gone once the sheet
+		// closes, so a dropped-on-close failure means the operator picked an API and
+		// it is silently never attached.
 		let entries = buildQueue([makeItem('stripe.com', 'reuse')]);
 		entries = patchEntry(entries, 'stripe.com/main', { status: 'failed', error: 'nope' });
+		expect(unfinishedItems(entries).map((i) => i.key)).toEqual(['stripe.com/main']);
+	});
+
+	it('excludes both settled states — attached and declined are answers', () => {
+		let entries = buildQueue([makeItem('stripe.com', 'reuse'), makeItem('slack.com', 'form')]);
+		entries = patchEntry(entries, 'stripe.com/main', { status: 'added' });
+		entries = patchEntry(entries, 'slack.com/main', { status: 'dropped' });
 		expect(unfinishedItems(entries)).toEqual([]);
 	});
 

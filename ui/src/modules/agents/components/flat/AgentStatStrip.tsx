@@ -1,22 +1,9 @@
 /**
- * AgentStatStrip — the selected agent's vitals as ONE quiet meta line under
- * the `APIs · N` heading, reading as a sentence rather than a figure board:
- *
- *   2 configured · 1 to set up · 181 operations reachable · 2 credentials ·
- *   1,204 calls in 7d · 99% success · last used 2m ago
- *
- * The heading carries the number that matters (how many APIs this agent
- * reaches); everything here is supporting detail, so it is small, muted and
- * one line deep. Tints are reserved for states needing attention ("to set up",
- * an unhealthy success rate) — that is the only colour on the line.
- *
- * Honesty contract per clause (three-state, mirrors the console's KPI strip):
- *   `undefined` = loading      → a same-footprint inline skeleton;
- *   `null`      = unavailable  → the clause is OMITTED (admin-gated 403 or a
- *                                failed join claims nothing);
- *   value       = rendered, with an em-dash for "no data to judge" (a
- *                 zero-traffic success rate, an empty execution feed).
- * When nothing is provable the line renders nothing at all.
+ * AgentStatStrip — the selected agent's vitals as ONE quiet meta line under the
+ * `APIs · N` heading ("2 configured · 1 to set up · 181 operations · 2
+ * credentials · 1,204 calls in 7d"), not a figure board. Per clause: `undefined`
+ * renders a skeleton, `null` (gated or failed) OMITS it, and nothing provable
+ * renders nothing at all.
  */
 import { Fragment } from 'react';
 import { Skeleton } from '@/shared/ui';
@@ -28,20 +15,16 @@ import type { ApiTileStats } from '@/modules/agents/lib/apiTiles';
 interface AgentStatStripProps {
 	/** The agent named in the line's accessible label. */
 	agentName: string;
-	/**
-	 * Tile-composition stats (same math as the grid): `undefined` while the
-	 * bindings/credentials/APIs join is still loading or draining, `null`
-	 * when it failed — those clauses drop out, never a wrong number.
-	 */
+	/** Tile-composition stats (same math as the grid): `undefined` while the join
+	 * loads or drains, `null` when it failed — the clause drops rather than print a
+	 * wrong number. */
 	access: ApiTileStats | null | undefined;
 	/** Bound-credential count off the already-fetched bindings list. */
 	credentialCount: number | null | undefined;
 	/** 7-day usage rollup; `null` = admin-gated (403) or failed → omitted. */
 	usage: ActorUsageDetail | null | undefined;
-	/**
-	 * Most-recent-execution timestamp: `{ at: null }` means the feed loaded
-	 * empty (em-dash); `null` means the feed itself is gated/failed (omit).
-	 */
+	/** Most-recent-execution timestamp: `{ at: null }` means the feed loaded empty
+	 * (em-dash); `null` means the feed is gated or failed (omit). */
 	lastActivity: { at: string | null } | null | undefined;
 }
 
@@ -77,14 +60,15 @@ export function AgentStatStrip({
 				tone: 'warning',
 			});
 		}
-		// "reachable" is load-bearing: the figure excludes paused bindings, so a
-		// line reading `0 operations` beside a tile advertising 900 of them would
-		// look like a contradiction rather than the pause it is. An unprovable
-		// count (nothing known, something withheld) drops the clause.
+		// "reachable" is load-bearing: the figure excludes paused bindings, so a bare
+		// `0 operations` beside a tile advertising 900 would read as a contradiction.
+		// A partly provable count takes the `+` that says the sum is only a floor.
 		if (access?.operations !== null) {
 			clauses.push({
 				key: 'operations',
-				text: access && `${access.operations.toLocaleString()} operations reachable`,
+				text:
+					access &&
+					`${access.operations.toLocaleString()}${access.operationsAtLeast ? '+' : ''} operations reachable`,
 			});
 		}
 	}

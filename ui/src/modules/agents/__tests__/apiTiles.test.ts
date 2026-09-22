@@ -237,7 +237,12 @@ describe('tileStats / agentSetupGapCount', () => {
 		];
 		const stats = tileStats(composeApiTiles(bindings, credentials, apis));
 		// The awaiting-consent GitHub tile contributes to needsSetup, not ops.
-		expect(stats).toEqual({ configured: 1, needsSetup: 1, operations: 100 });
+		expect(stats).toEqual({
+			configured: 1,
+			needsSetup: 1,
+			operations: 100,
+			operationsAtLeast: false,
+		});
 		expect(agentSetupGapCount(bindings, credentials)).toBe(1);
 	});
 
@@ -247,7 +252,12 @@ describe('tileStats / agentSetupGapCount', () => {
 		];
 		const suspended = makeBinding({ suspended: true });
 		const stats = tileStats(composeApiTiles([suspended], [makeCredential()], apis));
-		expect(stats).toEqual({ configured: 1, needsSetup: 0, operations: 0 });
+		expect(stats).toEqual({
+			configured: 1,
+			needsSetup: 0,
+			operations: 0,
+			operationsAtLeast: false,
+		});
 	});
 
 	it('withholds the operations figure when no usable tile proves a count', () => {
@@ -255,7 +265,12 @@ describe('tileStats / agentSetupGapCount', () => {
 		// but nothing states how many operations it exposes. A `0` would claim
 		// the agent can call nothing, so the figure is withheld instead.
 		const stats = tileStats(composeApiTiles([makeBinding()], [makeCredential()], []));
-		expect(stats).toEqual({ configured: 1, needsSetup: 0, operations: null });
+		expect(stats).toEqual({
+			configured: 1,
+			needsSetup: 0,
+			operations: null,
+			operationsAtLeast: false,
+		});
 	});
 
 	it('sums the counts it has when only some tiles withhold theirs', () => {
@@ -270,7 +285,14 @@ describe('tileStats / agentSetupGapCount', () => {
 			}),
 		];
 		const stats = tileStats(composeApiTiles(bindings, [makeCredential()], apis));
-		expect(stats).toEqual({ configured: 2, needsSetup: 0, operations: 100 });
+		// …and flags the sum as a floor, so the line can print `100+` rather than
+		// offer a partial total as the whole truth.
+		expect(stats).toEqual({
+			configured: 2,
+			needsSetup: 0,
+			operations: 100,
+			operationsAtLeast: true,
+		});
 	});
 
 	it('counts a multi-API credential as one setup gap', () => {
@@ -290,6 +312,34 @@ describe('tileStats / agentSetupGapCount', () => {
 		});
 		expect(agentSetupGapCount([binding], credentials)).toBe(1);
 		expect(agentSetupGapCount(undefined, credentials)).toBe(0);
+	});
+
+	it('agrees with the strip hint when one credential fans out to several tiles', () => {
+		// The two figures render at once — the tab's "· N to set up" and the stat
+		// line's "N to set up" — so counting tiles in one and credentials in the
+		// other puts two different numbers under the same words on one screen.
+		const apis = [
+			makeApi({ vendor: 'slack.com', display_name: 'Slack' }),
+			makeApi({ vendor: 'slack.com', name: 'admin', display_name: 'Slack Admin' }),
+		];
+		const credentials = [
+			makeCredential({
+				credential_id: 'cred_wait',
+				type: CredentialType.OAUTH2,
+				details: { grant_type: 'authorization_code', connected: false },
+			}),
+		];
+		// One wildcard binding, two tiles, one sign-in to finish.
+		const bindings = [
+			makeBinding({
+				credentialId: 'cred_wait',
+				serves: [{ vendor: 'slack.com', name: null, version: null }],
+			}),
+		];
+		const tiles = composeApiTiles(bindings, credentials, apis);
+		expect(tiles).toHaveLength(2);
+		expect(tileStats(tiles).needsSetup).toBe(agentSetupGapCount(bindings, credentials));
+		expect(tileStats(tiles).needsSetup).toBe(1);
 	});
 });
 

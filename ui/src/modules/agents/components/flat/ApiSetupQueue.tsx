@@ -1,25 +1,11 @@
 /**
- * ApiSetupQueue — step 2 of the Add-APIs flow (plan §4.4): finish the batch the
- * tray handed over, one API at a time.
+ * ApiSetupQueue — step 2 of the Add-APIs flow: finish the batch the tray handed
+ * over, one API at a time.
  *
- * Every API that reaches an agent leaves this queue with a credential bound to
- * it, because there is no `Skip for now` (D13). That single rule shapes the
- * whole component:
- *
- *  - **Reuse is free.** Items whose credential already exists are bound without
- *    ever showing a pane, first, before anything asks for attention.
- *  - **Dropping is not deferring.** The only alternative to finishing an item is
- *    dropping it, and the confirm says what that means: the API is not added.
- *  - **Per-item terminal state.** Binding a batch is N sequential POSTs, so one
- *    failure must not take the others with it. Each row carries its own outcome
- *    and its own retry.
- *  - **Re-enterable.** Closing mid-way keeps whatever completed and hands the
- *    remainder back to the host, which reopens the flow on it. Nothing is lost
- *    silently, because there is no deferred state for it to be lost into.
- *
- * Bindings are created with no rules — least privilege (C1), which is the
- * broker's default-deny state. The footer says so: an added API cannot serve
- * traffic until rules exist on it.
+ * There is no `Skip for now`, so every API that leaves here has a credential
+ * bound: reuse binds without a pane, the only alternative to finishing is
+ * dropping, and closing hands the remainder back to the host. Bindings are created
+ * with no rules — default-deny, so an added API cannot serve traffic yet.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, Check, KeyRound, Loader2, LogIn, Minus, X } from 'lucide-react';
@@ -62,11 +48,8 @@ export interface ApiSetupQueueProps {
 	agentName: string;
 	/** The preflighted batch from the tray, in the order it should be worked. */
 	items: PreflightItem[];
-	/**
-	 * Close the queue, handing back the items that never reached a terminal
-	 * state. The host must keep them: the queue is the only way an API arrives,
-	 * so an abandoned item has to be resumable rather than quietly dropped.
-	 */
+	/** Close, handing back the items that never reached a terminal state — the host
+	 * must keep them, since the queue is the only way an API arrives. */
 	onClose: (remaining: PreflightItem[]) => void;
 }
 
@@ -84,9 +67,8 @@ export function ApiSetupQueue({ open, agentId, agentName, items, onClose }: ApiS
 	/** `choose` panes: entry key → the credential the operator selected. */
 	const [choice, setChoice] = useState<Record<string, string>>({});
 
-	// A new batch replaces the queue outright. Compared by reference, not by
-	// content: the host hands over a fresh array per commit (including a resumed
-	// remainder), and a content compare would fight the in-progress statuses.
+	// A new batch replaces the queue outright. Compared by reference: a content
+	// compare would fight the in-progress statuses.
 	const lastItemsRef = useRef(items);
 	useEffect(() => {
 		if (lastItemsRef.current === items) return;
@@ -96,9 +78,8 @@ export function ApiSetupQueue({ open, agentId, agentName, items, onClose }: ApiS
 		setFormKey(null);
 	}, [items]);
 
-	// Silent: the queue reports every outcome on its own rows, so a batch of
-	// five would otherwise fire five toasts, and an error toast would compete
-	// with the row's own `Try again`.
+	// Silent: every outcome is reported on its own row, so a batch of five would
+	// otherwise fire five toasts.
 	const bindMutation = useBindAgentCredential(agentId, { silent: true });
 	const importMutation = useImportCatalogEntry();
 	const runConnect = useRunConnectFlow();
@@ -116,17 +97,10 @@ export function ApiSetupQueue({ open, agentId, agentName, items, onClose }: ApiS
 		setEntries((current) => markActive(current));
 	}, [entries]);
 
-	/**
-	 * Take one item to its terminal state: import the API if accepting it means
-	 * importing (D5), bind the credential with no rules, then — for a credential
-	 * whose sign-in is still outstanding — run the consent flow.
-	 *
-	 * An unfinished sign-in does NOT undo the bind. The binding is real, and the
-	 * surface already tells that truth: the API tile renders dashed until the
-	 * credential can actually serve (D14). Discarding here would instead leave
-	 * the operator with an API they were told was added and no way to see why it
-	 * is not.
-	 */
+	/** Take one item to its terminal state: import the API if needed, bind the
+	 * credential with no rules, then run the consent flow if sign-in is outstanding.
+	 * An unfinished sign-in does NOT undo the bind — the tile renders dashed until
+	 * the credential can serve. */
 	const inFlight = useRef<Set<string>>(new Set());
 	const settle = async (
 		entry: QueueEntry,
@@ -188,8 +162,7 @@ export function ApiSetupQueue({ open, agentId, agentName, items, onClose }: ApiS
 			return;
 		}
 		void settle(active, credential);
-		// `settle` is recreated every render; the item's key and status are what
-		// decide whether it runs.
+		// `settle` is recreated every render; the key and status decide whether it runs.
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [open, active?.key, active?.status]);
 
@@ -209,9 +182,8 @@ export function ApiSetupQueue({ open, agentId, agentName, items, onClose }: ApiS
 	};
 
 	const close = (): void => onClose(unfinishedItems(entries));
-	// The credential wizard stacks as a second SheetPrimitive over this one, and
-	// both see the same Escape keydown — dismissing the wizard must leave the
-	// operator in the queue it was opened from, with the batch intact.
+	// The wizard stacks as a second SheetPrimitive and both see the same Escape —
+	// dismissing it must leave the operator in the queue.
 	const guardedClose = (): void => {
 		if (formKey != null) return;
 		close();
@@ -278,15 +250,12 @@ export function ApiSetupQueue({ open, agentId, agentName, items, onClose }: ApiS
 					/>
 				</div>
 
-				{/* A real footer: a progress rail flush with its top edge, then one
-				    row that pairs the count with the only verb here, then one note
-				    line. Every line starts on the same gutter as the body above. */}
 				<footer className="border-border bg-card/60 border-t">
 					<div className="bg-muted h-0.5 w-full" aria-hidden="true">
 						<div
 							className="bg-primary h-full transition-[width] duration-300 ease-out"
 							style={{
-								width: `${summary.total === 0 ? 0 : ((summary.total - summary.unfinished) / summary.total) * 100}%`,
+								width: `${summary.total === 0 ? 0 : ((summary.total - summary.remaining) / summary.total) * 100}%`,
 							}}
 						/>
 					</div>
@@ -298,7 +267,7 @@ export function ApiSetupQueue({ open, agentId, agentName, items, onClose }: ApiS
 								className="text-foreground text-xs font-medium tabular-nums"
 								role="status"
 							>
-								{summary.total - summary.unfinished} of {summary.total} done
+								{summary.total - summary.remaining} of {summary.total} done
 							</p>
 							<Button
 								size="sm"
@@ -309,16 +278,15 @@ export function ApiSetupQueue({ open, agentId, agentName, items, onClose }: ApiS
 								{summary.done ? 'Done' : 'Close for now'}
 							</Button>
 						</div>
-						{/* One note, not a stack of them: what an added API can do yet,
-						    and — while anything is unfinished — what closing costs, so
-						    it is a choice rather than a surprise. */}
+						{/* One note, not a stack: what an added API can do yet, and — while anything
+						    is outstanding, failures included — what closing costs. */}
 						<p className="text-muted-foreground/90 text-xs leading-snug">
 							{QUEUE_RULES_NOTICE}
 							{!summary.done && (
 								<>
 									{' '}
 									Closing keeps the APIs already added; the remaining{' '}
-									{summary.unfinished} wait here for next time.
+									{summary.remaining} wait here for next time.
 								</>
 							)}
 						</p>
@@ -458,7 +426,7 @@ function ActivePane({
 				>
 					<p className="text-foreground flex items-start gap-2 text-xs">
 						<AlertTriangle className="text-warning mt-0.5 h-3.5 w-3.5 shrink-0" />
-						{/* D13: there is no "later" state to drop into. */}
+						{/* There is no "later" state to drop into. */}
 						<span>
 							{dropWarning(entry.api.label)} {agentName} will not be able to call it,
 							and you can add it again whenever you like.
@@ -500,10 +468,8 @@ function ActivePane({
 							Add credential
 						</Button>
 					)}
-					{/* The escape from a matched credential. Reuse is a match on API
-					    identity, not on account: an operator whose match is the wrong
-					    tenant, environment, or person has to be able to say so without
-					    dropping the API (D13 leaves no third option). */}
+					{/* Reuse matches API identity, not account: a wrong-tenant match has to be
+					    rejectable without dropping the API. */}
 					{hasCandidates && (
 						<Button size="sm" variant="ghost" disabled={working} onClick={onOpenForm}>
 							Use a different credential
@@ -528,11 +494,8 @@ function ActivePane({
 	);
 }
 
-/**
- * The outcome of the batch. A batch where everything was dropped or failed is
- * not a success, so it does not get the success mark or the "now set the rules"
- * follow-up — there is nothing to set rules on.
- */
+/** The outcome of the batch. Everything dropped or failed is not a success — no
+ * success mark, no "now set the rules" follow-up. */
 function DonePane({ summary }: { summary: QueueSummary }) {
 	const nothingAdded = summary.added === 0;
 	return (
