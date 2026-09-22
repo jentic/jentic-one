@@ -1,4 +1,4 @@
-"""Unit tests for agent scope management (create with scopes, get, replace)."""
+"""Unit tests for agent permission management (create with permissions, get, replace)."""
 
 from __future__ import annotations
 
@@ -52,7 +52,7 @@ def _mock_agent(agent_id: str = "agnt_test1", status: str = "active") -> MagicMo
 @patch("jentic_one.auth.services.agent_service.ActorPermissionGrantRepository")
 @patch("jentic_one.auth.services.agent_service.AgentRepository")
 @patch("jentic_one.auth.services.agent_service.AgentCredentialRepository")
-async def test_create_agent_with_scopes(
+async def test_create_agent_with_permissions(
     mock_cred_repo: MagicMock, mock_agent_repo: MagicMock, mock_permission_repo: MagicMock
 ) -> None:
     ctx = _make_ctx()
@@ -61,7 +61,9 @@ async def test_create_agent_with_scopes(
     mock_permission_repo.grant = AsyncMock()
 
     svc = AgentService(ctx)
-    payload = AgentCreatePayload(name="test-agent", scopes=["capabilities:execute", "agents:write"])
+    payload = AgentCreatePayload(
+        name="test-agent", permissions=["capabilities:execute", "agents:write"]
+    )
     await svc.create(payload, owner_id="usr_owner1", identity=_identity())
 
     assert mock_permission_repo.grant.call_count == 2
@@ -75,7 +77,7 @@ async def test_create_agent_with_scopes(
 @patch("jentic_one.auth.services.agent_service.ActorPermissionGrantRepository")
 @patch("jentic_one.auth.services.agent_service.AgentRepository")
 @patch("jentic_one.auth.services.agent_service.AgentCredentialRepository")
-async def test_create_grants_default_scopes_when_none_specified(
+async def test_create_grants_default_permissions_when_none_specified(
     mock_cred_repo: MagicMock, mock_agent_repo: MagicMock, mock_permission_repo: MagicMock
 ) -> None:
     ctx = _make_ctx()
@@ -96,7 +98,7 @@ async def test_create_grants_default_scopes_when_none_specified(
 @patch("jentic_one.auth.services.agent_service.ActorPermissionGrantRepository")
 @patch("jentic_one.auth.services.agent_service.AgentRepository")
 @patch("jentic_one.auth.services.agent_service.AgentCredentialRepository")
-async def test_get_scopes(
+async def test_get_permissions(
     mock_cred_repo: MagicMock, mock_agent_repo: MagicMock, mock_permission_repo: MagicMock
 ) -> None:
     ctx = _make_ctx()
@@ -111,15 +113,17 @@ async def test_get_scopes(
     mock_permission_repo.list_for_actor = AsyncMock(return_value=[grant1, grant2])
 
     svc = AgentService(ctx)
-    scopes = await svc.get_scopes("agnt_test1", identity=_identity())
+    permissions = await svc.get_permissions("agnt_test1", identity=_identity())
 
-    assert scopes == ["capabilities:execute", "agents:read"]
+    assert permissions == ["capabilities:execute", "agents:read"]
     mock_permission_repo.list_for_actor.assert_called_once()
 
 
 @patch("jentic_one.auth.services.agent_service.ActorPermissionGrantRepository")
 @patch("jentic_one.auth.services.agent_service.AgentRepository")
-async def test_replace_scopes(mock_agent_repo: MagicMock, mock_permission_repo: MagicMock) -> None:
+async def test_replace_permissions(
+    mock_agent_repo: MagicMock, mock_permission_repo: MagicMock
+) -> None:
     ctx = _make_ctx()
     agent = _mock_agent()
     mock_agent_repo.get_by_id = AsyncMock(return_value=agent)
@@ -127,17 +131,17 @@ async def test_replace_scopes(mock_agent_repo: MagicMock, mock_permission_repo: 
     mock_permission_repo.grant = AsyncMock()
 
     svc = AgentService(ctx)
-    result = await svc.replace_scopes("agnt_test1", ["new:scope"], identity=_identity())
+    result = await svc.replace_permissions("agnt_test1", ["new:permission"], identity=_identity())
 
-    assert result == ["new:scope"]
+    assert result == ["new:permission"]
     mock_permission_repo.revoke_all.assert_called_once()
     mock_permission_repo.grant.assert_called_once()
-    assert mock_permission_repo.grant.call_args.kwargs["permission"] == "new:scope"
+    assert mock_permission_repo.grant.call_args.kwargs["permission"] == "new:permission"
 
 
 @patch("jentic_one.auth.services.agent_service.ActorPermissionGrantRepository")
 @patch("jentic_one.auth.services.agent_service.AgentRepository")
-async def test_replace_scopes_empty_clears_all(
+async def test_replace_permissions_empty_clears_all(
     mock_agent_repo: MagicMock, mock_permission_repo: MagicMock
 ) -> None:
     ctx = _make_ctx()
@@ -146,7 +150,7 @@ async def test_replace_scopes_empty_clears_all(
     mock_permission_repo.revoke_all = AsyncMock(return_value=2)
 
     svc = AgentService(ctx)
-    result = await svc.replace_scopes("agnt_test1", [], identity=_identity())
+    result = await svc.replace_permissions("agnt_test1", [], identity=_identity())
 
     assert result == []
     mock_permission_repo.revoke_all.assert_called_once()
@@ -155,7 +159,7 @@ async def test_replace_scopes_empty_clears_all(
 
 @patch("jentic_one.auth.services.agent_service.ActorPermissionGrantRepository")
 @patch("jentic_one.auth.services.agent_service.AgentRepository")
-async def test_replace_scopes_not_found(
+async def test_replace_permissions_not_found(
     mock_agent_repo: MagicMock, mock_permission_repo: MagicMock
 ) -> None:
     ctx = _make_ctx()
@@ -163,12 +167,12 @@ async def test_replace_scopes_not_found(
 
     svc = AgentService(ctx)
     with pytest.raises(ActorNotFoundError):
-        await svc.replace_scopes("agnt_missing", ["x"], identity=_identity())
+        await svc.replace_permissions("agnt_missing", ["x"], identity=_identity())
 
 
 @patch("jentic_one.auth.services.agent_service.ActorPermissionGrantRepository")
 @patch("jentic_one.auth.services.agent_service.AgentRepository")
-async def test_replace_scopes_archived_raises(
+async def test_replace_permissions_archived_raises(
     mock_agent_repo: MagicMock, mock_permission_repo: MagicMock
 ) -> None:
     ctx = _make_ctx()
@@ -177,13 +181,13 @@ async def test_replace_scopes_archived_raises(
 
     svc = AgentService(ctx)
     with pytest.raises(InvalidTransitionError):
-        await svc.replace_scopes("agnt_test1", ["x"], identity=_identity())
+        await svc.replace_permissions("agnt_test1", ["x"], identity=_identity())
 
 
 @patch("jentic_one.auth.services.agent_service.ActorPermissionGrantRepository")
 @patch("jentic_one.auth.services.agent_service.AgentRepository")
 @patch("jentic_one.auth.services.agent_service.AgentCredentialRepository")
-async def test_create_uses_explicit_scopes_over_defaults(
+async def test_create_uses_explicit_permissions_over_defaults(
     mock_cred_repo: MagicMock, mock_agent_repo: MagicMock, mock_permission_repo: MagicMock
 ) -> None:
     ctx = _make_ctx()
@@ -193,7 +197,7 @@ async def test_create_uses_explicit_scopes_over_defaults(
 
     svc = AgentService(ctx)
     explicit = ["capabilities:execute", "agents:write"]
-    payload = AgentCreatePayload(name="test-agent", scopes=explicit)
+    payload = AgentCreatePayload(name="test-agent", permissions=explicit)
     await svc.create(payload, owner_id="usr_owner1", identity=_identity())
 
     assert mock_permission_repo.grant.call_count == 2
@@ -203,7 +207,7 @@ async def test_create_uses_explicit_scopes_over_defaults(
 
 @patch("jentic_one.auth.services.agent_service.ActorPermissionGrantRepository")
 @patch("jentic_one.auth.services.agent_service.AgentRepository")
-async def test_approve_grants_default_scopes_when_no_existing_grants(
+async def test_approve_grants_default_permissions_when_no_existing_grants(
     mock_agent_repo: MagicMock, mock_permission_repo: MagicMock
 ) -> None:
     ctx = _make_ctx()
@@ -224,7 +228,7 @@ async def test_approve_grants_default_scopes_when_no_existing_grants(
 
 @patch("jentic_one.auth.services.agent_service.ActorPermissionGrantRepository")
 @patch("jentic_one.auth.services.agent_service.AgentRepository")
-async def test_approve_preserves_existing_scopes(
+async def test_approve_preserves_existing_permissions(
     mock_agent_repo: MagicMock, mock_permission_repo: MagicMock
 ) -> None:
     ctx = _make_ctx()

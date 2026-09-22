@@ -5,8 +5,8 @@ dataclass, the `ALL_PERMISSIONS` catalogue, the derived `IMPLICATION_MAP`, and t
 pure `compute_effective` / `compute_implies_transitive` expansion helpers. It lives
 in ``shared/auth`` (not ``admin``) so any tier can expand grants through the
 implication map without a layering inversion: ``shared`` callers
-(``shared/web/deps.py``, ``shared/web/scope_catalog.py``,
-``shared/web/endpoint_scopes.py``, ``shared/auth/permissions.py``) and non-web
+(``shared/web/deps.py``, ``shared/web/permission_catalog_payload.py``,
+``shared/web/endpoint_permissions.py``, ``shared/auth/permissions.py``) and non-web
 service callers alike import from here rather than reaching up into the admin tier
 (#938). The broker is the reason the constants are tier-neutral: it cannot import
 from admin, so the permission strings it shares with admin are defined here.

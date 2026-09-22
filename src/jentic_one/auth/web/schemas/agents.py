@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from jentic_one.shared.schemas import ServedApiRef
 from jentic_one.shared.web.sensitive import SENSITIVE
 
-ScopeStr = Annotated[str, Field(min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_:./-]+$")]
+PermissionStr = Annotated[str, Field(min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_:./-]+$")]
 
 
 class AgentResponse(BaseModel):
@@ -87,19 +87,19 @@ class AgentCreateRequest(BaseModel):
 
     name: str = Field(min_length=1, max_length=255)
     description: str | None = Field(default=None, max_length=1024)
-    scopes: list[ScopeStr] | None = Field(default=None, max_length=100)
+    permissions: list[PermissionStr] | None = Field(default=None, max_length=100)
 
 
-class AgentScopesRequest(BaseModel):
-    """Request body for replacing an agent's scopes."""
+class AgentPermissionsRequest(BaseModel):
+    """Request body for replacing an agent's permissions."""
 
-    scopes: list[ScopeStr] = Field(max_length=100)
+    permissions: list[PermissionStr] = Field(max_length=100)
 
 
-class AgentScopesResponse(BaseModel):
-    """Response containing an agent's current scopes."""
+class AgentPermissionsResponse(BaseModel):
+    """Response containing an agent's current permissions."""
 
-    scopes: list[str]
+    permissions: list[str]
 
 
 class ApiKeyResponse(BaseModel):

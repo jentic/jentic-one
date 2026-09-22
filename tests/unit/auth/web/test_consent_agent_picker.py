@@ -108,9 +108,9 @@ def _seed_consent_handle(
 def _agent_option(
     agent_id: str = "agnt_1",
     name: str = "runtime-agent",
-    scopes: frozenset[str] = frozenset({"apis:read"}),
+    permissions: frozenset[str] = frozenset({"apis:read"}),
 ) -> AgentConsentOption:
-    return AgentConsentOption(id=agent_id, name=name, scopes=scopes)
+    return AgentConsentOption(id=agent_id, name=name, permissions=permissions)
 
 
 def _mock_authorize_svc(
@@ -168,8 +168,8 @@ def test_agent_model_page_renders_picker_with_own_active_agents(
     assert "reader-agent" in body and "writer-agent" in body
     # The redirect-URI origin is rendered prominently (untrusted-name counter).
     assert "https://mcpapp.example.com" in body
-    # The scope the reader agent lacks renders greyed-out, not hidden.
-    assert "not granted (agent lacks this scope)" in body
+    # The permission the reader agent lacks renders greyed-out, not hidden.
+    assert "not granted (agent lacks this permission)" in body
     svc.list_consentable_agents.assert_awaited_once_with("usr_owner")
     # Rendering must not provision: only the read-only resolver ran.
     svc.provision_from_claims.assert_not_awaited()
@@ -297,7 +297,7 @@ def test_agent_model_approve_mints_grant_and_grant_bearing_code(
     mock_grant_cls: MagicMock,
 ) -> None:
     """Approve: grant minted with the server-side D2 intersection (openid
-    stripped, allowlist and agent live scopes applied), code carries
+    stripped, allowlist and the agent's live permissions applied), code carries
     grant_id, redirect carries code + original state."""
     client, backend = _make_app()
     _seed_consent_handle(backend, scope="openid apis:read apis:write apis:admin")
@@ -320,7 +320,7 @@ def test_agent_model_approve_mints_grant_and_grant_bearing_code(
 
     assert resp.status_code == 302
     assert resp.headers["location"] == f"{_REDIRECT_URI}?code=code_grant&state=xyz"
-    # requested ∩ allowlist ∩ agent scopes, openid stripped (D11):
+    # requested ∩ allowlist ∩ the agent's permissions, openid stripped (D11):
     # openid → stripped; apis:admin → outside allowlist; apis:write → agent lacks.
     grant_svc.create_grant.assert_awaited_once_with(
         user_id="usr_owner",
@@ -481,7 +481,9 @@ def test_agent_model_empty_effective_scope_set_rejected(
     mock_client_svc_cls.return_value.get_by_client_id = AsyncMock(
         return_value=_client_view(allowed_scopes=["apis:write"])
     )
-    svc = _mock_authorize_svc(agents=[_agent_option("agnt_1", scopes=frozenset({"apis:read"}))])
+    svc = _mock_authorize_svc(
+        agents=[_agent_option("agnt_1", permissions=frozenset({"apis:read"}))]
+    )
     mock_authorize_cls.return_value = svc
     grant_svc = MagicMock()
     grant_svc.create_grant = AsyncMock()

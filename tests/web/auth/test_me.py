@@ -83,7 +83,10 @@ def _make_token(
     }
     if parent_actor_id:
         claims["parent_actor_id"] = parent_actor_id
-    # NOTE: The test _make_token was embedding permissions, we now rely on DB lookup
+    # The ``scopes`` claim (not ``permissions``) is deliberate: ``verify_token``
+    # folds OAuth2 scopes into the permission set *on top of* the DB-resolved
+    # grants, whereas a ``permissions`` claim short-circuits the lookup. The #673
+    # tests below need both legs — the token's baked-in set and the live grants.
     return issue_jwt(claims, config.jwt_secret.get_secret_value(), config.jwt_ttl_seconds)
 
 
@@ -193,8 +196,8 @@ async def approved_agent_id(
         await AgentCredentialBindingRepository.bind(
             session, agent_id=agent.id, credential_id=ORPHAN_CREDENTIAL_ID, created_by="usr_test"
         )
-        # A live scope grant the presented token won't carry — exercises #673:
-        # /me must reflect current grants, not just the token's baked-in scopes.
+        # A live grant the presented token won't carry — exercises #673: /me must
+        # reflect current grants, not just the token's baked-in permissions.
         await ActorPermissionGrantRepository.grant(
             session,
             actor_id=agent.id,
@@ -320,7 +323,7 @@ def test_me_user_admin(web_context: Context, admin_user_id: str) -> None:
     assert body["email"] == ADMIN_EMAIL
     assert body["name"] == "Me Admin"
     assert body["admin"] is True
-    assert "org:admin" in body["scopes"]
+    assert "org:admin" in body["permissions"]
     assert body["status"] == "active"
     assert body["must_change_password"] is False
 
@@ -340,7 +343,7 @@ def test_me_user_owner(web_context: Context, owner_user_id: str) -> None:
     assert body["type"] == "user"
     assert body["id"] == owner_user_id
     assert body["admin"] is False
-    assert "agents:read" in body["scopes"]
+    assert "agents:read" in body["permissions"]
     assert body["status"] == "active"
 
 
@@ -361,11 +364,12 @@ def test_me_agent(web_context: Context, approved_agent_id: str) -> None:
     assert body["id"] == approved_agent_id
     assert body["name"] == "me-test-agent"
     assert body["status"] == "active"
-    # scopes reflect the *live* actor_permission_grants (the grant from the fixture),
-    # not the token's baked-in scopes — this is the #673 fix. token_scopes
-    # carries the presented token's view so a stale-grant gap is detectable.
-    assert body["scopes"] == ["capabilities:read"]
-    assert body["token_scopes"] == ["toolkits:execute"]
+    # permissions reflect the *live* actor_permission_grants (the grant from the
+    # fixture), not the token's baked-in set — this is the #673 fix.
+    # token_permissions carries the presented token's view so a stale-grant gap
+    # is detectable.
+    assert body["permissions"] == ["capabilities:read"]
+    assert body["token_permissions"] == ["toolkits:execute"]
     assert body["parent_agent_id"] is None
     assert body["approved_by"] is not None
     bindings = {b["toolkit_id"]: b for b in body["toolkit_bindings"]}
@@ -398,7 +402,7 @@ async def test_me_agent_opaque_token_surfaces_minted_scopes(
     web_context: Context, approved_agent_id: str
 ) -> None:
     """Regression: an opaque agent access token (``at_…``) must surface the scopes
-    minted onto its token row.
+    minted onto its ``access_tokens`` row as the agent's token permissions.
 
     The auth verifier (``_make_auth_verifier``) used to discard the token-row
     scopes for agents and recompute via ``resolve_permissions_for_actor``, whose
@@ -406,7 +410,7 @@ async def test_me_agent_opaque_token_surfaces_minted_scopes(
     ``capabilities:read`` never took effect and re-minting the token could
     not help. Unlike the JWT path in ``test_me_agent`` (which falls back to the
     token's ``scopes`` claim), the opaque-token path has no such claim, and it is
-    the path real CLI agents use after the jwt-bearer exchange. token_scopes must
+    the path real CLI agents use after the jwt-bearer exchange. ``token_permissions`` must
     therefore echo the minted scopes, not come back empty.
     """
     token_svc = TokenService(web_context)
@@ -423,9 +427,9 @@ async def test_me_agent_opaque_token_surfaces_minted_scopes(
     # The presented opaque token carries capabilities:read on its row; the
     # verifier must surface it (pre-fix this came back [] and every
     # capabilities:read-gated call 403'd).
-    assert body["token_scopes"] == ["capabilities:read"]
-    # scopes still reflects the live actor_permission_grants.
-    assert body["scopes"] == ["capabilities:read"]
+    assert body["token_permissions"] == ["capabilities:read"]
+    # permissions still reflects the live actor_permission_grants.
+    assert body["permissions"] == ["capabilities:read"]
 
 
 def test_me_service_account_fallback_resolved_key(
@@ -443,10 +447,10 @@ def test_me_service_account_fallback_resolved_key(
     assert body["id"] == approved_sa_id
     assert body["name"] == "me-test-sa"
     assert body["status"] == "active"
-    # `scopes` = live grants; `token_scopes` = what the resolver loaded for the
-    # key (the same live grants on the API-key path).
-    assert body["scopes"] == ["capabilities:read"]
-    assert body["token_scopes"] == ["capabilities:read"]
+    # `permissions` = live grants; `token_permissions` = what the resolver loaded
+    # for the key (the same live grants on the API-key path).
+    assert body["permissions"] == ["capabilities:read"]
+    assert body["token_permissions"] == ["capabilities:read"]
     assert body["registered_by"] == owner_user_id
     assert body["approved_by"] is not None
 
@@ -469,8 +473,8 @@ def test_me_service_account_jwt_subject(
     body = resp.json()
     assert body["type"] == "service_account"
     assert body["id"] == approved_sa_id
-    assert body["scopes"] == ["capabilities:read"]
-    assert body["token_scopes"] == ["registry:read"]
+    assert body["permissions"] == ["capabilities:read"]
+    assert body["token_permissions"] == ["registry:read"]
 
 
 def test_me_service_account_row_gone_is_401(web_context: Context) -> None:

@@ -128,7 +128,7 @@ class PermissionService:
         """Validate that all permissions exist and the granter can grant them.
 
         ``RETIRED_PERMISSIONS`` members are accepted and skipped: a stored grant
-        set written before a scope retirement (theme-5 Phase 5b) must
+        set written before a permission retirement (theme-5 Phase 5b) must
         re-submit unchanged without a 422. The retired string is stored
         as-is and grants nothing — Phase 6b sweeps it.
         """

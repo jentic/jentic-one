@@ -70,8 +70,8 @@ is emitted once per client per fixed six-hour UTC window (a reconnect
 straddling a window boundary can yield two rows minutes apart), since spec
 2026-07-28 has no protocol-level sessions to count.
 
-Scopes and audit are identical to REST: the endpoint enforces the same
-per-tool scopes the fronted routes require, and executions land in the
+Permissions and audit are identical to REST: the endpoint enforces the same
+per-tool permissions the fronted routes require, and executions land in the
 monitor labeled with the `mcp` origin.
 
 ## Recipes: stdio-only clients
@@ -97,7 +97,7 @@ Pass the endpoint URL and hand the bearer over `JENTIC_MCP_BEARER` (or
 Two third-party bridges also pump
 stdio ↔ Streamable HTTP; both keep the endpoint's per-request bearer model
 (the bridge adds the `Authorization` header, the deployment still enforces
-identity, scopes, and audit per call).
+identity, permissions, and audit per call).
 
 ### `mcp-remote` (npm)
 

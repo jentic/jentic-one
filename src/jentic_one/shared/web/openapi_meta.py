@@ -24,7 +24,7 @@ from fastapi.openapi.utils import get_openapi
 from fastapi.routing import APIRoute
 
 from jentic_one import __version__
-from jentic_one.shared.web.endpoint_scopes import build_operation_auth_map
+from jentic_one.shared.web.endpoint_permissions import build_operation_auth_map
 from jentic_one.shared.web.openapi_responses import PROBLEM_JSON, STATUS_EXAMPLES
 
 _HTTP_METHODS = {"get", "put", "post", "delete", "patch", "options", "head", "trace"}
@@ -534,7 +534,8 @@ OPENAPI_TAGS: list[dict[str, str]] = [
             "(full deployment-wide access, granted via direct DB action). It is not enumerated "
             "to non-holders by `GET /permissions`, and is rejected by `PUT "
             "/users/{user_id}/permissions` from any caller who doesn't already hold it.\n\n"
-            "The same vocabulary is used for `User.permissions` — coarse JWT-embedded scopes — "
+            "The same vocabulary is used for `User.permissions` — the coarse set embedded in "
+            "the JWT — "
             "so the catalogue below covers user assignment. The per-binding fine-grained "
             "`PermissionRule[]` (the inner PBAC tier) lives separately on the direct "
             "agent↔credential bindings under the `Credentials` tag."
@@ -554,7 +555,7 @@ OPENAPI_TAGS: list[dict[str, str]] = [
         "name": "Identity",
         "description": (
             "Identity introspection for the calling principal (human, agent, or service "
-            "account) — `GET /me` returns the resolved subject, scopes, and permissions behind "
+            "account) — `GET /me` returns the resolved subject and its permissions behind "
             "the presented token."
         ),
     },
@@ -721,8 +722,8 @@ BEARER_SECURITY_SCHEME = {
             "(the JWT is the *assertion*, not the resulting access token).\n"
             "- **Users** — `grant_type=authorization_code` (interactive) or "
             "`grant_type=password`; refresh either with `grant_type=refresh_token`.\n\n"
-            "Per-endpoint scope and actor-type requirements are not modelled in this "
-            "document (OpenAPI cannot faithfully express the OR-of-scopes / "
+            "Per-endpoint permission and actor-type requirements are not modelled in "
+            "this document (OpenAPI cannot faithfully express the OR-of-permissions / "
             "`org:admin` bypass / service-layer enforcement); see "
             "`GET /reference/endpoints.json` for the authoritative authorization "
             "reference."
@@ -811,7 +812,7 @@ PUBLIC_OPERATION_IDS: frozenset[str] = frozenset(
 #: credentials with ``401``, so the documented error responses are kept intact.
 #: Their ``security`` is dropped to ``[]`` (no platform bearer requirement); the
 #: real credential is described in the endpoint reference's ``auth_note`` (see
-#: ``NON_IDENTITY_AUTH`` in ``endpoint_scopes.py``).
+#: ``NON_IDENTITY_AUTH`` in ``endpoint_permissions.py``).
 NON_BEARER_AUTH_OPERATION_IDS: frozenset[str] = frozenset(
     {
         # RFC 7592 registration-status poll: authenticated by the
@@ -969,7 +970,7 @@ def _normalise_error_responses(responses: dict[str, Any]) -> None:
         content[PROBLEM_JSON] = media
 
 
-def _stamp_scope_metadata(
+def _stamp_permission_metadata(
     method: str,
     path: str,
     operation: dict[str, Any],
@@ -978,11 +979,12 @@ def _stamp_scope_metadata(
     """Stamp the operation's ``security`` from its recovered identity dependency.
 
     The OpenAPI document models only the real authentication mechanism —
-    ``BearerAuth`` (an opaque bearer token, not a JWT). The per-operation scope/actor-type join
-    is *not* expressed here: OpenAPI's ``security`` model cannot faithfully carry
-    our OR-of-scopes semantics, the ``org:admin`` superuser bypass, the
-    typical-caller hint, or the fact that many scopes are enforced in the service
-    layer rather than at the gateway. Encoding it as a fabricated OAuth2 flow
+    ``BearerAuth`` (an opaque bearer token, not a JWT). The per-operation
+    permission/actor-type join is *not* expressed here: OpenAPI's ``security`` model
+    cannot faithfully carry our OR-of-permissions semantics, the ``org:admin``
+    superuser bypass, the typical-caller hint, or the fact that many permissions are
+    enforced in the service layer rather than at the gateway. Encoding it as a
+    fabricated OAuth2 flow
     would misrepresent enforcement, so that richer authorization reference lives
     in the endpoint reference (:mod:`jentic_one.shared.web.endpoint_reference`,
     served at ``GET /reference/endpoints.json``), which the CLI and docs SPA
@@ -1061,12 +1063,12 @@ def install_openapi_metadata(app: FastAPI) -> None:
                     # Authenticates by a non-bearer credential (e.g. an RFC 7592
                     # Registration-Access-Token): drop the platform BearerAuth
                     # requirement but keep the 401 it genuinely returns on a bad
-                    # credential. It never reaches the scope/authz layer, so the
+                    # credential. It never reaches the permission/authz layer, so the
                     # 403 (which only the permission gate raises) is dropped.
                     operation["security"] = []
                     operation.get("responses", {}).pop("403", None)
                 else:
-                    _stamp_scope_metadata(method, path, operation, operation_auth)
+                    _stamp_permission_metadata(method, path, operation, operation_auth)
                 if op_id in ROUTER_RESHAPED_422_OPERATION_IDS:
                     # Validation failures are reshaped to the governing spec's
                     # dialect at the router; the framework 422 can never be

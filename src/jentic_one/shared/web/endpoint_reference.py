@@ -1,17 +1,17 @@
-"""Canonical endpoint → scope → typical-caller reference, built from code.
+"""Canonical endpoint → permission → typical-caller reference, built from code.
 
 This is the single source of truth for the *authorization* reference — which
-actor types may call each operation, the scope(s) it requires, the typical
+actor types may call each operation, the permission(s) it requires, the typical
 caller, and any non-standard credential note. It is deliberately **separate**
 from the OpenAPI document:
 
 - The OpenAPI spec models only the real *authentication* mechanism
   (``BearerAuth`` — an opaque bearer token). It does **not** express per-operation
-  scopes/actor types, because OpenAPI's ``security`` model cannot faithfully carry
-  our authorization semantics (OR-of-scopes, the ``org:admin`` superuser bypass,
-  the typical-caller hint, and scopes enforced in the service layer rather than at
-  the gateway). Encoding those as a fabricated OAuth2 flow would misrepresent
-  enforcement.
+  permissions/actor types, because OpenAPI's ``security`` model cannot faithfully
+  carry our authorization semantics (OR-of-permissions, the ``org:admin`` superuser
+  bypass, the typical-caller hint, and permissions enforced in the service layer
+  rather than at the gateway). Encoding those as a fabricated OAuth2 flow would
+  misrepresent enforcement.
 - This module is therefore the authoritative, machine-readable authorization
   reference that the CLI and docs SPA consume.
 
@@ -36,15 +36,18 @@ from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from jentic_one.shared.auth.permission_catalog import BROKER_EXECUTE_PERMISSION
-from jentic_one.shared.web.endpoint_scopes import build_operation_auth_map, implied_scopes
+from jentic_one.shared.web.endpoint_permissions import (
+    build_operation_auth_map,
+    implied_permissions,
+)
 from jentic_one.shared.web.openapi_meta import PUBLIC_OPERATION_IDS
-from jentic_one.shared.web.scope_catalog import build_scope_catalog
+from jentic_one.shared.web.permission_catalog_payload import build_permission_catalog
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
 
 #: Schema identifier for the JSON payload (bump on a breaking shape change).
-REFERENCE_SCHEMA = "jentic.endpoint-scope-tree/v1"
+REFERENCE_SCHEMA = "jentic.endpoint-permission-tree/v1"
 
 _HTTP_METHODS = ("get", "post", "put", "patch", "delete")
 
@@ -56,7 +59,7 @@ _AGENT_ACTORS: tuple[str, ...] = ("agent",)
 _BROKER_PUBLIC_PATHS: frozenset[str] = frozenset({"/health", "/ready"})
 
 #: The broker's authenticated data-plane route — the catch-all execute proxy. Its
-#: hand-curated spec carries no scope metadata, so it is annotated explicitly
+#: hand-curated spec carries no permission metadata, so it is annotated explicitly
 #: rather than by "everything that isn't a probe", so an unexpected new broker
 #: route is NOT silently mislabelled as the proxy (it falls through to the guard).
 _BROKER_PROXY_PATH = "/{upstream_url}"
@@ -64,8 +67,8 @@ _BROKER_PROXY_PATH = "/{upstream_url}"
 #: HTTP methods the broker execute-proxy accepts on :data:`_BROKER_PROXY_PATH`.
 _BROKER_PROXY_METHODS: tuple[str, ...] = ("DELETE", "GET", "PATCH", "POST", "PUT")
 
-# Top-level grouping by the *typical caller* hint (advisory; the scope is the
-# real gate). Endpoints are scope-gated, not actor-gated, so we group by who
+# Top-level grouping by the *typical caller* hint (advisory; the permission is the
+# real gate). Endpoints are permission-gated, not actor-gated, so we group by who
 # usually calls a route rather than by an enforced actor restriction.
 GROUP_PUBLIC = "Public (unauthenticated)"
 GROUP_AGENT = "Agent-facing (typically an agent)"
@@ -95,11 +98,11 @@ class Endpoint:
     authenticated: bool
     public: bool
     actor_types: list[str] = field(default_factory=list)
-    required_scopes: list[str] = field(default_factory=list)
-    implied_scopes: dict[str, list[str]] = field(default_factory=dict)
+    required_permissions: list[str] = field(default_factory=list)
+    implied_permissions: dict[str, list[str]] = field(default_factory=dict)
     auth_note: str | None = None
     #: Advisory hint (``agent`` / ``operator`` / ``any``) at who usually calls the
-    #: endpoint. NOT an enforced restriction — the scope is the real gate.
+    #: endpoint. NOT an enforced restriction — the permission is the real gate.
     typical_caller: str | None = None
 
     @property
@@ -121,7 +124,7 @@ def _surface_for(path: str, default: str) -> str:
 def _endpoints_from_app(app: FastAPI, surface_default: str) -> list[Endpoint]:
     """Build endpoints for one app from its routes joined with the auth map.
 
-    The scope/actor/typical_caller/auth_note all come from
+    The permission/actor/typical_caller/auth_note all come from
     :func:`build_operation_auth_map` (the curated source of truth) — never from
     OpenAPI vendor extensions (the spec carries none).
     """
@@ -137,7 +140,7 @@ def _endpoints_from_app(app: FastAPI, surface_default: str) -> list[Endpoint]:
             info = auth_map.get((method.upper(), path))
             if info is not None:
                 authenticated = bool(info["authenticated"])
-                scopes = list(info["scopes"])
+                permissions = list(info["permissions"])
                 actor_types = list(info["actor_types"])
                 typical_caller = info.get("typical_caller")
                 auth_note = info.get("auth_note")
@@ -146,7 +149,7 @@ def _endpoints_from_app(app: FastAPI, surface_default: str) -> list[Endpoint]:
                 # app is annotated separately below). Fall back to the spec's native
                 # security: [] == public.
                 authenticated = operation.get("security") != []
-                scopes = []
+                permissions = []
                 actor_types = []
                 typical_caller = None
                 auth_note = None
@@ -160,8 +163,8 @@ def _endpoints_from_app(app: FastAPI, surface_default: str) -> list[Endpoint]:
                     authenticated=authenticated,
                     public=not authenticated,
                     actor_types=actor_types,
-                    required_scopes=scopes,
-                    implied_scopes=implied_scopes(scopes) if scopes else {},
+                    required_permissions=permissions,
+                    implied_permissions=implied_permissions(permissions) if permissions else {},
                     auth_note=auth_note,
                     typical_caller=typical_caller,
                 )
@@ -210,8 +213,8 @@ def _declared_broker_endpoints() -> list[Endpoint]:
             authenticated=True,
             public=False,
             actor_types=list(_AGENT_ACTORS),
-            required_scopes=[BROKER_EXECUTE_PERMISSION],
-            implied_scopes=implied_scopes([BROKER_EXECUTE_PERMISSION]),
+            required_permissions=[BROKER_EXECUTE_PERMISSION],
+            implied_permissions=implied_permissions([BROKER_EXECUTE_PERMISSION]),
             typical_caller="agent",
         )
         for method in _BROKER_PROXY_METHODS
@@ -220,11 +223,11 @@ def _declared_broker_endpoints() -> list[Endpoint]:
 
 
 def _annotate_broker(broker: list[Endpoint]) -> None:
-    """Stamp the broker execute-proxy route's enforced scope (its spec lacks the auth map).
+    """Stamp the broker execute-proxy route's enforced permission (its spec lacks the auth map).
 
     The broker proxy (:data:`_BROKER_PROXY_PATH`) enforces BROKER_EXECUTE_PERMISSION via
     RequireToolkitAccess (broker/web/deps.require_execute_permission); its hand-curated
-    spec does not carry scope metadata, so annotate that specific data-plane route
+    spec does not carry permission metadata, so annotate that specific data-plane route
     to keep the reference code-true. The liveness/readiness probes are the broker's
     only public routes.
 
@@ -234,11 +237,11 @@ def _annotate_broker(broker: list[Endpoint]) -> None:
     silently labelling it as the execute proxy.
     """
     for ep in broker:
-        if ep.path == _BROKER_PROXY_PATH and not ep.required_scopes:
+        if ep.path == _BROKER_PROXY_PATH and not ep.required_permissions:
             ep.authenticated = True
             ep.public = False
-            ep.required_scopes = [BROKER_EXECUTE_PERMISSION]
-            ep.implied_scopes = implied_scopes([BROKER_EXECUTE_PERMISSION])
+            ep.required_permissions = [BROKER_EXECUTE_PERMISSION]
+            ep.implied_permissions = implied_permissions([BROKER_EXECUTE_PERMISSION])
             ep.actor_types = ep.actor_types or list(_AGENT_ACTORS)
             ep.typical_caller = ep.typical_caller or "agent"
 
@@ -256,7 +259,7 @@ def assert_classification_is_sound(
     """Fail loudly if the public/authenticated boundary looks broken.
 
     The classification depends on introspecting private FastAPI internals
-    (``endpoint_scopes._closure_values`` / ``_IncludedRouter``). If a future
+    (``endpoint_permissions._closure_values`` / ``_IncludedRouter``). If a future
     FastAPI refactor breaks that, every route would silently fall back to
     "public", quietly emptying the reference. These invariants turn that silent
     failure into a loud error:
@@ -272,7 +275,8 @@ def assert_classification_is_sound(
         raise RuntimeError(
             "endpoint-reference: only "
             f"{len(authed)} authenticated control-plane operations recovered — "
-            "scope introspection likely broke (check endpoint_scopes._closure_values "
+            "permission introspection likely broke (check "
+            "endpoint_permissions._closure_values "
             "against the current FastAPI version)."
         )
     leaked = [
@@ -293,7 +297,8 @@ def assert_broker_classification_is_sound(broker: list[Endpoint]) -> None:
 
     The broker has no entry in the control auth map, so :func:`_endpoints_from_app`
     classifies its routes from the spec's native ``security`` and
-    :func:`_annotate_broker` stamps the execute proxy's scope. The only routes that
+    :func:`_annotate_broker` stamps the execute proxy's permission. The only routes
+    that
     may legitimately be public are the liveness/readiness probes
     (:data:`_BROKER_PUBLIC_PATHS`); anything else rendered public means the broker
     spec lost its ``security`` (or grew an unguarded route) and would silently
@@ -347,14 +352,15 @@ def build_reference_payload(endpoints: list[Endpoint]) -> dict[str, Any]:
     Identical shape whether produced offline by ``make endpoints`` or served live
     by ``GET /reference/endpoints.json`` — both call this with the same endpoints.
 
-    The ``scopes`` section is the conceptual scope catalogue (meaning + implication
-    graph) built from the permission source of truth, so the docs SPA can render
-    "what each scope means" alongside "which endpoints need it" from one document.
+    The ``permissions`` section is the conceptual permission catalogue (meaning +
+    implication graph) built from the permission source of truth, so the docs SPA
+    can render "what each permission means" alongside "which endpoints need it"
+    from one document.
     """
     return {
         "schema": REFERENCE_SCHEMA,
         "total": len(endpoints),
         "groups": list(GROUP_ORDER),
         "endpoints": [asdict(ep) | {"group": ep.group} for ep in endpoints],
-        "scopes": build_scope_catalog(),
+        "permissions": build_permission_catalog(),
     }

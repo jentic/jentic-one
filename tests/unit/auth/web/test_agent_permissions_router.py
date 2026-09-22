@@ -1,4 +1,4 @@
-"""Unit tests for agent scope management endpoints (GET/PUT /agents/{id}/scopes)."""
+"""Unit tests for agent permission management endpoints (GET/PUT /agents/{id}/permissions)."""
 
 from __future__ import annotations
 
@@ -36,8 +36,8 @@ def _readonly_identity() -> Identity:
 @pytest.fixture()
 def mock_agent_svc() -> MagicMock:
     svc = MagicMock(spec=AgentService)
-    svc.get_scopes = AsyncMock(return_value=["capabilities:execute", "agents:read"])
-    svc.replace_scopes = AsyncMock(return_value=["new:scope"])
+    svc.get_permissions = AsyncMock(return_value=["capabilities:execute", "agents:read"])
+    svc.replace_permissions = AsyncMock(return_value=["new:permission"])
     return svc
 
 
@@ -67,30 +67,30 @@ def readonly_client(mock_agent_svc: MagicMock) -> TestClient:
     return TestClient(app)
 
 
-def test_get_scopes(client: TestClient) -> None:
-    resp = client.get("/agents/agnt_test1/scopes")
+def test_get_permissions(client: TestClient) -> None:
+    resp = client.get("/agents/agnt_test1/permissions")
     assert resp.status_code == 200
-    assert resp.json() == {"scopes": ["capabilities:execute", "agents:read"]}
+    assert resp.json() == {"permissions": ["capabilities:execute", "agents:read"]}
 
 
-def test_get_scopes_requires_read(readonly_client: TestClient) -> None:
-    resp = readonly_client.get("/agents/agnt_test1/scopes")
+def test_get_permissions_requires_read(readonly_client: TestClient) -> None:
+    resp = readonly_client.get("/agents/agnt_test1/permissions")
     assert resp.status_code == 200
 
 
-def test_replace_scopes(client: TestClient) -> None:
-    resp = client.put("/agents/agnt_test1/scopes", json={"scopes": ["new:scope"]})
+def test_replace_permissions(client: TestClient) -> None:
+    resp = client.put("/agents/agnt_test1/permissions", json={"permissions": ["new:permission"]})
     assert resp.status_code == 200
-    assert resp.json() == {"scopes": ["new:scope"]}
+    assert resp.json() == {"permissions": ["new:permission"]}
 
 
-def test_replace_scopes_empty(client: TestClient, mock_agent_svc: MagicMock) -> None:
-    mock_agent_svc.replace_scopes = AsyncMock(return_value=[])
-    resp = client.put("/agents/agnt_test1/scopes", json={"scopes": []})
+def test_replace_permissions_empty(client: TestClient, mock_agent_svc: MagicMock) -> None:
+    mock_agent_svc.replace_permissions = AsyncMock(return_value=[])
+    resp = client.put("/agents/agnt_test1/permissions", json={"permissions": []})
     assert resp.status_code == 200
-    assert resp.json() == {"scopes": []}
+    assert resp.json() == {"permissions": []}
 
 
-def test_replace_scopes_requires_write(readonly_client: TestClient) -> None:
-    resp = readonly_client.put("/agents/agnt_test1/scopes", json={"scopes": ["x"]})
+def test_replace_permissions_requires_write(readonly_client: TestClient) -> None:
+    resp = readonly_client.put("/agents/agnt_test1/permissions", json={"permissions": ["x"]})
     assert resp.status_code == 403

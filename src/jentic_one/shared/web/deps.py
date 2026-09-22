@@ -120,7 +120,7 @@ def get_current_identity(
             # implies `*:read`). Without this, callers whose permissions arrive
             # unexpanded — API keys resolved straight from `actor_permission_grants`
             # (see shared/auth/api_key_resolver.py) — would be 403'd on a read
-            # route they hold the write scope for, while the same actor admitted
+            # route they hold the write permission for, while the same actor admitted
             # via an access token (expanded by PermissionService) would pass.
             caller_perms = compute_effective(set(identity.permissions))
             if "org:admin" not in caller_perms and not caller_perms.intersection(

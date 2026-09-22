@@ -17,9 +17,9 @@ from jentic_one.auth.web.schemas.agents import (
     AgentCreateRequest,
     AgentListResponse,
     AgentPatchRequest,
+    AgentPermissionsRequest,
+    AgentPermissionsResponse,
     AgentResponse,
-    AgentScopesRequest,
-    AgentScopesResponse,
     ApiKeyHistoryEntryResponse,
     ApiKeyHistoryResponse,
     ApiKeyInfoResponse,
@@ -64,7 +64,9 @@ async def create_agent(
 ) -> AgentResponse:
     """Create a new agent manually."""
     view = await agent_svc.create(
-        AgentCreatePayload(name=body.name, description=body.description, scopes=body.scopes),
+        AgentCreatePayload(
+            name=body.name, description=body.description, permissions=body.permissions
+        ),
         owner_id=identity.sub,
         identity=identity,
     )
@@ -152,7 +154,7 @@ async def claim_agent(
     ``allow_expired_password=True`` is intentional (matching ``GET /agents/{id}``):
     claiming is an onboarding step a brand-new user may hit before they have
     rotated a temporary password, so a must-change-password state must not block
-    it. The claim only sets ownership — it grants no scopes and cannot act as the
+    it. The claim only sets ownership — it grants no permissions and cannot act as the
     agent — so allowing it under an expired password is low-risk.
     """
     view = await agent_svc.claim(agent_id, token=body.token, identity=identity)
@@ -202,7 +204,7 @@ async def archive_agent(
     """Archive an agent — terminal-but-kept.
 
     The row is retained for history, but the action is not reversible and
-    the agent's authority is swept: scope grants, credential bindings, and
+    the agent's authority is swept: permission grants, credential bindings, and
     OAuth consent grants are revoked. For the reversible kill switch use
     ``:disable`` / ``:enable`` instead.
     """
@@ -210,27 +212,27 @@ async def archive_agent(
     return Response(status_code=204)
 
 
-@router.get("/agents/{agent_id}/scopes", operation_id="getAgentScopes")
-async def get_agent_scopes(
+@router.get("/agents/{agent_id}/permissions", operation_id="getAgentPermissions")
+async def get_agent_permissions(
     agent_id: str,
     identity: Identity = get_current_identity(required_permissions=["agents:read"]),
     agent_svc: AgentService = Depends(get_agent_service),
-) -> AgentScopesResponse:
-    """List scopes granted to an agent."""
-    scopes = await agent_svc.get_scopes(agent_id, identity=identity)
-    return AgentScopesResponse(scopes=scopes)
+) -> AgentPermissionsResponse:
+    """List permissions granted to an agent."""
+    permissions = await agent_svc.get_permissions(agent_id, identity=identity)
+    return AgentPermissionsResponse(permissions=permissions)
 
 
-@router.put("/agents/{agent_id}/scopes", operation_id="replaceAgentScopes")
-async def replace_agent_scopes(
+@router.put("/agents/{agent_id}/permissions", operation_id="replaceAgentPermissions")
+async def replace_agent_permissions(
     agent_id: str,
-    body: AgentScopesRequest,
+    body: AgentPermissionsRequest,
     identity: Identity = get_current_identity(required_permissions=["agents:write"]),
     agent_svc: AgentService = Depends(get_agent_service),
-) -> AgentScopesResponse:
-    """Replace all scopes for an agent."""
-    scopes = await agent_svc.replace_scopes(agent_id, body.scopes, identity=identity)
-    return AgentScopesResponse(scopes=scopes)
+) -> AgentPermissionsResponse:
+    """Replace all permissions for an agent."""
+    permissions = await agent_svc.replace_permissions(agent_id, body.permissions, identity=identity)
+    return AgentPermissionsResponse(permissions=permissions)
 
 
 def _credential_binding_response(view: CredentialBindingView) -> CredentialBindingResponse:

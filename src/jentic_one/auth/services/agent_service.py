@@ -103,17 +103,17 @@ class AgentService:
                 status=status,
             )
             if status is ActorStatus.ACTIVE:
-                scopes_to_grant = (
-                    list(dict.fromkeys(payload.scopes))
-                    if payload.scopes
+                permissions_to_grant = (
+                    list(dict.fromkeys(payload.permissions))
+                    if payload.permissions
                     else list(DEFAULT_AGENT_PERMISSIONS)
                 )
-                for scope in scopes_to_grant:
+                for permission in permissions_to_grant:
                     await ActorPermissionGrantRepository.grant(
                         session,
                         actor_id=agent.id,
                         actor_type=ActorType.AGENT,
-                        permission=scope,
+                        permission=permission,
                         granted_by=identity.sub,
                         created_by=identity.sub,
                     )
@@ -262,9 +262,10 @@ class AgentService:
                     target_id=agent_id,
                     actor_type=identity.actor_type,
                     actor_id=identity.sub,
-                    # The audit payload key stays ``scopes``: the trail spans the
-                    # permission rename in time, and pre-rename rows already say
-                    # ``scopes``. Renaming it is a versioned audit-schema change.
+                    # The audit payload key and ``reason`` stay on the ``scopes``
+                    # spelling: the trail spans the permission rename in time, and
+                    # pre-rename rows already say ``scopes``. Renaming either is a
+                    # versioned audit-schema change.
                     after={"scopes": list(DEFAULT_AGENT_PERMISSIONS)},
                     reason="default_scopes",
                     origin=identity.origin.value,
@@ -679,7 +680,7 @@ class AgentService:
             )
         return CredentialBindingView.model_validate(binding)
 
-    async def get_scopes(self, agent_id: str, *, identity: Identity) -> list[str]:
+    async def get_permissions(self, agent_id: str, *, identity: Identity) -> list[str]:
         await self.get_agent(agent_id, identity=identity)
         async with self._ctx.admin_db.session() as session:
             grants = await ActorPermissionGrantRepository.list_for_actor(
@@ -687,23 +688,23 @@ class AgentService:
             )
         return [g.permission for g in grants]
 
-    async def replace_scopes(
-        self, agent_id: str, scopes: list[str], *, identity: Identity
+    async def replace_permissions(
+        self, agent_id: str, permissions: list[str], *, identity: Identity
     ) -> list[str]:
         async with self._ctx.admin_db.transaction() as session:
             agent = await AgentRepository.get_by_id(session, agent_id)
             if agent is None:
                 raise ActorNotFoundError(agent_id)
             if agent.status == ActorStatus.ARCHIVED:
-                raise InvalidTransitionError(agent_id, ActorStatus.ARCHIVED, "replace_scopes")
+                raise InvalidTransitionError(agent_id, ActorStatus.ARCHIVED, "replace_permissions")
             await ActorPermissionGrantRepository.revoke_all(session, agent_id)
-            scopes = list(dict.fromkeys(scopes))
-            for scope in scopes:
+            permissions = list(dict.fromkeys(permissions))
+            for permission in permissions:
                 await ActorPermissionGrantRepository.grant(
                     session,
                     actor_id=agent_id,
                     actor_type=ActorType.AGENT,
-                    permission=scope,
+                    permission=permission,
                     granted_by=identity.sub,
                     created_by=identity.sub,
                 )
@@ -714,13 +715,13 @@ class AgentService:
                 target_id=agent_id,
                 actor_type=identity.actor_type,
                 actor_id=identity.sub,
-                # Audit key stays ``scopes`` — see the note on the default-grant
-                # record above.
-                after={"scopes": scopes},
+                # Audit key and reason stay on the ``scopes`` spelling — see the
+                # note on the default-grant record above.
+                after={"scopes": permissions},
                 reason="replace_scopes",
                 origin=identity.origin.value,
             )
-        return scopes
+        return permissions
 
     async def update_agent(
         self,
