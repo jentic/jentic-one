@@ -1,11 +1,8 @@
 /**
- * AgentMcpSheet — the dock's MCP surface: the console MCP tab's `McpPanel`
- * (config card + session history, local-MCP 2-E2) rehosted behind its own
- * dock verb. Covers the verb's tooltip naming, the sheet's wiring to the
- * SELECTED agent (the pinned `--context` snippet and the per-actor session
- * read — the panel's own console suite covers its internals), the archived
- * history-only rendering, Escape/focus behaviour consistent with the other
- * dock sheets, a11y and the 390px viewport.
+ * AgentMcpSheet — the dock's MCP surface: `McpPanel` (config card + session
+ * history) behind its own verb. The panel's console suite covers its internals;
+ * here the pinned `--context` snippet and the session read must be scoped to the
+ * SELECTED agent, and an archived agent gets history only.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { page, userEvent as browserUser } from 'vitest/browser';
@@ -82,7 +79,7 @@ describe('AgentMcpSheet — the dock MCP surface', () => {
 		expect(sheet.getAllByText('support-agent').length).toBeGreaterThan(0);
 
 		// The rehosted McpConfigCard, not a re-implementation: the pinned
-		// `--context` snippet carries THIS agent's name (§3.10).
+		// `--context` snippet carries THIS agent's name.
 		expect(await sheet.findByText('Connect via MCP')).toBeInTheDocument();
 		expect(sheet.getByText('jentic mcp --context support-agent')).toBeInTheDocument();
 
@@ -148,10 +145,10 @@ describe('AgentMcpSheet — the dock MCP surface', () => {
 		// Wait out the backdrop's opacity transition: axe measures contrast
 		// against the half-faded overlay otherwise and flags the page beneath.
 		await waitFor(() => {
-			const overlay = document.querySelector('div.backdrop-blur-sm');
+			const overlay = screen.getByTestId('sheet-backdrop');
 			expect(overlay && getComputedStyle(overlay).opacity).toBe('1');
 		});
-		await checkA11y(document.body);
+		await checkA11y(document.body, { modal: true });
 	});
 
 	it('390px: the sheet opens full-screen with both cards reachable', async () => {

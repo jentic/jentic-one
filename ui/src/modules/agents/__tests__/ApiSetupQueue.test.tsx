@@ -1,12 +1,8 @@
 /**
- * ApiSetupQueue — finishing the batch the Add-APIs tray handed over.
- *
- * The state machine has its own unit specs (`setupQueue.test.ts`); these pin the
- * behaviours that only exist once it is wired to the bind endpoint and the
- * credential wizard: reuse binding itself with nobody watching, a drop that
- * says the API is not added rather than deferred (D13), one failed POST in a
- * sequential batch not taking the others with it, and a mid-way dismissal
- * handing the remainder back so the flow can be re-entered.
+ * ApiSetupQueue — finishing the batch the Add-APIs tray handed over. The state
+ * machine has its own unit specs (`setupQueue.test.ts`); these pin what needs the
+ * bind endpoint and the credential wizard: silent reuse binds, one failed POST not
+ * taking the others, and a mid-way dismissal handing the remainder back.
  */
 import { useState } from 'react';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -81,10 +77,8 @@ function reuseItem(vendor: string, credentialId: string): PreflightItem {
 	});
 }
 
-/**
- * Hosts the queue the way the agents surface does: the batch and the open flag
- * live outside it, so a spec can close mid-way and reopen on the remainder.
- */
+/** Hosts the queue the way the agents surface does: the batch and the open flag
+ * live outside it, so a spec can close mid-way and reopen on the remainder. */
 function QueueHarness({
 	items,
 	onClosed,
@@ -169,7 +163,7 @@ describe('ApiSetupQueue — finishing a batch one API at a time', () => {
 
 		await waitFor(() => expect(calls).toHaveLength(2));
 		expect(calls.map((c) => c.agentId)).toEqual([AGENT_ID, AGENT_ID]);
-		// Least privilege (C1): the binding starts with no rules, and the footer
+		// Least privilege: the binding starts with no rules, and the footer
 		// says so rather than leaving the operator to assume access.
 		expect(calls[0].body).toEqual({ credential_id: 'cred_stripe' });
 		expect(
@@ -181,7 +175,7 @@ describe('ApiSetupQueue — finishing a batch one API at a time', () => {
 		renderWithProviders(<QueueHarness items={[reuseItem('stripe.com', 'cred_stripe')]} />);
 
 		// The reuse branch shows no pane, so the finished row is the only place the
-		// flow can disclose WHICH credential it picked (C4).
+		// flow can disclose WHICH credential it picked.
 		await waitFor(() => expect(rowFor('stripe')).toHaveAttribute('data-status', 'added'));
 		expect(rowFor('stripe')).toHaveTextContent('via stripe.com key');
 	});
@@ -200,7 +194,7 @@ describe('ApiSetupQueue — finishing a batch one API at a time', () => {
 		);
 
 		// A credential matches on API identity, not on account, so "none of these"
-		// has to be answerable without dropping the API — D13 leaves no third way.
+		// has to be answerable without dropping the API — there is no third way.
 		expect(
 			await screen.findByText(/if none of these 2 should be used for stripe/),
 		).toBeInTheDocument();
@@ -233,7 +227,7 @@ describe('ApiSetupQueue — finishing a batch one API at a time', () => {
 
 		await user.click(await screen.findByRole('button', { name: 'Not this one' }));
 		const confirm = await screen.findByTestId('queue-drop-confirm');
-		// D13: no deferred state exists, so the copy cannot imply one.
+		// No deferred state exists, so the copy cannot imply one.
 		expect(confirm).toHaveTextContent("slack won't be added.");
 		expect(confirm.textContent).not.toMatch(/skip|later/i);
 
@@ -441,7 +435,7 @@ describe('ApiSetupQueue — finishing a batch one API at a time', () => {
 		await user.click(screen.getByRole('button', { name: 'Not this one' }));
 		await screen.findByTestId('queue-drop-confirm');
 
-		await checkA11y(document.body);
+		await checkA11y(document.body, { modal: true });
 	});
 
 	it('390px: the pane action and the progress list stay reachable', async () => {

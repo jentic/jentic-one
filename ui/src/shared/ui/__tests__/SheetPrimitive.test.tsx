@@ -77,10 +77,9 @@ describe('SheetPrimitive', () => {
 		const confirm = screen.getByTestId('nested-dialog') as HTMLDialogElement;
 		expect(confirm.open).toBe(true);
 
-		// First Escape: the sheet must neither preventDefault (that would
-		// suppress the browser's close request to the dialog) nor close
-		// itself — only the dialog closes. Must be a real (trusted) key
-		// press: the native close request ignores synthetic events.
+		// First Escape: the sheet must neither preventDefault nor close itself — only
+		// the dialog closes. Must be a real key press; the native close request ignores
+		// synthetic events.
 		await browserUser.keyboard('{Escape}');
 		await waitFor(() => expect(confirm.open).toBe(false));
 		expect(screen.getByText('Sheet content')).toBeInTheDocument();
@@ -103,6 +102,6 @@ describe('SheetPrimitive', () => {
 	it('has no critical a11y violations', async () => {
 		renderWithProviders(<SheetHarness />);
 		// Sheet portals to document.body, so scan the whole document.
-		await checkA11y(document.body);
+		await checkA11y(document.body, { modal: true });
 	});
 });

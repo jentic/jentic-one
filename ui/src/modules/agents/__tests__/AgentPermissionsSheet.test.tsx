@@ -1,12 +1,7 @@
 /**
- * AgentPermissionsSheet — the dock's Permissions surface (plan §4.7, D4):
- * the retired Access tab's non-credential cards (scopes / access requests /
- * connected clients) rehosted behind their own dock verb. Covers the verb's
- * tooltip naming, the sheet's card wiring to the SELECTED agent (the cards'
- * own suites cover their internals — here the PUT must carry the right
- * agent id), the §4.7 copy naming the two permission models, Escape/focus
- * behaviour consistent with the other dock sheets, the archived history
- * rendering, a11y and the 390px viewport.
+ * AgentPermissionsSheet — the dock's Permissions surface: scopes, access requests
+ * and connected clients behind one verb. The cards' own suites cover their
+ * internals; here the mutations must carry the SELECTED agent's id.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { http, HttpResponse } from 'msw';
@@ -48,7 +43,7 @@ async function openSheet(user: ReturnType<typeof userEvent.setup>) {
 	return within(await screen.findByTestId('sheet-primitive'));
 }
 
-describe('AgentPermissionsSheet — the dock Permissions surface (§4.7)', () => {
+describe('AgentPermissionsSheet — the dock Permissions surface', () => {
 	beforeEach(async () => {
 		await page.viewport(1280, 900);
 		setToken('test-token');
@@ -82,7 +77,7 @@ describe('AgentPermissionsSheet — the dock Permissions surface (§4.7)', () =>
 		expect(sheet.getByRole('heading', { name: 'Permissions' })).toBeInTheDocument();
 		expect(sheet.getByText('support-agent')).toBeInTheDocument();
 
-		// §4.7: the copy names the two permission models users conflate —
+		// The copy names the two permission models users conflate —
 		// platform scopes vs. what the agent may call upstream (the tiles).
 		expect(sheet.getByText(/control plane/)).toBeInTheDocument();
 		expect(sheet.getByText(/API tiles on the main screen/)).toBeInTheDocument();
@@ -187,10 +182,10 @@ describe('AgentPermissionsSheet — the dock Permissions surface (§4.7)', () =>
 		// Wait out the backdrop's opacity transition: axe measures contrast
 		// against the half-faded overlay otherwise and flags the page beneath.
 		await waitFor(() => {
-			const overlay = document.querySelector('div.backdrop-blur-sm');
+			const overlay = screen.getByTestId('sheet-backdrop');
 			expect(overlay && getComputedStyle(overlay).opacity).toBe('1');
 		});
-		await checkA11y(document.body);
+		await checkA11y(document.body, { modal: true });
 	});
 
 	it('390px: the sheet opens full-screen with every section reachable', async () => {

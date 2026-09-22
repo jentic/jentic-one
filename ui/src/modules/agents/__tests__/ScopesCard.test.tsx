@@ -444,10 +444,12 @@ describe('ScopesCard', () => {
 		await screen.findByRole('list', { name: 'Granted scopes' });
 		await checkA11y(container);
 
-		// Also check the editor dialog (picker + checkboxes) once it's open.
+		// Also check the editor dialog (picker + checkboxes) once it's open — the
+		// second audit is scoped to the dialog, since its backdrop makes the card
+		// behind it indeterminate to axe (the card got its own audit above).
 		await user.click(screen.getByRole('button', { name: 'Edit scopes for support-agent' }));
 		await screen.findByRole('dialog');
 		await within(await screen.findByRole('dialog')).findByLabelText('Search scopes');
-		await checkA11y(container);
+		await checkA11y(document.body, { modal: true });
 	});
 });

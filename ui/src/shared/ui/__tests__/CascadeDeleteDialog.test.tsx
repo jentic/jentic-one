@@ -179,7 +179,8 @@ describe('CascadeDeleteDialog', () => {
 
 	it('has no critical a11y violations in generic-warning mode', async () => {
 		const { container } = renderWithProviders(<Harness />);
-		await checkA11y(container);
+		// The open dialog IS the component under test, so the audit says so.
+		await checkA11y(container, { modal: true });
 	});
 
 	it('has no critical a11y violations in blast-radius mode', async () => {
@@ -190,6 +191,6 @@ describe('CascadeDeleteDialog', () => {
 				dependents={[{ label: 'credential binding', count: 3, names: ['a', 'b', 'c'] }]}
 			/>,
 		);
-		await checkA11y(container);
+		await checkA11y(container, { modal: true });
 	});
 });

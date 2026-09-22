@@ -23,15 +23,10 @@ import { CredentialType, type ApiResponse } from '@/shared/credentials/api';
 import AgentsPage from '@/modules/agents/pages/AgentsPage';
 
 /**
- * The API access sidebar (plan §4.5) — everything about one tile's access in
- * one panel: the credential, the rehosted rules editor, the rehosted broker
- * dry-run tester (gated by the editor's unsaved draft), the connect flow for
- * awaiting-consent credentials, and the two DISTINCT destructive verbs
- * (unbind-this-agent vs delete-credential-org-wide).
- *
- * Rendered through the full AgentsPage so the tests exercise the real wiring:
- * tile click → centralized state in FlatAgentsSection → sidebar; mutations →
- * cache invalidation → the tile grid underneath.
+ * The API access sidebar — one tile's access in one panel: the credential, the
+ * rules editor, the dry-run tester (gated by an unsaved draft), the connect flow,
+ * and the two DISTINCT destructive verbs (unbind this agent vs delete the
+ * credential org-wide). Rendered through the full AgentsPage, so the wiring is real.
  */
 
 /** Workspace API row for the registry mock. */
@@ -96,17 +91,15 @@ async function openSidebar(title: string): Promise<HTMLElement> {
 	const user = userEvent.setup();
 	await user.click(tileOpener(title));
 	const dialog = await screen.findByRole('dialog', { name: title });
-	// Wait until the sheet has finished ENTERING: SheetPrimitive auto-focuses
-	// its first focusable child (the header's suspend/resume control) when
-	// the enter animation completes — which is also when its Escape handler
-	// arms. Typing or keying before that races the focus steal.
+	// Wait until the sheet has finished ENTERING: SheetPrimitive auto-focuses its
+	// first focusable child then, which is also when its Escape handler arms.
 	await waitFor(() => {
 		expect(within(dialog).getAllByRole('button')[0]).toHaveFocus();
 	});
 	return dialog;
 }
 
-describe('ApiAccessSidebar — the API tile access panel (plan §4.5)', () => {
+describe('ApiAccessSidebar — the API tile access panel', () => {
 	beforeEach(async () => {
 		await page.viewport(1280, 900);
 		setToken('test-token');
@@ -243,9 +236,8 @@ describe('ApiAccessSidebar — the API tile access panel (plan §4.5)', () => {
 	// --- Blast radius: one credential, several APIs --------------------------
 
 	it('names the OTHER APIs sharing the binding when one credential serves several', async () => {
-		// One credential fanning out to two workspace APIs (wildcard serves):
-		// rules are keyed by (agent, credential), so editing them from either
-		// tile changes both — the sidebar must say so, naming names.
+		// One credential fanning out to two workspace APIs: rules are keyed by
+		// (agent, credential), so editing from either tile changes both.
 		resetCredentialsStore([
 			makeMockCredential({
 				credential_id: 'cred_multi_1',
@@ -353,10 +345,8 @@ describe('ApiAccessSidebar — the API tile access panel (plan §4.5)', () => {
 		expect(await inDialog.findByTestId('rule-tester-disabled-note')).toBeInTheDocument();
 		await user.click(inDialog.getByRole('button', { name: /Save rules/ }));
 
-		// The tester re-enables — WITHOUT resurrecting the pre-save verdict,
-		// which claimed "Allowed, matched rule #1" for a request the new
-		// rules deny (the always-mounted sidebar keeps the tester alive
-		// across saves; the old card host unmounted it, masking this).
+		// The tester re-enables — WITHOUT resurrecting the pre-save verdict, which
+		// claimed "Allowed" for a request the new rules deny.
 		await waitFor(() => {
 			expect(inDialog.queryByTestId('rule-tester-disabled-note')).not.toBeInTheDocument();
 			expect(inDialog.queryByTestId('rule-verdict')).not.toBeInTheDocument();
@@ -381,9 +371,8 @@ describe('ApiAccessSidebar — the API tile access panel (plan §4.5)', () => {
 		await user.click(inDialog.getByRole('button', { name: 'Test' }));
 		expect(await inDialog.findByTestId('rule-verdict')).toHaveTextContent('Allowed');
 
-		// A background refetch of the SAME rule content (new array identity)
-		// must not drop the verdict — the reset compares content, not
-		// identity, so routine invalidations don't blank the panel.
+		// A background refetch of the SAME rule content (new array identity) must not
+		// drop the verdict: the reset compares content, not identity.
 		await queryClient.invalidateQueries({
 			queryKey: agentsKeysForTest.bindingPermissions('agnt_active_1', 'cred_slack_1'),
 		});
@@ -403,10 +392,8 @@ describe('ApiAccessSidebar — the API tile access panel (plan §4.5)', () => {
 		await user.type(inDialog.getByLabelText('Path pattern'), 'x');
 		expect(await inDialog.findByTestId('rule-tester-disabled-note')).toBeInTheDocument();
 
-		// The permissions read starts failing and a refetch lands: the error
-		// alert replaces the editor. Its unmount must retract the dirty
-		// report — the regression left the tester permanently disabled citing
-		// unsaved changes in an editor that no longer exists.
+		// The permissions read starts failing and a refetch lands: the error alert
+		// replaces the editor, and its unmount must retract the dirty report.
 		worker.use(
 			createErrorHandler('get', '/credentials/:cid/agents/:aid/permissions', {
 				status: 500,
@@ -435,9 +422,8 @@ describe('ApiAccessSidebar — the API tile access panel (plan §4.5)', () => {
 		const dialog = await openSidebar('Slack');
 		const inDialog = within(dialog);
 
-		// The danger-zone verb opens the app's standard confirm dialog —
-		// scoped to THIS agent, honest about both blast radii: the binding
-		// and its rules go; the credential survives elsewhere.
+		// The danger-zone verb opens the app's standard confirm — scoped to THIS agent
+		// and honest about both blast radii.
 		await user.click(
 			inDialog.getByRole('button', { name: 'Unbind Slack bot token from support-agent' }),
 		);
@@ -555,12 +541,9 @@ describe('ApiAccessSidebar — the API tile access panel (plan §4.5)', () => {
 
 	it('org-wide delete refreshes OTHER agents’ binding caches — no ghost tiles', async () => {
 		const user = userEvent.setup();
-		// cred_slack_1 also serves legacy-scraper. `DELETE /credentials/{id}`
-		// removes the binding from EVERY bound agent, and the flat surface
-		// keeps every agent's binding query MOUNTED (the strip's gap hints via
-		// useAgentsCredentialBindings) — so only an org-wide prefix sweep can
-		// refresh the other agent's slice; a this-agent-only invalidation
-		// leaves a ghost tile and a 404ing sidebar there until reload.
+		// cred_slack_1 also serves legacy-scraper, and the flat surface keeps every
+		// agent's binding query MOUNTED, so only an org-wide prefix sweep refreshes the
+		// other agent's slice; a this-agent-only one leaves a ghost tile behind.
 		seedCredentialBindings([
 			{
 				agent_id: 'agnt_disabled_1',
@@ -739,7 +722,7 @@ describe('ApiAccessSidebar — the API tile access panel (plan §4.5)', () => {
 			within(affordance).getByRole('button', { name: /Finish connecting/ }),
 		).toBeInTheDocument();
 
-		// D13: even an awaiting-consent binding is a REAL binding — the rules
+		// Even an awaiting-consent binding is a REAL binding — the rules
 		// editor and tester render, no empty branch.
 		expect(await inDialog.findByText('Permission rules for Stripe OAuth')).toBeInTheDocument();
 		expect(inDialog.getByText('Test a request')).toBeInTheDocument();

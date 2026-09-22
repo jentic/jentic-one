@@ -31,7 +31,7 @@ describe('OverviewStrip — update-available re-import', () => {
 		// background loop resolves cleanly; individual tests can override.
 		worker.use(
 			http.get('/jobs/:id', ({ params }) =>
-				HttpResponse.json({ job_id: params.id, status: 'succeeded' }),
+				HttpResponse.json({ job_id: params.id, status: 'completed' }),
 			),
 		);
 	});
@@ -225,7 +225,7 @@ describe('OverviewStrip — update-available re-import', () => {
 			// The job stays queued on the first poll and only then succeeds, proving
 			// the hook waits for a terminal state rather than acting on the 202.
 			http.get('/jobs/:id', ({ params }) => {
-				const status = jobPolled ? 'succeeded' : 'queued';
+				const status = jobPolled ? 'completed' : 'queued';
 				jobPolled = true;
 				return HttpResponse.json({ job_id: params.id, status });
 			}),

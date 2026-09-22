@@ -70,13 +70,11 @@ describe('AgentDetailPage', () => {
 		expect(screen.queryByText('usr_000000000000000000000admin')).not.toBeInTheDocument();
 	});
 
-	it('retires the Access tab — bindings live on the flat surface sidebar (redesign step 7)', async () => {
+	it('has no Access tab — bindings live on the flat surface sidebar', async () => {
 		renderDetail('agnt_active_1');
 		await screen.findByRole('heading', { name: 'support-agent' });
-		// The credential/binding story moved to the Agents page's API access
-		// sidebar; the console keeps its remaining tabs untouched. (#619's
-		// access-requests card keeps its own component coverage and its
-		// service-account host — it re-lands behind a dock destination, §4.7.)
+		// The credential/binding story lives on the Agents page's API access sidebar;
+		// the console keeps its remaining tabs.
 		expect(screen.queryByRole('tab', { name: 'Access' })).not.toBeInTheDocument();
 		for (const name of ['Overview', 'Activity', 'Keys', 'MCP', 'Settings']) {
 			expect(screen.getByRole('tab', { name })).toBeInTheDocument();

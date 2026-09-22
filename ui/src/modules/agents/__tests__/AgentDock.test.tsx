@@ -1,10 +1,8 @@
 /**
- * AgentDock — the fixed bottom action dock on the flat Agents surface
- * (plan §4.2). Covers the verb set per lifecycle state, the ported
- * ToolkitDock behaviours (double-click guard, Undo-on-deactivate,
- * "succeeded but the grid didn't refresh"), the sheet surfaces it opens,
- * archive wording, tooltip naming of the icon-only verbs, a11y and the
- * 390px viewport.
+ * AgentDock — the fixed bottom action dock. Covers the verb set per lifecycle
+ * state, the ported ToolkitDock behaviours (double-click guard,
+ * Undo-on-deactivate, "succeeded but the grid didn't refresh"), the sheets it
+ * opens, archive wording, tooltips, a11y and the 390px viewport.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { http, HttpResponse, delay } from 'msw';
@@ -75,17 +73,16 @@ describe('AgentDock — fixed bottom action dock', () => {
 		const toggle = dock.getByTestId('dock-serving-toggle');
 		expect(toggle).toHaveTextContent('Serving');
 		expect(toggle).toHaveAttribute('aria-pressed', 'true');
-		// Webapp ToolkitDock shape: toggle + divider + icon verbs, nothing
-		// else. Identity leaves the visual layer (the pill strip and panel
-		// header carry it) but stays in the a11y tree via the group name.
+		// Webapp ToolkitDock shape: toggle + divider + icon verbs, nothing else.
+		// Identity leaves the visual layer but stays in the a11y tree via the group name.
 		expect(screen.getByTestId('agent-dock')).toHaveAccessibleName('Actions for support-agent');
 		expect(dock.queryByText('support-agent')).not.toBeInTheDocument();
 		expect(dock.queryByText('Active')).not.toBeInTheDocument();
 		for (const label of ['API key', 'Permissions', 'Activity', 'MCP', 'Settings']) {
 			expect(dock.getByRole('button', { name: label })).toBeEnabled();
 		}
-		// D20: the dock is agent-scoped only — the org-wide Credentials
-		// (wallet) verb left it for the page-level control on the header.
+		// The dock is agent-scoped only — the org-wide Credentials verb lives on
+		// the page header instead.
 		expect(dock.queryByRole('button', { name: 'Credentials' })).not.toBeInTheDocument();
 		// Settings is a sheet verb, never a link out to the console.
 		expect(dock.queryByRole('link', { name: /Settings/ })).not.toBeInTheDocument();
@@ -203,10 +200,8 @@ describe('AgentDock — fixed bottom action dock', () => {
 	});
 
 	it("agent A's in-flight toggle never blocks agent B's toggle (per-agent scoping)", async () => {
-		// Hold agent A's disable in flight behind a gate: the dock survives
-		// selection changes (it is not keyed by agent), so any in-flight
-		// bookkeeping scoped to the component instance instead of the agent
-		// id would falsely render B's toggle as loading and no-op its clicks.
+		// Hold agent A's disable in flight behind a gate: the dock survives selection
+		// changes, so bookkeeping scoped to the instance would mark B's toggle loading.
 		let releaseDisable!: () => void;
 		const gate = new Promise<void>((resolve) => {
 			releaseDisable = resolve;
@@ -241,9 +236,8 @@ describe('AgentDock — fixed bottom action dock', () => {
 		await user.click(toggleB);
 		await screen.findByText(/legacy-scraper is serving traffic again/);
 
-		// Re-selecting A while its mutation is STILL in flight shows the
-		// honest loading state again — the guard is per-agent, not
-		// per-component-instance.
+		// Re-selecting A mid-flight shows the loading state again — the guard is
+		// per-agent, not per-component-instance.
 		await user.click(screen.getByRole('tab', { name: /support-agent/ }));
 		await waitFor(() =>
 			expect(
@@ -290,7 +284,7 @@ describe('AgentDock — fixed bottom action dock', () => {
 		expect(await sheet.findByRole('button', { name: /Generate/i })).toBeInTheDocument();
 	});
 
-	it('Credentials is not a dock verb — the inventory opens from page level (D20)', async () => {
+	it('Credentials is not a dock verb — the inventory opens from page level', async () => {
 		renderPage('/?agent=agnt_active_1');
 		const dock = await findDock();
 
@@ -301,9 +295,8 @@ describe('AgentDock — fixed bottom action dock', () => {
 	});
 
 	// --- Escape with a nested dialog above a sheet ---------------------------
-	// These press Escape via the REAL (CDP-driven) keyboard from
-	// `vitest/browser`: a native <dialog>'s Escape close request only fires
-	// for trusted key events, never for user-event's synthetic dispatch.
+	// Escape here goes through the REAL (CDP-driven) keyboard: a native <dialog>'s
+	// close request only fires for trusted key events.
 
 	it('Escape closes the one-time key dialog above the keys sheet first, then the sheet', async () => {
 		const user = userEvent.setup();
@@ -368,9 +361,8 @@ describe('AgentDock — fixed bottom action dock', () => {
 	it('surface with the dock mounted passes axe', async () => {
 		renderPage('/?agent=agnt_active_1');
 		await findDock();
-		// The selected-agent panel fades in (motion.section, 180ms); axe must
-		// not sample text contrast mid-animation or muted copy inside the
-		// section reads as low-contrast against the blended background.
+		// The panel fades in (180ms); axe must not sample contrast mid-animation or
+		// muted copy reads as low-contrast against the blended background.
 		await waitFor(() => {
 			const section = document.querySelector('section[aria-label="APIs for support-agent"]');
 			expect(section).not.toBeNull();

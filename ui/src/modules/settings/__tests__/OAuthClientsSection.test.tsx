@@ -357,7 +357,7 @@ describe('OAuth clients surface (via SettingsPage)', () => {
 		// The opened sheet (a body portal — outside the render container)
 		// carries no critical a11y violations either.
 		await settleHeader();
-		await checkA11y(document.body);
+		await checkA11y(document.body, { modal: true });
 	});
 
 	it('marks a dormant grant (#1345): the disabled-agent row carries the chip, working rows none, and the roster count excludes it', async () => {
@@ -397,7 +397,7 @@ describe('OAuth clients surface (via SettingsPage)', () => {
 
 		// The opened sheet with the dormancy chip stays axe-clean (body portal).
 		await settleHeader();
-		await checkA11y(document.body);
+		await checkA11y(document.body, { modal: true });
 	});
 
 	it("offers Enable in a zombie's detail sheet (recovery from its own console)", async () => {
@@ -458,7 +458,7 @@ describe('OAuth clients surface (via SettingsPage)', () => {
 
 		// The opened type-to-confirm dialog passes axe (body portal).
 		await settleHeader();
-		await checkA11y(document.body);
+		await checkA11y(document.body, { modal: true });
 
 		await user.click(confirmBtn);
 		expect(await screen.findByText('Internal Dashboard deleted')).toBeInTheDocument();
@@ -667,7 +667,7 @@ describe('OAuth clients surface (via SettingsPage)', () => {
 		await user.type(within(sheet).getByLabelText('Name'), 'half-typed-app');
 		// The opened form sheet passes axe too (body portal, so check the body).
 		await settleHeader();
-		await checkA11y(document.body);
+		await checkA11y(document.body, { modal: true });
 		await user.click(within(sheet).getByRole('button', { name: 'Cancel' }));
 		// Let the exit animation finish so the reopen starts from 'closed'.
 		await expect.poll(() => screen.queryByTestId('sheet-primitive')).toBeNull();

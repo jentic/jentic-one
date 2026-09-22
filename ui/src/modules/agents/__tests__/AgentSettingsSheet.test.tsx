@@ -1,11 +1,8 @@
 /**
- * AgentSettingsSheet — the dock's Settings surface: the console Settings
- * tab's `AgentSettingsPanel` (identity form via PATCH /agents/{id} + danger
- * zone) plus the agent's read-only provenance, rehosted behind the gear
- * verb. Covers the verb opening a sheet instead of navigating, the identity
- * form round-tripping a PATCH with the selected agent's id, the archive row
- * routing through the shared confirm, the archived read-only rendering,
- * Escape/focus behaviour consistent with the other dock sheets, and a11y.
+ * AgentSettingsSheet — the dock's Settings surface: `AgentSettingsPanel` (identity
+ * PATCH + danger zone) plus read-only provenance, behind the gear verb. Pins the
+ * PATCH carrying the selected agent's id, the archive routing through the shared
+ * confirm, and the archived read-only rendering.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { http } from 'msw';
@@ -118,6 +115,35 @@ describe('AgentSettingsSheet — the dock Settings surface', () => {
 		expect(patchBody).toEqual({ name: 'support-agent-v2' });
 	});
 
+	it('keeps a half-typed identity draft across a dismissal, and clears it on save', async () => {
+		const user = userEvent.setup();
+		renderPage('/?agent=agnt_active_1');
+		const sheet = await openSheet(user);
+
+		const nameInput = await sheet.findByLabelText('Name');
+		await user.clear(nameInput);
+		await user.type(nameInput, 'support-agent-v2');
+
+		// Closing is a dismissal, not a discard — only a successful save decides
+		// the draft is finished with.
+		await user.click(sheet.getByRole('button', { name: 'Close' }));
+		await waitFor(
+			() => expect(screen.queryByTestId('sheet-primitive')).not.toBeInTheDocument(),
+			{ timeout: 2000 },
+		);
+
+		const reopened = await openSheet(user);
+		expect(await reopened.findByLabelText('Name')).toHaveValue('support-agent-v2');
+		expect(reopened.getByRole('button', { name: 'Save changes' })).toBeEnabled();
+
+		await user.click(reopened.getByRole('button', { name: 'Save changes' }));
+		expect(await screen.findByText('Agent updated')).toBeInTheDocument();
+		// Committed: the form reads clean, so a reopen offers nothing to re-save.
+		await waitFor(() =>
+			expect(reopened.getByRole('button', { name: 'Save changes' })).toBeDisabled(),
+		);
+	});
+
 	it('danger zone Archive routes through the shared confirm and says archive', async () => {
 		const user = userEvent.setup();
 		renderPage('/?agent=agnt_active_1');
@@ -193,10 +219,10 @@ describe('AgentSettingsSheet — the dock Settings surface', () => {
 		// Wait out the backdrop's opacity transition: axe measures contrast
 		// against the half-faded overlay otherwise and flags the page beneath.
 		await waitFor(() => {
-			const overlay = document.querySelector('div.backdrop-blur-sm');
+			const overlay = screen.getByTestId('sheet-backdrop');
 			expect(overlay && getComputedStyle(overlay).opacity).toBe('1');
 		});
-		await checkA11y(document.body);
+		await checkA11y(document.body, { modal: true });
 	});
 
 	it('390px: the sheet opens full-screen with the form reachable', async () => {

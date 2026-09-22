@@ -1,9 +1,7 @@
 /**
- * AgentActivitySheet — the dock's Activity surface: the rehosted console
- * `ActivityPanel` (charts + recent executions + Monitor deep link) plus the
- * console Overview's "Recent changes" audit slice folded in as a section
- * (D21 — changes are activity). The panels' internals keep their own console
- * coverage; these specs pin the sheet's composition, the agent scoping of
+ * AgentActivitySheet — the dock's Activity surface: the console `ActivityPanel`
+ * plus the audit slice folded in as a section (changes are activity). The panels
+ * keep their console coverage; these pin the composition, the agent scoping of
  * both sections, and the actor-directory resolution in the audit rows.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
@@ -41,7 +39,7 @@ describe('AgentActivitySheet — the dock Activity surface', () => {
 		resetApisStore([]);
 	});
 
-	it('hosts the rehosted activity panel AND the Recent changes section (D21)', async () => {
+	it('hosts the activity panel AND the Recent changes section', async () => {
 		const user = userEvent.setup();
 		renderPage('/?agent=agnt_active_1');
 		const sheet = await openSheet(user);
@@ -53,7 +51,7 @@ describe('AgentActivitySheet — the dock Activity surface', () => {
 		expect(await sheet.findByText('Recent executions')).toBeInTheDocument();
 		expect(sheet.getByRole('link', { name: /Monitor/ })).toBeInTheDocument();
 
-		// D21: the console Overview's audit slice, as a SECTION of this sheet
+		// The console Overview's audit slice, as a SECTION of this sheet
 		// — not another surface. Lifecycle events recorded against this agent
 		// as the target, newest first.
 		expect(await sheet.findByText('Recent changes')).toBeInTheDocument();

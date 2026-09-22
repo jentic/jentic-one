@@ -52,27 +52,38 @@ export * from '@testing-library/react';
 export { default as userEvent } from '@testing-library/user-event';
 
 /**
- * Run axe against a rendered container and assert no critical/serious a11y
- * violations. Uses axe-core directly (browser-mode compatible). Feature PRs
- * call this on every page-level test.
+ * Run axe against a rendered container and assert no critical/serious violations.
  *
- * When a modal overlay is open inside `container`, the audit narrows to the
- * topmost modal. An overlay test passes `document.body` because the sheet
- * portals out of the render container, and a `SheetPrimitive` backdrop
- * deliberately obscures the page behind it (`bg-black/50 backdrop-blur-sm`).
- * Compositing the page's text under that translucent, blurred scrim makes
- * axe's colour-contrast result indeterminate — the same text lands in
- * `violations` or `incomplete` depending on where in the 300ms backdrop
- * transition the audit happens to run. The modal is the surface under test in
- * those specs, and the page behind it gets its own no-overlay audit, so
- * scoping to the modal is both the deterministic and the meaningful check.
+ * The caller declares the scope: an overlay spec passes `{ modal: true }` (usually
+ * with `document.body`, since the sheet portals out) and gets the topmost modal
+ * audited. Both directions throw rather than silently audit the other surface.
  */
-export async function checkA11y(container: Element): Promise<void> {
+export async function checkA11y(
+	container: Element,
+	options: { modal?: boolean } = {},
+): Promise<void> {
 	const { default: axe } = await import('axe-core');
-	// Topmost = last in DOM order: each overlay portals to the end of <body>,
-	// so a stacked sheet or a native dialog above a sheet audits itself.
-	const modals = container.querySelectorAll<HTMLElement>('[aria-modal="true"], dialog[open]');
-	const target = modals.length > 0 ? modals[modals.length - 1] : container;
+	// Topmost = last in DOM order: each overlay portals to the end of <body>.
+	// `:not([hidden])` skips a closed `keepMounted` sheet.
+	const modals = container.querySelectorAll<HTMLElement>(
+		'[aria-modal="true"]:not([hidden]), dialog[open]',
+	);
+	if (options.modal && modals.length === 0) {
+		throw new Error(
+			'checkA11y({ modal: true }) found no open modal in the container — ' +
+				'the overlay under test never opened, so nothing was audited.',
+		);
+	}
+	if (!options.modal && modals.length > 0) {
+		throw new Error(
+			`checkA11y found ${modals.length} open modal(s) in a page-level audit. ` +
+				'Pass `{ modal: true }` if the overlay is the surface under test; ' +
+				'otherwise close it and await its removal from the DOM (the exit ' +
+				'transition keeps `aria-modal` in place for ~300ms) before auditing ' +
+				'the page — the backdrop makes contrast results indeterminate.',
+		);
+	}
+	const target = options.modal ? modals[modals.length - 1] : container;
 	const results = await axe.run(target);
 	const critical = results.violations.filter(
 		(v) => v.impact === 'critical' || v.impact === 'serious',

@@ -9,11 +9,11 @@
  *   - Slides from right (default), left, or bottom
  *   - Focus trap + restoration to the trigger on close
  *   - Escape + backdrop click close (opt out of both with `preventClose`, of
- *     the backdrop alone with `dismissOnBackdrop={false}`); while a
- *     native modal `<dialog>` is open in the top layer above the sheet,
- *     Escape is left to the dialog's own cancel behaviour
+ *     the backdrop alone with `dismissOnBackdrop={false}`); Escape is left to a
+ *     native modal `<dialog>` open above the sheet
  *   - Body scroll lock via `overscroll-behavior: contain`
  *   - ARIA dialog semantics
+ *   - Children unmount on close; `keepMounted` holds a form's draft
  */
 
 import {
@@ -45,10 +45,14 @@ export interface SheetPrimitiveProps {
 	preventClose?: boolean;
 	/**
 	 * If `false`, clicking the backdrop will NOT close the sheet — Escape and the
-	 * sheet's own close controls still do. For a sheet holding work a stray click
-	 * shouldn't discard (a form mid-entry); same name and meaning as `Dialog`'s.
+	 * sheet's own close controls still do. Same name and meaning as `Dialog`'s.
 	 */
 	dismissOnBackdrop?: boolean;
+	/**
+	 * Keep `children` mounted (but `hidden`) while closed, so a form's draft survives
+	 * a dismissal. Leave off for a sheet holding a secret mid-entry.
+	 */
+	keepMounted?: boolean;
 	/** Ref to the element that should receive focus when the sheet opens. */
 	initialFocus?: RefObject<HTMLElement | null>;
 	/** Fired after the closing animation has fully completed. */
@@ -100,6 +104,7 @@ export function SheetPrimitive({
 	overlayClassName,
 	preventClose = false,
 	dismissOnBackdrop = true,
+	keepMounted = false,
 	initialFocus,
 	onAfterClose,
 	ariaLabel,
@@ -172,9 +177,8 @@ export function SheetPrimitive({
 
 		if (animationState === 'open') {
 			const timer = setTimeout(() => {
-				// The slide lasts 300ms, so this fires well after the sheet is
-				// usable: anything already focused inside it is where the user
-				// put focus, and moving it would eat their keystrokes.
+				// Fires well after the sheet is usable: anything already focused inside it
+				// is where the user put focus, and moving it would eat their keystrokes.
 				if (sheetRef.current?.contains(document.activeElement)) return;
 				if (initialFocus?.current) {
 					initialFocus.current.focus();
@@ -218,23 +222,15 @@ export function SheetPrimitive({
 
 	const handleKeyDown = useCallback(
 		(e: KeyboardEvent) => {
-			// Escape is honoured from the moment the sheet mounts, including
-			// during the entrance: `entering` lasts two animation frames plus
-			// the 300ms slide, and a key pressed in that window belongs to the
-			// sheet the user just opened. Tab containment waits for `open`,
-			// where there is something focusable to cycle.
+			// Escape is honoured from the moment the sheet mounts, including during the
+			// entrance. Tab containment waits for `open`, where there is something to cycle.
 			if (animationState !== 'open' && animationState !== 'entering') return;
 			if (e.key !== 'Escape' && animationState !== 'open') return;
 
 			if (e.key === 'Escape') {
-				// A native modal <dialog> renders in the top layer, ABOVE any
-				// sheet — Escape belongs to it. The browser turns an
-				// unprevented Escape keydown into the dialog's close request
-				// (its `cancel` event), so the sheet must neither
-				// preventDefault (that would suppress the dialog's cancel,
-				// leaving Escape inert) nor close itself underneath the
-				// dialog. Stacked sheets are unaffected: each SheetPrimitive
-				// owns its own close decision via `onClose`.
+				// A native modal <dialog> renders in the top layer, ABOVE any sheet, and the
+				// browser turns an unprevented Escape into its cancel — so the sheet must
+				// neither preventDefault nor close itself underneath the dialog.
 				if (document.querySelector('dialog:modal')) return;
 				if (!preventClose) {
 					e.preventDefault();
@@ -274,12 +270,18 @@ export function SheetPrimitive({
 		}
 	}, [preventClose, dismissOnBackdrop, onClose, animationState]);
 
-	if (!mounted || animationState === 'closed') return null;
+	if (!mounted) return null;
+	const isClosed = animationState === 'closed';
+	if (isClosed && !keepMounted) return null;
 
 	const isVisible = animationState === 'open';
 
 	return createPortal(
-		<div className="fixed inset-0 z-50" style={{ overscrollBehavior: 'contain' }}>
+		<div
+			hidden={isClosed}
+			className={cn('fixed inset-0 z-50', isClosed && 'hidden')}
+			style={{ overscrollBehavior: 'contain' }}
+		>
 			<div
 				className={cn(
 					'absolute inset-0 overflow-hidden bg-black/50 backdrop-blur-sm',
@@ -290,6 +292,7 @@ export function SheetPrimitive({
 				style={{ overscrollBehavior: 'contain' }}
 				onClick={handleBackdropClick}
 				aria-hidden="true"
+				data-testid={isClosed ? undefined : 'sheet-backdrop'}
 			/>
 
 			<div className={cn('fixed max-w-full', styles.container)}>
@@ -297,6 +300,8 @@ export function SheetPrimitive({
 					ref={sheetRef}
 					role="dialog"
 					aria-modal="true"
+					// On the panel too: "is an overlay open?" is asked of the dialog node itself.
+					hidden={isClosed}
 					aria-label={ariaLabel}
 					aria-labelledby={ariaLabelledBy}
 					className={cn(
@@ -313,7 +318,8 @@ export function SheetPrimitive({
 						willChange: 'transform',
 						overscrollBehavior: 'contain',
 					}}
-					data-testid="sheet-primitive"
+					// Tagged only while on screen — a closed `keepMounted` sheet is not open.
+					data-testid={isClosed ? undefined : 'sheet-primitive'}
 				>
 					{children}
 				</div>
