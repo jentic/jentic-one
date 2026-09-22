@@ -16,11 +16,9 @@ import type { PermissionRuleSchema } from '@/shared/api';
  * binding rules can reuse it — the agent console's rule editor and the
  * provisioning-plan fulfilment wizard both compose it.
  *
- * The editor's own verbs (`Add rule`, and `Allow all operations` whenever no
- * catch-all grant exists yet) share ONE row with the host's commit verbs via
- * `actionsSlot`, so a sheet never spends two rows on buttons. `beforeActions`
- * lets the host explain that commit (a pending-changes preview) immediately
- * above the row it belongs to.
+ * The editor's own verbs (`Add rule`, plus `Allow all operations` while no
+ * catch-all grant exists) share ONE row with the host's commit verbs via
+ * `actionsSlot`; `beforeActions` sits directly above that row.
  */
 
 /** Write shape for a permission rule (allow/deny + methods/path/operations). */
@@ -53,6 +51,10 @@ const HTTP_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] as const;
  * 422, so the editor never authors one — see `broker-permission-rules.md`.
  */
 const ALLOW_ALL_PATH = '.*';
+
+/** `.*` is a catch-all only when the path is read as a regex. A literal cast
+ * for the same reason as the rest of this file: the editor works in strings. */
+const REGEX_MATCH_MODE = 'regex' as NonNullable<PermissionRuleInput['match_mode']>;
 
 /**
  * True when a rule would be rejected by the backend: an `allow` that constrains
@@ -94,17 +96,16 @@ function allowAllRule(): PermissionRuleInput {
 	return {
 		effect: 'allow' as PermissionRuleInput['effect'],
 		methods: null,
-		// Explicit catch-all: a condition-less allow is rejected by the
-		// backend (422), so grant broad access via `path: ".*"` instead.
+		// A condition-less allow is rejected (422), so grant broadly via `path: ".*"`.
 		path: ALLOW_ALL_PATH,
 		operations: null,
 	};
 }
 
 /**
- * True when the draft already grants everything — an unconstrained-method
- * `allow` on the catch-all path. Offering the shortcut again would author a
- * duplicate rule that can never be reached (first match wins).
+ * True when the draft already grants everything — an unconstrained-method `allow`
+ * on the catch-all path, matched as a REGEX. The mode matters: `.*` under `exact`
+ * or `prefix` matches a literal two-character path and grants nothing.
  */
 function grantsEverything(rules: PermissionRuleInput[]): boolean {
 	return rules.some(
@@ -112,18 +113,21 @@ function grantsEverything(rules: PermissionRuleInput[]): boolean {
 			rule.effect === 'allow' &&
 			!rule.methods?.length &&
 			!rule.operations?.length &&
-			rule.path?.trim() === ALLOW_ALL_PATH,
+			rule.path?.trim() === ALLOW_ALL_PATH &&
+			isRegexMode(rule.match_mode),
 	);
+}
+
+/** Is this rule's path matched as a regex? `regex` is the backend default. */
+function isRegexMode(mode: PermissionRuleInput['match_mode']): boolean {
+	return mode == null || String(mode) === 'regex';
 }
 
 export interface PermissionRuleEditorProps {
 	rules: PermissionRuleInput[];
 	onChange: (rules: PermissionRuleInput[]) => void;
-	/**
-	 * The host's own verbs (e.g. Save / Discard), rendered right-aligned on the
-	 * SAME row as the editor's `Add rule`. Omit and the row holds only the
-	 * editor's verbs.
-	 */
+	/** The host's own verbs (e.g. Save / Discard), right-aligned on the SAME row as
+	 * `Add rule`. Omit and the row holds only the editor's verbs. */
 	actionsSlot?: ReactNode;
 	/** Full-width content rendered just above the verb row — e.g. a
 	 * pending-changes preview of what saving would do. */
@@ -173,8 +177,6 @@ export function PermissionRuleEditor({
 							<p className="text-foreground text-xs font-medium">
 								No rules defined — all operations will be denied by default.
 							</p>
-							{/* The verbs themselves live one row below, where
-							    they stay reachable once rules exist too. */}
 							<p className="text-muted-foreground text-xs">
 								Add a rule below to grant access, or allow all operations in one
 								step.
@@ -199,11 +201,8 @@ export function PermissionRuleEditor({
 								: 'border-border bg-card space-y-2 rounded-lg border p-3'
 						}
 					>
-						{/* Line 1 — the decision: effect + match mode compact, the
-						    path pattern taking the remaining width. The selects sit in
-						    fixed-width wrappers because `Select` renders inside a
-						    `w-full` shell — bare in a flex row, each one claims the
-						    full width and stacks the whole line vertically. */}
+						{/* Line 1 — effect + match mode, path taking the rest. The selects sit in
+						    fixed-width wrappers because `Select` renders a `w-full` shell. */}
 						<div className="flex flex-wrap items-center gap-2">
 							{/* The rule's evaluation position — the SAME number the rule
 							    tester's verdict cites, so "#2" always has an anchor. */}
@@ -250,9 +249,7 @@ export function PermissionRuleEditor({
 									))}
 								</Select>
 							</span>
-							{/* Same wrapper trick as the selects: `Input` also renders
-							    inside a `w-full` shell, so `flex-1` must live on a real
-							    flex child or the input claims the whole line. */}
+							{/* Same wrapper trick: `Input` renders inside a `w-full` shell too. */}
 							<span className="min-w-36 flex-1">
 								<Input
 									aria-label="Path pattern"
@@ -337,11 +334,17 @@ export function PermissionRuleEditor({
 										operation.
 									</span>
 								</span>
-								{/* The fix, not the instruction for it. */}
+								{/* The fix, not the instruction for it. It sets the mode as well as the
+								    path: `.*` grants everything only under `regex`. */}
 								<Button
 									variant="ghost"
 									size="sm"
-									onClick={() => update(index, { path: ALLOW_ALL_PATH })}
+									onClick={() =>
+										update(index, {
+											path: ALLOW_ALL_PATH,
+											match_mode: REGEX_MATCH_MODE,
+										})
+									}
 									className="text-danger hover:text-danger h-auto px-1.5 py-0.5 underline"
 								>
 									Use <code className="font-mono">.*</code> to allow everything
