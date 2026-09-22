@@ -266,11 +266,12 @@ func (d *agentDoctor) checkReachability(ctx context.Context, baseURL, token stri
 		return
 	}
 	d.add(section, "reachability", agentPass, baseURL, "")
-	scopes := "none"
-	if len(me.Scopes) > 0 {
-		scopes = strings.Join(me.Scopes, ", ")
+	permissions := "none"
+	if len(me.Permissions) > 0 {
+		permissions = strings.Join(me.Permissions, ", ")
 	}
-	d.add(section, "identity", agentPass, fmt.Sprintf("%s (status %s; scopes: %s)", me.Id, me.Status, scopes), "")
+	d.add(section, "identity", agentPass,
+		fmt.Sprintf("%s (status %s; permissions: %s)", me.Id, me.Status, permissions), "")
 }
 
 // jwtIssuedAt best-effort extracts the `iat` claim (seconds since epoch) from a

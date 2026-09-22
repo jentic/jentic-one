@@ -30,8 +30,9 @@ import (
 // makes that mistake unrepresentable and gives the "<identity>_<env>" filename
 // stem one authoritative definition.
 //
-// Deliberately NOT named "Scope": the control plane has RBAC *scopes* on an agent;
-// this is a local storage reference, not an authorization scope.
+// Deliberately NOT named "Scope": the control plane grants *permissions* to an
+// agent and issues OAuth2 *scopes* on a token. This is a local storage
+// reference, neither of those.
 type IdentityRef struct {
 	Identity    string
 	Environment string

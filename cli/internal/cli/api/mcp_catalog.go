@@ -106,16 +106,16 @@ func (s *mcpServer) handleSearchCatalog(ctx context.Context, req *mcp.CallToolRe
 					Msg:  fmt.Sprintf("catalog not available on this server (HTTP %d)", he.StatusCode),
 				}), nil
 			case http.StatusForbidden:
-				// A 403 on THIS route is the missing capabilities:read scope,
+				// A 403 on THIS route is the missing capabilities:read permission,
 				// not a revoked identity — the generic NOT_AUTHENTICATED +
-				// get_started mapping would dead-end the agent; the scope is
+				// get_started mapping would dead-end the agent; the permission is
 				// granted by a human operator (mirrors importAPIError).
 				return s.softError(cctx, &ux.CodedError{
 					Code: ux.CodeBrokerDenied,
-					Msg:  fmt.Sprintf("reading the catalog requires the capabilities:read scope: %v", err),
-					Actionable: "Ask your human operator to grant this agent the capabilities:read scope " +
+					Msg:  fmt.Sprintf("reading the catalog requires the capabilities:read permission: %v", err),
+					Actionable: "Ask your human operator to grant this agent the capabilities:read permission " +
 						"in the dashboard. Once they confirm, run `jentic logout` (clears only the cached token) " +
-						"so the next call mints a token carrying the scope, then retry search_catalog.",
+						"so the next call mints a token carrying the permission, then retry search_catalog.",
 				}), nil
 			}
 		}
@@ -269,8 +269,9 @@ func (s *mcpServer) trackImportJob(ctx context.Context, client *catalogClient, j
 
 // importAPIError maps the import-specific failures: a 404 is an unknown
 // catalog entry (rediscover via search_catalog — the identity is fine); a
-// control-plane 403 on THIS route is a missing catalog:import scope, and the
-// recovery is asking the operator to grant the scope (skill wording), not
+// control-plane 403 on THIS route is a missing catalog:import permission, and
+// the recovery is asking the operator to grant the permission (skill wording),
+// not
 // get_started.
 func (s *mcpServer) importAPIError(ctx context.Context, apiID string, err error) *mcp.CallToolResult {
 	s.logger.Warn("import_api failed", "api_id", apiID, "error", redactedErr(err))
@@ -287,10 +288,10 @@ func (s *mcpServer) importAPIError(ctx context.Context, apiID string, err error)
 		case http.StatusForbidden:
 			return s.softError(ctx, &ux.CodedError{
 				Code: ux.CodeBrokerDenied,
-				Msg:  fmt.Sprintf("importing a cataloged API requires the catalog:import scope: %v", err),
-				Actionable: "Ask your human operator to grant this agent the catalog:import scope " +
+				Msg:  fmt.Sprintf("importing a cataloged API requires the catalog:import permission: %v", err),
+				Actionable: "Ask your human operator to grant this agent the catalog:import permission " +
 					"in the dashboard. Once they confirm, run `jentic logout` (clears only the cached token) " +
-					"so the next call mints a token carrying the scope, then retry import_api.",
+					"so the next call mints a token carrying the permission, then retry import_api.",
 			})
 		}
 	}
@@ -393,9 +394,10 @@ func (s *mcpServer) catalogToolSpecs() []mcpToolSpec {
 					"The import runs as a job: this call tracks it briefly and, on completion, promotes the " +
 					"imported revisions live, returning {job_id, status, revisions, promoted}. If it returns " +
 					"a non-terminal status, call import_api again with the same api_id — re-importing " +
-					"converges (idempotent) and finishes the promotion. Requires the catalog:import scope " +
-					"(agents hold it by default); on a denial, ask your operator to grant it — do not guess " +
-					"other scopes. Importing makes an API discoverable but does NOT grant access to call " +
+					"converges (idempotent) and finishes the promotion. Requires the catalog:import " +
+					"permission (agents hold it by default); on a denial, ask your operator to grant it — " +
+					"do not guess other permissions. Importing makes an API discoverable but does NOT " +
+					"grant access to call " +
 					"it: check whoami for a credential binding serving it — never execute just to probe — and " +
 					"ask your operator to connect a credential and bind you if nothing serves it.",
 				InputSchema: importAPISchema,

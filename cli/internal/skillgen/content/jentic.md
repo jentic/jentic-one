@@ -87,7 +87,7 @@ reference names the exact recovery for each state.
 ### 2. Check what you can do, and report access gaps to your operator
 
 Your identity view (CLI `jentic api GET /me`; MCP `whoami`) lists your
-status, scopes, and credential bindings; each binding lists the APIs it
+status, permissions, and credential bindings; each binding lists the APIs it
 **serves** (`serves: [{api_vendor, api_name, api_version}]`). This tells you
 exactly what you can already call. Combined with the catalog (what's
 available to add — step 3), it's your map of the workspace.
@@ -172,7 +172,7 @@ state **converges** either way — but the surfaces report the duplicate
 differently (a success on the HTTP mount, a dead-letter "identical content
 already exists" error on the stdio server and the CLI); your lane's
 reference names the exact shape. Treat it as "already there" — don't retry,
-and don't invent a made-up "catalog read" scope to ask for: reading
+and don't invent a made-up "catalog read" permission to ask for: reading
 the registry and importing a cataloged API need no grant.
 
 **Before concluding "the data is gone", confirm which backend you're on.**
