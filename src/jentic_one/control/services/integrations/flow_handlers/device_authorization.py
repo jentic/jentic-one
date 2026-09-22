@@ -146,8 +146,27 @@ class DeviceAuthorizationHandler:
                 terminal_detail="device_code expired",
             )
 
-        # Rate limit — skip the vendor call if we polled within the interval.
-        if not _should_poll_now(dfc):
+        # RFC 8628 poll-interval rate limit — atomic claim so two scanner
+        # replicas cannot both pass the "interval elapsed" guard on the
+        # same credential and double-poll the vendor. The old
+        # ``_should_poll_now`` + late ``mark_polled`` was a TOCTOU: read
+        # here, mark after the vendor call. The DB-side compare-and-swap
+        # in ``try_claim_poll_slot`` closes it. A row with no
+        # ``poll_interval_seconds`` yet (transient between ``begin`` and
+        # ``set_transient_state``) is refused the claim and reports
+        # pending — the next scanner tick will catch it.
+        if dfc is None or dfc.poll_interval_seconds is None:
+            return StatusReport(kind="pending")
+        now = datetime.now(UTC)
+        min_last_polled_at = now - timedelta(seconds=dfc.poll_interval_seconds)
+        async with self._ctx.control_db.transaction() as claim_session:
+            claimed = await DeviceAuthorizationCredentialRepository.try_claim_poll_slot(
+                claim_session,
+                credential_id,
+                now=now,
+                min_last_polled_at=min_last_polled_at,
+            )
+        if not claimed:
             return StatusReport(kind="pending")
 
         try:
@@ -179,9 +198,10 @@ class DeviceAuthorizationHandler:
             device_code=device_code,
         )
 
-        now = datetime.now(UTC)
-        async with self._ctx.control_db.transaction() as session:
-            await DeviceAuthorizationCredentialRepository.mark_polled(session, credential_id, now)
+        # ``last_polled_at`` is stamped up in ``advance`` by
+        # ``try_claim_poll_slot`` before the vendor call — the atomic
+        # claim is what serialises concurrent scanner replicas. Stamping
+        # again here would just clobber it with the same value; skip.
 
         if result.status == "pending":
             return StatusReport(kind="pending")
@@ -247,13 +267,3 @@ class DeviceAuthorizationHandler:
         # transient artefacts have no operational value after ``connected``
         # and shouldn't hang around encrypted.
         await DeviceAuthorizationCredentialRepository.clear_transient(db_session, credential_id)
-
-
-def _should_poll_now(dfc: DeviceAuthorizationCredential | None) -> bool:
-    """Rate-limit the vendor poll to at most once per ``poll_interval_seconds``."""
-    if dfc is None or dfc.poll_interval_seconds is None:
-        return True
-    if dfc.last_polled_at is None:
-        return True
-    elapsed = (datetime.now(UTC) - dfc.last_polled_at).total_seconds()
-    return elapsed >= dfc.poll_interval_seconds

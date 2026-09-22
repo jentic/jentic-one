@@ -49,11 +49,13 @@ from jentic_one.control.services.vendors.service import (
     ResolvedScope,
     VendorRegistryService,
 )
+from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_best_effort
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.catalog import CatalogAutoImportProtocol
 from jentic_one.shared.context import Context
 from jentic_one.shared.metrics import get_meter
 from jentic_one.shared.models import ActorType
+from jentic_one.shared.models.actors import actor_type_from_id
 from jentic_one.shared.models.api_identity import canonical_credential_scope
 
 _logger = structlog.get_logger(__name__)
@@ -355,6 +357,30 @@ class ConnectSessionService:
             initiator_actor_id=initiator_actor_id,
         )
         _sessions_created.add(1, {"vendor": vendor_key, "flow": flow.kind})
+        # Connect-session lifecycle is auditable — the row plus its cascade
+        # (upfront credential, aux-flow row, later binding) can create
+        # material access, and operators need to be able to reconstruct
+        # "who started this, when, for which vendor" from the audit log
+        # rather than only from ephemeral scanner state. Best-effort so a
+        # failed admin-DB write never rolls back the committed session.
+        # Actor type is inferred from the id prefix — the router already
+        # resolves it, but we deliberately don't thread ``Identity`` into
+        # this service method so agent callers stay decoupled from the
+        # confirm/binding surface.
+        await record_audit_best_effort(
+            self._ctx,
+            action=AuditAction.CREATE,
+            target_type=AuditTargetType.SESSION,
+            target_id=row.id,
+            actor_type=actor_type_from_id(initiator_actor_id).value,
+            actor_id=initiator_actor_id,
+            after={
+                "vendor": vendor_key,
+                "resolved_flow": flow.kind,
+                "agent_id": agent_id,
+                "credential_id": row.credential_id,
+            },
+        )
         # Kick off the vendor's OpenAPI import as early as we can — the SPA
         # opens the connect dialog and immediately calls ``:connect``, so
         # firing here (rather than at ``:confirm``) gives the import
@@ -592,6 +618,27 @@ class ConnectSessionService:
             resolved_flow=row.resolved_flow,
             confirmed_scopes=confirmed_scopes,
             rules_count=len(permission_rules),
+        )
+        # Confirm produces the material change: the vendor conversation
+        # has begun, scopes and permission rules are committed, and an
+        # agent binding may have been created. The audit entry pins
+        # which caller approved which set — the log line above is
+        # observability, not attribution.
+        await record_audit_best_effort(
+            self._ctx,
+            action=AuditAction.CONFIRM,
+            target_type=AuditTargetType.SESSION,
+            target_id=row.id,
+            actor_type=identity.actor_type.value,
+            actor_id=identity.sub,
+            after={
+                "vendor": row.vendor,
+                "resolved_flow": row.resolved_flow,
+                "credential_id": row.credential_id,
+                "agent_id": effective_agent_id,
+                "confirmed_scopes": list(confirmed_scopes),
+                "rules_count": len(permission_rules),
+            },
         )
         if challenge.kind == "device_authorization":
             return DeviceAuthorizationConfirmResult(
@@ -1086,6 +1133,29 @@ class ConnectSessionService:
             error_code=error_code,
             error_detail=detail,
             credential_id=row.credential_id,
+        )
+        # Terminal transitions delete the credential + cascade the aux
+        # rows, so they're the most consequential mutation on the
+        # lifecycle — an operator needs to be able to say "who / what
+        # tore this session down" (scanner-TTL sweep, vendor rejection,
+        # callback error, or user-driven cancel). ``_mark_terminal`` is
+        # called from scanner / callback contexts without a caller
+        # ``Identity``; use the ``system`` actor sentinel there, matching
+        # the pattern in other scanner-driven audit paths.
+        await record_audit_best_effort(
+            self._ctx,
+            action=AuditAction.REVOKE,
+            target_type=AuditTargetType.SESSION,
+            target_id=session_id,
+            actor_type="system",
+            actor_id=None,
+            before={"state": row.state},
+            after={
+                "state": state,
+                "error_code": error_code,
+                "credential_id": row.credential_id,
+            },
+            reason=detail,
         )
         # Metrics: per-vendor + per-flow + per-outcome unhappy-terminal
         # counter. ``state`` here is the wire outcome (``failed``,

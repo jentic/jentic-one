@@ -94,11 +94,60 @@ async def test_tick_advances_each_candidate() -> None:
         service_cls.return_value.expire_stale_sessions = AsyncMock(return_value=0)
         await scanner._tick()
     assert advance_mock.await_count == 3
-    assert [call.args[0] for call in advance_mock.await_args_list] == [
+    # Advances run concurrently under ``asyncio.gather`` — completion
+    # order isn't guaranteed (a slow vendor at position 0 must not head-
+    # of-line-block positions 1+), so pin the *set* of ids rather than
+    # sequence.
+    assert {call.args[0] for call in advance_mock.await_args_list} == {
         "cred_1",
         "cred_2",
         "cred_3",
-    ]
+    }
+
+
+@pytest.mark.asyncio()
+async def test_tick_does_not_head_of_line_block_on_slow_vendor() -> None:
+    # A slow vendor at the head of the batch is the whole reason to
+    # switch from serial iteration to bounded ``asyncio.gather``: a
+    # 15s-timeout vendor at position 0 in a serial loop stalls every
+    # credential behind it. Pin the concurrency: a long-running advance
+    # for ``cred_slow`` cannot block ``cred_fast`` from completing.
+    import asyncio
+
+    scanner = ConnectPollScanner(_make_context())
+    slow_started = asyncio.Event()
+    fast_done = asyncio.Event()
+    slow_release = asyncio.Event()
+    order: list[str] = []
+
+    async def _fake_advance(credential_id: str) -> None:
+        if credential_id == "cred_slow":
+            slow_started.set()
+            await slow_release.wait()
+            order.append(credential_id)
+            return
+        # ``cred_fast`` waits until the slow one has actually started
+        # (proving they run in parallel), then completes.
+        await slow_started.wait()
+        order.append(credential_id)
+        fast_done.set()
+
+    with (
+        patch.object(
+            scanner,
+            "_due_credentials",
+            new=AsyncMock(return_value=["cred_slow", "cred_fast"]),
+        ),
+        patch("jentic_one.shared.jobs.connect_poll_scanner.ConnectSessionService") as service_cls,
+    ):
+        service_cls.return_value.advance_polling_target = AsyncMock(side_effect=_fake_advance)
+        service_cls.return_value.expire_stale_sessions = AsyncMock(return_value=0)
+        tick_task = asyncio.create_task(scanner._tick())
+        # ``cred_fast`` must complete *before* we release ``cred_slow``.
+        await asyncio.wait_for(fast_done.wait(), timeout=1.0)
+        slow_release.set()
+        await asyncio.wait_for(tick_task, timeout=1.0)
+    assert order == ["cred_fast", "cred_slow"]
 
 
 @pytest.mark.asyncio()

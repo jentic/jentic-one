@@ -44,6 +44,15 @@ _logger = structlog.get_logger(__name__)
 
 _POLL_INTERVAL_SECONDS = 2.0
 _CANDIDATE_LIMIT = 100
+# Per-tick concurrency cap on vendor advancement. Without a cap a slow
+# vendor at the head of the batch stalls every credential behind it —
+# each ``advance`` fires a 15s-timeout HTTP call, so serial iteration
+# meant a 100-candidate tick could take ~25 minutes in the worst case
+# even though 99 of them were healthy. Bounded ``asyncio.gather`` lets
+# healthy vendors advance while a single slow one occupies exactly one
+# concurrency slot. Cap is deliberately conservative so a scanner tick
+# never dominates the shared upstream HTTP pool.
+_ADVANCE_CONCURRENCY = 20
 
 
 class ConnectPollScanner:
@@ -100,8 +109,10 @@ class ConnectPollScanner:
 
         The cap keeps a single scanner tick from becoming a hostage to a
         slow vendor when there are many flows in flight — the next tick
-        picks up the remainder. Each advancement is guarded so one bad
-        row doesn't abort the batch.
+        picks up the remainder. Advances run concurrently under a bounded
+        semaphore so one slow vendor doesn't head-of-line-block the rest
+        of the batch. Each advancement is guarded so one bad row doesn't
+        abort the batch.
         """
         service = ConnectSessionService(
             self._ctx, catalog_auto_importer=self._catalog_auto_importer
@@ -115,14 +126,19 @@ class ConnectPollScanner:
         credential_ids = await self._due_credentials()
         if not credential_ids:
             return
-        for credential_id in credential_ids:
-            try:
-                await service.advance_polling_target(credential_id)
-            except Exception:
-                _logger.exception(
-                    "connect_poll_scanner_advance_failed",
-                    credential_id=credential_id,
-                )
+        semaphore = asyncio.Semaphore(_ADVANCE_CONCURRENCY)
+
+        async def _guarded_advance(credential_id: str) -> None:
+            async with semaphore:
+                try:
+                    await service.advance_polling_target(credential_id)
+                except Exception:
+                    _logger.exception(
+                        "connect_poll_scanner_advance_failed",
+                        credential_id=credential_id,
+                    )
+
+        await asyncio.gather(*(_guarded_advance(cid) for cid in credential_ids))
 
     async def _due_credentials(self) -> list[str]:
         """Return credential IDs due for a poll tick this cycle.
@@ -138,11 +154,22 @@ class ConnectPollScanner:
         ``expired`` terminal report comes from, and the terminal transition
         is what clears the aux row — filtering them out here would strand
         the session in ``polling`` forever (the vendor TTL is typically
-        *shorter* than the session TTL). RFC 8628 interval throttling
-        happens per-credential inside ``DeviceAuthorizationHandler.advance``
-        (via ``last_polled_at``), so we don't try to be clever with the query.
+        *shorter* than the session TTL).
+
+        Multi-pod safety: the definitive per-credential poll-interval
+        lease lives in ``DeviceAuthorizationCredentialRepository.try_claim_poll_slot``
+        (atomic ``UPDATE`` guard in ``DeviceAuthorizationHandler.advance``).
+        The ``with_for_update(skip_locked=True)`` here is the coarser
+        candidate-selection lease: two scanner replicas that tick at the
+        same moment don't both pull the same 100 IDs into memory, which
+        would otherwise burn a wave of contending atomic-claim UPDATEs
+        on the same rows. Postgres holds these locks only for the
+        duration of this transaction (released immediately below) so
+        we don't stall the vendor call on an idle-in-transaction lock;
+        the true poll ownership is the atomic-claim CAS in ``advance``.
+        A no-op on SQLite.
         """
-        async with self._ctx.control_db.session() as session:
+        async with self._ctx.control_db.transaction() as session:
             stmt = (
                 select(DeviceAuthorizationCredential.id)
                 .where(
@@ -151,6 +178,7 @@ class ConnectPollScanner:
                 )
                 .order_by(DeviceAuthorizationCredential.created_at.asc())
                 .limit(_CANDIDATE_LIMIT)
+                .with_for_update(skip_locked=True)
             )
             result = await session.execute(stmt)
             return [str(row_id) for row_id in result.scalars().all()]

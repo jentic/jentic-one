@@ -5,7 +5,7 @@ from __future__ import annotations
 import datetime as dt
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.control.core.schema.device_authorization_credentials import (
@@ -79,13 +79,56 @@ class DeviceAuthorizationCredentialRepository:
         return row
 
     @staticmethod
-    async def mark_polled(session: AsyncSession, credential_id: str, when: dt.datetime) -> None:
-        row = await DeviceAuthorizationCredentialRepository.get_by_credential(
-            session, credential_id
+    async def try_claim_poll_slot(
+        session: AsyncSession,
+        credential_id: str,
+        *,
+        now: dt.datetime,
+        min_last_polled_at: dt.datetime,
+    ) -> bool:
+        """Atomic RFC 8628 poll-interval lease.
+
+        Returns ``True`` iff this call won the right to poll the vendor for
+        this credential *now*. The check + stamp happen inside one SQL
+        ``UPDATE`` so two concurrent scanner replicas cannot both pass the
+        interval guard and double-poll the vendor — the loser sees zero
+        rows updated and its caller returns ``pending`` for this tick.
+
+        The caller computes ``min_last_polled_at = now - poll_interval``
+        from the currently-loaded row and passes it in — that keeps the
+        ``UPDATE`` predicate a pure column-vs-value comparison so it stays
+        cross-dialect (Postgres + SQLite) without dialect-specific
+        interval arithmetic in the SQL. The row's own
+        ``poll_interval_seconds`` still gets rechecked as ``IS NOT NULL``
+        so a not-yet-populated row cannot be poll-leased.
+
+        Stamping ``last_polled_at`` BEFORE the vendor call (rather than
+        after, as ``mark_polled`` used to) means a vendor HTTP error
+        doesn't reset the throttle — the retry still respects the interval.
+        """
+        stmt = (
+            update(DeviceAuthorizationCredential)
+            .where(
+                and_(
+                    DeviceAuthorizationCredential.id == credential_id,
+                    DeviceAuthorizationCredential.encrypted_device_code.is_not(None),
+                    DeviceAuthorizationCredential.poll_interval_seconds.is_not(None),
+                    or_(
+                        DeviceAuthorizationCredential.last_polled_at.is_(None),
+                        DeviceAuthorizationCredential.last_polled_at <= min_last_polled_at,
+                    ),
+                )
+            )
+            .values(last_polled_at=now)
+            .execution_options(synchronize_session=False)
         )
-        if row is not None:
-            row.last_polled_at = when
-            await session.flush()
+        # ``session.execute(update(...))`` returns a ``CursorResult`` whose
+        # ``rowcount`` reports the affected-row count for the DML — mypy
+        # infers the plain ``Result`` supertype (which has no ``rowcount``)
+        # so pull it off with ``getattr`` rather than sprinkling ignores.
+        result = await session.execute(stmt)
+        rowcount: int = getattr(result, "rowcount", 0) or 0
+        return rowcount > 0
 
     @staticmethod
     async def clear_transient(session: AsyncSession, credential_id: str) -> None:
