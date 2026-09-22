@@ -260,7 +260,12 @@ export function usePollConnectSessionStatus(
 		queryKey: KEYS.status(sessionId, pollToken),
 		queryFn: () => pollConnectSessionStatus(sessionId, pollToken),
 		enabled: options?.enabled ?? true,
-		refetchInterval: options?.enabled === false ? false : (options?.intervalMs ?? 3000),
+		// Default matches RFC 8628 §3.5's device-flow ``interval`` fallback
+		// (5s) so a caller that forgets to thread ``poll_interval_seconds``
+		// from the challenge still hits the spec-correct cadence rather
+		// than an out-of-spec 3s hammer. All wired-up callers should
+		// override via ``intervalMs``.
+		refetchInterval: options?.enabled === false ? false : (options?.intervalMs ?? 5000),
 		refetchIntervalInBackground: true,
 		staleTime: 0,
 		gcTime: 0,

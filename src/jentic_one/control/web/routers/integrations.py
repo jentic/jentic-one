@@ -11,8 +11,7 @@ from __future__ import annotations
 
 import structlog
 from fastapi import APIRouter, Depends, Query, Request, Response
-from fastapi.responses import JSONResponse
-from jentic.problem_details import Forbidden
+from jentic.problem_details import Forbidden, TooManyRequests
 
 from jentic_one.control.services.integrations.connect_session_service import (
     ConnectSessionService,
@@ -80,15 +79,23 @@ def _get_connect_limiter(request: Request) -> RateLimiter:
     return limiter
 
 
-async def _enforce_connect_rate_limit(request: Request, identity: Identity) -> JSONResponse | None:
-    """Acquire from the shared per-actor bucket; a 429 response when exhausted."""
+async def _enforce_connect_rate_limit(request: Request, identity: Identity) -> None:
+    """Acquire from the shared per-actor bucket; raise 429 problem+json when exhausted.
+
+    ``TooManyRequests`` routes through the same RFC 9457 problem-details
+    handler chain as every other error on this router — the module
+    docstring's "routers here raise/propagate, never build ad-hoc error
+    ``JSONResponse`` bodies" invariant applies to the rate-limit path
+    too.
+    """
     limiter = _get_connect_limiter(request)
     outcome = await limiter.acquire(identity.sub)
     if outcome.allowed:
-        return None
-    return JSONResponse(
-        status_code=429,
-        content={"detail": "rate limit exceeded"},
+        return
+    raise TooManyRequests(
+        detail="Rate limit exceeded; slow down and retry after the indicated delay.",
+        type="rate_limit_exceeded",
+        instance=request.url.path,
         headers={**outcome.headers(), "Retry-After": str(outcome.retry_after_s)},
     )
 
@@ -111,7 +118,7 @@ async def integrations_connect(
         required_permissions=["credentials:connect", "credentials:write"]
     ),
     svc: ConnectSessionService = Depends(get_connect_session_service),
-) -> IntegrationsConnectResponse | JSONResponse:
+) -> IntegrationsConnectResponse:
     """Both entrypoints (agent + UI) use this endpoint.
 
     Agent callers: `agent_id` in the payload is refused (the caller *is*
@@ -122,9 +129,7 @@ async def integrations_connect(
     credential connects unbound and an agent can be bound later through
     the credentials API.
     """
-    limited = await _enforce_connect_rate_limit(request, identity)
-    if limited is not None:
-        return limited
+    await _enforce_connect_rate_limit(request, identity)
 
     if identity.actor_type == ActorType.AGENT:
         if body.agent_id is not None:
@@ -231,7 +236,7 @@ async def confirm_connect_session(
     poll_token: str = Query(..., description="Opaque poll capability"),
     identity: Identity = get_current_identity(required_permissions=["credentials:write"]),
     svc: ConnectSessionService = Depends(get_connect_session_service),
-) -> ConfirmSessionResponse | JSONResponse:
+) -> ConfirmSessionResponse:
     """Called by the review page after the human confirms selections.
 
     Shares the ``:connect`` per-actor rate bucket — this is the endpoint
@@ -240,9 +245,7 @@ async def confirm_connect_session(
     free to hammer during a vendor incident. Gated by ``poll_token``
     like the review read (403 on mismatch or missing session).
     """
-    limited = await _enforce_connect_rate_limit(request, identity)
-    if limited is not None:
-        return limited
+    await _enforce_connect_rate_limit(request, identity)
 
     result = await svc.confirm(
         session_id,

@@ -312,7 +312,9 @@ export async function runConnectFlow(
 			}
 			// Honour the vendor's requested poll cadence (RFC 8628
 			// ``interval``) unless the caller pinned one explicitly.
-			const deviceTickMs = pollMs ?? (challenge.poll_interval_seconds ?? 3) * 1000;
+			// RFC 8628 §3.5: when the vendor omits ``interval``, the client
+			// MUST use 5 seconds — not our own hunch.
+			const deviceTickMs = pollMs ?? (challenge.poll_interval_seconds ?? 5) * 1000;
 			const cleanup = options.onDeviceAuthorizationChallenge(challenge);
 			try {
 				const deadline = Date.now() + timeoutMs;

@@ -17,6 +17,7 @@ from unittest.mock import AsyncMock
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from jentic.problem_details import ProblemDetailException, problem_detail_exception_handler
 
 from jentic_one.control.services.integrations.connect_session_service import (
     AuthCodeConfirmResult,
@@ -66,8 +67,12 @@ def _build_app(*, svc: Any, identity: Identity = _USER_IDENTITY) -> FastAPI:
     app = FastAPI()
     app.include_router(integrations_router.router)
     # Error → problem-details mapping lives in app-level exception handlers
-    # (control/web/errors.py), so the router contract can only be exercised
-    # with them registered — same wiring as ``create_app``.
+    # (control/web/errors.py) plus the shared ``ProblemDetailException``
+    # handler that ``create_surface_app`` installs. Wire both so the router
+    # contract is exercised with the same envelope shape production hits —
+    # otherwise ``raise TooManyRequests(...)`` would fall through to
+    # FastAPI's default JSON encoder and lose the ``problem+json`` type.
+    app.add_exception_handler(ProblemDetailException, problem_detail_exception_handler)  # type: ignore[arg-type]
     for exc_class, handler in get_exception_handlers():
         app.add_exception_handler(exc_class, handler)
     app.dependency_overrides[get_connect_session_service] = lambda: svc
@@ -450,6 +455,11 @@ def test_connect_rate_limit_returns_429_with_retry_after() -> None:
         assert third.status_code == 429
         assert "Retry-After" in third.headers
         assert int(third.headers["Retry-After"]) >= 1
+        # RFC 9457 problem+json envelope — the router raises ``TooManyRequests``
+        # rather than building an ad-hoc ``JSONResponse`` (see module
+        # docstring); the shared handler chain then produces this shape.
+        assert third.headers["content-type"].startswith("application/problem+json")
+        assert third.json()["type"] == "rate_limit_exceeded"
 
 
 def test_confirm_requires_poll_token_and_forwards_it_with_identity() -> None:
@@ -539,3 +549,5 @@ def test_confirm_shares_connect_rate_limit_bucket() -> None:
     assert second.status_code == 200
     assert third.status_code == 429
     assert "Retry-After" in third.headers
+    assert third.headers["content-type"].startswith("application/problem+json")
+    assert third.json()["type"] == "rate_limit_exceeded"

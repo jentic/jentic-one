@@ -258,12 +258,12 @@ function VendorSelfConnectFlow({
 
 	const polling = usePollConnectSessionStatus(session?.id ?? '', session?.pollToken ?? '', {
 		enabled: phase === 'awaiting' && !!session,
-		// Vendors state how often they want to be polled (RFC 8628
-		// ``interval``) — honour it once the challenge is known instead of
-		// hammering at the hook's default cadence.
+		// RFC 8628 §3.5: honour the vendor's ``interval`` when supplied,
+		// fall back to the spec-mandated 5s (never the hook's default —
+		// that's for our own ``/status`` reads, not vendor cadence).
 		intervalMs:
-			challenge?.kind === 'device_authorization' && challenge.poll_interval_seconds != null
-				? challenge.poll_interval_seconds * 1000
+			challenge?.kind === 'device_authorization'
+				? (challenge.poll_interval_seconds ?? 5) * 1000
 				: undefined,
 	});
 
@@ -684,11 +684,12 @@ function VendorApproveFlow({
 
 	const polling = usePollConnectSessionStatus(sessionId, pollToken, {
 		enabled: phase === 'awaiting',
-		// Honour the vendor's requested device-flow poll cadence (RFC 8628
-		// ``interval``) once the challenge is known.
+		// RFC 8628 §3.5: honour the vendor's ``interval`` when supplied,
+		// fall back to the spec-mandated 5s (never the hook's default —
+		// that's for our own ``/status`` reads, not vendor cadence).
 		intervalMs:
-			challenge?.kind === 'device_authorization' && challenge.poll_interval_seconds != null
-				? challenge.poll_interval_seconds * 1000
+			challenge?.kind === 'device_authorization'
+				? (challenge.poll_interval_seconds ?? 5) * 1000
 				: undefined,
 	});
 
