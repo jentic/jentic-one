@@ -19,9 +19,9 @@ import structlog
 from sqlalchemy import text
 
 from jentic_one.shared.auth.api_key_resolver import ApiKeyResolver
+from jentic_one.shared.auth.permission_catalog import BROKER_EXECUTE_PERMISSION
 from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.models import ActorType
-from jentic_one.shared.scopes import BROKER_EXECUTE_SCOPE
 
 pytestmark = pytest.mark.integration
 
@@ -52,7 +52,7 @@ async def clean_tables(admin_db: DatabaseSession) -> AsyncGenerator[None, None]:
     async def _cleanup() -> None:
         async with admin_db.session() as session:
             await session.execute(
-                text("DELETE FROM actor_scope_grants WHERE actor_id = :id"), {"id": _AGENT}
+                text("DELETE FROM actor_permission_grants WHERE actor_id = :id"), {"id": _AGENT}
             )
             await session.execute(
                 text("DELETE FROM agent_credentials WHERE agent_id = :id"), {"id": _AGENT}
@@ -69,7 +69,7 @@ async def clean_tables(admin_db: DatabaseSession) -> AsyncGenerator[None, None]:
 async def _seed_successor(
     admin_db: DatabaseSession, *, plaintext: str, status: str = "active"
 ) -> None:
-    """Land the plaintext's digest on a successor agent holding the execute scope —
+    """Land the plaintext's digest on a successor agent holding the execute permission —
     what the theme-5 flatten / theme-8 migration wrote."""
     api_key_hash = hashlib.sha256(plaintext.encode()).hexdigest()
     async with admin_db.session() as session:
@@ -96,10 +96,13 @@ async def _seed_successor(
         )
         await session.execute(
             text(
-                "INSERT INTO actor_scope_grants (id, actor_id, actor_type, scope, created_by) "
-                "VALUES (:id, :actor_id, 'agent', :scope, 'system:test')"
+                "INSERT INTO actor_permission_grants "
+                "("
+                "id, actor_id, actor_type, permission, created_by"
+                ")"
+                "VALUES (:id, :actor_id, 'agent', :permission, 'system:test')"
             ),
-            {"id": f"asg_{_AGENT}", "actor_id": _AGENT, "scope": BROKER_EXECUTE_SCOPE},
+            {"id": f"asg_{_AGENT}", "actor_id": _AGENT, "permission": BROKER_EXECUTE_PERMISSION},
         )
         await session.commit()
 
@@ -119,7 +122,7 @@ async def test_retired_toolkit_key_resolves_to_successor_agent(
     assert identity is not None
     assert identity.sub == _AGENT
     assert identity.actor_type is ActorType.AGENT
-    assert identity.permissions == [BROKER_EXECUTE_SCOPE]
+    assert identity.permissions == [BROKER_EXECUTE_PERMISSION]
     assert identity.active is True
     warnings = [log for log in logs if log["event"] == "deprecated_toolkit_key_used"]
     assert len(warnings) == 1 and warnings[0]["log_level"] == "warning"

@@ -7,8 +7,8 @@ binding twins, token revocation, the stamp, the sweep, and the pre-drop
 verification queries). The control module must not import admin ORM
 models, so every admin-side statement
 here is raw SQL (F1 is also served by this: successor creation must never go
-through ``AgentService.create()``/``approve()``, whose empty-scope default is
-``DEFAULT_AGENT_SCOPES``).
+through ``AgentService.create()``/``approve()``, whose empty-permission default is
+``DEFAULT_AGENT_PERMISSIONS``).
 
 Concurrency (H-A x F6): the caller wraps each SA in one admin transaction
 (``BEGIN IMMEDIATE`` on SQLite via ``DatabaseSession.transaction``);
@@ -48,11 +48,12 @@ SYSTEM_ACTOR = "system:theme8-sa-migration"
 #: stamped done without a successor. Unambiguous — real values start ``agnt_``.
 SKIPPED_STAMP = "skipped"
 
-#: Scopes retired by theme 8 itself (Phase 2): stored SA grants carrying them
+#: Permissions retired by theme 8 itself (Phase 2): stored SA grants carrying them
 #: get no successor twin — they are left behind for the sweep, never carried.
-#: E2 cross-reference: every member is also in ``shared.scopes.RETIRED_SCOPES``
-#: (Phase 2 retired them) — pinned by ``test_retired_scopes.py``.
-THEME8_RETIRED_SCOPES: frozenset[str] = frozenset(
+#: E2 cross-reference: every member is also in
+#: ``shared.auth.permission_catalog.RETIRED_PERMISSIONS`` (Phase 2 retired them) —
+#: pinned by ``test_retired_permissions.py``.
+THEME8_RETIRED_PERMISSIONS: frozenset[str] = frozenset(
     {
         "service-accounts:read",
         "service-accounts:write",
@@ -87,7 +88,7 @@ SWEEPABLE_SQL = (
     " FROM service_accounts sa"
     " WHERE sa.migrated_to_actor_id IS NOT NULL"
     " AND (sa.status != 'archived'"
-    "  OR EXISTS (SELECT 1 FROM actor_scope_grants g"
+    "  OR EXISTS (SELECT 1 FROM actor_permission_grants g"
     "   WHERE g.actor_id = sa.id AND g.actor_type = 'service_account')"
     "  OR EXISTS (SELECT 1 FROM agent_credential_bindings cb WHERE cb.agent_id = sa.id)"
     "  OR EXISTS (SELECT 1 FROM service_account_credentials sac"
@@ -121,15 +122,16 @@ _INSERT_AGENT_CREDENTIAL = text(
 )
 
 _SELECT_GRANTS = text(
-    "SELECT scope, granted_by FROM actor_scope_grants"
+    "SELECT permission, granted_by FROM actor_permission_grants"
     " WHERE actor_id = :actor_id AND actor_type = 'service_account'"
-    " ORDER BY scope"
+    " ORDER BY permission"
 )
 
 _INSERT_GRANT_TWIN = text(
-    "INSERT INTO actor_scope_grants (id, actor_id, actor_type, scope, granted_by, created_by)"
-    " VALUES (:id, :actor_id, 'agent', :scope, :granted_by, :created_by)"
-    " ON CONFLICT (actor_id, scope) DO NOTHING"
+    "INSERT INTO actor_permission_grants"
+    " (id, actor_id, actor_type, permission, granted_by, created_by)"
+    " VALUES (:id, :actor_id, 'agent', :permission, :granted_by, :created_by)"
+    " ON CONFLICT (actor_id, permission) DO NOTHING"
 )
 
 _SELECT_CREDENTIAL_BINDINGS = text(
@@ -239,7 +241,7 @@ class ServiceAccountMigrationRepository:
         first); a fresh one is generated when omitted.
 
         Raw SQL, NEVER ``AgentService.create()``/``approve()`` (F1) — both
-        default-grant ``DEFAULT_AGENT_SCOPES`` on empty scope sets, and a
+        default-grant ``DEFAULT_AGENT_PERMISSIONS`` on empty permission sets, and a
         zero-grant SA must yield a zero-grant successor. ``status`` is
         ``active`` or ``disabled`` (OQ-1) — never ``pending``. The digest is
         a COPY: the SA-side digest stays live until the sweep (F6/H-B). A
@@ -284,41 +286,41 @@ class ServiceAccountMigrationRepository:
     async def list_copyable_grants(
         session: AsyncSession, *, service_account_id: str
     ) -> list[tuple[str, str | None]]:
-        """The SA's stored grants a migration copies: ``(scope, granted_by)``.
+        """The SA's stored grants a migration copies: ``(permission, granted_by)``.
 
-        Stored rows only, theme-8-retired ``service-accounts:*`` scopes
+        Stored rows only, theme-8-retired ``service-accounts:*`` permissions
         excluded (left for the sweep). ``granted_by`` is the ORIGINAL grantor
         — the twin is re-stamped with the job's system actor, so this is the
         only place the report can recover it from.
         """
         rows = (await session.execute(_SELECT_GRANTS, {"actor_id": service_account_id})).all()
         return [
-            (str(row.scope), row.granted_by)
+            (str(row.permission), row.granted_by)
             for row in rows
-            if row.scope not in THEME8_RETIRED_SCOPES
+            if row.permission not in THEME8_RETIRED_PERMISSIONS
         ]
 
     @staticmethod
-    async def copy_scope_grants(
+    async def copy_permission_grants(
         session: AsyncSession, *, service_account_id: str, agent_id: str
     ) -> list[tuple[str, str | None]]:
         """COPY stored grant rows onto the successor; keep the originals (N1).
 
         Stored rows only — the resolve-time closure stays resolve-time; an
         empty set stays empty (F1). Theme-8-retired ``service-accounts:*``
-        scopes get no twin (left for the sweep). Returns the copied
-        ``(scope, original granted_by)`` pairs, in scope order.
+        permissions get no twin (left for the sweep). Returns the copied
+        ``(permission, original granted_by)`` pairs, in permission order.
         """
         grants = await ServiceAccountMigrationRepository.list_copyable_grants(
             session, service_account_id=service_account_id
         )
-        for scope, _granted_by in grants:
+        for permission, _granted_by in grants:
             await session.execute(
                 _INSERT_GRANT_TWIN,
                 {
                     "id": generate_ksuid("asg"),
                     "actor_id": agent_id,
-                    "scope": scope,
+                    "permission": permission,
                     "granted_by": SYSTEM_ACTOR,
                     "created_by": SYSTEM_ACTOR,
                 },
@@ -545,7 +547,7 @@ class ServiceAccountMigrationRepository:
         """
         await session.execute(
             text(
-                "DELETE FROM actor_scope_grants"
+                "DELETE FROM actor_permission_grants"
                 " WHERE actor_id = :sid AND actor_type = 'service_account'"
             ),
             {"sid": service_account_id},
@@ -601,36 +603,38 @@ class ServiceAccountMigrationRepository:
         """Copyable SA grants whose successor holds no twin.
 
         Only fully-migrated SAs (a skip-stamped row has no successor), and
-        never the theme-8-retired scopes (they are not carried). ``post_stamp``
+        never the theme-8-retired permissions (they are not carried). ``post_stamp``
         is 1 for a grant created after the SA's stamp — the only kind the
-        retirement copies for an SA stamped by an earlier run, so a scope an
+        retirement copies for an SA stamped by an earlier run, so a permission an
         operator removed from the successor is never resurrected.
 
-        Rows: ``service_account_id, successor_agent_id, scope, post_stamp``.
+        Rows: ``service_account_id, successor_agent_id, permission, post_stamp``.
         """
         # E2: bound parameters, never f-string interpolation, even for a
-        # frozen constant. THEME8_RETIRED_SCOPES ⊆ RETIRED_SCOPES is pinned by
-        # tests/unit/shared/test_retired_scopes.py.
-        scope_params = {f"scope_{i}": s for i, s in enumerate(sorted(THEME8_RETIRED_SCOPES))}
-        placeholders = ", ".join(f":{name}" for name in scope_params)
+        # frozen constant. THEME8_RETIRED_PERMISSIONS ⊆ RETIRED_PERMISSIONS is
+        # pinned by tests/unit/shared/test_retired_permissions.py.
+        permission_params = {
+            f"permission_{i}": s for i, s in enumerate(sorted(THEME8_RETIRED_PERMISSIONS))
+        }
+        placeholders = ", ".join(f":{name}" for name in permission_params)
         rows = await session.execute(
             text(
                 "SELECT sa.id AS service_account_id,"
-                " sa.migrated_to_actor_id AS successor_agent_id, g.scope,"
+                " sa.migrated_to_actor_id AS successor_agent_id, g.permission,"
                 " CASE WHEN g.created_at > sa.migrated_at THEN 1 ELSE 0 END AS post_stamp"
-                " FROM actor_scope_grants g"
+                " FROM actor_permission_grants g"
                 " JOIN service_accounts sa ON sa.id = g.actor_id"
                 " WHERE g.actor_type = 'service_account'"
-                f" AND g.scope NOT IN ({placeholders})"
+                f" AND g.permission NOT IN ({placeholders})"
                 " AND sa.migrated_to_actor_id IS NOT NULL"
                 " AND sa.migrated_to_actor_id != 'skipped'"
                 " AND NOT EXISTS ("
-                "  SELECT 1 FROM actor_scope_grants t"
+                "  SELECT 1 FROM actor_permission_grants t"
                 "  WHERE t.actor_id = sa.migrated_to_actor_id"
-                "  AND t.actor_type = 'agent' AND t.scope = g.scope)"
-                " ORDER BY sa.id, g.scope"
+                "  AND t.actor_type = 'agent' AND t.permission = g.permission)"
+                " ORDER BY sa.id, g.permission"
             ),
-            scope_params,
+            permission_params,
         )
         return list(rows.all())
 
@@ -662,14 +666,14 @@ class ServiceAccountMigrationRepository:
         return list(rows.all())
 
     @staticmethod
-    async def copy_grant_twin(session: AsyncSession, *, agent_id: str, scope: str) -> bool:
+    async def copy_grant_twin(session: AsyncSession, *, agent_id: str, permission: str) -> bool:
         """Insert one grant twin on the successor; False if it already held it."""
         result = await session.execute(
             _INSERT_GRANT_TWIN,
             {
                 "id": generate_ksuid("asg"),
                 "actor_id": agent_id,
-                "scope": scope,
+                "permission": permission,
                 "granted_by": SYSTEM_ACTOR,
                 "created_by": SYSTEM_ACTOR,
             },

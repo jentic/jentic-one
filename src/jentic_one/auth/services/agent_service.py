@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.repos import (
-    ActorScopeGrantRepository,
+    ActorPermissionGrantRepository,
     AgentCredentialBindingRepository,
     AgentCredentialRepository,
     AgentRepository,
@@ -44,7 +44,12 @@ from jentic_one.auth.services.schemas.agents import (
 )
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
 from jentic_one.shared.auth.identity import Identity
-from jentic_one.shared.auth.permission_catalog import ALL_PERMISSIONS
+from jentic_one.shared.auth.permission_catalog import (
+    ALL_PERMISSIONS,
+    DEFAULT_AGENT_PERMISSIONS,
+    ORG_ADMIN,
+    OWNER_CREDENTIALS_READ,
+)
 from jentic_one.shared.context import Context
 from jentic_one.shared.db import DatabaseIntegrityError
 from jentic_one.shared.events import emit_event_best_effort, settle_actionable_events
@@ -52,7 +57,6 @@ from jentic_one.shared.models import ActorStatus, ActorType, ActorVerb
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.pagination import Page, decode_cursor_str, encode_cursor
 from jentic_one.shared.schemas import ServedApiRef
-from jentic_one.shared.scopes import DEFAULT_AGENT_SCOPES, ORG_ADMIN, OWNER_CREDENTIALS_READ
 
 logger = structlog.get_logger(__name__)
 
@@ -90,7 +94,7 @@ class AgentService:
         mint their first agent mid-flow, but it lands in the same
         awaiting-approval posture as the anonymous ``POST /register`` door —
         status ``pending``, NO scope grants (``approve()`` grants
-        ``DEFAULT_AGENT_SCOPES`` on the PENDING→ACTIVE transition, exactly as
+        ``DEFAULT_AGENT_PERMISSIONS`` on the PENDING→ACTIVE transition, exactly as
         it does for self-registrations), plus the ``agent.self_registered``
         requires-action event so the registration lands in the admins' approval
         queue and ``approve()``/``deny()`` settle the alert. Any status other
@@ -104,7 +108,7 @@ class AgentService:
                 scopes_to_grant = list(dict.fromkeys(payload.scopes))
                 check_agent_scope_grant(scopes_to_grant, identity=identity)
             else:
-                scopes_to_grant = list(DEFAULT_AGENT_SCOPES)
+                scopes_to_grant = list(DEFAULT_AGENT_PERMISSIONS)
         async with self._ctx.admin_db.transaction() as session:
             agent = await AgentRepository.create(
                 session,
@@ -116,11 +120,11 @@ class AgentService:
                 status=status,
             )
             for scope in scopes_to_grant:
-                await ActorScopeGrantRepository.grant(
+                await ActorPermissionGrantRepository.grant(
                     session,
                     actor_id=agent.id,
                     actor_type=ActorType.AGENT,
-                    scope=scope,
+                    permission=scope,
                     granted_by=identity.sub,
                     created_by=identity.sub,
                 )
@@ -259,7 +263,7 @@ class AgentService:
         """
         async with self._ctx.admin_db.transaction() as session:
             await self._check_transition(session, agent_id, ActorVerb.APPROVE, identity=identity)
-            existing_grants = await ActorScopeGrantRepository.list_for_actor(
+            existing_grants = await ActorPermissionGrantRepository.list_for_actor(
                 session, agent_id, actor_type=ActorType.AGENT
             )
             # Scopes a self-registration requested become live on approval, so
@@ -267,17 +271,17 @@ class AgentService:
             # the catalogue grant nothing and are left as-is (not a 422: the
             # registrant, not the approver, chose them).
             check_agent_scope_grant(
-                [g.scope for g in existing_grants if g.scope in ALL_PERMISSIONS],
+                [g.permission for g in existing_grants if g.permission in ALL_PERMISSIONS],
                 identity=identity,
             )
             agent = await AgentRepository.set_approval(session, agent_id, approved_by=identity.sub)
             if not existing_grants:
-                for scope in DEFAULT_AGENT_SCOPES:
-                    await ActorScopeGrantRepository.grant(
+                for scope in DEFAULT_AGENT_PERMISSIONS:
+                    await ActorPermissionGrantRepository.grant(
                         session,
                         actor_id=agent_id,
                         actor_type=ActorType.AGENT,
-                        scope=scope,
+                        permission=scope,
                         granted_by=identity.sub,
                         created_by=identity.sub,
                     )
@@ -288,7 +292,7 @@ class AgentService:
                     target_id=agent_id,
                     actor_type=identity.actor_type,
                     actor_id=identity.sub,
-                    after={"scopes": list(DEFAULT_AGENT_SCOPES)},
+                    after={"scopes": list(DEFAULT_AGENT_PERMISSIONS)},
                     reason="default_scopes",
                     origin=identity.origin.value,
                 )
@@ -301,7 +305,7 @@ class AgentService:
                 actor_id=identity.sub,
                 after={
                     "owner_id": agent.owner_id,
-                    "scopes": [g.scope for g in existing_grants] or list(DEFAULT_AGENT_SCOPES),
+                    "scopes": [g.permission for g in existing_grants] or list(DEFAULT_AGENT_PERMISSIONS),
                 },
                 origin=identity.origin.value,
             )
@@ -463,7 +467,7 @@ class AgentService:
             if agent.status == ActorStatus.ARCHIVED:
                 raise InvalidTransitionError(agent_id, ActorStatus.ARCHIVED, "archive")
             await AgentRepository.archive(session, agent_id)
-            await ActorScopeGrantRepository.revoke_all(session, agent_id)
+            await ActorPermissionGrantRepository.revoke_all(session, agent_id)
             await AgentCredentialBindingRepository.delete_for_agent(session, agent_id)
             # #1233 (archive arm): archive is terminal — the status enum has
             # no exit — so any consent grant left `active` would misreport
@@ -732,10 +736,10 @@ class AgentService:
     async def get_scopes(self, agent_id: str, *, identity: Identity) -> list[str]:
         await self.get_agent(agent_id, identity=identity)
         async with self._ctx.admin_db.session() as session:
-            grants = await ActorScopeGrantRepository.list_for_actor(
+            grants = await ActorPermissionGrantRepository.list_for_actor(
                 session, agent_id, actor_type=ActorType.AGENT
             )
-        return [g.scope for g in grants]
+        return [g.permission for g in grants]
 
     async def replace_scopes(
         self, agent_id: str, scopes: list[str], *, identity: Identity
@@ -752,19 +756,19 @@ class AgentService:
             if agent.status == ActorStatus.ARCHIVED:
                 raise InvalidTransitionError(agent_id, ActorStatus.ARCHIVED, "replace_scopes")
             existing = [
-                g.scope
-                for g in await ActorScopeGrantRepository.list_for_actor(
+                g.permission
+                for g in await ActorPermissionGrantRepository.list_for_actor(
                     session, agent_id, actor_type=ActorType.AGENT
                 )
             ]
             check_agent_scope_grant(scopes, identity=identity, already_held=existing)
-            await ActorScopeGrantRepository.revoke_all(session, agent_id)
+            await ActorPermissionGrantRepository.revoke_all(session, agent_id)
             for scope in scopes:
-                await ActorScopeGrantRepository.grant(
+                await ActorPermissionGrantRepository.grant(
                     session,
                     actor_id=agent_id,
                     actor_type=ActorType.AGENT,
-                    scope=scope,
+                    permission=scope,
                     granted_by=identity.sub,
                     created_by=identity.sub,
                 )

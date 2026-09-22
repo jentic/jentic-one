@@ -11,12 +11,12 @@ from __future__ import annotations
 import pytest
 
 from jentic_one.admin.core.permissions import ALL_PERMISSIONS, compute_implies_transitive
-from jentic_one.shared.scopes import (
-    DEFAULT_AGENT_SCOPES,
+from jentic_one.shared.auth.permission_catalog import (
+    DEFAULT_AGENT_PERMISSIONS,
     OWNER_AGENTS_READ,
     OWNER_CREDENTIALS_READ,
     OWNER_RESOURCES_READ,
-    RETIRED_SCOPES,
+    RETIRED_PERMISSIONS,
 )
 from jentic_one.shared.web.scope_catalog import (
     SCOPE_CATALOG_SCHEMA,
@@ -89,8 +89,10 @@ def test_admin_scope_sorts_first_in_its_family() -> None:
 @pytest.mark.arch
 def test_default_agent_scopes_are_catalogued() -> None:
     """Every scope granted to a default agent must exist in the catalogue."""
-    missing = set(DEFAULT_AGENT_SCOPES) - set(ALL_PERMISSIONS)
-    assert not missing, f"DEFAULT_AGENT_SCOPES references uncatalogued scopes: {sorted(missing)}"
+    missing = set(DEFAULT_AGENT_PERMISSIONS) - set(ALL_PERMISSIONS)
+    assert not missing, (
+        f"DEFAULT_AGENT_PERMISSIONS references uncatalogued permissions: {sorted(missing)}"
+    )
 
 
 @pytest.mark.arch
@@ -145,19 +147,19 @@ def test_retired_scopes_stay_out_of_the_catalogue() -> None:
     """Retired scopes (theme-5 toolkits, theme-7 access requests, theme-8 service
     accounts) never reappear.
 
-    They are tolerated on stored-grant re-validation (``RETIRED_SCOPES``) but
+    They are tolerated on stored-grant re-validation (``RETIRED_PERMISSIONS``) but
     must not be grantable, defaulted, or implied — reintroducing one here would
     silently resurrect a deleted surface's authorization tier.
     """
-    assert not RETIRED_SCOPES & set(ALL_PERMISSIONS)
-    assert not RETIRED_SCOPES & set(DEFAULT_AGENT_SCOPES)
+    assert not RETIRED_PERMISSIONS & set(ALL_PERMISSIONS)
+    assert not RETIRED_PERMISSIONS & set(DEFAULT_AGENT_PERMISSIONS)
     catalog = build_scope_catalog()
-    assert not RETIRED_SCOPES & {s["name"] for s in catalog["scopes"]}
+    assert not RETIRED_PERMISSIONS & {s["name"] for s in catalog["scopes"]}
 
 
 @pytest.mark.arch
 def test_service_account_family_is_gone_from_the_catalogue() -> None:
-    """Theme-8 Phase 2: no ``service-accounts`` family, scope, or implication survives."""
+    """Theme-8 Phase 2: no ``service-accounts`` family, permission, or implication survives."""
     catalog = build_scope_catalog()
     assert "service-accounts" not in {f["name"] for f in catalog["families"]}
     by_name = {s["name"]: s for s in catalog["scopes"]}

@@ -1,12 +1,12 @@
-"""Scope enforcement on the mounted tools — parity with the REST routes fronted.
+"""Permission enforcement on the mounted tools — parity with the REST routes fronted.
 
 §3.2 / phase-3 item 5: each tool checks the same ``required_permissions`` the
 REST route it fronts declares, through the same ``compute_effective``
-expansion + ``org:admin`` bypass ``get_current_identity`` applies. A scope
+expansion + ``org:admin`` bypass ``get_current_identity`` applies. A permission
 failure maps exactly like the Go client's wire 403 (``mcpCoded``):
 NOT_AUTHENTICATED with the get_started pointer — except ``search_catalog``,
-whose 403 is a missing-scope fact routed to the operator (BROKER_DENIED with
-an ask-your-operator step, the Go special case).
+whose 403 is a missing-permission fact routed to the operator (BROKER_DENIED
+with an ask-your-operator step, the Go special case).
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ from jentic_one.mcp.tools import (
     CallEnv,
     dispatch_tool_call,
     require_password_current,
-    require_scopes,
+    require_permissions,
 )
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import AuthConfig, ServerConfig
@@ -51,28 +51,28 @@ def _payload(result: Any) -> dict[str, Any]:
     return decoded
 
 
-def test_require_scopes_applies_the_org_admin_bypass() -> None:
+def test_require_permissions_applies_the_org_admin_bypass() -> None:
     identity = Identity(sub="usr_1", permissions=["org:admin"], actor_type=ActorType.USER)
-    require_scopes(identity, ["apis:read"])  # must not raise
+    require_permissions(identity, ["apis:read"])  # must not raise
 
 
-def test_require_scopes_expands_effective_permissions() -> None:
+def test_require_permissions_expands_effective_permissions() -> None:
     """The same compute_effective expansion the REST dependency applies —
-    a role/bundle permission satisfies the scopes it implies."""
+    a role/bundle permission satisfies the permissions it implies."""
     identity = Identity(sub="agnt_1", permissions=["apis:read"], actor_type=ActorType.AGENT)
-    require_scopes(identity, ["apis:read"])  # direct grant passes
+    require_permissions(identity, ["apis:read"])  # direct grant passes
 
 
-def test_require_scopes_failure_is_the_coded_wire_403() -> None:
+def test_require_permissions_failure_is_the_coded_wire_403() -> None:
     identity = Identity(sub="agnt_1", permissions=[], actor_type=ActorType.AGENT)
     with pytest.raises(ToolError) as err:
-        require_scopes(identity, ["apis:read"])
+        require_permissions(identity, ["apis:read"])
     assert err.value.code == "NOT_AUTHENTICATED"
     assert "apis:read" in err.value.message
     # Lane-true prose (#1327): the stdio taxonomy points at get_started,
     # which this mount does not serve — the served prose routes through
     # whoami (which resolves here: the credential authenticated, it merely
-    # lacks scopes) and the operator.
+    # lacks permissions) and the operator.
     assert "whoami" in err.value.actionable
     assert "get_started" not in err.value.actionable
 
@@ -80,7 +80,7 @@ def test_require_scopes_failure_is_the_coded_wire_403() -> None:
 @pytest.mark.parametrize(
     ("tool", "arguments"),
     [
-        # The same scopes the REST routers declare on the routes fronted:
+        # The same permissions the REST routers declare on the routes fronted:
         # POST /search → apis:read, GET /inspect → apis:read,
         # GET /jobs/{id} → jobs:read.
         ("search_apis", {"query": "github issue"}),
@@ -88,7 +88,7 @@ def test_require_scopes_failure_is_the_coded_wire_403() -> None:
         ("get_execution_result", {"job_id": "job_1"}),
     ],
 )
-async def test_scope_failure_renders_not_authenticated(
+async def test_permission_failure_renders_not_authenticated(
     tool: str, arguments: dict[str, Any]
 ) -> None:
     result = await dispatch_tool_call(_env([]), tool, arguments)
@@ -105,7 +105,7 @@ async def test_scope_failure_renders_not_authenticated(
     assert "whoami" in payload["actionable_step"]
 
 
-async def test_search_catalog_scope_failure_is_the_operator_grant_special_case() -> None:
+async def test_search_catalog_permission_failure_is_the_operator_grant_special_case() -> None:
     """GET /catalog → capabilities:read; unlike the others this is an access
     gap the operator closes with a dashboard grant, so the mapping is
     BROKER_DENIED with an ask-your-operator step and no tool pointer. The
@@ -114,13 +114,13 @@ async def test_search_catalog_scope_failure_is_the_operator_grant_special_case()
     assert result.is_error
     payload = _payload(result)
     assert payload["error_code"] == "BROKER_DENIED"
-    # Access requests are retired: the scope grant is an operator action, not
-    # a tool call, so no next_tool pointer rides.
+    # Access requests are retired: the permission grant is an operator action,
+    # not a tool call, so no next_tool pointer rides.
     assert "next_tool" not in payload
     assert "operator" in payload["actionable_step"]
     assert "capabilities:read" in payload["actionable_step"]
     assert "capabilities:read" in payload["error"]
-    prefix, _, tail = payload["error"].partition("scope: ")
+    prefix, _, tail = payload["error"].partition("permission: ")
     assert prefix == "reading the catalog requires the capabilities:read "
     assert "http 403" in tail
 
@@ -145,10 +145,10 @@ def _expired_password_env(permissions: list[str]) -> CallEnv:
     )
 
 
-async def test_password_expired_identity_is_refused_even_with_scopes() -> None:
+async def test_password_expired_identity_is_refused_even_with_permissions() -> None:
     """Every REST route except /me refuses a must_change_password identity
     (403 password_rotation_required); the mount's tools mirror that — the
-    scope grant does not rescue the call."""
+    permission grant does not rescue the call."""
     result = await dispatch_tool_call(
         _expired_password_env(["apis:read"]), "search_apis", {"query": "github issue"}
     )

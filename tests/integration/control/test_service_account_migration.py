@@ -83,7 +83,7 @@ async def clean_tables(
             )
             for table, column in (
                 ("agent_credential_bindings", "agent_id"),
-                ("actor_scope_grants", "actor_id"),
+                ("actor_permission_grants", "actor_id"),
                 ("agent_credentials", "agent_id"),
             ):
                 await session.execute(
@@ -93,7 +93,7 @@ async def clean_tables(
                 text("DELETE FROM agents WHERE registered_by = 'system:theme8-sa-migration'")
             )
             for table, column in (
-                ("actor_scope_grants", "actor_id"),
+                ("actor_permission_grants", "actor_id"),
                 ("agent_credential_bindings", "agent_id"),
                 ("access_tokens", "actor_id"),
                 ("refresh_tokens", "actor_id"),
@@ -136,7 +136,7 @@ async def _seed_sa(
     *,
     suffix: str,
     status: str = "active",
-    scopes: tuple[str, ...] = (),
+    permissions: tuple[str, ...] = (),
     api_key_plaintext: str | None = None,
     client_secret_hash: str | None = None,
     with_tokens: bool = False,
@@ -168,17 +168,17 @@ async def _seed_sa(
                 "owner": _OWNER,
             },
         )
-        for scope in scopes:
+        for permission in permissions:
             await session.execute(
                 text(
-                    "INSERT INTO actor_scope_grants"
-                    " (id, actor_id, actor_type, scope, granted_by, created_by)"
-                    " VALUES (:id, :actor_id, 'service_account', :scope, :by, :by)"
+                    "INSERT INTO actor_permission_grants"
+                    " (id, actor_id, actor_type, permission, granted_by, created_by)"
+                    " VALUES (:id, :actor_id, 'service_account', :permission, :by, :by)"
                 ),
                 {
-                    "id": f"asg_t8m_{suffix}_{scope[:8]}",
+                    "id": f"asg_t8m_{suffix}_{permission[:8]}",
                     "actor_id": sa_id,
-                    "scope": scope,
+                    "permission": permission,
                     "by": _OWNER,
                 },
             )
@@ -203,7 +203,7 @@ async def _seed_sa(
                     token_hash=_digest(f"at_t8m_{suffix}"),
                     actor_id=sa_id,
                     actor_type="service_account",
-                    scopes=list(scopes),
+                    scopes=list(permissions),
                     token_family_id=f"tf_t8m_{suffix}",
                     expires_at=now + dt.timedelta(hours=1),
                     created_by=_OWNER,
@@ -215,7 +215,7 @@ async def _seed_sa(
                     token_hash=_digest(f"rt_t8m_{suffix}"),
                     actor_id=sa_id,
                     actor_type="service_account",
-                    scopes=list(scopes),
+                    scopes=list(permissions),
                     token_family_id=f"tf_t8m_{suffix}",
                     expires_at=now + dt.timedelta(days=7),
                     created_by=_OWNER,
@@ -251,7 +251,7 @@ async def test_active_sa_full_migration_copies_everything_and_stamps(
     sa_id = await _seed_sa(
         admin_db,
         suffix="full",
-        scopes=("capabilities:execute", "toolkit:read", "service-accounts:read"),
+        permissions=("capabilities:execute", "toolkit:read", "service-accounts:read"),
         api_key_plaintext=plaintext,
         client_secret_hash="cs-digest",
         with_tokens=True,
@@ -264,7 +264,7 @@ async def test_active_sa_full_migration_copies_everything_and_stamps(
     assert outcome.outcome == "migrated"
     agent_id = outcome.successor_agent_id
     assert agent_id is not None and agent_id.startswith("agnt_")
-    assert outcome.stored_scope_count == 2  # retired service-accounts:read not carried
+    assert outcome.stored_permission_count == 2  # retired service-accounts:read not carried
     assert outcome.credential_binding_count == 1
     assert outcome.access_tokens_revoked == 1
     assert outcome.refresh_tokens_revoked == 1
@@ -297,14 +297,14 @@ async def test_active_sa_full_migration_copies_everything_and_stamps(
     # Grant twins: stored rows only, retired scopes left behind, originals kept.
     agent_grants = await _rows(
         admin_db,
-        "SELECT scope FROM actor_scope_grants"
-        " WHERE actor_id = :id AND actor_type = 'agent' ORDER BY scope",
+        "SELECT permission FROM actor_permission_grants"
+        " WHERE actor_id = :id AND actor_type = 'agent' ORDER BY permission",
         {"id": agent_id},
     )
-    assert [r.scope for r in agent_grants] == ["capabilities:execute", "toolkit:read"]
+    assert [r.permission for r in agent_grants] == ["capabilities:execute", "toolkit:read"]
     sa_grants = await _rows(
         admin_db,
-        "SELECT scope FROM actor_scope_grants"
+        "SELECT permission FROM actor_permission_grants"
         " WHERE actor_id = :id AND actor_type = 'service_account'",
         {"id": sa_id},
     )
@@ -343,7 +343,7 @@ async def test_every_migrated_sa_has_register_grant_revoke_audit_rows(
     integration_context: Context, admin_db: DatabaseSession, seed_owner: None
 ) -> None:
     sa_id = await _seed_sa(
-        admin_db, suffix="audit", scopes=("toolkit:read",), api_key_plaintext="sak_t8m_audit"
+        admin_db, suffix="audit", permissions=("toolkit:read",), api_key_plaintext="sak_t8m_audit"
     )
 
     outcomes = await ServiceAccountMigrationService(integration_context).run()
@@ -368,7 +368,7 @@ async def test_rerun_is_noop_via_stamp_short_circuit(
     integration_context: Context, admin_db: DatabaseSession, seed_owner: None
 ) -> None:
     sa_id = await _seed_sa(
-        admin_db, suffix="idem", scopes=("toolkit:read",), api_key_plaintext="sak_t8m_idem"
+        admin_db, suffix="idem", permissions=("toolkit:read",), api_key_plaintext="sak_t8m_idem"
     )
     svc = ServiceAccountMigrationService(integration_context)
 
@@ -393,7 +393,11 @@ async def test_skip_but_stamp_revokes_outstanding_tokens_too(
     family-revoked in the stamp transaction, and the pre-drop retirement
     accepts and sweeps it (no successor to verify)."""
     sa_id = await _seed_sa(
-        admin_db, suffix="skiptok", status="pending", scopes=("toolkit:read",), with_tokens=True
+        admin_db,
+        suffix="skiptok",
+        status="pending",
+        permissions=("toolkit:read",),
+        with_tokens=True,
     )
 
     svc = ServiceAccountMigrationService(integration_context)
@@ -427,7 +431,7 @@ async def test_two_concurrent_sessions_race_one_unstamped_sa(
     the loser reports cleanly, and no partial write survives."""
     plaintext = "sak_t8m_realrace"
     sa_id = await _seed_sa(
-        admin_db, suffix="realrace", scopes=("toolkit:read",), api_key_plaintext=plaintext
+        admin_db, suffix="realrace", permissions=("toolkit:read",), api_key_plaintext=plaintext
     )
     async with admin_db.session() as session:
         rows = await ServiceAccountMigrationRepository.list_service_accounts(session)
@@ -470,11 +474,11 @@ async def test_unexpected_row_error_is_isolated_and_the_loop_continues(
     """L2: an arbitrary per-row failure (not just the two anticipated types)
     reports ``failed`` and never aborts the run for the remaining SAs."""
     poisoned = await _seed_sa(
-        admin_db, suffix="err_a", scopes=("toolkit:read",), api_key_plaintext="sak_t8m_err_a"
+        admin_db, suffix="err_a", permissions=("toolkit:read",), api_key_plaintext="sak_t8m_err_a"
     )
     healthy = await _seed_sa(admin_db, suffix="err_b", api_key_plaintext="sak_t8m_err_b")
 
-    original = ServiceAccountMigrationRepository.copy_scope_grants
+    original = ServiceAccountMigrationRepository.copy_permission_grants
 
     async def _poisoned_copy(
         session: Any, *, service_account_id: str, agent_id: str
@@ -483,7 +487,7 @@ async def test_unexpected_row_error_is_isolated_and_the_loop_continues(
             raise RuntimeError("simulated malformed row")
         return await original(session, service_account_id=service_account_id, agent_id=agent_id)
 
-    monkeypatch.setattr(ServiceAccountMigrationRepository, "copy_scope_grants", _poisoned_copy)
+    monkeypatch.setattr(ServiceAccountMigrationRepository, "copy_permission_grants", _poisoned_copy)
 
     outcomes = {
         o.service_account_id: o
@@ -501,21 +505,21 @@ async def test_unexpected_row_error_is_isolated_and_the_loop_continues(
 async def test_zero_grant_sa_yields_zero_grant_successor_and_never_pending(
     integration_context: Context, admin_db: DatabaseSession, seed_owner: None
 ) -> None:
-    """F1: raw SQL bypasses DEFAULT_AGENT_SCOPES — empty stays empty."""
+    """F1: raw SQL bypasses DEFAULT_AGENT_PERMISSIONS — empty stays empty."""
     sa_id = await _seed_sa(admin_db, suffix="zero", api_key_plaintext="sak_t8m_zero")
 
     outcomes = await ServiceAccountMigrationService(integration_context).run()
     outcome = {o.service_account_id: o for o in outcomes}[sa_id]
 
     assert outcome.outcome == "migrated"
-    assert outcome.stored_scope_count == 0
+    assert outcome.stored_permission_count == 0
     agents = await _rows(
         admin_db, "SELECT status FROM agents WHERE id = :id", {"id": outcome.successor_agent_id}
     )
     assert [r.status for r in agents] == ["active"]  # never pending (OQ-1)
     grants = await _rows(
         admin_db,
-        "SELECT scope FROM actor_scope_grants WHERE actor_id = :id",
+        "SELECT permission FROM actor_permission_grants WHERE actor_id = :id",
         {"id": outcome.successor_agent_id},
     )
     assert grants == []
@@ -524,19 +528,21 @@ async def test_zero_grant_sa_yields_zero_grant_successor_and_never_pending(
 async def test_no_successor_holds_stored_grant_row_its_sa_did_not(
     integration_context: Context, admin_db: DatabaseSession, seed_owner: None
 ) -> None:
-    await _seed_sa(admin_db, suffix="ga", scopes=("toolkit:read",), api_key_plaintext="sak_t8m_ga")
+    await _seed_sa(
+        admin_db, suffix="ga", permissions=("toolkit:read",), api_key_plaintext="sak_t8m_ga"
+    )
     await _seed_sa(admin_db, suffix="gb", api_key_plaintext="sak_t8m_gb")
 
     await ServiceAccountMigrationService(integration_context).run()
 
     excess = await _rows(
         admin_db,
-        "SELECT g.scope FROM actor_scope_grants g"
+        "SELECT g.permission FROM actor_permission_grants g"
         " JOIN service_accounts sa ON sa.migrated_to_actor_id = g.actor_id"
         " WHERE g.actor_type = 'agent'"
-        " AND NOT EXISTS (SELECT 1 FROM actor_scope_grants o"
+        " AND NOT EXISTS (SELECT 1 FROM actor_permission_grants o"
         "  WHERE o.actor_id = sa.id AND o.actor_type = 'service_account'"
-        "  AND o.scope = g.scope)",
+        "  AND o.permission = g.permission)",
         {},
     )
     assert excess == []
@@ -555,7 +561,7 @@ async def test_converted_jntc_live_key_authenticates_as_successor_with_identical
     sa_id = await _seed_sa(
         admin_db,
         suffix="resolve",
-        scopes=("capabilities:execute", "toolkit:read"),
+        permissions=("capabilities:execute", "toolkit:read"),
         api_key_plaintext=plaintext,
     )
     resolver = ApiKeyResolver(admin_db)
@@ -581,7 +587,10 @@ async def test_sak_key_never_authenticates_migrated_or_not(
     successor when there is one."""
     plaintext = f"sak_t8m_dead_{migrate}"
     sa_id = await _seed_sa(
-        admin_db, suffix=f"dead_{migrate}", scopes=("toolkit:read",), api_key_plaintext=plaintext
+        admin_db,
+        suffix=f"dead_{migrate}",
+        permissions=("toolkit:read",),
+        api_key_plaintext=plaintext,
     )
     agent_id = None
     if migrate:
@@ -639,7 +648,7 @@ async def test_disabling_the_successor_fails_closed_never_falls_back_to_active_s
     disable is 409-refused by the stamp guard)."""
     plaintext = "jntc_live_t8m_killlever"
     sa_id = await _seed_sa(
-        admin_db, suffix="killlever", scopes=("toolkit:read",), api_key_plaintext=plaintext
+        admin_db, suffix="killlever", permissions=("toolkit:read",), api_key_plaintext=plaintext
     )
     outcomes = {
         o.service_account_id: o
@@ -675,7 +684,7 @@ async def test_revoking_the_successor_key_fails_closed(
     must not resurrect the key (there is no SA fallback)."""
     plaintext = "jntc_live_t8m_revlever"
     sa_id = await _seed_sa(
-        admin_db, suffix="revlever", scopes=("toolkit:read",), api_key_plaintext=plaintext
+        admin_db, suffix="revlever", permissions=("toolkit:read",), api_key_plaintext=plaintext
     )
     outcomes = {
         o.service_account_id: o
@@ -837,7 +846,7 @@ async def test_sweep_clears_sa_satellites_and_archives(
     sa_id = await _seed_sa(
         admin_db,
         suffix="sweep",
-        scopes=("toolkit:read",),
+        permissions=("toolkit:read",),
         api_key_plaintext=plaintext,
         credential_ids=("cred_t8m_sweep",),
     )
@@ -852,7 +861,7 @@ async def test_sweep_clears_sa_satellites_and_archives(
 
     # SA-keyed originals gone, digest NULLed, row archived.
     for table, column in (
-        ("actor_scope_grants", "actor_id"),
+        ("actor_permission_grants", "actor_id"),
         ("agent_credential_bindings", "agent_id"),
     ):
         rows = await _rows(admin_db, f"SELECT id FROM {table} WHERE {column} = :id", {"id": sa_id})
@@ -912,7 +921,7 @@ async def test_pre_archived_stamped_sa_is_swept_and_sweep_is_idempotent(
         admin_db,
         suffix="prearch",
         status="archived",
-        scopes=("toolkit:read",),
+        permissions=("toolkit:read",),
         api_key_plaintext="sak_t8m_prearch",
     )
     svc = ServiceAccountMigrationService(integration_context)
@@ -923,7 +932,7 @@ async def test_pre_archived_stamped_sa_is_swept_and_sweep_is_idempotent(
     assert sa_id in first.swept
 
     # Satellites gone, digest NULLed, status still archived.
-    for table, column in (("actor_scope_grants", "actor_id"),):
+    for table, column in (("actor_permission_grants", "actor_id"),):
         rows = await _rows(admin_db, f"SELECT id FROM {table} WHERE {column} = :id", {"id": sa_id})
         assert rows == [], table
     sa_rows = await _rows(
@@ -980,7 +989,7 @@ async def test_retire_heals_post_stamp_sva_binding_inserts(
     writers bypassing the service guards) is copied onto the successor by the
     pre-drop retirement, then swept from the SA side."""
     sa_id = await _seed_sa(
-        admin_db, suffix="vbind", scopes=("toolkit:read",), api_key_plaintext="sak_t8m_vbind"
+        admin_db, suffix="vbind", permissions=("toolkit:read",), api_key_plaintext="sak_t8m_vbind"
     )
     svc = ServiceAccountMigrationService(integration_context)
     outcomes = {o.service_account_id: o for o in await svc.run()}
@@ -1021,7 +1030,7 @@ async def test_retire_migrates_unstamped_rows_and_sweeps_them(
     sa_id = await _seed_sa(
         admin_db,
         suffix="vpass",
-        scopes=("toolkit:read",),
+        permissions=("toolkit:read",),
         api_key_plaintext="sak_t8m_vpass",
         with_tokens=True,
     )
@@ -1052,7 +1061,7 @@ async def test_retire_is_idempotent(
     integration_context: Context, admin_db: DatabaseSession, seed_owner: None
 ) -> None:
     await _seed_sa(
-        admin_db, suffix="videm", scopes=("toolkit:read",), api_key_plaintext="sak_t8m_videm"
+        admin_db, suffix="videm", permissions=("toolkit:read",), api_key_plaintext="sak_t8m_videm"
     )
     svc = ServiceAccountMigrationService(integration_context)
 
@@ -1075,7 +1084,7 @@ async def test_retire_copies_post_stamp_grants_but_never_resurrects_removed_twin
     removed stays removed (not a refusal), while an SA grant created after
     the stamp is copied (the M4 post-stamp mutation, healed)."""
     sa_id = await _seed_sa(
-        admin_db, suffix="vtwin", scopes=("toolkit:read",), api_key_plaintext="sak_t8m_vtwin"
+        admin_db, suffix="vtwin", permissions=("toolkit:read",), api_key_plaintext="sak_t8m_vtwin"
     )
     svc = ServiceAccountMigrationService(integration_context)
     outcomes = {o.service_account_id: o for o in await svc.run()}
@@ -1083,12 +1092,12 @@ async def test_retire_copies_post_stamp_grants_but_never_resurrects_removed_twin
 
     async with admin_db.session() as session:
         await session.execute(
-            text("DELETE FROM actor_scope_grants WHERE actor_id = :id"), {"id": agent_id}
+            text("DELETE FROM actor_permission_grants WHERE actor_id = :id"), {"id": agent_id}
         )
         await session.execute(
             text(
-                "INSERT INTO actor_scope_grants"
-                " (id, actor_id, actor_type, scope, granted_by, created_by, created_at)"
+                "INSERT INTO actor_permission_grants"
+                " (id, actor_id, actor_type, permission, granted_by, created_by, created_at)"
                 " VALUES ('asg_t8m_late', :id, 'service_account', 'capabilities:execute',"
                 " :by, :by, :late)"
             ),
@@ -1100,9 +1109,11 @@ async def test_retire_copies_post_stamp_grants_but_never_resurrects_removed_twin
 
     assert retired.post_stamp_grants_copied == 1
     grants = await _rows(
-        admin_db, "SELECT scope FROM actor_scope_grants WHERE actor_id = :id", {"id": agent_id}
+        admin_db,
+        "SELECT permission FROM actor_permission_grants WHERE actor_id = :id",
+        {"id": agent_id},
     )
-    assert [g.scope for g in grants] == ["capabilities:execute"]
+    assert [g.permission for g in grants] == ["capabilities:execute"]
 
 
 @pytest.mark.parametrize("regenerate", [True, False], ids=["rotated", "revoked"])
@@ -1116,7 +1127,7 @@ async def test_retire_accepts_a_successor_key_rotation(
     successor's key after the stamp is not drift — the retirement passes and
     sweeps the superseded SA digest."""
     sa_id = await _seed_sa(
-        admin_db, suffix="vrot", scopes=("toolkit:read",), api_key_plaintext="sak_t8m_vrot"
+        admin_db, suffix="vrot", permissions=("toolkit:read",), api_key_plaintext="sak_t8m_vrot"
     )
     svc = ServiceAccountMigrationService(integration_context)
     outcomes = {o.service_account_id: o for o in await svc.run()}
@@ -1149,7 +1160,7 @@ async def test_retire_accepts_an_archived_successor(
     """#1416: an archived successor is terminal — a digest it no longer holds
     is superseded, not drift, even when the change carried no rotation stamp."""
     sa_id = await _seed_sa(
-        admin_db, suffix="varch", scopes=("toolkit:read",), api_key_plaintext="sak_t8m_varch"
+        admin_db, suffix="varch", permissions=("toolkit:read",), api_key_plaintext="sak_t8m_varch"
     )
     svc = ServiceAccountMigrationService(integration_context)
     outcomes = {o.service_account_id: o for o in await svc.run()}
@@ -1252,7 +1263,7 @@ async def test_migration_derives_state_from_in_transaction_reread_not_list_snaps
     come from the locked re-read, never the stale snapshot."""
     old_plaintext = "sak_t8m_stale_snapshot"
     sa_id = await _seed_sa(
-        admin_db, suffix="snap", scopes=("toolkit:read",), api_key_plaintext=old_plaintext
+        admin_db, suffix="snap", permissions=("toolkit:read",), api_key_plaintext=old_plaintext
     )
     async with admin_db.session() as session:
         rows = await ServiceAccountMigrationRepository.list_service_accounts(session)
@@ -1602,8 +1613,8 @@ async def test_retire_never_recreates_a_removed_successor_grant_or_purged_bindin
     async with admin_db.session() as session:
         await session.execute(
             text(
-                "INSERT INTO actor_scope_grants"
-                " (id, actor_id, actor_type, scope, granted_by, created_by, created_at)"
+                "INSERT INTO actor_permission_grants"
+                " (id, actor_id, actor_type, permission, granted_by, created_by, created_at)"
                 " VALUES ('asg_t8m_vgone', :id, 'service_account', 'capabilities:execute',"
                 " :by, :by, :late)"
             ),
@@ -1659,7 +1670,9 @@ async def test_retire_never_recreates_a_removed_successor_grant_or_purged_bindin
     assert (retired.post_stamp_grants_copied, retired.post_stamp_bindings_copied) == (0, 0)
     assert (
         await _rows(
-            admin_db, "SELECT scope FROM actor_scope_grants WHERE actor_id = :id", {"id": agent_id}
+            admin_db,
+            "SELECT permission FROM actor_permission_grants WHERE actor_id = :id",
+            {"id": agent_id},
         )
         == []
     )
@@ -1725,7 +1738,7 @@ async def test_sweep_revokes_sa_sessions_minted_during_the_window(
     sa_id = await _seed_sa(
         admin_db,
         suffix="ccgrant",
-        scopes=("toolkit:read",),
+        permissions=("toolkit:read",),
         api_key_plaintext="sak_t8m_ccgrant",
     )
     svc = ServiceAccountMigrationService(integration_context)
@@ -1832,11 +1845,14 @@ async def test_admin_level_grant_is_carried_over_and_reported_not_stripped(
     sa_id = await _seed_sa(
         admin_db,
         suffix="admin",
-        scopes=("capabilities:execute", "org:admin"),
+        permissions=("capabilities:execute", "org:admin"),
         api_key_plaintext="sak_t8m_admin",
     )
     plain_sa = await _seed_sa(
-        admin_db, suffix="plain", scopes=("capabilities:execute",), api_key_plaintext="sak_t8m_pl"
+        admin_db,
+        suffix="plain",
+        permissions=("capabilities:execute",),
+        api_key_plaintext="sak_t8m_pl",
     )
     svc = ServiceAccountMigrationService(integration_context)
     expected_admin = ({"scope": "org:admin", "original_granted_by": _OWNER},)
@@ -1846,7 +1862,7 @@ async def test_admin_level_grant_is_carried_over_and_reported_not_stripped(
 
     outcome = outcomes[sa_id]
     assert outcome.outcome == "migrated"
-    assert outcome.stored_scope_count == 2
+    assert outcome.stored_permission_count == 2
     assert outcome.copied_scopes == ("capabilities:execute", "org:admin")
     assert outcome.admin_level_scopes == expected_admin
     assert outcomes[plain_sa].admin_level_scopes == ()
@@ -1856,10 +1872,11 @@ async def test_admin_level_grant_is_carried_over_and_reported_not_stripped(
     # Nothing stripped: the successor holds org:admin exactly as the SA did.
     grants = await _rows(
         admin_db,
-        "SELECT scope FROM actor_scope_grants WHERE actor_id = :id AND actor_type = 'agent'",
+        "SELECT permission FROM actor_permission_grants "
+        "WHERE actor_id = :id AND actor_type = 'agent'",
         {"id": agent_id},
     )
-    assert {r.scope for r in grants} == {"capabilities:execute", "org:admin"}
+    assert {r.permission for r in grants} == {"capabilities:execute", "org:admin"}
 
     warnings = [
         log for log in logs if log["event"] == "service_account_migration_admin_scope_copied"
@@ -1891,7 +1908,7 @@ async def test_admin_level_grant_is_carried_over_and_reported_not_stripped(
     assert (retired.action, retired.swept) == ("retired", 2)
     grants_after = await _rows(
         admin_db,
-        "SELECT scope FROM actor_scope_grants WHERE actor_id = :id",
+        "SELECT permission FROM actor_permission_grants WHERE actor_id = :id",
         {"id": agent_id},
     )
-    assert {r.scope for r in grants_after} == {"capabilities:execute", "org:admin"}
+    assert {r.permission for r in grants_after} == {"capabilities:execute", "org:admin"}

@@ -486,7 +486,7 @@ def test_agent(base_url: str, admin_token: str) -> Generator[SmokeAgent]:
     agent_id, rat = register_agent(base_url, client_name, jwks)
     approve_agent(base_url, agent_id, admin_token)
     # URL/inline import (POST /apis) needs apis:write, which is deliberately
-    # not in DEFAULT_AGENT_SCOPES — an owner must approve the elevation. The
+    # not in DEFAULT_AGENT_PERMISSIONS — an owner must approve the elevation. The
     # smoke agent imports specs directly, so simulate that owner approval here.
     grant_agent_scope(base_url, agent_id, admin_token, "apis:write")
     access_token = agent_token_exchange(base_url, agent_id, private_key)

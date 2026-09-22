@@ -11,8 +11,8 @@ from jentic_one.admin.core.schema.jobs import Job
 from jentic_one.admin.core.schema.users import User
 from jentic_one.admin.scoping.filters import build_access_filters
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.auth.permission_catalog import OWNER_AGENTS_READ
 from jentic_one.shared.models import ActorType
-from jentic_one.shared.scopes import OWNER_AGENTS_READ
 
 
 def _identity(

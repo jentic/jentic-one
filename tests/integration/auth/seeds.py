@@ -12,7 +12,7 @@ import hashlib
 from base64 import urlsafe_b64encode
 
 from jentic_one.admin.repos import (
-    ActorScopeGrantRepository,
+    ActorPermissionGrantRepository,
     AgentRepository,
     OAuthClientRepository,
     UserPermissionGrantRepository,
@@ -88,11 +88,11 @@ async def seed_agent(
             status=status,
         )
         for scope in scopes:
-            await ActorScopeGrantRepository.grant(
+            await ActorPermissionGrantRepository.grant(
                 session,
                 actor_id=agent.id,
                 actor_type=ActorType.AGENT,
-                scope=scope,
+                permission=scope,
                 granted_by=owner_id,
                 created_by=SEED_MARKER,
             )

@@ -1140,8 +1140,9 @@ export const agentsHandlers = [
 		});
 		agents.unshift(row);
 		// `AgentService.create` grants the requested scopes verbatim, or the
-		// DEFAULT_AGENT_SCOPES baseline when the payload carries none — a fresh
-		// manual agent never has an empty Scopes card (shared/scopes.py).
+		// DEFAULT_AGENT_PERMISSIONS baseline when the payload carries none — a
+		// fresh manual agent never has an empty Scopes card
+		// (shared/auth/permission_catalog.py).
 		actorScopes[row.id] =
 			Array.isArray(body.scopes) && body.scopes.length > 0
 				? [...new Set(body.scopes)]

@@ -11,7 +11,7 @@ from sqlalchemy.sql.elements import ColumnElement
 from jentic_one.control.core.schema.connect_sessions import ConnectSession
 from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.shared.auth.identity import Identity
-from jentic_one.shared.scopes import (
+from jentic_one.shared.auth.permission_catalog import (
     ORG_ADMIN,
     OWNER_CREDENTIALS_READ,
 )

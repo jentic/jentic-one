@@ -57,7 +57,7 @@ class MeAgent(BaseModel):
     id: str
     name: str
     status: str
-    # Scopes the agent currently holds in `actor_scope_grants` (the source of
+    # Scopes the agent currently holds in `actor_permission_grants` (the source of
     # truth an approver grants against), so whoami reflects an approved grant
     # immediately — independent of when the presented token was minted (#673).
     scopes: list[str]

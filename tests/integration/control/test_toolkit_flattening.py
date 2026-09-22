@@ -45,7 +45,7 @@ pytestmark = pytest.mark.integration
 
 #: Revisions just below the theme-5 Phase 6b drop migrations.
 _CONTROL_PRE_DROP = "f2b3c4d5e6a7"  # pragma: allowlist secret
-_ADMIN_PRE_DROP = "c0e1f2a3b4c5"  # pragma: allowlist secret
+_ADMIN_PRE_DROP = "e3f4a5b6c7d8"  # pragma: allowlist secret
 
 _OWNER = "usr_fltest_owner"
 _AGENT_A = "agnt_fltest_a"
@@ -130,7 +130,7 @@ async def clean_tables(
                 )
             )
             await session.execute(
-                text("DELETE FROM actor_scope_grants WHERE actor_id LIKE 'sva_fltest%'")
+                text("DELETE FROM actor_permission_grants WHERE actor_id LIKE 'sva_fltest%'")
             )
             await session.execute(
                 text("DELETE FROM audit_entries WHERE actor_id = 'system:theme5-flattening'")
@@ -312,14 +312,19 @@ async def _seed_graph(control_db: DatabaseSession, admin_db: DatabaseSession) ->
             ),
             {"id": _MIGRATED_SVA, "owner": _OWNER},
         )
-        for i, scope in enumerate(("capabilities:execute", "agents:read")):
+        for i, permission in enumerate(("capabilities:execute", "agents:read")):
             await session.execute(
                 text(
-                    "INSERT INTO actor_scope_grants"
-                    " (id, actor_id, actor_type, scope, granted_by, created_by)"
-                    " VALUES (:id, :actor, 'service_account', :scope, :owner, :owner)"
+                    "INSERT INTO actor_permission_grants"
+                    " (id, actor_id, actor_type, permission, granted_by, created_by)"
+                    " VALUES (:id, :actor, 'service_account', :permission, :owner, :owner)"
                 ),
-                {"id": f"asg_fltest_{i}", "actor": _MIGRATED_SVA, "scope": scope, "owner": _OWNER},
+                {
+                    "id": f"asg_fltest_{i}",
+                    "actor": _MIGRATED_SVA,
+                    "permission": permission,
+                    "owner": _OWNER,
+                },
             )
         bindings = [
             ("atb_fltest_1", _AGENT_A, _TK_A),
@@ -471,9 +476,9 @@ async def test_flattening_creates_all_pairs_with_expected_semantics(
     assert "retire-toolkit-keys" in live_key["remediation"]
     assert "revoke the key" in live_key["remediation"]
 
-    (scopes,) = report["scope_exceeds_execute"]
-    assert scopes["actor_id"] == _MIGRATED_SVA
-    assert scopes["excess_scopes"] == ["agents:read"]
+    (grants,) = report["permission_exceeds_execute"]
+    assert grants["actor_id"] == _MIGRATED_SVA
+    assert grants["excess_permissions"] == ["agents:read"]
 
     # One audit entry per derived binding, system-actor attributed.
     async with admin_db.session() as session:
