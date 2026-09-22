@@ -3,17 +3,15 @@ import { captureConsoleErrors, createServiceAccount, uniqueSuffix } from './help
 import { provisionAdminOwnedAgent } from './agent-flow';
 
 /**
- * Agents (real backend). The Agents surface has two tabs: OAuth Agents and
- * Service accounts. On a clean DB both are empty. Service accounts can be
- * created through the public API (verified live: POST /service-accounts -> 201),
- * so this self-seeds one and asserts it surfaces in the roster — the
- * create-then-assert pattern, since the real DB has no MSW fixtures.
+ * Agents (real backend). One flat fleet with no roster and no tab switch, so the
+ * shell contract is the page's own controls plus the agent strip. Agents are
+ * created out-of-band via Dynamic Client Registration, so this asserts the list
+ * contract rather than driving a create the UI doesn't own.
  *
- * OAuth agents are created out-of-band via Dynamic Client Registration (the
- * agent self-registers), not from this admin UI, so we assert the empty/list
- * contract for that tab rather than driving a create that the UI doesn't own.
+ * Service accounts survive only as their own detail page, created through the
+ * public API — so this self-seeds one and asserts that page renders.
  */
-test('the agents surface renders its shell and tab switch', async ({ page }) => {
+test('the agents surface renders its shell', async ({ page }) => {
 	const errors = captureConsoleErrors(page);
 
 	await page.goto('/app');
@@ -23,41 +21,28 @@ test('the agents surface renders its shell and tab switch', async ({ page }) => 
 		.click();
 
 	await expect(page.getByRole('heading', { name: 'Agents', exact: true })).toBeVisible();
-	// The Agents/Service-accounts tab switch is present (segmented control).
 	// No emptiness assertion: the shared docker DB accumulates actors from
-	// other specs and reruns, so this pins the shell contract only.
-	await expect(page.getByRole('button', { name: 'Service accounts' })).toBeVisible();
+	// other specs and reruns, so this pins the shell contract only — the
+	// page-level fleet controls and the org-wide credential inventory trigger.
+	await expect(page.getByLabel('Filter agents')).toBeVisible();
+	await expect(page.getByRole('button', { name: 'New agent' })).toBeVisible();
+	await expect(page.getByRole('button', { name: 'Credentials' })).toBeVisible();
 
 	expect(errors, `unexpected console errors:\n${errors.join('\n')}`).toEqual([]);
 });
 
-test('a service account created via the API shows up in the roster', async ({ page, request }) => {
+test('a service account created via the API renders its detail page', async ({ page, request }) => {
 	const name = `e2e-sa-${uniqueSuffix()}`;
-	await createServiceAccount(request, name);
+	const id = await createServiceAccount(request, name);
 
-	await page.goto('/app/agents');
-	await expect(page.getByRole('heading', { name: 'Agents', exact: true })).toBeVisible();
+	// There is no roster to click through: the detail page is reached by URL.
+	await page.goto(`/app/agents/service-accounts/${id}`);
 
-	// Switch to the Service accounts tab where the seeded account lives.
-	await page.getByRole('button', { name: 'Service accounts' }).click();
-
-	// The freshly created SA is approved at creation (the backend approves
-	// inside the create transaction), so it renders in the fleet table.
-	await expect(page.getByText(name).first()).toBeVisible();
-});
-
-test('the service-account create sheet opens from the agents surface', async ({ page }) => {
-	await page.goto('/app/agents');
-	await page.getByRole('button', { name: 'Service accounts' }).click();
-
-	// The create affordance opens a sheet/dialog with a name field. We assert it
-	// opens (UI wiring) without submitting, to keep this spec's mutation surface
-	// limited to the API-seeded path above.
-	await page
-		.getByRole('button', { name: /new service account|create service account/i })
-		.first()
-		.click();
-	await expect(page.getByLabel('Name')).toBeVisible();
+	// The unique name in the heading is what proves the seeded account resolved
+	// from the backend; the status control beside it pins the header contract
+	// without asserting a label that depends on which control the status picks.
+	await expect(page.getByRole('heading', { name })).toBeVisible();
+	await expect(page.getByTestId('detail-status-badge').first()).toBeVisible();
 });
 
 /**

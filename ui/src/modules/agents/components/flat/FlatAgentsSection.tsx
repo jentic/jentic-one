@@ -1,18 +1,8 @@
 /**
- * FlatAgentsSection — the flat Agents surface that replaces the roster table.
- *
- * One screen: the pending-approval banner (plan §4.10 — the page's most
- * urgent job keeps top billing, naming the longest-waiting agent with a live
- * clock), the agent pill strip that selects an agent in place (pending agents
- * grouped at its head, D15), the selected agent's APIs band (its one quiet
- * meta line of access stats merged with the 7-day vitals), and its API tile
- * grid. Selection persists in `?agent=<id>` so a selected agent is
- * linkable; the per-agent console at `/agents/:id` stays alive behind this
- * surface for deep links, but every fact it holds is reachable from the dock.
- *
- * Data is client-side composition — agent → bindings → credential → the APIs
- * it serves — over reads the app already has (`GET /agents/{id}/credentials`,
- * `GET /credentials`, `GET /apis`). No new endpoints.
+ * FlatAgentsSection — the flat Agents surface: pending banner, agent strip, the
+ * selected agent's APIs band and its tile grid. Selection lives in `?agent=<id>`
+ * so it is linkable. Tiles are composed client-side from reads the app already
+ * makes — no new endpoints.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router';
@@ -101,10 +91,7 @@ interface FlatAgentsSectionProps {
 export function FlatAgentsSection({ createOpen, setCreateOpen, filter }: FlatAgentsSectionProps) {
 	const query = useAgents({ status: 'all' });
 
-	// The strip is the fleet — it has no "Load more" affordance, so drain the
-	// cursor pages eagerly until the roster is complete. The shared hook stops
-	// the drain while the query is errored (a failed page would otherwise
-	// re-fire forever); the inline notice below offers the retry.
+	// The strip is the fleet, with no "Load more", so drain the cursor eagerly.
 	const { fetchNextPage, hasNextPage, isFetchingNextPage, isError } = query;
 	useEagerCursorDrain({ hasNextPage, isFetchingNextPage, isError, fetchNextPage });
 
@@ -117,15 +104,8 @@ export function FlatAgentsSection({ createOpen, setCreateOpen, filter }: FlatAge
 		);
 	}, [query.data]);
 
-	// D10: the selected agent lives in the URL — `?agent=<id>` — so a selection
-	// survives refresh and is shareable. An unknown/absent id falls back to the
-	// first agent; when the param is ABSENT the effect below writes the fallback
-	// back into the URL, so the bare landing and the first tab click read the
-	// same and copying the URL at any moment links to what is visible.
-	// `replace`, because normalising the address is not a place the operator
-	// went — Back must still leave the page. An UNKNOWN id is left alone: right
-	// after creating an agent the param names an id the roster hasn't refetched
-	// yet, and rewriting it would clobber that selection before it can land.
+	// An ABSENT `?agent=` is written back; an UNKNOWN one is left alone — just
+	// after a create it names an agent the roster hasn't refetched yet.
 	const [searchParams, setSearchParams] = useSearchParams();
 	const agentParam = searchParams.get('agent');
 	const selected = agents.find((a) => a.id === agentParam) ?? agents[0] ?? null;
@@ -153,53 +133,52 @@ export function FlatAgentsSection({ createOpen, setCreateOpen, filter }: FlatAge
 		);
 	}
 
-	// Requirement 4: creating an agent flows straight into the Add-APIs step.
-	// The signal is the agent's ID rather than a boolean, because the new agent
-	// only becomes selectable once the invalidated roster read lands — until
-	// then `selected` is still whatever was on screen, and a boolean would open
-	// the tray over the wrong agent.
+	// The signal is the new agent's id, not a boolean: a boolean would open the
+	// tray over whichever agent was on screen before.
 	const [addApisFor, setAddApisFor] = useState<string | null>(null);
 	const clearAddApisFor = useCallback(() => setAddApisFor(null), []);
 
+	/** The unfinished Add-APIs batch per agent. Held here, not in
+	 *  `SelectedAgentPanel`, which unmounts on a tab switch. */
+	const [queueBatches, setQueueBatches] = useState<Record<string, PreflightItem[]>>({});
+	const setQueueBatchFor = useCallback((agentId: string, items: PreflightItem[]) => {
+		setQueueBatches((prev) => {
+			if (items.length === 0) {
+				if (prev[agentId] == null) return prev;
+				const { [agentId]: _dropped, ...rest } = prev;
+				return rest;
+			}
+			return { ...prev, [agentId]: items };
+		});
+	}, []);
+
 	function handleAgentCreated(agent: AgentEntity, opts: { addApis: boolean }) {
-		// Selected either way: the operator just named this agent, so the strip
-		// owes them the screen for it.
+		// Selected either way: the operator just named this agent.
 		selectAgent(agent.id);
 		setAddApisFor(opts.addApis ? agent.id : null);
 	}
 
-	// Approval keeps its prominence above the strip: the banner names the
-	// longest-waiting pending agent off the SAME cache slice the nav badge
-	// polls (plan §4.10), so removing the roster's band demotes nothing.
-	// `atLeast` rides along so the banner hedges its count while the pending
-	// drain is incomplete — same honesty contract as the badge's "N+".
+	// Same cache slice the nav badge polls; `atLeast` hedges an incomplete drain.
 	const { agents: pendingAgents, atLeast: pendingAtLeast } = usePendingAgents();
 	const approve = useApproveAgent();
 	const deny = useDenyAgent();
 	const disable = useDisableAgent();
 	const archive = useArchiveAgent();
 	const [confirm, setConfirm] = useState<PendingConfirm>(null);
-	// The dock's sheet surfaces (API key / activity / permissions / MCP /
-	// settings — all agent-scoped, D20; the org-wide credential inventory
-	// mounts from the page header instead). One slot: opening a surface
-	// replaces the previous one, so two sheets can never stack from the dock
-	// itself.
+	// The dock's agent-scoped sheets. One slot, so two can never stack.
 	const [dockSurface, setDockSurface] = useState<AgentDockSurface | null>(null);
 
-	// D10: the API access sidebar's state is EPHEMERAL — no URL param — but
-	// held HERE as one piece of state (the clicked tile's key) so a future
-	// URL contract (risk O3, e.g. `?api=<key>`) is one wiring change, not a
-	// refactor. Selecting a different agent closes it (the effect below
-	// covers strip clicks, banner reviews, and history navigation alike).
+	// The open tile's key. Selecting another agent closes the sidebar.
 	const [openTileKey, setOpenTileKey] = useState<string | null>(null);
 	const selectedId = selected?.id ?? null;
 	useEffect(() => {
 		setOpenTileKey(null);
+		// Each sheet is handed `agent={selected}`, so one left open across a tab
+		// switch would re-point at the new agent.
+		setDockSurface(null);
 	}, [selectedId]);
 
-	// Composition sources shared by the strip (gap hints) and the tile grid —
-	// drained to EVERY page, because the join is over the whole workspace: a
-	// first-page-only list silently mis-renders any credential/API past page 1.
+	// Drained to EVERY page: the join is over the whole workspace.
 	const credentialsSource = useAllCredentials();
 	const apisSource = useAllApis();
 	const credentials = credentialsSource.items;
@@ -209,11 +188,8 @@ export function FlatAgentsSection({ createOpen, setCreateOpen, filter }: FlatAge
 		[agents],
 	);
 	const bindingsByAgent = useAgentsCredentialBindings(agentIds);
-	// Honesty gating (see SelectedAgentPanel for the grid's version): the
-	// "N to set up" pill hint is a claim about the WHOLE credential list — a
-	// partial (still-draining or failed) list can only miss awaiting-consent
-	// credentials, so until the drain completes the strip shows no hints at
-	// all rather than a wrong count.
+	// The "N to set up" hint is a claim about the WHOLE credential list, so no
+	// hints until the drain completes.
 	const setupGaps = useMemo(() => {
 		const map = new Map<string, number>();
 		if (!credentialsSource.complete) return map;
@@ -223,11 +199,8 @@ export function FlatAgentsSection({ createOpen, setCreateOpen, filter }: FlatAge
 		return map;
 	}, [agentIds, bindingsByAgent, credentials, credentialsSource.complete]);
 
-	// The count on each tab: how many APIs that agent reaches. Same honesty
-	// gate as the grid it summarises — the join needs the WHOLE API registry
-	// (a partial one resolves fewer wildcards, so the figure could only be
-	// low), and an agent whose bindings haven't landed gets no entry at all,
-	// which the strip renders as no count rather than a zero.
+	// Each tab's count needs the whole API registry (a partial one resolves fewer
+	// wildcards); an agent with no entry renders no count.
 	const apiCounts = useMemo(() => {
 		const map = new Map<string, number>();
 		if (!apisSource.complete) return map;
@@ -239,24 +212,42 @@ export function FlatAgentsSection({ createOpen, setCreateOpen, filter }: FlatAge
 		return map;
 	}, [agentIds, bindingsByAgent, apisSource.complete, apisSource.items]);
 
-	// A failed FIRST page is a dead surface; a failed LATER page must keep the
-	// loaded fleet rendered (the drain has stopped — the inline notice below
-	// offers the retry that resumes it).
-	if (query.error && !query.data) return <ErrorAlert message={query.error as Error} />;
+	// Rendered by every branch below: the header's "New agent" flips `createOpen`
+	// from outside, and a loading roster would otherwise swallow the click.
+	const createSheet = (
+		<AgentCreateSheet
+			open={createOpen}
+			onClose={() => setCreateOpen(false)}
+			onCreated={handleAgentCreated}
+		/>
+	);
+
+	// A failed FIRST page is a dead surface; a failed LATER page keeps the loaded
+	// fleet on screen, with the inline notice below offering the retry.
+	if (query.error && !query.data) {
+		return (
+			<>
+				<ErrorAlert message={query.error as Error} />
+				{createSheet}
+			</>
+		);
+	}
 
 	if (query.isPending) {
 		return (
-			<div role="status" aria-live="polite" aria-busy="true" className="space-y-6">
-				<span className="sr-only">Loading agents…</span>
-				{/* Shaped like the tab rail it becomes, so the first paint
-				    doesn't reflow the page under the operator. */}
-				<Skeleton className="h-11 w-full max-w-md rounded-lg" />
-				<div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
-					{[0, 1, 2].map((i) => (
-						<Skeleton key={i} className="h-44 rounded-xl" />
-					))}
+			<>
+				<div role="status" aria-live="polite" aria-busy="true" className="space-y-6">
+					<span className="sr-only">Loading agents…</span>
+					{/* Shaped like the tab rail, so the first paint doesn't reflow. */}
+					<Skeleton className="h-11 w-full max-w-md rounded-lg" />
+					<div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
+						{[0, 1, 2].map((i) => (
+							<Skeleton key={i} className="h-44 rounded-xl" />
+						))}
+					</div>
 				</div>
-			</div>
+				{createSheet}
+			</>
 		);
 	}
 
@@ -275,11 +266,7 @@ export function FlatAgentsSection({ createOpen, setCreateOpen, filter }: FlatAge
 					}
 				/>
 				<DcrQuickstart />
-				<AgentCreateSheet
-					open={createOpen}
-					onClose={() => setCreateOpen(false)}
-					onCreated={handleAgentCreated}
-				/>
+				{createSheet}
 			</>
 		);
 	}
@@ -329,14 +316,14 @@ export function FlatAgentsSection({ createOpen, setCreateOpen, filter }: FlatAge
 					approvePending={approve.isPending && approve.variables === selected.id}
 					autoOpenAddApis={addApisFor === selected.id}
 					onAutoOpenAddApisConsumed={clearAddApisFor}
+					queueBatch={queueBatches[selected.id] ?? EMPTY_BATCH}
+					onQueueBatchChange={setQueueBatchFor}
 				/>
 			)}
 
 			{selected && (
 				<>
-					{/* Plan §4.2: the selected agent's verbs live in the fixed
-					    bottom dock. Approve shares the panel banner's mutation,
-					    so both affordances go in-flight together (per-id). */}
+					{/* Approve shares the panel banner's mutation, so both go in-flight together. */}
 					<AgentDock
 						agent={selected}
 						onOpenSurface={setDockSurface}
@@ -373,7 +360,7 @@ export function FlatAgentsSection({ createOpen, setCreateOpen, filter }: FlatAge
 						onArchive={() =>
 							setConfirm({ kind: 'archive', id: selected.id, name: selected.name })
 						}
-						archivePending={archive.isPending}
+						archivePending={archive.isPending && archive.variables === selected.id}
 					/>
 				</>
 			)}
@@ -385,11 +372,7 @@ export function FlatAgentsSection({ createOpen, setCreateOpen, filter }: FlatAge
 				disableBody="Disabling immediately revokes this agent's ability to authenticate. You can re-enable it later."
 				mutations={{ deny, disable, archive }}
 			/>
-			<AgentCreateSheet
-				open={createOpen}
-				onClose={() => setCreateOpen(false)}
-				onCreated={handleAgentCreated}
-			/>
+			{createSheet}
 		</>
 	);
 }
@@ -399,15 +382,8 @@ export function FlatAgentsSection({ createOpen, setCreateOpen, filter }: FlatAge
 // ---------------------------------------------------------------------------
 
 /**
- * Copy for the non-active banner: the state as a headline, what it means as a
- * quiet second line. Suspension stops traffic, not editing — so the copy says
- * "not serving traffic", never "read-only".
- *
- * `disabled` has NO banner. It is the one non-active state that carries no
- * information a notice could add: the tile family reads not-serving on its own
- * (dashed, `Not serving` chips) and the dock's red toggle is both the statement
- * and the way back. The three states that stay are the ones with something to
- * say — a decision to take, a reason to read, a sweep to explain.
+ * Copy for the non-active banner. Suspension stops traffic, not editing.
+ * `disabled` has no banner — the tile family and the dock's red toggle say it.
  */
 const NON_ACTIVE_COPY: Record<BanneredStatus, { title: string; detail: string }> = {
 	pending: {
@@ -427,21 +403,7 @@ const NON_ACTIVE_COPY: Record<BanneredStatus, { title: string; detail: string }>
 /** The non-active states that still warrant a banner (see `NON_ACTIVE_COPY`). */
 type BanneredStatus = Exclude<ActorStatus, 'active' | 'disabled'>;
 
-/**
- * Per-state banner treatment (D8/D9): the states must never read identically,
- * so each carries its own icon and tint — urgency for the one that wants a
- * decision, danger for the refusal, quiet grey for the one that is simply
- * retired. The copy above still says "not serving traffic", never "read-only":
- * the tint is about attention, not editability.
- *
- * The tint is carried by the icon's own chip rather than washed across the
- * whole row, so the banner reads as a titled notice on the page surface
- * instead of a coloured slab.
- *
- * Only the tint is local: the glyph comes from the shared `STATUS_ICON`
- * vocabulary, so the same state can't be a clock here and something else on the
- * tab that selected it.
- */
+/** Per-state banner tint — about attention, not editability. */
 const NON_ACTIVE_BANNER: Record<BanneredStatus, { shell: string; chip: string }> = {
 	pending: {
 		shell: 'border-warning/40 bg-warning/[0.04]',
@@ -457,10 +419,7 @@ const NON_ACTIVE_BANNER: Record<BanneredStatus, { shell: string; chip: string }>
 	},
 };
 
-/**
- * The notice above the grid for a state that has something to say: what the
- * state is, what it means for traffic, and — for pending — the decision itself.
- */
+/** The notice above the grid — and, for pending, the decision itself. */
 function StateBanner({
 	status,
 	denialReason,
@@ -483,8 +442,6 @@ function StateBanner({
 				shell,
 			)}
 		>
-			{/* The tint lives in the chip, which gives the icon a size worth
-			    seeing and keeps the row itself close to the page surface. */}
 			<span
 				aria-hidden="true"
 				className={cn('grid h-8 w-8 shrink-0 place-items-center rounded-lg', chip)}
@@ -510,13 +467,8 @@ function StateBanner({
 }
 
 /**
- * Copy for an agent that reaches no API yet, per state.
- *
- * "No APIs" means something different in each state, and the generic line —
- * an identity that authenticates and fails every call — is only true of an
- * agent that is actually serving. Saying it of a pending or disabled agent
- * tells the operator the bind is the missing piece when approval or enabling
- * is.
+ * Copy for an agent that reaches no API yet, per state. The generic line is only
+ * true of an agent that is actually serving.
  */
 const NO_APIS_COPY: Record<ActorStatus, string> = {
 	active: 'This agent has an identity and can authenticate, but no credential is bound — so every call it makes will fail. Add the APIs it needs.',
@@ -534,18 +486,23 @@ interface SelectedAgentPanelProps {
 	credentialsSource: DrainedList<Credential>;
 	/** Drained workspace API registry (join source for the tiles). */
 	apisSource: DrainedList<ApiResponse>;
-	/** The API access sidebar's centralized state (D10) — the open tile's
-	 * key, owned by FlatAgentsSection so a URL contract can be added later. */
+	/** The open tile's key. */
 	openTileKey: string | null;
 	onOpenTile: (key: string) => void;
 	onCloseTile: () => void;
 	onApprove: () => void;
 	approvePending: boolean;
-	/** This agent was just created and its APIs are the next step (requirement 4). */
+	/** This agent was just created and its APIs are the next step. */
 	autoOpenAddApis: boolean;
 	/** Spend the signal, so re-selecting this agent later does not reopen the tray. */
 	onAutoOpenAddApisConsumed: () => void;
+	/** Owned by the parent, because this panel remounts on every agent switch. */
+	queueBatch: PreflightItem[];
+	onQueueBatchChange: (agentId: string, items: PreflightItem[]) => void;
 }
+
+/** Stable empty batch, so an agent with nothing pending doesn't re-render. */
+const EMPTY_BATCH: PreflightItem[] = [];
 
 /** DOM id of the API access sidebar panel (the tiles' aria-controls target). */
 const API_ACCESS_SIDEBAR_ID = 'api-access-sidebar';
@@ -561,27 +518,18 @@ function SelectedAgentPanel({
 	approvePending,
 	autoOpenAddApis,
 	onAutoOpenAddApisConsumed,
+	queueBatch,
+	onQueueBatchChange,
 }: SelectedAgentPanelProps) {
 	const reducedMotion = useReducedMotion();
-	/** Which step of the Add-APIs flow is on screen (plan §4.4). */
+	/** Which step of the Add-APIs flow is on screen. */
 	const [addStep, setAddStep] = useState<'closed' | 'tray' | 'queue'>('closed');
-	/**
-	 * The batch the tray committed, and what the queue has left of it.
-	 *
-	 * This is the flow's memory: the queue is the only way an API arrives, so an
-	 * operator who closes it half-way must not lose the rest of their picks —
-	 * re-entering resumes the remainder instead of starting over (D13).
-	 */
-	const [queueBatch, setQueueBatch] = useState<PreflightItem[]>([]);
 
 	const bindingsQuery = useAgentCredentialBindings(agent.id);
 	const bindings = bindingsQuery.data;
 
-	// Pause/resume for the tiles' own controls — instantiated ONCE for the
-	// whole grid (a mutation per tile would multiply identical caches) and
-	// keyed back to a tile by the credential the in-flight call names. The
-	// suspend path is `unbind` WITHOUT `purge`: the binding and its rules
-	// survive, which is what makes the verb reversible.
+	// One mutation for the whole grid, keyed back to a tile by the credential the
+	// in-flight call names. Suspend is `unbind` WITHOUT `purge`, so it reverses.
 	const suspendBinding = useUnbindAgentCredential(agent.id);
 	const resumeBinding = useResumeAgentCredentialBinding(agent.id);
 	const pendingBindingCredentialId =
@@ -600,20 +548,12 @@ function SelectedAgentPanel({
 	);
 	const stats = useMemo(() => tileStats(tiles), [tiles]);
 
-	// Monitor enrichment for the stat strip — the SAME per-actor reads the
-	// console header's KPI strip makes (7-day usage rollup + the newest
-	// execution). Both are keyed per agent id with a 30s staleTime (see the
-	// hooks), so flipping between agents replays from cache instead of
-	// refetch-storming, and both resolve `null` on 403 — the strip simply
-	// omits those figures for non-admins.
+	// The same per-actor read the console's KPI strip makes; `null` on 403.
 	const usageQuery = useActorUsageDetail(agent.id);
 	const executionsQuery = useActorExecutions(agent.id);
 
-	// The sidebar's tile, resolved LIVE from the current composition so
-	// suspend/resume/rule changes reflect immediately. A stale key (its tile
-	// unbound from another surface) closes the sidebar rather than pinning a
-	// ghost — only once the bindings have loaded, so a refetch flicker can't
-	// slam it shut.
+	// Resolved live from the current composition, so suspend/resume shows at once.
+	// A key with no tile closes the sidebar, but only once bindings have loaded.
 	const openTile =
 		openTileKey != null ? (tiles.find((t) => t.key === openTileKey) ?? null) : null;
 	useEffect(() => {
@@ -632,33 +572,20 @@ function SelectedAgentPanel({
 		[openTile, tiles],
 	);
 
-	// Honesty gating: a grid joined against a PARTIAL credential/API list
-	// asserts states it can't prove — an awaiting-consent credential on a
-	// later page renders wrongly solid, an imported API falls into the "not
-	// imported" fallback, the "To set up" stat undercounts. Design choice:
-	// hold the grid in the existing loading skeleton while either source is
-	// still draining (the common one-page workspace completes in the same
-	// round-trip as the bindings read, so the fast path stays fast), and when
-	// a drain FAILED show the compact inline retry notice instead of
-	// silently-wrong tiles. An agent with no bindings skips the gate — there
-	// are no tiles to be wrong about.
+	// A grid joined against a PARTIAL list asserts states it can't prove: hold the
+	// skeleton while either source drains. No bindings, no gate.
 	const hasBindings = (bindings?.length ?? 0) > 0;
 	const sourcesError = credentialsSource.error ?? apisSource.error;
 	const sourcesDraining = !sourcesError && (!credentialsSource.complete || !apisSource.complete);
 
-	// Strip figures under the SAME honesty gate as the grid: the tile-derived
-	// numbers are only claimed once the drained join can prove them
-	// (`undefined` = still loading → skeleton; `null` = failed → em-dash).
-	// A bindings-less agent (archived: swept; pending: none yet) skips the
-	// drain gate exactly like the grid does and renders honest zeros.
+	// `undefined` = still loading → skeleton; `null` = failed → em-dash. A
+	// bindings-less agent skips the drain gate and renders honest zeros.
 	const bindingsFailed = Boolean(bindingsQuery.error);
 	const joinFailed = bindingsFailed || (hasBindings && Boolean(sourcesError));
 	const joinLoading =
 		!joinFailed && (bindingsQuery.isPending || (hasBindings && sourcesDraining));
 	const stripAccess = joinLoading ? undefined : joinFailed ? null : stats;
-	// The heading's figure is the grid's own length — so the number beside
-	// "APIs" is always exactly what is on screen, and is withheld (not guessed)
-	// while the join is loading or has failed.
+	// The grid's own length, so the number beside "APIs" is what is on screen.
 	const apiCount = joinLoading || joinFailed ? null : tiles.length;
 	const stripCredentialCount = bindingsQuery.isPending
 		? undefined
@@ -675,15 +602,13 @@ function SelectedAgentPanel({
 				? null
 				: { at: executionsQuery.data.items[0]?.startedAt ?? null };
 
-	// Serving is the tile family's own state, and `disabled` says it there rather
-	// than in a banner (see `NON_ACTIVE_COPY`).
+	// `disabled` says it in the tile family rather than a banner.
 	const serving = agent.status === 'active';
 	const bannerStatus: BanneredStatus | null =
 		agent.status === 'active' || agent.status === 'disabled' ? null : agent.status;
 
 	const isArchived = agent.status === 'archived';
-	// D9: a non-active agent stays fully editable — only pending (cannot
-	// authenticate yet), rejected and archived block the bind flow.
+	// Only pending (cannot authenticate yet), rejected and archived block binding.
 	const canBind = agent.status === 'active' || agent.status === 'disabled';
 	const bindBlockedReason =
 		agent.status === 'pending'
@@ -694,22 +619,13 @@ function SelectedAgentPanel({
 					? 'An archived agent cannot be given APIs.'
 					: null;
 
-	// Re-entry lands back on the queue when a batch is still owed, because those
-	// picks and their preflight are already decided — the tray would only ask the
-	// operator to choose them a second time.
+	// Re-entry lands on the queue while a batch is owed — those picks are decided.
 	const openAddApis = (): void => setAddStep(queueBatch.length > 0 ? 'queue' : 'tray');
 
-	// `a` is the surface's one creative shortcut (the page's help panel lists
-	// it). Bound only while the verb is actually available, so it
-	// never fires a no-op on an agent that cannot be given APIs, and never
-	// stacks a second tray over the one already open.
+	// Bound only while the verb is available, so it never fires a no-op.
 	useHotkey('a', openAddApis, canBind && addStep === 'closed');
 
-	// Requirement 4: the tray opens by itself on the agent that was just
-	// created, so "create" and "give it APIs" read as one flow rather than two
-	// screens the operator has to rejoin. The signal is spent on arrival —
-	// re-selecting this agent tomorrow must not reopen the tray — and a freshly
-	// created agent owes no queue batch, so the tray is always the right step.
+	// The signal is spent on arrival, so re-selecting the agent won't reopen it.
 	useEffect(() => {
 		if (!autoOpenAddApis) return;
 		onAutoOpenAddApisConsumed();
@@ -738,17 +654,8 @@ function SelectedAgentPanel({
 			transition={{ duration: 0.18, ease: 'easeOut' }}
 			className="space-y-4"
 		>
-			{/* Identity lives in the strip's selected tab and the APIs band
-			    below — the header repeats neither (the owner's 4×-name
-			    critique), so the agent's own description is all it carries.
-			    The section's aria-label still names the agent.
-
-			    ONE line until asked: this is free text of any length sitting
-			    between the selector and the content, so laying it out in full
-			    pushes the grid down by however much the operator typed — the
-			    same class of defect as a tile whose height depends on its state.
-			    `Show more` hands that choice to the reader instead, and the
-			    dock's Settings sheet still holds (and edits) the full text. */}
+			{/* Identity lives in the selected tab and the APIs band, so the header carries
+			    only the description — one line until asked. */}
 			{agent.description && (
 				<ExpandableText lines={1} className="text-muted-foreground text-sm">
 					{agent.description}
@@ -764,11 +671,6 @@ function SelectedAgentPanel({
 				/>
 			)}
 
-			{/* One band for the whole API story: the heading carries the number
-			    that matters (how many APIs this agent reaches) and the verb that
-			    changes it, with the supporting vitals as one quiet line beneath
-			    — instead of a board of six figures that all read `0` on a fresh
-			    agent. The agent's name is stated once, by the selected tab. */}
 			<div className="space-y-2">
 				<div className="flex flex-wrap items-center justify-between gap-2">
 					<h2 className="flex items-baseline gap-1.5 text-sm font-medium">
@@ -814,9 +716,6 @@ function SelectedAgentPanel({
 				/>
 			) : tiles.length === 0 ? (
 				<Card className="border-dashed p-6">
-					{/* The band above states the surface; this states the state,
-					    naming the agent so the sentence stands on its own. The
-					    verb lives in the band — it is not repeated here. */}
 					<h3 className="text-sm font-semibold">{agent.name} can reach nothing yet</h3>
 					<p className="text-muted-foreground mt-2 max-w-prose text-sm">
 						{NO_APIS_COPY[agent.status]}
@@ -825,11 +724,8 @@ function SelectedAgentPanel({
 			) : (
 				<div
 					className={cn(
-						// D8: a non-active agent's TILE FAMILY is what reads inactive
-						// — dashed and recessed per tile (see `ApiTile`), desaturated
-						// as a set so the vendor marks grey out with it. The band, its
-						// verb and the dock stay full strength, and every control here
-						// stays clickable: not serving is not read-only.
+						// A non-active agent's TILE FAMILY is what reads inactive. The band,
+						// its verb and the dock stay full strength and clickable.
 						!serving && 'saturate-[.35]',
 					)}
 				>
@@ -854,10 +750,8 @@ function SelectedAgentPanel({
 				</div>
 			)}
 
-			{/* Plan §4.4, two steps: pick the whole set with its cost on screen,
-			    then finish each one. The tray keeps its own draft across a
-			    dismissal, so it stays mounted; the queue is mounted only while it
-			    owns a batch. */}
+			{/* The tray keeps its draft across a dismissal so it stays mounted; the queue
+			    mounts only while it owns a batch. */}
 			{canBind && (
 				<>
 					<AddApisTray
@@ -867,7 +761,7 @@ function SelectedAgentPanel({
 						agentName={agent.name}
 						bindings={bindings ?? []}
 						onContinue={(items) => {
-							setQueueBatch(items);
+							onQueueBatchChange(agent.id, items);
 							setAddStep('queue');
 						}}
 					/>
@@ -878,7 +772,7 @@ function SelectedAgentPanel({
 							agentName={agent.name}
 							items={queueBatch}
 							onClose={(remaining) => {
-								setQueueBatch(remaining);
+								onQueueBatchChange(agent.id, remaining);
 								setAddStep('closed');
 							}}
 						/>
@@ -886,7 +780,6 @@ function SelectedAgentPanel({
 				</>
 			)}
 
-			{/* Plan §4.5: everything about one tile's access, in one panel. */}
 			<ApiAccessSidebar
 				agent={agent}
 				tile={openTile}

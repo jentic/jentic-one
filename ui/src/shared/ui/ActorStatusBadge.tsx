@@ -56,14 +56,22 @@ export const STATUS_DOT: Record<ActorStatus, string> = {
 };
 
 /**
- * Glyph per status, for the places where a coloured dot is too little to tell
- * the states apart — a tab in a rail, a notice's icon chip. Colour alone fails
- * anyone who can't see it AND anyone who hasn't learned our palette, so the
- * shape carries the meaning: a decision waiting, a refusal, a switch turned
- * off, a retirement.
- *
- * `active` has one too, but it is the quiet default almost everywhere and most
- * callers only reach in here for the non-active states.
+ * The same hues in foreground form (Tailwind text-*), for surfaces that colour a
+ * `STATUS_ICON` glyph rather than a dot. Shared so they don't pick their own:
+ * `pending` and `disabled` are adjacent warm hues, easily collapsed into one.
+ */
+export const STATUS_TINT: Record<ActorStatus, string> = {
+	pending: 'text-accent-orange',
+	active: 'text-success',
+	rejected: 'text-danger',
+	disabled: 'text-warning',
+	archived: 'text-muted-foreground/40',
+};
+
+/**
+ * Glyph per status, for places where a coloured dot is too little to tell the
+ * states apart — a tab in a rail, a notice's icon chip. Colour alone fails anyone
+ * who can't see it, so the shape carries the meaning.
  */
 export const STATUS_ICON: Record<ActorStatus, LucideIcon> = {
 	pending: Clock,

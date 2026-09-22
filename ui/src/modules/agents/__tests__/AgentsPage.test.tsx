@@ -60,10 +60,8 @@ function approvalBanner(): HTMLElement {
 	return screen.getByRole('region', { name: /Awaiting approval/i });
 }
 
-/**
- * Await the banner's arrival before touching it: its `status=pending` slice is
- * a separate query from the strip's list, so it can land a beat later.
- */
+/** Await the banner before touching it: its `status=pending` slice is a separate
+ * query from the strip's list, so it can land a beat later. */
 function findApprovalBanner(): Promise<HTMLElement> {
 	return screen.findByRole('region', { name: /Awaiting approval/i });
 }
@@ -144,7 +142,7 @@ describe('AgentsPage — flat agents surface', () => {
 
 	// --- Strip: selection, URL sync, keyboard ------------------------------
 
-	it('claims the whole page for the flat surface — no Agents/Service accounts toggle (D19)', async () => {
+	it('claims the whole page for the flat surface — no Agents/Service accounts toggle', async () => {
 		renderPage();
 		await screen.findAllByText('inbox-triage-bot');
 
@@ -172,10 +170,8 @@ describe('AgentsPage — flat agents surface', () => {
 		}
 		// One agent is always selected (tabs pattern), even before any click.
 		expect(screen.getAllByRole('tab', { selected: true })).toHaveLength(1);
-		// ONE banner above the strip names the LONGEST-waiting pending agent —
-		// the backend page is created_at DESC, so that is the LAST row
-		// (inbox-triage-bot, seeded 47m ago vs release-notes-bot's 12m) — and
-		// folds the rest into a count instead of stacking banners.
+		// ONE banner names the LONGEST-waiting pending agent — the page is created_at
+		// DESC, so that is the LAST row — and folds the rest into a count.
 		const banner = await findApprovalBanner();
 		expect(within(banner).getByText('inbox-triage-bot')).toBeInTheDocument();
 		expect(within(banner).queryByText('release-notes-bot')).not.toBeInTheDocument();
@@ -233,9 +229,8 @@ describe('AgentsPage — flat agents surface', () => {
 	});
 
 	it('writes the fallback selection into the URL on a bare landing', async () => {
-		// The address bar always names the agent on screen: landing without
-		// `?agent=` selects the first tab AND says so, so the bare landing and
-		// the first click read the same and any copied URL is a real deep link.
+		// The address bar always names the agent on screen: landing without `?agent=`
+		// selects the first tab AND says so, so any copied URL is a real deep link.
 		renderPage('/');
 		await screen.findAllByText('inbox-triage-bot');
 
@@ -254,20 +249,21 @@ describe('AgentsPage — flat agents surface', () => {
 		expect(screen.getByTestId('location-search')).toHaveTextContent('agent=agnt_active_1');
 		expect(stripTab('support-agent')).toHaveAttribute('aria-selected', 'true');
 		// The composed tile grid: workspace display names, credential lines,
-		// and the honest binding facts (1 rule vs zero-rules + suspended).
+		// and the honest binding facts (1 rule vs zero-rules + suspended). Each
+		// tile's rule count is its own read, so both are awaited — one arriving
+		// says nothing about the other.
 		expect(await screen.findByText('Slack')).toBeInTheDocument();
 		expect(screen.getByText('Slack bot token')).toBeInTheDocument();
 		expect(await screen.findByText('1 access rule')).toBeInTheDocument();
 		expect(screen.getByText('GitHub')).toBeInTheDocument();
 		expect(screen.getByText('GitHub PAT')).toBeInTheDocument();
-		expect(screen.getByText('No rules — all calls blocked')).toBeInTheDocument();
+		expect(await screen.findByText('No rules — all calls blocked')).toBeInTheDocument();
 		expect(screen.getByText('Suspended · not serving')).toBeInTheDocument();
 	});
 
 	it('says each identity once — a credential named after its API drops off the tile', async () => {
-		// The vendor mark, the title and the meta line would otherwise print the
-		// same word three times on one tile. A credential that names something
-		// else is a fact, and keeps its place.
+		// The mark, the title and the meta line would otherwise print the same word
+		// three times. A credential that names something else keeps its place.
 		resetCredentialsStore([
 			makeMockCredential({
 				credential_id: 'cred_slack_1',
@@ -303,10 +299,8 @@ describe('AgentsPage — flat agents surface', () => {
 	});
 
 	it('drops a credential named after the API’s host, not just after its title', async () => {
-		// A generically-named spec leaves the domain reaching the tile only as the
-		// host line, so the title and the host are different strings and matching
-		// the title alone lets the domain through twice. Both are the API's own
-		// identity, so a credential echoing either of them adds nothing.
+		// A generically-named spec keeps the title and the host distinct, so matching
+		// the title alone would let the host through twice.
 		resetCredentialsStore([
 			makeMockCredential({
 				credential_id: 'cred_slack_1',
@@ -384,9 +378,8 @@ describe('AgentsPage — flat agents surface', () => {
 	});
 
 	it('states its whole keyboard map in the page help, not in a permanent strip', async () => {
-		// The map is documented where the surface explains itself, so no key is a
-		// secret — and no strip across the page foot spends every operator's
-		// screen height restating what each of them reads once.
+		// The map is documented where the surface explains itself, rather than in a
+		// strip across the page foot that costs every operator screen height.
 		const user = userEvent.setup();
 		renderPage('/?agent=agnt_active_1');
 		await screen.findByText('Slack');
@@ -502,9 +495,8 @@ describe('AgentsPage — flat agents surface', () => {
 		renderPage('/?agent=agnt_active_1');
 		await screen.findByText('Slack');
 
-		// Access clauses — the same tileStats math the grid draws from:
-		// 2 usable tiles, 181 ops (the suspended GitHub binding's 912 are
-		// excluded), 2 bound credentials off the bindings list.
+		// Access clauses — the same tileStats math the grid draws from: 2 usable tiles,
+		// 181 ops (the suspended binding's 912 excluded), 2 bound credentials.
 		await waitFor(() => expect(stripFigure('configured')).toHaveTextContent('2 configured'));
 		expect(stripFigure('operations')).toHaveTextContent('181 operations');
 		expect(stripFigure('credentials')).toHaveTextContent('2 credentials');
@@ -527,9 +519,8 @@ describe('AgentsPage — flat agents surface', () => {
 
 		// The section still names the agent in the a11y tree…
 		const panel = screen.getByRole('region', { name: 'APIs for support-agent' });
-		// …while its VISIBLE heading is just the surface and its count: the
-		// selected tab already states the name, so the panel repeats neither
-		// the name nor the status.
+		// …while its VISIBLE heading is just the surface and its count: the selected
+		// tab already states the name.
 		expect(await within(panel).findByRole('heading', { name: 'APIs 2' })).toBeInTheDocument();
 		expect(
 			within(panel).queryByRole('heading', { name: 'support-agent' }),
@@ -542,9 +533,8 @@ describe('AgentsPage — flat agents surface', () => {
 	});
 
 	it('renders em-dashes when the monitor has no data and zeros without bindings', async () => {
-		// A pending agent: no bindings (honest zeros, no crash) and no usage
-		// rollup — zero executions, so success rate and last activity have
-		// nothing to judge and read as em-dashes, like the console header.
+		// A pending agent: no bindings (honest zeros) and no usage rollup, so success
+		// rate and last activity read as em-dashes.
 		renderPage('/?agent=agnt_pending_1');
 		await screen.findAllByText('inbox-triage-bot');
 
@@ -564,9 +554,8 @@ describe('AgentsPage — flat agents surface', () => {
 
 		await user.click(stripTab('legacy-scraper'));
 
-		// The disabled agent's own rollup (96 runs, 74% success) replaces the
-		// previous agent's figures — nothing lingers across the switch. Its
-		// execution feed is empty, so last activity is an honest em-dash.
+		// The disabled agent's own rollup replaces the previous agent's figures —
+		// nothing lingers across the switch; its empty feed reads as an em-dash.
 		await waitFor(() => expect(stripFigure('executions')).toHaveTextContent('96'));
 		expect(stripFigure('success-rate')).toHaveTextContent('74%');
 		// The execution feed resolves on its own request, so the last-activity
@@ -610,11 +599,11 @@ describe('AgentsPage — flat agents surface', () => {
 		renderPage('/?agent=agnt_active_1');
 		await screen.findByText('Slack');
 
-		// Free text of any length sits between the selector and the content, so
-		// it starts at one line: the grid's position is not decided by how much
-		// the operator typed. Browser mode gives real layout, so the line count
-		// is measurable rather than inferred from a class.
-		const line = screen.getByText(long);
+		// The description starts at one line, so the grid's position is not decided by
+		// how much the operator typed. Scoped: the Settings sheet holds the same text.
+		const line = within(
+			screen.getByRole('region', { name: 'APIs for support-agent' }),
+		).getByText(long);
 		const lineHeight = parseFloat(getComputedStyle(line).lineHeight);
 		expect(line.getBoundingClientRect().height).toBeLessThan(lineHeight * 2);
 
@@ -640,12 +629,12 @@ describe('AgentsPage — flat agents surface', () => {
 		await screen.findAllByText('inbox-triage-bot');
 
 		expect(await screen.findByText('legacy-scraper can reach nothing yet')).toBeInTheDocument();
-		// D9: disabled stops traffic, not editing — Add APIs stays live.
+		// Disabled stops traffic, not editing — Add APIs stays live.
 		const add = screen.getByRole('button', { name: 'Add APIs' });
 		expect(add).toBeEnabled();
 		await user.click(add);
 		// Step 1 of the flow: pick the APIs. The credential comes after, in the
-		// queue, which is why the tray says so up front (D13).
+		// queue, which is why the tray says so up front.
 		expect(await screen.findByRole('dialog', { name: 'Add APIs' })).toBeInTheDocument();
 		expect(screen.getByText(/Each API gets a credential in this flow/)).toBeInTheDocument();
 	});
@@ -655,15 +644,14 @@ describe('AgentsPage — flat agents surface', () => {
 		renderPage('/?agent=agnt_disabled_1');
 		await screen.findAllByText('inbox-triage-bot');
 
-		// Disabled is the one non-active state that carries no notice: the dock's
-		// red toggle is both the statement and the way back, and the grid says it
-		// per tile (the spec below). A banner here would only repeat them.
+		// Disabled is the one non-active state with no notice: the dock's red toggle
+		// is both the statement and the way back, and the grid says it per tile.
 		const toggle = await screen.findByTestId('dock-serving-toggle');
 		expect(toggle).toHaveTextContent('Not serving');
 		expect(screen.queryByTestId('agent-state-banner-disabled')).not.toBeInTheDocument();
 		expect(screen.queryByText(/Not serving traffic\./)).not.toBeInTheDocument();
 
-		// D9: not serving is never read-only — the toggle itself is live.
+		// Not serving is never read-only — the toggle itself is live.
 		await user.click(screen.getByRole('button', { name: /^Enable legacy-scraper/ }));
 		await waitFor(() => expect(toggle).toHaveTextContent('Serving'));
 	});
@@ -672,9 +660,8 @@ describe('AgentsPage — flat agents surface', () => {
 		renderPage();
 		await screen.findAllByText('inbox-triage-bot');
 
-		// `disabled` has no banner, so its tab is the only place the strip states
-		// it: struck through, with a glyph, because a coloured dot alone can't be
-		// read by anyone who hasn't learned the palette.
+		// `disabled` has no banner, so its tab is the only place the strip states it:
+		// struck through, with a glyph — a coloured dot alone can't be read.
 		const struck = (name: string) =>
 			getComputedStyle(within(stripTab(name)).getByText(name)).textDecorationLine;
 		expect(struck('legacy-scraper')).toContain('line-through');
@@ -693,7 +680,7 @@ describe('AgentsPage — flat agents surface', () => {
 
 	it('reads not-serving on every tile of a non-active agent, never Ready', async () => {
 		// The only fixture agent WITH bindings, handed back as disabled: the grid
-		// is what must read inactive (D8), so the tiles carry it themselves.
+		// is what must read inactive, so the tiles carry it themselves.
 		worker.use(
 			http.get('*/agents', () =>
 				HttpResponse.json({
@@ -782,7 +769,7 @@ describe('AgentsPage — flat agents surface', () => {
 		expect(screen.queryByRole('button', { name: 'Add APIs' })).not.toBeInTheDocument();
 	});
 
-	// --- Pending-approval banner (replaces the roster's band, plan §4.10) ----
+	// --- Pending-approval banner ---------------------------------------------
 
 	it('Review selects the named agent in the strip and shows its Approve panel', async () => {
 		const user = userEvent.setup();
@@ -797,7 +784,7 @@ describe('AgentsPage — flat agents surface', () => {
 
 		expect(screen.getByTestId('location-search')).toHaveTextContent('agent=agnt_pending_1');
 		expect(stripTab('inbox-triage-bot')).toHaveAttribute('aria-selected', 'true');
-		// D7: the pending agent's panel shows Add-APIs disabled with Approve adjacent.
+		// The pending agent's panel shows Add-APIs disabled with Approve adjacent.
 		expect(
 			await screen.findByText(/Not serving traffic\. Approve it to let it authenticate\./),
 		).toBeInTheDocument();
@@ -876,9 +863,8 @@ describe('AgentsPage — flat agents surface', () => {
 		renderPage();
 
 		expect(await screen.findByText('No agents yet')).toBeInTheDocument();
-		// Both routes in: self-registration below, manual creation here — and the
-		// manual one is primary, because it is the one that ends with a working
-		// agent rather than a pending one.
+		// Both routes in: self-registration below, manual creation here — manual is
+		// primary, because it ends with a working agent rather than a pending one.
 		expect(screen.getByRole('button', { name: /Create an agent/ })).toBeInTheDocument();
 		expect(screen.getByText('Register an agent from the command line')).toBeInTheDocument();
 		// Pin the real CLI flag: `jentic register` takes --url, not --base-url (#1204).
@@ -927,9 +913,8 @@ describe('AgentsPage — flat agents surface', () => {
 		expect(await screen.findByRole('tab', { name: /first-page-bot/ })).toBeInTheDocument();
 		expect(await screen.findByText(/Couldn't load the rest of the fleet/)).toBeInTheDocument();
 
-		// Regression (guarded drain): the error state must stop the eager
-		// drain, not re-fire it forever. After the failure settles, no further
-		// list calls happen — one first page + one failed second page.
+		// Regression: the error state must stop the eager drain, not re-fire it —
+		// one first page plus one failed second page, and nothing more.
 		const settledCalls = listCursors.length;
 		await new Promise((resolve) => setTimeout(resolve, 300));
 		expect(listCursors.length).toBe(settledCalls);
@@ -964,8 +949,7 @@ describe('AgentsPage — flat agents surface', () => {
 				if (url.searchParams.get('status') !== 'pending') return undefined;
 				const cursor = url.searchParams.get('cursor');
 				// Three DESC pages continuing ONE created_at sequence: the true
-				// longest-waiting agent lives on page 3 — the row the old
-				// first-page-only read could never name.
+				// longest-waiting agent lives on page 3.
 				if (cursor === null) {
 					return HttpResponse.json({
 						data: [
@@ -1048,9 +1032,8 @@ describe('AgentsPage — flat agents surface', () => {
 	});
 
 	it('renders a second-page credential with its awaiting-consent state (drained join)', async () => {
-		// The org credential list spans two pages; the OAuth credential that is
-		// still waiting for consent lives on page 2. A first-page-only join
-		// would render its tile wrongly solid with no gap hint.
+		// The credential still waiting for consent lives on page 2, so a
+		// first-page-only join would render its tile wrongly solid.
 		worker.use(
 			http.get('/credentials', ({ request }) => {
 				const cursor = new URL(request.url).searchParams.get('cursor');
@@ -1113,11 +1096,8 @@ describe('AgentsPage — flat agents surface', () => {
 	});
 
 	it('connecting from the inventory sheet clears the dashed tile and gap hint', async () => {
-		// The awaiting-consent OAuth credential lives in a mutable fixture:
-		// the mocked connect flips it, exactly like the backend callback. The
-		// list spans two pages so the cleared hint proves the DRAINED listAll
-		// join underneath the sheet — not just the sheet's own first-page
-		// query — was invalidated and refetched by the connect outcome.
+		// The mocked connect flips a mutable fixture, like the backend callback. The
+		// cleared hint proves the DRAINED join was invalidated, not just the sheet's.
 		let connected = false;
 		const stripeCred = (): Credential =>
 			makeMockCredential({
@@ -1194,7 +1174,7 @@ describe('AgentsPage — flat agents surface', () => {
 		expect(await screen.findByText(/Sign-in at stripe\.com unfinished/)).toBeInTheDocument();
 		expect(stripTab('support-agent')).toHaveTextContent('1 to set up');
 
-		// Open the page-level inventory sheet (D20: the trigger lives on the
+		// Open the page-level inventory sheet (the trigger lives on the
 		// page header, not the dock) and connect the credential.
 		await user.click(screen.getByRole('button', { name: 'Credentials' }));
 		const sheet = within(await screen.findByTestId('sheet-primitive'));
@@ -1365,9 +1345,8 @@ describe('AgentsPage — flat agents surface', () => {
 		await user.type(within(sheet).getByLabelText('Name'), 'chained-agent');
 		await user.click(within(sheet).getByRole('button', { name: 'Create and add APIs' }));
 
-		// Requirement 4: a created agent can authenticate and still fail every
-		// call it makes, so "created" is not a finished state — the tray opens on
-		// the new agent rather than leaving the operator to find it in the strip.
+		// A created agent can authenticate and still fail every call it makes, so the
+		// tray opens on it rather than leaving the operator to find it in the strip.
 		expect(await screen.findByText('Agent created')).toBeInTheDocument();
 		await waitFor(() =>
 			expect(stripTab('chained-agent')).toHaveAttribute('aria-selected', 'true'),

@@ -1,43 +1,14 @@
 /**
- * AgentStrip — the agent selector on the flat Agents surface. Selecting a tab
- * switches the surface in place (no drill-down); the page persists the
- * selection in `?agent=` so a selected agent stays linkable.
+ * AgentStrip — the agent selector on the flat Agents surface: text tabs carrying a
+ * muted API count, a lifecycle glyph, and a "· N to set up" hint while bound
+ * credentials await sign-in.
  *
- * Grammar: quiet text tabs inside one low-contrast rail — the selected tab is
- * a subtle filled slab, not a loud chip — each carrying a muted count of the
- * APIs that agent reaches. Every tab leads with its lifecycle glyph (the shared
- * `STATUS_ICON` vocabulary, so a state looks the same here as in the notice
- * about it) and a name struck through once the verdict is settled, plus a
- * "· N to set up" hint when bound credentials are still waiting on an OAuth
- * sign-in.
- *
- * It is a real `role="tablist"` with roving tabindex: arrow keys move the
- * selection (selection follows focus, the standard tabs pattern — moving
- * selection is never destructive). The filter input lives in the PAGE HEADER
- * beside the other page-level controls, so it is passed in controlled; this
- * component only applies it.
- *
- * Pending agents sit as their OWN GROUP at the head of the strip (D15): a
- * "Waiting" micro-label opens the group and a hairline divider closes it, so
- * "these are waiting on you" reads at a glance instead of being merely
- * sorted-first. The group is visual only — the tabs stay direct children of
- * the one tablist (dividers are aria-hidden), so the roving tabindex and the
- * filter traverse the whole strip unchanged; screen readers hear the state
- * from the sr-only "awaiting approval" suffix on each pending tab.
- *
- * The rail is ONE row at every width: it scrolls horizontally (snapped, no
- * mid-word truncation) rather than wrapping, so a fleet of any size costs the
- * same vertical space and the tiles below never shift down as the fleet grows.
- * A fade is drawn only on an end that actually has tabs behind it, so the fade
- * reads as "scroll this way" instead of decorating a rail that already fits.
- *
- * It also STICKS under the fixed `h-12` TopNavbar (`sticky top-12`, the app's
- * established gutter-bleeding sticky bar, growing a hairline while it is
- * pinned): the selection stays reachable while scrolling a long tile grid,
- * where the page header and its actions scroll away.
+ * Pending agents form a visual group at the head of the rail, but every tab stays a
+ * direct child of the one `role="tablist"`, which has a roving tabindex and
+ * selection following focus.
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { STATUS_ICON } from '@/shared/ui';
+import { STATUS_ICON, STATUS_TINT } from '@/shared/ui';
 import type { ActorStatus } from '@/shared/ui';
 import { cn } from '@/shared/lib/utils';
 import type { AgentEntity } from '@/modules/agents/api';
@@ -45,36 +16,27 @@ import type { AgentEntity } from '@/modules/agents/api';
 /** Width of the scroll-affordance fade at either end of the rail. */
 const FADE = '1.5rem';
 
-/** Where the rail pins: directly under the fixed `h-12` TopNavbar. Kept in sync
- * with the `sticky top-12` class below, which the pinned-state observer reads. */
+/** Where the rail pins: under the fixed `h-12` TopNavbar. In sync with the
+ * `sticky top-12` class below, which the pinned-state observer reads. */
 const STICKY_TOP = 48;
 
-/**
- * The non-active states whose verdict is in: the agent will not serve, and
- * nothing is going to change that on its own. Their tabs read struck through,
- * which is the whole point of the treatment — `pending` is still in motion, so
- * crossing it out would state the opposite of what is true.
- */
+/** Non-active states whose verdict is in: their tabs read struck through.
+ * `pending` is still in motion, so crossing it out would state the opposite. */
 const SETTLED_STATUSES: ReadonlySet<ActorStatus> = new Set<ActorStatus>([
 	'rejected',
 	'disabled',
 	'archived',
 ]);
 
-/**
- * Tint for a tab's status glyph. Quieter than the banner's chips — a rail of
- * tabs is chrome, and one saturated icon per tab would out-shout the names the
- * rail exists to list — but each state still keeps its own hue so the glyph and
- * the colour agree.
- */
-const TAB_STATUS_TINT: Record<ActorStatus, string> = {
-	pending: 'text-warning',
-	// Quietest of the five: it is on most tabs most of the time, so it marks
-	// "running" without competing with the marks that want a decision.
-	active: 'text-success/70',
-	rejected: 'text-danger/80',
-	disabled: 'text-warning/80',
-	archived: 'text-muted-foreground/60',
+/** How far the rail quiets each status glyph. Hues come from `STATUS_TINT`. */
+const TAB_STATUS_QUIETING: Record<ActorStatus, string> = {
+	// Full strength: the one state asking for a decision.
+	pending: 'opacity-100',
+	// Quietest of the five: it is on most tabs most of the time.
+	active: 'opacity-70',
+	rejected: 'opacity-80',
+	disabled: 'opacity-80',
+	archived: 'opacity-60',
 };
 
 /** The mask that fades whichever end still has tabs behind it. */
@@ -92,11 +54,10 @@ interface AgentStripProps {
 	onSelect: (id: string) => void;
 	/** Per-agent count of bound credentials that are not usable yet. */
 	setupGaps: ReadonlyMap<string, number>;
-	/** Per-agent count of reachable APIs. A missing key claims nothing — the
-	 * tab shows no count rather than a figure the join can't prove. */
+	/** Per-agent count of reachable APIs. A missing key shows no count rather
+	 * than a figure the join can't prove. */
 	apiCounts: ReadonlyMap<string, number>;
-	/** The page header's filter text (this component is the consumer, not the
-	 * owner — the input sits with the page-level controls). */
+	/** The page header's filter text (this component consumes it, not owns it). */
 	filter: string;
 }
 
@@ -121,15 +82,26 @@ export function AgentStrip({
 					(a) => a.name.toLowerCase().includes(q) || a.id.toLowerCase().includes(q),
 				)
 			: agents;
-		// D15 grouping: pending tabs always lead. The parent already sorts
-		// decisions-first, but the split is re-asserted here so the DOM order,
-		// the visual group and the arrow-key traversal can never disagree.
+		// Pending tabs lead, re-asserted here so DOM order and arrow-key traversal
+		// cannot disagree with the visual group.
 		return {
 			pending: matched.filter((a) => a.status === 'pending'),
 			rest: matched.filter((a) => a.status !== 'pending'),
 		};
 	}, [agents, filter]);
 	const ordered = useMemo(() => [...visible.pending, ...visible.rest], [visible]);
+
+	/**
+	 * Where the rail's keyboard focus sits: the selected tab while the filter still
+	 * shows it, else the first visible tab. A roving tabindex makes exactly one tab
+	 * focusable, so "the selected tab" alone would leave a filtered-out selection
+	 * with every tab at `-1` — a rail no keyboard can enter.
+	 */
+	const focusIndex = useMemo(() => {
+		const found = ordered.findIndex((a) => a.id === selectedId);
+		return found >= 0 ? found : 0;
+	}, [ordered, selectedId]);
+	const focusableId = ordered[focusIndex]?.id ?? null;
 
 	const syncEdges = useCallback(() => {
 		const scroller = scrollerRef.current;
@@ -141,8 +113,8 @@ export function AgentStrip({
 		setEdges((prev) => (prev.start === next.start && prev.end === next.end ? prev : next));
 	}, []);
 
-	// The rail's overflow changes on scroll, on resize AND as the fleet or the
-	// filter changes the tab count, so all three re-measure.
+	// Overflow changes on scroll, on resize and as the tab count changes. Counts
+	// and gap hints land later and WIDEN tabs, which the observer cannot see.
 	useEffect(() => {
 		syncEdges();
 		const scroller = scrollerRef.current;
@@ -150,17 +122,10 @@ export function AgentStrip({
 		const obs = new ResizeObserver(syncEdges);
 		obs.observe(scroller);
 		return () => obs.disconnect();
-	}, [syncEdges, ordered.length]);
+	}, [syncEdges, ordered.length, setupGaps, apiCounts]);
 
-	// The selection marker — the teal wash AND its underline — is ONE element
-	// owned by the rail, not styling on each tab: a single element can slide
-	// from the old tab to the new one, so a selection change reads as movement
-	// — the eye follows the slab to where it landed — instead of a repaint it
-	// has to go looking for. The underline is a CHILD of the sliding slab, so
-	// the two share one geometry and cannot travel at different speeds.
-	// Measured off the selected tab and re-measured when anything that can
-	// move or widen a tab changes (the roster/filter through `ordered`, the
-	// async count and setup-gap hints through their maps).
+	// The selection marker — wash and underline — is ONE element owned by the rail,
+	// so it slides from tab to tab. Re-measured when anything can move or widen one.
 	const [marker, setMarker] = useState<{
 		left: number;
 		top: number;
@@ -181,10 +146,8 @@ export function AgentStrip({
 		});
 	}, [selectedId, ordered, setupGaps, apiCounts]);
 
-	// Keep the selected tab in view: selection also arrives from elsewhere (the
-	// approval banner's Review, an `?agent=` deep link), where nothing focuses
-	// the tab. Scrolls the rail ONLY — never an ancestor, so the page keeps its
-	// own scroll position.
+	// Selection also arrives without focus (the banner's Review, an `?agent=` deep
+	// link). Scrolls the rail only, never an ancestor.
 	useEffect(() => {
 		const scroller = scrollerRef.current;
 		const tab = selectedId ? tabRefs.current.get(selectedId) : null;
@@ -197,13 +160,8 @@ export function AgentStrip({
 			scroller.scrollLeft += box.right - (rail.right - pad);
 	}, [selectedId, ordered.length]);
 
-	// Hairline once the rail is actually pinned, so a stuck rail reads as pinned
-	// rather than floating over the tiles. The bar watches ITSELF against a root
-	// inset by one pixel more than the sticky offset: while it still sits in the
-	// flow it is wholly inside that root (ratio 1), and the moment it pins at
-	// `top: 48px` the inset clips it (ratio < 1). A zero-height sentinel can't
-	// answer this — placed inside a sticky element it pins along with it and
-	// therefore never leaves the viewport.
+	// Hairline once the rail is actually pinned: the bar watches ITSELF against a
+	// root inset one pixel past the sticky offset, which clips it only when pinned.
 	useEffect(() => {
 		const bar = barRef.current;
 		if (!bar || typeof IntersectionObserver === 'undefined') return;
@@ -221,13 +179,9 @@ export function AgentStrip({
 	function handleTablistKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
 		if (ordered.length === 0) return;
 		let nextIndex: number | null = null;
-		const currentIndex = Math.max(
-			0,
-			ordered.findIndex((a) => a.id === selectedId),
-		);
-		if (e.key === 'ArrowRight') nextIndex = (currentIndex + 1) % ordered.length;
+		if (e.key === 'ArrowRight') nextIndex = (focusIndex + 1) % ordered.length;
 		else if (e.key === 'ArrowLeft')
-			nextIndex = (currentIndex - 1 + ordered.length) % ordered.length;
+			nextIndex = (focusIndex - 1 + ordered.length) % ordered.length;
 		else if (e.key === 'Home') nextIndex = 0;
 		else if (e.key === 'End') nextIndex = ordered.length - 1;
 		if (nextIndex == null) return;
@@ -255,38 +209,29 @@ export function AgentStrip({
 				type="button"
 				role="tab"
 				aria-selected={isSelected}
-				tabIndex={isSelected ? 0 : -1}
+				tabIndex={agent.id === focusableId ? 0 : -1}
 				onClick={() => onSelect(agent.id)}
 				className={cn(
-					// `relative` lifts every tab above the sliding selection marker
-					// (a positioned earlier sibling), so the slab paints BEHIND the
-					// tab's text rather than tinting it through the wash.
+					// `relative` lifts the tab above the sliding marker, which paints behind it.
 					'relative flex shrink-0 snap-start items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm whitespace-nowrap transition-colors duration-150',
 					'focus-visible:ring-ring focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:outline-none',
-					// The selected tab carries no background of its own — the rail's
-					// sliding marker (rendered once by the scroller, below) IS the
-					// wash and the underline. The tab only states its text: full
-					// strength and semibold when selected…
+					// No background of its own — the sliding marker is the wash and underline.
 					isSelected
 						? 'text-foreground font-semibold'
-						: // …and the unselected tabs have to recede for the marker to
-							// register: `--muted-foreground` is #E4EAEB in this theme,
-							// a hair off white, so it needs dimming to read as
-							// secondary at all.
+						: // Dimmed so the marker registers — `--muted-foreground` is near-white here.
 							'text-muted-foreground/65 hover:text-foreground hover:bg-muted/50',
 				)}
 			>
-				{/* Every state gets its own glyph, active included: the shape is
-				    what tells the five apart (a dot could only differ by colour,
-				    and `disabled` has no banner to fall back on), and filling the
-				    slot on every tab keeps all five labels on one left edge. */}
+				{/* Every state gets a glyph, active included: the shape tells the five apart. */}
 				<StatusIcon
 					aria-hidden="true"
-					className={cn('size-3.5 shrink-0', TAB_STATUS_TINT[agent.status])}
+					className={cn(
+						'size-3.5 shrink-0',
+						STATUS_TINT[agent.status],
+						TAB_STATUS_QUIETING[agent.status],
+					)}
 				/>
-				{/* Struck through when the name will not serve and won't change on
-				    its own. `pending` is the one non-active state still in motion,
-				    so it stays upright — the only crossing-out that would be a lie. */}
+				{/* Struck through when the name will not serve and won't change on its own. */}
 				<span className={cn(isSettled && 'line-through decoration-from-font')}>
 					{agent.name}
 				</span>
@@ -313,82 +258,76 @@ export function AgentStrip({
 			ref={barRef}
 			data-scrolled="false"
 			data-testid="agent-strip"
-			// Bleeds to the gutter edges so the blurred backdrop covers the tiles
-			// passing underneath. The border is transparent until it sticks, so
-			// pinning costs no layout shift.
+			// Bleeds to the gutter edges so the backdrop covers the tiles passing under.
+			// The border is transparent until it sticks, so pinning costs no layout shift.
 			className="-mx-page-gutter px-page-gutter bg-background/85 data-[scrolled=true]:border-border/40 sticky top-12 z-20 border-b border-transparent py-2 backdrop-blur transition-[box-shadow,border-color] data-[scrolled=true]:shadow-[0_1px_0_0_rgb(0_0_0_/0.04)]"
 		>
 			{/* The rail's own surface sits OUTSIDE the scroller, so the fade
 			    thins the tabs at an end without thinning the rail itself. */}
 			<div className="bg-muted/40 relative rounded-lg">
-				<div
-					ref={scrollerRef}
-					role="tablist"
-					aria-label="Agents"
-					onKeyDown={handleTablistKeyDown}
-					onScroll={syncEdges}
-					style={mask ? { maskImage: mask, WebkitMaskImage: mask } : undefined}
-					className={cn(
-						// `relative` anchors the sliding selection marker, which then
-						// lives in the scroll content and travels with it.
-						'relative flex min-w-0 snap-x items-center gap-0.5 overflow-x-auto px-1.5 py-1',
-						// One row at every width — the rail scrolls, it never wraps.
-						'[scrollbar-width:none] flex-nowrap [&::-webkit-scrollbar]:hidden',
-					)}
-				>
-					{/* The selection marker: the teal wash with its brand underline
-					    inside, sliding as one piece from tab to tab. First child and
-					    positioned, with the (also positioned) tabs after it in DOM
-					    order, so it paints behind their text. The underline starts at
-					    the NAME's left edge — never under the status glyph, whose job
-					    is status, not selection — so the two vocabularies keep their
-					    own pixels. Its left inset is the tab's own geometry summed:
-					    px-2.5 (10px) + the size-3.5 glyph (14px) + gap-1.5 (6px). */}
-					{marker && (
-						<span
-							aria-hidden="true"
-							data-testid="strip-selection-marker"
-							className="bg-primary/15 ring-primary/30 pointer-events-none absolute rounded-md ring-1 transition-[left,top,width,height] duration-200 ease-out motion-reduce:transition-none"
-							style={{
-								left: marker.left,
-								top: marker.top,
-								width: marker.width,
-								height: marker.height,
-							}}
-						>
-							<span className="bg-primary absolute right-2.5 bottom-0.5 left-[30px] h-0.5 rounded-full" />
-						</span>
-					)}
-					{visible.pending.length > 0 && (
-						<>
-							{/* Group opener — visual only (the sr-only tab suffix
-							    carries the state), so the tablist keeps tab-only
-							    semantics for AT. */}
+				{ordered.length > 0 && (
+					<div
+						ref={scrollerRef}
+						role="tablist"
+						aria-label="Agents"
+						onKeyDown={handleTablistKeyDown}
+						onScroll={syncEdges}
+						style={mask ? { maskImage: mask, WebkitMaskImage: mask } : undefined}
+						className={cn(
+							// `relative` anchors the sliding marker inside the scroll content.
+							'relative flex min-w-0 snap-x items-center gap-0.5 overflow-x-auto px-1.5 py-1',
+							// One row at every width — the rail scrolls, it never wraps.
+							'[scrollbar-width:none] flex-nowrap [&::-webkit-scrollbar]:hidden',
+						)}
+					>
+						{/* The selection marker, sliding as one piece. First child and positioned, so
+						    it paints behind the tabs' text; the underline starts at the NAME's left edge. */}
+						{marker && (
 							<span
 								aria-hidden="true"
-								data-testid="strip-pending-label"
-								className="text-warning flex shrink-0 items-center gap-1.5 px-1.5 text-xs font-medium"
+								data-testid="strip-selection-marker"
+								className="bg-primary/15 ring-primary/30 pointer-events-none absolute rounded-md ring-1 transition-[left,top,width,height] duration-200 ease-out motion-reduce:transition-none"
+								style={{
+									left: marker.left,
+									top: marker.top,
+									width: marker.width,
+									height: marker.height,
+								}}
 							>
-								<span className="bg-warning h-1.5 w-1.5 animate-pulse rounded-full motion-reduce:animate-none" />
-								Waiting
+								<span className="bg-primary absolute right-2.5 bottom-0.5 left-[30px] h-0.5 rounded-full" />
 							</span>
-							{visible.pending.map(renderTab)}
-							{visible.rest.length > 0 && (
+						)}
+						{visible.pending.length > 0 && (
+							<>
+								{/* Visual only — the sr-only tab suffix carries the state. */}
 								<span
 									aria-hidden="true"
-									data-testid="strip-pending-divider"
-									className="bg-border mx-1.5 h-5 w-px shrink-0 self-center"
-								/>
-							)}
-						</>
-					)}
-					{visible.rest.map(renderTab)}
-					{ordered.length === 0 && (
-						<p className="text-muted-foreground px-1.5 py-1 text-sm">
-							No agents match your filter.
-						</p>
-					)}
-				</div>
+									data-testid="strip-pending-label"
+									className="text-warning flex shrink-0 items-center gap-1.5 px-1.5 text-xs font-medium"
+								>
+									<span className="bg-warning h-1.5 w-1.5 animate-pulse rounded-full motion-reduce:animate-none" />
+									Waiting
+								</span>
+								{visible.pending.map(renderTab)}
+								{visible.rest.length > 0 && (
+									<span
+										aria-hidden="true"
+										data-testid="strip-pending-divider"
+										className="bg-border mx-1.5 h-5 w-px shrink-0 self-center"
+									/>
+								)}
+							</>
+						)}
+						{visible.rest.map(renderTab)}
+					</div>
+				)}
+				{/* Replaces the rail rather than sitting inside it: a tablist owns tabs and
+				    nothing else. `status` announces it when a keystroke empties the rail. */}
+				{ordered.length === 0 && (
+					<p role="status" className="text-muted-foreground px-3 py-2.5 text-sm">
+						No agents match your filter.
+					</p>
+				)}
 			</div>
 		</div>
 	);
