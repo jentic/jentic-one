@@ -63,7 +63,7 @@ test('a DCR-registered agent gets the identity console and can be renamed', asyn
 
 	// Console shell: KPI strip + tab set render for a real (fresh) agent.
 	await expect(page.getByRole('group', { name: 'Key metrics' })).toBeVisible();
-	for (const tab of ['Overview', 'Activity', 'Access', 'Keys', 'Settings']) {
+	for (const tab of ['Overview', 'Activity', 'Keys', 'MCP', 'Settings']) {
 		await expect(page.getByRole('tab', { name: tab })).toBeVisible();
 	}
 

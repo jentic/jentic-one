@@ -236,7 +236,10 @@ describe('AgentsPage — flat agents surface', () => {
 
 		// First tab is the newest pending agent (decisions first, newest first).
 		expect(stripTab('release-notes-bot')).toHaveAttribute('aria-selected', 'true');
-		expect(screen.getByTestId('location-search')).toHaveTextContent('agent=agnt_pending_2');
+		// The fallback is written by an effect, so it lands a render after the tab.
+		await waitFor(() =>
+			expect(screen.getByTestId('location-search')).toHaveTextContent('agent=agnt_pending_2'),
+		);
 	});
 
 	it('selecting a pill switches the surface in place and writes ?agent=', async () => {
