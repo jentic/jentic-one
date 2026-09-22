@@ -3,9 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Response containing an agent's current scopes.
+ * Request body for replacing an agent's permissions.
  */
-export type AgentScopesResponse = {
-    scopes: Array<string>;
+export type AgentPermissionsRequest = {
+    permissions: Array<string>;
 };
 

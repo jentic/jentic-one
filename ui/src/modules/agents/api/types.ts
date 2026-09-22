@@ -211,7 +211,7 @@ export interface ApiKeyHistoryEntry {
 
 /**
  * A platform permission from the catalogue (`GET /permissions`). These are the
- * scope vocabulary that actor `scopes` draw from — distinct from the OAuth2
+ * vocabulary that actor `permissions` draw from — distinct from the OAuth2
  * provider scopes the credentials picker uses. `grantableByCaller` is false for
  * permissions the current operator lacks the authority to grant.
  */

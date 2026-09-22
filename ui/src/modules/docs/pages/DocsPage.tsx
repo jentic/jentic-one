@@ -5,7 +5,7 @@
  * the reader from "what is this" to the raw API reference, in narrative order:
  *
  *   Get started — Overview · Installation · Quickstart
- *   Concepts    — Architecture · Permissions & scopes
+ *   Concepts    — Architecture · Permissions
  *   Reference   — CLI · API reference
  *
  * The API reference is the LAST destination, not the front door — this is the
@@ -49,7 +49,7 @@ const SUB_IDS = DOCS_SECTIONS.flatMap((s) => s.children?.map((c) => c.id) ?? [])
  *  the control-plane reference's (both reuse ApiReferenceView). */
 const BROKER_ANCHOR_PREFIX = 'broker';
 
-/** The Broker is authed solely by bearer token and has no scope/actor rows, so
+/** The Broker is authed solely by bearer token and has no permission/actor rows, so
  *  it renders with an empty reference payload — the spec carries everything. */
 const EMPTY_REFERENCE: ReferencePayload = {
 	schema: '',
@@ -247,13 +247,13 @@ export default function DocsPage() {
 
 					{/* API reference — native, rendered from our own data so it shares
 				    the page's theme, rail, and scroll-spy. The reference payload is
-				    the spine (authoritative scopes/actors); the OpenAPI spec enriches
+				    the spine (authoritative permissions/actors); the OpenAPI spec enriches
 				    each operation with parameters and responses. */}
 					<DocsSectionBlock
 						id="api"
 						title="API reference"
 						icon={BookOpen}
-						intro="Every operation on this instance, with the scopes it requires up front. Filter by path, method, or scope; the index on the left tracks where you are."
+						intro="Every operation on this instance, with the permissions it requires up front. Filter by path, method, or permission; the index on the left tracks where you are."
 					>
 						<ApiReferenceView
 							payload={data.reference}

@@ -13,9 +13,9 @@ export type MeAgent = {
     id: string;
     name: string;
     parent_agent_id?: (string | null);
-    scopes: Array<string>;
+    permissions: Array<string>;
     status: string;
-    token_scopes: Array<string>;
+    token_permissions: Array<string>;
     toolkit_bindings: Array<ToolkitBindingEntry>;
     type?: string;
 };

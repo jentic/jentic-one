@@ -3,9 +3,9 @@
  *
  * The only backend access path for the docs page: the page calls this hook,
  * which calls the repository (`./client`). It fetches the OpenAPI document and
- * the canonical scope reference in parallel and returns them side-by-side. The
- * native API reference renders the spec directly and joins each operation to
- * its scope/actor data from the reference payload.
+ * the canonical permission reference in parallel and returns them side-by-side.
+ * The native API reference renders the spec directly and joins each operation to
+ * its permission/actor data from the reference payload.
  */
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -26,7 +26,7 @@ export const docsKeys = {
 export interface DocsBundle {
 	/** The OpenAPI document, rendered natively by the API reference. */
 	spec: OpenApiDocument;
-	/** The raw scope/actor reference payload that enriches each operation. */
+	/** The raw permission/actor reference payload that enriches each operation. */
 	reference: ReferencePayload;
 }
 
@@ -38,11 +38,11 @@ export interface UseDocsResult {
 }
 
 /**
- * Fetch the spec + scope reference.
+ * Fetch the spec + permission reference.
  *
  * The reference endpoint may be absent on an older server (it shipped in #602):
  * if it fails, we surface the error so the page can show a graceful notice
- * rather than silently dropping the scope panel. The spec is static for the
+ * rather than silently dropping the permission panel. The spec is static for the
  * process lifetime, so a long staleTime is fine.
  */
 export function useDocs(): UseDocsResult {

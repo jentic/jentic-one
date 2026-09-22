@@ -3,8 +3,9 @@
  *
  * Two same-origin sources, both served by the instance behind the SPA:
  *   - `GET /openapi.json`            — the standards-pure OpenAPI document
- *   - `GET /reference/endpoints.json` — the canonical scope/typical-caller join
- *     (also carries the conceptual scope catalogue in its `scopes` section)
+ *   - `GET /reference/endpoints.json` — the canonical permission/typical-caller
+ *     join (also carries the conceptual permission catalogue in its
+ *     `permissions` section)
  *
  * Plus two build-time static assets, served from the SPA's own origin:
  *   - `cli-reference.json` — the CLI command tree, generated from cobra by
@@ -21,7 +22,7 @@
  * endpoints (the dev server proxies both to the backend — see vite.config.ts).
  *
  * The two are kept independent on purpose: the API reference renders the spec
- * verbatim, and the scope/actor reference enriches each operation. They are
+ * verbatim, and the permission/actor reference enriches each operation. They are
  * never merged.
  */
 import type { CliReference, OpenApiDocument, ReferencePayload } from '@/modules/docs/api/types';

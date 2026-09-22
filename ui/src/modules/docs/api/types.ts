@@ -2,10 +2,10 @@
  * Types for the canonical endpoint reference served at
  * `GET /reference/endpoints.json` (built by
  * src/jentic_one/shared/web/endpoint_reference.py — schema
- * `jentic.endpoint-scope-tree/v1`).
+ * `jentic.endpoint-permission-tree/v1`).
  *
  * This is the docs SPA's source of truth for the per-endpoint authorization
- * model (required scopes, the advisory "typical caller" hint, and any
+ * model (required permissions, the advisory "typical caller" hint, and any
  * non-standard auth note). It is deliberately NOT in the OpenAPI document
  * (#602). The SPA fetches it separately and uses
  * it to enrich each operation in the native API reference — it never mutates
@@ -22,9 +22,9 @@ export interface ReferenceEndpoint {
 	authenticated: boolean;
 	public: boolean;
 	actor_types: string[];
-	required_scopes: string[];
-	/** scope -> the scopes it implies (transitive closure), if any. */
-	implied_scopes: Record<string, string[]>;
+	required_permissions: string[];
+	/** permission -> the permissions it implies (transitive closure), if any. */
+	implied_permissions: Record<string, string[]>;
 	auth_note: string | null;
 	/** Advisory hint ("agent" | "operator" | "any"); NOT an enforced gate. */
 	typical_caller: string | null;
@@ -38,41 +38,44 @@ export interface ReferencePayload {
 	total: number;
 	groups: string[];
 	endpoints: ReferenceEndpoint[];
-	/** Conceptual scope catalogue (meaning + implication graph). May be absent on
-	 * a server that predates the catalogue (older #602 build). */
-	scopes?: ScopeCatalog;
+	/** Conceptual permission catalogue (meaning + implication graph). May be absent
+	 * on a server that predates the catalogue (older #602 build). */
+	permissions?: PermissionCatalog;
 }
 
-/** One scope's conceptual entry (meaning + relationships). */
-export interface ScopeEntry {
+/** One permission's conceptual entry (meaning + relationships). */
+export interface PermissionEntry {
 	name: string;
 	description: string;
 	/** Resource family prefix, e.g. `agents`, `credentials`, `owner`. */
 	family: string;
 	/** Action suffix, e.g. `read` | `write` | `execute` | `admin`. */
 	action: string;
-	/** Direct (one-hop) child scopes this scope implies. */
+	/** Direct (one-hop) child permissions this permission implies. */
 	implies: string[];
-	/** Full transitive closure of implied scopes (sorted). */
+	/** Full transitive closure of implied permissions (sorted). */
 	implies_transitive: string[];
 	/** `org:admin` is also a hard runtime superpower (bypasses endpoint checks). */
 	is_superuser: boolean;
 }
 
-/** A family (resource prefix) with its scopes, for the grouped scope tree. */
-export interface ScopeFamily {
+/**
+ * A family (resource prefix) with its permissions, for the grouped permission
+ * tree.
+ */
+export interface PermissionFamily {
 	name: string;
 	label: string;
 	blurb: string;
-	scopes: ScopeEntry[];
+	permissions: PermissionEntry[];
 }
 
-/** The `scopes` section of the reference payload. */
-export interface ScopeCatalog {
+/** The `permissions` section of the reference payload. */
+export interface PermissionCatalog {
 	schema: string;
 	total: number;
-	families: ScopeFamily[];
-	scopes: ScopeEntry[];
+	families: PermissionFamily[];
+	permissions: PermissionEntry[];
 }
 
 /**

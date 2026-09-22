@@ -13,10 +13,10 @@ export type MeServiceAccount = {
     approved_by?: (string | null);
     id: string;
     name: string;
+    permissions: Array<string>;
     registered_by: string;
-    scopes: Array<string>;
     status: string;
-    token_scopes: Array<string>;
+    token_permissions: Array<string>;
     type?: string;
 };
 

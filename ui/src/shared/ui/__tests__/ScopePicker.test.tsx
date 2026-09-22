@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { renderWithProviders, screen, userEvent, checkA11y } from '@/__tests__/test-utils';
 import { ScopePicker } from '@/shared/ui/ScopePicker';
-import type { EnhancedScope } from '@/shared/lib/scopes';
+import type { EnhancedScope, ScopeVocabulary } from '@/shared/lib/scopes';
 
 function scope(name: string, isRecommended = false): EnhancedScope {
 	return { scope: name, description: `${name} description`, origin: 'platform', isRecommended };
@@ -21,10 +21,12 @@ function Harness({
 	initial = [],
 	disabledScopes,
 	showRecommended,
+	vocabulary,
 }: {
 	initial?: string[];
 	disabledScopes?: string[];
 	showRecommended?: boolean;
+	vocabulary?: ScopeVocabulary;
 }) {
 	const [selected, setSelected] = useState<string[]>(initial);
 	const disabled = new Set(disabledScopes ?? []);
@@ -35,6 +37,7 @@ function Harness({
 			selectedScopes={selected}
 			disabledScopes={disabledScopes}
 			showRecommended={showRecommended}
+			vocabulary={vocabulary}
 			onScopeToggle={(s) =>
 				setSelected((prev) =>
 					prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s],
@@ -93,6 +96,24 @@ describe('ScopePicker', () => {
 		await user.type(screen.getByLabelText('Search scopes'), 'credentials');
 		await screen.findByRole('checkbox', { name: 'credentials:read' });
 		expect(screen.queryByText('Recommended')).not.toBeInTheDocument();
+	});
+
+	// The same picker serves two vocabularies — OAuth2 provider scopes and
+	// platform permissions — so the chrome's noun is the caller's choice. The
+	// items can't imply it: the empty state has none.
+	it('relabels its chrome when the caller asks for the permission vocabulary', async () => {
+		const user = userEvent.setup();
+		renderWithProviders(<Harness vocabulary="permission" />);
+
+		expect(screen.getByText('Permissions')).toBeInTheDocument();
+		expect(screen.queryByLabelText('Search scopes')).not.toBeInTheDocument();
+		// The group header announces the same noun as the picker around it.
+		expect(
+			screen.getByRole('button', { name: /Agents permissions, 0 of 2 selected/ }),
+		).toBeInTheDocument();
+
+		await user.type(screen.getByLabelText('Search permissions'), 'nope');
+		expect(await screen.findByText(/No permissions match/)).toBeInTheDocument();
 	});
 
 	it('has no critical a11y violations', async () => {

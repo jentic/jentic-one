@@ -2,7 +2,13 @@ import { useMemo, useState } from 'react';
 import { Search, X } from 'lucide-react';
 import { Input, Label } from '@/shared/ui';
 import { ScopeGroup } from '@/shared/ui/ScopeGroup';
-import { filterScopeGroups, groupScopesByResource, type EnhancedScope } from '@/shared/lib/scopes';
+import {
+	filterScopeGroups,
+	groupScopesByResource,
+	VOCABULARY_NOUNS,
+	type EnhancedScope,
+	type ScopeVocabulary,
+} from '@/shared/lib/scopes';
 
 /**
  * Grouped, searchable scope picker — a faithful port of jentic-webapp's
@@ -12,11 +18,17 @@ import { filterScopeGroups, groupScopesByResource, type EnhancedScope } from '@/
  *
  * Source-agnostic. The credentials module feeds it OAuth2 provider scopes (with
  * "Recommended" badges + auto-selection); the agents surface
- * feeds it platform permission scopes (`showRecommended={false}`, with
+ * feeds it platform permissions (`showRecommended={false}`, with
  * `disabledScopes` for permissions the caller can't grant). Selection state
- * lives in the parent; this component operates purely on scope names + the
+ * lives in the parent; this component operates purely on item names + the
  * callbacks.
+ *
+ * Because the two sources are different vocabularies — OAuth2 *scopes* on the
+ * wire vs. internal-authorization *permissions* — the caller picks the noun the
+ * chrome uses via {@link ScopePickerProps.vocabulary}, which is forwarded to
+ * every {@link ScopeGroup} so the group headers announce the same noun.
  */
+
 export interface ScopePickerProps {
 	scopes: EnhancedScope[];
 	selectedScopes: string[];
@@ -29,6 +41,8 @@ export interface ScopePickerProps {
 	disabledScopes?: string[];
 	/** Show per-scope "Recommended" badges (OAuth2 only). Default true. */
 	showRecommended?: boolean;
+	/** Noun for the heading, search box and empty state. Default `'scope'`. */
+	vocabulary?: ScopeVocabulary;
 }
 
 export function ScopePicker({
@@ -39,7 +53,9 @@ export function ScopePicker({
 	onDeselectAll,
 	disabledScopes,
 	showRecommended = true,
+	vocabulary = 'scope',
 }: ScopePickerProps) {
+	const noun = VOCABULARY_NOUNS[vocabulary];
 	const [query, setQuery] = useState('');
 	const selectedSet = useMemo(() => new Set(selectedScopes), [selectedScopes]);
 	const disabledSet = useMemo(() => new Set(disabledScopes ?? []), [disabledScopes]);
@@ -59,7 +75,7 @@ export function ScopePicker({
 		<div className="space-y-3">
 			<div className="flex items-center justify-between">
 				<div>
-					<Label>Scopes</Label>
+					<Label>{noun.heading}</Label>
 					<p className="text-muted-foreground mt-0.5 text-xs">
 						{selectedCount} of {selectableTotal} selected
 					</p>
@@ -78,8 +94,8 @@ export function ScopePicker({
 				<Input
 					value={query}
 					onChange={(e): void => setQuery(e.target.value)}
-					placeholder="Search scopes…"
-					aria-label="Search scopes"
+					placeholder={`Search ${noun.plural}…`}
+					aria-label={`Search ${noun.plural}`}
 					startIcon={<Search className="h-3.5 w-3.5" />}
 					className={query ? 'pr-9' : undefined}
 				/>
@@ -100,8 +116,8 @@ export function ScopePicker({
 					<div className="border-border bg-muted/30 rounded-xl border p-6 text-center">
 						<p className="text-muted-foreground text-xs">
 							{scopes.length === 0
-								? 'No scopes available.'
-								: `No scopes match “${query}”`}
+								? `No ${noun.plural} available.`
+								: `No ${noun.plural} match “${query}”`}
 						</p>
 					</div>
 				) : (
@@ -112,6 +128,7 @@ export function ScopePicker({
 							selectedScopes={selectedSet}
 							disabledScopes={disabledSet}
 							showRecommended={showRecommended}
+							vocabulary={vocabulary}
 							onToggleScope={onScopeToggle}
 							onSelectAll={(): void => onSelectAll(group.id)}
 							onDeselectAll={(): void => onDeselectAll(group.id)}

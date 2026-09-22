@@ -4,7 +4,7 @@ import {
 	bindCredentialToAgent,
 	createApiKeyCredential,
 	importInlineApi,
-	replaceAgentScopes,
+	replaceAgentPermissions,
 	uniqueSuffix,
 } from './helpers';
 import { provisionAdminOwnedAgent } from './agent-flow';
@@ -18,7 +18,7 @@ import { provisionAdminOwnedAgent } from './agent-flow';
  *     → grant capabilities:execute
  *     → mint agent token → broker GET → read execution back
  *
- * The PREFIX of that journey (everything up to and including the scope grant)
+ * The PREFIX of that journey (everything up to and including the permission grant)
  * runs against the combined `make start-app` boot and is asserted here for
  * real. The BROKER TAIL (token → /execute → executions) cannot run in this
  * suite and is captured as `test.fixme` with the issues that block it:
@@ -62,17 +62,21 @@ test('full loop prefix: import → credential → bind → grant', async ({ requ
 	const agent = await provisionAdminOwnedAgent(request, { name: `e2e-loop-agent-${sfx}` });
 
 	// 4. Bind the credential directly + grant capabilities:execute via the
-	//    PUBLIC API (the scope endpoints that landed with #517 / closed F-7).
+	//    PUBLIC API (the permission endpoints that landed with #517 / closed F-7).
 	await bindCredentialToAgent(request, agent.clientId, credentialId);
-	const scopes = await replaceAgentScopes(request, agent.clientId, ['capabilities:execute']);
-	expect(scopes).toContain('capabilities:execute');
+	const permissions = await replaceAgentPermissions(request, agent.clientId, [
+		'capabilities:execute',
+	]);
+	expect(permissions).toContain('capabilities:execute');
 
-	// Sanity: the agent now carries the execute scope on a freshly minted token.
+	// Sanity: the agent now carries the execute permission on a freshly minted token.
 	// (We re-read via the API rather than asserting on the broker, which is the
 	// fixme tail below.)
-	const after = await request.get(`/agents/${agent.clientId}/scopes`, { headers: authHeaders() });
-	expect(after.ok(), `read agent scopes failed: ${after.status()}`).toBeTruthy();
-	expect((await after.json()).scopes).toContain('capabilities:execute');
+	const after = await request.get(`/agents/${agent.clientId}/permissions`, {
+		headers: authHeaders(),
+	});
+	expect(after.ok(), `read agent permissions failed: ${after.status()}`).toBeTruthy();
+	expect((await after.json()).permissions).toContain('capabilities:execute');
 });
 
 // The broker tail. Blocked by #526 / #527 / #539 and by the broker not being a

@@ -11,7 +11,7 @@ export type MeUser = {
     id: string;
     must_change_password: boolean;
     name: string;
-    scopes: Array<string>;
+    permissions: Array<string>;
     status: string;
     type?: string;
 };

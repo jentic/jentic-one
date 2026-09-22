@@ -1,13 +1,13 @@
 /**
- * ScopesCard — view + edit the platform permission scopes granted to an
+ * PermissionsCard — view + edit the platform permissions granted to an
  * agent. Part of #615.
  *
- * Reads the actor's current scopes (`GET .../scopes`) and renders them as
- * chips. "Edit scopes" opens the shared {@link ScopePicker} fed by the platform
- * permission catalogue (`GET /permissions`); scopes the caller can't grant
- * (`grantableByCaller === false`) are disabled. Saving does a full-list replace
- * (`PUT .../scopes`) — there is no partial grant/revoke endpoint, so concurrent
- * edits are last-writer-wins (acceptable for v0).
+ * Reads the actor's current permissions (`GET .../permissions`) and renders them
+ * as chips. "Edit permissions" opens the shared {@link ScopePicker} fed by the
+ * platform permission catalogue (`GET /permissions`); permissions the caller
+ * can't grant (`grantableByCaller === false`) are disabled. Saving does a
+ * full-list replace (`PUT .../permissions`) — there is no partial grant/revoke
+ * endpoint, so concurrent edits are last-writer-wins (acceptable for v0).
  *
  * A view-tier component: it talks to the backend only through the agents
  * module's hooks (ESLint-enforced), never the facade or generated services.
@@ -29,37 +29,37 @@ import { extractResourceFromScope } from '@/shared/lib';
 import {
 	AgentsApiError,
 	usePermissionCatalogue,
-	useAgentScopes,
-	useReplaceAgentScopes,
+	useAgentPermissions,
+	useReplaceAgentPermissions,
 	type PermissionCatalogEntry,
 } from '@/modules/agents/api';
 import { ConfirmDialog } from '@/modules/agents/components/confirm/ConfirmDialog';
 
-export interface ScopesCardProps {
+export interface PermissionsCardProps {
 	actorId: string;
 	/** Name used in accessible labels / dialog title. */
 	actorName: string;
 	/**
-	 * Whether the operator may edit scopes. When false the card is read-only
-	 * (chips, no "Edit scopes"). A 403 from the backend is still handled
-	 * defensively even when `canEdit` is true.
+	 * Whether the operator may edit permissions. When false the card is
+	 * read-only (chips, no "Edit permissions"). A 403 from the backend is still
+	 * handled defensively even when `canEdit` is true.
 	 */
 	canEdit?: boolean;
 }
 
 /**
- * Scopes whose accidental removal is destructive enough to warrant an explicit
- * confirmation. `org:admin` is the org-wide superuser permission: for an admin
- * operator it is *grantable* (so it behaves like an ordinary, toggleable row,
- * not a preserved one), which means a routine "Deselect all" + Save would
- * silently strip it from an actor that holds it. We can't preserve it blindly
- * (revocation must stay possible), so instead we confirm before a save that
- * removes a previously-held high-privilege scope.
+ * Permissions whose accidental removal is destructive enough to warrant an
+ * explicit confirmation. `org:admin` is the org-wide superuser permission: for
+ * an admin operator it is *grantable* (so it behaves like an ordinary,
+ * toggleable row, not a preserved one), which means a routine "Deselect all" +
+ * Save would silently strip it from an actor that holds it. We can't preserve it
+ * blindly (revocation must stay possible), so instead we confirm before a save
+ * that removes a previously-held high-privilege permission.
  */
-const HIGH_PRIVILEGE_SCOPES = new Set<string>(['org:admin']);
+const HIGH_PRIVILEGE_PERMISSIONS = new Set<string>(['org:admin']);
 
-/** Map the platform permission catalogue into the picker's scope shape. */
-export function catalogueToScopes(catalogue: PermissionCatalogEntry[]): EnhancedScope[] {
+/** Map the platform permission catalogue into the picker's item shape. */
+export function catalogueToPickerItems(catalogue: PermissionCatalogEntry[]): EnhancedScope[] {
 	return catalogue.map((p) => ({
 		scope: p.name,
 		description: p.description,
@@ -70,51 +70,51 @@ export function catalogueToScopes(catalogue: PermissionCatalogEntry[]): Enhanced
 	}));
 }
 
-export function ScopesCard({ actorId, actorName, canEdit = true }: ScopesCardProps) {
-	const scopesQuery = useAgentScopes(actorId);
-	const replace = useReplaceAgentScopes();
+export function PermissionsCard({ actorId, actorName, canEdit = true }: PermissionsCardProps) {
+	const permissionsQuery = useAgentPermissions(actorId);
+	const replace = useReplaceAgentPermissions();
 
 	const [editing, setEditing] = useState(false);
 	const catalogue = usePermissionCatalogue();
 
-	const granted = scopesQuery.data ?? [];
+	const granted = permissionsQuery.data ?? [];
 
 	return (
 		<>
 			<DetailSection
-				title="Scopes"
+				title="Permissions"
 				icon={<ShieldCheck className="h-4 w-4" />}
 				trailing={
-					canEdit && !scopesQuery.isPending && !scopesQuery.error ? (
+					canEdit && !permissionsQuery.isPending && !permissionsQuery.error ? (
 						<Button
 							size="sm"
 							variant="outline"
 							onClick={() => setEditing(true)}
-							aria-label={`Edit scopes for ${actorName}`}
+							aria-label={`Edit permissions for ${actorName}`}
 						>
-							Edit scopes
+							Edit permissions
 						</Button>
 					) : null
 				}
 			>
-				{scopesQuery.isPending ? (
+				{permissionsQuery.isPending ? (
 					<LoadingState size="sm" />
-				) : scopesQuery.error ? (
-					<ErrorAlert message={scopesQuery.error as Error} />
+				) : permissionsQuery.error ? (
+					<ErrorAlert message={permissionsQuery.error as Error} />
 				) : granted.length === 0 ? (
 					<EmptyRow icon={<ShieldCheck />}>
-						No scopes granted.
+						No permissions granted.
 						{canEdit &&
 							' This actor can’t perform privileged operations until you grant some.'}
 					</EmptyRow>
 				) : (
-					<ul className="flex flex-wrap gap-2" aria-label="Granted scopes">
+					<ul className="flex flex-wrap gap-2" aria-label="Granted permissions">
 						{[...granted]
 							.sort((a, b) => a.localeCompare(b))
-							.map((scope) => (
-								<li key={scope}>
+							.map((permission) => (
+								<li key={permission}>
 									<Badge variant="default" className="font-mono text-[11px]">
-										{scope}
+										{permission}
 									</Badge>
 								</li>
 							))}
@@ -123,7 +123,7 @@ export function ScopesCard({ actorId, actorName, canEdit = true }: ScopesCardPro
 			</DetailSection>
 
 			{editing && (
-				<EditScopesDialog
+				<EditPermissionsDialog
 					actorName={actorName}
 					granted={granted}
 					catalogue={catalogue.data ?? []}
@@ -133,16 +133,16 @@ export function ScopesCard({ actorId, actorName, canEdit = true }: ScopesCardPro
 					onClose={() => setEditing(false)}
 					onSave={async (next) => {
 						try {
-							await replace.mutateAsync({ id: actorId, scopes: next });
+							await replace.mutateAsync({ id: actorId, permissions: next });
 							setEditing(false);
 							return null;
 						} catch (e) {
 							// The hook toasts a generic failure; surface a clearer
 							// in-dialog message for the common 403 (can't grant).
 							if (e instanceof AgentsApiError && e.status === 403) {
-								return 'You don’t have permission to grant one or more of these scopes.';
+								return 'You don’t have permission to grant one or more of these permissions.';
 							}
-							return e instanceof Error ? e.message : 'Failed to save scopes.';
+							return e instanceof Error ? e.message : 'Failed to save permissions.';
 						}
 					}}
 				/>
@@ -151,7 +151,7 @@ export function ScopesCard({ actorId, actorName, canEdit = true }: ScopesCardPro
 	);
 }
 
-interface EditScopesDialogProps {
+interface EditPermissionsDialogProps {
 	actorName: string;
 	granted: string[];
 	catalogue: PermissionCatalogEntry[];
@@ -160,10 +160,10 @@ interface EditScopesDialogProps {
 	saving: boolean;
 	onClose: () => void;
 	/** Returns an error message to display, or null on success. */
-	onSave: (scopes: string[]) => Promise<string | null>;
+	onSave: (permissions: string[]) => Promise<string | null>;
 }
 
-function EditScopesDialog({
+function EditPermissionsDialog({
 	actorName,
 	granted,
 	catalogue,
@@ -172,30 +172,30 @@ function EditScopesDialog({
 	saving,
 	onClose,
 	onSave,
-}: EditScopesDialogProps) {
+}: EditPermissionsDialogProps) {
 	const [selected, setSelected] = useState<string[]>(granted);
 	const [error, setError] = useState<string | null>(null);
-	// Scopes pending save that need an explicit confirmation (high-privilege
+	// Permissions pending save that need an explicit confirmation (high-privilege
 	// removals). Null when no confirmation is in flight.
 	const [confirmRemoval, setConfirmRemoval] = useState<{
 		next: string[];
 		removed: string[];
 	} | null>(null);
 
-	const scopes = useMemo(() => catalogueToScopes(catalogue), [catalogue]);
-	const disabledScopes = useMemo(
+	const items = useMemo(() => catalogueToPickerItems(catalogue), [catalogue]);
+	const disabledPermissions = useMemo(
 		() => catalogue.filter((p) => !p.grantableByCaller).map((p) => p.name),
 		[catalogue],
 	);
-	const disabledSet = useMemo(() => new Set(disabledScopes), [disabledScopes]);
-	const knownScopes = useMemo(() => new Set(catalogue.map((p) => p.name)), [catalogue]);
+	const disabledSet = useMemo(() => new Set(disabledPermissions), [disabledPermissions]);
+	const knownPermissions = useMemo(() => new Set(catalogue.map((p) => p.name)), [catalogue]);
 
-	// A scope already granted but absent from the catalogue (or not grantable by
-	// this caller) must survive a save untouched — we can't show it in the
-	// picker, but dropping it would silently revoke it. Track it separately.
+	// A permission already granted but absent from the catalogue (or not
+	// grantable by this caller) must survive a save untouched — we can't show it
+	// in the picker, but dropping it would silently revoke it. Track it separately.
 	const preserved = useMemo(
-		() => granted.filter((s) => !knownScopes.has(s) || disabledSet.has(s)),
-		[granted, knownScopes, disabledSet],
+		() => granted.filter((p) => !knownPermissions.has(p) || disabledSet.has(p)),
+		[granted, knownPermissions, disabledSet],
 	);
 
 	// The full set that a save would persist (picker selection + preserved
@@ -205,32 +205,34 @@ function EditScopesDialog({
 		const next = new Set([...selected, ...preserved]);
 		const current = new Set(granted);
 		if (next.size !== current.size) return true;
-		for (const s of next) if (!current.has(s)) return true;
+		for (const p of next) if (!current.has(p)) return true;
 		return false;
 	}, [selected, preserved, granted]);
 
-	const toggle = (scope: string): void => {
-		if (disabledSet.has(scope)) return;
+	const toggle = (permission: string): void => {
+		if (disabledSet.has(permission)) return;
 		setSelected((prev) =>
-			prev.includes(scope) ? prev.filter((s) => s !== scope) : [...prev, scope],
+			prev.includes(permission)
+				? prev.filter((p) => p !== permission)
+				: [...prev, permission],
 		);
 	};
 	const selectAll = (group?: string): void => {
 		const pool = group
-			? scopes.filter(
-					(s) => !disabledSet.has(s.scope) && extractResourceFromScope(s.scope) === group,
+			? items.filter(
+					(i) => !disabledSet.has(i.scope) && extractResourceFromScope(i.scope) === group,
 				)
-			: scopes.filter((s) => !disabledSet.has(s.scope));
-		setSelected((prev) => Array.from(new Set([...prev, ...pool.map((s) => s.scope)])));
+			: items.filter((i) => !disabledSet.has(i.scope));
+		setSelected((prev) => Array.from(new Set([...prev, ...pool.map((i) => i.scope)])));
 	};
 	const deselectAll = (group?: string): void => {
 		if (!group) {
 			// Keep any disabled-but-granted selections (can't toggle them off here).
-			setSelected((prev) => prev.filter((s) => disabledSet.has(s)));
+			setSelected((prev) => prev.filter((p) => disabledSet.has(p)));
 			return;
 		}
 		setSelected((prev) =>
-			prev.filter((s) => extractResourceFromScope(s) !== group || disabledSet.has(s)),
+			prev.filter((p) => extractResourceFromScope(p) !== group || disabledSet.has(p)),
 		);
 	};
 
@@ -244,10 +246,11 @@ function EditScopesDialog({
 		setError(null);
 		// Merge picker selection with preserved (non-editable) grants, dedup.
 		const next = Array.from(new Set([...selected, ...preserved]));
-		// Guard against silently revoking a previously-held high-privilege scope
-		// (e.g. an admin "Deselect all"-ing a grantable org:admin the actor holds).
+		// Guard against silently revoking a previously-held high-privilege
+		// permission (e.g. an admin "Deselect all"-ing a grantable org:admin the
+		// actor holds).
 		const nextSet = new Set(next);
-		const removed = granted.filter((s) => HIGH_PRIVILEGE_SCOPES.has(s) && !nextSet.has(s));
+		const removed = granted.filter((p) => HIGH_PRIVILEGE_PERMISSIONS.has(p) && !nextSet.has(p));
 		if (removed.length > 0) {
 			setConfirmRemoval({ next, removed });
 			return;
@@ -260,7 +263,7 @@ function EditScopesDialog({
 			<Dialog
 				open
 				onClose={onClose}
-				title={`Edit scopes — ${actorName}`}
+				title={`Edit permissions — ${actorName}`}
 				subtitle="Grant the platform permissions this actor needs. Saving replaces the full set."
 				size="lg"
 				footer={
@@ -273,7 +276,7 @@ function EditScopesDialog({
 							loading={saving}
 							disabled={saving || catalogueLoading || !!catalogueError || !dirty}
 						>
-							Save scopes
+							Save permissions
 						</Button>
 					</>
 				}
@@ -287,17 +290,18 @@ function EditScopesDialog({
 						{error && <ErrorAlert message={error} />}
 						{preserved.length > 0 && (
 							<p className="text-muted-foreground text-xs">
-								{preserved.length} existing scope
+								{preserved.length} existing permission
 								{preserved.length === 1 ? '' : 's'} not editable here will be
 								preserved.
 							</p>
 						)}
 						<ScopePicker
-							scopes={scopes}
+							vocabulary="permission"
+							scopes={items}
 							selectedScopes={selected.filter(
-								(s) => knownScopes.has(s) && !disabledSet.has(s),
+								(p) => knownPermissions.has(p) && !disabledSet.has(p),
 							)}
-							disabledScopes={disabledScopes}
+							disabledScopes={disabledPermissions}
 							showRecommended={false}
 							onScopeToggle={toggle}
 							onSelectAll={selectAll}
@@ -309,7 +313,7 @@ function EditScopesDialog({
 
 			<ConfirmDialog
 				open={confirmRemoval !== null}
-				title="Remove high-privilege scope?"
+				title="Remove high-privilege permission?"
 				body={
 					<>
 						This will revoke{' '}

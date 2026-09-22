@@ -77,7 +77,7 @@ export function ArchitectureSection() {
 				</h3>
 				<p className="text-foreground/65 mb-2 max-w-2xl text-sm">
 					Every authenticated call belongs to one of four actor types. What an actor may
-					do is decided by its scopes and ownership — not its type (see{' '}
+					do is decided by its permissions and ownership — not its type (see{' '}
 					<a href="#permissions" className="text-primary underline">
 						Permissions
 					</a>

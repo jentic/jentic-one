@@ -5,7 +5,7 @@
  * `modules/docs/routes`), so it has no global navbar of its own. This supplies
  * one: the Jentic One logo (home link) on the left and a global search on the
  * right that spans every searchable thing on the page — sections, CLI commands,
- * scopes, and API endpoints — jumping to the match's anchor on select.
+ * permissions, and API endpoints — jumping to the match's anchor on select.
  *
  * Search is keyboard-driven (⌘/Ctrl-K to focus, ↑/↓ to move, ↵ to jump, Esc to
  * dismiss) and closes on outside click via `useDismissable`.
@@ -29,7 +29,7 @@ import { cn } from '@/shared/lib/utils';
 const KIND_META: Record<SearchKind, { icon: LucideIcon; label: string }> = {
 	section: { icon: FileText, label: 'Section' },
 	cli: { icon: SquareTerminal, label: 'CLI' },
-	scope: { icon: ShieldCheck, label: 'Scope' },
+	permission: { icon: ShieldCheck, label: 'Permission' },
 	endpoint: { icon: Plug, label: 'Endpoint' },
 	model: { icon: Box, label: 'Model' },
 };
@@ -141,7 +141,7 @@ export function DocsTopNav({ reference, binaries, models, broker, onJump }: Docs
 						}}
 						onFocus={() => setOpen(true)}
 						onKeyDown={onInputKeyDown}
-						placeholder="Search docs, commands, scopes, endpoints…"
+						placeholder="Search docs, commands, permissions, endpoints…"
 						aria-label="Search documentation"
 						role="combobox"
 						aria-expanded={listboxOpen}

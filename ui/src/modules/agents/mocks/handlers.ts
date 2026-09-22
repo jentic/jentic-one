@@ -13,11 +13,11 @@
  *   invalid transition         → 409
  *
  * Also serves the platform permission catalogue (`GET /permissions`) and the
- * per-actor scope grants (`GET/PUT .../scopes`, #615). The catalogue mirrors the
- * backend's `ALL_PERMISSIONS` verbatim. Like the real actor-scope PUTs, saving
- * does NOT validate scopes against the catalogue or enforce
- * `grantable_by_caller` — only a malformed scope is rejected (422). See
- * {@link validateScopes}.
+ * per-actor permission grants (`GET/PUT .../permissions`, #615). The catalogue
+ * mirrors the backend's `ALL_PERMISSIONS` verbatim. Like the real actor PUTs,
+ * saving does NOT validate permissions against the catalogue or enforce
+ * `grantable_by_caller` — only a malformed permission is rejected (422). See
+ * {@link validatePermissions}.
  *
  * Registered additively in src/mocks/handlers.ts.
  */
@@ -75,8 +75,8 @@ function seedAgent(over: Partial<AgentRow> & Pick<AgentRow, 'id' | 'name' | 'sta
 
 /** Mutable per-session store. Reset between tests via `resetAgentsStore()`. */
 let agents: AgentRow[] = [];
-/** Per-agent granted scopes, keyed by agent id. */
-let actorScopes: Record<string, string[]> = {};
+/** Per-agent granted permissions, keyed by agent id. */
+let actorPermissions: Record<string, string[]> = {};
 
 /** One consent→agent OAuth grant (`GET /agents/{id}/oauth-grants`, §4.8). */
 interface OAuthGrantRow {
@@ -170,14 +170,14 @@ function bindingJson(row: CredentialBindingRow) {
  * The platform permission catalogue (`GET /permissions`).
  *
  * Mirrors the backend's `ALL_PERMISSIONS` (src/jentic_one/admin/core/
- * permissions.py) verbatim — same scope strings, descriptions, and `implies`
- * edges — so dev/tests exercise the real vocabulary, not invented scopes.
+ * permissions.py) verbatim — same permission strings, descriptions, and
+ * `implies` edges — so dev/tests exercise the real vocabulary, not invented ones.
  *
  * `org:admin` is marked `grantable_by_caller: false` to reproduce the common
  * real case (a non-admin operator) and exercise the editor's disabled-row
  * gating; the backend additionally *hides* `org:admin` from non-admins, but we
  * keep it visible-but-disabled here so the gating path is observable in dev.
- * Every other entry is grantable, matching an operator who holds those scopes.
+ * Every other entry is grantable, matching an operator who holds those permissions.
  */
 const PERMISSION_CATALOGUE: ReadonlyArray<{
 	name: string;
@@ -344,15 +344,15 @@ export function resetAgentsStore(): void {
 			denied_by: ADMIN,
 		}),
 	];
-	actorScopes = {
-		// Seed realistic grants so the Scopes card renders chips out of the box.
-		// `agnt_active_1` carries an approximation of the backend's
-		// DEFAULT_AGENT_SCOPES (including `owner:resources:read`, a
-		// catalogue-backed owner scope that renders as a normal editable chip).
-		// `legacy:orphaned:read` is a deliberately synthetic scope that is NOT in
-		// the catalogue, so it exercises the editor's "preserved scopes not editable
-		// here" path (a granted scope absent from /permissions survives a save
-		// untouched and is not counted in the picker total).
+	actorPermissions = {
+		// Seed realistic grants so the Permissions card renders chips out of the
+		// box. `agnt_active_1` carries an approximation of the backend's
+		// DEFAULT_AGENT_PERMISSIONS (including `owner:resources:read`, a
+		// catalogue-backed permission that renders as a normal editable chip).
+		// `legacy:orphaned:read` is a deliberately synthetic permission that is NOT
+		// in the catalogue, so it exercises the editor's "preserved permissions not
+		// editable here" path (a granted permission absent from /permissions
+		// survives a save untouched and is not counted in the picker total).
 		agnt_active_1: [
 			'capabilities:execute',
 			'apis:read',
@@ -496,19 +496,19 @@ function genId(prefix: string): string {
 }
 
 /**
- * The backend's per-scope structural guard (`ScopeStr` in
- * auth/web/schemas/agents.py): each scope is 1–64 chars of `[a-zA-Z0-9_:./-]`.
- * A violation is the only thing the real actor-scope PUT rejects (422, via
- * Pydantic) — see {@link validateScopes}.
+ * The backend's per-permission structural guard (`PermissionStr` in
+ * auth/web/schemas/agents.py): each permission is 1–64 chars of
+ * `[a-zA-Z0-9_:./-]`. A violation is the only thing the real actor PUT rejects
+ * (422, via Pydantic) — see {@link validatePermissions}.
  */
-const SCOPE_PATTERN = /^[a-zA-Z0-9_:./-]{1,64}$/;
+const PERMISSION_PATTERN = /^[a-zA-Z0-9_:./-]{1,64}$/;
 
 /**
  * The default baseline `AgentService.create` grants when the payload carries
- * no scopes (mirror of DEFAULT_AGENT_PERMISSIONS in
+ * no permissions (mirror of DEFAULT_AGENT_PERMISSIONS in
  * `shared/auth/permission_catalog.py`).
  */
-const DEFAULT_AGENT_SCOPES_MOCK = [
+const DEFAULT_AGENT_PERMISSIONS_MOCK = [
 	'capabilities:execute',
 	'capabilities:read',
 	'apis:read',
@@ -522,28 +522,30 @@ const DEFAULT_AGENT_SCOPES_MOCK = [
 ] as const;
 
 /**
- * Validate a replacement scope set the way the real backend actually does.
+ * Validate a replacement permission set the way the real backend actually does.
  *
- * IMPORTANT: `PUT /agents/{id}/scopes` does NOT validate scopes against the catalogue and do NOT enforce
- * `grantable_by_caller`. `AgentService.replace_scopes` simply dedupes and writes
- * any string that passes the `ScopeStr` regex. (Catalogue/grantability checks
- * live only on `PUT /users/{id}/permissions`, a different endpoint.) So the only
- * rejection we reproduce here is a malformed scope → 422, matching FastAPI's
+ * IMPORTANT: `PUT /agents/{id}/permissions` does NOT validate permissions
+ * against the catalogue and does NOT enforce `grantable_by_caller`.
+ * `AgentService.replace_permissions` simply dedupes and writes any string that
+ * passes the `PermissionStr` regex. (Catalogue/grantability checks live only on
+ * `PUT /users/{id}/permissions`, a different endpoint.) So the only rejection we
+ * reproduce here is a malformed permission → 422, matching FastAPI's
  * request-validation response. `grantable_by_caller` is purely a UI hint used to
  * disable rows in the picker, never a server-side gate for actors.
  *
- * The backend also caps the list at 100 entries (`list[ScopeStr] = Field(max_length=100)`),
- * which we mirror so a test that over-grants gets the same 422 the real API would.
+ * The backend also caps the list at 100 entries
+ * (`list[PermissionStr] = Field(max_length=100)`), which we mirror so a test that
+ * over-grants gets the same 422 the real API would.
  */
-function validateScopes(
+function validatePermissions(
 	requested: string[],
 ): { ok: true } | { ok: false; status: number; detail: string } {
 	if (requested.length > 100) {
-		return { ok: false, status: 422, detail: 'Too many scopes (max 100).' };
+		return { ok: false, status: 422, detail: 'Too many permissions (max 100).' };
 	}
-	for (const s of requested) {
-		if (!SCOPE_PATTERN.test(s)) {
-			return { ok: false, status: 422, detail: `Invalid scope: ${s}` };
+	for (const p of requested) {
+		if (!PERMISSION_PATTERN.test(p)) {
+			return { ok: false, status: 422, detail: `Invalid permission: ${p}` };
 		}
 	}
 	return { ok: true };
@@ -972,12 +974,12 @@ export const agentsHandlers = [
 		const body = (await request.json().catch(() => ({}))) as {
 			name?: string;
 			description?: string | null;
-			scopes?: string[] | null;
+			permissions?: string[] | null;
 		};
 		// Validate BEFORE mutating the store — the real backend rejects via
 		// Pydantic before anything is created (no phantom row on a 422).
-		if (Array.isArray(body.scopes) && body.scopes.length > 0) {
-			const check = validateScopes(body.scopes);
+		if (Array.isArray(body.permissions) && body.permissions.length > 0) {
+			const check = validatePermissions(body.permissions);
 			if (!check.ok) {
 				return HttpResponse.json({ detail: check.detail }, { status: check.status });
 			}
@@ -990,14 +992,14 @@ export const agentsHandlers = [
 			created_at: now(),
 		});
 		agents.unshift(row);
-		// `AgentService.create` grants the requested scopes verbatim, or the
+		// `AgentService.create` grants the requested permissions verbatim, or the
 		// DEFAULT_AGENT_PERMISSIONS baseline when the payload carries none — a
-		// fresh manual agent never has an empty Scopes card
+		// fresh manual agent never has an empty Permissions card
 		// (shared/auth/permission_catalog.py).
-		actorScopes[row.id] =
-			Array.isArray(body.scopes) && body.scopes.length > 0
-				? [...new Set(body.scopes)]
-				: [...DEFAULT_AGENT_SCOPES_MOCK];
+		actorPermissions[row.id] =
+			Array.isArray(body.permissions) && body.permissions.length > 0
+				? [...new Set(body.permissions)]
+				: [...DEFAULT_AGENT_PERMISSIONS_MOCK];
 		return HttpResponse.json(row, { status: 201 });
 	}),
 	// Partial in-place edit — name / description / owner_id. Mirrors
@@ -1083,23 +1085,23 @@ export const agentsHandlers = [
 		}
 		return HttpResponse.json({ data });
 	}),
-	// ---- Agent scopes (#615) ----
-	http.get('/agents/:id/scopes', ({ params }) => {
+	// ---- Agent permissions (#615) ----
+	http.get('/agents/:id/permissions', ({ params }) => {
 		const row = agents.find((a) => a.id === params.id);
 		if (!row) return new HttpResponse(null, { status: 404 });
-		return HttpResponse.json({ scopes: actorScopes[row.id] ?? [] });
+		return HttpResponse.json({ permissions: actorPermissions[row.id] ?? [] });
 	}),
-	http.put('/agents/:id/scopes', async ({ params, request }) => {
+	http.put('/agents/:id/permissions', async ({ params, request }) => {
 		const row = agents.find((a) => a.id === params.id);
 		if (!row) return new HttpResponse(null, { status: 404 });
-		const body = (await request.json().catch(() => ({}))) as { scopes?: string[] };
-		const requested = Array.isArray(body.scopes) ? body.scopes : [];
-		const check = validateScopes(requested);
+		const body = (await request.json().catch(() => ({}))) as { permissions?: string[] };
+		const requested = Array.isArray(body.permissions) ? body.permissions : [];
+		const check = validatePermissions(requested);
 		if (!check.ok) {
 			return HttpResponse.json({ detail: check.detail }, { status: check.status });
 		}
-		actorScopes[row.id] = [...new Set(requested)];
-		return HttpResponse.json({ scopes: actorScopes[row.id] });
+		actorPermissions[row.id] = [...new Set(requested)];
+		return HttpResponse.json({ permissions: actorPermissions[row.id] });
 	}),
 	// Dynamic client registration → creates a pending agent row.
 	http.post('/register', async ({ request }) => {
