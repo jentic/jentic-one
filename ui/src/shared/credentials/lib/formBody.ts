@@ -298,8 +298,20 @@ export function validateUpdate(
 
 /**
  * Seed the form state from a picked API. Replaces the manually-typed
- * vendor/name/version triple with the picker's values and uses the API's
- * display name as a sensible default credential name.
+ * vendor/name pair with the picker's values and uses the API's display name as
+ * a sensible default credential name.
+ *
+ * Version is deliberately NOT seeded: it stays empty, which the backend stores
+ * as the wildcard (`APIReferenceRequest.version` defaults to `""`, and
+ * `canonical_credential_scope` coerces empty to NULL = covers any version). The
+ * broker treats a pinned version as pinned, so stamping the pick's version here
+ * would scope the credential to one spec revision and the next call after a
+ * re-ingest resolves no covering credential — `CredentialNotProvisionedError`
+ * on a credential the operator believes they set up. A catalog pick makes that
+ * immediate rather than latent: its version comes from the catalog, and the
+ * registry's ingested spec need not report the same string. Pinning stays
+ * available — the Version field is still editable — it is just opt-in, the way
+ * the API models it.
  *
  * `nameDirty` guards the credential name: when the user hasn't manually edited
  * it we always refresh it to the newly-picked API's label (so switching APIs
@@ -314,7 +326,7 @@ export function seedFormFromSelectedApi(
 		...state,
 		apiVendor: api.vendor,
 		apiName: api.name,
-		apiVersion: api.version,
+		apiVersion: '',
 		catalogApiId: api.apiId ?? '',
 		name: nameDirty ? state.name : api.label,
 	};

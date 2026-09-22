@@ -53,8 +53,8 @@ import {
 
 export interface CreatedCredentialInfo {
 	credentialId: string;
-	/** The saved label, so a caller that binds this credential can name it
-	 *  rather than reporting an anonymous success. */
+	/** The saved label, so a binding caller can name it rather than report an
+	 *  anonymous success. */
 	name: string;
 	type: CredentialType;
 	provider: string;
@@ -72,16 +72,10 @@ interface CreateCredentialFlowProps {
 	/** Called once the credential has been successfully created. */
 	onCreated: (info: CreatedCredentialInfo) => void;
 	/**
-	 * Which container the flow renders in.
-	 *
-	 * `'sheet'` (the default) is a side drawer: adding a credential is a step
-	 * taken *from* somewhere — a list, an agent, a setup queue — and a drawer
-	 * keeps that somewhere on screen behind it.
-	 *
-	 * `'dialog'` is for a host that is itself a native modal `<dialog>`. Such a
-	 * dialog renders in the browser's top layer, above every sheet
-	 * (`SheetPrimitive.tsx`), so a drawer opened from inside one would be both
-	 * invisible and unreachable.
+	 * Which container the flow renders in. `'sheet'` (the default) is a side drawer,
+	 * keeping the surface it was opened from on screen. `'dialog'` is for a host that
+	 * is itself a native modal `<dialog>`: those render in the top layer above every
+	 * sheet, so a drawer opened from inside one would be invisible.
 	 */
 	surface?: 'sheet' | 'dialog';
 	/**
@@ -94,14 +88,10 @@ interface CreateCredentialFlowProps {
 	 */
 	initialType?: CredentialType;
 	/**
-	 * Skip the pick step and create a credential for exactly this API.
-	 *
-	 * Used when the caller has already established which API needs a credential
-	 * and changing it would break their flow — the Add-APIs setup queue is
-	 * working through a batch the operator chose in the tray, so the API is not
-	 * the dialog's question to re-ask. Hides the picker, the Back button and the
-	 * summary's `Change` affordance; everything downstream (spec-shaped form,
-	 * catalog import on save) behaves exactly as for a picked API.
+	 * Skip the pick step and create a credential for exactly this API — the setup
+	 * queue is working through a batch already chosen in the tray, so the API is not
+	 * this flow's question to re-ask. Hides the picker, Back and `Change`; everything
+	 * downstream behaves as for a picked API.
 	 */
 	pinnedApi?: SelectedApi;
 }
@@ -124,14 +114,12 @@ type Step = 'pick' | 'form';
  *  - Otherwise → create directly. Pipedream provider work composes under the
  *    oauth2 branch unchanged.
  *
- * The shell is the only thing `surface` switches: a drawer (default) or a
- * centred dialog for a host in the top layer. Everything between the header and
- * the action row — both steps, the spec-shaped form, the reset policy — is one
- * implementation, so the two surfaces cannot drift apart.
+ * The shell is the only thing `surface` switches: a drawer (default) or a centred
+ * dialog for a host in the top layer. Everything between the header and the action
+ * row is one implementation, so the two surfaces cannot drift.
  *
- * Neither surface dismisses on a backdrop click. Closing resets the wizard, and
- * a stray click outside would discard a half-typed secret; Escape, Cancel and
- * the close control are the deliberate ways out.
+ * Neither surface dismisses on a backdrop click — a stray click would discard a
+ * half-typed secret.
  */
 export function CreateCredentialFlow({
 	open,
@@ -265,8 +253,8 @@ export function CreateCredentialFlow({
 	};
 
 	const reset = (): void => {
-		// A pinned API is the caller's premise, not a user choice, so a reset
-		// returns to that API's empty form rather than to the picker.
+		// A pinned API is the caller's premise, not a user choice, so a reset returns
+		// to that API's empty form rather than to the picker.
 		setStep(pinnedApi ? 'form' : 'pick');
 		setSelectedApi(pinnedApi ?? null);
 		setManualMode(false);
@@ -445,8 +433,8 @@ export function CreateCredentialFlow({
 				});
 				onCreated({
 					credentialId: data.credential.credential_id,
-					// The server's stored label, not the draft field: an empty Name
-					// field is filled in by the backend's default.
+					// The server's stored label, not the draft field: an empty Name is
+					// filled in by the backend's default.
 					name: data.credential.name,
 					type,
 					provider: state.provider,
@@ -641,7 +629,7 @@ export function CreateCredentialFlow({
 										onChange={(e): void =>
 											patch({ apiVersion: e.target.value })
 										}
-										placeholder="1.0.0"
+										placeholder="Any version"
 									/>
 								</div>
 							</div>
@@ -843,9 +831,7 @@ export function CreateCredentialFlow({
 
 				<div className="flex-1 overflow-y-auto px-5 py-4">{body}</div>
 
-				{/* The pick step commits by picking, so it carries no action row —
-				    its only footer button would be a Cancel duplicating the
-				    header's close control. */}
+				{/* The pick step commits by picking, so it carries no action row. */}
 				{footer && (
 					<footer className="border-border flex shrink-0 flex-wrap items-center justify-end gap-2 border-t px-5 py-3">
 						{footer}
