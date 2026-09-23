@@ -4,7 +4,7 @@
  * Dashboard has no endpoint of its own — it composes four EXISTING list
  * endpoints owned by other domains:
  *   GET /agents?status=pending      — agents awaiting approval
- *   GET /events?requires_action=true — actionable alerts
+ *   GET /events?requires_action=true&from=… — recent actionable alerts
  *   GET /executions                 — recent activity / success rate
  *   GET /apis                       — registered API count
  *

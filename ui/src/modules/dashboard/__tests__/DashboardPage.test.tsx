@@ -109,6 +109,59 @@ describe('DashboardPage', () => {
 		expect(agentIdx).toBeGreaterThan(alertIdx);
 	});
 
+	it('scopes bell alerts to a recent window and skips live-queue event types', async () => {
+		seedDashboard();
+		let fromParam: string | null = null;
+		worker.use(
+			http.get('/events', ({ request }) => {
+				const params = new URL(request.url).searchParams;
+				if (params.get('requires_action') !== 'true') return undefined;
+				fromParam = params.get('from');
+				return HttpResponse.json({
+					data: [
+						{
+							_links: { self: '/events/evt_live' },
+							created_at: new Date().toISOString(),
+							detail: null,
+							event_id: 'evt_live',
+							requires_action: true,
+							severity: 'warning',
+							summary: 'Filed access request event',
+							type: 'access_request.filed',
+						},
+						{
+							_links: { self: '/events/evt_fail' },
+							created_at: new Date().toISOString(),
+							detail: null,
+							event_id: 'evt_fail',
+							requires_action: true,
+							severity: 'error',
+							summary: 'Execution failed recently',
+							type: 'execution.failed',
+						},
+					],
+					has_more: false,
+					next_cursor: null,
+				});
+			}),
+		);
+		renderDashboard();
+		const user = userEvent.setup();
+
+		await user.click(await screen.findByRole('button', { name: /Needs your action/ }));
+		const inbox = await screen.findByRole('dialog', { name: 'Needs your action' });
+		await within(inbox).findByText('Execution failed recently');
+		// Pending access requests have their own live "Decide" row; the filed
+		// event is history and must not duplicate or outlive it.
+		expect(within(inbox).queryByText('Filed access request event')).not.toBeInTheDocument();
+
+		// Events are append-only, so the read is bounded to recent activity.
+		expect(fromParam).not.toBeNull();
+		const ageMs = Date.now() - Date.parse(fromParam!);
+		expect(ageMs).toBeGreaterThan(23 * 60 * 60 * 1000);
+		expect(ageMs).toBeLessThan(25 * 60 * 60 * 1000);
+	});
+
 	it('renders the Gateway-health layer from the real usage aggregate (admin)', async () => {
 		seedDashboard();
 		renderDashboard();

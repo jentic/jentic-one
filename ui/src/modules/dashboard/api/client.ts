@@ -128,16 +128,38 @@ export async function fetchAccessRequestsPage(params: {
 }
 
 /**
- * Actionable events via `GET /events?requires_action=true`.
- * These are the alerts that still need a human.
+ * How far back the alert slice looks. Events are append-only history — nothing
+ * clears `requires_action` — so an unbounded read would pin every actionable
+ * event ever emitted to the inbox. The window keeps it to recent activity.
+ */
+const ACTIONABLE_EVENTS_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Actionable event types the inbox already surfaces from their live state
+ * (the pending access-request and pending-agent queues). Their events stay
+ * `requires_action` after the item is decided, so listing them as alerts would
+ * duplicate a live row, or outlive it once decided.
+ */
+const LIVE_QUEUE_EVENT_TYPES: ReadonlySet<string> = new Set([
+	'access_request.filed',
+	'agent.self_registered',
+]);
+
+/**
+ * Recent actionable events via `GET /events?requires_action=true&from=…`,
+ * minus the types already represented by a live queue. The `/events` filter
+ * can only include types, so the exclusion is applied to the fetched page;
+ * `count` is therefore a floor whenever the page was partial.
  */
 export async function fetchActionableEvents(): Promise<AlertsOverview> {
 	try {
 		const res: EventListResponse = await EventsService.listEvents({
 			requiresAction: true,
+			from: new Date(Date.now() - ACTIONABLE_EVENTS_WINDOW_MS).toISOString(),
 			limit: OVERVIEW_PAGE_SIZE,
 		});
-		return { count: approxCountFromPage(res), events: res.data };
+		const events = res.data.filter((e) => !LIVE_QUEUE_EVENT_TYPES.has(e.type));
+		return { count: approxCountFromPage({ ...res, data: events }), events };
 	} catch (error) {
 		throw toDashboardError(error, 'Failed to load alerts.');
 	}
