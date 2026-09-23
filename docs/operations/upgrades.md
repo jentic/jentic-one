@@ -20,8 +20,13 @@ The contract is the same on every install shape; only the commands differ.
    no `--target`) also performs the release's one-shot **upgrade steps** —
    data changes that span databases, such as the toolkit → direct-binding
    cutover — and prints an `==> upgrade step <name>: <action>` line for each.
-   A step that leaves work undone exits `4`: fix the logged cause and re-run
-   before starting the new version.
+   A step that leaves blocking work undone exits `4`: fix the logged cause
+   and re-run before starting the new version (`--skip-upgrade-step <name>`
+   defers one step deliberately; on Helm, via `migrate.extraArgs`).
+   Non-blocking follow-ups print as `==> WARNING` lines — read them. The run
+   lock these steps take is a Postgres session-level advisory lock, so point
+   the migration at the database directly, not through a transaction-mode
+   pooler (pgbouncer `pool_mode=transaction`).
 4. **Restart both roles** (app and broker) on the new version — don't run
    them split across releases.
 5. **Keep the CLIs on the same release** as the server:

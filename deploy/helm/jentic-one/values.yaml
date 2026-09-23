@@ -238,6 +238,15 @@ postgresql:
   # limit — raise both together.
   maxConnections: 200
 
+# The migration hook Job (templates/migrate-job.yaml).
+migrate:
+  # Extra arguments for `python -m jentic_one.migrations.run`. The escape hatch
+  # for a post-migration upgrade step that blocks an upgrade, e.g.
+  #   ["--skip-upgrade-step", "theme5_flatten_toolkits"]
+  # defers that step to the next upgrade (docs/operations/upgrades.md). Leave
+  # empty in normal operation.
+  extraArgs: []
+
 # Cluster-shaping resources. All three are off by default: turning any of them
 # on changes what an existing release creates, and each needs cluster facts the
 # chart has no way to discover (ingress class, controller namespace, replica

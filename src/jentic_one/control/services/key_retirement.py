@@ -49,8 +49,7 @@ from jentic_one.control.repos.permission_rule_set_repo import PermissionRuleSetR
 from jentic_one.control.repos.toolkit_binding_repo import ToolkitBindingRepository
 from jentic_one.control.repos.toolkit_key_repo import ToolkitKeyRepository
 from jentic_one.control.repos.toolkit_permission_repo import ToolkitPermissionRepository
-from jentic_one.control.repos.upgrade_step_repo import KEY_RETIREMENT_LOCK_KEY
-from jentic_one.control.services.run_lock import hold_run_lock
+from jentic_one.control.services.run_lock import KEY_RETIREMENT_LOCK_KEY, hold_run_lock
 from jentic_one.shared.context import Context
 
 if TYPE_CHECKING:

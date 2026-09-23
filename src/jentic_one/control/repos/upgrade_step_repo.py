@@ -1,41 +1,18 @@
-"""Repository for the post-migration upgrade-step ledger and its run lock.
+"""Repository for the post-migration upgrade-step ledger (control DB).
 
-Two concerns, both control-DB:
-
-- the ``upgrade_steps`` ledger (one row per completed one-shot step);
-- a **session-level** Postgres advisory lock that serialises whole job runs
-  spanning several transactions and both databases (the upgrade steps, and the
-  toolkit-key retirement that also runs at boot and from the CLI). A
-  transaction-scoped lock would release at the first commit, halfway through a
-  run. The lock lives on the connection of the dedicated session passed in:
-  the caller keeps that session open, **uncommitted**, for the whole run (a
-  commit would hand the connection — and the lock — back to the pool) and
-  releases explicitly; a crashed process releases it when its connection
-  closes.
-
-SQLite has no advisory locks. Its writers are serialised per transaction by
-``BEGIN IMMEDIATE`` (see ``DatabaseSession.transaction``), and the job writes
-are idempotent via natural keys, so the lock is a no-op there.
+One row per completed one-shot step in ``upgrade_steps``; the cross-process
+run lock serialising the steps lives in ``control/services/run_lock.py``.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import func, select, text
+from sqlalchemy import func, inspect, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.control.core.schema.toolkit_flattening_acks import ToolkitFlatteningAck
 from jentic_one.control.core.schema.upgrade_steps import UpgradeStep
-
-#: Advisory-lock keys (``pg_advisory_lock(bigint)``). Fixed constants rather
-#: than ``hashtext(...)`` so an operator can find the holder in ``pg_locks``.
-UPGRADE_STEPS_LOCK_KEY = 0x6A6F_5550_4752  # "joUPGR"
-KEY_RETIREMENT_LOCK_KEY = 0x6A6F_4B52_5452  # "joKRTR"
-
-
-def _is_postgres(session: AsyncSession) -> bool:
-    return session.get_bind().dialect.name == "postgresql"
 
 
 class UpgradeStepRepository:
@@ -69,12 +46,7 @@ class UpgradeStepRepository:
         return int(result.scalar_one())
 
     @staticmethod
-    async def acquire_run_lock(session: AsyncSession, key: int) -> None:
-        """Block until this session holds the run lock ``key`` (Postgres only)."""
-        if _is_postgres(session):
-            await session.execute(text("SELECT pg_advisory_lock(:key)"), {"key": key})
-
-    @staticmethod
-    async def release_run_lock(session: AsyncSession, key: int) -> None:
-        if _is_postgres(session):
-            await session.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": key})
+    async def has_table(session: AsyncSession, table: str) -> bool:
+        """Whether ``table`` exists in the session's (schema-scoped) database."""
+        conn = await session.connection()
+        return bool(await conn.run_sync(lambda sync: inspect(sync).has_table(table)))

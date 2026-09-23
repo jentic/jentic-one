@@ -17,7 +17,10 @@ A full upgrade to head (every database, no ``--target``) then runs the
 one-shot **upgrade steps** — data steps that span databases and so cannot live
 in one Alembic tree (``control/services/upgrade_steps.py``). Running them here
 means every install path that migrates performs them before the new version
-serves traffic. ``--skip-upgrade-steps`` defers them to the next full upgrade.
+serves traffic. ``--skip-upgrade-steps`` defers all of them (and
+``--skip-upgrade-step NAME`` one of them) to the next full upgrade. A step
+that leaves blocking work undone exits ``4`` (``EXIT_UPGRADE_STEP_FAILED``);
+non-blocking follow-ups are printed as ``==> WARNING`` lines.
 """
 
 from __future__ import annotations
@@ -26,6 +29,7 @@ import argparse
 import asyncio
 import json
 import sys
+from collections.abc import Collection
 from dataclasses import asdict
 from pathlib import Path
 
@@ -33,7 +37,7 @@ from alembic import command
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 
-from jentic_one.control.services.upgrade_steps import UpgradeStepService
+from jentic_one.control.services.upgrade_steps import STEP_NAMES, UpgradeStepService
 from jentic_one.migrations.targets import DB_TARGETS
 from jentic_one.shared.config import load_config
 from jentic_one.shared.context import Context
@@ -154,14 +158,16 @@ def _run_check(order: list[str]) -> int:
     return 0 if verdict == STATE_CURRENT else CHECK_EXIT_NEEDS_MIGRATION
 
 
-async def _run_upgrade_steps_async() -> int:
+async def _run_upgrade_steps_async(skip: Collection[str]) -> int:
     config = load_config()
     async with Context(config, allowed_dbs=set(_UPGRADE_STEP_DBS)) as ctx:
-        outcomes = await UpgradeStepService(ctx).run()
+        outcomes = await UpgradeStepService(ctx).run(skip=skip)
     failed = False
     for outcome in outcomes:
         print(f"==> upgrade step {outcome.name}: {outcome.action}", flush=True)
         print(json.dumps(asdict(outcome)), flush=True)
+        for warning in outcome.warnings:
+            print(f"==> WARNING ({outcome.name}): {warning}", file=sys.stderr, flush=True)
         failed = failed or outcome.failed
     if failed:
         print(
@@ -174,9 +180,24 @@ async def _run_upgrade_steps_async() -> int:
     return 0
 
 
-def run_upgrade_steps() -> int:
-    """Run the one-shot post-migration data steps (see ``UpgradeStepService``)."""
-    return asyncio.run(_run_upgrade_steps_async())
+def run_upgrade_steps(skip: Collection[str] = ()) -> int:
+    """Run the one-shot post-migration data steps (see ``UpgradeStepService``).
+
+    Any unexpected error (config, connectivity, a bug) is reported as an
+    upgrade-step failure — the schema is already at head, so the exit code must
+    say "steps undone", not "migration failed".
+    """
+    try:
+        return asyncio.run(_run_upgrade_steps_async(skip))
+    except Exception as exc:
+        print(
+            f"==> upgrade steps could not run ({type(exc).__name__}: {exc}); the schema "
+            "is at head. Fix the cause and re-run the migration before starting the "
+            "new version.",
+            file=sys.stderr,
+            flush=True,
+        )
+        return EXIT_UPGRADE_STEP_FAILED
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -209,9 +230,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--skip-upgrade-steps",
         action="store_true",
-        help="After a full upgrade to head, do not run the one-shot post-migration "
-        "data steps (toolkit-key retirement, toolkit flattening). They then run on "
-        "the next full upgrade instead.",
+        help="After a full upgrade to head, do not run any of the one-shot "
+        "post-migration data steps. They then run on the next full upgrade instead.",
+    )
+    parser.add_argument(
+        "--skip-upgrade-step",
+        action="append",
+        default=[],
+        choices=STEP_NAMES,
+        metavar="NAME",
+        help="Skip one post-migration data step (repeatable; "
+        f"one of: {', '.join(STEP_NAMES)}). It then runs on the next full upgrade.",
     )
     args = parser.parse_args(argv)
 
@@ -237,7 +266,7 @@ def main(argv: list[str] | None = None) -> int:
         # explicitly targeted upgrade leaves them for the next full one.
         full_upgrade = args.target is None and _UPGRADE_STEP_DBS.issubset(order)
         if full_upgrade and not args.skip_upgrade_steps:
-            return run_upgrade_steps()
+            return run_upgrade_steps(skip=args.skip_upgrade_step)
     return 0
 
 

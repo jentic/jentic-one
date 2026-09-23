@@ -1,9 +1,11 @@
 """Cross-process run lock for control-side batch jobs.
 
-Wraps :class:`UpgradeStepRepository`'s advisory lock in a context manager that
-owns the dedicated lock session, so a job body never has to thread (or
-accidentally commit) it. See ``control/repos/upgrade_step_repo.py`` for why the
-lock is session-level and why it is a no-op on SQLite.
+The upgrade steps and the toolkit-key retirement run from several places at
+once — every control replica's boot task, the migration runner, the CLI — and
+their find-then-create writes are only safe when runs never interleave. They
+serialise on a control-DB advisory lock
+(:meth:`DatabaseSession.advisory_lock`: session-level, on a dedicated
+autocommit connection, a no-op on SQLite).
 """
 
 from __future__ import annotations
@@ -11,8 +13,14 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from jentic_one.control.repos.upgrade_step_repo import UpgradeStepRepository
 from jentic_one.shared.context import Context
+
+#: Advisory-lock keys (``pg_advisory_lock(bigint)``). Fixed constants rather
+#: than ``hashtext(...)`` so an operator can find the holder in ``pg_locks``
+#: (``classid``/``objid`` are the high/low 32 bits). Acquisition order is
+#: always upgrade-steps → key-retirement, so the two never deadlock.
+UPGRADE_STEPS_LOCK_KEY = 0x6A6F_5550_4752  # "joUPGR"
+KEY_RETIREMENT_LOCK_KEY = 0x6A6F_4B52_5452  # "joKRTR"
 
 
 @asynccontextmanager
@@ -23,9 +31,5 @@ async def hold_run_lock(ctx: Context, key: int) -> AsyncIterator[None]:
     CLI run, the migration runner) finishes, so the job bodies it guards never
     interleave.
     """
-    async with ctx.control_db.session() as lock_session:
-        await UpgradeStepRepository.acquire_run_lock(lock_session, key)
-        try:
-            yield
-        finally:
-            await UpgradeStepRepository.release_run_lock(lock_session, key)
+    async with ctx.control_db.advisory_lock(key):
+        yield

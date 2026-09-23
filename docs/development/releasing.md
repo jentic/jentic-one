@@ -102,23 +102,41 @@ the Deprecations table.
      verified flatten is already acknowledged.
 
   Nothing extra to run on Helm (the pre-upgrade migrate hook), `jenticctl
-  update`, or a hand-run migration. A failed step exits the runner with code
-  `4` so the upgrade stops before the new version starts; fix the logged
-  cause and re-run. `--skip-upgrade-steps` defers both steps to the next full
-  migration run — only use it when you plan to run `flatten-toolkits`
-  yourself before serving traffic. Read the summary: `created_default_deny`
-  counts pairs bound with **no** allow rule (conflicting toolkit rules, or a
-  rule-less pair) — the rest of the `flatten-toolkits` report categories are
-  counted under `findings`; run `jentic_one flatten-toolkits --diff-only
-  --report report.jsonl` to get the full lines for review.
+  update`, or a hand-run migration. **Only a failed flatten blocks the
+  upgrade**: the runner exits `4` so the new version never starts without
+  its bindings; fix the logged cause and re-run (it is idempotent and not
+  recorded until it completes). A key-retirement problem never blocks — it
+  prints a `==> WARNING` line naming the recovery command, and the control
+  plane retries the job at every boot. To get past a step deliberately,
+  `--skip-upgrade-step <name>` defers that one step to the next full
+  migration run (`--skip-upgrade-steps` defers both); on Helm set
+  `migrate.extraArgs`, e.g. `["--skip-upgrade-step",
+  "theme5_flatten_toolkits"]` — and then run `flatten-toolkits` yourself
+  before serving traffic. Read the summary: `created_default_deny` counts
+  pairs bound with **no** allow rule (conflicting toolkit rules, or a
+  rule-less pair) and is also printed as a warning — the rest of the
+  `flatten-toolkits` report categories are counted under `findings`; run
+  `jentic_one flatten-toolkits --diff-only --report report.jsonl` to get the
+  full lines for review.
+- **Toolkit changes during a rolling upgrade are not flattened.** Helm (and
+  any rolling deploy) migrates while the previous version still serves: a
+  toolkit, toolkit binding, or agent–toolkit binding created on the old
+  version *after* the migration's flatten has no direct binding on the new
+  one, and the migration never flattens a second time. Freeze toolkit edits
+  for the rollout, or re-run `jentic_one flatten-toolkits` once the new
+  version is live (idempotent: it only adds the missing pairs).
 - **`jntc_live_` toolkit keys are retired; migration to `sak_` is automatic.**
   No new keys are issued. The migration run (and every control-plane boot)
   migrates every existing key digest to a service account, and the
   **unchanged plaintext keeps authenticating** — as that service account —
   for the deprecation window. Keys with no resolvable owner are skipped and
-  reported: run `jentic_one retire-toolkit-keys --owner <admin-email>` for
-  them. Watch `deprecated_toolkit_key_used` WARNING logs to find holders still
-  presenting the old key form, and rotate them to `sak_` keys.
+  reported (a `==> WARNING` line on the migration run): **their holders stop
+  authenticating** until you run `jentic_one retire-toolkit-keys --owner
+  <admin-email>`. The job writes a `migrated_actor_id` stamp on each
+  `toolkit_keys` row and creates the service accounts and their bindings; a
+  0.39.x rollback ignores all three. Watch `deprecated_toolkit_key_used`
+  WARNING logs to find holders still presenting the old key form, and rotate
+  them to `sak_` keys.
 - **Docker images run as uid `10001`** (was `999`), so kubelet can verify
   `runAsNonRoot`. Anything the container writes must be writable by that uid:
   `jenticctl` re-owns its SQLite data volume automatically on `update` and
