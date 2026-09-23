@@ -83,7 +83,7 @@ class AgentService:
         security review): a consenting user WITHOUT ``agents:write`` may still
         mint their first agent mid-flow, but it lands in the same
         awaiting-approval posture as the anonymous ``POST /register`` door —
-        status ``pending``, NO scope grants (``approve()`` grants
+        status ``pending``, NO permission grants (``approve()`` grants
         ``DEFAULT_AGENT_PERMISSIONS`` on the PENDING→ACTIVE transition, exactly as
         it does for self-registrations), plus the ``agent.self_registered``
         requires-action event so the registration lands in the admins' approval
@@ -246,12 +246,12 @@ class AgentService:
                 session, agent_id, actor_type=ActorType.AGENT
             )
             if not existing_grants:
-                for scope in DEFAULT_AGENT_PERMISSIONS:
+                for permission in DEFAULT_AGENT_PERMISSIONS:
                     await ActorPermissionGrantRepository.grant(
                         session,
                         actor_id=agent_id,
                         actor_type=ActorType.AGENT,
-                        permission=scope,
+                        permission=permission,
                         granted_by=identity.sub,
                         created_by=identity.sub,
                     )

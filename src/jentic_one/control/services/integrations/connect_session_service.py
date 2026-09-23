@@ -794,7 +794,7 @@ class ConnectSessionService:
             # Uniformly surface "missing session" as ``InvalidPollTokenError``
             # (403) rather than ``SessionNotFoundError`` (404). Anything else
             # would give an unauth'd caller a session-id enumeration oracle:
-            # the ``credentials:connect`` scope guards the endpoint, but the
+            # the ``credentials:connect`` permission guards the endpoint, but the
             # ``poll_token`` is the real capability — without it, 403 for
             # every id (missing or existing) is the only non-leaky answer.
             if row is None:
