@@ -8,8 +8,6 @@ import type { Body_loginSubmit } from '../models/Body_loginSubmit';
 import type { ConsentAgentStatusResponse } from '../models/ConsentAgentStatusResponse';
 import type { IntrospectRequest } from '../models/IntrospectRequest';
 import type { IntrospectResponse } from '../models/IntrospectResponse';
-import type { MintRequest } from '../models/MintRequest';
-import type { MintResponse } from '../models/MintResponse';
 import type { OAuthApprovalDecisionRequest } from '../models/OAuthApprovalDecisionRequest';
 import type { OAuthApprovalStatusResponse } from '../models/OAuthApprovalStatusResponse';
 import type { OAuthGrantAdminListResponse } from '../models/OAuthGrantAdminListResponse';
@@ -551,35 +549,6 @@ export class OAuthService {
         });
     }
     /**
-     * Mint Endpoint
-     * Mint a short-lived ephemeral token for a task agent.
-     *
-     * The caller must be an authenticated service account. The requested scopes
-     * must be a subset of the caller's own scopes.
-     * @returns MintResponse Successful Response
-     * @throws ApiError
-     */
-    public static mintEndpoint({
-        requestBody,
-    }: {
-        requestBody: MintRequest,
-    }): CancelablePromise<MintResponse> {
-        return __request(OpenAPI, {
-            method: 'POST',
-            url: '/oauth/mint',
-            body: requestBody,
-            mediaType: 'application/json',
-            errors: {
-                400: `Bad Request`,
-                401: `Unauthorized`,
-                403: `Forbidden`,
-                422: `Unprocessable Entity`,
-                500: `Internal Server Error`,
-                503: `Service Unavailable`,
-            },
-        });
-    }
-    /**
      * Revoke Endpoint
      * Revoke a token (RFC 7009). Always returns 200 for valid requests.
      *
@@ -681,7 +650,7 @@ export class OAuthService {
     }
     /**
      * Token Endpoint
-     * Exchange a refresh token, JWT assertion, authorization code, or client creds for tokens.
+     * Exchange a refresh token, JWT assertion, or authorization code for tokens.
      *
      * Error responses speak the RFC 6749 §5.2 dialect (top-level ``error`` +
      * ``error_description``), NOT platform Problem Details — reshaped by

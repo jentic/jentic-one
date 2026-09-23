@@ -27,7 +27,9 @@ export { SystemService } from '@/shared/api/generated/services/SystemService';
 // Agents / service-accounts / dynamic registration. Agent-side credential
 // bindings live on `AgentsService` (the /agents router).
 export { AgentsService } from '@/shared/api/generated/services/AgentsService';
-export { ServiceAccountsService } from '@/shared/api/generated/services/ServiceAccountsService';
+// Theme-8 Phase 2 removed the service-account API; the hand-maintained shim
+// keeps the agents module's SA tab compiling until Phase 3 deletes it.
+export { ServiceAccountsService } from '@/shared/api/legacyServiceAccounts';
 export { AgentRegistrationService } from '@/shared/api/generated/services/AgentRegistrationService';
 export type { PermissionRuleReadSchema } from '@/shared/api/generated/models/PermissionRuleReadSchema';
 // The toolkit-era codegen retag namespaced `PermissionRuleSchema` per web
@@ -63,13 +65,19 @@ export type { ApiKeyInfoResponse } from '@/shared/api/generated/models/ApiKeyInf
 export type { ApiKeyHistoryResponse } from '@/shared/api/generated/models/ApiKeyHistoryResponse';
 export type { ApiKeyHistoryEntryResponse } from '@/shared/api/generated/models/ApiKeyHistoryEntryResponse';
 export type { AgentListResponse } from '@/shared/api/generated/models/AgentListResponse';
-export type { ServiceAccountResponse } from '@/shared/api/generated/models/ServiceAccountResponse';
-export type { ServiceAccountListResponse } from '@/shared/api/generated/models/ServiceAccountListResponse';
-export type { ServiceAccountCreateRequest } from '@/shared/api/generated/models/ServiceAccountCreateRequest';
+export type {
+	ServiceAccountResponse,
+	ServiceAccountListResponse,
+	ServiceAccountCreateRequest,
+	ServiceAccountDenyRequest,
+	ServiceAccountScopesRequest,
+	ServiceAccountScopesResponse,
+} from '@/shared/api/legacyServiceAccounts';
 export type { RegisterRequest } from '@/shared/api/generated/models/RegisterRequest';
 export type { RegisterResponse } from '@/shared/api/generated/models/RegisterResponse';
-export type { jentic_one__auth__web__schemas__agents__DenyRequest as AgentDenyRequest } from '@/shared/api/generated/models/jentic_one__auth__web__schemas__agents__DenyRequest';
-export type { jentic_one__auth__web__schemas__service_accounts__DenyRequest as ServiceAccountDenyRequest } from '@/shared/api/generated/models/jentic_one__auth__web__schemas__service_accounts__DenyRequest';
+// The DenyRequest name no longer collides (the SA router is gone), so the
+// generator emits it un-namespaced; re-exported under the stable public name.
+export type { DenyRequest as AgentDenyRequest } from '@/shared/api/generated/models/DenyRequest';
 
 // Agent Rail — the persistent live-event rail consumes the REAL platform event
 // feed (`/events` + `/events/stream` SSE) via `EventsService`. These models
@@ -163,8 +171,6 @@ export type { PermissionResponse } from '@/shared/api/generated/models/Permissio
 export type { PermissionListResponse } from '@/shared/api/generated/models/PermissionListResponse';
 export type { AgentScopesRequest } from '@/shared/api/generated/models/AgentScopesRequest';
 export type { AgentScopesResponse } from '@/shared/api/generated/models/AgentScopesResponse';
-export type { ServiceAccountScopesRequest } from '@/shared/api/generated/models/ServiceAccountScopesRequest';
-export type { ServiceAccountScopesResponse } from '@/shared/api/generated/models/ServiceAccountScopesResponse';
 
 // --- Monitor module (executions / jobs / events / audit) -------------------
 // Re-exported through the facade so the Monitor repository tier consumes typed

@@ -3,9 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Response containing a service account's current scopes.
+ * Request body for denying an agent.
  */
-export type ServiceAccountScopesResponse = {
-    scopes: Array<string>;
+export type DenyRequest = {
+    reason: string;
 };
 
