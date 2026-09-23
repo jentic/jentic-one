@@ -1431,6 +1431,11 @@
           "default": 3,
           "title": "Retry Max",
           "type": "integer"
+        },
+        "service_account_sweep_min_stamp_age_hours": {
+          "default": 24,
+          "title": "Service Account Sweep Min Stamp Age Hours",
+          "type": "integer"
         }
       },
       "title": "ServicesConfig",

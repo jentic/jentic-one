@@ -10,7 +10,11 @@ from jentic_one.admin.repos import (
     ServiceAccountRepository,
 )
 from jentic_one.admin.scoping.filters import build_access_filters
-from jentic_one.auth.services.errors import ActorNotFoundError, InvalidTransitionError
+from jentic_one.auth.services.errors import (
+    ActorNotFoundError,
+    InvalidTransitionError,
+    ServiceAccountMigratedError,
+)
 from jentic_one.auth.services.schemas.service_accounts import (
     ServiceAccountCreatePayload,
     ServiceAccountView,
@@ -205,9 +209,12 @@ class ServiceAccountService:
 
     async def archive(self, service_account_id: str, *, identity: Identity) -> None:
         async with self._ctx.admin_db.transaction() as session:
-            sa = await ServiceAccountRepository.get_by_id(session, service_account_id)
+            # FOR UPDATE: serialise with the migration job's locked re-read
+            # so the stamp guard never races a concurrent stamp (H1).
+            sa = await ServiceAccountRepository.get_by_id_for_update(session, service_account_id)
             if sa is None:
                 raise ActorNotFoundError(service_account_id)
+            _refuse_if_migrated(sa)
             if sa.status == ActorStatus.ARCHIVED:
                 raise InvalidTransitionError(service_account_id, ActorStatus.ARCHIVED, "archive")
             await ServiceAccountRepository.archive(session, service_account_id)
@@ -234,9 +241,12 @@ class ServiceAccountService:
         self, service_account_id: str, scopes: list[str], *, identity: Identity
     ) -> list[str]:
         async with self._ctx.admin_db.transaction() as session:
-            sa = await ServiceAccountRepository.get_by_id(session, service_account_id)
+            # FOR UPDATE: serialise with the migration job's locked re-read
+            # so the stamp guard never races a concurrent stamp (H1).
+            sa = await ServiceAccountRepository.get_by_id_for_update(session, service_account_id)
             if sa is None:
                 raise ActorNotFoundError(service_account_id)
+            _refuse_if_migrated(sa)
             if sa.status == ActorStatus.ARCHIVED:
                 raise InvalidTransitionError(
                     service_account_id, ActorStatus.ARCHIVED, "replace_scopes"
@@ -268,11 +278,30 @@ class ServiceAccountService:
     async def _check_transition(
         self, session: AsyncSession, service_account_id: str, verb: ActorVerb
     ) -> None:
-        sa = await ServiceAccountRepository.get_by_id(session, service_account_id)
+        # FOR UPDATE: serialise with the migration job's locked re-read so a
+        # transition either lands before the stamp (and the job copies the
+        # fresh status) or sees the stamp and refuses (H1).
+        sa = await ServiceAccountRepository.get_by_id_for_update(session, service_account_id)
         if sa is None:
             raise ActorNotFoundError(service_account_id)
+        _refuse_if_migrated(sa)
         if sa.status == ActorStatus.ARCHIVED:
             raise InvalidTransitionError(service_account_id, ActorStatus.ARCHIVED, verb)
         allowed_from = _VALID_TRANSITIONS[verb]
         if sa.status not in allowed_from:
             raise InvalidTransitionError(service_account_id, sa.status, verb)
+
+
+def _refuse_if_migrated(sa: ServiceAccount) -> None:
+    """Theme-8 Phase 1 stamp guard (NF-1/NF-2): refuse mutations on stamped rows.
+
+    Uniform predicate ``migrated_to_actor_id IS NOT NULL`` — the live actor
+    is the successor agent (or, for skip-but-stamp rows, nothing at all), so
+    a mutation here would silently no-op against the key or diverge the
+    copied state. Runbook: dual-kill — disable the successor agent.
+    Reads stay unguarded; ``create`` too (new rows are unstamped, the boot
+    job re-runs migrate them, F5).
+    """
+    if sa.migrated_to_actor_id is not None:
+        successor = sa.migrated_to_actor_id
+        raise ServiceAccountMigratedError(sa.id, None if successor == "skipped" else successor)
