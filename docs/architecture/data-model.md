@@ -45,7 +45,7 @@ flowchart TB
         Credential
         RuleSet["PermissionRuleSet"] --> RuleSetRule["PermissionRuleSetRule"]
         AgentPermissionRule
-        AccessRequest --> AccessRequestItem
+        ConnectSession
     end
 
     subgraph adb [admin]
@@ -90,7 +90,8 @@ API-key/basic/OAuth/SigV4 material, encrypted at rest via the
 default-deny allowlist the broker evaluates — lives either inline per
 binding (`AgentPermissionRule`, keyed by the `(agent, credential)` pair) or
 in a shared, ordered `PermissionRuleSet` that several bindings can point at.
-`AccessRequest`/`AccessRequestItem` implement the approval flow;
+`ConnectSession` rows track agent-driven OAuth connect flows
+(device-authorization / auth-code) from creation to a terminal state;
 `CustomerAPIKey` is the bearer-key row for API-key access. The retired
 toolkit tables (`toolkits`, `toolkit_permission_rules`,
 `toolkit_credential_bindings`, `toolkit_keys`) remain until the phase-6b

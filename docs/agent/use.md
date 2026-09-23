@@ -50,16 +50,25 @@ Key behaviours (details and full flag syntax in the skill):
    like `catalog --update` or `import` do not exist. Before the first use of
    any command, run `jentic <command> --help`; every failure also prints the
    exact next command on stderr, so read the error before trying anything else.
-2. **A freshly imported API has no credential.** Your operator must first
-   connect/provision a credential for it in the dashboard (auth type +
-   permission rules), then bind you to it — importing alone grants nothing.
+2. **A freshly imported API has no credential.** Importing puts the API in
+   the registry; it does not connect an account. For a vendor in the
+   deployment's connect registry, `jentic connect <vendor>` starts the
+   connection (and imports the API for you); otherwise your operator must
+   store a credential for it in the dashboard (auth type + permission rules)
+   and bind you to it.
 3. **One report per job**, always with the reason — never thrash your
    operator with per-operation or duplicate asks.
+4. **Hand off when told to.** Every access denial carries a `prompt_human`
+   directive — read its instruction and `parameters.suggested_command`. If
+   it names `jentic connect <vendor>`, run it and relay the `approval_url`.
+   Otherwise (missing secret, vendor not in the registry, a credential that
+   needs fixing) report it to your operator once and wait. Never re-send the
+   same call hoping for a different answer.
 
 ## How to do an action (worked example)
 
 Task: *"get the current Bitcoin price"* on a fresh instance — nothing
-imported, no access yet.
+imported, no credential bound yet.
 
 ```bash
 # 1. What can I already call? (nothing yet, on a fresh install)
@@ -102,8 +111,8 @@ recovery — follow its instruction instead of retrying the same call.
   (pass `--timeout` on long waits such as `register`).
 - Exit codes are a coarse contract: **0** ok, **1** transport/unexpected,
   **2** "cannot succeed as asked" (denial, resolve failure, missing context —
-  do not blind-retry), **3** timed out still pending (retry later),
-  **4** partially approved. Two caveats: `execute` exits **0 for any
+  do not blind-retry), **3** timed out still pending (retry later). Two
+  caveats: `execute` exits **0 for any
   non-denial broker response**, including 429 rate-limits, 503 shed/circuit
   responses and 504 timeouts — always check the HTTP status in the JSON
   envelope, never the exit code alone. Exit 1 is also broader than
@@ -124,6 +133,7 @@ recovery — follow its instruction instead of retrying the same call.
 | Action | Where the human does it |
 | ------ | ----------------------- |
 | Approve a new agent | `/app/agents` in the console |
+| Approve an agent-initiated connect (the `approval_url` from `jentic connect`) | The link opens `/app/credentials?approve=…` in the console; the human confirms scopes and rules, then consents at the vendor |
 | Connect/provision credentials, bind agents, enter credential secrets | `/app` console (dashboard) — relay your access ask to the operator in prose; they act on it there |
 | Create/manage users | `/app` admin UI |
 | Re-import an updated API spec (`jentic catalog outdated`) | Their call — suggest it, never run it silently |

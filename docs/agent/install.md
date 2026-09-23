@@ -498,7 +498,7 @@ jentic whoami                  # who you are and what you may call
 ```
 
 You are done installing. **Now read [use.md](use.md) before doing anything
-else** — it covers how to import an API, request access, and make calls; do
+else** — it covers how to import an API, get access, and make calls; do
 not guess commands from package-manager habit. The first two you will need:
 
 ```bash

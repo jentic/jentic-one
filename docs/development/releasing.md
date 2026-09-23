@@ -95,13 +95,18 @@ the Deprecations table.
   `/agents/{id}/toolkits*` routes now return `404`. The `toolkits:read`,
   `toolkits:write`, and `owner:toolkits:read` scopes are retired: no route
   requires them and they grant nothing, but they are **tolerated in stored
-  grants** — re-submitting a permission row or access request that predates
+  grants** — re-submitting a permission row that predates
   the retirement never fails validation. Access is managed on the
   agent↔credential axis instead: the agent detail **Access** tab ("Bound
   credentials") in the UI, or `POST /agents/{agent_id}/credentials`.
-- **CLI: `--toolkit` → `--api`.** `jentic access request --api <vendor/name>`
-  is the verb (`--provision` when nothing serves the API yet). `--toolkit`
-  survives as a hidden, deprecated alias for `--api`.
+- **CLI: `--toolkit` → `--api`.** At this release, `jentic access request
+  --api <vendor/name>` was the verb (`--provision` when nothing served the
+  API yet), with `--toolkit` surviving as a hidden, deprecated alias for
+  `--api`. *(Superseded: the theme-7 release —
+  [epic #1374](https://github.com/jentic/jentic-one/issues/1374) — removes
+  the access-request flow and the `jentic access` group entirely; the
+  agent-driven connect flow, `jentic connect <vendor>` over
+  `POST /integrations:connect`, is the replacement.)*
 - **Broker headers.** Requests are disambiguated with `Jentic-Credential-Name`
   or `Jentic-Credential-Id` (the id is authoritative); responses attribute the
   credential used via the same two headers. The `Jentic-Toolkit-Id` response

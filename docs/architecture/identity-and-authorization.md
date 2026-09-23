@@ -105,16 +105,17 @@ Scopes shared across surfaces are canonical constants in
   requires. Every accepted credential kind must carry it.
 - **`DEFAULT_AGENT_SCOPES`** is the safe agent baseline: execute, reads
   (`apis:read`, `executions:read`, `jobs:read`, `events:read`,
-  `capabilities:read`), `catalog:import`, and the `owner:*:read` delegation
-  scopes for resources, agents, credentials, and access requests
+  `capabilities:read`), `catalog:import`, `credentials:connect` (start a
+  vendor connect flow — narrower than `credentials:write`), and the
+  `owner:*:read` delegation scopes for resources, agents, and credentials
   (not `owner:service-accounts:read`).
-- **Self-service elevation is bounded.** An agent may file a `scope:grant`
-  access request only for `GRANTABLE_SCOPES` (the baseline plus
-  `apis:write`). The privileged scopes — `org:admin`, `agents:write`,
-  `overlays:confirm` — are deliberately excluded, so neither an agent nor a
-  merely agent-owning operator can escalate through the request path.
+- **There is no self-service scope elevation.** Scopes are granted by an
+  operator on the agent detail surface, so the privileged scopes —
+  `org:admin`, `agents:write`, `overlays:confirm` — can never be reached
+  through an agent-facing path: neither an agent nor a merely agent-owning
+  operator can escalate.
 - **`owner:<resource>:read`** scopes power delegation: an operator holding
-  them sees their agents' rows (credentials, access requests)
+  them sees their agents' rows (e.g. credentials)
   without being org admin. The `scoping/filters.py` modules translate these
   into row-level filters (see
   [surfaces and layering](surfaces-and-layering.md#the-scoping-packages)).
@@ -142,9 +143,9 @@ different questions:
    (see [broker execution](broker-execution.md)).
 
 The chain for an agent's first real call is therefore: registration
-approval (human) → credential binding via an access request (human) → scope
-check (route) → permission rule (call). Each step is auditable, and none is
-implied by the previous one.
+approval (human) → credential binding, via a consented vendor connect flow
+or an operator-made bind (human) → scope check (route) → permission rule
+(call). Each step is auditable, and none is implied by the previous one.
 
 ## Related
 

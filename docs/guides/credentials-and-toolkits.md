@@ -109,12 +109,14 @@ in this order ([`broker/services/credentials/resolver.py`](../../src/jentic_one/
 The outcomes:
 
 - **0 bound credentials for the API → `403 no_credential_binding`.** The
-  problem body carries an agent directive: ask your operator to bind you to
-  the credential serving the API, or — when nothing serves it yet — to
-  connect/provision one first. When a *bound*
-  credential is a near-miss (its identity does not cover this operation), the
-  refusal is `403 credential_identity_mismatch` instead — the operator fixes
-  the credential; a new binding would not help.
+  problem body carries an agent directive naming the recovery: start a vendor
+  connect flow (`jentic connect <vendor>`, over `POST /integrations:connect`)
+  when the deployment's vendor registry can mint the credential, or hand off
+  to a human when it cannot — the operator binds the agent to the credential
+  that already serves the API, or stores one first if none does. When a
+  *bound* credential is a near-miss (its identity does not cover this
+  operation), the refusal is `403 credential_identity_mismatch` instead — the
+  operator fixes the credential; a new binding or connect would not help.
 - **1 winner → use it.** The response carries `Jentic-Credential-Id` and
   `Jentic-Credential-Name` (absent when no stored credential was used), and
   the execution record carries the same attribution — every execution names
