@@ -100,6 +100,7 @@ func (CurrentUserResponse) RequiredFields() []string {
 func (DailyExecutionBucket) RequiredFields() []string {
 	return []string{"date", "failed", "success", "total"}
 }
+func (DenyRequest) RequiredFields() []string             { return []string{"reason"} }
 func (EffectivePermission) RequiredFields() []string     { return []string{"name"} }
 func (ErrorItem) RequiredFields() []string               { return []string{"detail"} }
 func (EventAcknowledgeRequest) RequiredFields() []string { return []string{"acknowledged"} }
@@ -150,8 +151,6 @@ func (MeServiceAccount) RequiredFields() []string {
 func (MeUser) RequiredFields() []string {
 	return []string{"admin", "email", "id", "must_change_password", "name", "scopes", "status"}
 }
-func (MintRequest) RequiredFields() []string                  { return []string{"scope", "target_agent_id"} }
-func (MintResponse) RequiredFields() []string                 { return []string{"access_token", "expires_in"} }
 func (NoAuthCreateRequest) RequiredFields() []string          { return []string{"api", "name", "type"} }
 func (NoteApiReference) RequiredFields() []string             { return []string{"name", "vendor", "version"} }
 func (NoteCreateRequest) RequiredFields() []string            { return []string{"body", "resource"} }
@@ -246,21 +245,14 @@ func (RuleSetResponse) RequiredFields() []string {
 func (RuleSetSummaryResponse) RequiredFields() []string {
 	return []string{"created_at", "name", "rule_count", "rule_set_id"}
 }
-func (SearchLinksResponse) RequiredFields() []string         { return []string{"inspect"} }
-func (SearchRequest) RequiredFields() []string               { return []string{"query"} }
-func (SearchResponse) RequiredFields() []string              { return []string{"data", "has_more"} }
-func (SecuritySchemeFlowResponse) RequiredFields() []string  { return []string{"flow_type"} }
-func (SecuritySchemeListResponse) RequiredFields() []string  { return []string{"data"} }
-func (SecuritySchemeResponse) RequiredFields() []string      { return []string{"name", "type"} }
-func (ServedApiRef) RequiredFields() []string                { return []string{"api_vendor"} }
-func (ServiceAccountCreateRequest) RequiredFields() []string { return []string{"name"} }
-func (ServiceAccountListResponse) RequiredFields() []string  { return []string{"data", "has_more"} }
-func (ServiceAccountResponse) RequiredFields() []string {
-	return []string{"created_at", "id", "name", "owner_id", "registered_by", "status"}
-}
-func (ServiceAccountScopesRequest) RequiredFields() []string  { return []string{"scopes"} }
-func (ServiceAccountScopesResponse) RequiredFields() []string { return []string{"scopes"} }
-func (SetPermissionsRequest) RequiredFields() []string        { return []string{"permissions"} }
+func (SearchLinksResponse) RequiredFields() []string        { return []string{"inspect"} }
+func (SearchRequest) RequiredFields() []string              { return []string{"query"} }
+func (SearchResponse) RequiredFields() []string             { return []string{"data", "has_more"} }
+func (SecuritySchemeFlowResponse) RequiredFields() []string { return []string{"flow_type"} }
+func (SecuritySchemeListResponse) RequiredFields() []string { return []string{"data"} }
+func (SecuritySchemeResponse) RequiredFields() []string     { return []string{"name", "type"} }
+func (ServedApiRef) RequiredFields() []string               { return []string{"api_vendor"} }
+func (SetPermissionsRequest) RequiredFields() []string      { return []string{"permissions"} }
 func (Sigv4CreateRequest) RequiredFields() []string {
 	return []string{"access_key_id", "api", "aws_region", "aws_service", "name", "secret_access_key", "type"}
 }
