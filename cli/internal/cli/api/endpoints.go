@@ -15,6 +15,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// endpointReferenceSchema is the payload schema id of /reference/endpoints.json
+// this CLI understands (tools/endpoint_tree.py and endpoint_reference.py emit it).
+const endpointReferenceSchema = "jentic.endpoint-permission-tree/v1"
+
 // endpointsOptions holds flags for `jentic endpoints`.
 type endpointsOptions struct {
 	json       bool
@@ -101,12 +105,26 @@ func (a *app) endpointsE(ctx context.Context, o *endpointsOptions) error {
 // /reference/endpoints.json (schema jentic.endpoint-permission-tree/v1). The
 // server builds it from its curated permission map, so the CLI consumes the join directly
 // rather than re-deriving authorization from the OpenAPI document.
+//
+// The payload's `schema` id is checked, not just decoded: its field names are
+// part of the contract (`required_permissions`), so a server on another release
+// would otherwise decode into endpoints that silently require nothing.
 func parseEndpoints(body []byte) ([]endpoint, error) {
 	var doc struct {
+		Schema    string     `json:"schema"`
 		Endpoints []endpoint `json:"endpoints"`
 	}
 	if err := json.Unmarshal(body, &doc); err != nil {
 		return nil, fmt.Errorf("parse endpoint reference: %w", err)
+	}
+	if doc.Schema != endpointReferenceSchema {
+		return nil, &ux.CodedError{
+			Code: ux.CodeInternalError,
+			Msg: fmt.Sprintf("the server's endpoint reference uses schema %q; this CLI reads %q",
+				doc.Schema, endpointReferenceSchema),
+			Actionable: "Keep the CLI on the same release as the server: run `jenticctl update`, " +
+				"or ask your operator which release the server runs.",
+		}
 	}
 	eps := doc.Endpoints
 	sort.Slice(eps, func(i, j int) bool {
