@@ -70,16 +70,6 @@ describe('AgentDetailPage', () => {
 		expect(screen.queryByText('usr_000000000000000000000admin')).not.toBeInTheDocument();
 	});
 
-	it('shows the pending access requests this agent has filed (#619)', async () => {
-		const user = userEvent.setup();
-		renderDetail('agnt_active_1');
-		await screen.findByRole('heading', { name: 'support-agent' });
-		// The permission story lives on the Access tab.
-		await user.click(screen.getByRole('tab', { name: 'Access' }));
-		expect(await screen.findByRole('heading', { name: 'Access requests' })).toBeInTheDocument();
-		expect(await screen.findByText(/toolkit · use \+2 more/)).toBeInTheDocument();
-	});
-
 	it('renders a not-found surface for an unknown id', async () => {
 		renderDetail('agnt_does_not_exist');
 		expect(await screen.findByText('Agent not found')).toBeInTheDocument();

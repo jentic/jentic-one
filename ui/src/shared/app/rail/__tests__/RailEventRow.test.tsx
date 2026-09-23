@@ -21,24 +21,24 @@ function makeEvent(partial: Partial<StreamEvent>): StreamEvent {
 }
 
 describe('RailEventRow — action slot vs severity (issue #652)', () => {
-	// Regression pin: real `access_request.filed` events are emitted at INFO
-	// severity. The row must not force INFO events into a compact 1-line
-	// layout that omits the action slot — View/Deny would never appear with real
-	// data (MSW seeds `warning`, which masks it). An event that
-	// requires a decision must render its actions regardless of severity.
-	it('renders View/Deny for an INFO filed access request that requires action', () => {
+	// Regression pin: action-required events can be emitted at INFO severity
+	// (e.g. `agent.self_registered`). The row must not force INFO events into a
+	// compact 1-line layout that omits the action slot — the Review/Acknowledge
+	// actions would never appear with real data. An event that requires action
+	// must render its actions regardless of severity.
+	it('renders Review/Acknowledge for an INFO self-registration that requires action', () => {
 		const ev = makeEvent({
-			id: 'evt_filed',
-			type: 'access_request.filed',
-			kind: 'access_request',
+			id: 'evt_selfreg',
+			type: 'agent.self_registered',
+			kind: 'agent',
 			severity: 'info',
-			title: 'Access request filed: github read',
+			title: 'Agent self-registered: invoice-bot',
 			requiresAction: true,
-			tokens: { access_request_id: 'ar_1' },
+			tokens: { agent_id: 'agnt_1' },
 		});
-		render(<RailEventRow ev={ev} onAction={() => {}} onOpenRequest={() => {}} />);
-		expect(screen.getByRole('button', { name: 'View' })).toBeInTheDocument();
-		expect(screen.getByRole('button', { name: 'Deny' })).toBeInTheDocument();
+		render(<RailEventRow ev={ev} onAction={() => {}} />);
+		expect(screen.getByRole('button', { name: 'Review' })).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Acknowledge' })).toBeInTheDocument();
 	});
 
 	it('keeps a plain INFO event compact (no action slot) when it does not require action', () => {
@@ -51,23 +51,23 @@ describe('RailEventRow — action slot vs severity (issue #652)', () => {
 			requiresAction: false,
 		});
 		render(<RailEventRow ev={ev} onAction={() => {}} />);
-		expect(screen.queryByRole('button', { name: 'View' })).not.toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: 'Review' })).not.toBeInTheDocument();
 		expect(screen.queryByRole('button', { name: 'Acknowledge' })).not.toBeInTheDocument();
 	});
 
 	it('collapses an acknowledged action-required event to compact (no buttons)', () => {
 		const ev = makeEvent({
 			id: 'evt_acked',
-			type: 'access_request.filed',
-			kind: 'access_request',
+			type: 'agent.self_registered',
+			kind: 'agent',
 			severity: 'info',
-			title: 'Access request filed: github read',
+			title: 'Agent self-registered: invoice-bot',
 			requiresAction: true,
 			acknowledged: true,
-			tokens: { access_request_id: 'ar_1' },
+			tokens: { agent_id: 'agnt_1' },
 		});
-		render(<RailEventRow ev={ev} onAction={() => {}} onOpenRequest={() => {}} />);
-		expect(screen.queryByRole('button', { name: 'View' })).not.toBeInTheDocument();
+		render(<RailEventRow ev={ev} onAction={() => {}} />);
+		expect(screen.queryByRole('button', { name: 'Review' })).not.toBeInTheDocument();
 		expect(screen.getByText('Acked')).toBeInTheDocument();
 	});
 });

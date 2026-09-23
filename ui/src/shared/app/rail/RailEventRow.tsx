@@ -8,27 +8,21 @@
  *
  * Exception: an unacknowledged event that `requiresAction` always uses the full
  * layout regardless of severity, so its inline action slot is never hidden
- * (real `access_request.filed` events are INFO severity — see issue #652).
+ * (see issue #652).
  *
  * Inline-action slot:
- *   • "View" — opens the access-request detail dialog (per-item approve/deny)
- *     for a filed `access_request.filed` event
- *   • "Deny" — real `POST /access-requests/{id}:decide` (reason-gated fast path:
- *     clicking it reveals an inline note field before it fires, denying the
- *     whole request)
  *   • "Acknowledge" — real `PATCH /events/{id}` via the parent
- *   • "View …" — pure-navigation deep-links into the execution/job/trace
+ *   • "View …" / "Review" — pure-navigation deep-links into the
+ *     execution/job/trace/agent the event references
  *
  * Acknowledged events collapse to the compact 1-line variant regardless of
  * severity, so the row visually fades once the operator has handled it.
  */
 import type React from 'react';
-import { useState } from 'react';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 import { Button } from '@/shared/ui/Button';
 import { Tooltip } from '@/shared/ui';
 import { StreamEventIcon } from '@/shared/app/rail/StreamEventIcon';
-import { DenyReasonField } from '@/shared/app/rail/DenyReasonField';
 import {
 	formatStreamTime,
 	formatStreamDateTimeParts,
@@ -46,9 +40,7 @@ export type RailEventRowProps = {
 	groupCount?: number; // > 1 means this row represents a collapsed group
 	expanded?: boolean;
 	onToggleExpand?: () => void;
-	onAction?: (eventId: string, action: InlineActionSpec, reason?: string) => void;
-	/** Open the access-request detail dialog for a filed event's "View" action. */
-	onOpenRequest?: (requestId: string, eventId: string) => void;
+	onAction?: (eventId: string, action: InlineActionSpec) => void;
 	onNavigate?: (href: string) => void;
 };
 
@@ -68,10 +60,9 @@ function TimeTooltipContent({ tsMs }: { tsMs: number }) {
 function isCompactSeverity(ev: StreamEvent): boolean {
 	if (ev.acknowledged) return true;
 	// An unacknowledged event that still needs a human decision must keep its
-	// full layout so the inline action slot (View/Deny/Acknowledge) renders.
-	// Real `access_request.filed` events are emitted at INFO severity, so gating
-	// compactness on severity alone hid their View/Deny buttons — they only
-	// showed under MSW because the mock seeded them at `warning`. See issue #652.
+	// full layout so the inline action slot (Review/Acknowledge) renders —
+	// actionable events can be emitted at INFO severity, so gating compactness
+	// on severity alone would hide their action buttons. See issue #652.
 	if (ev.requiresAction) return false;
 	return ev.severity === 'info';
 }
@@ -82,16 +73,11 @@ export function RailEventRow({
 	expanded = false,
 	onToggleExpand,
 	onAction,
-	onOpenRequest,
 	onNavigate,
 }: RailEventRowProps) {
 	const compact = isCompactSeverity(ev);
 	const isCritical = (ev.severity === 'critical' || ev.severity === 'error') && !ev.acknowledged;
 	const actions = inlineActionsFor(ev);
-	// When the operator clicks a reason-gated action (Deny), we reveal an inline
-	// note field and hold the action until they confirm.
-	const [pendingReasonFor, setPendingReasonFor] = useState<InlineActionSpec | null>(null);
-	const [reason, setReason] = useState('');
 	const headline = KIND_LABEL[ev.kind];
 	// The conflict "why" hint (if any) rides in the detail line alongside the
 	// event's own meta, so a `catalog.update_conflicts_overlay` row explains the
@@ -202,89 +188,22 @@ export function RailEventRow({
 						{submeta}
 					</div>
 				)}
-				{actions.length > 0 && (onAction || onOpenRequest) && (
-					<div className="mt-1.5 flex flex-col gap-1.5">
-						<div className="flex flex-wrap gap-1">
-							{actions.map((action) => {
-								const tone =
-									action.kind === 'acknowledge' ||
-									action.kind === 'approve' ||
-									action.kind === 'view_request'
-										? 'primary'
-										: action.kind === 'deny'
-											? 'danger'
-											: 'ghost';
-								return (
-									<Button
-										key={action.kind}
-										variant={tone}
-										size="sm"
-										onClick={() => {
-											if (action.opensRequest) {
-												const reqId = ev.tokens.access_request_id;
-												if (reqId) onOpenRequest?.(reqId, ev.id);
-												return;
-											}
-											if (action.requiresReason) {
-												setReason('');
-												setPendingReasonFor(
-													pendingReasonFor?.kind === action.kind
-														? null
-														: action,
-												);
-												return;
-											}
-											onAction?.(ev.id, action);
-										}}
-										className="h-6 px-2 text-[11px]"
-										aria-expanded={
-											action.requiresReason
-												? pendingReasonFor?.kind === action.kind
-												: undefined
-										}
-									>
-										{action.label}
-									</Button>
-								);
-							})}
-						</div>
-						{pendingReasonFor && (
-							<div className="flex flex-col gap-1">
-								<DenyReasonField
-									id={`deny-reason-${ev.id}`}
-									value={reason}
-									onChange={setReason}
-									autoFocus
-								/>
-								<div className="flex gap-1">
-									<Button
-										variant="danger"
-										size="sm"
-										disabled={reason.trim().length === 0}
-										onClick={() => {
-											const action = pendingReasonFor;
-											setPendingReasonFor(null);
-											onAction?.(ev.id, action, reason.trim());
-											setReason('');
-										}}
-										className="h-6 px-2 text-[11px]"
-									>
-										Confirm {pendingReasonFor.label.toLowerCase()}
-									</Button>
-									<Button
-										variant="ghost"
-										size="sm"
-										onClick={() => {
-											setPendingReasonFor(null);
-											setReason('');
-										}}
-										className="h-6 px-2 text-[11px]"
-									>
-										Cancel
-									</Button>
-								</div>
-							</div>
-						)}
+				{actions.length > 0 && onAction && (
+					<div className="mt-1.5 flex flex-wrap gap-1">
+						{actions.map((action) => {
+							const tone = action.kind === 'acknowledge' ? 'primary' : 'ghost';
+							return (
+								<Button
+									key={action.kind}
+									variant={tone}
+									size="sm"
+									onClick={() => onAction?.(ev.id, action)}
+									className="h-6 px-2 text-[11px]"
+								>
+									{action.label}
+								</Button>
+							);
+						})}
 					</div>
 				)}
 			</div>

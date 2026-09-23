@@ -39,7 +39,6 @@ export {
 	useReplaceAgentScopes,
 	useServiceAccountScopes,
 	useReplaceServiceAccountScopes,
-	useActorAccessRequests,
 	useAgentOauthGrants,
 	useRevokeOauthGrant,
 	useActorsUsage,
@@ -51,8 +50,6 @@ export {
 	useMcpLastSeen,
 	useLatestMcpActivity,
 	useInstanceIdentity,
-	actorAccessRequestsKey,
-	actorAccessRequestsRootKey,
 	agentOauthGrantsKey,
 	agentOauthGrantsRootKey,
 } from '@/modules/agents/api/hooks';
@@ -102,5 +99,3 @@ export type {
 } from '@/modules/agents/api/types';
 
 export { mcpClientLabel } from '@/modules/agents/api/types';
-
-export type { AccessRequest } from '@/shared/lib';

@@ -18,7 +18,7 @@ export function Skeleton({ className, ...props }: React.HTMLAttributes<HTMLDivEl
 
 /**
  * A list of placeholder rows — the canonical loading state for the dashboard
- * cards and access-request lists. Each row mimics a title + meta line with a
+ * cards and other list surfaces. Each row mimics a title + meta line with a
  * trailing affordance, so the skeleton has the same shape as the real content
  * (no layout jump when data lands). Announced once to assistive tech.
  */

@@ -1,20 +1,13 @@
 import { useState } from 'react';
-import {
-	AlertTriangle,
-	ListChecks,
-	Maximize2,
-	ShieldAlert,
-	ShieldBan,
-	ShieldCheck,
-} from 'lucide-react';
+import { AlertTriangle, ListChecks, Maximize2, ShieldBan, ShieldCheck } from 'lucide-react';
 import { isUnrestrictedAllow, ruleSummary, type PermissionRule } from '@/shared/lib';
 import { OperationsDialog } from '@/shared/app/rail/OperationsDialog';
 
 /**
- * OperationsSummary — read-only, BOUNDED preview of the allow/block operations a
- * `credential.bind` item grants. On approval these rules are written verbatim
- * to the binding (broker-enforced), so the reviewer needs to SEE what they're
- * granting before they approve — otherwise they approve blind.
+ * OperationsSummary — read-only, BOUNDED preview of the allow/block operations
+ * an `(agent, credential)` binding's permission rules grant. The rules are
+ * broker-enforced (ordered, first-match-wins, default-deny), so this is what the
+ * agent can actually call through that credential.
  *
  * Bounded by design: this never tries to render a whole grant inline. Each rule
  * shows its effect + method/path and at most a handful of example operations;
@@ -23,16 +16,15 @@ import { OperationsDialog } from '@/shared/app/rail/OperationsDialog';
  * card's height constant regardless of how large the grant is — a big grant
  * can never produce an unbounded wall of chips here.
  *
- * Read-only by design: the `:decide` verb only accepts approve/deny + reason,
- * so narrowing the rule set is a separate `:amend` concern, not something this
- * card can do. We surface, we don't edit.
+ * Read-only by design: editing the rules is the owning surface's job (the
+ * binding rule editor); this component only surfaces them.
  *
  * Accessibility: colour is never the only signal — each rule leads with an
- * effect WORD ("Allow"/"Block"/"Needs approval") and a distinct icon, and the
- * whole block carries an `aria-label` summary (`ruleSummary`) so a screen-reader
- * user hears "Blocks DELETE; Allows GET on 3 operations" without parsing
- * individual chips. Paths and operationIds wrap rather than truncate — on touch
- * there is no hover `title` to recover a clipped value.
+ * effect WORD ("Allow"/"Block") and a distinct icon, and the whole block
+ * carries an `aria-label` summary (`ruleSummary`) so a screen-reader user hears
+ * "Blocks DELETE; Allows GET on 3 operations" without parsing individual chips.
+ * Paths and operationIds wrap rather than truncate — on touch there is no hover
+ * `title` to recover a clipped value.
  */
 
 const EFFECT_STYLES: Record<
@@ -49,11 +41,6 @@ const EFFECT_STYLES: Record<
 		chip: 'bg-danger/10 text-danger',
 		Icon: ShieldBan,
 	},
-	'require-approval': {
-		label: 'Needs approval',
-		chip: 'bg-accent-orange/10 text-accent-orange',
-		Icon: ShieldAlert,
-	},
 };
 
 /** How many operationIds to show inline before deferring the rest to the dialog. */
@@ -62,7 +49,7 @@ const OPS_PREVIEW = 4;
 function RuleRow({ rule }: { rule: PermissionRule }) {
 	// An unrestricted allow grants blanket access (matches every request). Render
 	// it in danger styling with an explicit "unrestricted" word and a warning
-	// icon so a reviewer can't approve it blind — it overrides the bland green
+	// icon so a reviewer can't miss it — it overrides the bland green
 	// "Allow" treatment a constrained allow gets.
 	const unrestricted = isUnrestrictedAllow(rule);
 	const { label, chip, Icon } = unrestricted

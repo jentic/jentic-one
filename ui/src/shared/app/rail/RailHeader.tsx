@@ -35,13 +35,12 @@ import { cn } from '@/shared/lib/utils';
 // Kind + severity chips cover the full taxonomy the rail can render, including
 // types the backend declares but does not yet emit (`credential.*`,
 // `execution.repeated_failure`) — kept for forward-compat so wiring them later
-// is zero-effort. Reachable today: import/execution/access_request kinds and
+// is zero-effort. Reachable today: import/execution/agent kinds and
 // info/error severities. Backend emitters tracked in jentic/jentic-one#397
 // (+ #387 actor filter, #389 _links.action).
 const KIND_LABEL: Record<StreamEvent['kind'], string> = {
 	import: 'imports',
 	execution: 'executions',
-	access_request: 'access',
 	credential: 'creds',
 	agent: 'agents',
 	catalog: 'catalog',

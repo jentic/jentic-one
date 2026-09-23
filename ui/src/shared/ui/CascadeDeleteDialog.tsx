@@ -98,7 +98,7 @@ const TYPE_COPY: Record<
 		confirmLabel: 'Archive agent',
 		noun: 'agent',
 		warning:
-			'Archiving is permanent — the agent can no longer authenticate or be restored, and its grants and access requests are released.',
+			'Archiving is permanent — the agent can no longer authenticate or be restored, and its grants are released.',
 		icon: Archive,
 	},
 	'service-account': {

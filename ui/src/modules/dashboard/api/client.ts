@@ -33,11 +33,9 @@ import {
 	deriveSuccessRate,
 	type AlertsOverview,
 	type CatalogOverview,
-	type PendingAccessRequestsOverview,
 	type PendingAgentsOverview,
 	type RecentExecutionsOverview,
 } from '@/modules/dashboard/api/types';
-import { listAccessRequests, type AccessRequestPage } from '@/shared/lib';
 
 /**
  * Sentinel error for Dashboard repository calls. Hooks/components branch on
@@ -85,45 +83,6 @@ export async function fetchPendingAgents(): Promise<PendingAgentsOverview> {
 		return { count: approxCountFromPage(res), agents: res.data };
 	} catch (error) {
 		throw toDashboardError(error, 'Failed to load pending agents.');
-	}
-}
-
-/**
- * Pending access requests via `GET /access-requests?status=pending`. This is
- * the DURABLE approval queue (unlike the rail's transient `access_request.filed`
- * events): the card surfaces the count + a few rows, and each row opens the
- * shared AccessRequestDialog to decide it. Reads through the cross-cutting
- * `@/shared/lib` access-request repository (the endpoint isn't on a generated
- * service yet — see shared/lib/accessRequests).
- */
-export async function fetchPendingAccessRequests(): Promise<PendingAccessRequestsOverview> {
-	try {
-		const res = await listAccessRequests({ status: 'pending', limit: OVERVIEW_PAGE_SIZE });
-		return { count: approxCountFromPage(res), requests: res.data };
-	} catch (error) {
-		throw toDashboardError(error, 'Failed to load pending access requests.');
-	}
-}
-
-/**
- * One cursor page of access requests for the full-queue subpage
- * (`/app/access-requests`). Unlike `fetchPendingAccessRequests` (a small,
- * count-only overview slice for the card), this returns the raw cursor page so
- * the page can paginate with "Load more". `status` defaults to `pending`.
- */
-export async function fetchAccessRequestsPage(params: {
-	status?: string | null;
-	cursor?: string | null;
-	limit?: number;
-}): Promise<AccessRequestPage> {
-	try {
-		return await listAccessRequests({
-			status: params.status ?? 'pending',
-			cursor: params.cursor ?? null,
-			limit: params.limit ?? 25,
-		});
-	} catch (error) {
-		throw toDashboardError(error, 'Failed to load access requests.');
 	}
 }
 

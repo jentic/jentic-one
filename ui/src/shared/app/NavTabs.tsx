@@ -7,35 +7,15 @@ import { useAuth } from '@/shared/auth/AuthContext';
 import { AppLink } from '@/shared/ui/AppLink';
 import { Button } from '@/shared/ui/Button';
 import { MenuPanel, menuItemClass, useDismissable } from '@/shared/ui/Menu';
-import { usePendingAccessRequestCount, usePendingAgentsCount } from '@/shared/hooks';
+import { usePendingAgentsCount } from '@/shared/hooks';
 import { cn } from '@/shared/lib/utils';
 
 const NAV_SPRING = { type: 'spring' as const, stiffness: 500, damping: 35 };
 
 /**
- * Persistent pending-access-request count badge. Surfaces on the Dashboard nav
- * tab (where the approval queue lives) so the "N waiting" signal is visible at
- * every breakpoint — including when the Agent Rail is collapsed or hidden below
- * `xl`. Renders nothing when the queue is empty.
- */
-function PendingRequestsBadge() {
-	const { count, atLeast } = usePendingAccessRequestCount();
-	if (count <= 0) return null;
-	const label = atLeast ? `${count}+` : `${count}`;
-	return (
-		<span
-			className="bg-warning/15 text-warning ml-0.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] font-semibold tabular-nums"
-			aria-label={`${label} access requests awaiting review`}
-		>
-			{label}
-		</span>
-	);
-}
-
-/**
- * Persistent pending-agents count badge on the Agents nav tab — mirrors
- * PendingRequestsBadge so a newly-registered agent awaiting approval is visible
- * without opening the Agents page or manually refreshing (#652). Renders nothing
+ * Persistent pending-agents count badge on the Agents nav tab — a "N waiting"
+ * signal so a newly-registered agent awaiting approval is visible without
+ * opening the Agents page or manually refreshing (#652). Renders nothing
  * when no agent is pending.
  */
 function PendingAgentsBadge() {
@@ -54,7 +34,6 @@ function PendingAgentsBadge() {
 
 /** Renders the pending-count badge appropriate to a nav item, if any. */
 function NavBadge({ navId }: { navId: string }) {
-	if (navId === 'dashboard') return <PendingRequestsBadge />;
 	if (navId === 'agents') return <PendingAgentsBadge />;
 	return null;
 }

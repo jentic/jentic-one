@@ -23,14 +23,6 @@ describe('sharedQueryKeys', () => {
 		expect(sharedQueryKeys.dashboardRoot).toEqual(['dashboard']);
 	});
 
-	it('exposes the access-request root', () => {
-		// The durable queue, the dashboard action inbox (`ActionInboxBell`), and the
-		// nav badge (`pendingAccessRequestCountKey` derives from this) all sit
-		// under this prefix; every decision path invalidates it. Lock the literal
-		// so a drift can't silently break the cross-surface refresh.
-		expect(sharedQueryKeys.accessRequestsRoot).toEqual(['access-requests']);
-	});
-
 	it('exposes the actor-directory root', () => {
 		// `useActorDirectory` caches the directory aggressively as reference
 		// data; the SSE→query bridge invalidates this root when an agent

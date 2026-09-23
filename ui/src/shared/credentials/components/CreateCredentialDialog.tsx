@@ -68,15 +68,6 @@ interface CreateCredentialDialogProps {
 	/** Called once the credential has been successfully created. */
 	onCreated: (info: CreatedCredentialInfo) => void;
 	/**
-	 * Pre-select this auth type when the dialog opens (the user can still change
-	 * it). Used by the provisioning wizard to honour the agent-declared
-	 * `--auth` type (read from the API spec's securitySchemes) so the human
-	 * doesn't re-pick what the agent already determined. A spec-driven selection
-	 * (picking an API) still overrides it — the spec is more authoritative than
-	 * the agent's guess.
-	 */
-	initialType?: CredentialType;
-	/**
 	 * When provided, the dialog opens directly into the vendor flow in "approve"
 	 * mode — landing here from the `approval_url` an agent handed its owner.
 	 * The dialog fetches the session, skips the picker + agent selection, and
@@ -127,7 +118,6 @@ export function CreateCredentialDialog({
 	open,
 	onClose,
 	onCreated,
-	initialType,
 	approvalSession,
 	preselectedAgentId,
 	renderPostConnect,
@@ -136,7 +126,7 @@ export function CreateCredentialDialog({
 	const [selectedApi, setSelectedApi] = useState<SelectedApi | null>(null);
 	const [selectedVendor, setSelectedVendor] = useState<VendorSummary | null>(null);
 	const [manualMode, setManualMode] = useState(false);
-	const [type, setType] = useState<CredentialType>(initialType ?? CredentialType.BEARER_TOKEN);
+	const [type, setType] = useState<CredentialType>(CredentialType.BEARER_TOKEN);
 	/** When non-null, the spec drove the type (UI hides the manual toggle). */
 	const [activeScheme, setActiveScheme] = useState<SchemeOption | null>(null);
 	const [state, setState] = useState<CredentialFormState>(EMPTY_FORM);
@@ -265,7 +255,7 @@ export function CreateCredentialDialog({
 		setActiveFlowId(null);
 		hasUserInteractedWithScopes.current = false;
 		nameDirty.current = false;
-		setType(initialType ?? CredentialType.BEARER_TOKEN);
+		setType(CredentialType.BEARER_TOKEN);
 		createMutation.reset();
 		importMutation.reset();
 	};
