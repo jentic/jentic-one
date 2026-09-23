@@ -1140,15 +1140,20 @@ class ConnectSessionService:
         # tore this session down" (scanner-TTL sweep, vendor rejection,
         # callback error, or user-driven cancel). ``_mark_terminal`` is
         # called from scanner / callback contexts without a caller
-        # ``Identity``; use the ``system`` actor sentinel there, matching
-        # the pattern in other scanner-driven audit paths.
+        # ``Identity``, so attribute the revoke to the session's
+        # ``initiator_actor_id`` — the real actor whose session is
+        # being torn down. The ``reason`` field (``detail``) captures
+        # *why* (TTL vs. callback vs. user cancel); the actor field
+        # names *whose* session it was, without inventing a "system"
+        # sentinel that no longer exists in ``ActorType``.
+        initiator_actor_type = actor_type_from_id(row.initiator_actor_id)
         await record_audit_best_effort(
             self._ctx,
             action=AuditAction.REVOKE,
             target_type=AuditTargetType.SESSION,
             target_id=session_id,
-            actor_type="system",
-            actor_id=None,
+            actor_type=initiator_actor_type.value,
+            actor_id=row.initiator_actor_id,
             before={"state": row.state},
             after={
                 "state": state,

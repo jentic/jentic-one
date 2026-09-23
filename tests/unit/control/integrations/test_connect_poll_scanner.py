@@ -15,6 +15,7 @@ enough to pin explicitly:
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import os
 from unittest.mock import AsyncMock, patch
@@ -112,8 +113,6 @@ async def test_tick_does_not_head_of_line_block_on_slow_vendor() -> None:
     # 15s-timeout vendor at position 0 in a serial loop stalls every
     # credential behind it. Pin the concurrency: a long-running advance
     # for ``cred_slow`` cannot block ``cred_fast`` from completing.
-    import asyncio
-
     scanner = ConnectPollScanner(_make_context())
     slow_started = asyncio.Event()
     fast_done = asyncio.Event()
