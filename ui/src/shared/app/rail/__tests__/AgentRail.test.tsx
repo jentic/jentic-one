@@ -374,7 +374,7 @@ describe('agentStream — wire adaptation + pure helpers', () => {
 		});
 		const kinds = inlineActionsFor(ev).map((a) => a.kind);
 		// No decision action exists for a failed run; the row offers a passive
-		// deep-link into the execution (acknowledgement was removed).
+		// deep-link into the execution.
 		expect(kinds).toEqual(['view_execution']);
 	});
 
@@ -721,8 +721,8 @@ describe('AgentRail — shell-mounted live surface', () => {
 			name: /1 failure in recent activity. Show failures./i,
 		});
 		expect(pill).toBeInTheDocument();
-		// Acknowledgement was removed, so the pill is a window-scoped "recent
-		// activity" signal that stays put — there is no per-event clear control.
+		// The pill is a window-scoped "recent activity" signal that stays put —
+		// events are append-only, so there is no per-event clear control.
 		expect(screen.queryByRole('button', { name: 'Acknowledge' })).not.toBeInTheDocument();
 	});
 

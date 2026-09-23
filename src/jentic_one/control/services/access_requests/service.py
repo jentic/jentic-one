@@ -808,13 +808,12 @@ class AccessRequestService:
             names = await self._resolve_names(session, [refreshed])
             view = self._to_view(refreshed, names=names)
 
-        # Announce the decision. `any_transition` alone is NOT a perfect gate:
-        # decide() is documented as safe to retry, and if a first attempt
-        # crashed after the control commit (or `_reconcile_admin_effects`
-        # raised), the decision is durable but a retry transitions nothing, so
-        # the decision event is skipped. This is accepted: event history is
-        # best-effort, and the `access_request.filed` alert is no longer a
-        # durable operator-facing prompt that must be cleared.
+        # Announce the decision only when something transitioned. decide() is
+        # safe to retry, so if a first attempt crashed after the control commit
+        # (or `_reconcile_admin_effects` raised), the retry transitions nothing
+        # and the decision event is never emitted. That gap is accepted: event
+        # history is best-effort, and the request's own status (not an event)
+        # is the durable record of the decision.
         if any_transition:
             await self._emit_decision(view, decided_by=decided_by, identity=identity)
         return view

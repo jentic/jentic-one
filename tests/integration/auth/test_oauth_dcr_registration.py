@@ -535,7 +535,7 @@ async def test_dedupe_key_spaces_never_cross_match(
 
 async def test_approve_verb_emits_event(dcr_context: Context, clean_dcr_tables: None) -> None:
     """:approve flips the row live and emits oauth_client.approved. The
-    registration event stays as append-only history (acknowledgement removed)."""
+    registration event stays as append-only history."""
     dcr_svc = OAuthDcrService(dcr_context)
     result = await dcr_svc.register(
         client_name="Cursor", redirect_uris=_REDIRECT_URIS, software_id="com.cursor.ide"
@@ -876,7 +876,7 @@ async def test_requeued_client_needs_explicit_admin_reapproval(
     assert recovered.approval_status == OAuthClientApprovalStatus.APPROVED.value
     assert recovered.active is True
     assert await client_svc.is_public_client(first.client_id) is True
-    # Registration events remain as append-only history (acknowledgement removed).
+    # Registration events remain as append-only history.
     events = await _events_of_type(dcr_context, EventType.OAUTH_CLIENT_REGISTERED)
     assert any(e.requires_action for e in events)
 

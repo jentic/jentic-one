@@ -300,8 +300,7 @@ async def test_delete_pending_dcr_client_leaves_registration_event(
     queue_policy_context: Context, clean_tables: None
 ) -> None:
     """Deleting a pending DCR client leaves its registration event intact —
-    events are an append-only history, not a settleable inbox (acknowledgement
-    was removed)."""
+    events are an append-only history, not a settleable inbox."""
     dcr = OAuthDcrService(queue_policy_context)
     result = await dcr.register(
         client_name="doomed-mcp-client",

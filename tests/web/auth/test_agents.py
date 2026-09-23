@@ -445,7 +445,7 @@ async def test_approve_emits_decision_event(
     self_registered_alert_id: str,
 ) -> None:
     """Approving emits the decision event; the self-registered event stays as
-    append-only history (acknowledgement was removed).
+    append-only history.
 
     Also pins the decision event's payload contract — `data.agent_id` is what
     lets the UI deep-link the rail row to the agent page (the top-level actor

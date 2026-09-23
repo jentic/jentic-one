@@ -418,19 +418,19 @@ jentic api GET "/apis/$V/$N/$VER" \
 print('origin          :', a.get('origin')); \
 print('update_available:', a.get('update_available'))"
 
-# WHICH class? Look for an actionable conflict event for this API. If this returns a row,
-# it's the operator-decision path; if empty (but update_available is true), it's the
-# routine adopt path. The conflict event's data carries the overlay_id to act on.
+# WHICH class? Events are append-only, so resolved rounds still list: the NEWEST update event
+# for this API (list is newest-first) is the current class while update_available is true —
+# update_conflicts_overlay = operator-decision path (carries overlay_id), else routine adopt.
 # (Events live on the admin/control plane; listing needs events:read — an org:admin/
 # operator identity has it. Use `--context <operator>` if your agent identity lacks it.)
 jentic api GET /events \
+  --query event_type=catalog.update_available \
   --query event_type=catalog.update_conflicts_overlay \
-  --query requires_action=true \
   | python3 -c "import json,sys; \
 evs=json.load(sys.stdin).get('data', []); \
 mine=[e for e in evs if (e.get('data') or {}).get('spec_url')=='$SRC']; \
-print('conflicts_overlay pending:', bool(mine)); \
-print('overlay_id:', (mine[0]['data'].get('overlay_id') if mine else None))"
+latest=mine[0] if mine else {}; \
+print('latest:', latest.get('type'), 'overlay_id:', (latest.get('data') or {}).get('overlay_id'))"
 # Match on data.spec_url (the upstream URL) — it is present on BOTH the sweep-emitted conflict
 # event and the refuse-path event (logged when an under-scoped caller attempts the adopt), and
 # it equals the API's source_url you read in step 9. Do NOT filter on data.vendor: the sweep
@@ -440,7 +440,7 @@ print('overlay_id:', (mine[0]['data'].get('overlay_id') if mine else None))"
 
 **Reacting to `catalog.update_available`** (adopt upstream — your fix is upstream now, or the
 change is unrelated and you no longer need the overlay): re-import the catalog entry. A plain
-re-import adopts the upstream spec and **settles the event** automatically. This needs
+re-import adopts the upstream spec and flips `update_available` to false. This needs
 `catalog:import` (an `apis:write` scope implies it):
 
 ```
@@ -481,7 +481,7 @@ jentic api POST "/apis/$V/$N/$VER/overlays/<overlay_id>:rollback" -d '{}'
 ```
 
 The loop is closed when the served spec, the overlay's lifecycle status, and the action inbox all
-agree: either upstream was adopted (overlay `deprecated`, event settled) or the fix is deliberately
+agree: either upstream was adopted (overlay `deprecated`, `update_available` false) or the fix is deliberately
 retained (overlay `confirmed`, divergence flagged but not hidden).
 
 

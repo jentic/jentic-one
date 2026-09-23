@@ -23,16 +23,25 @@ depends_on: str | Sequence[str] | None = None
 _ACK_COLUMNS = ("acknowledgement_note", "acknowledged_by", "acknowledged_at", "acknowledged")
 
 
-def _recreate_mcp_session_index() -> None:
-    """Recreate the mcp.session_started dedupe index (SQLite batch drops it).
+_MCP_SESSION_INDEX = "uq_events_mcp_session_started_session"
 
-    SQLite's ``batch_alter_table`` rebuilds the table by copy, and it cannot
-    reflect the expression-based partial unique index
-    ``uq_events_mcp_session_started_session`` (on ``(type, data->>'session_id')``)
-    from ``f2a3b4c5d6e7``, so the copy silently loses it. Recreate it verbatim.
+
+def _drop_mcp_session_index() -> None:
+    """Drop the mcp.session_started dedupe index ahead of a SQLite batch op.
+
+    SQLite's ``batch_alter_table`` cannot reflect the expression-based partial
+    unique index from ``f2a3b4c5d6e7`` (on ``(type, data->>'session_id')``), so a
+    table-copy silently loses it, while an in-place ``ADD COLUMN`` keeps it.
+    Dropping it explicitly first makes the outcome identical either way, and
+    :func:`_create_mcp_session_index` restores it afterwards.
     """
+    op.drop_index(_MCP_SESSION_INDEX, table_name="events")
+
+
+def _create_mcp_session_index() -> None:
+    """Recreate the mcp.session_started dedupe index verbatim (SQLite form)."""
     op.create_index(
-        "uq_events_mcp_session_started_session",
+        _MCP_SESSION_INDEX,
         "events",
         ["type", sa.text("json_extract(data, '$.session_id')")],
         unique=True,
@@ -45,7 +54,8 @@ def upgrade() -> None:
     op.drop_index("ix_events_requires_action_unack", table_name="events")
     if is_sqlite:
         # Drop the columns first; the table-copy would otherwise clobber a
-        # freshly created index. Recreate the lost indexes afterwards.
+        # freshly created index. Recreate the indexes afterwards.
+        _drop_mcp_session_index()
         with op.batch_alter_table("events") as batch_op:
             for column in _ACK_COLUMNS:
                 batch_op.drop_column(column)
@@ -55,7 +65,7 @@ def upgrade() -> None:
             ["requires_action"],
             sqlite_where=sa.text("requires_action = 1"),
         )
-        _recreate_mcp_session_index()
+        _create_mcp_session_index()
     else:
         op.create_index(
             "ix_events_requires_action",
@@ -77,6 +87,7 @@ def downgrade() -> None:
     )
     op.drop_index("ix_events_requires_action", table_name="events")
     if is_sqlite:
+        _drop_mcp_session_index()
         with op.batch_alter_table("events") as batch_op:
             for column in ack_columns:
                 batch_op.add_column(column)
@@ -86,7 +97,7 @@ def downgrade() -> None:
             ["requires_action"],
             sqlite_where=sa.text("requires_action = 1 AND acknowledged = 0"),
         )
-        _recreate_mcp_session_index()
+        _create_mcp_session_index()
     else:
         for column in ack_columns:
             op.add_column("events", column)

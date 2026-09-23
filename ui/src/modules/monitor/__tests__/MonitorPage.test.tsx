@@ -273,8 +273,8 @@ describe('MonitorPage', () => {
 		await user.click(screen.getByRole('tab', { name: 'Events' }));
 
 		expect(await screen.findByText('Execution failed: github-api')).toBeInTheDocument();
-		// Acknowledgement was removed: actionable events are flagged with a
-		// "Needs action" badge rather than offering an Acknowledge control.
+		// Actionable events carry a "Needs action" badge; events are append-only
+		// history, so there is no per-row Acknowledge control.
 		expect(screen.getAllByText('Needs action').length).toBeGreaterThanOrEqual(1);
 		expect(screen.queryByRole('button', { name: 'Acknowledge' })).not.toBeInTheDocument();
 	});

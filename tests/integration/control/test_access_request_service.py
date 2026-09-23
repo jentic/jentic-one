@@ -428,10 +428,10 @@ async def test_decide_leaves_filed_alert_intact(
     seed_binding: None,
     admin_db: DatabaseSession,
 ) -> None:
-    """Deciding a request no longer settles its `access_request.filed` event.
+    """Deciding a request leaves its `access_request.filed` event untouched.
 
-    Acknowledgement was removed: the filed event is append-only history, so a
-    decision leaves it (and any unrelated request's event) untouched.
+    The filed event is append-only history, so a decision mutates neither it
+    nor any unrelated request's event.
     """
     filer = _filer_identity()
     filed = await svc.file(actor_id=FILER_SUB, reason=None, items=_base_items(), identity=filer)
@@ -471,7 +471,7 @@ async def test_withdraw_leaves_filed_alert_intact(
     seed_binding: None,
     admin_db: DatabaseSession,
 ) -> None:
-    """Withdrawing a request leaves its filed event intact (acknowledgement removed)."""
+    """Withdrawing a request leaves its filed event intact (events are append-only history)."""
     filer = _filer_identity()
     filed = await svc.file(actor_id=FILER_SUB, reason=None, items=_base_items(), identity=filer)
 

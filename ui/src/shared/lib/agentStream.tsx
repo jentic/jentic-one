@@ -119,7 +119,7 @@ export type StreamLinks = {
  * `summary`; `requiresAction` drives the inline action slot, and the
  * local-only `resolved` flag lets the live session hide an actionable row the
  * instant its action is taken (decided/withdrawn) without waiting for a backlog
- * refetch — the backend no longer tracks acknowledgement.
+ * refetch — the backend keeps events as append-only history.
  */
 export type StreamEvent = {
 	id: string;

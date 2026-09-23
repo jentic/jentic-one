@@ -15,7 +15,7 @@ import { authHeaders } from './helpers';
  *       and an actionable catalog.update_available event
  *     → re-import (adopts the upstream) → assert update_available:false, outdated_count:0,
  *       AND the catalog.update_available event remains as append-only history
- *       (acknowledgement was removed, so the event is never settled/mutated).
+ *       (events are never settled or mutated).
  *
  * The fixture upstream is only present in CI (and local runs that start it), so
  * the whole spec self-skips when 127.0.0.1:8099 is unreachable — it must never
@@ -116,7 +116,7 @@ test('flow-3 loop: import → upstream change → update_available → re-import
 	expect((outdatedBody.data as unknown[]).length, 'one outdated catalog row expected').toBe(1);
 
 	// An actionable catalog.update_available event must have been emitted.
-	const events1 = await request.get('/events?type=catalog.update_available', {
+	const events1 = await request.get('/events?event_type=catalog.update_available', {
 		headers: authHeaders(),
 	});
 	expect(events1.ok()).toBeTruthy();
@@ -143,10 +143,10 @@ test('flow-3 loop: import → upstream change → update_available → re-import
 	expect(catalogAfter.ok()).toBeTruthy();
 	expect((await catalogAfter.json()).outdated_count, 'outdated_count should clear to 0').toBe(0);
 
-	// Acknowledgement was removed: the catalog.update_available event is
-	// append-only history, so re-import clears the update flag but the event
-	// itself remains (still flagged requires_action, never mutated/settled).
-	const eventsAfter = await request.get('/events?type=catalog.update_available', {
+	// The catalog.update_available event is append-only history: re-import
+	// clears the update flag but the event itself remains (still flagged
+	// requires_action, never mutated or settled).
+	const eventsAfter = await request.get('/events?event_type=catalog.update_available', {
 		headers: authHeaders(),
 	});
 	expect(eventsAfter.ok()).toBeTruthy();
