@@ -74,8 +74,8 @@ type ActiveState struct {
 }
 
 // IsMachine reports whether this is a fenced machine mode (agent) rather than
-// a human session — the single canonical
-// "is machine mode?" predicate the CLI keys off. Any non-human mode counts:
+// a human session — the single canonical "is machine mode?" predicate the CLI
+// keys off. Any non-human mode counts:
 // unknown modes fail closed to agent at Audience construction (root
 // interceptor), so treating "not human" as machine matches that fail-closed
 // posture. Output rendering (JSONOrPretty), progress-line suppression
