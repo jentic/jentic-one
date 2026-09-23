@@ -72,6 +72,7 @@ class CredentialService:
         api_name: str,
         api_version: str,
         identity: Identity,
+        toolkit_id: str,
         credential_name: str | None = None,
         trace_id: str | None = None,
     ) -> InjectedAuth:
@@ -81,6 +82,11 @@ class CredentialService:
         credential path). Credential failures are mapped to broker-domain
         exceptions (424/409/401/502) so both call-sites render identical
         problem+json.
+
+        ``toolkit_id`` is the toolkit the execution was authorized against and
+        bounds resolution to that toolkit's bound credentials (see
+        :meth:`CredentialResolver.resolve`). Required: an execution never
+        resolves across the whole tenant.
 
         ``trace_id`` is stamped onto the ``CREDENTIAL_ACCESSED`` audit event so
         an operator inspecting an execution can join the credential-use record
@@ -95,7 +101,10 @@ class CredentialService:
         api = APIReference(vendor=api_vendor, name=api_name or "", version=api_version or "")
         try:
             resolved = await CredentialResolver(self._ctx).resolve(
-                api=api, caller=identity.sub, credential_name=credential_name
+                api=api,
+                caller=identity.sub,
+                toolkit_id=toolkit_id,
+                credential_name=credential_name,
             )
 
             try:

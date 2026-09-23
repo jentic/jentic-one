@@ -716,9 +716,10 @@ def provision_toolkit_and_credential(
     Returns ``(toolkit_id, credential_id)``.
 
     The agent↔toolkit binding is required for ``select_toolkit``; the credential
-    is required for ``inject``. Binding the credential to the toolkit is optional
-    for injection (resolution is keyed on the API tuple + ``active``) — kept on
-    by default to mirror the documented happy path.
+    is required for ``inject``, and it must be bound to the toolkit — injection
+    only considers credentials bound to the toolkit the execution was authorized
+    against. ``bind_credential_to_toolkit=False`` leaves it unbound, so the
+    broker refuses the execution.
     """
     tk, st = authed_request(
         f"{base_url}/toolkits",

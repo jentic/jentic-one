@@ -57,6 +57,7 @@ class _StaticInjector:
         api_name: str,
         api_version: str,
         identity: Any,
+        toolkit_id: str,
         credential_name: str | None = None,
         trace_id: str | None = None,
     ) -> InjectedAuth:

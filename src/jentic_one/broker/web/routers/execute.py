@@ -532,12 +532,18 @@ async def _resolve_credentials(
     identity: Identity,
     credential_name: str | None = None,
 ) -> InjectedAuth:
-    """Resolve + inject credentials via the shared ``CredentialService``."""
+    """Resolve + inject credentials via the shared ``CredentialService``.
+
+    Resolution is bounded to the credentials bound to ``ctx_req.toolkit_id``
+    (the toolkit ``select_toolkit`` derived and the rules were evaluated
+    against), so the injected secret always belongs to the authorizing toolkit.
+    """
     return await CredentialService(ctx).inject(
         api_vendor=ctx_req.api_vendor or "",
         api_name=ctx_req.api_name or "",
         api_version=ctx_req.api_version or "",
         identity=identity,
+        toolkit_id=ctx_req.toolkit_id or "",
         credential_name=credential_name,
         trace_id=ctx_req.trace_id,
     )

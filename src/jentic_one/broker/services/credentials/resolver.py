@@ -76,27 +76,41 @@ class CredentialResolver:
         self._ctx = ctx
 
     async def resolve(
-        self, *, api: APIReference, caller: str, credential_name: str | None = None
+        self,
+        *,
+        api: APIReference,
+        caller: str,
+        toolkit_id: str,
+        credential_name: str | None = None,
     ) -> ResolvedCredential:
         """Resolve a single active credential for the API tuple.
 
         Args:
             api: API vendor/name/version tuple to resolve credentials for.
             caller: Identity of the requesting party — reserved for future ACL/audit-logging.
+            toolkit_id: The toolkit the execution was authorized against. The
+                **injection boundary**: only credentials bound to this toolkit
+                are candidates — for selection, for the ``credential_name``
+                filter, and for the ambiguity/name-not-found candidate lists —
+                so a credential outside the caller's toolkit is never injected
+                or disclosed. Required; there is no unfiltered mode.
             credential_name: Optional human-readable name to disambiguate multiple matches.
 
         Raises CredentialNotProvisionedError if no match.
         Raises AmbiguousCredentialError if >1 match and no credential_name given.
         Raises CredentialNameNotFoundError if credential_name doesn't match any candidate.
 
-        Resolution order: filter to credentials whose stored scope *covers* the
-        API, then — if a ``credential_name`` is given — restrict to that name
-        across **all** covering credentials (an explicit name is the strongest
-        disambiguation signal, so it can select a covering-but-less-specific
-        credential), and only then apply most-specific-wins to break ties.
+        Resolution order: restrict to the toolkit's bound credentials, filter to
+        those whose stored scope *covers* the API, then — if a
+        ``credential_name`` is given — restrict to that name across **all**
+        covering credentials (an explicit name is the strongest disambiguation
+        signal, so it can select a covering-but-less-specific credential), and
+        only then apply most-specific-wins to break ties.
         """
         async with self._ctx.control_db.session() as session:
-            candidates = await CredentialRepository.list_by_vendor(session, api.vendor)
+            candidates = await CredentialRepository.list_by_vendor(
+                session, api.vendor, toolkit_id=toolkit_id
+            )
 
             # Coverage + specificity via the shared seam. A credential's stored
             # scope (canonicalized here so legacy '' / non-slug rows compare on

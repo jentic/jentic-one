@@ -114,6 +114,10 @@ class ExecutionHandler:
                 api_name=api_name or "",
                 api_version=api_version or "",
                 identity=_worker_identity(created_by, actor_type),
+                # The toolkit the web edge authorized the execution against;
+                # bounds resolution to that toolkit's bound credentials. A
+                # payload without one resolves nothing (fail closed).
+                toolkit_id=payload.get("toolkit_id") or "",
                 trace_id=trace_id,
             )
             applied = _apply_injection(upstream_url, injection)
