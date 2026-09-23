@@ -14,6 +14,7 @@ from jentic_one.broker.services.execution.service import (
     default_broker,
     run_execution,
 )
+from jentic_one.shared.models.events import EVENT_TYPE_SEVERITIES, EventType
 from jentic_one.shared.schemas import OperationInfo
 
 
@@ -82,6 +83,10 @@ async def test_circuit_open_emits_event() -> None:
     assert len(circuit_calls) == 1
     call_kwargs = circuit_calls[0].kwargs
     assert call_kwargs["severity"].value == "warning"
+    # Cross-check against the documented severity matrix (issue #907): a future
+    # change to this emit site must also update EVENT_TYPE_SEVERITIES, or this
+    # assertion — not just the hardcoded literal above — catches the drift.
+    assert call_kwargs["severity"] in EVENT_TYPE_SEVERITIES[EventType.UPSTREAM_CIRCUIT_OPEN]
     assert "api.example.com" in call_kwargs["summary"]
     assert call_kwargs["data"] == {"host": "api.example.com"}
 

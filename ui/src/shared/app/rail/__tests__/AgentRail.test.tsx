@@ -21,6 +21,7 @@ import {
 	matchesToastScope,
 	primaryDestinationFor,
 	severityForWire,
+	severityStripeClass,
 	streamDayKey,
 	unacknowledgedFailureCount,
 	useAgentStream,
@@ -116,6 +117,26 @@ describe('agentStream — wire adaptation + pure helpers', () => {
 		expect(severityForWire('error')).toBe('error');
 		expect(severityForWire('warning')).toBe('warning');
 		expect(severityForWire('info')).toBe('info');
+	});
+
+	// Issue #907: critical and error shared an IDENTICAL rail stripe
+	// (`border-l-danger` for both, same width) — an operator had no visual way
+	// to tell a single failure from a chronic-failure escalation without
+	// opening the row. Critical now renders a wider stripe on top of the same
+	// danger colour, so the two failure tiers stay visually related but not
+	// indistinguishable.
+	it('severityStripeClass gives critical a distinct treatment from error', () => {
+		const critical = severityStripeClass('critical');
+		const error = severityStripeClass('error');
+		expect(critical).not.toBe(error);
+		// Both stay in the danger colour family — they're still both failures.
+		expect(critical).toContain('border-l-danger');
+		expect(error).toContain('border-l-danger');
+	});
+
+	it('severityStripeClass gives warning and info their own colours', () => {
+		expect(severityStripeClass('warning')).toContain('border-l-warning');
+		expect(severityStripeClass('info')).toContain('border-l-primary');
 	});
 
 	it('adaptEvent lifts tokens, links and flags off the wire shape', () => {

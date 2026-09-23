@@ -28,7 +28,7 @@ from jentic_one.control.core.schema.oauth_tokens import OAuthToken
 from jentic_one.shared.config import DatabaseConfig
 from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.jobs.credential_expiry_scanner import CredentialExpiryScanner
-from jentic_one.shared.models.events import EventSeverity, EventType
+from jentic_one.shared.models.events import EVENT_TYPE_SEVERITIES, EventSeverity, EventType
 
 
 def _create_tables(sync_conn: Connection, *tables: Table) -> None:
@@ -136,6 +136,11 @@ async def test_expiring_soon_emits_warning_and_stamps_marker(
     assert events[0].requires_action is False
     assert events[0].data["credential_id"] == "cred_soon"
     assert events[0].data["api_vendor"] == "stripe"
+    # Cross-check against the documented severity matrix (issue #907).
+    assert (
+        EventSeverity(events[0].severity)
+        in EVENT_TYPE_SEVERITIES[EventType.CREDENTIAL_EXPIRING_SOON]
+    )
 
     token = await _marker(control_db, "cred_soon")
     assert token.expiring_soon_event_at is not None
@@ -156,6 +161,8 @@ async def test_expired_emits_error_and_requires_action(
     assert len(events) == 1
     assert events[0].severity == EventSeverity.ERROR.value
     assert events[0].requires_action is True
+    # Cross-check against the documented severity matrix (issue #907).
+    assert EventSeverity(events[0].severity) in EVENT_TYPE_SEVERITIES[EventType.CREDENTIAL_EXPIRED]
 
     token = await _marker(control_db, "cred_dead")
     assert token.expired_event_at is not None
