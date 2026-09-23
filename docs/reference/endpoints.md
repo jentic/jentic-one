@@ -27,7 +27,7 @@ Every API endpoint grouped by its **typical caller**, then by surface, annotated
 
 > The grouping and the _Typical caller_ column are an **advisory hint** at who usually calls a route, inferred from the scope family. They are **not** an enforced restriction: access is gated by the **scope**, not the actor kind, so any actor holding the required scope can call the endpoint.
 
-_Total endpoints: **184**._
+_Total endpoints: **183**._
 
 
 ## Agent-facing (typically agent / service-account) (31)
@@ -109,7 +109,7 @@ _Total endpoints: **184**._
 |---|---|---|---|---|
 | POST | `/search` | `apis:read` | agent | Search operations |
 
-## Operator-facing (typically a human operator / admin) (52)
+## Operator-facing (typically a human operator / admin) (51)
 
 
 ### `access-requests`
@@ -180,12 +180,6 @@ _Total endpoints: **184**._
 | Method | Path | Scope(s) | Typical caller | Summary |
 |---|---|---|---|---|
 | POST | `/catalog:refresh` | `org:admin` | operator | Refresh Catalog |
-
-### `events`
-
-| Method | Path | Scope(s) | Typical caller | Summary |
-|---|---|---|---|---|
-| PATCH | `/events/{event_id}` | `events:write` | operator | Acknowledge Event |
 
 ### `monitoring`
 

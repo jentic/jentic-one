@@ -27,9 +27,6 @@ class EventResponse(BaseModel):
     severity: EventSeverity
     summary: str
     requires_action: bool
-    acknowledged: bool
-    acknowledged_at: datetime | None = None
-    acknowledged_by: str | None = None
     created_at: datetime
     trace_id: str | None = None
     detail: str | None = None
@@ -45,10 +42,3 @@ class EventListResponse(BaseModel):
     data: list[EventResponse]
     has_more: bool
     next_cursor: str | None = None
-
-
-class EventAcknowledgeRequest(BaseModel):
-    """Request body for acknowledging an event."""
-
-    acknowledged: bool
-    note: str | None = Field(default=None, max_length=2000)

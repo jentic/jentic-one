@@ -24,7 +24,6 @@ def _make_event(id: str, created_at: datetime) -> Event:
     event.severity = "info"
     event.summary = f"Event {id}"
     event.requires_action = False
-    event.acknowledged = False
     event.trace_id = None
     event.detail = None
     event.data = {}

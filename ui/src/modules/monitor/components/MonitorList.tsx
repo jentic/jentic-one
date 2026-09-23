@@ -100,8 +100,8 @@ export function MonitorRow({
 	return (
 		<li className="bg-card border-border/40 border-b last:border-0">
 			{onClick ? (
-				// A row can carry its own inline controls (e.g. Events' Acknowledge
-				// button), so the clickable wrapper is a `role="link"` div rather than
+				// A row can carry its own inline controls, so the clickable wrapper is
+				// a `role="link"` div rather than
 				// a real <button> — nesting a button inside a button is invalid. A
 				// click that originates on a nested control is ignored here so the
 				// control's own handler wins.

@@ -3699,32 +3699,6 @@
         "title": "EvaluationResponse",
         "type": "object"
       },
-      "EventAcknowledgeRequest": {
-        "description": "Request body for acknowledging an event.",
-        "properties": {
-          "acknowledged": {
-            "title": "Acknowledged",
-            "type": "boolean"
-          },
-          "note": {
-            "anyOf": [
-              {
-                "maxLength": 2000,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Note"
-          }
-        },
-        "required": [
-          "acknowledged"
-        ],
-        "title": "EventAcknowledgeRequest",
-        "type": "object"
-      },
       "EventLinks": {
         "description": "HAL-style links for an event.",
         "properties": {
@@ -3811,33 +3785,6 @@
           "_links": {
             "$ref": "#/components/schemas/EventLinks"
           },
-          "acknowledged": {
-            "title": "Acknowledged",
-            "type": "boolean"
-          },
-          "acknowledged_at": {
-            "anyOf": [
-              {
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Acknowledged At"
-          },
-          "acknowledged_by": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Acknowledged By"
-          },
           "actor_id": {
             "anyOf": [
               {
@@ -3918,7 +3865,6 @@
           "severity",
           "summary",
           "requires_action",
-          "acknowledged",
           "created_at",
           "_links"
         ],
@@ -26296,22 +26242,6 @@
           },
           {
             "in": "query",
-            "name": "acknowledged",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "boolean"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Acknowledged"
-            }
-          },
-          {
-            "in": "query",
             "name": "from",
             "required": false,
             "schema": {
@@ -26963,160 +26893,6 @@
           }
         ],
         "summary": "Get Event",
-        "tags": [
-          "Events"
-        ]
-      },
-      "patch": {
-        "description": "Acknowledge an event.",
-        "operationId": "acknowledgeEvent",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "event_id",
-            "required": true,
-            "schema": {
-              "title": "Event Id",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/EventAcknowledgeRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/EventResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "400": {
-            "content": {
-              "application/problem+json": {
-                "example": {
-                  "detail": "The request was malformed or failed a precondition.",
-                  "instance": "/example/path",
-                  "status": 400,
-                  "title": "Bad Request",
-                  "type": "bad_request"
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ProblemDetail"
-                }
-              }
-            },
-            "description": "Bad Request"
-          },
-          "401": {
-            "content": {
-              "application/problem+json": {
-                "example": {
-                  "detail": "Authentication is required or the bearer token is invalid.",
-                  "instance": "/example/path",
-                  "status": 401,
-                  "title": "Unauthorized",
-                  "type": "unauthorized"
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ProblemDetail"
-                }
-              }
-            },
-            "description": "Unauthorized"
-          },
-          "403": {
-            "content": {
-              "application/problem+json": {
-                "example": {
-                  "detail": "The authenticated principal lacks the required permission.",
-                  "instance": "/example/path",
-                  "status": 403,
-                  "title": "Forbidden",
-                  "type": "forbidden"
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ProblemDetail"
-                }
-              }
-            },
-            "description": "Forbidden"
-          },
-          "422": {
-            "content": {
-              "application/problem+json": {
-                "example": {
-                  "detail": "Request validation failed; see errors[] for details.",
-                  "errors": [
-                    {
-                      "detail": "Field 'name' must not be blank.",
-                      "pointer": "#/name"
-                    }
-                  ],
-                  "instance": "/example/path",
-                  "status": 422,
-                  "title": "Unprocessable Entity",
-                  "type": "validation_error"
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ProblemDetail"
-                }
-              }
-            },
-            "description": "Unprocessable Entity"
-          },
-          "500": {
-            "content": {
-              "application/problem+json": {
-                "example": {
-                  "detail": "An unexpected error occurred.",
-                  "instance": "/example/path",
-                  "status": 500,
-                  "title": "Internal Server Error",
-                  "type": "server_error"
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ProblemDetail"
-                }
-              }
-            },
-            "description": "Internal Server Error"
-          },
-          "503": {
-            "content": {
-              "application/problem+json": {
-                "example": {
-                  "detail": "The database is temporarily unavailable; please retry.",
-                  "instance": "/example/path",
-                  "status": 503,
-                  "title": "Service Unavailable",
-                  "type": "database_unavailable"
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ProblemDetail"
-                }
-              }
-            },
-            "description": "Service Unavailable"
-          }
-        },
-        "security": [
-          {
-            "BearerAuth": []
-          }
-        ],
-        "summary": "Acknowledge Event",
         "tags": [
           "Events"
         ]

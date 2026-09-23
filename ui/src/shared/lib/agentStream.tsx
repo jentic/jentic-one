@@ -11,7 +11,7 @@ import type { ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { EventSeverity, type EventResponse } from '@/shared/api';
 import { sharedQueryKeys } from '@/shared/api/queryKeys';
-import { acknowledgeEvent, listEvents, streamEvents } from '@/shared/lib/railEvents';
+import { listEvents, streamEvents } from '@/shared/lib/railEvents';
 import { decideAllPending } from '@/shared/lib/accessRequests';
 
 /*
@@ -116,7 +116,10 @@ export type StreamLinks = {
 /**
  * UI-shaped view of a single platform event. A faithful adaptation of
  * `EventResponse` — `id`/`tsMs`/`title` map to `event_id`/`created_at`/
- * `summary`; `acknowledged` + `requiresAction` drive the inline action slot.
+ * `summary`; `requiresAction` drives the inline action slot. The backend keeps
+ * events as append-only history, so `resolved` is derived client-side: a row
+ * resolves when the loaded feed holds the decision that supersedes it (see
+ * `resolveSupersededRows`), or optimistically the instant its action is taken.
  */
 export type StreamEvent = {
 	id: string;
@@ -129,8 +132,9 @@ export type StreamEvent = {
 	tokens: StreamTokens;
 	links: StreamLinks;
 	requiresAction: boolean;
-	acknowledged: boolean;
-	acknowledgedAt?: number;
+	/** Client-derived: this actionable row's action has been taken (see type doc). */
+	resolved: boolean;
+	resolvedAt?: number;
 	/** Conflict digests for a `catalog.update_conflicts_overlay` event (L5 "why"). */
 	conflict?: ConflictDigests;
 	// Stable key for grouping. Format: "<kind>:<type>:<trace|''>".
@@ -358,8 +362,7 @@ export function adaptEvent(e: EventResponse): StreamEvent {
 			job: e._links?.job ?? null,
 		},
 		requiresAction: e.requires_action,
-		acknowledged: e.acknowledged,
-		acknowledgedAt: e.acknowledged_at ? Date.parse(e.acknowledged_at) || undefined : undefined,
+		resolved: false,
 		conflict,
 		groupKey: '',
 	};
@@ -377,8 +380,6 @@ type AgentStreamValue = {
 	events: StreamEvent[];
 	latest: StreamEvent | null;
 	status: StreamStatus;
-	/** Acknowledge an event against the real backend (`PATCH /events/{id}`). */
-	acknowledge: (eventId: string) => Promise<void>;
 	/**
 	 * Decide an `access_request.filed` event: approve/deny the request's pending
 	 * items (`POST /access-requests/{id}:decide`). `reason` is the human's note
@@ -400,12 +401,11 @@ type AgentStreamValue = {
 	 */
 	resolveEvent: (eventId: string) => void;
 	/**
-	 * Settle every unacknowledged actionable `oauth_client.registered` row for
+	 * Resolve every outstanding actionable `oauth_client.registered` row for
 	 * one client (matched on the internal `oauth_client_id` token). The approve
 	 * arm gets this mirror for free from the `oauth_client.approved` SSE event;
 	 * a DENY emits no event (§4.8 / D7), so the deny mutation — which knows the
-	 * client id — calls this on success. The backend settles the row inside the
-	 * decision transaction either way; this only syncs the live session's local
+	 * client id — calls this on success. This syncs the live session's local
 	 * copy so a stale "Review" prompt doesn't linger until the next backlog
 	 * fetch.
 	 */
@@ -428,7 +428,8 @@ const MAX_EVENTS = 300;
  *   2. Subscribe to the live SSE (`GET /events/stream`); each new event is
  *      prepended (deduped by id) and exposed as `latest` so the ToastHost +
  *      audio cue can react.
- *   3. `acknowledge` PATCHes the event and optimistically flips its local flag.
+ *   3. `decide` fans a verdict across an access request's items and resolves
+ *      the filed event's action slot locally.
  *   4. `loadOlderEvents` pages backwards via the list cursor.
  *
  * `live` defaults to `true`; tests pass `live={false}` to skip the SSE
@@ -502,7 +503,7 @@ export function AgentStreamProvider({
 
 	/**
 	 * Flip a single event by id with `fn`, leaving the rest untouched. Centralises
-	 * the optimistic-update / rollback pattern used by acknowledge + decide so the
+	 * the optimistic-update / rollback pattern used by decide so the
 	 * map-by-id boilerplate isn't repeated (and can't drift between flip and undo).
 	 */
 	const patchEvent = useCallback((eventId: string, fn: (ev: StreamEvent) => StreamEvent) => {
@@ -512,16 +513,16 @@ export function AgentStreamProvider({
 	const markResolved = useCallback(
 		(ev: StreamEvent): StreamEvent => ({
 			...ev,
-			acknowledged: true,
-			acknowledgedAt: Date.now(),
+			resolved: true,
+			resolvedAt: Date.now(),
 		}),
 		[],
 	);
 	const markUnresolved = useCallback(
 		(ev: StreamEvent): StreamEvent => ({
 			...ev,
-			acknowledged: false,
-			acknowledgedAt: undefined,
+			resolved: false,
+			resolvedAt: undefined,
 		}),
 		[],
 	);
@@ -540,12 +541,18 @@ export function AgentStreamProvider({
 					continue;
 				}
 				// Same id already present. Live upserts (`front`) are authoritative
-				// — a re-delivered event carries the server's current truth (e.g. an
-				// acknowledged flag set elsewhere), so reconcile in place. Backlog
-				// pages (`!front`) are historical and must NOT clobber a local
-				// optimistic flip, so they're ignored on collision.
+				// — a re-delivered event carries the server's current truth, so
+				// reconcile in place. The server never carries `resolved` (it is
+				// client-derived), so a local resolve survives the reconcile.
+				// Backlog pages (`!front`) are historical and are ignored on
+				// collision.
 				if (front && existing !== ev) {
-					byId.set(ev.id, ev);
+					byId.set(
+						ev.id,
+						existing.resolved
+							? { ...ev, resolved: true, resolvedAt: existing.resolvedAt }
+							: ev,
+					);
 					changed = true;
 				}
 			}
@@ -555,7 +562,7 @@ export function AgentStreamProvider({
 			const base = prev.map((e) => byId.get(e.id) ?? e);
 			const merged = front ? [...appended, ...base] : [...base, ...appended];
 			merged.sort((a, b) => b.tsMs - a.tsMs);
-			return merged.slice(0, MAX_EVENTS);
+			return resolveSupersededRows(merged.slice(0, MAX_EVENTS));
 		});
 	}, []);
 
@@ -568,7 +575,7 @@ export function AgentStreamProvider({
 				prev.map((row) =>
 					row.type === 'oauth_client.registered' &&
 					row.tokens.oauth_client_id === oauthClientId &&
-					!row.acknowledged
+					!row.resolved
 						? markResolved(row)
 						: row,
 				),
@@ -627,64 +634,9 @@ export function AgentStreamProvider({
 						}
 					}
 					upsert([ev], true);
-					// Settlement mirrors run on EVERY delivery, not just the
-					// first: they're idempotent (only unacknowledged matching
-					// rows flip), and in the late-commit race the actionable
-					// row can land AFTER its decision event was first seen —
-					// a re-delivered decision must still be able to settle it.
-					if (
-						ev.kind === 'agent' &&
-						(ev.type === 'agent.registration_approved' ||
-							ev.type === 'agent.registration_denied') &&
-						ev.tokens.agent_id
-					) {
-						// The backend acknowledges the registration alert in the
-						// decision transaction; mirror on local rows so the live
-						// session drops the stale actionable row immediately.
-						setEvents((prev) =>
-							prev.map((row) =>
-								row.type === 'agent.self_registered' &&
-								row.tokens.agent_id === ev.tokens.agent_id &&
-								!row.acknowledged
-									? markResolved(row)
-									: row,
-							),
-						);
-					}
-					if (
-						ev.kind === 'access_request' &&
-						(ev.type === 'access_request.approved' ||
-							ev.type === 'access_request.denied' ||
-							ev.type === 'access_request.withdrawn') &&
-						ev.tokens.access_request_id
-					) {
-						// Same for the filed alert: the decision settles it
-						// server-side; without this mirror a re-delivered filed
-						// event (reconnect overlap) could resurrect View/Deny
-						// buttons for an already-decided request.
-						setEvents((prev) =>
-							prev.map((row) =>
-								row.type === 'access_request.filed' &&
-								row.tokens.access_request_id === ev.tokens.access_request_id &&
-								!row.acknowledged
-									? markResolved(row)
-									: row,
-							),
-						);
-					}
-					if (
-						ev.kind === 'oauth' &&
-						ev.type === 'oauth_client.approved' &&
-						ev.tokens.oauth_client_id
-					) {
-						// The backend settles the actionable oauth_client.registered
-						// alert inside the approve/deny transaction (§4.8 / D7);
-						// mirror on local rows so the live session drops the stale
-						// "Review" prompt immediately. (A deny emits no event, so
-						// the deny mutation calls this same settle directly —
-						// see settleOAuthClientRegistration.)
-						settleOAuthClientRegistration(ev.tokens.oauth_client_id);
-					}
+					// `upsert` re-derives `resolved` over the whole feed on every
+					// delivery (see `resolveSupersededRows`), so a decision resolves
+					// its actionable row whichever of the two lands first.
 					if (!firstDelivery) return;
 					setLatest(ev);
 					// Bridge: a filed/decided access request changes the durable
@@ -711,33 +663,7 @@ export function AgentStreamProvider({
 		invalidateApprovalSurfaces,
 		invalidateAgentSurfaces,
 		invalidateOAuthSurfaces,
-		markResolved,
-		settleOAuthClientRegistration,
 	]);
-
-	const acknowledge = useCallback(
-		async (eventId: string) => {
-			// Optimistic flip so the row resolves immediately; reconcile on response.
-			patchEvent(eventId, markResolved);
-			try {
-				const updated = await acknowledgeEvent(eventId);
-				patchEvent(eventId, () => adaptEvent(updated));
-				// The ack happened outside React Query, and the SSE stream is a
-				// created_at-watermark poll that will never re-deliver an old event
-				// just because its acknowledged flag flipped — so eagerly refresh
-				// the other surfaces that count/list unacknowledged events (the
-				// Monitor Events tab and the dashboard action inbox), mirroring
-				// what `decide` does for approval surfaces.
-				void queryClient.invalidateQueries({
-					queryKey: sharedQueryKeys.monitorEventsRoot,
-				});
-				void queryClient.invalidateQueries({ queryKey: DASHBOARD_ROOT_KEY });
-			} catch {
-				patchEvent(eventId, markUnresolved);
-			}
-		},
-		[patchEvent, markResolved, markUnresolved, queryClient],
-	);
 
 	const decide = useCallback(
 		async (eventId: string, decision: 'approved' | 'denied', reason?: string) => {
@@ -752,9 +678,9 @@ export function AgentStreamProvider({
 			patchEvent(eventId, markResolved);
 			try {
 				if (!requestId) {
-					// No request id on the event — fall back to acknowledging it so the
-					// row doesn't get stuck asking for a decision it can't route.
-					await acknowledgeEvent(eventId);
+					// No request id on the event — nothing to route a decision to;
+					// leave it resolved locally so the row doesn't get stuck asking
+					// for a decision it can't route.
 					return;
 				}
 				await decideAllPending(requestId, decision, reason);
@@ -802,7 +728,6 @@ export function AgentStreamProvider({
 			events,
 			latest,
 			status,
-			acknowledge,
 			decide,
 			resolveEvent,
 			settleOAuthClientRegistration,
@@ -814,7 +739,6 @@ export function AgentStreamProvider({
 			events,
 			latest,
 			status,
-			acknowledge,
 			decide,
 			resolveEvent,
 			settleOAuthClientRegistration,
@@ -837,9 +761,8 @@ export function useAgentStream(): AgentStreamValue {
 /**
  * Provider-optional variant for module-side hooks that should SYNC with the
  * stream when it's mounted (the app shell) but must not require it (tests,
- * embedded surfaces). Monitor's acknowledge mutation uses this to flip the
- * rail's in-memory copy of an event so the failure pill drops immediately —
- * the SSE watermark poll never re-delivers an old event on an ack flip.
+ * embedded surfaces). Monitor uses this to read the rail's in-memory feed so
+ * shared surfaces (e.g. the failure pill) stay consistent with the live stream.
  */
 export function useAgentStreamOptional(): AgentStreamValue | null {
 	return useContext(AgentStreamContext);
@@ -889,19 +812,63 @@ export function isFailureSeverity(severity: StreamSeverity): boolean {
 }
 
 /**
- * Count of unacknowledged failure events (error/critical) in the LOADED feed
+ * Count of failure events (error/critical) in the LOADED feed
  * window (backlog seed + live inserts, capped) — the number shown on the
  * rail's persistent failure badge (#671). Deliberately window-scoped: the pill
- * is a "recent activity" signal, not a global unacked-failures query (that's
+ * is a "recent activity" signal, not a global failures query (that's
  * the Monitor Events tab); labels around it say "recent" for that reason.
- * Drops as the operator acknowledges each failing event.
  */
-export function unacknowledgedFailureCount(events: StreamEvent[]): number {
+export function recentFailureCount(events: StreamEvent[]): number {
 	let n = 0;
 	for (const ev of events) {
-		if (!ev.acknowledged && isFailureSeverity(ev.severity)) n += 1;
+		if (isFailureSeverity(ev.severity)) n += 1;
 	}
 	return n;
+}
+
+/**
+ * Decision event → the actionable row type it supersedes, and the token both
+ * carry. Events are append-only, so this is how an actionable row is known to
+ * be handled: its decision is present in the loaded feed. (An OAuth deny emits
+ * no event; the deny mutation resolves that row via
+ * `settleOAuthClientRegistration`.)
+ */
+const SUPERSEDED_BY: Record<string, { target: string; token: keyof StreamTokens }> = {
+	'access_request.approved': { target: 'access_request.filed', token: 'access_request_id' },
+	'access_request.denied': { target: 'access_request.filed', token: 'access_request_id' },
+	'access_request.withdrawn': { target: 'access_request.filed', token: 'access_request_id' },
+	'agent.registration_approved': { target: 'agent.self_registered', token: 'agent_id' },
+	'agent.registration_denied': { target: 'agent.self_registered', token: 'agent_id' },
+	'oauth_client.approved': { target: 'oauth_client.registered', token: 'oauth_client_id' },
+};
+
+/**
+ * Mark every actionable row whose superseding decision is in `events` as
+ * resolved. Pure and idempotent; returns the same array when nothing changes.
+ * Applied on every upsert, so it covers the backlog seed, "load older" pages
+ * (a decision and its filed row can land on different pages, in either order)
+ * and live re-deliveries — without it a reload would resurrect View/Deny/Review
+ * buttons on requests, agents and OAuth clients that were already decided.
+ */
+export function resolveSupersededRows(events: StreamEvent[]): StreamEvent[] {
+	const decided = new Set<string>();
+	for (const ev of events) {
+		const rule = SUPERSEDED_BY[ev.type];
+		const id = rule ? ev.tokens[rule.token] : undefined;
+		if (rule && id) decided.add(`${rule.target}|${id}`);
+	}
+	if (decided.size === 0) return events;
+	let changed = false;
+	const out = events.map((ev) => {
+		if (ev.resolved || !ev.requiresAction) return ev;
+		const hit = Object.values(SUPERSEDED_BY).find(
+			(r) => r.target === ev.type && ev.tokens[r.token],
+		);
+		if (!hit || !decided.has(`${ev.type}|${ev.tokens[hit.token]}`)) return ev;
+		changed = true;
+		return { ...ev, resolved: true };
+	});
+	return changed ? out : events;
 }
 
 /**
@@ -1010,24 +977,24 @@ export function formatStreamDayLabel(tsMs: number, now: number = Date.now()): st
 /*
   EVENT BEHAVIOUR — derived from the REAL contract.
 
-  Two backend mutations reach the rail:
-    • Acknowledge (`PATCH /events/{id}`) — dismisses ANY action-required event.
+  One backend mutation reaches the rail:
     • Decide (`POST /access-requests/{id}:decide`) — the real "feed the agent
       back" action for an `access_request.filed` event. The event carries the
       request id in `data.request_id`; Approve/Deny fan a verdict across the
       request's pending items, and Deny carries a reason the agent reads back.
 
   So the inline-action slot is:
-    • View / Deny — for an unacked `access_request.filed` event that carries a
-      request id. "View" opens the request-detail dialog (per-item approve/deny);
-      "Deny" is the reason-gated fast path that denies the whole request.
-    • "Acknowledge" — for any other action-required event not yet acked.
+    • View / Deny — for an outstanding `access_request.filed` event that carries
+      a request id. "View" opens the request-detail dialog (per-item
+      approve/deny); "Deny" is the reason-gated fast path that denies the whole
+      request.
+    • "Review" links — deep-link to where the action for an actionable event
+      lives (agent page, OAuth queue, API detail).
     • "View" links — deep-link into the execution/job/trace the event references.
   Navigation targets are router-relative (basename `/app` is prepended) to match
   jentic-one's route tree.
 */
 export type InlineActionKind =
-	| 'acknowledge'
 	| 'approve'
 	| 'deny'
 	| 'view_request'
@@ -1041,8 +1008,6 @@ export type InlineActionKind =
 export type InlineActionSpec = {
 	kind: InlineActionKind;
 	label: string;
-	/** Real backend mutation (acknowledge). Omit for pure navigation. */
-	acknowledges?: boolean;
 	/** Access-request decision (approve/deny via `:decide`). */
 	decides?: 'approved' | 'denied';
 	/**
@@ -1108,12 +1073,12 @@ const NAV = {
 
 export function inlineActionsFor(ev: StreamEvent): InlineActionSpec[] {
 	const actions: InlineActionSpec[] = [];
-	if (ev.requiresAction && !ev.acknowledged) {
+	if (ev.requiresAction && !ev.resolved) {
 		// An access_request.filed event with a routable request id gets View
 		// (opens the per-item decision dialog) + a reason-gated Deny fast path
 		// (denies the whole request). Approving without seeing the items is the
 		// risky direction, so approve lives inside the dialog. Everything else
-		// that needs action just gets Acknowledge.
+		// that needs action gets a "Review" deep-link to where its action lives.
 		if (ev.type === 'access_request.filed' && ev.tokens.access_request_id) {
 			actions.push({ kind: 'view_request', label: 'View', opensRequest: true });
 			actions.push({
@@ -1124,15 +1089,13 @@ export function inlineActionsFor(ev: StreamEvent): InlineActionSpec[] {
 			});
 		} else if (ev.type === 'agent.self_registered' && ev.tokens.agent_id) {
 			// A self-registered agent awaits approval — route the operator to the
-			// agent's page (where approve/deny lives) instead of a bare Acknowledge.
+			// agent's page (where approve/deny lives).
 			actions.push({ kind: 'view_agent', label: 'Review', href: NAV.agent });
-			actions.push({ kind: 'acknowledge', label: 'Acknowledge', acknowledges: true });
 		} else if (ev.type === 'oauth_client.registered') {
 			// A DCR client registration awaiting approval — route
 			// the operator to the Settings approval queue, where the D7
-			// approve/deny verbs live, alongside Acknowledge.
+			// approve/deny verbs live.
 			actions.push({ kind: 'view_oauth_queue', label: 'Review', href: NAV.oauthQueue });
-			actions.push({ kind: 'acknowledge', label: 'Acknowledge', acknowledges: true });
 		} else if (
 			(ev.type === 'catalog.update_available' ||
 				ev.type === 'catalog.update_conflicts_overlay') &&
@@ -1140,11 +1103,8 @@ export function inlineActionsFor(ev: StreamEvent): InlineActionSpec[] {
 		) {
 			// An upstream spec change (or a change that conflicts with a confirmed
 			// overlay) — deep-link the operator to the API's Workspace detail page
-			// (where Re-import / overlay resolution lives) alongside Acknowledge.
+			// (where Re-import / overlay resolution lives).
 			actions.push({ kind: 'view_api', label: 'Review', href: NAV.workspaceApi });
-			actions.push({ kind: 'acknowledge', label: 'Acknowledge', acknowledges: true });
-		} else {
-			actions.push({ kind: 'acknowledge', label: 'Acknowledge', acknowledges: true });
 		}
 	}
 	// A deep-link into the underlying record, when the event references one.

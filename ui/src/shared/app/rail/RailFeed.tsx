@@ -112,8 +112,8 @@ function formatLastEventAgo(tsMs: number): string {
 function buildRows(events: StreamEvent[]): FeedRow[] {
 	const out: FeedRow[] = [];
 	for (const ev of events) {
-		// Critical/error and acknowledged events never group — visibility floor.
-		if (ev.severity === 'critical' || ev.severity === 'error' || ev.acknowledged) {
+		// Critical/error and resolved events never group — visibility floor.
+		if (ev.severity === 'critical' || ev.severity === 'error' || ev.resolved) {
 			out.push({ kind: 'single', ev });
 			continue;
 		}

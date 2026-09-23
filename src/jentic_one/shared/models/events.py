@@ -36,8 +36,8 @@ class EventType:
     # A registered catalog/imported API's upstream spec changed (detected by the
     # update-notify sweep). Emitted with requires_action=True — the operator resolves
     # it by re-importing the upstream spec (one-click in the UI / `jentic catalog
-    # outdated` in the CLI), which the ImportHandler settles via
-    # settle_actionable_events. Deduped on the observed spec digest so it fires once
+    # outdated` in the CLI), which drops the API out of the outdated set. Deduped on
+    # the observed spec digest so it fires once
     # per real change, not every sweep.
     CATALOG_UPDATE_AVAILABLE = "catalog.update_available"
     # A registered API's upstream spec changed AND that change collides with a

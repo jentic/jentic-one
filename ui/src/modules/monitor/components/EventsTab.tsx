@@ -5,7 +5,8 @@
  * (`GET /events/stream`, fetch-stream so the Bearer header can be sent). When
  * Live is on, streamed events are merged on top of the fetched page (deduped by
  * `event_id`, newest first) and a status pill reflects the connection. Events
- * that `requires_action` and aren't acknowledged get an Acknowledge button.
+ * that `requires_action` are flagged with a "Needs action" badge and can be
+ * filtered to.
  */
 import { useMemo } from 'react';
 import { useSearchParams } from 'react-router';
@@ -24,7 +25,6 @@ import { eventSeverityIcon, idFromLink } from '@/shared/lib';
 import {
 	useEvents,
 	useEventStream,
-	useAcknowledgeEvent,
 	EventSeverity,
 	type EventResponse,
 } from '@/modules/monitor/api';
@@ -40,16 +40,15 @@ import { useCursorStack } from '@/modules/monitor/lib/useCursorStack';
 import { formatRelative } from '@/modules/monitor/lib/format';
 import { hasTrace } from '@/modules/monitor/lib/links';
 
-type EventFilter = 'all' | 'action' | 'unacknowledged';
+type EventFilter = 'all' | 'action';
 
 const EVENT_FILTERS: { value: EventFilter; label: string }[] = [
 	{ value: 'all', label: 'All' },
 	{ value: 'action', label: 'Needs action' },
-	{ value: 'unacknowledged', label: 'Unacknowledged' },
 ];
 
 function isEventFilter(value: string | null): value is EventFilter {
-	return value === 'all' || value === 'action' || value === 'unacknowledged';
+	return value === 'all' || value === 'action';
 }
 
 // Severity filter chips. This is a distinct axis from the status toggle above:
@@ -249,7 +248,6 @@ export function EventsTab() {
 	const severityList = SEVERITY_ORDER.filter((s) => selectedSeverities.has(s));
 	const listParams = {
 		requiresAction: filter === 'action' ? true : null,
-		acknowledged: filter === 'unacknowledged' ? false : null,
 		severity: severityList.length > 0 ? severityList : null,
 		actorId: filters.actorId,
 		actorType: filters.actorType,
@@ -257,13 +255,9 @@ export function EventsTab() {
 	};
 	const query = useEvents({ ...listParams, cursor: pager.cursor });
 	// The live stream honours the same actor + time-window filters (its `from`
-	// maps to the SSE `since`); the status/ack filters apply to the historical
+	// maps to the SSE `since`); the status filter applies to the historical
 	// page only, since the stream forwards every new event for the window.
 	const stream = useEventStream(listParams, live);
-	const acknowledge = useAcknowledgeEvent();
-	// Track which event id is mid-acknowledge so only its button shows pending,
-	// instead of disabling every row's button during one in-flight mutation.
-	const pendingAckId = acknowledge.isPending ? acknowledge.variables : null;
 
 	// Merge live + fetched, newest-first, deduped by event_id.
 	const merged = useMemo(() => {
@@ -279,25 +273,10 @@ export function EventsTab() {
 
 	const showEmpty = merged.length === 0 && !query.isLoading && !query.isFetching;
 
-	// Acknowledge control shared by the desktop column and the mobile card. Stops
-	// propagation so it never triggers a row click.
-	const renderAck = (row: EventResponse) =>
-		row.requires_action && !row.acknowledged ? (
-			<Button
-				variant="outline"
-				size="sm"
-				onClick={(e) => {
-					e.stopPropagation();
-					acknowledge.mutate(row.event_id);
-				}}
-				loading={pendingAckId === row.event_id}
-				disabled={pendingAckId === row.event_id}
-			>
-				Acknowledge
-			</Button>
-		) : row.acknowledged ? (
-			<Badge variant="success">Acknowledged</Badge>
-		) : null;
+	// A "Needs action" badge on actionable events, shared by the desktop column
+	// and the mobile card.
+	const renderActionBadge = (row: EventResponse) =>
+		row.requires_action ? <Badge variant="warning">Needs action</Badge> : null;
 
 	return (
 		<div className="space-y-4">
@@ -415,7 +394,7 @@ export function EventsTab() {
 						const accent =
 							SEVERITY_ACCENT[severity] ?? SEVERITY_ACCENT[EventSeverity.INFO];
 						const Icon = eventSeverityIcon(severity);
-						const ack = renderAck(row);
+						const actionBadge = renderActionBadge(row);
 						const { traceId, executionId } = drillInFor(row);
 						const clickable = hasTrace(traceId) || executionId != null;
 						return (
@@ -450,7 +429,7 @@ export function EventsTab() {
 										)}
 									</span>
 								}
-								badges={ack}
+								badges={actionBadge}
 								meta={<span>{formatRelative(row.created_at)}</span>}
 							/>
 						);

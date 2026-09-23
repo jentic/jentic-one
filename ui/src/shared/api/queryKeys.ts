@@ -71,11 +71,9 @@ export const sharedQueryKeys = {
 	/**
 	 * The Monitor Events feed root (`GET /events` list slices; the Monitor
 	 * module's `monitorKeys.events(params)` derives from this). Owned by the
-	 * Monitor module, but the shared agent-stream provider's `acknowledge`
-	 * (rail rows, failure toasts) flips an event's `acknowledged` flag outside
-	 * React Query — without invalidating this root the Events tab's
-	 * `status=unacknowledged` list keeps showing a failure the operator already
-	 * acked from the rail until its staleTime lapses (#671 follow-through).
+	 * Monitor module, and shared here so cross-module surfaces (rail rows,
+	 * failure toasts) can invalidate the Events tab's list slices when a
+	 * decision (approve/deny/withdraw) supersedes an actionable event.
 	 */
 	monitorEventsRoot: ['monitor', 'events'] as const,
 	/**

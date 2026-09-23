@@ -533,11 +533,9 @@ async def test_dedupe_key_spaces_never_cross_match(
     assert other_sid.client_id not in {with_sid.client_id, without_sid.client_id}
 
 
-async def test_approve_verb_emits_event_and_settles_registration_alert(
-    dcr_context: Context, clean_dcr_tables: None
-) -> None:
-    """:approve flips the row live, emits oauth_client.approved, and
-    acknowledges the actionable registered alert."""
+async def test_approve_verb_emits_event(dcr_context: Context, clean_dcr_tables: None) -> None:
+    """:approve flips the row live and emits oauth_client.approved. The
+    registration event stays as append-only history."""
     dcr_svc = OAuthDcrService(dcr_context)
     result = await dcr_svc.register(
         client_name="Cursor", redirect_uris=_REDIRECT_URIS, software_id="com.cursor.ide"
@@ -557,11 +555,9 @@ async def test_approve_verb_emits_event_and_settles_registration_alert(
 
     registered_events = await _events_of_type(dcr_context, EventType.OAUTH_CLIENT_REGISTERED)
     assert len(registered_events) == 1
-    assert registered_events[0].acknowledged is True
-    assert registered_events[0].acknowledged_by == _ADMIN.sub
 
 
-async def test_deny_verb_settles_alert_without_approved_event(
+async def test_deny_verb_emits_no_approved_event(
     dcr_context: Context, clean_dcr_tables: None
 ) -> None:
     dcr_svc = OAuthDcrService(dcr_context)
@@ -576,7 +572,7 @@ async def test_deny_verb_settles_alert_without_approved_event(
 
     assert await _events_of_type(dcr_context, EventType.OAUTH_CLIENT_APPROVED) == []
     registered_events = await _events_of_type(dcr_context, EventType.OAUTH_CLIENT_REGISTERED)
-    assert registered_events[0].acknowledged is True
+    assert len(registered_events) == 1
 
 
 async def test_dedupe_denied_row_returns_same_client_id_and_stays_denied(
@@ -880,9 +876,9 @@ async def test_requeued_client_needs_explicit_admin_reapproval(
     assert recovered.approval_status == OAuthClientApprovalStatus.APPROVED.value
     assert recovered.active is True
     assert await client_svc.is_public_client(first.client_id) is True
-    # The re-queue alert is settled by the decision.
+    # Registration events remain as append-only history.
     events = await _events_of_type(dcr_context, EventType.OAUTH_CLIENT_REGISTERED)
-    assert all(e.acknowledged for e in events if e.requires_action)
+    assert any(e.requires_action for e in events)
 
 
 async def test_dedupe_prefers_active_approved_over_deactivated_approved(

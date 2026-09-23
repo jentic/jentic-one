@@ -14,8 +14,8 @@ import { authHeaders } from './helpers';
  *     → assert GET /apis update_available:true, GET /catalog?outdated_only outdated_count:1,
  *       and an actionable catalog.update_available event
  *     → re-import (adopts the upstream) → assert update_available:false, outdated_count:0,
- *       AND the event is acknowledged (the settle path — regressed by the SQLite
- *       nested-transaction self-deadlock the manual E2E caught).
+ *       AND the catalog.update_available event remains as append-only history
+ *       (events are never settled or mutated).
  *
  * The fixture upstream is only present in CI (and local runs that start it), so
  * the whole spec self-skips when 127.0.0.1:8099 is unreachable — it must never
@@ -116,7 +116,7 @@ test('flow-3 loop: import → upstream change → update_available → re-import
 	expect((outdatedBody.data as unknown[]).length, 'one outdated catalog row expected').toBe(1);
 
 	// An actionable catalog.update_available event must have been emitted.
-	const events1 = await request.get('/events?type=catalog.update_available', {
+	const events1 = await request.get('/events?event_type=catalog.update_available', {
 		headers: authHeaders(),
 	});
 	expect(events1.ok()).toBeTruthy();
@@ -125,9 +125,8 @@ test('flow-3 loop: import → upstream change → update_available → re-import
 	);
 	expect(evt, 'no catalog.update_available event emitted').toBeTruthy();
 	expect(evt!.requires_action, 'event should be actionable').toBe(true);
-	expect(evt!.acknowledged, 'event should not be acked before re-import').toBe(false);
 
-	// 6. Re-import adopts the upstream: clears the flag AND settles the event.
+	// 6. Re-import adopts the upstream: clears the update_available flag.
 	const imp2 = await request.post(IMPORT_PATH, { headers: authHeaders() });
 	expect(imp2.status(), `re-import failed: ${await imp2.text()}`).toBe(202);
 	await waitForJob(request, (await imp2.json()).job_id as string);
@@ -144,25 +143,16 @@ test('flow-3 loop: import → upstream change → update_available → re-import
 	expect(catalogAfter.ok()).toBeTruthy();
 	expect((await catalogAfter.json()).outdated_count, 'outdated_count should clear to 0').toBe(0);
 
-	// The settle path must have acknowledged the actionable event (the regression
-	// the manual E2E surfaced: on SQLite it self-deadlocked and never acked).
-	await expect
-		.poll(
-			async () => {
-				const res = await request.get('/events?type=catalog.update_available', {
-					headers: authHeaders(),
-				});
-				if (!res.ok()) return null;
-				const e = ((await res.json()).data as Array<Record<string, unknown>>).find(
-					(x) => x.type === 'catalog.update_available',
-				);
-				return e ? (e.acknowledged as boolean) : null;
-			},
-			{
-				message: 'catalog.update_available event was never acknowledged by the settle path',
-				timeout: 20_000,
-				intervals: [500, 1000, 2000],
-			},
-		)
-		.toBe(true);
+	// The catalog.update_available event is append-only history: re-import
+	// clears the update flag but the event itself remains (still flagged
+	// requires_action, never mutated or settled).
+	const eventsAfter = await request.get('/events?event_type=catalog.update_available', {
+		headers: authHeaders(),
+	});
+	expect(eventsAfter.ok()).toBeTruthy();
+	const evtAfter = ((await eventsAfter.json()).data as Array<Record<string, unknown>>).find(
+		(x) => x.type === 'catalog.update_available',
+	);
+	expect(evtAfter, 'catalog.update_available event should remain as history').toBeTruthy();
+	expect(evtAfter!.requires_action, 'event stays actionable history after re-import').toBe(true);
 });

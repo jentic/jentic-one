@@ -79,7 +79,6 @@ export type { jentic_one__auth__web__schemas__service_accounts__DenyRequest as S
 export type { EventResponse } from '@/shared/api/generated/models/EventResponse';
 export type { EventListResponse } from '@/shared/api/generated/models/EventListResponse';
 export type { EventLinks } from '@/shared/api/generated/models/EventLinks';
-export type { EventAcknowledgeRequest } from '@/shared/api/generated/models/EventAcknowledgeRequest';
 export { EventSeverity } from '@/shared/api/generated/models/EventSeverity';
 
 // Discover (catalog) slice — services + models. The former `ApisService` was

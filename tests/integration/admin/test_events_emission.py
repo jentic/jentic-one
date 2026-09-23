@@ -118,29 +118,6 @@ async def test_emitted_events_visible_via_list(
         assert events[0].requires_action is True
 
 
-async def test_acknowledge_emitted_event(admin_db: DatabaseSession, clean_events: None) -> None:
-    async with admin_db.transaction() as session:
-        event_id = await emit_event(
-            session,
-            type=EventType.IMPORT_FAILED,
-            severity=EventSeverity.ERROR,
-            summary="Import failed",
-            requires_action=True,
-            created_by="usr_test",
-        )
-
-    async with admin_db.transaction() as session:
-        acked = await EventRepository.acknowledge(
-            session,
-            event_id,
-            acknowledged_by="usr_test00000000000000000",
-            acknowledgement_note="Investigating",
-        )
-        assert acked.acknowledged is True
-        assert acked.acknowledged_by == "usr_test00000000000000000"
-        assert acked.acknowledged_at is not None
-
-
 async def test_emit_credential_access_persists_audit_event(
     admin_db: DatabaseSession, clean_events: None
 ) -> None:

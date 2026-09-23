@@ -118,7 +118,7 @@ export function useAccessRequestsQueue(status: string = 'pending') {
 	});
 }
 
-/** Events that need a human (`GET /events?requires_action=true`). */
+/** Recent actionable events not already shown by a live queue (`fetchActionableEvents`). */
 export function useActionableEvents() {
 	return useQuery<AlertsOverview, DashboardApiError>({
 		queryKey: dashboardKeys.alerts(),

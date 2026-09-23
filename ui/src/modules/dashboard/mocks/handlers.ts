@@ -4,7 +4,7 @@
  * Dashboard has no endpoint of its own — it composes four EXISTING list
  * endpoints owned by other domains:
  *   GET /agents?status=pending      — agents awaiting approval
- *   GET /events?requires_action=true — actionable alerts
+ *   GET /events?requires_action=true&from=… — recent actionable alerts
  *   GET /executions                 — recent activity / success rate
  *   GET /apis                       — registered API count
  *
@@ -48,7 +48,6 @@ export const dashboardPendingAgents = [
 export const dashboardActionableEvents = [
 	{
 		_links: { self: '/events/evt_1' },
-		acknowledged: false,
 		created_at: minutesAgo(5),
 		detail: 'Stripe credential rejected 3 calls',
 		event_id: 'evt_1',
@@ -59,7 +58,6 @@ export const dashboardActionableEvents = [
 	},
 	{
 		_links: { self: '/events/evt_2' },
-		acknowledged: false,
 		created_at: minutesAgo(40),
 		detail: null,
 		event_id: 'evt_2',

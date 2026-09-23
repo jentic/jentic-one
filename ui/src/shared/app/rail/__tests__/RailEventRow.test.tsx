@@ -14,7 +14,7 @@ function makeEvent(partial: Partial<StreamEvent>): StreamEvent {
 		tokens: {},
 		links: {},
 		requiresAction: false,
-		acknowledged: false,
+		resolved: false,
 		groupKey: 'execution:execution.completed:',
 	};
 	return { ...base, ...partial };
@@ -52,22 +52,22 @@ describe('RailEventRow — action slot vs severity (issue #652)', () => {
 		});
 		render(<RailEventRow ev={ev} onAction={() => {}} />);
 		expect(screen.queryByRole('button', { name: 'View' })).not.toBeInTheDocument();
-		expect(screen.queryByRole('button', { name: 'Acknowledge' })).not.toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: 'Review' })).not.toBeInTheDocument();
 	});
 
-	it('collapses an acknowledged action-required event to compact (no buttons)', () => {
+	it('collapses a resolved action-required event to compact (no buttons)', () => {
 		const ev = makeEvent({
-			id: 'evt_acked',
+			id: 'evt_resolved',
 			type: 'access_request.filed',
 			kind: 'access_request',
 			severity: 'info',
 			title: 'Access request filed: github read',
 			requiresAction: true,
-			acknowledged: true,
+			resolved: true,
 			tokens: { access_request_id: 'ar_1' },
 		});
 		render(<RailEventRow ev={ev} onAction={() => {}} onOpenRequest={() => {}} />);
 		expect(screen.queryByRole('button', { name: 'View' })).not.toBeInTheDocument();
-		expect(screen.getByText('Acked')).toBeInTheDocument();
+		expect(screen.getByText('Done')).toBeInTheDocument();
 	});
 });

@@ -421,19 +421,17 @@ async def _filed_alert(admin_db: DatabaseSession, request_id: str) -> Event | No
     return next((e for e in rows if (e.data or {}).get("request_id") == request_id), None)
 
 
-async def test_decide_settles_filed_alert(
+async def test_decide_leaves_filed_alert_intact(
     svc: AccessRequestService,
     clean_access_requests: None,
     clean_events: None,
     seed_binding: None,
     admin_db: DatabaseSession,
 ) -> None:
-    """Deciding a request acknowledges its actionable `access_request.filed` alert.
+    """Deciding a request leaves its `access_request.filed` event untouched.
 
-    The filed event is what puts the "review this request" row on the rail and
-    dashboard. The decision IS that review — leaving the alert live keeps a
-    stale actionable row whose buttons then fail on "already decided". Only the
-    decided request's alert may be touched (scoped by data.request_id).
+    The filed event is append-only history, so a decision mutates neither it
+    nor any unrelated request's event.
     """
     filer = _filer_identity()
     filed = await svc.file(actor_id=FILER_SUB, reason=None, items=_base_items(), identity=filer)
@@ -457,93 +455,31 @@ async def test_decide_settles_filed_alert(
         item_decisions=[{"item_id": filed.items[0].id, "decision": "approved"}],
     )
 
-    settled = await _filed_alert(admin_db, filed.id)
-    assert settled is not None
-    assert settled.acknowledged is True
-    assert settled.acknowledged_by == OWNER_SUB
+    decided = await _filed_alert(admin_db, filed.id)
+    assert decided is not None
+    assert decided.requires_action is True
 
     untouched = await _filed_alert(admin_db, other.id)
     assert untouched is not None
-    assert untouched.acknowledged is False
+    assert untouched.requires_action is True
 
 
-async def test_withdraw_settles_filed_alert(
+async def test_withdraw_leaves_filed_alert_intact(
     svc: AccessRequestService,
     clean_access_requests: None,
     clean_events: None,
     seed_binding: None,
     admin_db: DatabaseSession,
 ) -> None:
-    """Withdrawing a request also settles its filed alert — nothing left to review."""
+    """Withdrawing a request leaves its filed event intact (events are append-only history)."""
     filer = _filer_identity()
     filed = await svc.file(actor_id=FILER_SUB, reason=None, items=_base_items(), identity=filer)
 
     await svc.withdraw(filed.id, identity=filer)
 
-    settled = await _filed_alert(admin_db, filed.id)
-    assert settled is not None
-    assert settled.acknowledged is True
-
-
-async def test_decide_retry_after_post_commit_crash_still_announces(
-    svc: AccessRequestService,
-    clean_access_requests: None,
-    clean_events: None,
-    seed_binding: None,
-    admin_db: DatabaseSession,
-) -> None:
-    """A decide() retry recovers a decision that committed but was never announced.
-
-    decide() is documented as safe to retry: phase 1 (the decision) commits to
-    the control DB, then post-commit work (admin-effect reconcile, decision
-    event, filed-alert settlement) runs. If the process dies between the two,
-    the decision is durable but unannounced. Pre-fix, the retry gated the
-    announcement purely on ``any_transition`` — which a retry never has — so the
-    decision event was never emitted and the actionable ``access_request.filed``
-    alert stayed live forever (a stale "review this request" row whose buttons
-    then fail on "already decided"). The still-unsettled alert is the durable
-    marker: a retry that settles it must also emit the decision event.
-    """
-    filer = _filer_identity()
-    filed = await svc.file(actor_id=FILER_SUB, reason=None, items=_base_items(), identity=filer)
-    reviewer = _owner_identity()
-    decisions = [{"item_id": filed.items[0].id, "decision": "approved"}]
-
-    # First attempt: the control-DB commit lands, then the post-commit
-    # reconcile "crashes" — the decision is durable but never announced.
-    original = svc._reconcile_admin_effects
-
-    async def boom(*args: object, **kwargs: object) -> None:
-        raise RuntimeError("simulated crash after phase-1 commit")
-
-    svc._reconcile_admin_effects = boom  # type: ignore[method-assign]
-    try:
-        with pytest.raises(RuntimeError, match="simulated crash"):
-            await svc.decide(filed.id, identity=reviewer, item_decisions=decisions)
-    finally:
-        svc._reconcile_admin_effects = original  # type: ignore[method-assign]
-
-    live = await _filed_alert(admin_db, filed.id)
-    assert live is not None
-    assert live.acknowledged is False
-
-    # Retry with the same decisions: nothing transitions, but the announcement
-    # must be recovered — alert settled AND decision event emitted — and the
-    # un-acked admin effect (the crash also skipped it) driven to completion.
-    view = await svc.decide(filed.id, identity=reviewer, item_decisions=decisions)
-    assert view.status == "approved"
-    assert view.items[0].applied_effects is not None
-
-    settled = await _filed_alert(admin_db, filed.id)
-    assert settled is not None
-    assert settled.acknowledged is True
-
-    async with admin_db.session() as session:
-        rows = await EventRepository.list_all(
-            session, event_type=["access_request.approved"], limit=100
-        )
-    decision_events = [e for e in rows if (e.data or {}).get("request_id") == filed.id]
-    assert len(decision_events) == 1
+    alert = await _filed_alert(admin_db, filed.id)
+    assert alert is not None
+    assert alert.requires_action is True
 
 
 async def test_decide_approve_unresolvable_credential_ref_denies_not_pending(

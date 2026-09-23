@@ -6,7 +6,7 @@
  *   • warning:          3-line layout, no tint
  *   • info:             1-line compact
  *
- * Exception: an unacknowledged event that `requiresAction` always uses the full
+ * Exception: an unresolved event that `requiresAction` always uses the full
  * layout regardless of severity, so its inline action slot is never hidden
  * (real `access_request.filed` events are INFO severity — see issue #652).
  *
@@ -16,10 +16,11 @@
  *   • "Deny" — real `POST /access-requests/{id}:decide` (reason-gated fast path:
  *     clicking it reveals an inline note field before it fires, denying the
  *     whole request)
- *   • "Acknowledge" — real `PATCH /events/{id}` via the parent
+ *   • "Review" — pure-navigation deep-link to where an actionable event's
+ *     action lives (agent page, OAuth queue, API detail)
  *   • "View …" — pure-navigation deep-links into the execution/job/trace
  *
- * Acknowledged events collapse to the compact 1-line variant regardless of
+ * Resolved events collapse to the compact 1-line variant regardless of
  * severity, so the row visually fades once the operator has handled it.
  */
 import type React from 'react';
@@ -66,9 +67,9 @@ function TimeTooltipContent({ tsMs }: { tsMs: number }) {
 }
 
 function isCompactSeverity(ev: StreamEvent): boolean {
-	if (ev.acknowledged) return true;
-	// An unacknowledged event that still needs a human decision must keep its
-	// full layout so the inline action slot (View/Deny/Acknowledge) renders.
+	if (ev.resolved) return true;
+	// An unresolved event that still needs a human decision must keep its
+	// full layout so the inline action slot (View/Deny/Review) renders.
 	// Real `access_request.filed` events are emitted at INFO severity, so gating
 	// compactness on severity alone hid their View/Deny buttons — they only
 	// showed under MSW because the mock seeded them at `warning`. See issue #652.
@@ -86,7 +87,7 @@ export function RailEventRow({
 	onNavigate,
 }: RailEventRowProps) {
 	const compact = isCompactSeverity(ev);
-	const isCritical = (ev.severity === 'critical' || ev.severity === 'error') && !ev.acknowledged;
+	const isCritical = (ev.severity === 'critical' || ev.severity === 'error') && !ev.resolved;
 	const actions = inlineActionsFor(ev);
 	// When the operator clicks a reason-gated action (Deny), we reveal an inline
 	// note field and hold the action until they confirm.
@@ -127,7 +128,7 @@ export function RailEventRow({
 				className={cn(
 					'flex items-center gap-2 border-l-2 px-2 py-1',
 					severityStripeClass(ev.severity),
-					ev.acknowledged && 'opacity-60',
+					ev.resolved && 'opacity-60',
 					dest && 'hover:bg-background/40 cursor-pointer',
 				)}
 			>
@@ -140,9 +141,9 @@ export function RailEventRow({
 						</span>
 					)}
 				</span>
-				{ev.acknowledged && (
+				{ev.resolved && (
 					<span className="text-success shrink-0 font-mono text-[10px] tracking-wider uppercase">
-						Acked
+						Done
 					</span>
 				)}
 				<Tooltip content={<TimeTooltipContent tsMs={ev.tsMs} />}>
@@ -207,9 +208,7 @@ export function RailEventRow({
 						<div className="flex flex-wrap gap-1">
 							{actions.map((action) => {
 								const tone =
-									action.kind === 'acknowledge' ||
-									action.kind === 'approve' ||
-									action.kind === 'view_request'
+									action.kind === 'approve' || action.kind === 'view_request'
 										? 'primary'
 										: action.kind === 'deny'
 											? 'danger'

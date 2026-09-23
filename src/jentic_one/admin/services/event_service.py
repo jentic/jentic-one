@@ -4,22 +4,18 @@ from __future__ import annotations
 
 from typing import Any
 
-from jentic_one.admin.repos import AuditRepository, EventRepository
+from jentic_one.admin.repos import EventRepository
 from jentic_one.admin.services._support.pagination import Page, decode_cursor, encode_cursor
-from jentic_one.admin.services.errors import EventNotFoundError, InvalidInputError
-from jentic_one.admin.services.metrics import audit_events_counter
+from jentic_one.admin.services.errors import EventNotFoundError
 from jentic_one.admin.services.schemas.events import (
-    EventAcknowledgePayload,
     EventFilter,
     EventView,
 )
-from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
-from jentic_one.shared.models.audit import AuditAction, AuditTargetType
 
 
 class EventService:
-    """Manages event queries and acknowledgement."""
+    """Manages event queries."""
 
     def __init__(self, ctx: Context) -> None:
         self._ctx = ctx
@@ -43,7 +39,6 @@ class EventService:
                 event_type=filter.event_type,
                 severity=[str(s) for s in filter.severity] if filter.severity else None,
                 requires_action=filter.requires_action,
-                acknowledged=filter.acknowledged,
                 from_dt=filter.from_dt,
                 to_dt=filter.to_dt,
                 trace_id=filter.trace_id,
@@ -69,45 +64,6 @@ class EventService:
             raise EventNotFoundError(event_id)
         return self._to_view(event)
 
-    async def acknowledge(
-        self,
-        event_id: str,
-        payload: EventAcknowledgePayload,
-        *,
-        identity: Identity,
-    ) -> EventView:
-        if not payload.acknowledged:
-            raise InvalidInputError("acknowledged must be true")
-
-        async with self._ctx.admin_db.transaction() as session:
-            event = await EventRepository.get_by_id(session, event_id)
-            if event is None:
-                raise EventNotFoundError(event_id)
-
-            if event.acknowledged:
-                return self._to_view(event)
-
-            event = await EventRepository.acknowledge(
-                session,
-                event_id,
-                acknowledged_by=identity.sub,
-                acknowledgement_note=payload.note,
-            )
-
-            await AuditRepository.record(
-                session,
-                action=AuditAction.UPDATE,
-                target_type=AuditTargetType.EVENT,
-                target_id=event_id,
-                actor_type=identity.actor_type,
-                actor_id=identity.sub,
-            )
-            audit_events_counter.add(
-                1, {"action": AuditAction.UPDATE, "target_type": AuditTargetType.EVENT}
-            )
-
-        return self._to_view(event)
-
     @staticmethod
     def _to_view(event: Any) -> EventView:
         return EventView(
@@ -116,9 +72,6 @@ class EventService:
             severity=event.severity,
             summary=event.summary,
             requires_action=event.requires_action,
-            acknowledged=event.acknowledged,
-            acknowledged_at=event.acknowledged_at,
-            acknowledged_by=event.acknowledged_by,
             trace_id=event.trace_id,
             detail=event.detail,
             data=event.data,
