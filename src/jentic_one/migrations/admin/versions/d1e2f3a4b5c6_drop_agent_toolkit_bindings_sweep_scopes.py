@@ -27,7 +27,7 @@ The admin half of the deletion cut. Two pieces:
 
 2. **Scope-data sweep** — the retired ``toolkits:read`` / ``toolkits:write``
    / ``owner:toolkits:read`` scope strings are purged from every stored
-   grant/token surface: ``actor_scope_grants`` (one scope per row → rows
+   grant/token surface: ``actor_permission_grants`` (one scope per row → rows
    deleted), ``user_permission_grants`` (same), and the array/string carriers
    ``access_tokens.scopes``, ``refresh_tokens.scopes``,
    ``oauth_client_grants.scopes``, ``oauth_clients.allowed_scopes`` (JSON
@@ -47,7 +47,7 @@ runbook in ``docs/development/releasing.md``. The scope sweep is not reversed: t
 strings granted nothing.
 
 Revision ID: d1e2f3a4b5c6
-Revises: c0e1f2a3b4c5
+Revises: e3f4a5b6c7d8
 Create Date: 2026-09-11
 
 """
@@ -61,7 +61,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "d1e2f3a4b5c6"  # pragma: allowlist secret
-down_revision: str | None = "c0e1f2a3b4c5"  # pragma: allowlist secret
+down_revision: str | None = "e3f4a5b6c7d8"  # pragma: allowlist secret
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -73,7 +73,7 @@ _RETIRED_SCOPES = frozenset({"toolkits:read", "toolkits:write", "owner:toolkits:
 #: (table, column) pairs storing one scope string per row → retired rows are
 #: deleted outright.
 _SCALAR_SCOPE_TABLES = (
-    ("actor_scope_grants", "scope"),
+    ("actor_permission_grants", "permission"),
     ("user_permission_grants", "permission"),
 )
 

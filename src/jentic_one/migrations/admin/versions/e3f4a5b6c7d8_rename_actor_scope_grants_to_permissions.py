@@ -11,8 +11,8 @@ indexes. **No value migration:** rows keep their colon-form strings
 (``agents:write`` stays ``agents:write``), and the ``asg`` KSUID prefix on
 ``id`` stays too, so existing ids remain valid. Fully reversible.
 
-Revision ID: d1e2f3a4b5c6
-Revises: c0d1e2f3a4b5
+Revision ID: e3f4a5b6c7d8
+Revises: c0e1f2a3b4c5
 Create Date: 2026-09-22
 
 """
@@ -22,8 +22,8 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "d1e2f3a4b5c6"  # pragma: allowlist secret
-down_revision: str | None = "c0d1e2f3a4b5"  # pragma: allowlist secret
+revision: str = "e3f4a5b6c7d8"  # pragma: allowlist secret
+down_revision: str | None = "c0e1f2a3b4c5"  # pragma: allowlist secret
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

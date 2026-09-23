@@ -12,7 +12,7 @@ The rule, for a scope in the permission catalogue:
 - a caller holding ``org:admin`` may grant any scope;
 - any other caller may grant a scope in its own effective (implication-expanded)
   permission set or in the default agent baseline
-  (:data:`~jentic_one.shared.scopes.DEFAULT_AGENT_SCOPES`), and never
+  (:data:`~jentic_one.shared.auth.permission_catalog.DEFAULT_AGENT_PERMISSIONS`), and never
   ``org:admin`` or ``agents:write``, even if it holds them.
 """
 
@@ -20,8 +20,11 @@ from __future__ import annotations
 
 from collections.abc import Collection
 
-from jentic_one.shared.auth.permission_catalog import AGENTS_WRITE, ORG_ADMIN
-from jentic_one.shared.scopes import DEFAULT_AGENT_SCOPES
+from jentic_one.shared.auth.permission_catalog import (
+    AGENTS_WRITE,
+    DEFAULT_AGENT_PERMISSIONS,
+    ORG_ADMIN,
+)
 
 #: Scopes only an ``org:admin`` caller may put on an agent.
 ADMIN_ONLY_AGENT_SCOPES: frozenset[str] = frozenset({ORG_ADMIN, AGENTS_WRITE})
@@ -37,4 +40,4 @@ def is_agent_scope_grantable(scope: str, caller_effective: Collection[str]) -> b
         return True
     if scope in ADMIN_ONLY_AGENT_SCOPES:
         return False
-    return scope in caller_effective or scope in DEFAULT_AGENT_SCOPES
+    return scope in caller_effective or scope in DEFAULT_AGENT_PERMISSIONS

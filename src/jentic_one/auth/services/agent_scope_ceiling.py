@@ -5,7 +5,7 @@ Applied by ``AgentService.create`` (explicit scopes), ``AgentService.approve``
 The rules:
 
 - Every newly granted scope must be in the permission catalogue
-  (:data:`ALL_PERMISSIONS`). Members of :data:`RETIRED_SCOPES` are
+  (:data:`ALL_PERMISSIONS`). Members of :data:`RETIRED_PERMISSIONS` are
   accepted-and-ignored, matching every other scope validation path.
 - Which catalogue scopes the caller may grant is
   :func:`~jentic_one.shared.auth.agent_scope_ceiling.is_agent_scope_grantable`
@@ -23,8 +23,11 @@ from collections.abc import Collection, Iterable
 from jentic_one.auth.services.errors import ScopeNotGrantableError, UnknownScopeError
 from jentic_one.shared.auth.agent_scope_ceiling import is_agent_scope_grantable
 from jentic_one.shared.auth.identity import Identity
-from jentic_one.shared.auth.permission_catalog import ALL_PERMISSIONS, compute_effective
-from jentic_one.shared.scopes import RETIRED_SCOPES
+from jentic_one.shared.auth.permission_catalog import (
+    ALL_PERMISSIONS,
+    RETIRED_PERMISSIONS,
+    compute_effective,
+)
 
 
 def check_agent_scope_grant(
@@ -41,11 +44,11 @@ def check_agent_scope_grant(
     held = set(already_held)
     new_scopes = [s for s in dict.fromkeys(requested) if s not in held]
     for scope in new_scopes:
-        if scope not in ALL_PERMISSIONS and scope not in RETIRED_SCOPES:
+        if scope not in ALL_PERMISSIONS and scope not in RETIRED_PERMISSIONS:
             raise UnknownScopeError(scope)
     effective = compute_effective(set(identity.permissions))
     for scope in new_scopes:
-        if scope in RETIRED_SCOPES:
+        if scope in RETIRED_PERMISSIONS:
             continue
         if not is_agent_scope_grantable(scope, effective):
             raise ScopeNotGrantableError(scope)

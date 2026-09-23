@@ -14,7 +14,7 @@ from types import ModuleType
 
 from jentic_one.control.repos.service_account_migration_repo import (
     SWEEPABLE_SQL,
-    THEME8_RETIRED_SCOPES,
+    THEME8_RETIRED_PERMISSIONS,
 )
 
 _MIGRATION = (
@@ -41,7 +41,7 @@ def test_sweepable_sql_matches_the_job() -> None:
 
 
 def test_retired_scopes_match_the_job() -> None:
-    assert _load()._RETIRED_SCOPES == THEME8_RETIRED_SCOPES
+    assert _load()._RETIRED_SCOPES == THEME8_RETIRED_PERMISSIONS
 
 
 def test_retired_scope_probe_covers_every_retired_scope() -> None:

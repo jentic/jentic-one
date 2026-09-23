@@ -61,7 +61,7 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 #: Scope strings retired with the service-account surface (mirrors
-#: ``jentic_one.control.repos.service_account_migration_repo.THEME8_RETIRED_SCOPES``
+#: ``jentic_one.control.repos.service_account_migration_repo.THEME8_RETIRED_PERMISSIONS``
 #: — copied, not imported: migrations must stay runnable against the
 #: historical code state; ``tests/unit/control/test_drop_service_accounts_sql.py``
 #: pins the copies equal).
@@ -73,7 +73,7 @@ _RETIRED_SCOPES = frozenset(
 _RETIRED_SCOPE_PROBE = "%service-accounts%"
 
 _SCALAR_SCOPE_TABLES = (
-    ("actor_scope_grants", "scope"),
+    ("actor_permission_grants", "permission"),
     ("user_permission_grants", "permission"),
 )
 
@@ -97,7 +97,7 @@ SWEEPABLE_SQL = (
     " FROM service_accounts sa"
     " WHERE sa.migrated_to_actor_id IS NOT NULL"
     " AND (sa.status != 'archived'"
-    "  OR EXISTS (SELECT 1 FROM actor_scope_grants g"
+    "  OR EXISTS (SELECT 1 FROM actor_permission_grants g"
     "   WHERE g.actor_id = sa.id AND g.actor_type = 'service_account')"
     "  OR EXISTS (SELECT 1 FROM agent_credential_bindings cb WHERE cb.agent_id = sa.id)"
     "  OR EXISTS (SELECT 1 FROM service_account_credentials sac"
@@ -115,7 +115,7 @@ _RUNBOOK = (
 
 #: Cleanup (after the gate): references nothing can resolve once the tables go.
 _CLEANUP_SQL = (
-    "DELETE FROM actor_scope_grants"
+    "DELETE FROM actor_permission_grants"
     " WHERE actor_type = 'service_account' OR substr(actor_id, 1, 4) = 'sva_'",
     "DELETE FROM agent_credential_bindings WHERE substr(agent_id, 1, 4) = 'sva_'",
     "DELETE FROM access_tokens WHERE actor_type = 'service_account'",

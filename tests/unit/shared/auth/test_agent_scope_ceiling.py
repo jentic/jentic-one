@@ -5,8 +5,11 @@ from __future__ import annotations
 import pytest
 
 from jentic_one.shared.auth.agent_scope_ceiling import is_agent_scope_grantable
-from jentic_one.shared.auth.permission_catalog import ALL_PERMISSIONS, compute_effective
-from jentic_one.shared.scopes import DEFAULT_AGENT_SCOPES
+from jentic_one.shared.auth.permission_catalog import (
+    ALL_PERMISSIONS,
+    DEFAULT_AGENT_PERMISSIONS,
+    compute_effective,
+)
 
 
 @pytest.mark.parametrize("scope", sorted(ALL_PERMISSIONS))
@@ -23,7 +26,7 @@ def test_admin_only_scopes_never_grantable_by_non_admin_even_if_held(scope: str)
 
 def test_non_admin_may_grant_held_implied_and_default_scopes_only() -> None:
     held = compute_effective({"agents:write", "users:write"})
-    for scope in ("users:write", "users:read", "agents:read", *DEFAULT_AGENT_SCOPES):
+    for scope in ("users:write", "users:read", "agents:read", *DEFAULT_AGENT_PERMISSIONS):
         assert is_agent_scope_grantable(scope, held), scope
     for scope in ("credentials:write", "audit:read", "config:write"):
         assert not is_agent_scope_grantable(scope, held), scope

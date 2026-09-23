@@ -29,16 +29,16 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import delete
 
 from jentic_one.admin.core.schema.agents import Agent
-from jentic_one.admin.repos import ActorScopeGrantRepository, AgentRepository, AuditRepository
+from jentic_one.admin.repos import ActorPermissionGrantRepository, AgentRepository, AuditRepository
 from jentic_one.auth.services.errors import AuthServiceError
 from jentic_one.auth.services.registration_service import RegistrationService
 from jentic_one.auth.web.errors import service_error_handler
 from jentic_one.auth.web.routers import agents
 from jentic_one.shared.audit import AuditAction, AuditTargetType
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.auth.permission_catalog import DEFAULT_AGENT_PERMISSIONS
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import ActorStatus
-from jentic_one.shared.scopes import DEFAULT_AGENT_SCOPES
 from jentic_one.shared.web.deps import resolve_identity
 from tests.integration.auth import seeds
 
@@ -118,8 +118,8 @@ async def _create_owned_agent(ctx: Context) -> str:
 
 async def _scopes(ctx: Context, agent_id: str) -> set[str]:
     async with ctx.admin_db.session() as session:
-        grants = await ActorScopeGrantRepository.list_for_actor(session, agent_id)
-    return {g.scope for g in grants}
+        grants = await ActorPermissionGrantRepository.list_for_actor(session, agent_id)
+    return {g.permission for g in grants}
 
 
 async def _agent(ctx: Context, agent_id: str) -> Agent:
@@ -160,14 +160,14 @@ async def test_create_rejects_scope_above_caller_ceiling(
     integration_context: Context, users: None, scope: str
 ) -> None:
     async with _client(integration_context, _writer(OWNER)) as client:
-        resp = await client.post("/agents", json={"name": "escalate", "scopes": [scope]})
+        resp = await client.post("/agents", json={"name": "escalate", "permissions": [scope]})
     assert resp.status_code == 403
     assert resp.json()["type"] == "scope_not_grantable"
 
 
 async def test_create_rejects_unknown_scope(integration_context: Context, users: None) -> None:
     async with _client(integration_context, _writer(OWNER)) as client:
-        resp = await client.post("/agents", json={"name": "bogus", "scopes": ["made:up"]})
+        resp = await client.post("/agents", json={"name": "bogus", "permissions": ["made:up"]})
     assert resp.status_code == 422
     assert resp.json()["type"] == "unknown_scope"
 
@@ -176,8 +176,10 @@ async def test_create_without_scopes_grants_defaults_and_audits_them(
     integration_context: Context, users: None
 ) -> None:
     agent_id = await _create_owned_agent(integration_context)
-    assert await _scopes(integration_context, agent_id) == set(DEFAULT_AGENT_SCOPES)
-    assert await _register_audit_scopes(integration_context, agent_id) == list(DEFAULT_AGENT_SCOPES)
+    assert await _scopes(integration_context, agent_id) == set(DEFAULT_AGENT_PERMISSIONS)
+    assert await _register_audit_scopes(integration_context, agent_id) == list(
+        DEFAULT_AGENT_PERMISSIONS
+    )
 
 
 async def test_create_with_held_or_baseline_scopes_succeeds(
@@ -185,7 +187,7 @@ async def test_create_with_held_or_baseline_scopes_succeeds(
 ) -> None:
     async with _client(integration_context, _writer(OWNER)) as client:
         resp = await client.post(
-            "/agents", json={"name": "narrow", "scopes": ["agents:read", "capabilities:read"]}
+            "/agents", json={"name": "narrow", "permissions": ["agents:read", "capabilities:read"]}
         )
     assert resp.status_code == 201, resp.text
     agent_id = resp.json()["id"]
@@ -198,7 +200,9 @@ async def test_create_with_held_or_baseline_scopes_succeeds(
 
 async def test_admin_create_may_grant_org_admin(integration_context: Context, users: None) -> None:
     async with _client(integration_context, _admin()) as client:
-        resp = await client.post("/agents", json={"name": "admin-agent", "scopes": ["org:admin"]})
+        resp = await client.post(
+            "/agents", json={"name": "admin-agent", "permissions": ["org:admin"]}
+        )
     assert resp.status_code == 201, resp.text
     agent_id = resp.json()["id"]
     assert await _scopes(integration_context, agent_id) == {"org:admin"}
@@ -216,10 +220,10 @@ async def test_replace_scopes_rejects_scope_above_caller_ceiling(
 ) -> None:
     agent_id = await _create_owned_agent(integration_context)
     async with _client(integration_context, _writer(OWNER)) as client:
-        resp = await client.put(f"/agents/{agent_id}/scopes", json={"scopes": [scope]})
+        resp = await client.put(f"/agents/{agent_id}/permissions", json={"permissions": [scope]})
     assert resp.status_code == 403
     assert resp.json()["type"] == "scope_not_grantable"
-    assert await _scopes(integration_context, agent_id) == set(DEFAULT_AGENT_SCOPES)
+    assert await _scopes(integration_context, agent_id) == set(DEFAULT_AGENT_PERMISSIONS)
 
 
 async def test_replace_scopes_rejects_unknown_scope(
@@ -227,7 +231,9 @@ async def test_replace_scopes_rejects_unknown_scope(
 ) -> None:
     agent_id = await _create_owned_agent(integration_context)
     async with _client(integration_context, _writer(OWNER)) as client:
-        resp = await client.put(f"/agents/{agent_id}/scopes", json={"scopes": ["made:up"]})
+        resp = await client.put(
+            f"/agents/{agent_id}/permissions", json={"permissions": ["made:up"]}
+        )
     assert resp.status_code == 422
     assert resp.json()["type"] == "unknown_scope"
 
@@ -236,7 +242,7 @@ async def test_owner_can_narrow_scopes(integration_context: Context, users: None
     agent_id = await _create_owned_agent(integration_context)
     async with _client(integration_context, _writer(OWNER)) as client:
         resp = await client.put(
-            f"/agents/{agent_id}/scopes", json={"scopes": ["capabilities:read"]}
+            f"/agents/{agent_id}/permissions", json={"permissions": ["capabilities:read"]}
         )
     assert resp.status_code == 200, resp.text
     assert await _scopes(integration_context, agent_id) == {"capabilities:read"}
@@ -248,11 +254,14 @@ async def test_owner_may_keep_scope_an_admin_granted(
     agent_id = await _create_owned_agent(integration_context)
     async with _client(integration_context, _admin()) as client:
         resp = await client.put(
-            f"/agents/{agent_id}/scopes", json={"scopes": ["org:admin", "capabilities:read"]}
+            f"/agents/{agent_id}/permissions",
+            json={"permissions": ["org:admin", "capabilities:read"]},
         )
     assert resp.status_code == 200, resp.text
     async with _client(integration_context, _writer(OWNER)) as client:
-        resp = await client.put(f"/agents/{agent_id}/scopes", json={"scopes": ["org:admin"]})
+        resp = await client.put(
+            f"/agents/{agent_id}/permissions", json={"permissions": ["org:admin"]}
+        )
     assert resp.status_code == 200, resp.text
     assert await _scopes(integration_context, agent_id) == {"org:admin"}
 
@@ -261,11 +270,11 @@ async def test_non_owner_cannot_replace_scopes(integration_context: Context, use
     agent_id = await _create_owned_agent(integration_context)
     async with _client(integration_context, _writer(OTHER)) as client:
         resp = await client.put(
-            f"/agents/{agent_id}/scopes", json={"scopes": ["capabilities:read"]}
+            f"/agents/{agent_id}/permissions", json={"permissions": ["capabilities:read"]}
         )
     assert resp.status_code == 404
     assert resp.json()["type"] == "actor_not_found"
-    assert await _scopes(integration_context, agent_id) == set(DEFAULT_AGENT_SCOPES)
+    assert await _scopes(integration_context, agent_id) == set(DEFAULT_AGENT_PERMISSIONS)
 
 
 # ---------------------------------------------------------------------------
@@ -322,7 +331,7 @@ async def test_non_owner_cannot_disable_enable_or_archive(
         assert resp.json()["type"] == "actor_not_found"
 
     assert (await _agent(integration_context, agent_id)).status == ActorStatus.DISABLED
-    assert await _scopes(integration_context, agent_id) == set(DEFAULT_AGENT_SCOPES)
+    assert await _scopes(integration_context, agent_id) == set(DEFAULT_AGENT_PERMISSIONS)
 
 
 async def test_owner_can_disable_enable_and_archive(
@@ -339,7 +348,9 @@ async def test_owner_can_disable_enable_and_archive(
 async def test_admin_can_mutate_any_agent(integration_context: Context, users: None) -> None:
     agent_id = await _create_owned_agent(integration_context)
     async with _client(integration_context, _admin()) as client:
-        resp = await client.put(f"/agents/{agent_id}/scopes", json={"scopes": ["apis:read"]})
+        resp = await client.put(
+            f"/agents/{agent_id}/permissions", json={"permissions": ["apis:read"]}
+        )
         assert resp.status_code == 200, resp.text
         assert (await client.patch(f"/agents/{agent_id}", json={"name": "x"})).status_code == 200
         assert (await client.post(f"/agents/{agent_id}:disable")).status_code == 204
@@ -353,7 +364,7 @@ async def test_unknown_agent_is_404_for_owner_scoped_verbs(
     missing = "agnt_does_not_exist"
     async with _client(integration_context, _writer(OWNER)) as client:
         responses = [
-            await client.put(f"/agents/{missing}/scopes", json={"scopes": []}),
+            await client.put(f"/agents/{missing}/permissions", json={"permissions": []}),
             await client.patch(f"/agents/{missing}", json={"name": "x"}),
             await client.post(f"/agents/{missing}:disable"),
             await client.post(f"/agents/{missing}:enable"),
@@ -543,7 +554,7 @@ async def test_approve_without_requested_scopes_grants_and_audits_defaults(
     async with _client(integration_context, _writer(OTHER)) as client:
         resp = await client.post(f"/agents/{agent_id}:approve")
     assert resp.status_code == 200, resp.text
-    assert await _scopes(integration_context, agent_id) == set(DEFAULT_AGENT_SCOPES)
+    assert await _scopes(integration_context, agent_id) == set(DEFAULT_AGENT_PERMISSIONS)
     assert await _audit_scopes(integration_context, agent_id, AuditAction.APPROVE) == list(
-        DEFAULT_AGENT_SCOPES
+        DEFAULT_AGENT_PERMISSIONS
     )

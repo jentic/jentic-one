@@ -7,7 +7,7 @@ import pytest
 from jentic_one.auth.services.agent_scope_ceiling import check_agent_scope_grant
 from jentic_one.auth.services.errors import ScopeNotGrantableError, UnknownScopeError
 from jentic_one.shared.auth.identity import Identity
-from jentic_one.shared.scopes import DEFAULT_AGENT_SCOPES
+from jentic_one.shared.auth.permission_catalog import DEFAULT_AGENT_PERMISSIONS
 
 
 def _identity(*permissions: str) -> Identity:
@@ -35,7 +35,7 @@ def test_non_admin_can_grant_held_and_implied_scopes() -> None:
 
 def test_non_admin_can_grant_default_agent_baseline() -> None:
     caller = _identity("agents:write")
-    check_agent_scope_grant(list(DEFAULT_AGENT_SCOPES), identity=caller)
+    check_agent_scope_grant(list(DEFAULT_AGENT_PERMISSIONS), identity=caller)
 
 
 def test_unknown_scope_rejected_for_everyone() -> None:
