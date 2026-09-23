@@ -725,8 +725,8 @@
           "name": "whoami",
           "path": "jentic whoami",
           "use": "whoami",
-          "short": "Show who you are: identity, status, scopes, and credential bindings",
-          "long": "whoami answers with your identity as the control plane sees it — the\nauthenticated GET /me response, verbatim. For an agent that is the id,\nstatus, scopes, and credential bindings with the APIs each one serves;\nuser and service-account tokens render their own /me variant. Check it\nbefore executing anything new — access is decided from your bindings,\nnever by probing with execute.",
+          "short": "Show who you are: identity, status, permissions, and credential bindings",
+          "long": "whoami answers with your identity as the control plane sees it — the\nauthenticated GET /me response, verbatim. For an agent that is the id,\nstatus, permissions, and credential bindings with the APIs each one serves;\nuser and service-account tokens render their own /me variant. Check it\nbefore executing anything new — access is decided from your bindings,\nnever by probing with execute.",
           "group_title": "Identity \u0026 access",
           "flags": [
             {
