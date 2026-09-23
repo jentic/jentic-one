@@ -216,22 +216,19 @@ describe('ScopesCard', () => {
 	});
 
 	it('renders a default-granted owner scope as an editable catalogue chip', async () => {
-		// `owner:access-requests:read` is granted to `agnt_active_1` by default and
-		// is now catalogued, so it must render as a normal editable picker row
-		// (a checkbox), not as a preserved non-catalogue scope.
+		// `owner:resources:read` is granted to `agnt_active_1` by default and is
+		// catalogued, so it must render as a normal editable picker row (a
+		// checkbox), not as a preserved non-catalogue scope.
 		const user = userEvent.setup();
 		renderCard({ actorKind: 'agent', actorId: 'agnt_active_1', actorName: 'support-agent' });
 		const list = await screen.findByRole('list', { name: 'Granted scopes' });
-		expect(within(list).getByText('owner:access-requests:read')).toBeInTheDocument();
+		expect(within(list).getByText('owner:resources:read')).toBeInTheDocument();
 
 		await user.click(screen.getByRole('button', { name: 'Edit scopes for support-agent' }));
 		const dialog = await screen.findByRole('dialog');
-		await user.type(
-			within(dialog).getByLabelText('Search scopes'),
-			'owner:access-requests:read',
-		);
+		await user.type(within(dialog).getByLabelText('Search scopes'), 'owner:resources:read');
 		const checkbox = await within(dialog).findByRole('checkbox', {
-			name: 'owner:access-requests:read',
+			name: 'owner:resources:read',
 		});
 		// Catalogue-backed and already granted → checked and editable (not disabled).
 		expect(checkbox).toBeChecked();

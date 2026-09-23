@@ -1,12 +1,12 @@
 import { useMemo, useState } from 'react';
-import { Filter, ListChecks, ShieldAlert, ShieldBan, ShieldCheck } from 'lucide-react';
+import { Filter, ListChecks, ShieldBan, ShieldCheck } from 'lucide-react';
 import { Dialog } from '@/shared/ui/Dialog';
 import { SearchInput } from '@/shared/ui/SearchInput';
 import { ruleSummary, type PermissionRule } from '@/shared/lib';
 
 /**
- * OperationsDialog — the full, scannable view of every operation a
- * `credential.bind` item grants.
+ * OperationsDialog — the full, scannable view of every operation an
+ * `(agent, credential)` binding's permission rules grant.
  *
  * The inline {@link OperationsSummary} on a card is a *bounded preview* — it
  * shows a few operations and a count, never the whole list, so a card can't be
@@ -22,8 +22,8 @@ import { ruleSummary, type PermissionRule } from '@/shared/lib';
  * operationId, method, or path) with a running result count, so finding one op
  * among hundreds is a type-not-scroll task.
  *
- * Read-only: this surfaces what a grant contains; narrowing it is a separate
- * `:amend` concern, never editable here.
+ * Read-only: this surfaces what a grant contains; editing the rules belongs to
+ * the binding rule editor, never here.
  */
 
 const EFFECT_STYLES: Record<
@@ -42,24 +42,16 @@ const EFFECT_STYLES: Record<
 		Icon: ShieldBan,
 		desc: 'These operations are always refused — Block overrides everything else.',
 	},
-	'require-approval': {
-		label: 'Needs approval',
-		chip: 'bg-accent-orange/10 text-accent-orange',
-		Icon: ShieldAlert,
-		desc: 'The agent may attempt these, but each call is held for a human to approve before it runs.',
-	},
 };
 
 /** The fixed broker priority order — strictest first — used to order the legend. */
-const EFFECT_ORDER: PermissionRule['effect'][] = ['deny', 'require-approval', 'allow'];
+const EFFECT_ORDER: PermissionRule['effect'][] = ['deny', 'allow'];
 
 /**
  * A short legend explaining what each effect present in THIS grant means at call
- * time. The broker evaluates rules with a strict priority — `deny` >
- * `require-approval` > `allow`, strictest match wins, no match = implicit deny —
- * so we list only the effects that actually appear, in that priority order
- * (strictest first), and spell out "Needs approval" (the least self-evident
- * tier) explicitly. The fixed-width chip column keeps the descriptions aligned
+ * time. The broker evaluates rules with a strict priority — `deny` > `allow`,
+ * strictest match wins, no match = implicit deny — so we list only the effects
+ * that actually appear, in that priority order (strictest first). The fixed-width chip column keeps the descriptions aligned
  * into a tidy second column rather than ragged against variable-width chips.
  */
 function EffectLegend({ rules }: { rules: PermissionRule[] }) {
@@ -234,8 +226,7 @@ export function OperationsDialog({ open, onClose, rules, targetLabel }: Operatio
 			}
 		>
 			<div className="space-y-3">
-				{/* What each effect means at call time — explains "Needs approval"
-				    rather than leaving the reviewer to guess. */}
+				{/* What each effect means at call time, strictest first. */}
 				<EffectLegend rules={rules} />
 
 				{totalOps > 8 && (

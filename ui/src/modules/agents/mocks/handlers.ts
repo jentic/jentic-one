@@ -349,12 +349,6 @@ const PERMISSION_CATALOGUE: ReadonlyArray<{
 		grantable_by_caller: true,
 	},
 	{
-		name: 'owner:access-requests:read',
-		description: "Read access requests filed by or for the agent's creator",
-		implies: [],
-		grantable_by_caller: true,
-	},
-	{
 		name: 'owner:service-accounts:read',
 		description: "Read service accounts owned by the agent's creator",
 		implies: [],
@@ -402,8 +396,8 @@ export function resetAgentsStore(): void {
 	actorScopes = {
 		// Seed realistic grants so the Scopes card renders chips out of the box.
 		// `agnt_active_1` carries an approximation of the backend's
-		// DEFAULT_AGENT_SCOPES (including `owner:access-requests:read`, now a
-		// catalogue-backed scope that renders as a normal editable chip).
+		// DEFAULT_AGENT_SCOPES (including `owner:resources:read`, a
+		// catalogue-backed owner scope that renders as a normal editable chip).
 		// `legacy:orphaned:read` is a deliberately synthetic scope that is NOT in
 		// the catalogue, so it exercises the editor's "preserved scopes not editable
 		// here" path (a granted scope absent from /permissions survives a save
@@ -413,7 +407,6 @@ export function resetAgentsStore(): void {
 			'apis:read',
 			'executions:read',
 			'owner:resources:read',
-			'owner:access-requests:read',
 			'legacy:orphaned:read',
 		],
 		sva_active_1: ['credentials:read'],
@@ -555,7 +548,6 @@ const DEFAULT_AGENT_SCOPES_MOCK = [
 	'owner:resources:read',
 	'owner:agents:read',
 	'owner:credentials:read',
-	'owner:access-requests:read',
 ] as const;
 
 /**

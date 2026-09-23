@@ -9,8 +9,8 @@
  * editing, and persistence live with their owning surfaces.
  */
 
-/** Permission-rule effect — `require-approval` exists in the schema but is rarely shown. */
-export type PermissionRuleEffect = 'allow' | 'deny' | 'require-approval';
+/** Permission-rule effect — the broker only enforces `allow` and `deny`. */
+export type PermissionRuleEffect = 'allow' | 'deny';
 
 /** How a rule's `path` is interpreted by the broker. Absent = `regex`. */
 export type PermissionRuleMatchMode = 'regex' | 'prefix' | 'exact';
@@ -54,7 +54,7 @@ export function isUnrestrictedAllow(rule: PermissionRule): boolean {
  * e.g. "Allows GET, POST on 3 operations". Used as the `aria-label` so SR users
  * get the gist without parsing individual chips.
  *
- * Restrictive rules (`deny` / `require-approval`) are summarised FIRST so an SR
+ * Restrictive (`deny`) rules are summarised FIRST so an SR
  * user hears what is blocked before the (often longer) allow enumeration — the
  * block is the security-critical signal. An UNRESTRICTED allow is the other
  * security-critical signal, so it is called out explicitly as "unrestricted".
@@ -68,12 +68,7 @@ export function ruleSummary(rules: PermissionRule[]): string {
 		// An unrestricted allow matches everything — surface that danger plainly
 		// instead of the bland "Allows all requests".
 		if (isUnrestrictedAllow(rule)) return 'Allows ANY request (unrestricted)';
-		const verb =
-			rule.effect === 'allow'
-				? 'Allows'
-				: rule.effect === 'deny'
-					? 'Blocks'
-					: 'Requires approval for';
+		const verb = rule.effect === 'allow' ? 'Allows' : 'Blocks';
 		const bits: string[] = [];
 		if (rule.methods?.length) bits.push(rule.methods.join(', '));
 		if (rule.operations?.length) {

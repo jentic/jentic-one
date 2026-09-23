@@ -11,16 +11,26 @@
  */
 import type { RouteObject } from 'react-router';
 import { Navigate } from 'react-router';
+import { ROUTES } from '@/shared/app';
 import DashboardPage from '@/modules/dashboard/pages/DashboardPage';
 
 export const dashboardIndexRoute: RouteObject = { index: true, element: <DashboardPage /> };
 
 /**
- * Dashboard's non-index child routes. `/app/access-requests` (the retired
- * access-request queue — theme 7, epic jentic/jentic-one#1374) redirects to
- * the dashboard so stale bookmarks and old `approve_url` deep links land
- * somewhere useful instead of a 404.
+ * `/app/access-requests` (the retired access-request queue — theme 7, epic
+ * jentic/jentic-one#1374) redirects to the dashboard so old bookmarks of that
+ * page land somewhere useful instead of a 404.
+ *
+ * A component rather than an inline `<Navigate>` element: `@/shared/app/routes`
+ * imports this module to build `moduleRoutes`, so reading `ROUTES` at module
+ * evaluation would hit the import cycle's TDZ. Deferring it to render time
+ * keeps the shared constant without the cycle biting.
  */
+function RetiredAccessRequestsRedirect() {
+	return <Navigate to={ROUTES.app} replace />;
+}
+
+/** Dashboard's non-index child routes. */
 export const dashboardRoutes: RouteObject[] = [
-	{ path: 'access-requests', element: <Navigate to="/" replace /> },
+	{ path: 'access-requests', element: <RetiredAccessRequestsRedirect /> },
 ];

@@ -31,14 +31,6 @@ describe('isUnrestrictedAllow', () => {
 		expect(
 			isUnrestrictedAllow({ effect: 'deny', methods: null, path: null, operations: null }),
 		).toBe(false);
-		expect(
-			isUnrestrictedAllow({
-				effect: 'require-approval',
-				methods: null,
-				path: null,
-				operations: null,
-			}),
-		).toBe(false);
 	});
 });
 
