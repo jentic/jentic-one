@@ -10,11 +10,13 @@ on:
     branches: [main]
   pull_request:
     # `main` for normal PRs; `cli-v2-*` so the CLI-V2 stacked-PR chain (each phase's
-    # PR is based on the previous phase's branch, not main) still gets full CI.
+    # PR is based on the previous phase's branch, not main) still gets full CI;
+    # `hotfix/*` so fixes targeting a release hotfix branch (cut from a vX.Y.Z tag)
+    # get the same checks as a PR to main.
     # GitHub reads this pull_request filter from the PR's BASE branch, so a PR based
     # on cli-v2-phase-0 only triggers this workflow if cli-v2-phase-0's own ci.yml
     # lists that base pattern here.
-    branches: [main, 'cli-v2-*']
+    branches: [main, 'cli-v2-*', 'hotfix/*']
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
