@@ -256,6 +256,21 @@ export function planChains(request: AccessRequest): PlanShape {
 	return { chains: ordered, extras };
 }
 
+/**
+ * True when a plan can actually be driven by the fulfilment wizard: at least one
+ * chain carries a `credential:bind` for the wizard's create → amend → approve
+ * loop to target. `isProvisioningPlan` only asks whether a request carries a
+ * `credential:provision` intent; a plan whose bind reference is missing or does
+ * not match its provision leaves every bind in `extras` and no chain to fulfil.
+ * The wizard renders nothing in that case, so the router must send such a plan
+ * to the plain approve/deny dialog instead. Routing on this predicate keeps the
+ * router and the wizard's own guard in agreement.
+ */
+export function planIsFulfillable(request: AccessRequest): boolean {
+	if (!isProvisioningPlan(request)) return false;
+	return planChains(request).chains.some((c) => c.credentialBind !== undefined);
+}
+
 /** Per-chain variant of {@link planAuthType}. */
 export function chainAuthType(chain: PlanChain): string | null {
 	const scheme = chain.provision?.resource_reference?.security_scheme;

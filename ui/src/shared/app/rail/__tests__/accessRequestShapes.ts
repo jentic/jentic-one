@@ -229,6 +229,50 @@ export const ACCESS_REQUEST_SHAPES: AccessRequestShape[] = [
 		]),
 	},
 
+	// ── Provision-carrying plans the wizard CAN'T drive (open the plain dialog) ─
+	{
+		// A `credential:provision` whose `credential:bind` references a DIFFERENT
+		// API: the two never join into a chain, so no chain carries a bind and the
+		// wizard has nothing to fulfil. `isProvisioningPlan` is true, but the
+		// request is not fulfillable — it must open the plain approve/deny dialog,
+		// not render nothing. Pins the fix for the silent no-op the wizard's own
+		// `return null` guard produced when the router keyed on the weaker predicate.
+		key: 'plan-bind-reference-mismatch',
+		title: 'Provisioning plan · bind references a different API (not fulfillable)',
+		routedTo: 'plain',
+		request: req('areq_plan_mismatch', 'pending', [
+			item({
+				resource_type: 'credential',
+				action: 'provision',
+				resource_reference: { ...API, security_scheme: 'oauth2' },
+			}),
+			item({
+				resource_type: 'credential',
+				action: 'bind',
+				resource_reference: {
+					vendor: 'stripe-com',
+					name: 'stripe-api',
+					version: '1.0.0',
+				},
+				rules: RULES,
+			}),
+		]),
+	},
+	{
+		// A `credential:provision` with no downstream `credential:bind` at all —
+		// nothing to wire, so no fulfillable chain. Also routes to the plain dialog.
+		key: 'plan-provision-only',
+		title: 'Provisioning plan · provision with no bind (not fulfillable)',
+		routedTo: 'plain',
+		request: req('areq_plan_provision_only', 'pending', [
+			item({
+				resource_type: 'credential',
+				action: 'provision',
+				resource_reference: { ...API, security_scheme: 'api_key' },
+			}),
+		]),
+	},
+
 	// ── Single-item requests (open the plain approve/deny dialog) ─────────────
 	{
 		key: 'credential-bind-reference-pending',

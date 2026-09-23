@@ -23,7 +23,7 @@ import { LoadingState } from '@/shared/ui/LoadingState';
 import { ErrorAlert } from '@/shared/ui/ErrorAlert';
 import { AccessRequestDialog } from '@/shared/app/rail/AccessRequestDialog';
 import { ProvisioningRequestDialog } from '@/shared/app/rail/ProvisioningRequestDialog';
-import { getAccessRequest, isProvisioningPlan, type AccessRequest } from '@/shared/lib';
+import { getAccessRequest, planIsFulfillable, type AccessRequest } from '@/shared/lib';
 
 export interface AccessRequestDecisionDialogProps {
 	/** The request to decide; null closes the dialog. Full object so we can route. */
@@ -95,7 +95,12 @@ export function AccessRequestDecisionDialog({
 		);
 	}
 
-	if (resolved && isProvisioningPlan(resolved)) {
+	// Route to the wizard only when it can actually render the plan (a chain with
+	// a `credential:bind` to fulfil). A `credential:provision` request whose bind
+	// reference is missing or mismatched has no fulfillable chain — the wizard
+	// would render nothing — so it falls through to the plain approve/deny dialog,
+	// which decides its items directly instead of stranding the operator.
+	if (resolved && planIsFulfillable(resolved)) {
 		return (
 			<ProvisioningRequestDialog
 				open

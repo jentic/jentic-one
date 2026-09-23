@@ -44,6 +44,7 @@ export {
 // wizard that decides `--provision` requests (create → amend → approve).
 export {
 	isProvisioningPlan,
+	planIsFulfillable,
 	planApiReference,
 	planAuthType,
 	planIsNoAuth,
