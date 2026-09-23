@@ -30,9 +30,16 @@ _FIND_USER_BY_ID = text("SELECT id FROM users WHERE id = :user_id")
 _FIND_USER_BY_EMAIL = text("SELECT id FROM users WHERE lower(email) = lower(:email)")
 
 _FIND_AGENT_BY_NAME = text("SELECT id FROM agents WHERE name = :name")
-_FIND_SERVICE_ACCOUNT_BY_NAME = text(
+_FIND_SERVICE_ACCOUNT_BY_NAME_SQL = (
     "SELECT id, migrated_to_actor_id FROM service_accounts WHERE name = :name"
 )
+_FIND_SERVICE_ACCOUNT_BY_NAME = text(_FIND_SERVICE_ACCOUNT_BY_NAME_SQL)
+# Row lock on the remnant SA (Postgres): the SA→agent migration takes
+# ``FOR UPDATE`` on the same row before it copies bindings and stamps, so the
+# two serialise — either the migration waits for this transaction's binds to
+# commit (and copies them), or this read blocks until the stamp commits (and
+# sees it, redirecting instead of binding onto a stamped row).
+_FIND_SERVICE_ACCOUNT_BY_NAME_FOR_UPDATE = text(_FIND_SERVICE_ACCOUNT_BY_NAME_SQL + " FOR UPDATE")
 
 # Theme-8 Phase 1 (W8): the job mints **agents** for late ``jntc_live_``
 # stragglers — after Phase 1 no code path may create a service-account row
@@ -164,11 +171,26 @@ class KeyRetirementRepository:
         row the migration already processed (post-stamp mutations, NF-3).
         A real ``agnt_`` stamp is REDIRECTED to the successor; a ``skipped``
         stamp returns None so the caller mints a fresh agent.
+
+        The stamp is read under a row lock (L2): on Postgres the remnant is
+        selected ``FOR UPDATE``, serialising with the migration's own
+        ``FOR UPDATE`` re-read, so the stamp cannot land between this check
+        and the caller's binds (same transaction; the caller's later control-DB
+        ``toolkit_keys`` stamp is outside this lock and healed by the next
+        migration run's re-stamp). SQLite needs no row lock —
+        the caller's ``admin_db.transaction()`` is ``BEGIN IMMEDIATE`` and
+        already holds the database write lock.
         """
         row = (await session.execute(_FIND_AGENT_BY_NAME, {"name": name})).one_or_none()
         if row is not None:
             return str(row.id)
-        row = (await session.execute(_FIND_SERVICE_ACCOUNT_BY_NAME, {"name": name})).one_or_none()
+        dialect = session.get_bind().dialect.name
+        sa_stmt = (
+            _FIND_SERVICE_ACCOUNT_BY_NAME_FOR_UPDATE
+            if dialect == "postgresql"
+            else _FIND_SERVICE_ACCOUNT_BY_NAME
+        )
+        row = (await session.execute(sa_stmt, {"name": name})).one_or_none()
         if row is None:
             return None
         stamp = row.migrated_to_actor_id
