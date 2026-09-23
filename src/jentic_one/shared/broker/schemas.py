@@ -30,8 +30,8 @@ class ExecuteRequestContext(BaseModel):
 
     # Forbid unknown fields: this is part of the public Broker contract and
     # pydantic's default extra="ignore" would silently DROP a misspelled or
-    # since-renamed kwarg (e.g. the old ``operation_id=``) instead of failing
-    # loudly at the caller.
+    # unsupported kwarg (e.g. a flat ``operation_id=`` — the identity rides
+    # ``operation``) instead of failing loudly at the caller.
     model_config = ConfigDict(extra="forbid")
 
     upstream_url: str

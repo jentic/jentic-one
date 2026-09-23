@@ -27,9 +27,15 @@ import structlog
 
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import SecurityConfig
-from jentic_one.shared.events import emit_event, valid_trace_id_or_minted, valid_trace_id_or_none
+from jentic_one.shared.events import (
+    MAX_EVENT_SUMMARY_FIELD_LEN,
+    emit_event,
+    valid_trace_id_or_minted,
+    valid_trace_id_or_none,
+)
 from jentic_one.shared.events.repeated_failure import maybe_emit_repeated_failure
 from jentic_one.shared.jobs.handlers import JobResultPayload
+from jentic_one.shared.jobs.operation_payload import operation_from_job_payload
 from jentic_one.shared.jobs.protocols import (
     CredentialInjector,
     InjectedAuth,
@@ -40,13 +46,12 @@ from jentic_one.shared.models import ActorType as ActorTypeEnum
 from jentic_one.shared.models import ExecutionStatus
 from jentic_one.shared.models.actors import origin_or_none
 from jentic_one.shared.models.events import EventSeverity, EventTag, EventType
-from jentic_one.shared.schemas import OperationInfo, operation_from_job_payload
+from jentic_one.shared.schemas import OperationInfo
 from jentic_one.shared.url import apply_server_variables
 from jentic_one.shared.url_validation import validate_upstream_url
 
 logger = structlog.get_logger(__name__)
 
-_MAX_EVENT_SUMMARY_LEN = 128
 # A far-future expiry so the resolved-identity dataclass is well-formed; the
 # worker only runs an already-authorized, enqueued job — the inbound token was
 # validated at enqueue time, so credential resolution here is by actor identity.
@@ -98,8 +103,8 @@ class ExecutionHandler:
         api_version = payload.get("api_version")
         origin = payload.get("origin")
         # The repeated-failure detector keys on the operation id and renders the
-        # human identity; fold the payload's dual-written keys (the dict wins,
-        # jobs enqueued before it existed carry only the legacy flat id).
+        # human identity; fold the payload's dual-written keys (the dict wins;
+        # legacy in-flight jobs carry only the flat id).
         operation = operation_from_job_payload(payload)
 
         body: bytes | None = None
@@ -159,7 +164,7 @@ class ExecutionHandler:
                         "toolkit_id": payload.get("toolkit_id"),
                         # The resolved operation (id + path template + method)
                         # as one dict; ``operation_id`` rides alongside for
-                        # jobs enqueued before the ``operation`` key existed.
+                        # legacy in-flight jobs that carry only the flat id.
                         "operation": payload.get("operation"),
                         "operation_id": payload.get("operation_id"),
                         "api_vendor": api_vendor,
@@ -187,7 +192,7 @@ class ExecutionHandler:
                 error_msg = f"Upstream returned {http_status}"
         except (OSError, TimeoutError) as exc:
             status = ExecutionStatus.FAILED
-            error_msg = str(exc)[:_MAX_EVENT_SUMMARY_LEN]
+            error_msg = str(exc)[:MAX_EVENT_SUMMARY_FIELD_LEN]
         except Exception as exc:
             # BrokerError (circuit open, bulkhead full, transport) crosses the arch
             # boundary via the UpstreamExecutor protocol — we can't import it here.
@@ -198,10 +203,10 @@ class ExecutionHandler:
                 "pipeline_error",
                 job_id=job_id,
                 error_type=type(exc).__name__,
-                error=str(exc)[:_MAX_EVENT_SUMMARY_LEN],
+                error=str(exc)[:MAX_EVENT_SUMMARY_FIELD_LEN],
             )
             status = ExecutionStatus.FAILED
-            error_msg = str(exc)[:_MAX_EVENT_SUMMARY_LEN]
+            error_msg = str(exc)[:MAX_EVENT_SUMMARY_FIELD_LEN]
 
         await self._emit_lifecycle(
             session,
@@ -267,7 +272,7 @@ class ExecutionHandler:
                     tags=origin_tags,
                 )
             else:
-                sanitized = (error_msg or "unknown")[:_MAX_EVENT_SUMMARY_LEN]
+                sanitized = (error_msg or "unknown")[:MAX_EVENT_SUMMARY_FIELD_LEN]
                 await emit_event(
                     session,
                     type=EventType.EXECUTION_FAILED,

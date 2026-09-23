@@ -9,7 +9,7 @@ Deliberately unindexed: nothing filters or groups by these columns (list
 filters use toolkit/trace/status/api/actor; monitoring groups by
 ``operation_id``); they are display-only.
 
-Revision ID: c1d2e3f4a5b6
+Revision ID: 0679072d60eb
 Revises: b9d0e1f2a3b4
 Create Date: 2026-09-16
 
@@ -20,7 +20,7 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "c1d2e3f4a5b6"  # pragma: allowlist secret
+revision: str = "0679072d60eb"  # pragma: allowlist secret
 down_revision: str | None = "b9d0e1f2a3b4"  # pragma: allowlist secret
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None

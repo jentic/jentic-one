@@ -27,12 +27,12 @@ from jentic_one.broker.core.schemas import ExecuteRequestContext
 from jentic_one.broker.services.execution.service import default_broker, run_execution
 from jentic_one.shared.broker.broker import Broker
 from jentic_one.shared.events import valid_trace_id_or_minted
+from jentic_one.shared.jobs.operation_payload import operation_from_job_payload
 from jentic_one.shared.jobs.protocols import (
     UpstreamExecRequest,
     UpstreamExecResult,
     UpstreamExecutor,
 )
-from jentic_one.shared.schemas import operation_from_job_payload
 
 
 class PipelineExecutor(UpstreamExecutor):
