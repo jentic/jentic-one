@@ -17,13 +17,24 @@ doesn't name one:
 | ----- | --------- | ------------------ |
 | `user` | A human operator, signed in through the SPA or `jenticctl`. | Session token (JWT), or a password login exchanged for one. |
 | `agent` | An AI agent owned by a user. Registered first, approved by a human before it can act. | Ed25519-signed assertion → opaque access token, or a `jak_` API key. |
-| `service_account` | A headless integration. | `sak_` API key. |
 
-The former `toolkit` actor is retired: a startup migration turns each
-`jntc_live_` toolkit key into a `sak_` service account, and a retired
-plaintext keeps authenticating as its migrated service account through the
-deprecation window (see the
-[release runbook](../development/releasing.md)).
+Agents are the only machine identity. Headless integrations (CI jobs, cron
+runners, scripts) register as an agent and authenticate with its `jak_` API
+key.
+
+Two former actor kinds are retired, and their existing plaintexts keep
+working through the deprecation window (see the
+[release runbook](../development/releasing.md)):
+
+- **`service_account`** — removed in theme 8. A startup migration converts
+  each service account into a successor agent, carrying over its grants,
+  bindings, and API-key digest, so an existing `sak_` plaintext keeps
+  authenticating (as the successor agent). No new `sak_` keys are issued;
+  the `/service-accounts` API, `POST /oauth/mint`, and the
+  `client_credentials` grant are gone.
+- **`toolkit`** — a startup migration turns each `jntc_live_` toolkit key
+  into a successor agent (it minted a service account before theme 8), and
+  the retired plaintext keeps authenticating as that agent.
 
 An agent's `Identity` carries its owner (`parent_actor_id`) and the owner's
 effective permissions (`parent_permissions`): an agent can never out-rank
@@ -90,8 +101,9 @@ sequenceDiagram
    more than a few seconds fast produces `iat` rejections — keep both ends
    on NTP.
 
-Operators and the SPA use session JWTs minted at login; API keys
-(`jak_`/`sak_`) are the long-lived alternative, resolved by prefix against
+Operators and the SPA use session JWTs minted at login; agent API
+keys (`jak_`, plus legacy `sak_`/`jntc_live_` plaintexts that resolve as
+their successor agents) are the long-lived alternative, resolved by digest against
 the admin DB ([`shared/auth/api_key_resolver.py`](../../src/jentic_one/shared/auth/api_key_resolver.py)). JWT verification for
 asymmetric tokens allows only asymmetric algorithms — `alg: none` and all
 HMAC algorithms are rejected ([`shared/auth/jwt_verification.py`](../../src/jentic_one/shared/auth/jwt_verification.py)).

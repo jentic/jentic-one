@@ -63,7 +63,7 @@ credential-centric view.
   `name` and `version` axes may be unset — an unset axis is a wildcard, so a
   vendor-wide credential covers every API under that vendor.
 - An **agent-credential binding** (admin DB, `agent_credential_bindings`)
-  grants one agent (or service account) the use of one credential. A binding
+  grants one agent the use of one credential. A binding
   optionally points at a shared **rule set** (`rule_set_id` → control DB
   `permission_rule_sets`); with no rule set, the binding's policy is its own
   inline permission rules. Either way access is **default-deny**: a binding
