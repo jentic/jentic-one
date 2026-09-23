@@ -10,7 +10,7 @@ from jentic_one.admin.core.schema.users import User
 from jentic_one.admin.scoping.filters import build_access_filters
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.models import ActorType
-from jentic_one.shared.scopes import OWNER_AGENTS_READ, OWNER_SERVICE_ACCOUNTS_READ
+from jentic_one.shared.scopes import OWNER_AGENTS_READ
 
 
 def _identity(
@@ -104,29 +104,11 @@ def test_agent_with_scope_but_no_parent_returns_single_filter() -> None:
     assert "agent_1" in sql
 
 
-def test_service_account_model_returns_owner_filter() -> None:
+def test_service_account_model_is_no_longer_scoped() -> None:
+    """Theme-8 Phase 2: ServiceAccount left the scoping map (no reads remain)."""
     identity = _identity(sub="user_7", permissions=[])
-    filters = build_access_filters(identity, ServiceAccount)
-    assert len(filters) == 1
-    compiled = filters[0].compile(compile_kwargs={"literal_binds": True})
-    sql = str(compiled)
-    assert "user_7" in sql
-    assert "owner_id" in sql
-
-
-def test_service_account_with_delegation_scope() -> None:
-    identity = _identity(
-        sub="agent_x",
-        permissions=[OWNER_SERVICE_ACCOUNTS_READ],
-        actor_type=ActorType.AGENT,
-        parent_actor_id="user_delegator",
-    )
-    filters = build_access_filters(identity, ServiceAccount)
-    assert len(filters) == 1
-    compiled = filters[0].compile(compile_kwargs={"literal_binds": True})
-    sql = str(compiled)
-    assert "agent_x" in sql
-    assert "user_delegator" in sql
+    with pytest.raises(ValueError, match="Unknown model"):
+        build_access_filters(identity, ServiceAccount)
 
 
 def test_user_model_returns_self_scope_filter() -> None:

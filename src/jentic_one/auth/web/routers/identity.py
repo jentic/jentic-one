@@ -9,10 +9,12 @@ from jentic_one.admin.services.errors import UserNotFoundError
 from jentic_one.admin.services.user_service import UserService
 from jentic_one.auth.services.agent_service import AgentService
 from jentic_one.auth.services.errors import ActorNotFoundError
-from jentic_one.auth.services.service_account_service import ServiceAccountService
+from jentic_one.auth.services.legacy_service_account_identity_service import (
+    LegacyServiceAccountIdentityService,
+)
 from jentic_one.auth.web.deps import (
     get_agent_service,
-    get_service_account_service,
+    get_legacy_service_account_identity_service,
     get_user_service,
 )
 from jentic_one.auth.web.schemas.identity import (
@@ -36,7 +38,9 @@ async def get_me(
     identity: Identity = get_current_identity(allow_expired_password=True),
     user_svc: UserService = Depends(get_user_service),
     agent_svc: AgentService = Depends(get_agent_service),
-    sa_svc: ServiceAccountService = Depends(get_service_account_service),
+    legacy_sa_svc: LegacyServiceAccountIdentityService = Depends(
+        get_legacy_service_account_identity_service
+    ),
 ) -> MeUser | MeAgent | MeServiceAccount:
     """Return the caller's identity and context, discriminated by actor type."""
     sub = identity.sub
@@ -46,7 +50,7 @@ async def get_me(
     elif sub.startswith("agnt_"):
         return await _resolve_agent(request, identity, agent_svc)
     elif sub.startswith("sva_"):
-        return await _resolve_service_account(request, identity, sa_svc)
+        return await _resolve_service_account(request, identity, legacy_sa_svc)
     else:
         raise Unauthorized(
             detail="Unrecognised actor type in token subject",
@@ -125,25 +129,29 @@ async def _resolve_agent(request: Request, identity: Identity, agent_svc: AgentS
 
 
 async def _resolve_service_account(
-    request: Request, identity: Identity, sa_svc: ServiceAccountService
+    request: Request, identity: Identity, legacy_sa_svc: LegacyServiceAccountIdentityService
 ) -> MeServiceAccount:
+    """Answer ``/me`` for a fallback-resolved ``sva_`` caller (theme-8 Phase 2, M-1).
+
+    The service-account surface is gone; the only way to reach this branch is
+    an unmigrated ``sak_``/``jntc_live_`` key resolved through the resolver's
+    SA-table fallback. Shared with the MCP ``me`` tool. Deleted in Phase 4.
+    """
     try:
-        sa = await sa_svc.get_service_account(identity.sub, identity=identity)
-        # Mirror the agent path: report live grants as `scopes` and the token's
-        # own view as `token_scopes` so a fresh grant shows up immediately and
-        # any staleness gap is detectable (#673).
-        granted_scopes = await sa_svc.get_scopes(identity.sub, identity=identity)
+        sa = await legacy_sa_svc.get_self(identity)
     except ActorNotFoundError:
         raise Unauthorized(
             detail="Service account referenced by token no longer exists",
             instance=request.url.path,
             type="unauthorized",
         ) from None
+    # Mirror the agent path: live grants as `scopes`, the token's own view as
+    # `token_scopes`, so any staleness gap is detectable (#673).
     return MeServiceAccount(
         id=sa.id,
         name=sa.name,
         status=sa.status,
-        scopes=granted_scopes,
+        scopes=sa.scopes,
         token_scopes=identity.permissions,
         registered_by=sa.registered_by,
         approved_by=sa.approved_by,

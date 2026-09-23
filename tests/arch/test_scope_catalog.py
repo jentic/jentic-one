@@ -16,7 +16,6 @@ from jentic_one.shared.scopes import (
     OWNER_AGENTS_READ,
     OWNER_CREDENTIALS_READ,
     OWNER_RESOURCES_READ,
-    OWNER_SERVICE_ACCOUNTS_READ,
     RETIRED_SCOPES,
 )
 from jentic_one.shared.web.scope_catalog import (
@@ -136,7 +135,6 @@ def test_owner_shared_constants_are_catalogued() -> None:
         OWNER_CREDENTIALS_READ,
         OWNER_AGENTS_READ,
         OWNER_RESOURCES_READ,
-        OWNER_SERVICE_ACCOUNTS_READ,
     }
     missing = owner_constants - set(ALL_PERMISSIONS)
     assert not missing, f"OWNER_* constants missing from the catalogue: {sorted(missing)}"
@@ -144,7 +142,8 @@ def test_owner_shared_constants_are_catalogued() -> None:
 
 @pytest.mark.arch
 def test_retired_scopes_stay_out_of_the_catalogue() -> None:
-    """Retired scopes (theme-5 toolkits, theme-7 access requests) never reappear.
+    """Retired scopes (theme-5 toolkits, theme-7 access requests, theme-8 service
+    accounts) never reappear.
 
     They are tolerated on stored-grant re-validation (``RETIRED_SCOPES``) but
     must not be grantable, defaulted, or implied — reintroducing one here would
@@ -154,3 +153,13 @@ def test_retired_scopes_stay_out_of_the_catalogue() -> None:
     assert not RETIRED_SCOPES & set(DEFAULT_AGENT_SCOPES)
     catalog = build_scope_catalog()
     assert not RETIRED_SCOPES & {s["name"] for s in catalog["scopes"]}
+
+
+@pytest.mark.arch
+def test_service_account_family_is_gone_from_the_catalogue() -> None:
+    """Theme-8 Phase 2: no ``service-accounts`` family, scope, or implication survives."""
+    catalog = build_scope_catalog()
+    assert "service-accounts" not in {f["name"] for f in catalog["families"]}
+    by_name = {s["name"]: s for s in catalog["scopes"]}
+    assert not [n for n in by_name if "service-accounts" in n]
+    assert not [n for n in by_name["org:admin"]["implies_transitive"] if "service-accounts" in n]

@@ -211,14 +211,6 @@ class AgentNotFoundError(NotFoundError):
         self.agent_id = agent_id
 
 
-class ServiceAccountNotFoundError(NotFoundError):
-    """Raised when a service account identified by ID does not exist."""
-
-    def __init__(self, service_account_id: str) -> None:
-        super().__init__(f"ServiceAccount '{service_account_id}' not found")
-        self.service_account_id = service_account_id
-
-
 class OAuthClientNotFoundError(NotFoundError):
     """Raised when an OAuth client does not exist."""
 

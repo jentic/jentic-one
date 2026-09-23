@@ -25,7 +25,6 @@ from jentic_one.shared.scopes import (
     OWNER_AGENTS_READ,
     OWNER_CREDENTIALS_READ,
     OWNER_RESOURCES_READ,
-    OWNER_SERVICE_ACCOUNTS_READ,
 )
 
 CAPABILITIES_EXECUTE = "capabilities:execute"
@@ -50,8 +49,6 @@ EXECUTIONS_READ = "executions:read"
 AUDIT_READ = "audit:read"
 AGENTS_READ = "agents:read"
 AGENTS_WRITE = "agents:write"
-SERVICE_ACCOUNTS_READ = "service-accounts:read"
-SERVICE_ACCOUNTS_WRITE = "service-accounts:write"
 CONFIG_READ = "config:read"
 CONFIG_WRITE = "config:write"
 OAUTH_CLIENTS_READ = "oauth-clients:read"
@@ -93,8 +90,6 @@ ALL_PERMISSIONS: dict[str, Permission] = {
                 AUDIT_READ,
                 AGENTS_WRITE,
                 AGENTS_READ,
-                SERVICE_ACCOUNTS_WRITE,
-                SERVICE_ACCOUNTS_READ,
                 CONFIG_WRITE,
                 CONFIG_READ,
                 OAUTH_CLIENTS_WRITE,
@@ -193,15 +188,6 @@ ALL_PERMISSIONS: dict[str, Permission] = {
         name=AGENTS_READ,
         description="Read agent configuration and status",
     ),
-    SERVICE_ACCOUNTS_WRITE: Permission(
-        name=SERVICE_ACCOUNTS_WRITE,
-        description="Create, update, and delete service accounts",
-        implies=frozenset({SERVICE_ACCOUNTS_READ}),
-    ),
-    SERVICE_ACCOUNTS_READ: Permission(
-        name=SERVICE_ACCOUNTS_READ,
-        description="Read service account configuration and status",
-    ),
     CONFIG_WRITE: Permission(
         name=CONFIG_WRITE,
         description="Create and update runtime platform configuration",
@@ -232,10 +218,6 @@ ALL_PERMISSIONS: dict[str, Permission] = {
     OWNER_AGENTS_READ: Permission(
         name=OWNER_AGENTS_READ,
         description="Read agents owned by the agent's creator",
-    ),
-    OWNER_SERVICE_ACCOUNTS_READ: Permission(
-        name=OWNER_SERVICE_ACCOUNTS_READ,
-        description="Read service accounts owned by the agent's creator",
     ),
 }
 
@@ -301,8 +283,6 @@ __all__ = [
     "OAUTH_CLIENTS_WRITE",
     "ORG_ADMIN",
     "OVERLAYS_CONFIRM",
-    "SERVICE_ACCOUNTS_READ",
-    "SERVICE_ACCOUNTS_WRITE",
     "USERS_READ",
     "USERS_WRITE",
     "Permission",

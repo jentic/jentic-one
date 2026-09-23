@@ -297,8 +297,9 @@ async def _run_service_account_migration(ctx: Context) -> None:
 
     Loud-but-non-blocking on failure — the ``migrate-service-accounts`` CLI
     is the recovery path. Re-runs are cheap no-ops (stamp short-circuit),
-    which is also what catches SAs created during the window
-    (``POST /service-accounts`` stays unguarded, F5). After the migration
+    which is also what catches SA rows left over from before the upgrade
+    (the ``/service-accounts`` write surface was removed in theme-8 Phase 2).
+    After the migration
     pass the boot arm triggers the **age-gated** automatic sweep (N3) — never
     the ungated sweep; a negative configured stamp age disables the automatic
     sweep arm entirely.

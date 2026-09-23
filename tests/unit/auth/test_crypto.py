@@ -6,7 +6,6 @@ import re
 
 from jentic_one.auth.services.crypto import (
     generate_agent_api_key,
-    generate_service_account_api_key,
     hash_secret,
 )
 
@@ -24,24 +23,8 @@ def test_generate_agent_api_key_body_is_base64url() -> None:
     assert _BASE64URL_RE.match(body)
 
 
-def test_generate_service_account_api_key_has_sak_prefix() -> None:
-    key = generate_service_account_api_key()
-    assert key.startswith("sak_")
-
-
-def test_generate_service_account_api_key_body_is_base64url() -> None:
-    key = generate_service_account_api_key()
-    body = key.removeprefix("sak_")
-    assert _BASE64URL_RE.match(body)
-
-
 def test_generate_agent_api_key_is_unique() -> None:
     keys = {generate_agent_api_key() for _ in range(10)}
-    assert len(keys) == 10
-
-
-def test_generate_service_account_api_key_is_unique() -> None:
-    keys = {generate_service_account_api_key() for _ in range(10)}
     assert len(keys) == 10
 
 

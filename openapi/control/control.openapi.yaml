@@ -97,11 +97,17 @@ components:
         Type of authenticated actor.
 
         ``toolkit`` is retired (theme-5 Phase 4): toolkit keys resolve as the
-        service accounts the key-retirement job created, so no code path mints a
+        agents the key-retirement job created, so no code path mints a
         toolkit identity. Persisted ``actor_type='toolkit'`` strings survive in
         historical rows (events, audit entries, execution records) until the
         Phase-6b scope-data sweep; read paths must tolerate the string without
         round-tripping it through this enum.
+
+        ``service_account`` is deserialization-only (theme-8 Phase 2): the
+        service-account surface is gone and no issuance path produces it, but
+        stored token rows, grant rows, audit/execution records, and telemetry
+        history carry the value, and the Phase-1 resolver fallback still resolves
+        unmigrated ``sak_`` keys as it. Deletion is a Phase-4/5 decision.
       enum:
       - user
       - agent
@@ -1916,6 +1922,18 @@ components:
       - failed
       title: DailyExecutionBucket
       type: object
+    DenyRequest:
+      description: Request body for denying an agent.
+      properties:
+        reason:
+          maxLength: 1024
+          minLength: 1
+          title: Reason
+          type: string
+      required:
+      - reason
+      title: DenyRequest
+      type: object
     EffectivePermission:
       description: A single effective permission with provenance.
       properties:
@@ -2742,7 +2760,12 @@ components:
       title: MeAgent
       type: object
     MeServiceAccount:
-      description: Identity response for a service-account actor.
+      description: |-
+        Identity response for a (retired) service-account actor.
+
+        Served only to callers whose unmigrated ``sak_``/``jntc_live_`` key
+        resolved through the Phase-1 SA-table fallback (theme 8). Deleted with the
+        fallback in Phase 4.
       properties:
         approved_by:
           anyOf:
@@ -2825,46 +2848,6 @@ components:
       - scopes
       - must_change_password
       title: MeUser
-      type: object
-    MintRequest:
-      description: Ephemeral token minting request.
-      properties:
-        scope:
-          title: Scope
-          type: string
-        target_agent_id:
-          title: Target Agent Id
-          type: string
-        ttl_seconds:
-          anyOf:
-          - maximum: 3600.0
-            minimum: 1.0
-            type: integer
-          - type: 'null'
-          title: Ttl Seconds
-      required:
-      - scope
-      - target_agent_id
-      title: MintRequest
-      type: object
-    MintResponse:
-      description: Ephemeral token minting response.
-      properties:
-        access_token:
-          title: Access Token
-          type: string
-          x-sensitive: true
-        expires_in:
-          title: Expires In
-          type: integer
-        token_type:
-          default: bearer
-          title: Token Type
-          type: string
-      required:
-      - access_token
-      - expires_in
-      title: MintResponse
       type: object
     NoAuthCreateRequest:
       description: |-
@@ -5438,141 +5421,6 @@ components:
       - api_vendor
       title: ServedApiRef
       type: object
-    ServiceAccountCreateRequest:
-      description: Request body for creating a service account.
-      properties:
-        description:
-          anyOf:
-          - maxLength: 1024
-            type: string
-          - type: 'null'
-          title: Description
-        name:
-          maxLength: 255
-          minLength: 1
-          title: Name
-          type: string
-        scopes:
-          anyOf:
-          - items:
-              maxLength: 64
-              minLength: 1
-              pattern: ^[a-zA-Z0-9_:./-]+$
-              type: string
-            maxItems: 100
-            type: array
-          - type: 'null'
-          title: Scopes
-      required:
-      - name
-      title: ServiceAccountCreateRequest
-      type: object
-    ServiceAccountListResponse:
-      description: List of service accounts.
-      properties:
-        data:
-          items:
-            $ref: '#/components/schemas/ServiceAccountResponse'
-          title: Data
-          type: array
-        has_more:
-          title: Has More
-          type: boolean
-        next_cursor:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Next Cursor
-      required:
-      - data
-      - has_more
-      title: ServiceAccountListResponse
-      type: object
-    ServiceAccountResponse:
-      description: ServiceAccount representation in API responses.
-      properties:
-        approved_at:
-          anyOf:
-          - format: date-time
-            type: string
-          - type: 'null'
-          title: Approved At
-        approved_by:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Approved By
-        created_at:
-          format: date-time
-          title: Created At
-          type: string
-        denial_reason:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Denial Reason
-        denied_by:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Denied By
-        description:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Description
-        id:
-          title: Id
-          type: string
-        name:
-          title: Name
-          type: string
-        owner_id:
-          title: Owner Id
-          type: string
-        registered_by:
-          title: Registered By
-          type: string
-        status:
-          title: Status
-          type: string
-      required:
-      - id
-      - name
-      - owner_id
-      - registered_by
-      - status
-      - created_at
-      title: ServiceAccountResponse
-      type: object
-    ServiceAccountScopesRequest:
-      description: Request body for replacing a service account's scopes.
-      properties:
-        scopes:
-          items:
-            maxLength: 64
-            minLength: 1
-            pattern: ^[a-zA-Z0-9_:./-]+$
-            type: string
-          maxItems: 100
-          title: Scopes
-          type: array
-      required:
-      - scopes
-      title: ServiceAccountScopesRequest
-      type: object
-    ServiceAccountScopesResponse:
-      description: Response containing a service account's current scopes.
-      properties:
-        scopes:
-          items:
-            type: string
-          title: Scopes
-          type: array
-      required:
-      - scopes
-      title: ServiceAccountScopesResponse
-      type: object
     SetPermissionsRequest:
       description: Request body for setting user permissions.
       properties:
@@ -5739,7 +5587,7 @@ components:
           anyOf:
           - type: string
           - type: 'null'
-          description: Space-delimited effective scopes of the minted access token (RFC 6749 §3.3), computed the way the platform's resolvers enforce them (live scope grants ∩ client ceiling ∩ consent-grant scopes for agent and service-account tokens), so the granted set may be narrower than requested and clients must not assume they got what they asked for. Present on every response whose token carries at least one scope; OMITTED (never the ABNF-invalid empty string) only when the effective set is empty — reachable solely on legs where the client requested no scopes at the token endpoint (the token request carries no scope parameter, and consent fails closed on an empty intersection).
+          description: Space-delimited effective scopes of the minted access token (RFC 6749 §3.3), computed the way the platform's resolvers enforce them (live scope grants ∩ client ceiling ∩ consent-grant scopes for agent tokens), so the granted set may be narrower than requested and clients must not assume they got what they asked for. Present on every response whose token carries at least one scope; OMITTED (never the ABNF-invalid empty string) only when the effective set is empty — reachable solely on legs where the client requested no scopes at the token endpoint (the token request carries no scope parameter, and consent fails closed on an empty intersection).
           title: Scope
         token_type:
           default: bearer
@@ -6156,30 +6004,6 @@ components:
       - update_available
       title: VersionResponse
       type: object
-    jentic_one__auth__web__schemas__agents__DenyRequest:
-      description: Request body for denying an agent.
-      properties:
-        reason:
-          maxLength: 1024
-          minLength: 1
-          title: Reason
-          type: string
-      required:
-      - reason
-      title: DenyRequest
-      type: object
-    jentic_one__auth__web__schemas__service_accounts__DenyRequest:
-      description: Request body for denying a service account.
-      properties:
-        reason:
-          maxLength: 1024
-          minLength: 1
-          title: Reason
-          type: string
-      required:
-      - reason
-      title: DenyRequest
-      type: object
   securitySchemes:
     BearerAuth:
       description: |-
@@ -6187,10 +6011,7 @@ components:
 
         Obtain one from `POST /oauth/token` using the grant for your actor type:
         - **Agents** — `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer` with a JWT assertion signed by the key registered via `POST /register` (the JWT is the *assertion*, not the resulting access token).
-        - **Service accounts** — `grant_type=client_credentials` with `client_id` + `client_secret`.
         - **Users** — `grant_type=authorization_code` (interactive) or `grant_type=password`; refresh either with `grant_type=refresh_token`.
-
-        Service accounts can also mint short-lived, scope-narrowed task tokens for agents via `POST /oauth/mint`.
 
         Per-endpoint scope and actor-type requirements are not modelled in this document (OpenAPI cannot faithfully express the OR-of-scopes / `org:admin` bypass / service-layer enforcement); see `GET /reference/endpoints.json` for the authoritative authorization reference.
       scheme: bearer
@@ -6235,16 +6056,15 @@ info:
 
     Today the platform ships a local username + password identity
     provider for human users, alongside agent identity (Dynamic Client
-    Registration + RFC 7523 JWT-bearer assertions) and service-account
-    client credentials — every authenticated operation expects
+    Registration + RFC 7523 JWT-bearer assertions) — every authenticated operation expects
     `Authorization: Bearer <token>` (`BearerAuth`, an opaque `at_`
     token) except `GET /health`, `POST /auth/login`,
     `POST /users:create-admin`, and `POST /users:redeem-invite`.
     Human tokens are issued by `POST /auth/login` with a fixed 1-hour
     TTL and can be re-minted before expiry via `POST /auth/refresh`
     (sliding session, bounded by an absolute window —
-    `admin.auth.session_ttl_seconds`, 12 hours by default); agents and
-    service accounts obtain tokens from `POST /oauth/token` (see
+    `admin.auth.session_ttl_seconds`, 12 hours by default); agents
+    obtain tokens from `POST /oauth/token` (see
     `BearerAuth`). The `permissions` claim on a token is a snapshot at
     issue time; permission changes take effect at the next re-issue —
     the next refresh or re-login (≤ 1 hour with the default TTL).
@@ -6342,7 +6162,7 @@ info:
       | Prefix | Resource | Notes |
       |---|---|---|
       | `tk_` | Toolkit ID | Retired (theme-5 Phase 5b): the toolkit management surface is gone. Ids still appear in stored records (bindings, audit) until the tables retire in Phase 6b. |
-      | `ck_` | Toolkit-key record | Retired (theme-5 Phase 4): no new keys are issued and the key-management routes are gone (Phase 5b). Each surviving plaintext authenticates as the service account it was migrated to. |
+      | `ck_` | Toolkit-key record | Retired (theme-5 Phase 4): no new keys are issued and the key-management routes are gone (Phase 5b). Each surviving plaintext authenticates as the agent it was migrated to. |
       | `cred_` | Credential ID | |
       | `exec_` | Execution record | Returned in the `Jentic-Execution-Id` response header on every brokered call. |
       | `job_` | Async job | UUIDs also accepted on inputs for backward compatibility. |
@@ -6354,7 +6174,7 @@ info:
       | `areq_` | Access request (retired) | Retired (theme 7): the access-request flow is gone. Ids still appear in stored audit/event records. |
       | `note_` | Note | ULID-shaped. Free-form annotation attached to a registry resource — see the `Notes` tag. |
       | `ovr_` | Overlay | ULID-shaped. OpenAPI Overlay 1.0 document attached to an `Api` aggregate — see the `Overlays` tag. |
-      | `jntc_live_` | Plaintext toolkit API key value (retired) | Never issued anymore (issuance died in Phase 4, the management routes in Phase 5b). A surviving value keeps authenticating — as its migrated service account — for the deprecation window; rotate holders to `sak_` keys. |
+      | `jntc_live_` | Plaintext toolkit API key value (retired) | Never issued anymore (issuance died in Phase 4, the management routes in Phase 5b). A surviving value keeps authenticating — as its migrated agent — for the deprecation window; rotate holders to agent (`jak_`) keys. |
 
       Surfaces still being designed (agent identity, OAuth brokers)
       will add their own prefixes when they land.
@@ -6655,7 +6475,7 @@ paths:
       - Discovery
   /actors:
     get:
-      description: List all actors (users, agents, service accounts) for UI cache hydration.
+      description: List all actors (users and agents) for UI cache hydration.
       operationId: listActors
       parameters:
       - in: query
@@ -9049,7 +8869,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/jentic_one__auth__web__schemas__agents__DenyRequest'
+              $ref: '#/components/schemas/DenyRequest'
         required: true
       responses:
         '200':
@@ -16790,74 +16610,6 @@ paths:
       summary: Introspect Endpoint
       tags:
       - OAuth
-  /oauth/mint:
-    post:
-      description: |-
-        Mint a short-lived ephemeral token for a task agent.
-
-        The caller must be an authenticated service account. The requested scopes
-        must be a subset of the caller's own scopes.
-      operationId: mintEndpoint
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/MintRequest'
-        required: true
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/MintResponse'
-          description: Successful Response
-        '400':
-          content:
-            application/problem+json:
-              example: *id001
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Bad Request
-        '401':
-          content:
-            application/problem+json:
-              example: *id005
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unauthorized
-        '403':
-          content:
-            application/problem+json:
-              example: *id006
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Forbidden
-        '422':
-          content:
-            application/problem+json:
-              example: *id002
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unprocessable Entity
-        '500':
-          content:
-            application/problem+json:
-              example: *id003
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Internal Server Error
-        '503':
-          content:
-            application/problem+json:
-              example: *id004
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Service Unavailable
-      security:
-      - BearerAuth: []
-      summary: Mint Endpoint
-      tags:
-      - OAuth
   /oauth/revoke:
     post:
       description: |-
@@ -17028,7 +16780,7 @@ paths:
   /oauth/token:
     post:
       description: |-
-        Exchange a refresh token, JWT assertion, authorization code, or client creds for tokens.
+        Exchange a refresh token, JWT assertion, or authorization code for tokens.
 
         Error responses speak the RFC 6749 §5.2 dialect (top-level ``error`` +
         ``error_description``), NOT platform Problem Details — reshaped by
@@ -18033,741 +17785,6 @@ paths:
       summary: Search operations
       tags:
       - Search
-  /service-accounts:
-    get:
-      description: List service accounts — owner-scoped unless caller is org:admin.
-      operationId: listServiceAccounts
-      parameters:
-      - in: query
-        name: cursor
-        required: false
-        schema:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Cursor
-      - in: query
-        name: limit
-        required: false
-        schema:
-          default: 50
-          maximum: 200
-          minimum: 1
-          title: Limit
-          type: integer
-      - in: query
-        name: status
-        required: false
-        schema:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Status
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ServiceAccountListResponse'
-          description: Successful Response
-        '400':
-          content:
-            application/problem+json:
-              example: *id001
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Bad Request
-        '401':
-          content:
-            application/problem+json:
-              example: *id005
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unauthorized
-        '403':
-          content:
-            application/problem+json:
-              example: *id006
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Forbidden
-        '422':
-          content:
-            application/problem+json:
-              example: *id002
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unprocessable Entity
-        '500':
-          content:
-            application/problem+json:
-              example: *id003
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Internal Server Error
-        '503':
-          content:
-            application/problem+json:
-              example: *id004
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Service Unavailable
-      security:
-      - BearerAuth: []
-      summary: List Service Accounts
-      tags:
-      - Service Accounts
-    post:
-      description: Create a new service account.
-      operationId: createServiceAccount
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ServiceAccountCreateRequest'
-        required: true
-      responses:
-        '201':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ServiceAccountResponse'
-          description: Successful Response
-        '400':
-          content:
-            application/problem+json:
-              example: *id001
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Bad Request
-        '401':
-          content:
-            application/problem+json:
-              example: *id005
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unauthorized
-        '403':
-          content:
-            application/problem+json:
-              example: *id006
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Forbidden
-        '422':
-          content:
-            application/problem+json:
-              example: *id002
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unprocessable Entity
-        '500':
-          content:
-            application/problem+json:
-              example: *id003
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Internal Server Error
-        '503':
-          content:
-            application/problem+json:
-              example: *id004
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Service Unavailable
-      security:
-      - BearerAuth: []
-      summary: Create Service Account
-      tags:
-      - Service Accounts
-  /service-accounts/{service_account_id}:
-    delete:
-      description: |-
-        Archive a service account — terminal-but-kept.
-
-        The row is retained for history, but the action is not reversible and
-        the account's scope grants are revoked. For the reversible kill switch
-        use ``:disable`` / ``:enable`` instead.
-      operationId: archiveServiceAccount
-      parameters:
-      - in: path
-        name: service_account_id
-        required: true
-        schema:
-          title: Service Account Id
-          type: string
-      responses:
-        '204':
-          description: Successful Response
-        '400':
-          content:
-            application/problem+json:
-              example: *id001
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Bad Request
-        '401':
-          content:
-            application/problem+json:
-              example: *id005
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unauthorized
-        '403':
-          content:
-            application/problem+json:
-              example: *id006
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Forbidden
-        '422':
-          content:
-            application/problem+json:
-              example: *id002
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unprocessable Entity
-        '500':
-          content:
-            application/problem+json:
-              example: *id003
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Internal Server Error
-        '503':
-          content:
-            application/problem+json:
-              example: *id004
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Service Unavailable
-      security:
-      - BearerAuth: []
-      summary: Archive Service Account
-      tags:
-      - Service Accounts
-    get:
-      description: Get service account by ID — requires service-accounts:read or self-read.
-      operationId: getServiceAccount
-      parameters:
-      - in: path
-        name: service_account_id
-        required: true
-        schema:
-          title: Service Account Id
-          type: string
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ServiceAccountResponse'
-          description: Successful Response
-        '400':
-          content:
-            application/problem+json:
-              example: *id001
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Bad Request
-        '401':
-          content:
-            application/problem+json:
-              example: *id005
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unauthorized
-        '403':
-          content:
-            application/problem+json:
-              example: *id006
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Forbidden
-        '422':
-          content:
-            application/problem+json:
-              example: *id002
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unprocessable Entity
-        '500':
-          content:
-            application/problem+json:
-              example: *id003
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Internal Server Error
-        '503':
-          content:
-            application/problem+json:
-              example: *id004
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Service Unavailable
-      security:
-      - BearerAuth: []
-      summary: Get Service Account
-      tags:
-      - Service Accounts
-  /service-accounts/{service_account_id}/scopes:
-    get:
-      description: List scopes granted to a service account.
-      operationId: getServiceAccountScopes
-      parameters:
-      - in: path
-        name: service_account_id
-        required: true
-        schema:
-          title: Service Account Id
-          type: string
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ServiceAccountScopesResponse'
-          description: Successful Response
-        '400':
-          content:
-            application/problem+json:
-              example: *id001
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Bad Request
-        '401':
-          content:
-            application/problem+json:
-              example: *id005
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unauthorized
-        '403':
-          content:
-            application/problem+json:
-              example: *id006
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Forbidden
-        '422':
-          content:
-            application/problem+json:
-              example: *id002
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unprocessable Entity
-        '500':
-          content:
-            application/problem+json:
-              example: *id003
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Internal Server Error
-        '503':
-          content:
-            application/problem+json:
-              example: *id004
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Service Unavailable
-      security:
-      - BearerAuth: []
-      summary: Get Service Account Scopes
-      tags:
-      - Service Accounts
-    put:
-      description: Replace all scopes for a service account.
-      operationId: replaceServiceAccountScopes
-      parameters:
-      - in: path
-        name: service_account_id
-        required: true
-        schema:
-          title: Service Account Id
-          type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ServiceAccountScopesRequest'
-        required: true
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ServiceAccountScopesResponse'
-          description: Successful Response
-        '400':
-          content:
-            application/problem+json:
-              example: *id001
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Bad Request
-        '401':
-          content:
-            application/problem+json:
-              example: *id005
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unauthorized
-        '403':
-          content:
-            application/problem+json:
-              example: *id006
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Forbidden
-        '422':
-          content:
-            application/problem+json:
-              example: *id002
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unprocessable Entity
-        '500':
-          content:
-            application/problem+json:
-              example: *id003
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Internal Server Error
-        '503':
-          content:
-            application/problem+json:
-              example: *id004
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Service Unavailable
-      security:
-      - BearerAuth: []
-      summary: Replace Service Account Scopes
-      tags:
-      - Service Accounts
-  /service-accounts/{service_account_id}:approve:
-    post:
-      description: Approve a pending service account.
-      operationId: approveServiceAccount
-      parameters:
-      - in: path
-        name: service_account_id
-        required: true
-        schema:
-          title: Service Account Id
-          type: string
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ServiceAccountResponse'
-          description: Successful Response
-        '400':
-          content:
-            application/problem+json:
-              example: *id001
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Bad Request
-        '401':
-          content:
-            application/problem+json:
-              example: *id005
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unauthorized
-        '403':
-          content:
-            application/problem+json:
-              example: *id006
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Forbidden
-        '422':
-          content:
-            application/problem+json:
-              example: *id002
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unprocessable Entity
-        '500':
-          content:
-            application/problem+json:
-              example: *id003
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Internal Server Error
-        '503':
-          content:
-            application/problem+json:
-              example: *id004
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Service Unavailable
-      security:
-      - BearerAuth: []
-      summary: Approve Service Account
-      tags:
-      - Service Accounts
-  /service-accounts/{service_account_id}:deny:
-    post:
-      description: Deny a pending service account.
-      operationId: denyServiceAccount
-      parameters:
-      - in: path
-        name: service_account_id
-        required: true
-        schema:
-          title: Service Account Id
-          type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/jentic_one__auth__web__schemas__service_accounts__DenyRequest'
-        required: true
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ServiceAccountResponse'
-          description: Successful Response
-        '400':
-          content:
-            application/problem+json:
-              example: *id001
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Bad Request
-        '401':
-          content:
-            application/problem+json:
-              example: *id005
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unauthorized
-        '403':
-          content:
-            application/problem+json:
-              example: *id006
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Forbidden
-        '422':
-          content:
-            application/problem+json:
-              example: *id002
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unprocessable Entity
-        '500':
-          content:
-            application/problem+json:
-              example: *id003
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Internal Server Error
-        '503':
-          content:
-            application/problem+json:
-              example: *id004
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Service Unavailable
-      security:
-      - BearerAuth: []
-      summary: Deny Service Account
-      tags:
-      - Service Accounts
-  /service-accounts/{service_account_id}:disable:
-    post:
-      description: Disable an active service account.
-      operationId: disableServiceAccount
-      parameters:
-      - in: path
-        name: service_account_id
-        required: true
-        schema:
-          title: Service Account Id
-          type: string
-      responses:
-        '204':
-          description: Successful Response
-        '400':
-          content:
-            application/problem+json:
-              example: *id001
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Bad Request
-        '401':
-          content:
-            application/problem+json:
-              example: *id005
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unauthorized
-        '403':
-          content:
-            application/problem+json:
-              example: *id006
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Forbidden
-        '422':
-          content:
-            application/problem+json:
-              example: *id002
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unprocessable Entity
-        '500':
-          content:
-            application/problem+json:
-              example: *id003
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Internal Server Error
-        '503':
-          content:
-            application/problem+json:
-              example: *id004
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Service Unavailable
-      security:
-      - BearerAuth: []
-      summary: Disable Service Account
-      tags:
-      - Service Accounts
-  /service-accounts/{service_account_id}:enable:
-    post:
-      description: Enable a disabled service account.
-      operationId: enableServiceAccount
-      parameters:
-      - in: path
-        name: service_account_id
-        required: true
-        schema:
-          title: Service Account Id
-          type: string
-      responses:
-        '204':
-          description: Successful Response
-        '400':
-          content:
-            application/problem+json:
-              example: *id001
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Bad Request
-        '401':
-          content:
-            application/problem+json:
-              example: *id005
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unauthorized
-        '403':
-          content:
-            application/problem+json:
-              example: *id006
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Forbidden
-        '422':
-          content:
-            application/problem+json:
-              example: *id002
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unprocessable Entity
-        '500':
-          content:
-            application/problem+json:
-              example: *id003
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Internal Server Error
-        '503':
-          content:
-            application/problem+json:
-              example: *id004
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Service Unavailable
-      security:
-      - BearerAuth: []
-      summary: Enable Service Account
-      tags:
-      - Service Accounts
-  /service-accounts/{service_account_id}:generate-api-key:
-    post:
-      description: Generate a new API key for a service account. Rotates any existing key.
-      operationId: generateServiceAccountApiKey
-      parameters:
-      - in: path
-        name: service_account_id
-        required: true
-        schema:
-          title: Service Account Id
-          type: string
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiKeyResponse'
-          description: Successful Response
-        '400':
-          content:
-            application/problem+json:
-              example: *id001
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Bad Request
-        '401':
-          content:
-            application/problem+json:
-              example: *id005
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unauthorized
-        '403':
-          content:
-            application/problem+json:
-              example: *id006
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Forbidden
-        '422':
-          content:
-            application/problem+json:
-              example: *id002
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unprocessable Entity
-        '500':
-          content:
-            application/problem+json:
-              example: *id003
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Internal Server Error
-        '503':
-          content:
-            application/problem+json:
-              example: *id004
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Service Unavailable
-      security:
-      - BearerAuth: []
-      summary: Generate Service Account Api Key
-      tags:
-      - Service Accounts
   /system/version:
     get:
       description: |-
@@ -19883,15 +18900,13 @@ tags:
   name: Identity
 - description: Agent actors — autonomous principals that call the Broker. Covers the agent lifecycle (list, read, approve / deny, enable / disable, archive) and the credentials directly bound to each agent.
   name: Agents
-- description: Machine principals for non-interactive integrations — lifecycle (create, list, read, approve / deny, enable / disable, archive) mirroring the agent surface.
-  name: Service Accounts
-- description: OAuth 2.0 / OIDC endpoints exposed by the platform authorization server — the authorize, token, introspection, revocation, and assertion-mint endpoints plus the redirect callback.
+- description: OAuth 2.0 / OIDC endpoints exposed by the platform authorization server — the authorize, token, introspection, and revocation endpoints plus the redirect callback.
   name: OAuth
 - description: Dynamic agent registration (RFC 7591-style) — register a new agent client, poll registration status, update, or delete a registration.
   name: Agent Registration
 - description: Unauthenticated metadata discovery — the JWKS document and OAuth authorization server metadata under `/.well-known/*`.
   name: Discovery
-- description: Unified actor directory — a lightweight read-only view across all actor types (users, agents, service accounts). Returns ID-to-name mappings for UI cache hydration so dashboards can display friendly names wherever an `actor_id` appears.
+- description: Unified actor directory — a lightweight read-only view across all actor types (users and agents). Returns ID-to-name mappings for UI cache hydration so dashboards can display friendly names wherever an `actor_id` appears.
   name: Actors
 - description: Append-only administrative audit trail — who did what, when. Distinct from `Executions` (brokered upstream calls); this records control-plane mutations.
   name: Audit
@@ -19937,7 +18952,6 @@ x-tagGroups:
   tags:
   - Identity
   - Agents
-  - Service Accounts
   - OAuth
   - Agent Registration
   - Discovery

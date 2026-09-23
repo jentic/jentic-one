@@ -27,30 +27,6 @@ class ActorNotFoundError(AuthServiceError):
         self.actor_id = actor_id
 
 
-class ServiceAccountMigratedError(AuthServiceError):
-    """Raised when a mutation targets a service account already migrated to an agent.
-
-    Theme-8 Phase 1 (NF-1/NF-2): once a row carries the migration stamp, the
-    live actor is the successor agent — a status flip, scope replacement, key
-    rotation, or archive against the stamped SA would either silently no-op
-    against the key (new pods resolve agent-first) or diverge the copied
-    state. 409, not 410: the SA resource still exists and is readable during
-    the coexistence window; 410 arrives with Phase 2's surface removal.
-    ``successor_agent_id`` is ``None`` for skip-but-stamp rows (no successor
-    was minted).
-    """
-
-    def __init__(self, service_account_id: str, successor_agent_id: str | None) -> None:
-        manage = (
-            f"manage the successor agent {successor_agent_id} instead"
-            if successor_agent_id is not None
-            else "it was skipped-but-stamped (no successor agent)"
-        )
-        super().__init__(f"Service account '{service_account_id}' migrated — {manage}")
-        self.service_account_id = service_account_id
-        self.successor_agent_id = successor_agent_id
-
-
 class CredentialBindingConflictError(AuthServiceError):
     """Raised when a direct agent↔credential binding already exists."""
 

@@ -49,7 +49,7 @@ REFERENCE_SCHEMA = "jentic.endpoint-scope-tree/v1"
 _HTTP_METHODS = ("get", "post", "put", "patch", "delete")
 
 #: Actor types that ride the agent token flow (mirrored in the Go CLI grouping).
-_AGENT_ACTORS: tuple[str, ...] = ("agent", "service_account")
+_AGENT_ACTORS: tuple[str, ...] = ("agent",)
 
 #: The broker's only unauthenticated routes (liveness / readiness probes); every
 #: other broker route is the execute proxy and requires BROKER_EXECUTE_SCOPE.
