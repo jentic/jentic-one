@@ -38,7 +38,8 @@ allow. See `docs/security/README.md` before using real credentials.
    (terminal). This is a one-time step.
 3. Import an API from https://github.com/jentic/jentic-public-apis (e.g. `httpbin.org`, used in
    step 6), or register a private OpenAPI description of the user's own service.
-4. Store a credential for that API, once. It is encrypted at rest and is never returned.
+4. The operator stores a credential for that API, once (skip for a registry vendor — step 5's
+   connect flow creates it). It is encrypted at rest and is never returned.
 5. Get access: granting is always a human action. Access is default-deny — the operator binds
    the agent to a stored credential in the console, and a rule-less binding still blocks
    everything. For OAuth vendors in the deployment's vendor registry the agent can start the

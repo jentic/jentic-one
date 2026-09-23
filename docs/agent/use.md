@@ -15,9 +15,9 @@ Every task against an external API follows the same audited loop:
 jentic whoami                          # 1. what your bindings already SERVE
 jentic catalog search "<capability>"   # 2. find an importable API (public catalog)
 jentic catalog import <vendor/name>    #    import it into the local registry
-jentic search "<what you want to do>"  # 2. find the operation — each hit gives its METHOD and URL
-jentic inspect GET:https://api.example.com/v1/things/{id}     # 3. params, schemas, auth
-jentic execute GET:https://api.example.com/v1/things/{id} --path id=abc   # 4. call it through the broker
+jentic search "<what you want to do>"  # 3. find the operation — each hit gives its METHOD and URL
+jentic inspect GET:https://api.example.com/v1/things/{id}     # 4. params, schemas, auth
+jentic execute GET:https://api.example.com/v1/things/{id} --path id=abc   # 5. call it through the broker
 ```
 
 Key behaviours (details and full flag syntax in the skill):
@@ -58,9 +58,11 @@ Key behaviours (details and full flag syntax in the skill):
    and bind you to it.
 3. **One report per job**, always with the reason — never thrash your
    operator with per-operation or duplicate asks.
-4. **Hand off when told to.** A `prompt_human` directive (missing secret,
-   vendor not in the registry, lapsed account link) means a human must act
-   in the console — report it to the operator and wait; never re-send the
+4. **Hand off when told to.** Every access denial carries a `prompt_human`
+   directive — read its instruction and `parameters.suggested_command`. If
+   it names `jentic connect <vendor>`, run it and relay the `approval_url`.
+   Otherwise (missing secret, vendor not in the registry, a credential that
+   needs fixing) report it to your operator once and wait. Never re-send the
    same call hoping for a different answer.
 
 ## How to do an action (worked example)
@@ -88,7 +90,7 @@ jentic catalog import coincap-io/coincap-io
 # 4. Find the operation — the hit gives you its METHOD and URL
 jentic search "get current asset price"
 
-# 3. Inspect, then execute with that exact METHOD + URL
+# 5. Inspect, then execute with that exact METHOD + URL
 jentic inspect GET:https://rest.coincap.io/v3/assets/{id}
 jentic execute GET:https://rest.coincap.io/v3/assets/{id} --path id=bitcoin
 ```
@@ -131,6 +133,7 @@ recovery — follow its instruction instead of retrying the same call.
 | Action | Where the human does it |
 | ------ | ----------------------- |
 | Approve a new agent | `/app/agents` in the console |
+| Approve an agent-initiated connect (the `approval_url` from `jentic connect`) | The link opens `/app/credentials?approve=…` in the console; the human confirms scopes and rules, then consents at the vendor |
 | Connect/provision credentials, bind agents, enter credential secrets | `/app` console (dashboard) — relay your access ask to the operator in prose; they act on it there |
 | Create/manage users | `/app` admin UI |
 | Re-import an updated API spec (`jentic catalog outdated`) | Their call — suggest it, never run it silently |

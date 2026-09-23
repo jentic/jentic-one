@@ -112,11 +112,11 @@ The outcomes:
   problem body carries an agent directive naming the recovery: start a vendor
   connect flow (`jentic connect <vendor>`, over `POST /integrations:connect`)
   when the deployment's vendor registry can mint the credential, or hand off
-  to a human — the operator stores the credential and binds the agent in the
-  console — when it cannot. When a *bound*
-  credential is a near-miss (its identity does not cover this operation), the
-  refusal is `403 credential_identity_mismatch` instead — fix the credential,
-  don't connect a new one.
+  to a human when it cannot — the operator binds the agent to the credential
+  that already serves the API, or stores one first if none does. When a
+  *bound* credential is a near-miss (its identity does not cover this
+  operation), the refusal is `403 credential_identity_mismatch` instead — the
+  operator fixes the credential; a new binding or connect would not help.
 - **1 winner → use it.** The response carries `Jentic-Credential-Id` and
   `Jentic-Credential-Name` (absent when no stored credential was used), and
   the execution record carries the same attribution — every execution names

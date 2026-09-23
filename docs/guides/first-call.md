@@ -30,7 +30,7 @@ From the terminal instead: `jenticctl setup` creates the account;
 ## 2. Register the agent *(agent machine)*
 
 Nearly every step from here runs the `jentic` CLI — the exceptions are steps 4
-and 5, which happen (mostly) in the dashboard — and every `jentic` command (even
+and 5, which are human steps in the dashboard or browser — and every `jentic` command (even
 browsing the catalog) needs a registered agent. From the machine that will
 run the agent:
 
@@ -67,7 +67,7 @@ imported description without editing the original, use [Overlays](overlays.md).
 
 ## 4. Store a credential *(authenticated APIs only)*
 
-httpbin needs none — skip to step 5. For an API that does authenticate, the
+httpbin takes no secret — its no-auth credential is created in step 5. For an API that does authenticate, the
 operator stores what it needs (API key, bearer, basic, or an OAuth2 flow) in
 the UI. It is encrypted at rest and never returned to a caller — it is
 decrypted only inside the broker, at execution time. How a stored credential

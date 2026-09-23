@@ -105,8 +105,9 @@ Scopes shared across surfaces are canonical constants in
   requires. Every accepted credential kind must carry it.
 - **`DEFAULT_AGENT_SCOPES`** is the safe agent baseline: execute, reads
   (`apis:read`, `executions:read`, `jobs:read`, `events:read`,
-  `capabilities:read`), `catalog:import`, and the `owner:*:read` delegation
-  scopes for resources, agents, and credentials
+  `capabilities:read`), `catalog:import`, `credentials:connect` (start a
+  vendor connect flow — narrower than `credentials:write`), and the
+  `owner:*:read` delegation scopes for resources, agents, and credentials
   (not `owner:service-accounts:read`).
 - **There is no self-service scope elevation.** Scopes are granted by an
   operator on the agent detail surface, so the privileged scopes —
