@@ -50,9 +50,6 @@ _ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     InvalidOwnerError: (422, "invalid_owner"),
     InvalidRevocationRequestError: (400, "invalid_request"),
     InvalidTransitionError: (409, "invalid_transition"),
-    # Theme-8 Phase 1 (IMPL-DECISION 7): 409 over 410 — the SA resource still
-    # exists (readable) during the coexistence window; 410 arrives with
-    # Phase 2's surface removal.
     NoApiKeyError: (409, "no_api_key"),
     OAuthGrantAccessDeniedError: (403, "oauth_grant_access_denied"),
     OAuthGrantNotFoundError: (404, "oauth_grant_not_found"),

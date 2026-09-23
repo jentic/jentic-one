@@ -378,11 +378,12 @@ async def test_user_token_follows_user_active_flag(
             await _dual(admin_db).validate("at_user_token")
 
 
-@pytest.mark.parametrize("sa_status,should_pass", [("active", True), ("disabled", False)])
-async def test_service_account_token_follows_sa_status(
-    admin_db: DatabaseSession, clean_access_tokens: None, sa_status: str, should_pass: bool
+@pytest.mark.parametrize("sa_status", ["active", "disabled"])
+async def test_service_account_token_is_refused_whatever_the_sa_status(
+    admin_db: DatabaseSession, clean_access_tokens: None, sa_status: str
 ) -> None:
-    """The SQL's `service_account` CASE branch."""
+    """The SQL's `service_account` CASE branch fails closed: SA sessions are
+    retired, so even an active SA row no longer vouches for its `at_`."""
     await _seed_user_row(admin_db, "usr_sa_owner")
     await _seed_service_account_row(
         admin_db, "sva_broker", owner_id="usr_sa_owner", status=sa_status
@@ -391,12 +392,8 @@ async def test_service_account_token_follows_sa_status(
         admin_db, plaintext="at_sa_token", actor_id="sva_broker", actor_type="service_account"
     )
 
-    if should_pass:
-        resolved = await _dual(admin_db).validate("at_sa_token")
-        assert resolved.sub == "sva_broker"
-    else:
-        with pytest.raises(TokenValidationError, match="token_inactive"):
-            await _dual(admin_db).validate("at_sa_token")
+    with pytest.raises(TokenValidationError, match="token_inactive"):
+        await _dual(admin_db).validate("at_sa_token")
 
 
 async def test_disable_mid_life_kills_token_after_cache_ttl(

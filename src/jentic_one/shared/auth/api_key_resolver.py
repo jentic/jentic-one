@@ -131,8 +131,8 @@ class ApiKeyResolver:
                 # H1: a stamped SA is never a valid identity source — the
                 # successor's digest was NULLed (key revoked/rotated) or the
                 # row was skip-but-stamped. FAIL CLOSED regardless of SA
-                # status: the SA-side mutation guards 409 the direct kill
-                # levers, so this arm must not keep the key alive.
+                # status: the SA surface is gone, so nothing can kill the
+                # key through the SA row and this arm must not keep it alive.
                 logger.warning(
                     "migrated_key_fail_closed",
                     reason="stamped_service_account",

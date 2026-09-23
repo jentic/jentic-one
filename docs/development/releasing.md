@@ -88,9 +88,11 @@ the Deprecations table.
 - **`jntc_live_` toolkit keys are retired; migration to `sak_` is automatic.**
   No new keys are issued. Run `jentic_one retire-toolkit-keys` once: every
   existing key digest is migrated to a service account, and the **unchanged
-  plaintext keeps authenticating** — as that service account — for the
-  deprecation window. Watch `deprecated_toolkit_key_used` WARNING logs to find
-  holders still presenting the old key form, and rotate them to `sak_` keys.
+  plaintext keeps authenticating** for the deprecation window — as that
+  service account, and as its successor agent once the theme-8 migration
+  runs. Watch `deprecated_toolkit_key_used` WARNING logs to find holders still
+  presenting the old key form, and rotate them to the successor agent's `jak_`
+  key (`sak_` keys can no longer be issued).
 - **The toolkit management surface is gone.** All `/toolkits/*` and
   `/agents/{id}/toolkits*` routes now return `404`. The `toolkits:read`,
   `toolkits:write`, and `owner:toolkits:read` scopes are retired: no route
@@ -284,8 +286,8 @@ Run against **production data**; order matters.
 run the Phase-1 migration (above) first — the boot job still does it.
 
 - **Routes removed:** every `/service-accounts…` route (create, list, get,
-  approve/deny/disable/enable/archive, scopes, `:generate-api-key`,
-  API-key history) and `POST /oauth/mint` now return `404`. The gateway
+  approve/deny/disable/enable/archive, scopes, `:generate-api-key`) and
+  `POST /oauth/mint` now return `404`. The gateway
   chart no longer routes `/service-accounts`.
 - **`client_credentials` grant removed:** `POST /oauth/token` with
   `grant_type=client_credentials` returns `400 unsupported_grant_type`, and
@@ -293,7 +295,8 @@ run the Phase-1 migration (above) first — the boot job still does it.
   authorization-server metadata. Move holders to the successor agent's
   `jak_` API key (or the jwt-bearer grant).
 - **SA sessions are dead:** an outstanding `service_account` access or
-  refresh token introspects inactive and cannot be refreshed.
+  refresh token introspects inactive, cannot be refreshed, and is refused at
+  the broker.
 - **API keys keep working:** migrated `sak_`/`jntc_live_` plaintexts keep
   authenticating as the successor agent; an unmigrated `sak_` key still
   resolves through the SA fallback (and `GET /me` / MCP `me` still answer

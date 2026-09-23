@@ -1,13 +1,11 @@
 import { test, expect } from '@playwright/test';
-import { captureConsoleErrors, createServiceAccount, uniqueSuffix } from './helpers';
+import { captureConsoleErrors } from './helpers';
 import { provisionAdminOwnedAgent } from './agent-flow';
 
 /**
  * Agents (real backend). The Agents surface has two tabs: OAuth Agents and
- * Service accounts. On a clean DB both are empty. Service accounts can be
- * created through the public API (verified live: POST /service-accounts -> 201),
- * so this self-seeds one and asserts it surfaces in the roster — the
- * create-then-assert pattern, since the real DB has no MSW fixtures.
+ * Service accounts. Service accounts can no longer be created (theme 8
+ * removed POST /service-accounts); the tab itself goes with the UI removal.
  *
  * OAuth agents are created out-of-band via Dynamic Client Registration (the
  * agent self-registers), not from this admin UI, so we assert the empty/list
@@ -29,21 +27,6 @@ test('the agents surface renders its shell and tab switch', async ({ page }) => 
 	await expect(page.getByRole('button', { name: 'Service accounts' })).toBeVisible();
 
 	expect(errors, `unexpected console errors:\n${errors.join('\n')}`).toEqual([]);
-});
-
-test('a service account created via the API shows up in the roster', async ({ page, request }) => {
-	const name = `e2e-sa-${uniqueSuffix()}`;
-	await createServiceAccount(request, name);
-
-	await page.goto('/app/agents');
-	await expect(page.getByRole('heading', { name: 'Agents', exact: true })).toBeVisible();
-
-	// Switch to the Service accounts tab where the seeded account lives.
-	await page.getByRole('button', { name: 'Service accounts' }).click();
-
-	// The freshly created SA is approved at creation (the backend approves
-	// inside the create transaction), so it renders in the fleet table.
-	await expect(page.getByText(name).first()).toBeVisible();
 });
 
 test('the service-account create sheet opens from the agents surface', async ({ page }) => {

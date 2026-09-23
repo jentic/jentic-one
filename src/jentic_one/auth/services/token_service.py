@@ -567,7 +567,7 @@ class TokenService:
         effect immediately without forcing a re-mint — the token row's
         ``scopes`` column is only a mint-time snapshot.
 
-        Ephemeral minted tokens (``mint_task_token`` → ``issue_access_only``,
+        Ephemeral minted tokens (``issue_access_only``,
         ``is_ephemeral=True``) keep their frozen snapshot: their scopes are a
         deliberate downscoped subset of the host's grants and must not be
         re-broadened. User tokens also keep their snapshot (their permissions do
