@@ -458,8 +458,7 @@ is an operator call with two clean options — **never** hand-edit around it:
    requires **`catalog:import`**, and superseding the overlay additionally requires
    **`overlays:confirm`** (because it discards an operator's fix). So the caller needs **both**
    permissions — an `org:admin` identity satisfies both by implication; `overlays:confirm` *alone*
-   is
-   rejected by the route guard before the supersede is even evaluated. An authorized re-import
+   is rejected by the route guard before the supersede is even evaluated. An authorized re-import
    auto-deprecates the overlay and serves the fresh upstream in one step; a caller with
    `catalog:import` but **not** `overlays:confirm` is **refused** (403 `overlay_supersede_forbidden`)
    and the conflict is re-surfaced for someone who can decide — the fix is never silently reverted.
