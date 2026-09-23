@@ -8,6 +8,7 @@ import {
 } from '@/shared/credentials/mocks/handlers';
 import { seedFormFromSelectedApi } from '@/shared/credentials/lib/formBody';
 import { EMPTY_FORM } from '@/shared/credentials/components/CredentialTypeFields';
+import { apiRefKey } from '@/shared/credentials/lib/apiIdentity';
 import type { SelectedApi } from '@/shared/credentials/api';
 
 describe('ApiPicker', () => {
@@ -105,24 +106,65 @@ describe('ApiPicker', () => {
 		expect(seeded.catalogApiId).toBe('nytimes.com/article_search');
 	});
 
-	it('stores the server-supplied vendor and dedups against a workspace row', async () => {
-		// A catalog entry `{api_id:'github.com', vendor:'github'}` must resolve
-		// vendor='github' (not 'github.com') so it dedups against a workspace
-		// `github/main` row rather than showing as a duplicate-looking catalog
-		// result — and so the persisted vendor doesn't drift to `github.com`.
+	it('gives a catalog pick the identity its import registers', async () => {
+		// The import registers vendor = the entry's vendor and name = the whole
+		// `api_id`, both slugged. A credential saved from the pick must carry that
+		// same identity, or the broker never finds it and the Credentials page
+		// files it under a second card for the same API.
 		resetApisStore(
-			[makeMockApi({ vendor: 'github', name: 'main', displayName: 'GitHub' })],
-			[{ entry: makeMockCatalogEntry({ apiId: 'github.com', vendor: 'github' }).entry }],
+			[],
+			[
+				{
+					entry: makeMockCatalogEntry({
+						apiId: 'abstractapi.com/ip-geolocation-api',
+						vendor: 'abstractapi.com',
+					}).entry,
+				},
+			],
 		);
 		const onSelect = vi.fn();
 		renderWithProviders(<ApiPicker onSelect={onSelect} onManualEntry={vi.fn()} />);
 
-		await userEvent.type(screen.getByLabelText('Search APIs'), 'github');
+		await userEvent.type(screen.getByLabelText('Search APIs'), 'geolocation');
+		await userEvent.click(await screen.findByText('Ip Geolocation Api', {}, { timeout: 3000 }));
 
-		// Workspace row shows; the catalog section must NOT list a duplicate
-		// github row (deduped on the resolved `github/main` key).
-		await screen.findByText('GitHub');
-		expect(screen.queryByText('From the Jentic public catalog')).not.toBeInTheDocument();
+		const selected = onSelect.mock.calls[0][0] as SelectedApi;
+		expect(apiRefKey(selected)).toBe('abstractapi-com/abstractapi-com-ip-geolocation-api');
+		expect(selected.label).toBe('Ip Geolocation Api');
+	});
+
+	it('hides a catalog entry already imported into the workspace', async () => {
+		resetApisStore(
+			[
+				makeMockApi({
+					vendor: 'abstractapi-com',
+					name: 'abstractapi-com-ip-geolocation-api',
+					displayName: 'IP Geolocation (workspace)',
+				}),
+			],
+			[
+				{
+					entry: makeMockCatalogEntry({
+						apiId: 'abstractapi.com/ip-geolocation-api',
+						vendor: 'abstractapi.com',
+					}).entry,
+				},
+				{
+					entry: makeMockCatalogEntry({
+						apiId: 'abstractapi.com/email-validation-api',
+						vendor: 'abstractapi.com',
+					}).entry,
+				},
+			],
+		);
+		renderWithProviders(<ApiPicker onSelect={vi.fn()} onManualEntry={vi.fn()} />);
+
+		await userEvent.type(screen.getByLabelText('Search APIs'), 'abstractapi');
+
+		// Wait on the entry that is NOT imported, so the catalog has answered.
+		await screen.findByText('Email Validation Api', {}, { timeout: 3000 });
+		expect(screen.getByText('IP Geolocation (workspace)')).toBeInTheDocument();
+		expect(screen.queryByText('Ip Geolocation Api')).not.toBeInTheDocument();
 	});
 
 	it('shows the empty state and a manual-entry escape for unmatched queries', async () => {

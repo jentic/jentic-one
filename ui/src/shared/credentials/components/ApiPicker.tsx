@@ -59,36 +59,20 @@ const ROW_VARIANTS: Variants = {
 };
 
 function catalogToSelected(entry: CatalogEntryResponse): SelectedApi {
-	// Catalog `api_id` is a flat slug (e.g. "stripe.com"). We split path-like
-	// entries into vendor/name; otherwise we fall back to using the slug as
-	// both. Version isn't on the catalog entry, so we default to "1.0.0".
+	// The identity a catalog import registers: vendor is the entry's `vendor`, and
+	// name is the WHOLE `api_id` (`abstractapi.com/ip-geolocation-api`), which the
+	// backend slugs to `abstractapi-com-ip-geolocation-api`. A credential saved
+	// from this pick must carry that same identity — the broker only finds a
+	// credential whose name matches the registered API's — so this mirrors the
+	// import rather than splitting the slug itself.
 	//
-	// Row label: the friendly title, via the same shared helper the workspace
-	// rows use — so the same API can't read `github.com` in the catalog
-	// section and `Github.Com` in the "in your workspace" section of this one
-	// picker. The label is derived from the SAME `vendor`/`name` the row
-	// stores as its identity, so the displayed title and the vendor/name tuple
-	// (and thus the credential's default saved name) can never drift.
-	//
-	// `vendor`/`name` resolve from the server-supplied `entry.vendor` first (the
-	// canonical, dedup-stable field), then off the `api_id` slug
-	// (`domain[/sub-api]`) and the `path` segments as fallbacks. A bare vendor
-	// like `github` renders through the shared humanise helper (`github` →
-	// `Github`); a sub-API segment promotes to `Article Search`. The
-	// create-credential dialog's Name field pre-fills from this label.
-	// `vendor` prefers the server-supplied `entry.vendor` (canonical, and what
-	// the workspace rows dedup against — an entry `{api_id:'github.com',
-	// vendor:'github'}` must resolve to `github`, not `github.com`, so it dedups
-	// against a workspace `github/main` row and doesn't drift the persisted
-	// vendor). It falls back to the `api_id` slug parts, then the `path`
-	// segments, and finally the raw slug. `name` promotes a sub-API segment when
-	// present, else `main`.
+	// The label reads from `api_id` through the shared helper the workspace rows
+	// use, so one API never titles two ways in this picker. Version isn't on the
+	// catalog entry; a credential leaves it unpinned anyway.
 	const slug = entry.api_id;
-	const slugParts = slug.split('/').filter(Boolean);
-	const pathParts = (entry.path ?? slug).split('/').filter(Boolean);
-	const vendor = entry.vendor ?? slugParts[0] ?? pathParts[0] ?? slug;
-	const name = slugParts[1] ?? pathParts[1] ?? 'main';
-	const version = pathParts[2] ?? '1.0.0';
+	const vendor = entry.vendor ?? slug.split('/')[0] ?? slug;
+	const name = slug;
+	const version = '1.0.0';
 	return {
 		source: 'catalog',
 		vendor,
@@ -153,18 +137,13 @@ export function ApiPicker({
 
 	const catalogRows = useMemo(() => {
 		if (!debouncedQuery.trim()) return [];
-		// Hide catalog entries that already match a workspace API to avoid
-		// duplicate-looking rows. We must compare on the SAME derived key shape:
-		// `catalogToSelected` splits the catalog `path`/`api_id` slug into
-		// vendor/name, so we key both sides on that resolved `vendor/name` (a raw
-		// `e.path` like "stripe.com/main/1.0.0" would never match "stripe/main").
-		const localKeys = new Set(
-			localRows.map((r) => `${r.api.vendor}/${r.api.name}`.toLowerCase()),
+		// Hide catalog entries already imported into the workspace, so one API
+		// never lists twice. Both sides key in slug form: a workspace row stores
+		// `abstractapi-com`, the catalog entry says `abstractapi.com`.
+		const localKeys = new Set(localRows.map((r) => apiRefKey(r.api)));
+		return (catalogQuery.data?.data ?? []).filter(
+			(e) => !localKeys.has(apiRefKey(catalogToSelected(e))),
 		);
-		return (catalogQuery.data?.data ?? []).filter((e) => {
-			const sel = catalogToSelected(e);
-			return !localKeys.has(`${sel.vendor}/${sel.name}`.toLowerCase());
-		});
 	}, [catalogQuery.data, debouncedQuery, localRows]);
 
 	const isSearching = catalogQuery.isFetching && !!debouncedQuery.trim();
