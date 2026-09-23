@@ -470,12 +470,12 @@ async def select_toolkit(
     header is validated against the derived candidates; never silently honoured or
     silently picked.
 
-    Non-agent actors (users) follow the **same** derivation rule — there is
-    no implicit bypass. Toolkit keys — the one actor kind that authenticated
-    *as* a toolkit and skipped derivation — are retired (theme-5 Phase 4): a
-    presented ``jntc_live_`` plaintext resolves as the successor agent the
-    retirement job bound to the same toolkit, so it derives here like any
-    other caller.
+    Non-agent actors (users, and not-yet-migrated service accounts) follow
+    the **same** derivation rule — there is no implicit bypass. Toolkit keys
+    — the one actor kind that authenticated *as* a toolkit and skipped
+    derivation — are retired (theme-5 Phase 4): a presented ``jntc_live_``
+    plaintext resolves as the successor the retirement job bound to the same
+    toolkit, so it derives here like any other caller.
     """
     # Invariant: the API identity here is the *discovered* spec identity, which is
     # always concrete (vendor/name/version all set) — the registry never yields a

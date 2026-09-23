@@ -29,12 +29,16 @@ working through the deprecation window (see the
 - **`service_account`** — removed in theme 8. A startup migration converts
   each service account into a successor agent, carrying over its grants,
   bindings, and API-key digest, so an existing `sak_` plaintext keeps
-  authenticating (as the successor agent). No new `sak_` keys are issued;
+  authenticating as the successor agent. Until an account is migrated (and
+  until the service-account tables are dropped), its key still resolves
+  through a service-account fallback, as the service account itself. No new
+  `sak_` keys are issued;
   the `/service-accounts` API, `POST /oauth/mint`, and the
   `client_credentials` grant are gone.
 - **`toolkit`** — a startup migration turns each `jntc_live_` toolkit key
-  into a successor agent (it minted a service account before theme 8), and
-  the retired plaintext keeps authenticating as that agent.
+  into a successor agent (it minted a service account before theme 8, and
+  those service accounts migrate like any other), and the retired plaintext
+  keeps authenticating as that successor.
 
 An agent's `Identity` carries its owner (`parent_actor_id`) and the owner's
 effective permissions (`parent_permissions`): an agent can never out-rank
@@ -103,7 +107,8 @@ sequenceDiagram
 
 Operators and the SPA use session JWTs minted at login; agent API
 keys (`jak_`, plus legacy `sak_`/`jntc_live_` plaintexts that resolve as
-their successor agents) are the long-lived alternative, resolved by digest against
+their successor agents once migrated) are the long-lived alternative,
+dispatched by prefix and matched by digest against
 the admin DB ([`shared/auth/api_key_resolver.py`](../../src/jentic_one/shared/auth/api_key_resolver.py)). JWT verification for
 asymmetric tokens allows only asymmetric algorithms — `alg: none` and all
 HMAC algorithms are rejected ([`shared/auth/jwt_verification.py`](../../src/jentic_one/shared/auth/jwt_verification.py)).
