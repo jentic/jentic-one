@@ -137,14 +137,6 @@ export type { CredentialRedactedResponse } from '@/shared/api/generated/models/C
 export type { ProviderDiscoveryResponse } from '@/shared/api/generated/models/ProviderDiscoveryResponse';
 export type { ProviderDiscoveryEntryResponse } from '@/shared/api/generated/models/ProviderDiscoveryEntryResponse';
 
-// Agent Rail — access-request decisions (`POST /access-requests/{id}:decide`).
-// The access-request router (tag "Access Requests") is now exposed as a
-// generated `AccessRequestsService` after the codegen retag. The rail's
-// access-request repository (`shared/lib/accessRequests`) still issues its calls
-// through the low-level request primitive the generated services use, kept
-// behind the facade so the Bearer-JWT `OpenAPI` config still applies; switching
-// it to `AccessRequestsService` is a safe follow-up. Append-only, like the rest.
-export { AccessRequestsService } from '@/shared/api/generated/services/AccessRequestsService';
 export { OpenAPI } from '@/shared/api/generated/core/OpenAPI';
 export { request as apiRequest } from '@/shared/api/generated/core/request';
 
