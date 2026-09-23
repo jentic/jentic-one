@@ -75,6 +75,27 @@ _AUDIT_ACTOR_TYPE = "system:job"
 _AUDIT_ACTOR_ID = "migrate-service-accounts"
 
 
+#: Report-field → log-key renames. The central redactor
+#: (``shared/redaction.py``) blanks any key containing ``secret``,
+#: ``credential``, or ``_token`` — which would hide the operator signal
+#: (OQ-1: who still holds client_credentials) behind ``***REDACTED***``. The
+#: redaction rule prescribes renaming false positives rather than weakening
+#: the redactor, so the structured-log lines use these non-matching keys;
+#: the JSONL report (not redacted) keeps the dataclass field names stable.
+_LOG_KEY_RENAMES: dict[str, str] = {
+    "had_client_secret": "cc_holder",
+    "credential_binding_count": "cred_binding_count",
+    "access_tokens_revoked": "access_revoked_count",
+    "refresh_tokens_revoked": "refresh_revoked_count",
+    "unrevoked_token_count": "unrevoked_session_count",
+}
+
+
+def _log_fields(fields: dict[str, Any]) -> dict[str, Any]:
+    """Rename redactor-matching report keys for a structured-log line."""
+    return {_LOG_KEY_RENAMES.get(key, key): value for key, value in fields.items()}
+
+
 class _ConcurrentWinnerError(Exception):
     """A concurrent run stamped this SA first — roll back, report already_migrated."""
 
@@ -171,7 +192,9 @@ class ServiceAccountMigrationService:
             else:
                 outcome = await self._migrate_one(row)
             outcomes.append(outcome)
-            logger.info("service_account_migration", diff_only=diff_only, **asdict(outcome))
+            logger.info(
+                "service_account_migration", diff_only=diff_only, **_log_fields(asdict(outcome))
+            )
         return outcomes
 
     @staticmethod
@@ -578,8 +601,8 @@ class ServiceAccountMigrationService:
                 successor_agent_id=(
                     None if row.migrated_to_actor_id == SKIPPED_STAMP else row.migrated_to_actor_id
                 ),
-                access_tokens_revoked=access_revoked,
-                refresh_tokens_revoked=refresh_revoked,
+                access_revoked_count=access_revoked,
+                refresh_revoked_count=refresh_revoked,
             )
 
         # Control DB (H2): the sva_-keyed inline rules. Runs after the admin
@@ -607,8 +630,8 @@ class ServiceAccountMigrationService:
             "service_account_migration_sweep_run",
             swept=len(outcome.swept),
             skipped_young=outcome.skipped_young,
-            access_tokens_revoked=outcome.access_tokens_revoked,
-            refresh_tokens_revoked=outcome.refresh_tokens_revoked,
+            access_revoked_count=outcome.access_tokens_revoked,
+            refresh_revoked_count=outcome.refresh_tokens_revoked,
             permission_rules_deleted=outcome.permission_rules_deleted,
             ignore_age_gate=ignore_age_gate,
         )
@@ -683,7 +706,7 @@ class ServiceAccountMigrationService:
             passed=result.passed,
             unstamped_count=unstamped,
             grant_twin_missing_count=twin_missing,
-            unrevoked_token_count=unrevoked,
+            unrevoked_session_count=unrevoked,
             digest_mismatch_count=digest_mismatch,
             post_stamp_mutation_count=post_stamp,
             inline_rule_mismatch_count=rule_mismatch,
