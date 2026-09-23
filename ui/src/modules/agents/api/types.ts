@@ -5,17 +5,13 @@
  * `shared/models/actors.py`): the status/verb unions below mirror those values
  * verbatim. The web response schema still serializes attribution as
  * `registered_by`/`approved_by`/`denied_by` (NOT yet `actor_id`/`actor_type`),
- * so we adapt the served `AgentResponse`/`ServiceAccountResponse` into neutral
- * entity envelopes here. When the web schema is regenerated to
+ * so we adapt the served `AgentResponse` into a neutral entity envelope
+ * here. When the web schema is regenerated to
  * `actor_id`/`actor_type`, only these adapters change — hooks/views are
  * unaffected.
  */
-import type {
-	AgentResponse,
-	PermissionRuleReadSchema,
-	PermissionTestResponse,
-	ServiceAccountResponse,
-} from '@/shared/api';
+import type { AgentResponse, PermissionRuleReadSchema, PermissionTestResponse } from '@/shared/api';
+import { SERVICE_ACCOUNT_SUCCESSOR_REGISTRAR } from '@/shared/lib';
 import {
 	ACTOR_STATUSES,
 	STATUS_BADGE_VARIANT,
@@ -96,19 +92,6 @@ export interface AgentEntity {
 	hasApiKey: boolean;
 }
 
-/** UI envelope for a service account. */
-export interface ServiceAccountEntity {
-	id: string;
-	name: string;
-	description: string | null;
-	status: ActorStatus;
-	ownerId: string;
-	denialReason: string | null;
-	createdAt: string;
-	approvedAt: string | null;
-	attribution: Attribution;
-}
-
 export function agentToEntity(r: AgentResponse): AgentEntity {
 	return {
 		id: r.id,
@@ -129,22 +112,14 @@ export function agentToEntity(r: AgentResponse): AgentEntity {
 	};
 }
 
-export function serviceAccountToEntity(r: ServiceAccountResponse): ServiceAccountEntity {
-	return {
-		id: r.id,
-		name: r.name,
-		description: r.description ?? null,
-		status: toActorStatus(r.status),
-		ownerId: r.owner_id,
-		denialReason: r.denial_reason ?? null,
-		createdAt: r.created_at,
-		approvedAt: r.approved_at ?? null,
-		attribution: {
-			registeredBy: r.registered_by ?? null,
-			approvedBy: r.approved_by ?? null,
-			deniedBy: r.denied_by ?? null,
-		},
-	};
+/**
+ * True when the agent was minted by the theme-8 service-account migration.
+ * Keys off the immutable `registered_by` stamp
+ * (`control/repos/service_account_migration_repo.py`), so it still holds
+ * after an operator renames the agent.
+ */
+export function isServiceAccountSuccessor(agent: Pick<AgentEntity, 'attribution'>): boolean {
+	return agent.attribution.registeredBy === SERVICE_ACCOUNT_SUCCESSOR_REGISTRAR;
 }
 
 // ---------------------------------------------------------------------------

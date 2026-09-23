@@ -21,7 +21,7 @@ export {
 } from '@/shared/lib/permissionRules';
 
 // Source-agnostic scope primitives — shared by the credentials OAuth2 scope
-// picker and the actor (agent/service-account) platform-permission picker.
+// picker and the agent platform-permission picker.
 export {
 	type ScopeOrigin,
 	type EnhancedScope,
@@ -34,6 +34,14 @@ export {
 } from '@/shared/lib/scopes';
 
 export { fetchActorDirectory } from '@/shared/lib/actorDirectory';
+export {
+	SERVICE_ACCOUNT_SUCCESSOR_REGISTRAR,
+	RETIRED_SERVICE_ACCOUNT_ACTOR_TYPE,
+	RETIRED_SERVICE_ACCOUNT_SUFFIX,
+	retiredServiceAccountLabel,
+	MIGRATED_SERVICE_ACCOUNT_KEY_WARNING,
+	holdsMigratedServiceAccountKey,
+} from '@/shared/lib/retiredActors';
 
 // Canonical per-severity event icon — the single source of truth shared by
 // Monitor's Events tab and the Dashboard's "Needs attention" card so the same

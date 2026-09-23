@@ -71,8 +71,8 @@ const NO_HARDCODED_APP_PATH = [
 // registry. Keyed by module dir → the query-key root(s) that module owns.
 //
 // Unlike the import boundary (auto-derived from `readdirSync`), this map can't
-// be inferred — a key root needn't equal its dir name (e.g. `agents` also owns
-// `service-accounts`). So `assertModuleRootsCoverDirs()` below fails the lint
+// be inferred — a key root needn't equal its dir name (e.g. `settings` also
+// owns `oauth-clients`). So `assertModuleRootsCoverDirs()` below fails the lint
 // run if a module dir is missing here, forcing a new module to declare its
 // roots rather than silently escaping the rule.
 const MODULE_QUERY_KEY_ROOTS = {
@@ -80,7 +80,7 @@ const MODULE_QUERY_KEY_ROOTS = {
 	discover: ['discover'],
 	credentials: ['credentials'],
 	dashboard: ['dashboard'],
-	agents: ['agents', 'service-accounts'],
+	agents: ['agents'],
 	monitor: ['monitor'],
 	docs: ['docs'],
 	settings: ['settings', 'oauth-clients'],

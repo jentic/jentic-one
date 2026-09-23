@@ -5000,7 +5000,7 @@ type ClientInterface interface {
 	//
 	// Restricted to ``USER`` actors: ``Agent.owner_id`` is a FK to ``users.id``, so
 	// only a human can own an agent. The ``require_actor_type`` gate rejects a
-	// non-user actor (agent/service-account) at the boundary with a 403;
+	// non-user actor (an agent) at the boundary with a 403;
 	// ``AgentService.claim`` re-checks the same invariant as defense-in-depth.
 	//
 	// ``allow_expired_password=True`` is intentional (matching ``GET /agents/{id}``):
@@ -5025,7 +5025,7 @@ type ClientInterface interface {
 	//
 	// Restricted to ``USER`` actors: ``Agent.owner_id`` is a FK to ``users.id``, so
 	// only a human can own an agent. The ``require_actor_type`` gate rejects a
-	// non-user actor (agent/service-account) at the boundary with a 403;
+	// non-user actor (an agent) at the boundary with a 403;
 	// ``AgentService.claim`` re-checks the same invariant as defense-in-depth.
 	//
 	// ``allow_expired_password=True`` is intentional (matching ``GET /agents/{id}``):
@@ -5896,10 +5896,10 @@ type ClientInterface interface {
 	//
 	// **Always self-scoped** — derived from the authenticated identity's own
 	// credential bindings; there is no cross-actor or admin variant. Credentials
-	// bind to agents and service accounts, so agent-scoped tokens (the OAuth
-	// agent-consent flow's output) and `sak_` keys are the callers this endpoint
-	// serves — a plain user token yields an empty set. Suspended bindings and
-	// inactive credentials still contribute their hosts: keep diverting that
+	// bind to agents, so agent-scoped tokens (the OAuth agent-consent flow's
+	// output) and agent API keys are the callers this endpoint serves — a plain
+	// user token yields an empty set. Suspended bindings and inactive
+	// credentials still contribute their hosts: keep diverting that
 	// traffic, so the broker can refuse it — dropping it from the list would
 	// send it direct to the upstream, unbrokered. The ``digest`` covers exactly
 	// the ``data`` list and is also emitted as a strong ``ETag``, so integrators
@@ -7954,7 +7954,7 @@ func (c *Client) ApproveAgent(ctx context.Context, agentId string, reqEditors ..
 //
 // Restricted to “USER“ actors: “Agent.owner_id“ is a FK to “users.id“, so
 // only a human can own an agent. The “require_actor_type“ gate rejects a
-// non-user actor (agent/service-account) at the boundary with a 403;
+// non-user actor (an agent) at the boundary with a 403;
 // “AgentService.claim“ re-checks the same invariant as defense-in-depth.
 //
 // “allow_expired_password=True“ is intentional (matching “GET /agents/{id}“):
@@ -7989,7 +7989,7 @@ func (c *Client) ClaimAgentWithBody(ctx context.Context, agentId string, content
 //
 // Restricted to “USER“ actors: “Agent.owner_id“ is a FK to “users.id“, so
 // only a human can own an agent. The “require_actor_type“ gate rejects a
-// non-user actor (agent/service-account) at the boundary with a 403;
+// non-user actor (an agent) at the boundary with a 403;
 // “AgentService.claim“ re-checks the same invariant as defense-in-depth.
 //
 // “allow_expired_password=True“ is intentional (matching “GET /agents/{id}“):
@@ -9730,10 +9730,10 @@ func (c *Client) GetExecution(ctx context.Context, executionId string, reqEditor
 //
 // **Always self-scoped** — derived from the authenticated identity's own
 // credential bindings; there is no cross-actor or admin variant. Credentials
-// bind to agents and service accounts, so agent-scoped tokens (the OAuth
-// agent-consent flow's output) and `sak_` keys are the callers this endpoint
-// serves — a plain user token yields an empty set. Suspended bindings and
-// inactive credentials still contribute their hosts: keep diverting that
+// bind to agents, so agent-scoped tokens (the OAuth agent-consent flow's
+// output) and agent API keys are the callers this endpoint serves — a plain
+// user token yields an empty set. Suspended bindings and inactive
+// credentials still contribute their hosts: keep diverting that
 // traffic, so the broker can refuse it — dropping it from the list would
 // send it direct to the upstream, unbrokered. The “digest“ covers exactly
 // the “data“ list and is also emitted as a strong “ETag“, so integrators
@@ -20945,7 +20945,7 @@ type ClientWithResponsesInterface interface {
 	//
 	// Restricted to ``USER`` actors: ``Agent.owner_id`` is a FK to ``users.id``, so
 	// only a human can own an agent. The ``require_actor_type`` gate rejects a
-	// non-user actor (agent/service-account) at the boundary with a 403;
+	// non-user actor (an agent) at the boundary with a 403;
 	// ``AgentService.claim`` re-checks the same invariant as defense-in-depth.
 	//
 	// ``allow_expired_password=True`` is intentional (matching ``GET /agents/{id}``):
@@ -20970,7 +20970,7 @@ type ClientWithResponsesInterface interface {
 	//
 	// Restricted to ``USER`` actors: ``Agent.owner_id`` is a FK to ``users.id``, so
 	// only a human can own an agent. The ``require_actor_type`` gate rejects a
-	// non-user actor (agent/service-account) at the boundary with a 403;
+	// non-user actor (an agent) at the boundary with a 403;
 	// ``AgentService.claim`` re-checks the same invariant as defense-in-depth.
 	//
 	// ``allow_expired_password=True`` is intentional (matching ``GET /agents/{id}``):
@@ -21945,10 +21945,10 @@ type ClientWithResponsesInterface interface {
 	//
 	// **Always self-scoped** — derived from the authenticated identity's own
 	// credential bindings; there is no cross-actor or admin variant. Credentials
-	// bind to agents and service accounts, so agent-scoped tokens (the OAuth
-	// agent-consent flow's output) and `sak_` keys are the callers this endpoint
-	// serves — a plain user token yields an empty set. Suspended bindings and
-	// inactive credentials still contribute their hosts: keep diverting that
+	// bind to agents, so agent-scoped tokens (the OAuth agent-consent flow's
+	// output) and agent API keys are the callers this endpoint serves — a plain
+	// user token yields an empty set. Suspended bindings and inactive
+	// credentials still contribute their hosts: keep diverting that
 	// traffic, so the broker can refuse it — dropping it from the list would
 	// send it direct to the upstream, unbrokered. The ``digest`` covers exactly
 	// the ``data`` list and is also emitted as a strong ``ETag``, so integrators
@@ -37316,7 +37316,7 @@ func (c *ClientWithResponses) ApproveAgentWithResponse(ctx context.Context, agen
 //
 // Restricted to “USER“ actors: “Agent.owner_id“ is a FK to “users.id“, so
 // only a human can own an agent. The “require_actor_type“ gate rejects a
-// non-user actor (agent/service-account) at the boundary with a 403;
+// non-user actor (an agent) at the boundary with a 403;
 // “AgentService.claim“ re-checks the same invariant as defense-in-depth.
 //
 // “allow_expired_password=True“ is intentional (matching “GET /agents/{id}“):
@@ -37347,7 +37347,7 @@ func (c *ClientWithResponses) ClaimAgentWithBodyWithResponse(ctx context.Context
 //
 // Restricted to “USER“ actors: “Agent.owner_id“ is a FK to “users.id“, so
 // only a human can own an agent. The “require_actor_type“ gate rejects a
-// non-user actor (agent/service-account) at the boundary with a 403;
+// non-user actor (an agent) at the boundary with a 403;
 // “AgentService.claim“ re-checks the same invariant as defense-in-depth.
 //
 // “allow_expired_password=True“ is intentional (matching “GET /agents/{id}“):
@@ -38844,10 +38844,10 @@ func (c *ClientWithResponses) GetExecutionWithResponse(ctx context.Context, exec
 //
 // **Always self-scoped** — derived from the authenticated identity's own
 // credential bindings; there is no cross-actor or admin variant. Credentials
-// bind to agents and service accounts, so agent-scoped tokens (the OAuth
-// agent-consent flow's output) and `sak_` keys are the callers this endpoint
-// serves — a plain user token yields an empty set. Suspended bindings and
-// inactive credentials still contribute their hosts: keep diverting that
+// bind to agents, so agent-scoped tokens (the OAuth agent-consent flow's
+// output) and agent API keys are the callers this endpoint serves — a plain
+// user token yields an empty set. Suspended bindings and inactive
+// credentials still contribute their hosts: keep diverting that
 // traffic, so the broker can refuse it — dropping it from the list would
 // send it direct to the upstream, unbrokered. The “digest“ covers exactly
 // the “data“ list and is also emitted as a strong “ETag“, so integrators

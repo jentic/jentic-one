@@ -1,7 +1,7 @@
 /**
  * AgentSettingsPanel — the "Settings" tab of the agent detail console, built
- * from the shared console cards so it reads identically to the
- * service-account Settings tabs:
+ * from the shared console cards so it reads identically to the other
+ * detail consoles' Settings tabs:
  *   - {@link IdentitySettingsCard} → the immutable, copyable agent id plus
  *     editable name / description via PATCH /agents/{id}. Only dirty fields
  *     are sent (real PATCH semantics). Ownership is intentionally NOT

@@ -1,7 +1,8 @@
 /**
- * Agents page — operator surface for the agent & service-account lifecycle.
+ * Agents page — operator surface for the agent lifecycle.
  *
- * Two fleet tables behind a segmented tab (Agents / Service accounts), each:
+ * One fleet table (service accounts were retired by theme 8 — their
+ * successors are ordinary agents and show up here), with:
  *   - a toolbar (client-side name/id filter + status segments with counts),
  *   - an "Awaiting approval" band with one-click Approve/Deny (the page's
  *     most urgent job keeps top billing),
@@ -23,7 +24,6 @@ import {
 	PageShell,
 	PageHeader,
 	PageHelp,
-	SegmentedToggle,
 } from '@/shared/ui';
 import { ROUTE_PATHS } from '@/shared/app/routes';
 import {
@@ -33,12 +33,6 @@ import {
 	useDisableAgent,
 	useEnableAgent,
 	useArchiveAgent,
-	useServiceAccounts,
-	useApproveServiceAccount,
-	useDenyServiceAccount,
-	useDisableServiceAccount,
-	useEnableServiceAccount,
-	useArchiveServiceAccount,
 	useActorsUsage,
 	useMcpLastSeen,
 	ACTOR_STATUSES,
@@ -55,10 +49,7 @@ import {
 	type PendingConfirm,
 } from '@/modules/agents/components/LifecycleDialogs';
 import { AgentCreateSheet } from '@/modules/agents/components/AgentCreateSheet';
-import { ServiceAccountCreateSheet } from '@/modules/agents/components/ServiceAccountCreateSheet';
 import { DcrQuickstart } from '@/modules/agents/components/DcrQuickstart';
-
-type Tab = 'agents' | 'service-accounts';
 
 /** Scan order for the fleet table: decisions first, then the working fleet. */
 const STATUS_ORDER: Record<ActorStatus, number> = {
@@ -70,93 +61,64 @@ const STATUS_ORDER: Record<ActorStatus, number> = {
 };
 
 export default function AgentsPage() {
-	const [tab, setTab] = useState<Tab>('agents');
 	const [createOpen, setCreateOpen] = useState(false);
-	const [agentCreateOpen, setAgentCreateOpen] = useState(false);
-
-	function selectTab(next: Tab) {
-		if (next !== 'service-accounts') setCreateOpen(false);
-		if (next !== 'agents') setAgentCreateOpen(false);
-		setTab(next);
-	}
 
 	return (
 		<PageShell>
 			<PageHeader
 				title="Agents"
-				subtitle="Approve, deny, and govern agents and service accounts across their lifecycle."
+				subtitle="Approve, deny, and govern agents across their lifecycle."
 				actions={
-					<PageHelp
-						title="About Agents"
-						intro={
-							<p>
-								Agents register themselves via dynamic client registration and land
-								here as <strong>pending</strong>. Approve one to make it active, or
-								deny it with a reason.
-							</p>
-						}
-						sections={[
-							{
-								heading: 'Lifecycle',
-								body: (
-									<p>
-										<strong>Pending</strong> → approve (→ active) or deny (→
-										rejected). <strong>Active</strong> can be disabled;{' '}
-										<strong>disabled</strong> can be re-enabled. Any
-										non-archived actor can be archived (terminal).
-									</p>
-								),
-							},
-							{
-								heading: 'Service accounts',
-								body: (
-									<p>
-										Service accounts represent non-human callers. Create one
-										here; it starts pending and follows the same lifecycle.
-									</p>
-								),
-							},
-						]}
-					/>
+					<>
+						<Button size="sm" onClick={() => setCreateOpen(true)}>
+							<Plus className="h-4 w-4" />
+							New agent
+						</Button>
+						<PageHelp
+							title="About Agents"
+							intro={
+								<p>
+									Agents register themselves via dynamic client registration and
+									land here as <strong>pending</strong>. Approve one to make it
+									active, or deny it with a reason.
+								</p>
+							}
+							sections={[
+								{
+									heading: 'Lifecycle',
+									body: (
+										<p>
+											<strong>Pending</strong> → approve (→ active) or deny (→
+											rejected). <strong>Active</strong> can be disabled;{' '}
+											<strong>disabled</strong> can be re-enabled. Any
+											non-archived actor can be archived (terminal).
+										</p>
+									),
+								},
+								{
+									heading: 'Looking for service accounts?',
+									body: (
+										<p>
+											Service accounts have been retired. Active and disabled
+											ones were migrated to agents that keep their scopes,
+											credential bindings, and API key, so they appear in this
+											list. Create an agent for any new non-human caller.
+										</p>
+									),
+								},
+							]}
+						/>
+					</>
 				}
 			/>
 
-			<div className="flex flex-wrap items-center justify-between gap-3">
-				<SegmentedToggle<Tab>
-					options={[
-						{ value: 'agents', label: 'Agents' },
-						{ value: 'service-accounts', label: 'Service accounts' },
-					]}
-					value={tab}
-					onChange={selectTab}
-					layoutId="agents-tab"
-					className="w-fit"
-				/>
-				{tab === 'agents' && (
-					<Button size="sm" onClick={() => setAgentCreateOpen(true)}>
-						<Plus className="h-4 w-4" />
-						New agent
-					</Button>
-				)}
-				{tab === 'service-accounts' && (
-					<Button size="sm" onClick={() => setCreateOpen(true)}>
-						<Plus className="h-4 w-4" />
-						New service account
-					</Button>
-				)}
-			</div>
-
-			{tab === 'agents' ? (
-				<AgentsSection createOpen={agentCreateOpen} setCreateOpen={setAgentCreateOpen} />
-			) : (
-				<ServiceAccountsSection createOpen={createOpen} setCreateOpen={setCreateOpen} />
-			)}
+			<AgentsSection createOpen={createOpen} setCreateOpen={setCreateOpen} />
 		</PageShell>
 	);
 }
 
 // ---------------------------------------------------------------------------
-// Generic fleet section (shared by both tabs)
+// Fleet section
 // ---------------------------------------------------------------------------
 
 /** The mutation objects a section wires into the queue/table/dialogs. */
@@ -182,12 +144,9 @@ interface LifecycleMutations {
 }
 
 interface ActorsSectionProps<T extends ActorRow> {
-	query: ReturnType<typeof useAgents> | ReturnType<typeof useServiceAccounts>;
+	query: ReturnType<typeof useAgents>;
 	entities: T[];
 	mutations: LifecycleMutations;
-	entityType: 'agent' | 'service-account';
-	/** Backend `actor_type` discriminator for the usage aggregate. */
-	usageActorType: 'agent' | 'service_account';
 	kindLabel: string;
 	nounPlural: string;
 	disableBody: string;
@@ -198,9 +157,8 @@ interface ActorsSectionProps<T extends ActorRow> {
 	/** Extra first-run content below the empty state (e.g. DCR quickstart). */
 	emptyExtra?: React.ReactNode;
 	/**
-	 * "Last seen via MCP" enrichment (agents tab only — MCP is an agent
-	 * transport; service accounts never appear in the session events).
-	 * Omitted/`null` renders the roster without the column.
+	 * "Last seen via MCP" enrichment. Omitted/`null` renders the roster
+	 * without the column.
 	 */
 	mcpLastSeen?: Map<string, McpLastSeen> | null;
 	detailHref: (item: T) => string;
@@ -210,8 +168,6 @@ function ActorsSection<T extends ActorRow>({
 	query,
 	entities,
 	mutations,
-	entityType,
-	usageActorType,
 	kindLabel,
 	nounPlural,
 	disableBody,
@@ -229,7 +185,7 @@ function ActorsSection<T extends ActorRow>({
 	// Activity columns are enrichment: `data` is a per-actor stats map for
 	// admins, `null` for non-admins (403), `undefined` while loading/failed —
 	// the table renders the plain roster in every non-map case.
-	const usage = useActorsUsage(usageActorType);
+	const usage = useActorsUsage();
 
 	const { approve, deny, disable, enable, archive } = mutations;
 	const pendingId = activeId([approve, deny, disable, enable, archive]);
@@ -362,7 +318,6 @@ function ActorsSection<T extends ActorRow>({
 			<LifecycleDialogs
 				confirm={confirm}
 				onClose={() => setConfirm(null)}
-				entityType={entityType}
 				disableBody={disableBody}
 				mutations={{ deny, disable, archive }}
 			/>
@@ -371,7 +326,7 @@ function ActorsSection<T extends ActorRow>({
 }
 
 // ---------------------------------------------------------------------------
-// Configured variants
+// Configured variant
 // ---------------------------------------------------------------------------
 
 function AgentsSection({
@@ -404,8 +359,6 @@ function AgentsSection({
 				query={query}
 				entities={entities}
 				mutations={mutations}
-				entityType="agent"
-				usageActorType="agent"
 				kindLabel="Agent"
 				nounPlural="agents"
 				disableBody="Disabling immediately revokes this agent's ability to authenticate. You can re-enable it later."
@@ -422,53 +375,6 @@ function AgentsSection({
 				detailHref={(a) => ROUTE_PATHS.agent(a.id)}
 			/>
 			<AgentCreateSheet open={createOpen} onClose={() => setCreateOpen(false)} />
-		</>
-	);
-}
-
-function ServiceAccountsSection({
-	createOpen,
-	setCreateOpen,
-}: {
-	createOpen: boolean;
-	setCreateOpen: (open: boolean) => void;
-}) {
-	const query = useServiceAccounts({ status: 'all' });
-	const entities = useMemo(
-		() => query.data?.pages.flatMap((p) => p.entities) ?? [],
-		[query.data],
-	);
-
-	const mutations: LifecycleMutations = {
-		approve: useApproveServiceAccount(),
-		deny: useDenyServiceAccount(),
-		disable: useDisableServiceAccount(),
-		enable: useEnableServiceAccount(),
-		archive: useArchiveServiceAccount(),
-	};
-
-	return (
-		<>
-			<ActorsSection
-				query={query}
-				entities={entities}
-				mutations={mutations}
-				entityType="service-account"
-				usageActorType="service_account"
-				kindLabel="Service account"
-				nounPlural="service accounts"
-				disableBody="Disabling immediately revokes this service account's access. You can re-enable it later."
-				emptyTitle="No service accounts yet"
-				emptyBody="Create a service account to give a non-human caller its own identity."
-				emptyAction={
-					<Button size="sm" variant="outline" onClick={() => setCreateOpen(true)}>
-						<Plus className="h-4 w-4" />
-						New service account
-					</Button>
-				}
-				detailHref={(sa) => ROUTE_PATHS.serviceAccount(sa.id)}
-			/>
-			<ServiceAccountCreateSheet open={createOpen} onClose={() => setCreateOpen(false)} />
 		</>
 	);
 }

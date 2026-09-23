@@ -17,16 +17,15 @@ import { useActorExecutions, useActorUsageDetail } from '@/modules/agents/api';
 
 interface ActivityPanelProps {
 	actorId: string;
-	actorType: 'agent' | 'service_account';
 }
 
-export function ActivityPanel({ actorId, actorType }: ActivityPanelProps) {
+export function ActivityPanel({ actorId }: ActivityPanelProps) {
 	const usage = useActorUsageDetail(actorId);
 	const executions = useActorExecutions(actorId);
 
-	// Monitor's Executions lens, pre-filtered to this actor — built by the
+	// Monitor's Executions lens, pre-filtered to this agent — built by the
 	// shared route helper so the param vocabulary can't drift across modules.
-	const monitorLink = ROUTE_PATHS.monitorExecutions({ actorId, actorType });
+	const monitorLink = ROUTE_PATHS.monitorExecutions({ actorId, actorType: 'agent' });
 
 	if (usage.isPending || executions.isPending) {
 		return <LoadingState size="sm" message="Loading activity…" />;

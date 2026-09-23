@@ -99,13 +99,6 @@ const actorDirectorySeed = [
 		active: true,
 		created_at: '2026-01-01T00:00:00Z',
 	},
-	{
-		id: 'sva_active_1',
-		actor_type: 'service_account',
-		name: 'metrics-exporter',
-		active: true,
-		created_at: '2026-01-01T00:00:00Z',
-	},
 ];
 
 export const handlers = [

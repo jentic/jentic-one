@@ -50,18 +50,10 @@ describe('CascadeDeleteDialog', () => {
 		).toBeInTheDocument();
 	});
 
-	it('uses archive wording for agents and service accounts', () => {
-		const { unmount } = renderWithProviders(
-			<Harness entityType="agent" entityName="Build Bot" />,
-		);
+	it('uses archive wording for agents', () => {
+		renderWithProviders(<Harness entityType="agent" entityName="Build Bot" />);
 		expect(screen.getByRole('heading', { name: 'Archive agent' })).toBeInTheDocument();
 		expect(screen.getByText(/Archiving is permanent/i)).toBeInTheDocument();
-		unmount();
-
-		renderWithProviders(<Harness entityType="service-account" entityName="CI runner" />);
-		expect(
-			screen.getByRole('heading', { name: 'Archive service account' }),
-		).toBeInTheDocument();
 	});
 
 	it('arms archive-style entities on the word "archive", not "delete"', async () => {

@@ -13,7 +13,7 @@ import {
 } from '@/__tests__/test-utils';
 import { setToken } from '@/shared/api';
 import { Toaster } from '@/shared/ui';
-import { resetAgentsStore } from '@/modules/agents/mocks/handlers';
+import { resetAgentsStore, seedServiceAccountSuccessor } from '@/modules/agents/mocks/handlers';
 import { showHttpVariant } from '@/modules/agents/components/detail/McpPanel';
 import AgentDetailPage from '@/modules/agents/pages/AgentDetailPage';
 
@@ -226,6 +226,91 @@ describe('AgentDetailPage', () => {
 		expect(
 			await screen.findByRole('dialog', { name: 'API key generated' }),
 		).toBeInTheDocument();
+	});
+
+	it("warns that a service-account successor's migrated key is unrecoverable before rotating it", async () => {
+		seedServiceAccountSuccessor();
+		const user = userEvent.setup();
+		renderDetail('agnt_successor_1');
+		await screen.findByRole('heading', { name: 'service-account:sva_active_1' });
+		await user.click(screen.getByRole('tab', { name: 'Keys' }));
+
+		await user.click(
+			await screen.findByRole('button', {
+				name: 'Regenerate API key for service-account:sva_active_1',
+			}),
+		);
+		const confirm = await screen.findByRole('dialog', {
+			name: 'Regenerate API key for service-account:sva_active_1',
+		});
+		expect(within(confirm).getByTestId('migrated-key-warning')).toHaveTextContent(
+			/replaced a retired service account/,
+		);
+		await user.click(within(confirm).getByRole('button', { name: 'Regenerate' }));
+		const reveal = await screen.findByRole('dialog', { name: 'API key generated' });
+		await user.click(within(reveal).getByRole('button', { name: 'Done' }));
+
+		// Once rotated, the key is a fresh one — the warning no longer applies.
+		await user.click(
+			await screen.findByRole('button', {
+				name: 'Revoke API key for service-account:sva_active_1',
+			}),
+		);
+		const revoke = await screen.findByRole('dialog', {
+			name: /Revoke API key/,
+		});
+		expect(within(revoke).queryByTestId('migrated-key-warning')).not.toBeInTheDocument();
+	});
+
+	// The signal is the credential row (migration-created, never rotated), not
+	// the audit history: that is capped at the latest 50 agent audit rows, so a
+	// key rotated long ago can fall out of it.
+	it('does not warn once a successor key was rotated, even with an empty key history', async () => {
+		seedServiceAccountSuccessor();
+		worker.use(
+			http.get('/agents/:id/api-key', () =>
+				HttpResponse.json({
+					id: 'agc_agnt_successor_1',
+					status: 'active',
+					created_at: '2026-01-01T00:00:00Z',
+					rotated_at: '2026-02-01T00:00:00Z',
+					created_by: 'system:theme8-sa-migration',
+				}),
+			),
+			http.get('/agents/:id/api-key/history', () => HttpResponse.json({ data: [] })),
+		);
+		const user = userEvent.setup();
+		renderDetail('agnt_successor_1');
+		await screen.findByRole('heading', { name: 'service-account:sva_active_1' });
+		await user.click(screen.getByRole('tab', { name: 'Keys' }));
+		await user.click(
+			await screen.findByRole('button', {
+				name: 'Regenerate API key for service-account:sva_active_1',
+			}),
+		);
+		const confirm = await screen.findByRole('dialog', {
+			name: 'Regenerate API key for service-account:sva_active_1',
+		});
+		expect(within(confirm).queryByTestId('migrated-key-warning')).not.toBeInTheDocument();
+	});
+
+	it('does not warn about a migrated key for an ordinary agent', async () => {
+		const user = userEvent.setup();
+		renderDetail('agnt_active_1');
+		await screen.findByRole('heading', { name: 'support-agent' });
+		await user.click(screen.getByRole('tab', { name: 'Keys' }));
+		await user.click(
+			await screen.findByRole('button', { name: 'Generate API key for support-agent' }),
+		);
+		const reveal = await screen.findByRole('dialog', { name: 'API key generated' });
+		await user.click(within(reveal).getByRole('button', { name: 'Done' }));
+		await user.click(
+			await screen.findByRole('button', { name: 'Regenerate API key for support-agent' }),
+		);
+		const confirm = await screen.findByRole('dialog', {
+			name: 'Regenerate API key for support-agent',
+		});
+		expect(within(confirm).queryByTestId('migrated-key-warning')).not.toBeInTheDocument();
 	});
 
 	it('gates lifecycle actions by status (pending → approve / deny in header)', async () => {

@@ -3,15 +3,12 @@ import { captureConsoleErrors } from './helpers';
 import { provisionAdminOwnedAgent } from './agent-flow';
 
 /**
- * Agents (real backend). The Agents surface has two tabs: OAuth Agents and
- * Service accounts. Service accounts can no longer be created (theme 8
- * removed POST /service-accounts); the tab itself goes with the UI removal.
- *
- * OAuth agents are created out-of-band via Dynamic Client Registration (the
- * agent self-registers), not from this admin UI, so we assert the empty/list
- * contract for that tab rather than driving a create that the UI doesn't own.
+ * Agents (real backend). The Agents surface is a single agents roster (the
+ * Service accounts tab was retired in theme 8 — migrated accounts are agents
+ * now). Agents are created out-of-band via Dynamic Client Registration or the
+ * admin "New agent" sheet, so the shell spec pins the list contract only.
  */
-test('the agents surface renders its shell and tab switch', async ({ page }) => {
+test('the agents surface renders its shell without a service-accounts tab', async ({ page }) => {
 	const errors = captureConsoleErrors(page);
 
 	await page.goto('/app');
@@ -21,26 +18,12 @@ test('the agents surface renders its shell and tab switch', async ({ page }) => 
 		.click();
 
 	await expect(page.getByRole('heading', { name: 'Agents', exact: true })).toBeVisible();
-	// The Agents/Service-accounts tab switch is present (segmented control).
 	// No emptiness assertion: the shared docker DB accumulates actors from
 	// other specs and reruns, so this pins the shell contract only.
-	await expect(page.getByRole('button', { name: 'Service accounts' })).toBeVisible();
+	await expect(page.getByRole('button', { name: /new agent/i })).toBeVisible();
+	await expect(page.getByRole('button', { name: 'Service accounts' })).toHaveCount(0);
 
 	expect(errors, `unexpected console errors:\n${errors.join('\n')}`).toEqual([]);
-});
-
-test('the service-account create sheet opens from the agents surface', async ({ page }) => {
-	await page.goto('/app/agents');
-	await page.getByRole('button', { name: 'Service accounts' }).click();
-
-	// The create affordance opens a sheet/dialog with a name field. We assert it
-	// opens (UI wiring) without submitting, to keep this spec's mutation surface
-	// limited to the API-seeded path above.
-	await page
-		.getByRole('button', { name: /new service account|create service account/i })
-		.first()
-		.click();
-	await expect(page.getByLabel('Name')).toBeVisible();
 });
 
 /**

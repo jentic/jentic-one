@@ -1,6 +1,6 @@
 /**
- * ActorsToolbar — filter + status segments + refresh for the agents /
- * service-accounts fleet table.
+ * ActorsToolbar — filter + status segments + refresh for the agents fleet
+ * table.
  *
  * Mirrors the Credentials toolbar treatment for cross-page parity:
  * sticky below the fixed `h-12` TopNavbar, bleeding to the page gutter edges

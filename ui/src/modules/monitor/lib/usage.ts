@@ -6,6 +6,7 @@
  * failed,avg_ms,trend}` rows for each.
  */
 import type { UsageResponse } from '@/modules/monitor/api';
+import { RETIRED_SERVICE_ACCOUNT_ACTOR_TYPE, retiredServiceAccountLabel } from '@/shared/lib';
 
 /** Overall window stats, UI vocabulary (rates in 0–100 percent). */
 export interface UsageOverview {
@@ -53,7 +54,9 @@ export function usageToOverview(usage: UsageResponse): UsageOverview {
  * backend composes keys/labels mechanically (see monitoring_repo.grouped_top):
  *   api        → "vendor/name" with NULL columns coalesced to "unknown"
  *   credential → the raw credential_id (NULL coalesced to "unknown")
- *   agent      → "actor_type/actor_id" (both NOT NULL columns)
+ *   agent      → "actor_type/actor_id" (both NOT NULL columns). Historical
+ *                pre-theme-8 `service_account/sva_…` keys are labelled
+ *                "sva_… (retired service account)".
  * Null/unknown keys are surfaced as an explicit "Unattributed" bucket.
  */
 function formatEntityLabel(groupBy: string, key: string | null | undefined): string {
@@ -66,7 +69,12 @@ function formatEntityLabel(groupBy: string, key: string | null | undefined): str
 	}
 	if (groupBy === 'agent') {
 		const slash = key.indexOf('/');
-		return slash >= 0 ? key.slice(slash + 1) || 'Unattributed' : key;
+		if (slash < 0) return key;
+		const actorId = key.slice(slash + 1);
+		if (!actorId) return 'Unattributed';
+		return key.slice(0, slash) === RETIRED_SERVICE_ACCOUNT_ACTOR_TYPE
+			? retiredServiceAccountLabel(actorId)
+			: actorId;
 	}
 	if (groupBy === 'credential') {
 		return key === 'unknown' ? 'Unattributed' : key;

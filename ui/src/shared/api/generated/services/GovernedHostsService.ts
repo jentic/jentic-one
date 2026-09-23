@@ -13,10 +13,10 @@ export class GovernedHostsService {
      *
      * **Always self-scoped** — derived from the authenticated identity's own
      * credential bindings; there is no cross-actor or admin variant. Credentials
-     * bind to agents and service accounts, so agent-scoped tokens (the OAuth
-     * agent-consent flow's output) and `sak_` keys are the callers this endpoint
-     * serves — a plain user token yields an empty set. Suspended bindings and
-     * inactive credentials still contribute their hosts: keep diverting that
+     * bind to agents, so agent-scoped tokens (the OAuth agent-consent flow's
+     * output) and agent API keys are the callers this endpoint serves — a plain
+     * user token yields an empty set. Suspended bindings and inactive
+     * credentials still contribute their hosts: keep diverting that
      * traffic, so the broker can refuse it — dropping it from the list would
      * send it direct to the upstream, unbrokered. The ``digest`` covers exactly
      * the ``data`` list and is also emitted as a strong ``ETag``, so integrators

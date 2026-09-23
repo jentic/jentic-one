@@ -90,4 +90,29 @@ describe('ActorLabel', () => {
 		expect(el.className).not.toContain('font-mono');
 		expect(screen.queryByText('self')).not.toBeInTheDocument();
 	});
+
+	// The theme-8 migration stamps every successor agent's `registered_by` with
+	// `system:theme8-sa-migration` — a sentinel, not an id.
+	it('renders the service-account migration registrar as a friendly word', async () => {
+		seedActors();
+		render(<ActorLabel actorId="system:theme8-sa-migration" />, { wrapper });
+		const el = await screen.findByText('Service-account migration');
+		expect(el).toHaveAttribute('title', 'system:theme8-sa-migration');
+		expect(el.className).not.toContain('font-mono');
+	});
+
+	// Historical executions/audit rows keep `actor_type = 'service_account'`
+	// (theme 8, OQ-3): the directory never holds them, so show the raw id
+	// marked as retired rather than a type prefix that reads as a live actor.
+	it('labels a historical service-account actor as retired', async () => {
+		seedActors();
+		const { container } = render(<ActorLabel actorId="sva_x" actorType="service_account" />, {
+			wrapper,
+		});
+		const raw = await screen.findByText('sva_x');
+		expect(raw.className).toContain('font-mono');
+		expect(screen.getByText('(retired service account)')).toBeInTheDocument();
+		expect(container.textContent).toBe('sva_x (retired service account)');
+		expect(container.querySelector('a')).toBeNull();
+	});
 });
