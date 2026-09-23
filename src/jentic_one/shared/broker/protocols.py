@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Protocol, runtime_checkable
@@ -164,12 +165,18 @@ class ToolkitDerivation:
     - ``identity_mismatch`` — a nearest-miss for the diagnostic when the agent is
       bound but nothing serves the API because a bound credential's identity does
       not cover the operation.
+    - ``credentials_by_toolkit`` — for each toolkit in ``toolkits``, the ids of
+      its bound credentials that cover the API. This is the **injection
+      boundary** of the toolkit path: once a toolkit is selected, only these
+      credentials may resolve. A toolkit absent from the map resolves nothing
+      (fail closed).
     """
 
     toolkits: tuple[str, ...]
     agent_bound_any: bool
     api_served_toolkits: tuple[str, ...]
     identity_mismatch: IdentityMismatch | None
+    credentials_by_toolkit: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
 
 
 @runtime_checkable
