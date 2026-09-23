@@ -50,7 +50,7 @@ def install_broker_auth(app: FastAPI, ctx: Context) -> None:
         resolver=resolver,
         cache_ttl_seconds=ctx.config.broker.resolve_cache_ttl_seconds,
     )
-    api_key_resolver = ApiKeyResolver(ctx.admin_db, telemetry=ctx.telemetry)
+    api_key_resolver = ApiKeyResolver(ctx.admin_db)
     api_key_cached = CachedTokenValidator(
         resolver=api_key_resolver,
         cache_ttl_seconds=ctx.config.broker.resolve_cache_ttl_seconds,

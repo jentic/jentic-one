@@ -55,10 +55,6 @@ class TelemetryEventName(StrEnum):
     # Local-MCP transport adoption (issue #1177)
     MCP_SESSION_STARTED = "mcp_session_started"
     MCP_CONFIG_REGISTERED = "mcp_config_registered"
-    # Theme-8 Phase 1: a sak_/jntc_live_ key resolved through the SA fallback
-    # arm (not yet migrated to its successor agent). Trending to zero is the
-    # sweep-readiness signal; sustained hits mean unmigrated stragglers.
-    SERVICE_ACCOUNT_FALLBACK_RESOLVE = "service_account_fallback_resolve"
 
 
 #: Allowlist: internal ``EventType`` → wire ``TelemetryEventName``. Only events

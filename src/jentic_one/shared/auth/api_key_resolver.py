@@ -11,11 +11,22 @@ from sqlalchemy import text
 
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.db import DatabaseSession
+from jentic_one.shared.metrics import get_meter
 from jentic_one.shared.models import ActorType
-from jentic_one.shared.telemetry.events import TelemetryEventName
-from jentic_one.shared.telemetry.sink import TelemetrySink, get_active_sink
 
 logger = structlog.get_logger(__name__)
+
+_meter = get_meter("jentic_one.auth")
+#: Theme-8 Phase 1: a ``sak_``/``jntc_live_`` key resolved through the SA
+#: fallback arm (not yet migrated). Operator metric (OTel), not phone-home
+#: telemetry. Trending to zero is the sweep-readiness signal.
+_fallback_resolve_counter = _meter.create_counter(
+    "auth_service_account_fallback_resolves",
+    description=(
+        "API-key resolves served by the service-account fallback arm "
+        "(theme-8 Phase 1: key not yet migrated to its successor agent)"
+    ),
+)
 
 AGENT_API_KEY_PREFIX = "jak_"
 SERVICE_ACCOUNT_API_KEY_PREFIX = "sak_"
@@ -58,7 +69,7 @@ class ApiKeyResolver:
       Keys not yet migrated miss the agent lookup and
       fall back to ``service_account_credentials`` joined to
       ``service_accounts`` — each fallback hit logs a WARNING and bumps the
-      ``service_account_fallback_resolve`` telemetry counter (trending to
+      ``auth_service_account_fallback_resolves`` OTel counter (trending to
       zero is the sweep-readiness signal). Never a hard repoint: the boot
       migration job is fire-and-forget and old-image pods must keep serving
       migrated keys through a rolling upgrade.
@@ -67,14 +78,8 @@ class ApiKeyResolver:
     can be wrapped by ``CachedTokenValidator``.
     """
 
-    def __init__(self, admin_db: DatabaseSession, telemetry: TelemetrySink | None = None) -> None:
+    def __init__(self, admin_db: DatabaseSession) -> None:
         self._admin_db = admin_db
-        # IMPL-DECISION 4 deviation (documented): construction sites run
-        # before the lifespan wires ctx.telemetry, so the injected handle is
-        # always None in practice; _record_fallback falls back to the
-        # process-global active sink at record time. The parameter stays so
-        # tests can inject a sink directly.
-        self._telemetry = telemetry
 
     async def resolve_access_token(self, token: str) -> Identity | None:
         """Protocol method — delegates to prefix-based resolve."""
@@ -151,7 +156,7 @@ class ApiKeyResolver:
                         "boot job) so it resolves as its successor agent."
                     ),
                 )
-                self._record_fallback()
+                _fallback_resolve_counter.add(1, {"actor_type": ActorType.SERVICE_ACCOUNT.value})
                 if raw_key.startswith(RETIRED_TOOLKIT_KEY_PREFIX):
                     # WARNING (not info): this stays the theme-5 6b migration
                     # signal — each line names a caller still presenting a
@@ -168,15 +173,6 @@ class ApiKeyResolver:
                     )
             return identity
         return None
-
-    def _record_fallback(self) -> None:
-        """Bump the fallback counter on the injected or process-global sink."""
-        sink = self._telemetry or get_active_sink()
-        if sink is not None:
-            sink.record(
-                TelemetryEventName.SERVICE_ACCOUNT_FALLBACK_RESOLVE,
-                actor_type=ActorType.SERVICE_ACCOUNT.value,
-            )
 
     async def _resolve_agent(self, raw_key: str) -> Identity | None:
         """``jak_`` arm: miss and inactive are both a plain None (no fallback)."""

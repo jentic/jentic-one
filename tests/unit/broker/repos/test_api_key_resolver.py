@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 from collections import namedtuple
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import structlog.testing
+from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 
+import jentic_one.shared.auth.api_key_resolver as _resolver_mod
 from jentic_one.shared.auth.api_key_resolver import ApiKeyResolver
 from jentic_one.shared.models import ActorType
-from jentic_one.shared.telemetry.events import TelemetryEventName
-from jentic_one.shared.telemetry.sink import TelemetrySink
 
 Row = namedtuple("Row", ["scope"])
 AgentRow = namedtuple("AgentRow", ["agent_id", "status", "owner_id"])
@@ -275,24 +277,51 @@ def _fallback_session(admin_db: MagicMock) -> None:
     admin_db.session.return_value = ctx_mgr
 
 
+def _counter_points(reader: InMemoryMetricReader, name: str) -> list[tuple[int, dict[str, Any]]]:
+    """``(value, attributes)`` for every data point of counter ``name``."""
+    data = reader.get_metrics_data()
+    if data is None:
+        return []
+    return [
+        (int(getattr(point, "value", 0)), dict(point.attributes or {}))
+        for resource_metric in data.resource_metrics
+        for scope_metric in resource_metric.scope_metrics
+        for metric in scope_metric.metrics
+        if metric.name == name
+        for point in metric.data.data_points
+    ]
+
+
 @pytest.mark.asyncio
-async def test_fallback_hit_records_telemetry_event(admin_db: MagicMock) -> None:
-    """A fallback resolve bumps SERVICE_ACCOUNT_FALLBACK_RESOLVE on a real sink."""
+async def test_fallback_hit_bumps_otel_counter_not_phone_home_telemetry(
+    admin_db: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A fallback resolve bumps the OTel operator counter (L3) and logs a WARNING."""
+    reader = InMemoryMetricReader()
+    provider = MeterProvider(metric_readers=[reader])
+    counter = provider.get_meter("test").create_counter("auth_service_account_fallback_resolves")
+    monkeypatch.setattr(_resolver_mod, "_fallback_resolve_counter", counter)
     _fallback_session(admin_db)
-    sink = TelemetrySink(enabled=True, queue_max=8)
-    resolver = ApiKeyResolver(admin_db, telemetry=sink)
+    resolver = ApiKeyResolver(admin_db)
 
-    identity = await resolver.resolve("sak_unmigrated")
+    try:
+        with structlog.testing.capture_logs() as logs:
+            identity = await resolver.resolve("sak_unmigrated")
 
-    assert identity is not None
-    event = sink.queue.get_nowait()
-    assert event.name == TelemetryEventName.SERVICE_ACCOUNT_FALLBACK_RESOLVE
-    assert event.actor_type == ActorType.SERVICE_ACCOUNT
+        assert identity is not None
+        assert identity.actor_type == ActorType.SERVICE_ACCOUNT
+        assert _counter_points(reader, "auth_service_account_fallback_resolves") == [
+            (1, {"actor_type": "service_account"})
+        ]
+        fallbacks = [log for log in logs if log["event"] == "service_account_fallback_resolve"]
+        assert len(fallbacks) == 1 and fallbacks[0]["log_level"] == "warning"
+    finally:
+        provider.shutdown()
 
 
 @pytest.mark.asyncio
-async def test_fallback_without_sink_does_not_crash(admin_db: MagicMock) -> None:
-    """No telemetry sink (injected or active) → the fallback still resolves."""
+async def test_fallback_without_configured_metrics_does_not_crash(admin_db: MagicMock) -> None:
+    """No MeterProvider configured (no-op meter) → the fallback still resolves."""
     _fallback_session(admin_db)
     resolver = ApiKeyResolver(admin_db)
 
