@@ -12,8 +12,8 @@ their final schema shape — the original creation (a2b3c4d5e6f7) plus the
 ``rule_set_id`` column added by the theme-5 governance collapse
 (s0a1b2c3d4e5) — but cannot restore dropped rows.
 
-Revision ID: v3d4e5f6a7b8
-Revises: u2c3d4e5f6a7
+Revision ID: y6a7b8c9d0e1
+Revises: x5f6a7b8c9d0
 Create Date: 2026-09-15
 
 """
@@ -23,8 +23,8 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "v3d4e5f6a7b8"  # pragma: allowlist secret
-down_revision: str | None = "u2c3d4e5f6a7"  # pragma: allowlist secret
+revision: str = "y6a7b8c9d0e1"  # pragma: allowlist secret
+down_revision: str | None = "x5f6a7b8c9d0"  # pragma: allowlist secret
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
