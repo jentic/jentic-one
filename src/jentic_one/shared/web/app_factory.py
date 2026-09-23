@@ -340,8 +340,12 @@ def _start_boot_migrations(ctx: Context, enabled_apps: set[str]) -> asyncio.Task
     missed them and ``verify`` (post-stamp mutations) failed until the sweep.
     Sequencing makes the in-process order deterministic: the migration always
     sees the remnant's final binding set. (The repo-level row lock in
-    ``KeyRetirementRepository.find_successor_by_name`` covers the cross-process
-    case — a second replica or an operator CLI run.)
+    ``KeyRetirementRepository.find_successor_by_name`` serialises the admin-DB
+    binds against a second replica or an operator CLI run. The control-DB
+    ``toolkit_keys`` stamp is written in a later transaction, so a concurrent
+    migration landing in that gap leaves the key pointing at the stamped
+    ``sva_`` id until the next migration run's ``already_migrated`` re-stamp
+    heals it.)
 
     Both jobs keep their own failure isolation: each step logs and swallows
     its own errors, so a failing key retirement never prevents the migration.

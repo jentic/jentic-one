@@ -175,14 +175,16 @@ class KeyRetirementRepository:
         The stamp is read under a row lock (L2): on Postgres the remnant is
         selected ``FOR UPDATE``, serialising with the migration's own
         ``FOR UPDATE`` re-read, so the stamp cannot land between this check
-        and the caller's binds (same transaction). SQLite needs no row lock —
+        and the caller's binds (same transaction; the caller's later control-DB
+        ``toolkit_keys`` stamp is outside this lock and healed by the next
+        migration run's re-stamp). SQLite needs no row lock —
         the caller's ``admin_db.transaction()`` is ``BEGIN IMMEDIATE`` and
         already holds the database write lock.
         """
         row = (await session.execute(_FIND_AGENT_BY_NAME, {"name": name})).one_or_none()
         if row is not None:
             return str(row.id)
-        dialect = session.bind.dialect.name if session.bind else "sqlite"
+        dialect = session.get_bind().dialect.name
         sa_stmt = (
             _FIND_SERVICE_ACCOUNT_BY_NAME_FOR_UPDATE
             if dialect == "postgresql"
