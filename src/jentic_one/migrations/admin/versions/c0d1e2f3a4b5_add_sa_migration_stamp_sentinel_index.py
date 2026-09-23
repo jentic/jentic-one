@@ -27,7 +27,7 @@ Batch-safe on SQLite (``render_as_batch``): pure add_column / create_table /
 create_index — no table rewrite.
 
 Revision ID: c0d1e2f3a4b5
-Revises: b9d0e1f2a3b4
+Revises: f1a2b3c4d5e7
 Create Date: 2026-09-16
 
 """
@@ -38,7 +38,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "c0d1e2f3a4b5"  # pragma: allowlist secret
-down_revision: str | None = "b9d0e1f2a3b4"  # pragma: allowlist secret
+down_revision: str | None = "f1a2b3c4d5e7"  # pragma: allowlist secret
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
