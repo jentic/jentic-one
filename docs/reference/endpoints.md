@@ -27,10 +27,10 @@ Every API endpoint grouped by its **typical caller**, then by surface, annotated
 
 > The grouping and the _Typical caller_ column are an **advisory hint** at who usually calls a route, inferred from the scope family. They are **not** an enforced restriction: access is gated by the **scope**, not the actor kind, so any actor holding the required scope can call the endpoint.
 
-_Total endpoints: **186**._
+_Total endpoints: **174**._
 
 
-## Agent-facing (typically agent / service-account) (33)
+## Agent-facing (typically agent / service-account) (32)
 
 
 ### `apis`
@@ -97,12 +97,6 @@ _Total endpoints: **186**._
 | GET | `/jobs/{job_id}` | `jobs:read` | agent | Get Job |
 | GET | `/jobs/{job_id}/result` | `jobs:read` | agent | Get Job Result |
 
-### `oauth`
-
-| Method | Path | Scope(s) | Typical caller | Summary |
-|---|---|---|---|---|
-| POST | `/oauth/mint` | _any authenticated_ | agent | Mint Endpoint |
-
 ### `search`
 
 | Method | Path | Scope(s) | Typical caller | Summary |
@@ -116,7 +110,7 @@ _Total endpoints: **186**._
 | GET | `/vendors` | `capabilities:read` | agent | List verified vendors |
 | GET | `/vendors/{vendor_key}/auth-capabilities` | `capabilities:read` | agent | Get a vendor's SSO capabilities |
 
-## Operator-facing (typically a human operator / admin) (51)
+## Operator-facing (typically a human operator / admin) (41)
 
 
 ### `actors`
@@ -201,21 +195,6 @@ _Total endpoints: **186**._
 |---|---|---|---|---|
 | POST | `/oauth/session/continue` | _any authenticated_ | operator | Exchange a live platform session for an authorize continuation |
 
-### `service-accounts`
-
-| Method | Path | Scope(s) | Typical caller | Summary |
-|---|---|---|---|---|
-| GET | `/service-accounts` | `service-accounts:read` | operator | List Service Accounts |
-| POST | `/service-accounts` | `service-accounts:write` | operator | Create Service Account |
-| DELETE | `/service-accounts/{service_account_id}` | `service-accounts:write` | operator | Archive Service Account |
-| GET | `/service-accounts/{service_account_id}/scopes` | `service-accounts:read` | operator | Get Service Account Scopes |
-| PUT | `/service-accounts/{service_account_id}/scopes` | `service-accounts:write` | operator | Replace Service Account Scopes |
-| POST | `/service-accounts/{service_account_id}:approve` | `service-accounts:write` | operator | Approve Service Account |
-| POST | `/service-accounts/{service_account_id}:deny` | `service-accounts:write` | operator | Deny Service Account |
-| POST | `/service-accounts/{service_account_id}:disable` | `service-accounts:write` | operator | Disable Service Account |
-| POST | `/service-accounts/{service_account_id}:enable` | `service-accounts:write` | operator | Enable Service Account |
-| POST | `/service-accounts/{service_account_id}:generate-api-key` | `service-accounts:write` | operator | Generate Service Account Api Key |
-
 ### `users`
 
 | Method | Path | Scope(s) | Typical caller | Summary |
@@ -230,7 +209,7 @@ _Total endpoints: **186**._
 | POST | `/users/{user_id}:enable` | `users:write` | operator | Enable User |
 | POST | `/users/{user_id}:reissue-invite` | `users:write` | operator | Reissue Invite |
 
-## Any authenticated actor (72)
+## Any authenticated actor (71)
 
 
 ### `admin`
@@ -380,12 +359,6 @@ _Total endpoints: **186**._
 | DELETE | `/register/{agent_id}` | _any authenticated_ | any | Delete Registration Endpoint |
 | GET | `/register/{agent_id}` | _any authenticated_ | any | Poll Status Endpoint _(Authenticated with the Registration-Access-Token issued at registration (RFC 7592), not a platform bearer token.)_ |
 | PUT | `/register/{agent_id}` | _any authenticated_ | any | Update Registration Endpoint |
-
-### `service-accounts`
-
-| Method | Path | Scope(s) | Typical caller | Summary |
-|---|---|---|---|---|
-| GET | `/service-accounts/{service_account_id}` | _any authenticated_ | any | Get Service Account |
 
 ### `system`
 

@@ -1,4 +1,4 @@
-"""OAuth token, revocation, introspection, and ephemeral minting endpoints."""
+"""OAuth token, revocation, and introspection endpoints."""
 
 from __future__ import annotations
 
@@ -24,21 +24,17 @@ from jentic_one.auth.services.errors import (
     RateLimitExceededError,
 )
 from jentic_one.auth.services.oauth_revocation_service import OAuthRevocationService
-from jentic_one.auth.services.service_account_auth_service import ServiceAccountAuthService
 from jentic_one.auth.services.token_service import TokenService
 from jentic_one.auth.web.errors import record_rate_limited_request
 from jentic_one.auth.web.schemas.oauth import (
     IntrospectRequest,
     IntrospectResponse,
-    MintRequest,
-    MintResponse,
     RevokeRequest,
     TokenRequest,
     TokenResponse,
 )
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
-from jentic_one.shared.models import ActorType
 from jentic_one.shared.resilience import RateLimiter
 from jentic_one.shared.state.backend import MemoryStateBackend, SharedStateBackend
 from jentic_one.shared.web import get_current_identity
@@ -113,7 +109,6 @@ async def _check_token_rate_limit(request: Request, ctx: Context = Depends(get_c
 
 
 _JWT_BEARER_GRANT = "urn:ietf:params:oauth:grant-type:jwt-bearer"
-_CLIENT_CREDENTIALS_GRANT = "client_credentials"
 _AUTHORIZATION_CODE_GRANT = "authorization_code"
 
 
@@ -126,8 +121,8 @@ def _scope_member(scopes: list[str]) -> str | None:
     honest here: no grant leg of this endpoint accepts a scope parameter in
     the token request, and the consent flow fails closed on an empty
     intersection (``no_grantable_scopes``), so an empty set can only mean the
-    caller never asked for scopes at this endpoint (zero-grant agents/SAs on
-    the jwt-bearer/client-credentials legs) or every grant was revoked
+    caller never asked for scopes at this endpoint (zero-grant agents on
+    the jwt-bearer leg) or every grant was revoked
     post-mint (refresh leg) — a live, reversible administrative state the
     platform deliberately distinguishes from revocation, which fails the
     exchange closed instead.
@@ -141,10 +136,6 @@ def get_token_service(ctx: Context = Depends(get_ctx)) -> TokenService:
 
 def get_assertion_service(ctx: Context = Depends(get_ctx)) -> AssertionService:
     return AssertionService(ctx)
-
-
-def get_sa_auth_service(ctx: Context = Depends(get_ctx)) -> ServiceAccountAuthService:
-    return ServiceAccountAuthService(ctx)
 
 
 def get_authorize_service(ctx: Context = Depends(get_ctx)) -> AuthorizeService:
@@ -354,11 +345,10 @@ async def token_endpoint(
     ctx: Context = Depends(get_ctx),
     token_svc: TokenService = Depends(get_token_service),
     assertion_svc: AssertionService = Depends(get_assertion_service),
-    sa_auth_svc: ServiceAccountAuthService = Depends(get_sa_auth_service),
     authorize_svc: AuthorizeService = Depends(get_authorize_service),
     oauth_client_svc: OAuthClientService = Depends(get_oauth_client_service),
 ) -> TokenResponse:
-    """Exchange a refresh token, JWT assertion, authorization code, or client creds for tokens.
+    """Exchange a refresh token, JWT assertion, or authorization code for tokens.
 
     Error responses speak the RFC 6749 §5.2 dialect (top-level ``error`` +
     ``error_description``), NOT platform Problem Details — reshaped by
@@ -440,23 +430,6 @@ async def token_endpoint(
             scope=_scope_member(scopes),
         )
 
-    if body.grant_type == _CLIENT_CREDENTIALS_GRANT:
-        if not body.client_id or not body.client_secret:
-            raise InvalidGrantError(
-                "client_id and client_secret are required",
-                oauth_error_code="invalid_request",
-            )
-        access_token, refresh_token, scopes = await sa_auth_svc.authenticate_client_credentials(
-            body.client_id, body.client_secret
-        )
-        return TokenResponse(
-            access_token=access_token,
-            refresh_token=refresh_token,
-            token_type="bearer",
-            expires_in=sa_auth_svc.access_ttl_seconds,
-            scope=_scope_member(scopes),
-        )
-
     if body.grant_type != "refresh_token":
         raise InvalidGrantError(
             f"unsupported grant_type: {body.grant_type}",
@@ -498,35 +471,6 @@ async def token_endpoint(
 # Mounted via its own router so `_TokenRoute` owns the endpoint's error
 # dialect (same include pattern as `revocation_router` below).
 router.include_router(token_router)
-
-
-@router.post("/oauth/mint")
-async def mint_endpoint(
-    body: MintRequest,
-    identity: Identity = get_current_identity(require_actor_type=ActorType.SERVICE_ACCOUNT),
-    sa_auth_svc: ServiceAccountAuthService = Depends(get_sa_auth_service),
-) -> MintResponse:
-    """Mint a short-lived ephemeral token for a task agent.
-
-    The caller must be an authenticated service account. The requested scopes
-    must be a subset of the caller's own scopes.
-    """
-    requested_scopes = [s.strip() for s in body.scope.split() if s.strip()]
-    ttl = body.ttl_seconds if body.ttl_seconds is not None else 300
-
-    access_token = await sa_auth_svc.mint_task_token(
-        host_sa_id=identity.sub,
-        host_sa_scopes=identity.permissions,
-        requested_scopes=requested_scopes,
-        target_agent_id=body.target_agent_id,
-        ttl_seconds=ttl,
-    )
-
-    return MintResponse(
-        access_token=access_token,
-        token_type="bearer",
-        expires_in=ttl,
-    )
 
 
 #: Raw request-body ceiling for the anonymous RFC 7009 form arm — the DCR

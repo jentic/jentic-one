@@ -14,7 +14,6 @@ ORG_ADMIN = "org:admin"
 OWNER_CREDENTIALS_READ = "owner:credentials:read"
 OWNER_AGENTS_READ = "owner:agents:read"
 OWNER_RESOURCES_READ = "owner:resources:read"
-OWNER_SERVICE_ACCOUNTS_READ = "owner:service-accounts:read"
 
 # Scopes retired from the catalogue. Stored grants — user permission rows and
 # agent ``actor_scope_grants`` — still carry these strings, so every validation
@@ -28,12 +27,18 @@ OWNER_SERVICE_ACCOUNTS_READ = "owner:service-accounts:read"
 #   and the stored strings — are swept in Phase 6b.
 # - ``owner:access-requests:read`` retired in theme 7 (the access-request flow
 #   is gone; nothing is left to delegate reads over).
+# - The service-account scopes retired in theme-8 Phase 2 (the service-account
+#   surface is gone; every SA was migrated to a successor agent in Phase 1).
+#   Stored strings are swept with the Phase-4 table drops.
 RETIRED_SCOPES: frozenset[str] = frozenset(
     {
         "toolkits:read",
         "toolkits:write",
         "owner:toolkits:read",
         "owner:access-requests:read",
+        "service-accounts:read",
+        "service-accounts:write",
+        "owner:service-accounts:read",
     }
 )
 

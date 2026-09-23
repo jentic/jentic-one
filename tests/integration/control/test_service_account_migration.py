@@ -4,7 +4,7 @@ Runs ``ServiceAccountMigrationService`` against real admin (+ control)
 databases on both dialects (``JENTIC_TEST_BACKEND=sqlite`` locally, Postgres
 in CI): the copy→revoke→stamp→audit transaction, dispositions (OQ-1),
 resolver behaviour through the window (agent arm, SA fallback, post-sweep),
-the stamp guards (W6), the deferred sweep (W3/N3), and verify/acknowledge
+the deferred sweep (W3/N3), and verify/acknowledge
 (W9). Test names lift the plan's acceptance criteria verbatim where they
 apply.
 """
@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import hashlib
-from collections.abc import AsyncGenerator, Awaitable, Callable
+from collections.abc import AsyncGenerator
 from typing import Any
 
 import pytest
@@ -27,10 +27,6 @@ from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.refresh_tokens import RefreshToken
 from jentic_one.admin.core.schema.service_account_credentials import ServiceAccountCredential
 from jentic_one.admin.core.schema.service_accounts import ServiceAccount
-from jentic_one.auth.services.errors import InvalidGrantError, ServiceAccountMigratedError
-from jentic_one.auth.services.schemas.service_accounts import ServiceAccountCreatePayload
-from jentic_one.auth.services.service_account_auth_service import ServiceAccountAuthService
-from jentic_one.auth.services.service_account_service import ServiceAccountService
 from jentic_one.control.core.schema.agent_permission_rules import AgentPermissionRule
 from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.core.schema.toolkit_keys import ToolkitKey
@@ -43,7 +39,6 @@ from jentic_one.control.services.service_account_migration import (
     ServiceAccountMigrationService,
 )
 from jentic_one.shared.auth.api_key_resolver import ApiKeyResolver
-from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.models import ActorType, StoredCredentialType
@@ -239,15 +234,6 @@ async def _stamp_of(admin_db: DatabaseSession, sa_id: str) -> tuple[str | None, 
     )
     assert len(rows) == 1
     return rows[0].migrated_to_actor_id, rows[0].migrated_at
-
-
-def _operator_identity() -> Identity:
-    return Identity(
-        sub=_OWNER,
-        actor_type=ActorType.USER,
-        permissions=["org:admin"],
-        active=True,
-    )
 
 
 # --------------------------------------------------------------- job + window
@@ -918,86 +904,6 @@ async def test_diff_only_writes_nothing(
     assert successors == []
 
 
-# ---------------------------------------------------------------- W6 guards
-
-
-async def test_every_mutation_verb_on_migrated_sa_refuses_with_successor_error(
-    integration_context: Context, admin_db: DatabaseSession, seed_owner: None
-) -> None:
-    """NF-1/NF-2: the guarded writer surface refuses stamped rows uniformly."""
-    sa_id = await _seed_sa(
-        admin_db, suffix="guard", scopes=("toolkit:read",), api_key_plaintext="sak_t8m_guard"
-    )
-    outcomes = {
-        o.service_account_id: o
-        for o in await ServiceAccountMigrationService(integration_context).run()
-    }
-    agent_id = outcomes[sa_id].successor_agent_id
-    identity = _operator_identity()
-
-    svc = ServiceAccountService(integration_context)
-    auth_svc = ServiceAccountAuthService(integration_context)
-    verbs: list[Callable[[], Awaitable[object]]] = [
-        lambda: svc.approve(sa_id, identity=identity),
-        lambda: svc.deny(sa_id, reason="no", identity=identity),
-        lambda: svc.disable(sa_id, identity=identity),
-        lambda: svc.enable(sa_id, identity=identity),
-        lambda: svc.archive(sa_id, identity=identity),
-        lambda: svc.replace_scopes(sa_id, ["toolkit:read"], identity=identity),
-        lambda: auth_svc.register_api_key(sa_id, identity=identity),
-    ]
-    for verb in verbs:
-        with pytest.raises(ServiceAccountMigratedError) as exc_info:
-            await verb()
-        assert exc_info.value.successor_agent_id == agent_id
-
-    # The guarded archive's revoke_all never ran: originals still intact (N1).
-    originals = await _rows(
-        admin_db,
-        "SELECT scope FROM actor_scope_grants"
-        " WHERE actor_id = :id AND actor_type = 'service_account'",
-        {"id": sa_id},
-    )
-    assert len(originals) == 1
-
-
-async def test_mutation_verbs_still_work_on_unstamped_rows(
-    integration_context: Context, admin_db: DatabaseSession, seed_owner: None
-) -> None:
-    """The guard keys on the stamp, never the name/status — unstamped rows mutate."""
-    sa_id = await _seed_sa(admin_db, suffix="unguard", api_key_plaintext="sak_t8m_unguard")
-    identity = _operator_identity()
-    svc = ServiceAccountService(integration_context)
-
-    await svc.disable(sa_id, identity=identity)
-    await svc.enable(sa_id, identity=identity)
-    scopes = await svc.replace_scopes(sa_id, ["toolkit:read"], identity=identity)
-    assert scopes == ["toolkit:read"]
-    key = await ServiceAccountAuthService(integration_context).register_api_key(
-        sa_id, identity=identity
-    )
-    assert key.startswith("sak_")
-
-
-async def test_create_stays_unguarded_and_boot_rerun_migrates_new_rows(
-    integration_context: Context, admin_db: DatabaseSession, seed_owner: None
-) -> None:
-    """F5: POST /service-accounts keeps working in the window; the next
-    (boot) run stamps the new row."""
-    svc = ServiceAccountService(integration_context)
-    created = await svc.create(
-        ServiceAccountCreatePayload(name="t8m-window-created", scopes=["toolkit:read"]),
-        owner_id=_OWNER,
-        identity=_operator_identity(),
-    )
-
-    outcomes = {
-        o.service_account_id: o
-        for o in await ServiceAccountMigrationService(integration_context).run()
-    }
-    assert outcomes[created.id].outcome == "migrated"
-
-
 # ---------------------------------------------------------------- W3 sweep
 
 
@@ -1418,11 +1324,22 @@ async def test_migration_derives_state_from_in_transaction_reread_not_list_snaps
     stale = next(r for r in rows if r.id == sa_id)
     assert stale.status == "active"
 
-    identity = _operator_identity()
-    new_plaintext = await ServiceAccountAuthService(integration_context).register_api_key(
-        sa_id, identity=identity
-    )
-    await ServiceAccountService(integration_context).disable(sa_id, identity=identity)
+    # The SA write surface is gone (theme-8 Phase 2); a concurrent rotation +
+    # disable is simulated at the row level.
+    new_plaintext = "sak_t8m_stale_snapshot_rotated"
+    async with admin_db.session() as session:
+        await session.execute(
+            text(
+                "UPDATE service_account_credentials SET api_key_hash = :h"
+                " WHERE service_account_id = :id"
+            ),
+            {"h": _digest(new_plaintext), "id": sa_id},
+        )
+        await session.execute(
+            text("UPDATE service_accounts SET status = 'disabled' WHERE id = :id"),
+            {"id": sa_id},
+        )
+        await session.commit()
 
     outcome = await ServiceAccountMigrationService(integration_context)._migrate_one(stale)
 
@@ -1651,28 +1568,51 @@ async def test_sweep_deletes_inline_rules_left_by_an_interrupted_sweep(
     assert await _inline_rules(control_db, sa_id) == []
 
 
-async def test_sweep_revokes_client_credentials_sessions_minted_during_the_window(
+async def test_sweep_revokes_sa_sessions_minted_during_the_window(
     integration_context: Context, admin_db: DatabaseSession, seed_owner: None
 ) -> None:
-    """M1: a pre-sweep client-credentials login still mints SA sessions; the
-    sweep revokes them in its transaction (verify criterion 3 then passes
-    without waiting out the refresh TTL) and the archived row refuses the
-    grant afterwards — ``--sweep-migrated`` is the kill lever."""
-    secret = "t8m-client-secret"
+    """M1: SA sessions that appear after the stamp (pre-Phase-2 a
+    client-credentials login minted them; the grant is gone now, but a
+    pre-upgrade session can still be live) are revoked by the sweep in its
+    transaction — ``--sweep-migrated`` is the kill lever."""
     sa_id = await _seed_sa(
         admin_db,
         suffix="ccgrant",
         scopes=("toolkit:read",),
         api_key_plaintext="sak_t8m_ccgrant",
-        client_secret_hash=_digest(secret),
     )
     svc = ServiceAccountMigrationService(integration_context)
     await svc.run()
 
-    auth = ServiceAccountAuthService(integration_context)
-    await auth.authenticate_client_credentials(sa_id, secret)
+    now = dt.datetime.now(dt.UTC)
+    async with admin_db.session() as session:
+        session.add(
+            AccessToken(
+                id="at_t8m_ccgrant_window",
+                token_hash=_digest("at_t8m_ccgrant_window"),
+                actor_id=sa_id,
+                actor_type="service_account",
+                scopes=["toolkit:read"],
+                token_family_id="tf_t8m_ccgrant_window",
+                expires_at=now + dt.timedelta(hours=1),
+                created_by=_OWNER,
+            )
+        )
+        session.add(
+            RefreshToken(
+                id="rt_t8m_ccgrant_window",
+                token_hash=_digest("rt_t8m_ccgrant_window"),
+                actor_id=sa_id,
+                actor_type="service_account",
+                scopes=["toolkit:read"],
+                token_family_id="tf_t8m_ccgrant_window",
+                expires_at=now + dt.timedelta(days=7),
+                created_by=_OWNER,
+            )
+        )
+        await session.commit()
     live = await svc.verify()
-    assert live.unrevoked_token_count == 2  # the fresh access + refresh pair
+    assert live.unrevoked_token_count == 2  # the window access + refresh pair
 
     swept = await svc.sweep(ignore_age_gate=True)
     assert swept.swept == [sa_id]
@@ -1687,9 +1627,6 @@ async def test_sweep_revokes_client_credentials_sessions_minted_during_the_windo
         {"id": sa_id},
     )
     assert len(revokes) == 1
-
-    with pytest.raises(InvalidGrantError):
-        await auth.authenticate_client_credentials(sa_id, secret)
 
 
 async def test_control_db_failure_is_a_row_outcome_not_a_run_abort(

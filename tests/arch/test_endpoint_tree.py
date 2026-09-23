@@ -97,7 +97,7 @@ def fixture_endpoints() -> list[Endpoint]:
         _ep(
             "POST",
             "/capabilities:execute",
-            actor_types=["agent", "service_account", "toolkit"],
+            actor_types=["agent", "toolkit"],
             required_scopes=["capabilities:execute"],
             typical_caller="agent",
             summary="Execute",
@@ -106,7 +106,7 @@ def fixture_endpoints() -> list[Endpoint]:
         _ep(
             "POST",
             "/credentials",
-            actor_types=["user", "agent", "service_account", "toolkit"],
+            actor_types=["user", "agent", "toolkit"],
             required_scopes=[],
             typical_caller="any",
             summary="Create Credential",
@@ -123,7 +123,7 @@ def fixture_endpoints() -> list[Endpoint]:
         _ep(
             "GET",
             "/register/{agent_id}",
-            actor_types=["agent", "service_account"],
+            actor_types=["agent"],
             required_scopes=[],
             auth_note="Authenticated with the Registration-Access-Token.",
             summary="Poll registration status",
@@ -435,3 +435,20 @@ def test_operator_only_scopes_are_classified_operator() -> None:
     # Every such scope classifies as operator on its own.
     for scope in operator_only:
         assert _typical_caller([scope], []) == TYPICAL_OPERATOR, scope
+
+
+@pytest.mark.arch
+def test_no_service_account_surface_survives() -> None:
+    """Theme-8 Phase 2: no route creates, lists, mutates, or mints for an SA.
+
+    Walks the live combined control app's route table (the same one the
+    reference is built from): no ``/service-accounts`` path, no
+    ``/oauth/mint``, and no endpoint advertises ``service_account`` as a
+    caller actor type.
+    """
+    app = _build_control_app()
+    paths = {getattr(r, "path", "") for r in app.routes}
+    assert not [p for p in paths if p.startswith("/service-accounts")]
+    assert "/oauth/mint" not in paths
+    for ep in collect_endpoints(app):
+        assert "service_account" not in ep.actor_types, (ep.method, ep.path)

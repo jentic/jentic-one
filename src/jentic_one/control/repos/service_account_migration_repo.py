@@ -40,8 +40,8 @@ SKIPPED_STAMP = "skipped"
 
 #: Scopes retired by theme 8 itself (Phase 2): stored SA grants carrying them
 #: get no successor twin — they are left behind for the sweep, never carried.
-#: E2 cross-reference: keep this set in sync with Phase-2's ``RETIRED_SCOPES``
-#: when the Phase-2 removal migration lands.
+#: E2 cross-reference: every member is also in ``shared.scopes.RETIRED_SCOPES``
+#: (Phase 2 retired them) — pinned by ``test_retired_scopes.py``.
 THEME8_RETIRED_SCOPES: frozenset[str] = frozenset(
     {
         "service-accounts:read",
@@ -571,8 +571,8 @@ class ServiceAccountMigrationRepository:
     async def count_grant_twin_missing(session: AsyncSession) -> int:
         """Criterion 2: every non-retired SA grant has its agent twin."""
         # E2: bound parameters, never f-string interpolation, even for a
-        # frozen constant. THEME8_RETIRED_SCOPES must stay in sync with the
-        # Phase-2 RETIRED_SCOPES set when Phase 2 lands its removal migration.
+        # frozen constant. THEME8_RETIRED_SCOPES ⊆ RETIRED_SCOPES is pinned by
+        # tests/unit/shared/test_retired_scopes.py.
         scope_params = {f"scope_{i}": s for i, s in enumerate(sorted(THEME8_RETIRED_SCOPES))}
         placeholders = ", ".join(f":{name}" for name in scope_params)
         row = (

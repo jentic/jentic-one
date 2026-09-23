@@ -25,7 +25,6 @@ from jentic_one.auth.web.routers import (
     oauth_client_registration,
     oauth_grants,
     registration,
-    service_accounts,
 )
 from jentic_one.shared.auth.api_key_resolver import (
     AGENT_API_KEY_PREFIX,
@@ -65,7 +64,6 @@ def get_routers() -> list[tuple[APIRouter, str, list[str]]]:
         (local_login.router, "", []),
         (identity.router, "", []),
         (agents.router, "", []),
-        (service_accounts.router, "", []),
         (oauth.router, "", []),
         (oauth_client_registration.router, "", []),
         (oauth_grants.router, "", []),

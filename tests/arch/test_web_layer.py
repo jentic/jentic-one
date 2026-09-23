@@ -224,8 +224,6 @@ def _check_router_has_auth(filepath: Path) -> list[str]:
         "RequireUsersWrite",
         "RequireAgentsRead",
         "RequireAgentsWrite",
-        "RequireServiceAccountsRead",
-        "RequireServiceAccountsWrite",
         "required_permission",
         "required_permissions",
         "require_permission",

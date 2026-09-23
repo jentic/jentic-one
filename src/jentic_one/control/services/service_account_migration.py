@@ -23,7 +23,7 @@ successor).
 
 Idempotency: the stamp short-circuits re-runs, so the boot job runs on every
 start (like theme-5 key retirement) and catches SAs created during the
-window (``POST /service-accounts`` stays unguarded, F5). Concurrency: one
+window (until Phase 2 removed ``POST /service-accounts``, F5). Concurrency: one
 admin transaction per SA (``BEGIN IMMEDIATE`` on SQLite), a pg advisory-lock
 fast path, an in-transaction stamp re-check, and — the real backstop — the
 ``uq_agent_credentials_api_key_hash`` unique partial index: a losing
@@ -109,8 +109,8 @@ class ServiceAccountMigrationOutcome:
     #: re-attributed, so the successor loses owner-scoped access to them;
     #: (b) with ``parent_actor_id=owner`` any copied ``owner:*`` delegation
     #: scope now widens to the owner's resources; (c) migrated ``sak_``
-    #: callers now act as an agent — ``POST /oauth/mint`` returns 403
-    #: (requires a service-account actor), ``/integrations:connect`` refuses
+    #: callers now act as an agent — ``POST /oauth/mint`` is gone (404),
+    #: ``/integrations:connect`` refuses
     #: ``agent_id`` in the body, and an agent-initiated connect session
     #: cannot be confirmed by the agent itself (``_forbid_self_confirm``).
     owner_visibility_note: str | None = None
@@ -214,7 +214,7 @@ class ServiceAccountMigrationService:
             f" scope now also reaches that owner's resources; control-DB objects"
             f" created_by {row.id} are not re-attributed (the successor loses"
             f" owner-scoped access to them); sak_ callers now act as an agent:"
-            f" POST /oauth/mint returns 403, /integrations:connect refuses agent_id"
+            f" POST /oauth/mint is gone (404), /integrations:connect refuses agent_id"
             f" in the body, and agent-initiated connect sessions cannot be"
             f" self-confirmed"
         )

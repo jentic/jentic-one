@@ -17,7 +17,6 @@ from jentic_one.admin.core.schema.user_secrets import UserSecret
 from jentic_one.admin.core.schema.users import User
 from jentic_one.admin.repos import (
     AgentRepository,
-    ServiceAccountRepository,
     UserPermissionGrantRepository,
     UserRepository,
     UserSecretRepository,
@@ -80,7 +79,7 @@ async def admin_user_id(web_context: Context) -> AsyncGenerator[str, None]:
 
 @pytest.fixture()
 async def owner_user_id(web_context: Context) -> AsyncGenerator[str, None]:
-    """Create an owner user with agents:read/write and service-accounts:read/write."""
+    """Create an owner user with agents:read/write."""
     ctx = web_context
     async with ctx.admin_db.transaction() as session:
         user = await UserRepository.create(
@@ -103,8 +102,6 @@ async def owner_user_id(web_context: Context) -> AsyncGenerator[str, None]:
             permissions={
                 "agents:read",
                 "agents:write",
-                "service-accounts:read",
-                "service-accounts:write",
             },
             granted_by=None,
             created_by="usr_test",
@@ -143,28 +140,6 @@ async def test_agent_id(web_context: Context, owner_user_id: str) -> AsyncGenera
         await session.commit()
 
 
-@pytest.fixture()
-async def test_service_account_id(
-    web_context: Context, owner_user_id: str
-) -> AsyncGenerator[str, None]:
-    """Create a test service account in pending status."""
-    ctx = web_context
-    async with ctx.admin_db.transaction() as session:
-        sa = await ServiceAccountRepository.create(
-            session,
-            name="test-service-account",
-            owner_id=owner_user_id,
-            registered_by=owner_user_id,
-            description="Test SA for web tests",
-            created_by="usr_test",
-        )
-    yield sa.id
-
-    async with ctx.admin_db.session() as session:
-        await session.execute(delete(ServiceAccount).where(ServiceAccount.id == sa.id))
-        await session.commit()
-
-
 def _make_token(ctx: Context, user_id: str, email: str, permissions: list[str]) -> str:
     config = ctx.config.admin.auth
     claims = {
@@ -185,12 +160,12 @@ def admin_token(web_context: Context, admin_user_id: str) -> str:
 
 @pytest.fixture()
 def owner_token(web_context: Context, owner_user_id: str) -> str:
-    """Issue a valid JWT with agents and service-accounts permissions."""
+    """Issue a valid JWT with agents permissions."""
     return _make_token(
         web_context,
         owner_user_id,
         OWNER_EMAIL,
-        ["agents:read", "agents:write", "service-accounts:read", "service-accounts:write"],
+        ["agents:read", "agents:write"],
     )
 
 

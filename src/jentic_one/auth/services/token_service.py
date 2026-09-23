@@ -15,7 +15,6 @@ from jentic_one.admin.repos import (
     OAuthClientGrantRepository,
     OAuthClientRepository,
     RefreshTokenRepository,
-    ServiceAccountRepository,
     UserRepository,
 )
 from jentic_one.auth.services.errors import InvalidGrantError
@@ -141,8 +140,11 @@ async def _actor_is_active(session: AsyncSession, actor_id: str, actor_type: str
         agent = await AgentRepository.get_by_id(session, actor_id)
         return agent is not None and agent.status == ActorStatus.ACTIVE
     if actor_type == ActorType.SERVICE_ACCOUNT:
-        sa = await ServiceAccountRepository.get_by_id(session, actor_id)
-        return sa is not None and sa.status == ActorStatus.ACTIVE
+        # Theme-8 Phase 2 (M-3): the service-account surface is gone and every
+        # SA session was revoked at migration. Refuse explicitly — deleting
+        # this arm would fall through to ``return True`` below and make any
+        # surviving SA token fail OPEN.
+        return False
     if actor_type == ActorType.USER:
         user = await UserRepository.get_by_id(session, actor_id)
         return user is not None and user.active
@@ -565,7 +567,7 @@ class TokenService:
         effect immediately without forcing a re-mint — the token row's
         ``scopes`` column is only a mint-time snapshot.
 
-        Ephemeral minted tokens (``mint_task_token`` → ``issue_access_only``,
+        Ephemeral minted tokens (``issue_access_only``,
         ``is_ephemeral=True``) keep their frozen snapshot: their scopes are a
         deliberate downscoped subset of the host's grants and must not be
         re-broadened. User tokens also keep their snapshot (their permissions do

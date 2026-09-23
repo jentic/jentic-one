@@ -84,7 +84,7 @@ _INSERT_CREDENTIAL_BINDING = text(
 _SET_AGENT_STATUS = text("UPDATE agents SET status = :status WHERE id = :actor_id")
 _SELECT_SA_STAMP = text("SELECT migrated_to_actor_id FROM service_accounts WHERE id = :actor_id")
 # Stamp-guarded (theme-8 M4): raw SQL must not resurrect a row the migration
-# job stamped — the guard mirrors the service-layer ServiceAccountMigratedError.
+# job stamped.
 _SET_SERVICE_ACCOUNT_STATUS = text(
     "UPDATE service_accounts SET status = :status"
     " WHERE id = :actor_id AND migrated_to_actor_id IS NULL"

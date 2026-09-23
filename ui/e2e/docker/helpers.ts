@@ -199,20 +199,6 @@ export function uniqueSuffix(): string {
 	return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
 }
 
-/** POST /service-accounts → 201. Returns the created service-account id. */
-export async function createServiceAccount(
-	request: APIRequestContext,
-	name: string,
-	description = 'created by e2e',
-): Promise<string> {
-	const res = await request.post('/service-accounts', {
-		headers: authHeaders(),
-		data: { name, description },
-	});
-	expect(res.status(), `createServiceAccount failed: ${await res.text()}`).toBe(201);
-	return (await res.json()).id;
-}
-
 /**
  * POST /credentials → 201 (requires the credential-at-rest encryption keyset,
  * see config/local.yaml). Returns the credential id. Defaults to a bearer token.

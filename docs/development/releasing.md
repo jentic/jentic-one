@@ -88,9 +88,11 @@ the Deprecations table.
 - **`jntc_live_` toolkit keys are retired; migration to `sak_` is automatic.**
   No new keys are issued. Run `jentic_one retire-toolkit-keys` once: every
   existing key digest is migrated to a service account, and the **unchanged
-  plaintext keeps authenticating** — as that service account — for the
-  deprecation window. Watch `deprecated_toolkit_key_used` WARNING logs to find
-  holders still presenting the old key form, and rotate them to `sak_` keys.
+  plaintext keeps authenticating** for the deprecation window — as that
+  service account, and as its successor agent once the theme-8 migration
+  runs. Watch `deprecated_toolkit_key_used` WARNING logs to find holders still
+  presenting the old key form, and rotate them to the successor agent's `jak_`
+  key (`sak_` keys can no longer be issued).
 - **The toolkit management surface is gone.** All `/toolkits/*` and
   `/agents/{id}/toolkits*` routes now return `404`. The `toolkits:read`,
   `toolkits:write`, and `owner:toolkits:read` scopes are retired: no route
@@ -278,6 +280,33 @@ Run against **production data**; order matters.
    drop migrations require. Refused unless the verification passes in that
    same invocation.
 
+## Upgrading to the theme-8 Phase-2 release (service-account surface removed)
+
+**Breaking.** The service-account management and token surface is deleted;
+run the Phase-1 migration (above) first — the boot job still does it.
+
+- **Routes removed:** every `/service-accounts…` route (create, list, get,
+  approve/deny/disable/enable/archive, scopes, `:generate-api-key`) and
+  `POST /oauth/mint` now return `404`. The gateway
+  chart no longer routes `/service-accounts`.
+- **`client_credentials` grant removed:** `POST /oauth/token` with
+  `grant_type=client_credentials` returns `400 unsupported_grant_type`, and
+  `client_credentials` is gone from `grant_types_supported` in the
+  authorization-server metadata. Move holders to the successor agent's
+  `jak_` API key (or the jwt-bearer grant).
+- **SA sessions are dead:** an outstanding `service_account` access or
+  refresh token introspects inactive, cannot be refreshed, and is refused at
+  the broker.
+- **API keys keep working:** migrated `sak_`/`jntc_live_` plaintexts keep
+  authenticating as the successor agent; an unmigrated `sak_` key still
+  resolves through the SA fallback (and `GET /me` / MCP `me` still answer
+  for it) until Phase 4.
+- **Scopes retired:** `service-accounts:read`, `service-accounts:write` and
+  `owner:service-accounts:read` are no longer granted, listed, or implied by
+  `org:admin`; stored grants of them are tolerated (a re-submitted scope
+  set containing them is not a 422) and simply grant nothing.
+- **Actor directory:** `GET /actors` lists users and agents only.
+
 ## Deprecations
 
 Active deprecation windows are registered here (the named channel) and
@@ -288,7 +317,7 @@ runtime signal an operator can watch, and the earliest removal point.
 | Deprecated | Since | Runtime signal | Removal |
 | ---------- | ----- | -------------- | ------- |
 | `jntc_live_` toolkit API keys (theme-5 Phase 4). No new keys are issued (`POST /toolkits/{id}/keys` → `410 toolkit_keys_retired`); run `jentic_one retire-toolkit-keys` so existing plaintexts keep authenticating as their migrated service accounts (as their successor **agents** once theme-8 Phase 1 migrates them), then rotate holders to the successor's key. | The first release carrying theme-5 Phase 4 (opened 2026-09-11). | `deprecated_toolkit_key_used` WARNING log lines — one per resolve, naming the actor (service account, or successor agent after theme-8 migration) still presenting the retired key form. | The theme-5 toolkit-surface deletion release (Phase 5b), no earlier than **2026-12-01**. |
-| Service accounts (theme-8 Phase 1). Every SA is auto-migrated to a successor agent; the migrated `sak_`/`jntc_live_` plaintext keeps authenticating — as that agent. The SA management surface still answers reads, but mutations on migrated rows return `409 service_account_migrated`, and broker JWTs may no longer assert `actor_type=service_account`. Rotate holders to the successor agent's `jak_` key. | The first release carrying theme-8 Phase 1. | `service_account_fallback_resolve` WARNING log lines and the `auth_service_account_fallback_resolves` OTel counter — one per resolve still served by the SA fallback arm. | Theme-8 Phase 2 removes the SA surface; Phase 4 drops the tables (gated on the `--verify --acknowledge` sentinel). |
+| Service accounts (theme-8 Phase 1). Every SA is auto-migrated to a successor agent; the migrated `sak_`/`jntc_live_` plaintext keeps authenticating — as that agent. The SA management surface, `POST /oauth/mint` and the `client_credentials` grant were removed in theme-8 Phase 2, and broker JWTs may no longer assert `actor_type=service_account`. Rotate holders to the successor agent's `jak_` key. | The first release carrying theme-8 Phase 1. | `service_account_fallback_resolve` WARNING log lines and the `auth_service_account_fallback_resolves` OTel counter — one per resolve still served by the SA fallback arm. | Surface removed in theme-8 Phase 2; Phase 4 drops the tables (gated on the `--verify --acknowledge` sentinel). |
 
 
 ## One-time setup (repo/org admin)

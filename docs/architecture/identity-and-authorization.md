@@ -107,8 +107,7 @@ Scopes shared across surfaces are canonical constants in
   (`apis:read`, `executions:read`, `jobs:read`, `events:read`,
   `capabilities:read`), `catalog:import`, `credentials:connect` (start a
   vendor connect flow — narrower than `credentials:write`), and the
-  `owner:*:read` delegation scopes for resources, agents, and credentials
-  (not `owner:service-accounts:read`).
+  `owner:*:read` delegation scopes for resources, agents, and credentials.
 - **There is no self-service scope elevation.** Scopes are granted by an
   operator on the agent detail surface, so the privileged scopes —
   `org:admin`, `agents:write`, `overlays:confirm` — can never be reached

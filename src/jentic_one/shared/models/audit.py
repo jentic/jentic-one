@@ -51,6 +51,11 @@ class AuditTargetType(StrEnum):
     INVITE_TOKEN = "invite_token"
     EVENT = "event"
     EXECUTION_RECORD = "execution_record"
+    # Retired (theme-8 Phase 2): the service-account surface is gone. The
+    # member stays for the same reason as ACCESS_REQUEST below — historical
+    # rows carry it and ``/audit?target_type=service_account`` must keep
+    # parsing. The only remaining writer is the SA→agent migration job's
+    # per-account provenance rows (deleted with it in Phase 4).
     SERVICE_ACCOUNT = "service_account"
     TOKEN = "token"
     OVERLAY = "overlay"

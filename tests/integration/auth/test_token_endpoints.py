@@ -20,7 +20,6 @@ from jentic_one.admin.repos import (
     AccessTokenRepository,
     ActorScopeGrantRepository,
     AgentRepository,
-    ServiceAccountRepository,
     UserRepository,
 )
 from jentic_one.auth.services.errors import InvalidGrantError
@@ -92,17 +91,21 @@ async def _seed_agent(
 async def _seed_service_account(
     ctx: Context, *, owner_id: str, status: ActorStatus = ActorStatus.ACTIVE
 ) -> str:
+    # The SA repositories were deleted with the surface (theme-8 Phase 2);
+    # the ORM model survives until the Phase-4 table drop.
     async with ctx.admin_db.session() as session:
-        sa = await ServiceAccountRepository.create(
-            session,
+        sa = ServiceAccount(
             name="token-test-sa",
             owner_id=owner_id,
             registered_by=owner_id,
             created_by=_SEED_MARKER,
+            status=status,
         )
-        await ServiceAccountRepository.update_status(session, sa.id, status)
+        session.add(sa)
+        await session.flush()
+        sa_id = sa.id
         await session.commit()
-        return sa.id
+        return sa_id
 
 
 @pytest.fixture()
@@ -206,6 +209,24 @@ async def test_token_endpoint_unsupported_grant_type(
     with pytest.raises(InvalidGrantError, match="unsupported grant_type"):
         body = TokenRequest(grant_type="invalid_grant", refresh_token=None)
         await token_endpoint(request=request, response=response, body=body, token_svc=token_service)
+
+
+async def test_token_endpoint_client_credentials_grant_is_unsupported(
+    token_service: TokenService, clean_tokens: None
+) -> None:
+    """Theme-8 Phase 2 (D3): the service-account client-credentials arm is gone,
+    so ``grant_type=client_credentials`` answers ``unsupported_grant_type``."""
+    request = MagicMock()
+    request.headers = {}
+    response = MagicMock()
+    response.headers = {}
+
+    body = TokenRequest(
+        grant_type="client_credentials", client_id="sva_whatever", client_secret="jcs_x"
+    )
+    with pytest.raises(InvalidGrantError, match="unsupported grant_type") as exc_info:
+        await token_endpoint(request=request, response=response, body=body, token_svc=token_service)
+    assert exc_info.value.oauth_error_code == "unsupported_grant_type"
 
 
 async def test_invalid_refresh_token(token_service: TokenService, clean_tokens: None) -> None:
@@ -460,23 +481,21 @@ async def test_disabled_agent_cannot_refresh_to_fresh_tokens(
     assert refresh2.startswith("rt_")
 
 
-async def test_disabled_service_account_token_is_inactive(
+async def test_service_account_token_is_refused_even_when_sa_active(
     token_service: TokenService, integration_context: Context, clean_tokens: None
 ) -> None:
+    """Theme-8 Phase 2 (M-3): an SA token fails CLOSED — even for an ``active``
+    SA row. The ``_actor_is_active`` SA arm refuses explicitly; a bare arm
+    deletion would have fallen through to ``return True`` (fail open)."""
     owner_id = await _seed_user(integration_context, "usr_sa_owner")
     sa_id = await _seed_service_account(integration_context, owner_id=owner_id)
     access, refresh = await token_service.issue_pair(sa_id, ActorType.SERVICE_ACCOUNT, [])
 
     resolved = await token_service.resolve_access_token(access)
-    assert resolved is not None and resolved.active is True
-
-    async with integration_context.admin_db.session() as session:
-        await ServiceAccountRepository.update_status(session, sa_id, ActorStatus.DISABLED)
-        await session.commit()
-
-    resolved = await token_service.resolve_access_token(access)
     assert resolved is not None
     assert resolved.active is False
+    assert (await token_service.introspect(access))["active"] is False
+    assert (await token_service.introspect(refresh))["active"] is False
     with pytest.raises(InvalidGrantError, match="not active"):
         await token_service.refresh(refresh)
 
