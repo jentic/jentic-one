@@ -29,6 +29,13 @@ async function enableMocking() {
 	// module-agnostic — DEV + MSW only, tree-shaken from production builds.
 	const { installE2eTestHooks } = await import('@/mocks/handlers');
 	installE2eTestHooks(window as unknown as Record<string, unknown>);
+	// Opt-in review data layered over the defaults (`VITE_MSW_SCENARIO=review`).
+	if (import.meta.env.VITE_MSW_SCENARIO === 'review') {
+		const { installReviewScenario, reviewScenarioHandlers } =
+			await import('@/mocks/scenarios/review');
+		installReviewScenario();
+		worker.use(...reviewScenarioHandlers);
+	}
 	await worker.start({
 		onUnhandledRequest: 'bypass',
 		// Vite serves static assets (incl. the generated worker script) under
