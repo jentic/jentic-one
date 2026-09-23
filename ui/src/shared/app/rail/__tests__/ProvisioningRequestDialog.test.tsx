@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
-import { renderWithProviders, screen, waitFor, within, userEvent } from '@/__tests__/test-utils';
+import { renderWithProviders, screen, waitFor, userEvent } from '@/__tests__/test-utils';
 import { worker } from '@/mocks/browser';
 import { clearToken, setToken } from '@/shared/api';
 import {
@@ -10,6 +10,7 @@ import {
 	resetProvisioningWizardDrafts,
 } from '@/shared/app/rail/ProvisioningRequestDialog';
 import type { AccessRequest } from '@/shared/lib/accessRequests';
+import { makeMockApi } from '@/shared/credentials/mocks/handlers';
 
 /**
  * The 2-item provisioning flow (toolkits retired): a plan is
@@ -21,14 +22,17 @@ import type { AccessRequest } from '@/shared/lib/accessRequests';
  */
 
 // The real CreateCredentialFlow is a heavy two-step picker/form; the wizard
-// only cares about its `onCreated` callback. Stub it with a one-click
-// stand-in so the create path can be exercised without driving the form.
+// only cares about the API it pins and its `onCreated` callback. Stub it with a
+// one-click stand-in that names the pinned API, so the create path can be
+// exercised without driving the form.
 vi.mock('@/shared/credentials/components/CreateCredentialFlow', () => ({
 	CreateCredentialFlow: ({
 		open,
 		onCreated,
+		pinnedApi,
 	}: {
 		open: boolean;
+		pinnedApi?: { vendor: string; name: string; version: string };
 		onCreated: (info: {
 			credentialId: string;
 			name: string;
@@ -38,19 +42,26 @@ vi.mock('@/shared/credentials/components/CreateCredentialFlow', () => ({
 		}) => void;
 	}) =>
 		open ? (
-			<button
-				onClick={() =>
-					onCreated({
-						credentialId: 'cred_created_1',
-						name: 'Created credential',
-						type: 'api_key',
-						provider: 'manual',
-						needsConnect: false,
-					})
-				}
-			>
-				Mock create credential
-			</button>
+			<>
+				{pinnedApi && (
+					<p>
+						Form for {pinnedApi.vendor}/{pinnedApi.name}@{pinnedApi.version}
+					</p>
+				)}
+				<button
+					onClick={() =>
+						onCreated({
+							credentialId: 'cred_created_1',
+							name: 'Created credential',
+							type: 'api_key',
+							provider: 'manual',
+							needsConnect: false,
+						})
+					}
+				>
+					Mock create credential
+				</button>
+			</>
 		) : null,
 }));
 
@@ -294,6 +305,23 @@ describe('ProvisioningRequestDialog — operator-created credential (auth plan)'
 		const request = authPlanRequest();
 		stubDirectoryAndRequest(request);
 		stubEmptyCredentialList();
+		// The workspace knows the chain's API, which supplies the version the
+		// filed reference leaves out.
+		worker.use(
+			http.get('/apis', () =>
+				HttpResponse.json({
+					data: [
+						makeMockApi({
+							vendor: 'open-meteo-com',
+							name: 'forecast',
+							version: '1.2.0',
+						}).row,
+					],
+					has_more: false,
+					next_cursor: null,
+				}),
+			),
+		);
 		const toolkits = trackToolkitCalls();
 		let amendBody: unknown;
 		stubSubmitPath(request, { onAmend: (b) => (amendBody = b) });
@@ -303,9 +331,18 @@ describe('ProvisioningRequestDialog — operator-created credential (auth plan)'
 		const user = userEvent.setup();
 
 		// Auth chain: the credential step comes first, pre-scoped to the API.
-		expect(await screen.findByText('Connect a credential')).toBeInTheDocument();
-		await user.click(screen.getByRole('button', { name: /Connect credential/ }));
-		await user.click(await screen.findByRole('button', { name: 'Mock create credential' }));
+		// No saved credential serves the API, so adding one is already chosen.
+		expect(await screen.findByText(/^Choose a credential/)).toBeInTheDocument();
+		await screen.findByRole('radio', { name: /Add a new credential/, checked: true });
+		await waitFor(() =>
+			expect(screen.getByRole('button', { name: /^Add a credential for/ })).toBeEnabled(),
+		);
+		await user.click(screen.getByRole('button', { name: /^Add a credential for/ }));
+		// The form opens on the chain's API — no API picker in between.
+		expect(
+			await screen.findByText('Form for open-meteo-com/forecast@1.2.0'),
+		).toBeInTheDocument();
+		await user.click(screen.getByRole('button', { name: 'Mock create credential' }));
 
 		// Created → rules → review → approve.
 		await user.click(await screen.findByRole('button', { name: /^Review/ }));
@@ -343,8 +380,9 @@ describe('ProvisioningRequestDialog — operator-created credential (auth plan)'
 		);
 		const user = userEvent.setup();
 
-		await screen.findByText('Connect a credential');
-		await user.click(screen.getByRole('button', { name: /Connect credential/ }));
+		await screen.findByText(/^Choose a credential/);
+		await screen.findByRole('radio', { name: /Add a new credential/, checked: true });
+		await user.click(screen.getByRole('button', { name: /^Add a credential for/ }));
 		await user.click(await screen.findByRole('button', { name: 'Mock create credential' }));
 		await screen.findByRole('button', { name: /^Review/ });
 
@@ -377,8 +415,9 @@ describe('ProvisioningRequestDialog — operator-created credential (auth plan)'
 		const first = renderWithProviders(
 			<ProvisioningRequestDialog open request={authPlanRequest()} onClose={() => {}} />,
 		);
-		await screen.findByText('Connect a credential');
-		await user.click(screen.getByRole('button', { name: /Connect credential/ }));
+		await screen.findByText(/^Choose a credential/);
+		await screen.findByRole('radio', { name: /Add a new credential/, checked: true });
+		await user.click(screen.getByRole('button', { name: /^Add a credential for/ }));
 		await user.click(await screen.findByRole('button', { name: 'Mock create credential' }));
 		await screen.findByRole('button', { name: /^Review/ });
 		await user.click(screen.getByRole('button', { name: 'Close' }));
@@ -394,7 +433,7 @@ describe('ProvisioningRequestDialog — operator-created credential (auth plan)'
 		);
 		expect(await screen.findByRole('button', { name: /^Review/ })).toBeInTheDocument();
 		expect(
-			screen.queryByRole('button', { name: /Connect credential/ }),
+			screen.queryByRole('button', { name: /Add a credential for/ }),
 		).not.toBeInTheDocument();
 	});
 });
@@ -739,13 +778,13 @@ describe('ProvisioningRequestDialog — adopt existing credentials (#826)', () =
 		);
 		const user = userEvent.setup();
 
-		// The credential step offers the vendor-scoped existing credentials;
-		// staging one and committing advances straight to rules — no create
-		// form, no connect flow.
-		const picker = await screen.findByLabelText(/use an existing credential/i);
+		// The credential step offers the vendor-scoped existing credentials; the
+		// only active one is chosen already, and committing advances straight to
+		// rules — no create form, no connect flow.
+		const option = await screen.findByRole('radio', { name: /Weather key/, checked: true });
 		// No satisfaction hint on this request — the nudge must not render.
 		expect(screen.queryByText(/already wired/i)).not.toBeInTheDocument();
-		await user.selectOptions(picker, 'cred_exist');
+		await user.click(option);
 		await user.click(screen.getByRole('button', { name: 'Use this credential' }));
 		await user.click(await screen.findByRole('button', { name: /^Review/ }));
 
@@ -786,8 +825,7 @@ describe('ProvisioningRequestDialog — adopt existing credentials (#826)', () =
 		);
 		const user = userEvent.setup();
 
-		const picker = await screen.findByLabelText(/use an existing credential/i);
-		await user.selectOptions(picker, 'cred_exist');
+		await screen.findByRole('radio', { name: /Weather key/, checked: true });
 		await user.click(screen.getByRole('button', { name: 'Use this credential' }));
 		await screen.findByRole('button', { name: /^Review/ });
 
@@ -822,12 +860,9 @@ describe('ProvisioningRequestDialog — adopt existing credentials (#826)', () =
 			<ProvisioningRequestDialog open request={request} onClose={() => {}} />,
 		);
 
-		const credPicker = await screen.findByLabelText(/use an existing credential/i);
+		expect(await screen.findByRole('radio', { name: /Weather key/ })).toBeVisible();
 		expect(queriedVendor).toBe('open-meteo-com');
-		expect(within(credPicker).getByRole('option', { name: /Weather key/ })).toBeVisible();
-		expect(
-			within(credPicker).queryByRole('option', { name: /Old disabled key/ }),
-		).not.toBeInTheDocument();
+		expect(screen.queryByRole('radio', { name: /Old disabled key/ })).not.toBeInTheDocument();
 	});
 
 	it('names the wired credential, floats it in the picker, and reviews honestly on adopt', async () => {
@@ -856,14 +891,13 @@ describe('ProvisioningRequestDialog — adopt existing credentials (#826)', () =
 		const nudge = await screen.findByText(/already wired to/i);
 		await waitFor(() => expect(nudge).toHaveTextContent('Weather key'));
 
-		const picker = await screen.findByLabelText(/use an existing credential/i);
-		const options = within(picker).getAllByRole('option');
-		expect(options[1]).toHaveTextContent(/Weather key .* — already linked to this agent/);
+		// The wired credential is chosen already and marked on its card.
+		const option = await screen.findByRole('radio', { name: /Weather key/, checked: true });
+		expect(option.closest('label')).toHaveTextContent('Already linked');
 
 		// Adopt it and reach review: the note is the adopted variant, honest
 		// about the rules being updated (an approve REPLACES binding rules —
 		// never "nothing changes").
-		await user.selectOptions(picker, 'cred_exist');
 		await user.click(screen.getByRole('button', { name: 'Use this credential' }));
 		await user.click(await screen.findByRole('button', { name: /^Review/ }));
 		expect(
@@ -910,13 +944,10 @@ describe('ProvisioningRequestDialog — adopt existing credentials (#826)', () =
 		);
 		const user = userEvent.setup();
 
-		const picker = await screen.findByLabelText(/use an existing credential/i);
-		const options = within(picker).getAllByRole('option');
-		expect(options[1]).toHaveTextContent(/not connected yet/);
-
-		// No warning until the risky option is actually staged.
-		expect(screen.queryByText(/was never connected/i)).not.toBeInTheDocument();
-		await user.selectOptions(picker, 'cred_oauth_pending');
+		// The only serving credential is chosen already, so its card flags the
+		// missing sign-in and the warning shows while it is still only staged.
+		const option = await screen.findByRole('radio', { name: /GitHub OAuth/, checked: true });
+		expect(option.closest('label')).toHaveTextContent('Sign-in needed');
 		expect(await screen.findByText(/was never connected/i)).toBeInTheDocument();
 		// The pick is still allowed — warned, not blocked.
 		expect(screen.getByRole('button', { name: 'Use this credential' })).toBeEnabled();
@@ -968,7 +999,7 @@ describe('ProvisioningRequestDialog — adopt existing credentials (#826)', () =
 			await screen.findByText(/couldn.t load your existing credentials/i),
 		).toBeInTheDocument();
 		await user.click(screen.getByRole('button', { name: 'Retry' }));
-		expect(await screen.findByLabelText(/use an existing credential/i)).toBeInTheDocument();
+		expect(await screen.findByRole('radio', { name: /Weather key/ })).toBeInTheDocument();
 	});
 });
 

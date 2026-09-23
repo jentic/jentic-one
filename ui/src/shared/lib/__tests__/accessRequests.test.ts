@@ -57,6 +57,17 @@ describe('itemTargetLabel', () => {
 		).toBe('github/rest@1.0');
 	});
 
+	it('names the API of a bind even once a credential is chosen for it', () => {
+		expect(
+			itemTargetLabel(
+				item({
+					resource_id: 'cred_123',
+					resource_reference: { vendor: 'github', name: 'github-api' },
+				}),
+			),
+		).toBe('github/github-api');
+	});
+
 	it('falls back to api_reference, then resource_type', () => {
 		expect(
 			itemTargetLabel(
@@ -79,10 +90,10 @@ describe('isSpecificResource', () => {
 describe('itemActionSummary', () => {
 	it('summarises the new vocabulary in agent↔credential terms', () => {
 		expect(itemActionSummary(item({ resource_type: 'credential', action: 'bind' }))).toBe(
-			'Bind agent to credential',
+			'Let the agent call this API',
 		);
 		expect(itemActionSummary(item({ resource_type: 'credential', action: 'provision' }))).toBe(
-			'Provision a credential',
+			'Set up a new credential for this API',
 		);
 		expect(itemActionSummary(item({ resource_type: 'scope', action: 'grant' }))).toBe(
 			'Platform scope',
@@ -283,24 +294,41 @@ describe('ruleSummary', () => {
 });
 
 describe('summarizeAccessRequest', () => {
-	it('renders "type · action" for a single item', () => {
-		expect(summarizeAccessRequest(request([item()]))).toBe('credential · bind');
+	const github = { vendor: 'github', name: 'github-api' };
+	const stripe = { vendor: 'stripe', name: 'stripe-api' };
+
+	it('names the API a single bind gives access to', () => {
+		expect(summarizeAccessRequest(request([item({ resource_reference: github })]))).toBe(
+			'Access to github/github-api',
+		);
 	});
 
-	it('appends "+N more" for multi-item requests', () => {
+	it('folds a plan\'s bind into its provision and appends "+N more"', () => {
 		expect(
 			summarizeAccessRequest(
 				request([
-					item({ resource_type: 'credential', action: 'provision' }),
-					item({ id: 'ari_2' }),
-					item({ id: 'ari_3' }),
+					item({ action: 'provision', resource_reference: stripe }),
+					item({ id: 'ari_2', resource_reference: stripe }),
+					item({ id: 'ari_3', resource_reference: github }),
+					item({
+						id: 'ari_4',
+						resource_type: 'scope',
+						action: 'grant',
+						resource_id: 'capabilities:execute',
+					}),
 				]),
 			),
-		).toBe('credential · provision +2 more');
+		).toBe('A new credential for stripe/stripe-api +2 more');
 	});
 
-	it('falls back to "access" for an empty item list', () => {
-		expect(summarizeAccessRequest(request([]))).toBe('access');
+	it('labels retired toolkit rows as history', () => {
+		expect(
+			summarizeAccessRequest(request([item({ resource_type: 'toolkit', action: 'bind' })])),
+		).toBe('Retired toolkit access');
+	});
+
+	it('falls back to "Access" for an empty item list', () => {
+		expect(summarizeAccessRequest(request([]))).toBe('Access');
 	});
 });
 

@@ -55,11 +55,19 @@ function seed(
 
 let events: EventRow[] = [];
 
+/** Append rail events to the current store. Resets with `resetRailEventsStore()`. */
+export function seedRailEvents(
+	rows: Array<Partial<EventRow> & Pick<EventRow, 'event_id' | 'type' | 'severity' | 'summary'>>,
+): void {
+	for (const over of rows) events.push(seed(over));
+}
+
 interface AccessRequestItemRow {
 	id: string;
 	resource_type: string;
 	action: string;
 	resource_id: string | null;
+	resource_reference?: Record<string, unknown> | null;
 	status: string;
 	decided_by: string | null;
 	decided_at: string | null;
@@ -99,6 +107,12 @@ function arItem(
 
 let accessRequests: AccessRequestRow[] = [];
 
+/** Records of the amendments the mock received, for test assertions. */
+export const amendCalls: {
+	request_id: string;
+	items: { item_id: string; resource_id: string | null }[];
+}[] = [];
+
 /** Records of the decisions the mock received, for test assertions. */
 export const decideCalls: {
 	request_id: string;
@@ -107,6 +121,7 @@ export const decideCalls: {
 
 export function resetRailEventsStore(): void {
 	decideCalls.length = 0;
+	amendCalls.length = 0;
 	accessRequests = [
 		{
 			id: 'ar_1',
@@ -122,24 +137,24 @@ export function resetRailEventsStore(): void {
 			items: [
 				arItem({
 					id: 'ari_1',
-					resource_type: 'toolkit',
-					action: 'use',
-					status: 'pending',
-				}),
-				arItem({
-					id: 'ari_2',
 					resource_type: 'credential',
 					action: 'bind',
-					// HISTORICAL shape: `to_*` only exists on rows filed before
-					// toolkits were retired from this flow — kept here so the
-					// read-only "→ toolkit …" rendering stays exercised in dev.
-					to_type: 'toolkit',
-					to_id: 'tk_github',
+					// Names the API, not a credential: the reviewer picks which
+					// credential the agent uses.
+					resource_reference: { vendor: 'github', name: 'github-api' },
 					status: 'pending',
 					// A deliberately LARGE allow/block grant (~100 operations) so the
 					// OperationsDialog + its search/scroll are exercised in dev. The
 					// first allow op stays `repos/get` so existing assertions hold.
 					rules: bigGitHubRules(),
+				}),
+				arItem({
+					id: 'ari_2',
+					resource_type: 'credential',
+					action: 'bind',
+					resource_reference: { vendor: 'stripe', name: 'stripe-api' },
+					status: 'pending',
+					rules: [{ effect: 'allow', methods: ['GET'], operations: ['charges/list'] }],
 				}),
 				arItem({
 					id: 'ari_scope',
@@ -164,15 +179,24 @@ export function resetRailEventsStore(): void {
 			items: [
 				arItem({
 					id: 'ari_3',
-					resource_type: 'toolkit',
-					action: 'use',
+					resource_type: 'credential',
+					action: 'bind',
+					resource_reference: { vendor: 'stripe', name: 'stripe-api' },
 					status: 'pending',
+					rules: [
+						{
+							effect: 'allow',
+							methods: ['GET', 'POST'],
+							operations: ['charges/create'],
+						},
+					],
 				}),
 			],
 		},
 		// Decided history for agnt_active_1 — backs the card's Approved / Denied /
 		// All filters (#619). The detail card defaults to pending, so these only
-		// surface when an operator pulls up the actor's history.
+		// surface when an operator pulls up the actor's history. `ar_3` is a
+		// retired toolkit grant, the shape such history keeps.
 		{
 			id: 'ar_3',
 			actor_id: 'agnt_active_1',
@@ -432,6 +456,29 @@ export const railEventsHandlers = [
 		const allDenied = ar.items.every((i) => i.status === 'denied');
 		const allApproved = ar.items.every((i) => i.status === 'approved');
 		ar.status = allDenied ? 'denied' : allApproved ? 'approved' : 'partially_approved';
+		return HttpResponse.json(ar);
+	}),
+	// Writes the reviewer's chosen credential onto a pending item.
+	http.post(/\/access-requests\/([^/]+):amend$/, async ({ request }) => {
+		const match = new URL(request.url).pathname.match(/\/access-requests\/([^/]+):amend$/);
+		const requestId = match ? decodeURIComponent(match[1]) : '';
+		const body = (await request.json().catch(() => ({}))) as {
+			items?: { item_id: string; resource_id?: string | null }[];
+		};
+		const ar = accessRequests.find((r) => r.id === requestId);
+		if (!ar) return new HttpResponse(null, { status: 404 });
+		amendCalls.push({
+			request_id: requestId,
+			items: (body.items ?? []).map((i) => ({
+				item_id: i.item_id,
+				resource_id: i.resource_id ?? null,
+			})),
+		});
+		for (const amendment of body.items ?? []) {
+			const item = ar.items.find((i) => i.id === amendment.item_id);
+			if (item?.status === 'pending' && amendment.resource_id)
+				item.resource_id = amendment.resource_id;
+		}
 		return HttpResponse.json(ar);
 	}),
 	http.get('/access-requests/:id', ({ params }) => {

@@ -38,7 +38,7 @@ describe('access-request routing (all shapes)', () => {
 		);
 		// The wizard renders from the request prop (no fetch needed on open).
 		await waitFor(() => expect(screen.getByText('Set up access')).toBeInTheDocument());
-		expect(screen.getByText('Connect a credential')).toBeInTheDocument();
+		expect(screen.getByText(/^Choose a credential/)).toBeInTheDocument();
 	});
 
 	// The rail only carries the request ID on the event token, so it opens this
@@ -57,7 +57,7 @@ describe('access-request routing (all shapes)', () => {
 			/>,
 		);
 		await waitFor(() => expect(screen.getByText('Set up access')).toBeInTheDocument());
-		expect(screen.getByText('Connect a credential')).toBeInTheDocument();
+		expect(screen.getByText(/^Choose a credential/)).toBeInTheDocument();
 	});
 
 	// A `credential:provision` request whose bind can't join a chain is a plan

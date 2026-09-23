@@ -22,6 +22,7 @@ import type {
 } from '@/shared/api';
 import { toast } from '@/shared/ui';
 import { apiRefDisplayName } from '@/shared/lib';
+import { slugifyApiField } from '@/shared/lib/apiSlug';
 import { useEagerCursorDrain, type DrainedList } from '@/shared/hooks/useEagerCursorDrain';
 import {
 	fetchPublicSpec,
@@ -103,6 +104,38 @@ export function apiRowToSelected(row: ApiResponse): SelectedApi {
 		apiId: row.catalog_api_id ?? undefined,
 		securitySchemeTypes: row.security_schemes ?? [],
 		label,
+	};
+}
+
+/**
+ * The workspace API a filed reference names, as a pick — so a flow that already
+ * knows the API opens the credential form for it rather than asking again.
+ * Filed references often omit the version; the workspace row supplies it (the
+ * named version when the reference carries one, else the first row listed).
+ * A reference that names an exact version pins even without a workspace row.
+ * Null when neither the workspace nor the reference pins one API.
+ */
+export function workspaceApiFor(
+	rows: readonly ApiResponse[],
+	ref: { vendor: string; name?: string | null; version?: string | null },
+	label?: string,
+): SelectedApi | null {
+	if (!ref.name) return null;
+	const vendor = slugifyApiField(ref.vendor);
+	const name = slugifyApiField(ref.name);
+	const matches = rows.filter(
+		(row) =>
+			slugifyApiField(row.api.vendor) === vendor && slugifyApiField(row.api.name) === name,
+	);
+	const row = matches.find((r) => r.api.version === ref.version) ?? matches[0];
+	if (row) return apiRowToSelected(row);
+	if (!ref.version) return null;
+	return {
+		source: 'local',
+		vendor: ref.vendor,
+		name: ref.name,
+		version: ref.version,
+		label: label ?? `${ref.vendor}/${ref.name}`,
 	};
 }
 

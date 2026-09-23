@@ -24,12 +24,12 @@ import {
 	preflightApis,
 	preflightTally,
 	preflightTallyLabel,
-	type CredentialChoice,
 	type PreflightItem,
 	type PreflightOutcome,
 } from '@/modules/agents/lib/apiPreflight';
 import type { CredentialBindingEntity } from '@/modules/agents/api/types';
-import { CredentialOptions } from '@/modules/agents/components/flat/CredentialOptions';
+import type { CredentialChoice } from '@/shared/credentials/lib/credentialIdentity';
+import { CredentialOptions } from '@/shared/credentials/components/CredentialOptions';
 
 /** Badge colour per outcome — cheapest reads as success, costliest as neutral. */
 const OUTCOME_VARIANT: Record<PreflightOutcome, 'default' | 'success' | 'warning' | 'pending'> = {

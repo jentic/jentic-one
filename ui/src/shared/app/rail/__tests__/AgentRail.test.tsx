@@ -29,7 +29,7 @@ import {
 	type StreamEvent,
 } from '@/shared/lib/agentStream';
 import type { EventResponse } from '@/shared/api';
-import { decideCalls } from '@/shared/app/rail/mocks/handlers';
+import { amendCalls, decideCalls } from '@/shared/app/rail/mocks/handlers';
 import { listAccessRequests, getAccessRequest } from '@/shared/lib/accessRequests';
 
 /** A location probe so navigation from the rail can be asserted. */
@@ -977,21 +977,30 @@ describe('AgentRail — shell-mounted live surface', () => {
 		await user.click(screen.getByRole('button', { name: 'View' }));
 
 		// The dialog loads the request's items (ar_1 has three pending items: a
-		// toolkit use, a credential bind with operation rules, and a platform scope
-		// grant) into the "Awaiting Decision" rail, labelled by their target.
+		// GitHub bind with a long operation list, a Stripe bind, and a platform
+		// scope grant) into the "Awaiting Decision" rail, labelled by the API.
 		await screen.findByText('Awaiting Decision');
 		await screen.findByText(/is requesting access/i);
-		const cards = await screen.findAllByText('toolkit');
-		expect(cards.length).toBeGreaterThanOrEqual(1);
-		expect((await screen.findAllByText('credential')).length).toBeGreaterThanOrEqual(1);
+		expect((await screen.findAllByText('github/github-api')).length).toBeGreaterThanOrEqual(1);
+		expect(screen.getAllByText('stripe/stripe-api').length).toBeGreaterThanOrEqual(1);
+		expect(screen.queryByText(/toolkit/i)).not.toBeInTheDocument();
 
-		// The credential.bind item carries permission rules, so the card surfaces a
-		// read-only "Operations granted" summary with allow/block effects and the
-		// concrete operationIds the binding will enforce on approval.
-		expect(await screen.findByText(/Operations granted/i)).toBeInTheDocument();
-		expect(screen.getByText('Allow')).toBeInTheDocument();
-		expect(screen.getByText('Block')).toBeInTheDocument();
+		// Each bind carries permission rules, so its card surfaces a read-only
+		// "Operations granted" summary with allow/block effects and the concrete
+		// operationIds the binding will enforce on approval.
+		expect((await screen.findAllByText(/Operations granted/i)).length).toBe(2);
+		expect(screen.getAllByText('Allow').length).toBeGreaterThanOrEqual(1);
+		expect(screen.getAllByText('Block').length).toBeGreaterThanOrEqual(1);
 		expect(screen.getByText('repos/get')).toBeInTheDocument();
+
+		// Each bind asks which credential to use; the one saved credential for each
+		// API is preselected.
+		expect(
+			await screen.findByRole('radio', { name: /GitHub PAT/, checked: true }),
+		).toBeInTheDocument();
+		expect(
+			await screen.findByRole('radio', { name: /Stripe live key/, checked: true }),
+		).toBeInTheDocument();
 
 		// The scope.grant item gets its own "Platform scope" treatment (the scope
 		// string as the headline), never mistaken for a per-resource grant.
@@ -1000,9 +1009,12 @@ describe('AgentRail — shell-mounted live surface', () => {
 		).toBeInTheDocument();
 		expect(screen.getAllByText('Platform scope').length).toBeGreaterThanOrEqual(1);
 
-		// Approve all (toolkit + credential + scope), then move to confirm and submit.
+		// Approve all, then move to confirm — which names the credential each bind
+		// uses — and submit.
 		await user.click(screen.getByRole('button', { name: 'Approve all' }));
 		await user.click(screen.getByRole('button', { name: /Review & submit/i }));
+		expect(await screen.findByText('GitHub PAT')).toBeInTheDocument();
+		expect(screen.getByText('Stripe live key')).toBeInTheDocument();
 		await user.click(screen.getByRole('button', { name: /Confirm decision/i }));
 
 		await waitFor(() => {
@@ -1011,6 +1023,16 @@ describe('AgentRail — shell-mounted live surface', () => {
 			expect(decideCalls[0].items).toHaveLength(3);
 			expect(decideCalls[0].items.every((i) => i.decision === 'approved')).toBe(true);
 		});
+		// The chosen credentials are recorded on the binds before the decision.
+		expect(amendCalls).toEqual([
+			{
+				request_id: 'ar_1',
+				items: [
+					{ item_id: 'ari_1', resource_id: 'cred_github_1' },
+					{ item_id: 'ari_2', resource_id: 'cred_stripe_1' },
+				],
+			},
+		]);
 		// A success terminal screen confirms the grant.
 		await screen.findByText('Access granted');
 	});
@@ -1022,34 +1044,38 @@ describe('AgentRail — shell-mounted live surface', () => {
 		await user.click(screen.getByRole('button', { name: 'View' }));
 		await screen.findByText('Awaiting Decision');
 
-		// Approve the first item (its card's Approve button).
+		// Approve the first item (its card's Approve button) once its credential
+		// is preselected.
+		await screen.findByRole('radio', { name: /GitHub PAT/, checked: true });
 		await user.click(screen.getAllByRole('button', { name: 'Approve' })[0]);
 
 		// Deny the second item: clicking its card's "Deny {label}" affordance
 		// expands the reason field INLINE on the card. The reason must be typed
 		// before "Confirm deny" finalises it into the Denied lane.
-		await user.click(screen.getByRole('button', { name: /^Deny credential$/i }));
+		await user.click(screen.getByRole('button', { name: /^Deny stripe\/stripe-api$/i }));
 		const reason = screen.getByLabelText(/Why deny\?/i);
 		await user.click(reason);
-		await user.paste('Only the toolkit is needed, not the credential.');
+		await user.paste('Only GitHub is needed, not Stripe.');
 		await user.click(screen.getByRole('button', { name: /Confirm deny/i }));
 
-		// Undo the toolkit approval, then re-approve it — the chip's "Move back to
+		// Undo the GitHub approval, then re-approve it — the chip's "Move back to
 		// pending" affordance returns the item to the rail (client-side draft only).
-		await user.click(screen.getByRole('button', { name: /Move toolkit back to pending/i }));
+		await user.click(
+			screen.getByRole('button', { name: /Move github\/github-api back to pending/i }),
+		);
 		await user.click(screen.getAllByRole('button', { name: 'Approve' })[0]);
 
 		// Reason was captured inline, so the confirm step submits straight away.
 		await user.click(screen.getByRole('button', { name: /Review & submit/i }));
 
 		// Traceability: the confirm step mirrors step 1 for DENIED items too — the
-		// denied credential.bind still shows its "Operations granted" summary, and
-		// its reason stays in an EDITABLE field (never a read-only preview that
-		// would unmount on keystroke), so a reviewer who denied fast can see and
-		// refine exactly what they turned down before submitting.
-		expect(await screen.findByText(/Operations granted/i)).toBeInTheDocument();
+		// denied Stripe bind still shows its "Operations granted" summary, and its
+		// reason stays in an EDITABLE field (never a read-only preview that would
+		// unmount on keystroke), so a reviewer who denied fast can see and refine
+		// exactly what they turned down before submitting.
+		expect((await screen.findAllByText(/Operations granted/i)).length).toBe(2);
 		expect(screen.getByLabelText(/Reason \(sent back to the agent\)/i)).toHaveValue(
-			'Only the toolkit is needed, not the credential.',
+			'Only GitHub is needed, not Stripe.',
 		);
 
 		await user.click(screen.getByRole('button', { name: /Confirm decision/i }));
@@ -1061,8 +1087,12 @@ describe('AgentRail — shell-mounted live surface', () => {
 			expect(items.find((i) => i.item_id === 'ari_1')?.decision).toBe('approved');
 			const denied = items.find((i) => i.item_id === 'ari_2');
 			expect(denied?.decision).toBe('denied');
-			expect(denied?.decision_reason).toBe('Only the toolkit is needed, not the credential.');
+			expect(denied?.decision_reason).toBe('Only GitHub is needed, not Stripe.');
 		});
+		// Only the approved bind gets a credential recorded.
+		expect(amendCalls).toEqual([
+			{ request_id: 'ar_1', items: [{ item_id: 'ari_1', resource_id: 'cred_github_1' }] },
+		]);
 	});
 
 	it('lets the operator caption reasonless "Deny all" items in the confirm step without the field unmounting', async () => {

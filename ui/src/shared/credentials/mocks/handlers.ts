@@ -80,6 +80,11 @@ export function resetCredentialsStore(seed: Credential[] = []): void {
 	connectAutoCompletes = true;
 }
 
+/** Append credentials to the current store, keeping what is already there. */
+export function seedMockCredentials(rows: Credential[]): void {
+	store.push(...rows);
+}
+
 /** Build a redacted credential for seeding tests. */
 export function makeMockCredential(overrides: Partial<Credential> = {}): Credential {
 	seq += 1;

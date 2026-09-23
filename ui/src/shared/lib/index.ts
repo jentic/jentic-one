@@ -21,6 +21,7 @@ export {
 	itemActionSummary,
 	scopeLabel,
 	summarizeAccessRequest,
+	isRetiredItem,
 	ACCESS_REQUEST_STATUS_VARIANT,
 	rulesAreEnforceable,
 	parseItemRules,

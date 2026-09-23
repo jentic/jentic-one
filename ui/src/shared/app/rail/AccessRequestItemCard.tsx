@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import { motion } from 'framer-motion';
 import { CheckCircle2, Info, Key, KeyRound, MessageSquare, X, Zap } from 'lucide-react';
 import { Button } from '@/shared/ui/Button';
@@ -39,6 +39,10 @@ import { OperationsSummary } from '@/shared/app/rail/OperationsSummary';
  * IS the scope string) — it gets its own "Platform scope" treatment so it's
  * never mistaken for a narrow per-resource grant.
  *
+ * A host can slot extra content above the action block (`children`) — the
+ * dialog puts a bind's credential choice there — and hold Approve back until
+ * that content is complete (`approveDisabled` with an `approveHint`).
+ *
  * Approve drafts the item `approved`. Deny flips the card into an INLINE deny
  * state — the reason field expands in place (rather than being buried in a
  * later step), so the operator writes the "no, because…" exactly where they
@@ -53,6 +57,16 @@ interface AccessRequestItemCardProps {
 	onStartDeny: () => void;
 	onCancelDeny: () => void;
 	onReasonChange: (reason: string) => void;
+	/** Content above the action block, e.g. a bind's credential choice. */
+	children?: ReactNode;
+	/** Hold Approve back until the host's content is complete. */
+	approveDisabled?: boolean;
+	/** What Approve is waiting for, shown under it while disabled. */
+	approveHint?: string;
+	/** Names what Approve does when it does more than approve (e.g. adds a credential first). */
+	approveLabel?: string;
+	/** Approve's action is starting up. */
+	approveBusy?: boolean;
 }
 
 export function AccessRequestItemCard({
@@ -63,6 +77,11 @@ export function AccessRequestItemCard({
 	onStartDeny,
 	onCancelDeny,
 	onReasonChange,
+	children,
+	approveDisabled = false,
+	approveHint,
+	approveLabel = 'Approve',
+	approveBusy = false,
 }: AccessRequestItemCardProps) {
 	const scopeGrant = isScopeGrant(item);
 	const label = scopeGrant ? scopeLabel(item) : itemTargetLabel(item);
@@ -81,10 +100,6 @@ export function AccessRequestItemCard({
 		.replace(/[^a-zA-Z0-9]/g, '')
 		.slice(0, 2)
 		.toUpperCase();
-	// HISTORICAL: `to_*` only exists on rows decided before toolkits were
-	// retired from this flow (the credential→toolkit assignment). Render the
-	// stored strings read-only; new items never carry them.
-	const assignedTo = item.to_id ? `${item.to_type ?? 'target'} ${item.to_id}` : null;
 	// Shared permission rule set governing a credential:bind (the alternative
 	// policy carrier to inline rules) — surfaced so the reviewer sees WHICH
 	// policy applies, not just that one exists.
@@ -178,11 +193,6 @@ export function AccessRequestItemCard({
 									Specific resource
 								</span>
 							)}
-							{assignedTo && (
-								<span className="bg-accent-orange/10 text-accent-orange rounded px-1.5 py-0.5 font-medium">
-									&rarr; {assignedTo}
-								</span>
-							)}
 							{ruleSetId && (
 								<span
 									className="bg-accent-blue/10 text-accent-blue rounded px-1.5 py-0.5 font-medium"
@@ -232,6 +242,8 @@ export function AccessRequestItemCard({
 						</span>
 					</div>
 				)}
+
+				{children}
 
 				{/* Action block pinned to the bottom (`mt-auto`) so the Approve
 				    button aligns across cards of differing content height — e.g. a
@@ -284,14 +296,31 @@ export function AccessRequestItemCard({
 							</div>
 						</motion.div>
 					) : (
-						<button
-							type="button"
-							onClick={onApprove}
-							className="bg-accent-green/10 text-accent-green hover:bg-accent-green/20 inline-flex w-full items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-sm font-semibold transition-colors"
-						>
-							<CheckCircle2 className="h-4 w-4" aria-hidden="true" />
-							Approve
-						</button>
+						<>
+							<button
+								type="button"
+								onClick={onApprove}
+								disabled={approveDisabled || approveBusy}
+								aria-busy={approveBusy || undefined}
+								aria-describedby={
+									approveDisabled && approveHint
+										? `ar-approve-hint-${item.id}`
+										: undefined
+								}
+								className="bg-accent-green/10 text-accent-green hover:bg-accent-green/20 disabled:hover:bg-accent-green/10 inline-flex w-full items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+							>
+								<CheckCircle2 className="h-4 w-4" aria-hidden="true" />
+								{approveLabel}
+							</button>
+							{approveDisabled && approveHint && (
+								<p
+									id={`ar-approve-hint-${item.id}`}
+									className="text-muted-foreground mt-1.5 text-center text-[11px]"
+								>
+									{approveHint}
+								</p>
+							)}
+						</>
 					)}
 				</div>
 			</div>

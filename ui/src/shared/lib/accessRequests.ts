@@ -301,25 +301,31 @@ export async function decideAllPending(
 	return decideAccessRequest(requestId, decisions);
 }
 
+/** `vendor/name@version` from an item's API reference, or null when it names none. */
+function referenceLabel(item: AccessRequestItem): string | null {
+	const ref = item.resource_reference;
+	if (!ref) return null;
+	const vendor = typeof ref.vendor === 'string' ? ref.vendor : undefined;
+	const name = typeof ref.name === 'string' ? ref.name : undefined;
+	const version = typeof ref.version === 'string' ? ref.version : undefined;
+	const parts = [vendor, name].filter(Boolean).join('/');
+	if (parts) return version ? `${parts}@${version}` : parts;
+	const apiRef = typeof ref.api_reference === 'string' ? ref.api_reference : undefined;
+	return apiRef ?? null;
+}
+
 /**
  * A human-readable label for an item's target. The item is a fully specified
  * `{resource_type, action, resource_id | resource_reference, to_*}`; we surface
  * the most identifying string available — an explicit id, an api-reference
- * triple, or the resource_type as a last resort.
+ * triple, or the resource_type as a last resort. A `credential:bind` names the
+ * API it serves even once a credential is chosen for it: the API is what the
+ * reviewer recognises, the credential id is not.
  */
 export function itemTargetLabel(item: AccessRequestItem): string {
-	if (item.resource_id) return item.resource_id;
-	const ref = item.resource_reference;
-	if (ref) {
-		const vendor = typeof ref.vendor === 'string' ? ref.vendor : undefined;
-		const name = typeof ref.name === 'string' ? ref.name : undefined;
-		const version = typeof ref.version === 'string' ? ref.version : undefined;
-		const parts = [vendor, name].filter(Boolean).join('/');
-		if (parts) return version ? `${parts}@${version}` : parts;
-		const apiRef = typeof ref.api_reference === 'string' ? ref.api_reference : undefined;
-		if (apiRef) return apiRef;
-	}
-	return item.resource_type;
+	const api = referenceLabel(item);
+	if (api && item.resource_type === 'credential' && item.action === 'bind') return api;
+	return item.resource_id || api || item.resource_type;
 }
 
 /**
@@ -340,8 +346,8 @@ export function isSpecificResource(item: AccessRequestItem): boolean {
  */
 export function itemActionSummary(item: AccessRequestItem): string {
 	const key = `${item.resource_type}:${item.action}`;
-	if (key === 'credential:bind') return 'Bind agent to credential';
-	if (key === 'credential:provision') return 'Provision a credential';
+	if (key === 'credential:bind') return 'Let the agent call this API';
+	if (key === 'credential:provision') return 'Set up a new credential for this API';
 	if (key === 'scope:grant') return 'Platform scope';
 	return item.resource_type;
 }
@@ -362,17 +368,44 @@ export function scopeLabel(item: AccessRequestItem): string {
 }
 
 /**
- * One-line queue-row summary of a request's items: "toolkit · bind +2 more".
- * The single copy of this presentation for the OSS queue surfaces (dashboard
- * queue page, per-actor card). Richer consumers that resolve
- * target names client-side (e.g. the enterprise console) extend rather than
- * replace this.
+ * True for an item of a retired kind — a historical `toolkit:*` row. The server
+ * no longer accepts them, so they only appear in decided history: render them
+ * read-only, never offer them for a decision.
+ */
+export function isRetiredItem(item: AccessRequestItem): boolean {
+	return item.resource_type === 'toolkit' || item.to_type === 'toolkit';
+}
+
+/** The plain-words phrase for one item, or null when another item already says it. */
+function itemPhrase(item: AccessRequestItem, provisioned: ReadonlySet<string>): string | null {
+	const key = `${item.resource_type}:${item.action}`;
+	const target = itemTargetLabel(item);
+	if (isRetiredItem(item)) return 'Retired toolkit access';
+	if (key === 'credential:provision') return `A new credential for ${target}`;
+	// A plan's bind points at the credential its provision creates — one phrase.
+	if (key === 'credential:bind') return provisioned.has(target) ? null : `Access to ${target}`;
+	if (key === 'scope:grant') return `The ${scopeLabel(item)} platform scope`;
+	return `${item.resource_type} · ${item.action}`;
+}
+
+/**
+ * One-line, plain-words summary of what a request asks for: "Access to
+ * github/github-api", "A new credential for stripe/stripe-api +1 more". A
+ * provisioning plan's provision and bind collapse into one phrase. The single
+ * copy of this presentation for the OSS queue surfaces (dashboard queue page,
+ * per-actor card, the Agents banner).
  */
 export function summarizeAccessRequest(request: AccessRequest): string {
-	const n = request.items.length;
-	const head = request.items[0];
-	const label = head ? `${head.resource_type} · ${head.action}` : 'access';
-	return n > 1 ? `${label} +${n - 1} more` : label;
+	const provisioned = new Set(
+		request.items
+			.filter((i) => i.resource_type === 'credential' && i.action === 'provision')
+			.map(itemTargetLabel),
+	);
+	const phrases = request.items
+		.map((item) => itemPhrase(item, provisioned))
+		.filter((p): p is string => p !== null);
+	const head = phrases[0] ?? 'Access';
+	return phrases.length > 1 ? `${head} +${phrases.length - 1} more` : head;
 }
 
 /**

@@ -81,10 +81,12 @@ describe('DashboardPage', () => {
 		expect(await within(inbox).findByText('Credential failing')).toBeInTheDocument();
 
 		// An access-request row (summarised items) decidable in place.
-		expect(await within(inbox).findByText('toolkit · use +2 more')).toBeInTheDocument();
+		expect(
+			await within(inbox).findByText('Access to stripe/stripe-api +1 more'),
+		).toBeInTheDocument();
 		expect(
 			within(inbox).getByRole('button', {
-				name: 'Decide access request toolkit · use +2 more',
+				name: 'Decide access request Access to stripe/stripe-api +1 more',
 			}),
 		).toBeInTheDocument();
 
@@ -261,7 +263,9 @@ describe('DashboardPage', () => {
 
 		// …while the other queue rows in the same panel still render.
 		expect(await within(inbox).findByText('invoice-bot')).toBeInTheDocument();
-		expect(await within(inbox).findByText('toolkit · use +2 more')).toBeInTheDocument();
+		expect(
+			await within(inbox).findByText('Access to stripe/stripe-api +1 more'),
+		).toBeInTheDocument();
 		expect(await screen.findByText('charges/create')).toBeInTheDocument();
 		expect(await screen.findByText('Gateway health')).toBeInTheDocument();
 	});

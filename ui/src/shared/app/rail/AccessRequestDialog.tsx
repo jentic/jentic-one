@@ -19,6 +19,15 @@
  *             verdicts differ from what the agent asked for.
  *   done    — an inline success / declined / error terminal screen.
  *
+ * A `credential:bind` that names an API but no credential asks the reviewer
+ * which credential the agent should use: the card lists every credential that
+ * serves the API (or "Add a new credential"), and Approve waits for a choice.
+ * On submit the choice is written onto the item (`:amend`) before `:decide`,
+ * so the platform binds exactly the credential the reviewer picked.
+ *
+ * Retired `toolkit:*` items are listed read-only and never offered for a
+ * decision.
+ *
  * Verdicts are DRAFT (client-side) until submit; jentic-one's `:decide` is
  * terminal server-side, so "undo" is purely local. Leftover pending items are
  * skipped on submit, matching the original webapp parity.
@@ -30,6 +39,7 @@ import {
 	ArrowLeft,
 	ArrowRight,
 	CheckCircle2,
+	Info,
 	KeyRound,
 	MessageSquare,
 	Shield,
@@ -49,17 +59,36 @@ import { AccessRequestChip } from '@/shared/app/rail/AccessRequestChip';
 import { OperationsSummary } from '@/shared/app/rail/OperationsSummary';
 import { useActorDirectory } from '@/shared/hooks';
 import {
+	amendAccessRequest,
 	decideAccessRequest,
 	getAccessRequest,
 	itemTargetLabel,
+	isRetiredItem,
 	isScopeGrant,
 	scopeLabel,
 	parseItemRules,
 	type AccessRequest,
 	type AccessRequestItem,
+	type ItemAmendment,
 	type ItemDecision,
 } from '@/shared/lib/accessRequests';
-import { isProvisioningPlan } from '@/shared/lib/provisioningPlan';
+import {
+	useAllApis,
+	useAllCredentials,
+	workspaceApiFor,
+	type Credential,
+} from '@/shared/credentials/api';
+import { CredentialOptions } from '@/shared/credentials/components/CredentialOptions';
+import {
+	CreateCredentialFlow,
+	type CreatedCredentialInfo,
+} from '@/shared/credentials/components/CreateCredentialFlow';
+import {
+	credentialDistinguisher,
+	credentialsServingReference,
+	type ApiReference,
+	type CredentialChoice,
+} from '@/shared/credentials/lib/credentialIdentity';
 
 type DraftStatus = 'pending' | 'denying' | 'approved' | 'denied';
 type Step = 'review' | 'confirm';
@@ -73,6 +102,22 @@ function statusVariant(status: string): 'success' | 'danger' | 'pending' | 'defa
 	if (status === 'denied') return 'danger';
 	if (status === 'pending') return 'pending';
 	return 'default';
+}
+
+/**
+ * The API a pending `credential:bind` names when it names no credential — the
+ * item the reviewer must pick a credential for. Null for every other item.
+ */
+function bindReference(item: AccessRequestItem): ApiReference | null {
+	if (item.resource_type !== 'credential' || item.action !== 'bind') return null;
+	if (item.resource_id) return null;
+	const ref = item.resource_reference;
+	if (!ref || typeof ref.vendor !== 'string' || !ref.vendor) return null;
+	return {
+		vendor: ref.vendor,
+		name: typeof ref.name === 'string' ? ref.name : null,
+		version: typeof ref.version === 'string' ? ref.version : null,
+	};
 }
 
 /** Tiny uppercase mono eyebrow — the house section-label style. */
@@ -121,7 +166,14 @@ export function AccessRequestDialog({
 	// credential first"). The server's `:decide` response is authoritative, so we
 	// surface these instead of falsely reporting "Access granted".
 	const [blocked, setBlocked] = useState<{ label: string; reason: string }[]>([]);
+	// Which credential each name-less bind should use, keyed by item id.
+	const [choices, setChoices] = useState<Record<string, CredentialChoice>>({});
+	// The bind whose "Add a new credential" flow is open.
+	const [creatingFor, setCreatingFor] = useState<string | null>(null);
 	const { resolve: resolveActor } = useActorDirectory();
+	const credentials = useAllCredentials();
+	// The workspace APIs, to open "Add a new credential" on the requested API.
+	const workspaceApis = useAllApis();
 
 	// Load (and reset) whenever the dialog opens for a request. Seed a `pending`
 	// draft for every still-pending server item; already-decided items render
@@ -136,6 +188,8 @@ export function AccessRequestDialog({
 		setStep('review');
 		setOutcome(null);
 		setBlocked([]);
+		setChoices({});
+		setCreatingFor(null);
 		void (async () => {
 			try {
 				const ar = await getAccessRequest(requestId);
@@ -143,7 +197,7 @@ export function AccessRequestDialog({
 				setRequest(ar);
 				const seed: DraftState = {};
 				for (const item of ar.items) {
-					if (item.status === 'pending')
+					if (item.status === 'pending' && !isRetiredItem(item))
 						seed[item.id] = { status: 'pending', reason: '' };
 				}
 				setDrafts(seed);
@@ -183,17 +237,103 @@ export function AccessRequestDialog({
 	const decidedCount = partition.approved.length + partition.denied.length;
 	const allProcessed = totalDraftable > 0 && partition.pending.length === 0;
 	const hasAnyDecision = decidedCount > 0;
-	// Already-decided items the operator can't act on (rendered read-only).
+	// Items the operator can't act on (rendered read-only): already decided, or
+	// of a retired kind.
 	const decidedItems = useMemo(
-		() => (request?.items ?? []).filter((i) => i.status !== 'pending'),
+		() => (request?.items ?? []).filter((i) => i.status !== 'pending' || isRetiredItem(i)),
 		[request],
 	);
 
-	const approve = useCallback((id: string) => {
-		setDrafts((prev) =>
-			id in prev ? { ...prev, [id]: { status: 'approved', reason: '' } } : prev,
-		);
+	const credentialsById = useMemo(
+		() => new Map(credentials.items.map((c) => [c.credential_id, c])),
+		[credentials.items],
+	);
+	// For every pending bind that needs a credential chosen: the credentials
+	// that serve its API, in the order the platform would consider them.
+	const servingByItem = useMemo(() => {
+		const map = new Map<string, Credential[]>();
+		for (const item of request?.items ?? []) {
+			const ref = item.status === 'pending' ? bindReference(item) : null;
+			if (ref) map.set(item.id, credentialsServingReference(credentials.items, ref));
+		}
+		return map;
+	}, [request, credentials.items]);
+
+	// One credential serves the API: choose it for the reviewer, who can still
+	// switch to a new one. None serves it: adding one is the only choice. Never
+	// overrides a choice already made.
+	useEffect(() => {
+		if (!credentials.complete) return;
+		setChoices((prev) => {
+			let next = prev;
+			for (const [itemId, serving] of servingByItem) {
+				if (prev[itemId] || serving.length > 1) continue;
+				if (next === prev) next = { ...prev };
+				next[itemId] =
+					serving.length === 1
+						? { kind: 'existing', credentialId: serving[0].credential_id }
+						: { kind: 'new' };
+			}
+			return next;
+		});
+	}, [credentials.complete, servingByItem]);
+
+	/** The credential a bind will use, once the reviewer's choice is one that serves it. */
+	const chosenCredential = useCallback(
+		(itemId: string): Credential | null => {
+			const choice = choices[itemId];
+			if (choice?.kind !== 'existing') return null;
+			const serving = servingByItem.get(itemId) ?? [];
+			return serving.find((c) => c.credential_id === choice.credentialId) ?? null;
+		},
+		[choices, servingByItem],
+	);
+	/** A bind that needs a credential chosen, and doesn't have one yet. */
+	const awaitsCredential = useCallback(
+		(itemId: string): boolean => servingByItem.has(itemId) && !chosenCredential(itemId),
+		[servingByItem, chosenCredential],
+	);
+
+	// Choosing only stages the choice — arrowing through the radios changes it
+	// per keystroke, so "Add a new credential" opens its flow from the card's
+	// Approve button instead.
+	const chooseCredential = useCallback((itemId: string, choice: CredentialChoice) => {
+		setChoices((prev) => ({ ...prev, [itemId]: choice }));
 	}, []);
+	// The new credential is made for this bind's API, so creating it completes
+	// the approval the reviewer started.
+	const handleCreated = useCallback(
+		(info: CreatedCredentialInfo) => {
+			if (creatingFor) {
+				setChoices((prev) => ({
+					...prev,
+					[creatingFor]: { kind: 'existing', credentialId: info.credentialId },
+				}));
+				setDrafts((prev) =>
+					creatingFor in prev
+						? { ...prev, [creatingFor]: { status: 'approved', reason: '' } }
+						: prev,
+				);
+			}
+			setCreatingFor(null);
+			credentials.refresh();
+		},
+		[creatingFor, credentials],
+	);
+
+	const approve = useCallback(
+		(id: string) => {
+			if (choices[id]?.kind === 'new') {
+				setCreatingFor(id);
+				return;
+			}
+			if (awaitsCredential(id)) return;
+			setDrafts((prev) =>
+				id in prev ? { ...prev, [id]: { status: 'approved', reason: '' } } : prev,
+			);
+		},
+		[awaitsCredential, choices],
+	);
 	// Deny is two-phase: the first click opens the inline reason field
 	// (`denying`); the confirm click (with a non-empty reason) finalises to
 	// `denied`. Calling this again while already `denying` finalises it.
@@ -223,18 +363,21 @@ export function AccessRequestDialog({
 	const setReason = useCallback((id: string, reason: string) => {
 		setDrafts((prev) => (prev[id] ? { ...prev, [id]: { ...prev[id], reason } } : prev));
 	}, []);
-	const decideAll = useCallback((verdict: 'approved' | 'denied') => {
-		setDrafts((prev) => {
-			const next: DraftState = {};
-			for (const [id, draft] of Object.entries(prev)) {
-				next[id] =
-					verdict === 'denied'
-						? { status: 'denied', reason: draft.reason }
-						: { status: 'approved', reason: '' };
-			}
-			return next;
-		});
-	}, []);
+	// "Approve all" leaves a bind still waiting for its credential in the rail.
+	const decideAll = useCallback(
+		(verdict: 'approved' | 'denied') => {
+			setDrafts((prev) => {
+				const next: DraftState = {};
+				for (const [id, draft] of Object.entries(prev)) {
+					if (verdict === 'denied') next[id] = { status: 'denied', reason: draft.reason };
+					else if (awaitsCredential(id)) next[id] = draft;
+					else next[id] = { status: 'approved', reason: '' };
+				}
+				return next;
+			});
+		},
+		[awaitsCredential],
+	);
 
 	// A denied item with an empty reason blocks submit (shouldn't happen via the
 	// inline flow, but "Deny all" can produce reasonless denials).
@@ -277,7 +420,16 @@ export function AccessRequestDialog({
 				});
 			}
 		}
+		// Write each approved bind's chosen credential onto its item first, so the
+		// platform binds that credential rather than resolving one itself.
+		const amendments: ItemAmendment[] = decisions.flatMap((d) => {
+			const credential = d.decision === 'approved' ? chosenCredential(d.item_id) : null;
+			return credential
+				? [{ item_id: d.item_id, resource_id: credential.credential_id }]
+				: [];
+		});
 		try {
+			if (amendments.length > 0) await amendAccessRequest(request.id, amendments);
 			const updated = await decideAccessRequest(request.id, decisions);
 			if (eventId) onResolved?.(eventId);
 			onDecided?.();
@@ -315,8 +467,96 @@ export function AccessRequestDialog({
 		}
 	}
 
+	/** What a pending card needs beyond its verdict: a credential choice, or a note. */
+	const creatingItem = creatingFor ? request?.items.find((i) => i.id === creatingFor) : undefined;
+	const creatingApi = creatingItem ? bindReference(creatingItem) : null;
+	// Open the form on the requested API once the workspace list can say which
+	// version it is; an API the workspace lacks falls back to the picker.
+	const creatingPin =
+		creatingItem && creatingApi
+			? (workspaceApiFor(workspaceApis.items, creatingApi, itemTargetLabel(creatingItem)) ??
+				undefined)
+			: undefined;
+	const creatingReady =
+		Boolean(creatingPin) || workspaceApis.complete || Boolean(workspaceApis.error);
+
+	function renderItemExtras(item: AccessRequestItem): ReactNode {
+		if (item.resource_type === 'credential' && item.action === 'provision') {
+			return (
+				<p className="text-muted-foreground mt-3 flex items-start gap-1.5 text-xs">
+					<Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+					Approving records your go-ahead only — nothing is created. The agent’s access
+					comes from the credential you choose for this API.
+				</p>
+			);
+		}
+		const serving = servingByItem.get(item.id);
+		if (!serving) return null;
+		if (credentials.isPending) {
+			return (
+				<p className="text-muted-foreground mt-3 text-xs" role="status">
+					Loading credentials…
+				</p>
+			);
+		}
+		if (credentials.error) {
+			return (
+				<div className="mt-3 flex items-center gap-2 text-xs">
+					<span className="text-destructive">Couldn’t load credentials.</span>
+					<Button variant="ghost" size="sm" onClick={credentials.retry}>
+						Try again
+					</Button>
+				</div>
+			);
+		}
+		const choice = choices[item.id] ?? null;
+		const created =
+			choice?.kind === 'existing' && !chosenCredential(item.id)
+				? credentialsById.get(choice.credentialId)
+				: undefined;
+		return (
+			<div className="mt-3">
+				<CredentialOptions
+					id={`ar-credential-${item.id}`}
+					legend={
+						serving.length > 0
+							? 'Which credential should the agent use?'
+							: 'No saved credential works for this API yet'
+					}
+					credentials={serving}
+					selected={choice}
+					onSelect={(next) => chooseCredential(item.id, next)}
+					newCredentialDetail="Create one now — it’s used for this approval"
+					disabled={submitting}
+				/>
+				{created && (
+					<p className="text-destructive mt-1.5 text-xs" role="alert">
+						“{created.name}” isn’t for this API, so the agent can’t use it here. Pick
+						another credential.
+					</p>
+				)}
+			</div>
+		);
+	}
+
+	/** The confirm step's note of which credential an approved bind uses. */
+	function usesLine(item: AccessRequestItem): ReactNode {
+		const credential = chosenCredential(item.id);
+		if (!credential) return null;
+		return (
+			<p className="text-muted-foreground mt-1 flex items-center gap-1.5 text-xs">
+				<KeyRound className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+				<span className="truncate">
+					Uses <span className="text-foreground font-medium">{credential.name}</span>
+					{' · '}
+					{credentialDistinguisher(credential, { type: true })}
+				</span>
+			</p>
+		);
+	}
+
 	function renderFooter() {
-		if (loading || error || !request || isProvisioningPlan(request)) {
+		if (loading || error || !request) {
 			return (
 				<Button variant="ghost" onClick={onClose}>
 					Close
@@ -413,10 +653,18 @@ export function AccessRequestDialog({
 									key={item.id}
 									className="border-border bg-muted/40 flex items-center justify-between rounded-md border px-3 py-2 text-sm"
 								>
-									<span className="truncate">{itemTargetLabel(item)}</span>
-									<Badge variant={statusVariant(item.status)}>
-										{item.status}
-									</Badge>
+									<span className="truncate">
+										{isRetiredItem(item)
+											? 'Toolkit access'
+											: itemTargetLabel(item)}
+									</span>
+									{isRetiredItem(item) ? (
+										<Badge variant="default">No longer used</Badge>
+									) : (
+										<Badge variant={statusVariant(item.status)}>
+											{item.status}
+										</Badge>
+									)}
 								</li>
 							))}
 						</ul>
@@ -481,7 +729,23 @@ export function AccessRequestDialog({
 														onReasonChange={(r) =>
 															setReason(item.id, r)
 														}
-													/>
+														approveDisabled={
+															awaitsCredential(item.id) &&
+															choices[item.id]?.kind !== 'new'
+														}
+														approveHint="Choose a credential first"
+														approveLabel={
+															choices[item.id]?.kind === 'new'
+																? 'Add credential & approve'
+																: undefined
+														}
+														approveBusy={
+															creatingFor === item.id &&
+															!creatingReady
+														}
+													>
+														{renderItemExtras(item)}
+													</AccessRequestItemCard>
 												);
 											})}
 										</AnimatePresence>
@@ -669,6 +933,7 @@ export function AccessRequestDialog({
 												</span>
 											)}
 										</div>
+										{usesLine(item)}
 										{rules.length > 0 && (
 											<OperationsSummary
 												rules={rules}
@@ -898,22 +1163,19 @@ export function AccessRequestDialog({
 		>
 			{loading && <LoadingState message="Loading the access request…" />}
 			{!loading && error && <ErrorAlert message={error} />}
-			{!loading && !error && request && isProvisioningPlan(request) && (
-				<div className="text-foreground space-y-3">
-					<p className="text-sm font-semibold">This request needs the setup wizard</p>
-					<p className="text-muted-foreground text-sm">
-						It’s a provisioning plan — approving it connects a credential and binds the
-						agent to it before granting. Open it from{' '}
-						<span className="font-medium">Access Requests</span> to run the guided
-						setup; a plain approval here can’t complete it.
-					</p>
-				</div>
-			)}
 			{!loading &&
 				!error &&
 				request &&
-				!isProvisioningPlan(request) &&
 				(step === 'review' ? renderReview() : renderConfirm())}
+			{creatingItem && creatingApi && creatingReady && (
+				<CreateCredentialFlow
+					open
+					surface="dialog"
+					onClose={() => setCreatingFor(null)}
+					onCreated={handleCreated}
+					pinnedApi={creatingPin}
+				/>
+			)}
 		</Dialog>
 	);
 }

@@ -3,6 +3,12 @@ import { http, HttpResponse } from 'msw';
 import { renderWithProviders, screen, userEvent } from '@/__tests__/test-utils';
 import { worker } from '@/mocks/browser';
 import { AccessRequestDialog } from '@/shared/app/rail/AccessRequestDialog';
+import {
+	makeMockApi,
+	makeMockCredential,
+	resetApisStore,
+	resetCredentialsStore,
+} from '@/shared/credentials/mocks/handlers';
 
 // Note on a11y: the terminal screen renders inside a framer-motion entrance
 // animation (initial opacity 0 → 1). In headless tests axe measures the text
@@ -61,20 +67,43 @@ const scopeItem = (status: string): Item => ({
 	resource_id: 'apis:write',
 });
 
+/** The one saved credential that serves the bind's API, so the dialog preselects it. */
+const sheetsCredential = () =>
+	makeMockCredential({
+		credential_id: 'cred_sheets',
+		name: 'Sheets service account',
+		api: { vendor: 'googleapis-com', name: 'googleapis-com-sheets', version: '4.0.0' },
+	});
+
 /**
- * Stub GET (loads the pending request) and `:decide` (returns the server's
- * authoritative decided request). `worker.use` handlers take priority over the
+ * Stub GET (loads the pending request), `:amend` (records the chosen credential)
+ * and `:decide` (returns the server's authoritative decided request), and seed
+ * the credentials the bind can use. `worker.use` handlers take priority over the
  * default rail handlers and are reset after each test by the global setup.
  */
-function stub(getRequest: object, decideResponse: object) {
+function stub(
+	getRequest: object,
+	decideResponse: object,
+	credentials = [sheetsCredential()],
+): { amendBodies: unknown[] } {
+	const amendBodies: unknown[] = [];
+	resetCredentialsStore(credentials);
+	resetApisStore();
 	worker.use(
 		http.get('/access-requests/:id', () => HttpResponse.json(getRequest)),
+		http.post(/\/access-requests\/([^/]+):amend$/, async ({ request: req }) => {
+			amendBodies.push(await req.json());
+			return HttpResponse.json(getRequest);
+		}),
 		http.post(/\/access-requests\/([^/]+):decide$/, () => HttpResponse.json(decideResponse)),
 	);
+	return { amendBodies };
 }
 
 async function approveAndSubmit() {
 	const user = userEvent.setup();
+	// The only serving credential is preselected once the list loads.
+	await screen.findByRole('radio', { name: /Sheets service account/, checked: true });
 	await user.click(await screen.findByRole('button', { name: 'Approve' }));
 	await user.click(screen.getByRole('button', { name: /Review & submit/i }));
 	await user.click(screen.getByRole('button', { name: /Confirm decision/i }));
@@ -82,6 +111,7 @@ async function approveAndSubmit() {
 
 async function approveAllAndSubmit() {
 	const user = userEvent.setup();
+	await screen.findByRole('radio', { name: /Sheets service account/, checked: true });
 	await user.click(await screen.findByRole('button', { name: /Approve all/i }));
 	await user.click(screen.getByRole('button', { name: /Review & submit/i }));
 	await user.click(screen.getByRole('button', { name: /Confirm decision/i }));
@@ -135,5 +165,53 @@ describe('AccessRequestDialog — server-authoritative outcome', () => {
 
 		expect(await screen.findByText('Access granted')).toBeInTheDocument();
 		expect(screen.getByText(reason)).toBeInTheDocument();
+	});
+
+	it('records the chosen credential on the bind before deciding', async () => {
+		const { amendBodies } = stub(
+			request('areq_3', 'pending', [bindItem('pending')]),
+			request('areq_3', 'approved', [bindItem('approved')]),
+		);
+
+		renderWithProviders(<AccessRequestDialog requestId="areq_3" open onClose={() => {}} />);
+		await approveAndSubmit();
+
+		expect(await screen.findByText('Access granted')).toBeInTheDocument();
+		expect(amendBodies).toEqual([
+			{ items: [{ item_id: 'arqi_bind', resource_id: 'cred_sheets' }] },
+		]);
+	});
+
+	it('adds a credential and approves in one click, opening the form on the requested API', async () => {
+		stub(
+			request('areq_4', 'pending', [bindItem('pending')]),
+			request('areq_4', 'approved', [bindItem('approved')]),
+			[],
+		);
+		resetApisStore([
+			makeMockApi({
+				vendor: 'googleapis-com',
+				name: 'googleapis-com-sheets',
+				version: '4.0.0',
+				displayName: 'Google Sheets',
+			}),
+		]);
+		const user = userEvent.setup();
+
+		renderWithProviders(<AccessRequestDialog requestId="areq_4" open onClose={() => {}} />);
+
+		expect(
+			await screen.findByText('No saved credential works for this API yet'),
+		).toBeInTheDocument();
+		// Adding one is the only choice, so it is already selected and the card's
+		// own button commits it — no second "add" button to find.
+		expect(
+			await screen.findByRole('radio', { name: /Add a new credential/, checked: true }),
+		).toBeInTheDocument();
+		await user.click(screen.getByRole('button', { name: 'Add credential & approve' }));
+
+		// The form opens straight on the requested API — no API picker first.
+		expect(await screen.findByText('Add credential — Google Sheets')).toBeInTheDocument();
+		expect(screen.queryByText('Choose an API')).not.toBeInTheDocument();
 	});
 });

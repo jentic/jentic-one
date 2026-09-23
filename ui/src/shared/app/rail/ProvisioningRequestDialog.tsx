@@ -31,8 +31,6 @@ import {
 } from 'lucide-react';
 import { Dialog } from '@/shared/ui/Dialog';
 import { Button } from '@/shared/ui/Button';
-import { Label } from '@/shared/ui/Label';
-import { Select } from '@/shared/ui/Select';
 import { Badge } from '@/shared/ui/Badge';
 import { ActorLabel } from '@/shared/ui/ActorLabel';
 import { AgentBadge } from '@/shared/ui/AgentBadge';
@@ -41,7 +39,17 @@ import { PermissionRuleEditor, type PermissionRuleInput } from '@/shared/ui/Perm
 import { useActorDirectory } from '@/shared/hooks';
 import { CreateCredentialFlow } from '@/shared/credentials/components/CreateCredentialFlow';
 import type { CreatedCredentialInfo } from '@/shared/credentials/components/CreateCredentialFlow';
-import { CREDENTIAL_TYPE_LABELS, runConnectFlow } from '@/shared/credentials/api';
+import { CredentialOptions } from '@/shared/credentials/components/CredentialOptions';
+import {
+	credentialsServingReference,
+	type CredentialChoice,
+} from '@/shared/credentials/lib/credentialIdentity';
+import {
+	CREDENTIAL_TYPE_LABELS,
+	runConnectFlow,
+	useAllApis,
+	workspaceApiFor,
+} from '@/shared/credentials/api';
 import {
 	CredentialType,
 	AgentsService,
@@ -373,6 +381,7 @@ export function ProvisioningRequestDialog({
 	// pristine peek at a plan should not accumulate map entries.
 	const [touched, setTouched] = useState(() => draftFor(request.id) !== undefined);
 	const [credentialDialogOpen, setCredentialDialogOpen] = useState(false);
+	const workspaceApis = useAllApis();
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [outcome, setOutcome] = useState<Outcome | null>(null);
@@ -567,21 +576,15 @@ export function ProvisioningRequestDialog({
 		cred.type === CredentialType.OAUTH2 && cred.details?.connected === false;
 
 	// Picker selections are staged locally and committed by an explicit
-	// button: committing on <select> change is a keyboard trap (arrowing
-	// through options on a closed native select fires change per keystroke —
-	// WCAG 3.2.2). Reset whenever the step or chain changes.
-	const [pendingCredentialChoice, setPendingCredentialChoice] = useState('');
+	// button: committing on radio change is a keyboard trap (arrowing through
+	// a radio group changes the selection per keystroke — WCAG 3.2.2). Reset
+	// whenever the step or chain changes.
+	const [pendingCredentialChoice, setPendingCredentialChoice] = useState<CredentialChoice | null>(
+		null,
+	);
 	useEffect(() => {
-		setPendingCredentialChoice('');
+		setPendingCredentialChoice(null);
 	}, [step, chainIndex]);
-	// Derived before JSX (file convention — no closures in the tree): the
-	// staged credential and whether it needs the unconnected-OAuth warning.
-	const pendingCredential =
-		chainCredentialOptions !== 'error' && chainCredentialOptions !== null
-			? chainCredentialOptions.find((c) => c.credential_id === pendingCredentialChoice)
-			: undefined;
-	const pendingUnconnectedOAuth =
-		pendingCredential !== undefined && isUnconnectedOAuth(pendingCredential);
 
 	/**
 	 * Adopt an existing credential — reused as-is, no connect flow. The picker
@@ -947,6 +950,42 @@ export function ProvisioningRequestDialog({
 					...chainCredentialOptions.filter((c) => c.credential_id === wiredCredentialId),
 					...chainCredentialOptions.filter((c) => c.credential_id !== wiredCredentialId),
 				];
+	// Only the credentials that can serve this chain's exact API: the fetch is
+	// vendor-wide, and a vendor can publish several APIs.
+	const servingCredentials =
+		chain && Array.isArray(credentialPickerOptions)
+			? credentialsServingReference(credentialPickerOptions, chain.apiRef)
+			: [];
+	// With no choice made yet, the wired credential — or the only one serving
+	// the API — is chosen for the operator, who can still pick another. Once the
+	// list has settled with nothing serving, adding a new one is the only choice.
+	const defaultCredential =
+		servingCredentials.find((c) => c.credential_id === wiredCredentialId) ??
+		(servingCredentials.length === 1 ? servingCredentials[0] : undefined);
+	const defaultCredentialChoice: CredentialChoice | null = defaultCredential
+		? { kind: 'existing', credentialId: defaultCredential.credential_id }
+		: credentialPickerOptions !== null && servingCredentials.length === 0
+			? { kind: 'new' }
+			: null;
+	const stagedCredentialChoice = pendingCredentialChoice ?? defaultCredentialChoice;
+	const pendingCredential =
+		stagedCredentialChoice?.kind === 'existing'
+			? servingCredentials.find(
+					(c) => c.credential_id === stagedCredentialChoice.credentialId,
+				)
+			: undefined;
+	const pendingUnconnectedOAuth =
+		pendingCredential !== undefined && isUnconnectedOAuth(pendingCredential);
+	// The new-credential form opens on the chain's API — it is already known, so
+	// the flow skips its API picker. An API the workspace lacks falls back to it.
+	const pinnedApi = chain
+		? (workspaceApiFor(workspaceApis.items, chain.apiRef, chainLabel) ?? undefined)
+		: undefined;
+	const pinResolving = !pinnedApi && !workspaceApis.complete && !workspaceApis.error;
+	const handleCommitCredentialChoice = (): void => {
+		if (stagedCredentialChoice?.kind === 'new') setCredentialDialogOpen(true);
+		else if (pendingCredential) handleAdoptCredential(pendingCredential.credential_id);
+	};
 	const wiredCredentialName =
 		wiredCredentialId && chainCredentialOptions !== 'error'
 			? chainCredentialOptions?.find((c) => c.credential_id === wiredCredentialId)?.name
@@ -1200,12 +1239,12 @@ export function ProvisioningRequestDialog({
 								<StepBody
 									title={
 										multiChain
-											? `Connect a credential for ${chainLabel}`
-											: 'Connect a credential'
+											? `Choose a credential for ${chainLabel}`
+											: 'Choose a credential'
 									}
 									blurb={
 										<>
-											{chainLabel} needs an account to call it
+											{chainLabel} needs a credential to call it
 											{detectedAuth ? (
 												<>
 													{' '}
@@ -1213,10 +1252,10 @@ export function ProvisioningRequestDialog({
 													<Badge variant="default">{detectedAuth}</Badge>)
 												</>
 											) : null}
-											.{' '}
-											<span className="text-foreground font-medium">You</span>{' '}
-											enter the secret — the agent never sees it. Approving
-											binds the agent directly to this credential.
+											. Use one you’ve saved or add a new one —{' '}
+											<span className="text-foreground font-medium">you</span>{' '}
+											enter the secret, the agent never sees it. Approving
+											binds the agent directly to the credential you choose.
 										</>
 									}
 								>
@@ -1291,34 +1330,27 @@ export function ProvisioningRequestDialog({
 																<span className="font-medium">
 																	{wiredCredentialName}
 																</span>{' '}
-																for {chainLabel} — adopt it below
-																instead of creating another one.
+																for {chainLabel}. It’s selected
+																below — keep it rather than creating
+																another one.
 															</>
 														) : (
 															<>
 																This agent is already wired to a
 																credential serving {chainLabel} —
-																prefer adopting that existing
-																credential over creating another
-																one.
+																prefer keeping that credential over
+																creating another one.
 															</>
 														)}
 													</div>
 												)}
-											<Button
-												variant="primary"
-												size="lg"
-												onClick={() => setCredentialDialogOpen(true)}
-											>
-												<KeyRound className="h-4 w-4" /> Connect credential
-											</Button>
 											{credentialPickerOptions === 'error' && (
 												// Failure ≠ empty — offer a retry instead of a
 												// silent collapse.
-												<div className="text-muted-foreground flex items-center gap-2 pt-2 text-sm">
+												<div className="text-muted-foreground flex items-center gap-2 text-sm">
 													<span>
 														Couldn’t load your existing credentials —
-														you can still connect a new one, or retry.
+														you can still add a new one, or retry.
 													</span>
 													<Button
 														variant="secondary"
@@ -1337,80 +1369,58 @@ export function ProvisioningRequestDialog({
 													</Button>
 												</div>
 											)}
-											{credentialPickerOptions !== 'error' &&
-												credentialPickerOptions !== null &&
-												credentialPickerOptions.length > 0 && (
-													// Adopt-existing path (#826): an active
-													// credential the operator already provisioned
-													// for this vendor can be reused as-is — no
-													// connect flow and no orphan discard. Staged
-													// selection + explicit commit (a change-commit
-													// select is a keyboard trap). The
-													// already-wired credential, when known, is
-													// floated to the top.
-													<div className="space-y-1.5 pt-2">
-														<Label htmlFor="pw-existing-credential">
-															Or use an existing credential for{' '}
-															{chainLabel}
-														</Label>
-														<Select
-															id="pw-existing-credential"
-															value={pendingCredentialChoice}
-															onChange={(e) =>
-																setPendingCredentialChoice(
-																	e.target.value,
-																)
-															}
-															disabled={busy}
-														>
-															<option value="">
-																Choose an existing credential…
-															</option>
-															{credentialPickerOptions.map((cred) => (
-																<option
-																	key={cred.credential_id}
-																	value={cred.credential_id}
-																>
-																	{cred.name} (
-																	{credentialTypeLabel(
-																		cred.type,
-																	) ?? cred.type}
-																	)
-																	{cred.credential_id ===
-																	wiredCredentialId
-																		? ' — already linked to this agent'
-																		: isUnconnectedOAuth(cred)
-																			? ' — not connected yet'
-																			: ''}
-																</option>
-															))}
-														</Select>
-														{pendingUnconnectedOAuth && (
-															<p
-																className="text-warning text-sm"
-																role="status"
-															>
-																This OAuth credential was never
-																connected, so calls using it will
-																fail until someone connects it from
-																the Credentials page.
-															</p>
-														)}
-														{pendingCredentialChoice && (
-															<Button
-																variant="secondary"
-																onClick={() =>
-																	handleAdoptCredential(
-																		pendingCredentialChoice,
-																	)
-																}
-																disabled={busy}
-															>
-																Use this credential
-															</Button>
-														)}
-													</div>
-												)}
+											{credentialPickerOptions === null ? (
+												<p
+													className="text-muted-foreground text-sm"
+													role="status"
+												>
+													Loading credentials…
+												</p>
+											) : (
+												// Adopt-existing path (#826): an active
+												// credential already serving this API is reused
+												// as-is — no connect flow and no orphan
+												// discard. The choice is staged and committed
+												// by the button below (arrowing through radios
+												// changes the selection). The already-wired
+												// credential, when known, is listed first.
+												<CredentialOptions
+													id="pw-credential-choice"
+													legend={
+														servingCredentials.length > 0
+															? `Which credential should the agent use for ${chainLabel}?`
+															: `No saved credential works for ${chainLabel} yet`
+													}
+													credentials={servingCredentials}
+													selected={stagedCredentialChoice}
+													onSelect={setPendingCredentialChoice}
+													newCredentialDetail="Set one up now, then bind the agent to it"
+													linkedCredentialId={wiredCredentialId}
+													disabled={busy}
+												/>
+											)}
+											{pendingUnconnectedOAuth && (
+												<p className="text-warning text-sm" role="status">
+													This OAuth credential was never connected, so
+													calls using it will fail until someone connects
+													it from the Credentials page.
+												</p>
+											)}
+											<Button
+												variant="primary"
+												onClick={handleCommitCredentialChoice}
+												disabled={
+													busy ||
+													stagedCredentialChoice === null ||
+													(stagedCredentialChoice.kind === 'new' &&
+														pinResolving)
+												}
+											>
+												<KeyRound className="h-4 w-4" aria-hidden="true" />
+												{stagedCredentialChoice?.kind === 'new'
+													? `Add a credential for ${chainLabel}`
+													: 'Use this credential'}
+											</Button>
 										</div>
 									)}
 								</StepBody>
@@ -1644,6 +1654,7 @@ export function ProvisioningRequestDialog({
 				onClose={() => setCredentialDialogOpen(false)}
 				onCreated={handleCredentialCreated}
 				initialType={initialCredentialType}
+				pinnedApi={pinnedApi}
 				surface="dialog"
 			/>
 
@@ -1974,7 +1985,7 @@ function Stepper({
 		if (!chainIsNoAuth(c)) {
 			steps.push({
 				key: `${c.key}:credential`,
-				label: `Connect credential${suffix}`,
+				label: `Credential${suffix}`,
 				hint: 'You enter the secret',
 				chain: i,
 				step: 'credential',

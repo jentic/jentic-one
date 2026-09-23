@@ -429,6 +429,7 @@ export type { DrainedList } from '@/shared/hooks/useEagerCursorDrain';
 export {
 	apiPickerKeys,
 	apiRowToSelected,
+	workspaceApiFor,
 	useApis,
 	useAllApis,
 	useApiSchemes,

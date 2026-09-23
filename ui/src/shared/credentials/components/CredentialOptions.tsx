@@ -1,7 +1,8 @@
 /**
  * CredentialOptions — which credential an API should use, as radio cards: every
- * credential that covers it, then "Add a new credential". The tray and the setup
- * queue both render it, so the choice reads the same wherever it is made.
+ * credential that covers it, then "Add a new credential". The Add APIs tray, the
+ * setup queue and both access-request dialogs render it, so the choice reads the
+ * same wherever it is made.
  *
  * Sibling credentials often share the API's own name, so each card carries the
  * type, date and id tail that tell them apart, and reuse is never the only
@@ -13,9 +14,11 @@ import { Badge } from '@/shared/ui';
 import { cn } from '@/shared/lib/utils';
 import type { Credential } from '@/shared/credentials/api';
 import { CredentialTypeBadge } from '@/shared/credentials/components/CredentialTypeBadge';
-import { credentialDistinguisher } from '@/shared/credentials/lib/credentialIdentity';
-import { credentialAwaitsConsent } from '@/modules/agents/lib/apiTiles';
-import type { CredentialChoice } from '@/modules/agents/lib/apiPreflight';
+import {
+	credentialAwaitsConsent,
+	credentialDistinguisher,
+	type CredentialChoice,
+} from '@/shared/credentials/lib/credentialIdentity';
 
 export interface CredentialOptionsProps {
 	/** Radio-group name and fieldset id — unique per API on screen. */
@@ -29,6 +32,8 @@ export interface CredentialOptionsProps {
 	onSelect: (choice: CredentialChoice) => void;
 	/** What choosing a new credential leads to, from where it is being chosen. */
 	newCredentialDetail: string;
+	/** The credential the agent already uses for this API, marked on its card. */
+	linkedCredentialId?: string | null;
 	disabled?: boolean;
 	className?: string;
 }
@@ -41,6 +46,7 @@ export function CredentialOptions({
 	selected,
 	onSelect,
 	newCredentialDetail,
+	linkedCredentialId,
 	disabled = false,
 	className,
 }: CredentialOptionsProps) {
@@ -64,6 +70,11 @@ export function CredentialOptions({
 					detail={credentialDistinguisher(credential, { type: false })}
 					badges={
 						<>
+							{credential.credential_id === linkedCredentialId && (
+								<Badge variant="success" className="text-[10px]">
+									Already linked
+								</Badge>
+							)}
 							{credentialAwaitsConsent(credential) && (
 								<Badge variant="pending" className="text-[10px]">
 									Sign-in needed

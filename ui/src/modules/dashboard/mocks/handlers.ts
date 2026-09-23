@@ -118,8 +118,7 @@ interface DashboardAccessRequestItem {
 	action: string;
 	status: string;
 	resource_id?: string | null;
-	to_type?: string | null;
-	to_id?: string | null;
+	resource_reference?: Record<string, unknown> | null;
 	rules?: Record<string, unknown>[] | null;
 	decision_reason: string | null;
 	decided_at?: string | null;
@@ -159,20 +158,10 @@ export const dashboardPendingAccessRequests: DashboardAccessRequest[] = [
 		evaluation: { can_fulfill: true, checks: [] },
 		items: [
 			{
-				id: 'ari_dash_1',
-				resource_type: 'toolkit',
-				action: 'use',
-				status: 'pending',
-				decision_reason: null,
-			},
-			{
 				id: 'ari_dash_2',
 				resource_type: 'credential',
 				action: 'bind',
-				// HISTORICAL shape: `to_*` only exists on rows filed before
-				// toolkits were retired — kept to exercise read-only rendering.
-				to_type: 'toolkit',
-				to_id: 'tk_stripe',
+				resource_reference: { vendor: 'stripe', name: 'stripe-api' },
 				status: 'pending',
 				decision_reason: null,
 				rules: [
@@ -208,10 +197,12 @@ export const dashboardPendingAccessRequests: DashboardAccessRequest[] = [
 		items: [
 			{
 				id: 'ari_dash_3',
-				resource_type: 'toolkit',
-				action: 'use',
+				resource_type: 'credential',
+				action: 'bind',
+				resource_reference: { vendor: 'github', name: 'github-api' },
 				status: 'pending',
 				decision_reason: null,
+				rules: [{ effect: 'allow', methods: ['GET'] }],
 			},
 		],
 	},
@@ -233,10 +224,12 @@ export const dashboardPendingAccessRequests: DashboardAccessRequest[] = [
 		items: [
 			{
 				id: 'ari_dash_4',
-				resource_type: 'toolkit',
-				action: 'use',
+				resource_type: 'credential',
+				action: 'bind',
+				resource_reference: { vendor: 'stripe', name: 'stripe-api' },
 				status: 'pending',
 				decision_reason: null,
+				rules: [{ effect: 'allow', methods: ['GET'], operations: ['invoices/list'] }],
 			},
 		],
 	},
@@ -279,6 +272,24 @@ export const dashboardHandlers = [
 		if (!id.startsWith('ar_dash_')) return undefined;
 		const ar = dashboardPendingAccessRequests.find((r) => r.id === id);
 		if (!ar) return new HttpResponse(null, { status: 404 });
+		return HttpResponse.json(ar);
+	}),
+
+	http.post(/\/access-requests\/(ar_dash_[^/]+):amend$/, async ({ request }) => {
+		const match = new URL(request.url).pathname.match(
+			/\/access-requests\/(ar_dash_[^/]+):amend$/,
+		);
+		const id = match ? decodeURIComponent(match[1]) : '';
+		const ar = dashboardPendingAccessRequests.find((r) => r.id === id);
+		if (!ar) return new HttpResponse(null, { status: 404 });
+		const body = (await request.json().catch(() => ({}))) as {
+			items?: { item_id: string; resource_id?: string | null }[];
+		};
+		for (const amendment of body.items ?? []) {
+			const item = ar.items.find((i) => i.id === amendment.item_id);
+			if (item?.status === 'pending' && amendment.resource_id)
+				item.resource_id = amendment.resource_id;
+		}
 		return HttpResponse.json(ar);
 	}),
 

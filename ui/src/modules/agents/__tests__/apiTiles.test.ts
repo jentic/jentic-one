@@ -8,9 +8,9 @@ import {
 	agentApiCount,
 	agentSetupGapCount,
 	composeApiTiles,
-	credentialAwaitsConsent,
 	tileStats,
 } from '@/modules/agents/lib/apiTiles';
+import { credentialAwaitsConsent } from '@/shared/credentials/lib/credentialIdentity';
 import type { CredentialBindingEntity } from '@/modules/agents/api';
 import { CredentialType, type ApiResponse, type Credential } from '@/shared/credentials/api';
 

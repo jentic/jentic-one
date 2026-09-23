@@ -5,7 +5,10 @@
  */
 import type { Credential, SelectedApi } from '@/shared/credentials/api';
 import { apiRefKey, apiScopeCovers } from '@/shared/credentials/lib/apiIdentity';
-import { credentialAwaitsConsent } from '@/modules/agents/lib/apiTiles';
+import {
+	credentialAwaitsConsent,
+	type CredentialChoice,
+} from '@/shared/credentials/lib/credentialIdentity';
 import type { CredentialBindingEntity, ServedApiEntity } from '@/modules/agents/api/types';
 
 /**
@@ -41,10 +44,6 @@ export interface PreflightItem {
 	/** True when accepting this pick imports the API into the workspace. */
 	importsApi: boolean;
 }
-
-/** Which credential a pick should use: an existing one, or a new one even though
- * existing ones cover it. An API can hold any number of credentials. */
-export type CredentialChoice = { kind: 'existing'; credentialId: string } | { kind: 'new' };
 
 export interface PreflightInputs {
 	/** Every org credential — pass a DRAINED list; a first page misclassifies. */

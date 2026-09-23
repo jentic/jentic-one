@@ -40,7 +40,7 @@ import {
 	type EventResponse,
 } from '@/modules/dashboard/api';
 import { ROUTES } from '@/shared/app/routes';
-import { eventSeverityIcon } from '@/shared/lib';
+import { eventSeverityIcon, summarizeAccessRequest } from '@/shared/lib';
 import { timeAgo, cn } from '@/shared/lib/utils';
 
 /** How many rows the dropdown shows before deferring to the owning surfaces. */
@@ -111,13 +111,6 @@ function alertRow(event: EventResponse, onView: () => void): InboxRow {
 	};
 }
 
-function summarizeRequest(request: AccessRequest): string {
-	const n = request.items.length;
-	const head = request.items[0];
-	const label = head ? `${head.resource_type} · ${head.action}` : 'access';
-	return n > 1 ? `${label} +${n - 1} more` : label;
-}
-
 export function ActionInboxBell() {
 	const agents = usePendingAgents();
 	const requests = usePendingAccessRequests();
@@ -159,7 +152,7 @@ export function ActionInboxBell() {
 			stripe: 'border-l-primary',
 			tag: { label: 'Access', className: 'bg-primary/10 text-primary' },
 			leading: <AgentBadge id={request.actor_id} kind="Agent" size="sm" />,
-			title: summarizeRequest(request),
+			title: summarizeAccessRequest(request),
 			subtitle: (
 				<>
 					requested by <ActorLabel actorId={request.actor_id} />
@@ -168,7 +161,7 @@ export function ActionInboxBell() {
 			tsIso: request.filed_at,
 			action: {
 				label: 'Decide',
-				ariaLabel: `Decide access request ${summarizeRequest(request)}`,
+				ariaLabel: `Decide access request ${summarizeAccessRequest(request)}`,
 				onAct: act(() => setActive(request)),
 			},
 		})),

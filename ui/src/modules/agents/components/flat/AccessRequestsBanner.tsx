@@ -36,6 +36,11 @@ export function accessRequestWaitingLabel(filedAt: string): string {
 	return `waiting ${timeAgo(filedAt)}`;
 }
 
+/** `Access to …` → `access to …`, so the summary reads mid-sentence. */
+function lowerFirst(text: string): string {
+	return text.charAt(0).toLowerCase() + text.slice(1);
+}
+
 export function AccessRequestsBanner({ requests, onReview }: AccessRequestsBannerProps) {
 	const reducedMotion = useReducedMotion();
 
@@ -91,7 +96,7 @@ export function AccessRequestsBanner({ requests, onReview }: AccessRequestsBanne
 								className="font-heading font-semibold"
 							/>{' '}
 							<span className="text-muted-foreground">
-								requests {summarizeAccessRequest(longest)}
+								is asking for {lowerFirst(summarizeAccessRequest(longest))}
 							</span>{' '}
 							<span
 								className="text-muted-foreground"

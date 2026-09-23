@@ -5,11 +5,8 @@
  * and an unsettled item is handed back on re-entry rather than lost.
  */
 import type { Credential, SelectedApi } from '@/shared/credentials/api';
-import type {
-	CredentialChoice,
-	PreflightItem,
-	PreflightOutcome,
-} from '@/modules/agents/lib/apiPreflight';
+import type { CredentialChoice } from '@/shared/credentials/lib/credentialIdentity';
+import type { PreflightItem, PreflightOutcome } from '@/modules/agents/lib/apiPreflight';
 
 /** Where one API is in the queue: `active` = the pane is on it, `working` = a
  * request is in flight, `added`/`dropped` are terminal, `failed` is retryable but

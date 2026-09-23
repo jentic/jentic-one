@@ -36,7 +36,9 @@ describe('ActorAccessRequestsCard', () => {
 
 		expect(await screen.findByRole('heading', { name: 'Access requests' })).toBeInTheDocument();
 		// Summarized as "<first item> +N more" — three items → "+2 more".
-		expect(await screen.findByText(/toolkit · use \+2 more/)).toBeInTheDocument();
+		expect(
+			await screen.findByText(/Access to github\/github-api \+2 more/),
+		).toBeInTheDocument();
 		// The reason is shown beneath the summary.
 		expect(screen.getByText('agent requested repo:read + secret:read')).toBeInTheDocument();
 		// Count badge reflects the number of pending requests.
@@ -46,7 +48,7 @@ describe('ActorAccessRequestsCard', () => {
 	it('only shows requests filed by THIS actor (filters by actor_id)', async () => {
 		// `ar_2` belongs to agnt_active_2; agnt_active_1 must not see it.
 		renderCard({ actorId: 'agnt_active_1', actorName: 'support-agent' });
-		await screen.findByText(/toolkit · use \+2 more/);
+		await screen.findByText(/Access to github\/github-api \+2 more/);
 		expect(screen.queryByText('agent needs to call the payments API')).not.toBeInTheDocument();
 	});
 
@@ -57,7 +59,7 @@ describe('ActorAccessRequestsCard', () => {
 		renderCard({ actorId: 'agnt_active_1', actorName: 'support-agent' });
 
 		// Pending by default: only the pending request, and decided ones are hidden.
-		await screen.findByText(/toolkit · use \+2 more/);
+		await screen.findByText(/Access to github\/github-api \+2 more/);
 		expect(
 			screen.queryByText('agent needed read access to the analytics toolkit'),
 		).not.toBeInTheDocument();
@@ -82,7 +84,9 @@ describe('ActorAccessRequestsCard', () => {
 
 		// All filter: every status shows, with a per-row status badge.
 		await user.click(screen.getByRole('button', { name: 'All' }));
-		expect(await screen.findByText(/toolkit · use \+2 more/)).toBeInTheDocument();
+		expect(
+			await screen.findByText(/Access to github\/github-api \+2 more/),
+		).toBeInTheDocument();
 		expect(
 			screen.getByText('agent needed read access to the analytics toolkit'),
 		).toBeInTheDocument();
@@ -94,7 +98,7 @@ describe('ActorAccessRequestsCard', () => {
 		const user = userEvent.setup();
 		// agnt_active_2 has only a pending request — no approved history.
 		renderCard({ actorId: 'agnt_active_2', actorName: 'payments-agent' });
-		await screen.findByText(/toolkit · use$/);
+		await screen.findByText(/Access to stripe\/stripe-api$/);
 
 		await user.click(screen.getByRole('button', { name: 'Approved' }));
 		expect(await screen.findByText('No access requests')).toBeInTheDocument();
@@ -123,7 +127,7 @@ describe('ActorAccessRequestsCard', () => {
 		const user = userEvent.setup();
 		renderCard({ actorId: 'agnt_active_1', actorName: 'support-agent' });
 
-		await user.click(await screen.findByText(/toolkit · use \+2 more/));
+		await user.click(await screen.findByText(/Access to github\/github-api \+2 more/));
 
 		const dialog = await screen.findByRole('dialog');
 		// Wait for the request to load inside the dialog, then approve every
@@ -143,7 +147,7 @@ describe('ActorAccessRequestsCard', () => {
 			actorId: 'agnt_active_1',
 			actorName: 'support-agent',
 		});
-		await screen.findByText(/toolkit · use \+2 more/);
+		await screen.findByText(/Access to github\/github-api \+2 more/);
 		await checkA11y(container);
 	});
 });

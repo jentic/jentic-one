@@ -20,7 +20,15 @@ function pendingRequest(id: string, actorId: string, minutesAgo: number): Access
 		filed_at: new Date(Date.now() - minutesAgo * 60_000).toISOString(),
 		expires_at: new Date(Date.now() + 86_400_000).toISOString(),
 		evaluation: { can_fulfill: true, checks: [] },
-		items: [{ id: `${id}_item`, resource_type: 'toolkit', action: 'use', status: 'pending' }],
+		items: [
+			{
+				id: `${id}_item`,
+				resource_type: 'credential',
+				action: 'bind',
+				resource_reference: { vendor: 'github', name: 'github-api' },
+				status: 'pending',
+			},
+		],
 	};
 }
 
@@ -81,7 +89,7 @@ describe('AccessRequestsBanner', () => {
 		expect(banner).not.toHaveTextContent('newest-bot');
 		expect(banner).not.toHaveTextContent('middling-bot');
 		// The item summary is the shared queue-row copy.
-		expect(banner).toHaveTextContent('toolkit · use');
+		expect(banner).toHaveTextContent('is asking for access to github/github-api');
 		// The rest fold into a count, not extra banners.
 		expect(banner).toHaveTextContent('and 2 more waiting');
 	});

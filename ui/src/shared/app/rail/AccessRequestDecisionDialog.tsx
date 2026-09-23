@@ -14,8 +14,8 @@
  * routing is then synchronous. Event-driven callers (the rail) only carry the
  * request ID on the event token — pass `requestId` and this wrapper fetches the
  * request first, showing a brief loading shell, then routes. Without the fetch
- * the rail can't know it's a plan and would strand the operator in the plain
- * dialog's "open it from Access Requests" dead end.
+ * the rail can't know it's a plan and would open the plain dialog, whose
+ * approval creates no credential.
  */
 import { useEffect, useState } from 'react';
 import { Dialog } from '@/shared/ui/Dialog';

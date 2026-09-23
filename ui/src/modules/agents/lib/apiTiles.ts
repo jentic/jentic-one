@@ -8,6 +8,7 @@
 import { apiRefDisplayName } from '@/shared/lib';
 import { CredentialType, type ApiResponse, type Credential } from '@/shared/credentials/api';
 import { apiScopeCovers } from '@/shared/credentials/lib/apiIdentity';
+import { credentialAwaitsConsent } from '@/shared/credentials/lib/credentialIdentity';
 import type { CredentialBindingEntity, ServedApiEntity } from '@/modules/agents/api/types';
 
 /** One tile on the grid: the API is the card, the credential is a line on it. */
@@ -47,17 +48,6 @@ const AUTH_TILE_LABEL: Partial<Record<string, string>> = {
 	[CredentialType.SIGV4]: 'AWS SigV4',
 	[CredentialType.NO_AUTH]: 'No auth',
 };
-
-/**
- * True when an OAuth 2.0 authorization-code credential's sign-in has not
- * completed — the only not-usable case a redacted credential can prove.
- */
-export function credentialAwaitsConsent(credential: Credential | undefined): boolean {
-	if (!credential || credential.type !== CredentialType.OAUTH2) return false;
-	const details = credential.details;
-	if (!details || typeof details !== 'object') return false;
-	return details.grant_type === 'authorization_code' && details.connected === false;
-}
 
 /** Does a workspace API row satisfy a binding's served-API reference? The two
  * value spaces differ in casing, so a hand-rolled `===` would disagree. */

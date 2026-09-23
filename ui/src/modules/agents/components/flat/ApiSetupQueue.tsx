@@ -21,13 +21,12 @@ import {
 	type CreatedCredentialInfo,
 } from '@/shared/credentials/components/CreateCredentialFlow';
 import { useBindAgentCredential } from '@/modules/agents/api';
-import { credentialAwaitsConsent } from '@/modules/agents/lib/apiTiles';
 import {
-	currentChoice,
+	credentialAwaitsConsent,
 	type CredentialChoice,
-	type PreflightItem,
-} from '@/modules/agents/lib/apiPreflight';
-import { CredentialOptions } from '@/modules/agents/components/flat/CredentialOptions';
+} from '@/shared/credentials/lib/credentialIdentity';
+import { CredentialOptions } from '@/shared/credentials/components/CredentialOptions';
+import { currentChoice, type PreflightItem } from '@/modules/agents/lib/apiPreflight';
 import {
 	QUEUE_RULES_NOTICE,
 	QUEUE_STATUS_LABELS,
