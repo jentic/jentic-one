@@ -15189,7 +15189,7 @@
         ]
       },
       "post": {
-        "description": "Directly bind a credential to an agent (theme 5 phase 1).\n\nThe caller must be able to see the target credential; a credential that\ndoes not exist or is outside the caller's visibility returns 404.",
+        "description": "Directly bind a credential to an agent (theme 5 phase 1).\n\nThe caller must own the target credential (or hold ``org:admin``); a\ncredential that does not exist or that the caller does not own returns 404.",
         "operationId": "bindAgentCredential",
         "parameters": [
           {

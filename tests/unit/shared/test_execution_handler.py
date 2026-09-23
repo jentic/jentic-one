@@ -60,6 +60,8 @@ class _FakeInjector:
     def __init__(self, injection: InjectedAuth) -> None:
         self._injection = injection
         self.last_trace_id: str | None = None
+        self.last_allowed_credential_ids: Any = "unset"
+        self.last_credential_id: str | None = None
 
     async def inject(
         self,
@@ -74,6 +76,8 @@ class _FakeInjector:
         trace_id: str | None = None,
     ) -> InjectedAuth:
         self.last_trace_id = trace_id
+        self.last_allowed_credential_ids = allowed_credential_ids
+        self.last_credential_id = credential_id
         return self._injection
 
 
@@ -191,6 +195,39 @@ async def test_handler_no_injector_sends_no_auth() -> None:
     assert req is not None
     assert req.headers == {}
     assert "?" not in req.url
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("payload_extra", "expected_allowed", "expected_id"),
+    [
+        # The edge's boundary (direct or toolkit path) and credential id replay verbatim.
+        ({"allowed_credential_ids": ["cred_b"], "credential_id": "cred_b"}, ["cred_b"], "cred_b"),
+        # An empty boundary stays deny-all.
+        ({"allowed_credential_ids": []}, [], None),
+        # No boundary at all fails closed — never the unfiltered tenant-wide set.
+        ({}, [], None),
+    ],
+)
+async def test_handler_bounds_injection_to_the_payload_boundary(
+    payload_extra: dict[str, Any], expected_allowed: list[str], expected_id: str | None
+) -> None:
+    executor = _RecordingExecutor(
+        UpstreamExecResult(status_code=200, body=b"", content_type=None, duration_ms=1)
+    )
+    injector = _FakeInjector(InjectedAuth(headers={}, query_params={}, cookies={}))
+    handler = ExecutionHandler(executor=executor, credential_injector=injector)
+
+    await handler.execute(
+        "job_bound",
+        _FakeSession(),
+        payload=_payload(**payload_extra),
+        created_by="usr_test",
+        actor_type="user",
+    )
+
+    assert injector.last_allowed_credential_ids == expected_allowed
+    assert injector.last_credential_id == expected_id
 
 
 @pytest.mark.asyncio
