@@ -453,4 +453,28 @@ describe('AgentsPage — agents lifecycle', () => {
 		// The client normalises an empty selection to `scopes: null`.
 		expect(postBody).toMatchObject({ name: 'plain-agent', scopes: null });
 	});
+
+	it('keeps the sheet and draft when the create is rejected (403)', async () => {
+		const user = userEvent.setup();
+		worker.use(
+			createErrorHandler('post', '/agents', { status: 403, body: { detail: 'forbidden' } }),
+		);
+		renderPage();
+		await screen.findByText('support-agent');
+
+		await user.click(screen.getByRole('button', { name: 'New agent' }));
+		const sheet = await screen.findByRole('dialog', { name: 'Create agent' });
+		await user.type(within(sheet).getByLabelText('Name'), 'forbidden-agent');
+		await user.click(within(sheet).getByRole('button', { name: 'Create' }));
+
+		// The hook toasts the failure; the sheet stays open with the draft so the
+		// operator can retry.
+		expect(await screen.findByText('Failed to create the agent.')).toBeInTheDocument();
+		expect(screen.getByRole('dialog', { name: 'Create agent' })).toBeInTheDocument();
+		expect(within(sheet).getByLabelText('Name')).toHaveValue('forbidden-agent');
+		// Nothing was created, so there's no phantom row behind the sheet.
+		expect(
+			screen.queryAllByText('forbidden-agent').filter((el) => el.closest('tr')),
+		).toHaveLength(0);
+	});
 });

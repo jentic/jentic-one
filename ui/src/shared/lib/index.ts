@@ -34,6 +34,12 @@ export {
 } from '@/shared/lib/scopes';
 
 export { fetchActorDirectory } from '@/shared/lib/actorDirectory';
+export {
+	SERVICE_ACCOUNT_SUCCESSOR_REGISTRAR,
+	RETIRED_SERVICE_ACCOUNT_ACTOR_TYPE,
+	RETIRED_SERVICE_ACCOUNT_SUFFIX,
+	retiredServiceAccountLabel,
+} from '@/shared/lib/retiredActors';
 
 // Canonical per-severity event icon — the single source of truth shared by
 // Monitor's Events tab and the Dashboard's "Needs attention" card so the same

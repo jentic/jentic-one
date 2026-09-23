@@ -11,6 +11,7 @@
  * unaffected.
  */
 import type { AgentResponse, PermissionRuleReadSchema, PermissionTestResponse } from '@/shared/api';
+import { SERVICE_ACCOUNT_SUCCESSOR_REGISTRAR } from '@/shared/lib';
 import {
 	ACTOR_STATUSES,
 	STATUS_BADGE_VARIANT,
@@ -112,14 +113,11 @@ export function agentToEntity(r: AgentResponse): AgentEntity {
 }
 
 /**
- * `registered_by` stamp the theme-8 service-account migration writes on every
- * successor agent (`control/repos/service_account_migration_repo.py`). Unlike
- * the successor's name/description it is immutable, so it identifies the
- * lineage even after an operator renames the agent.
+ * True when the agent was minted by the theme-8 service-account migration.
+ * Keys off the immutable `registered_by` stamp
+ * (`control/repos/service_account_migration_repo.py`), so it still holds
+ * after an operator renames the agent.
  */
-export const SERVICE_ACCOUNT_SUCCESSOR_REGISTRAR = 'system:theme8-sa-migration';
-
-/** True when the agent was minted by the theme-8 service-account migration. */
 export function isServiceAccountSuccessor(agent: Pick<AgentEntity, 'attribution'>): boolean {
 	return agent.attribution.registeredBy === SERVICE_ACCOUNT_SUCCESSOR_REGISTRAR;
 }

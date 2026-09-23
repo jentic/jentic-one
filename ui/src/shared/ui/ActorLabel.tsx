@@ -26,6 +26,11 @@
  */
 import { ActorType } from '@/shared/api';
 import { useActorDirectory } from '@/shared/hooks';
+import {
+	RETIRED_SERVICE_ACCOUNT_ACTOR_TYPE,
+	RETIRED_SERVICE_ACCOUNT_SUFFIX,
+	SERVICE_ACCOUNT_SUCCESSOR_REGISTRAR,
+} from '@/shared/lib/retiredActors';
 
 /** Subtle, human-friendly noun for each actor type. Keyed by the wire string
  * (not the enum) because historical rows persist the retired
@@ -38,7 +43,9 @@ const ACTOR_TYPE_LABEL: Record<string, string> = {
 	// Retired actor types: neither mints new identities any more (their keys
 	// resolve as successor agents), but persisted executions/audit entries
 	// still carry the strings — label them so the raw `tk_…` / `sva_…` id reads
-	// as what it was rather than an unexplained token.
+	// as what it was rather than an unexplained token. (An unresolved
+	// `service_account` id renders with a "(retired service account)" suffix
+	// instead — see below.)
 	service_account: 'Service account',
 	toolkit: 'Toolkit',
 };
@@ -51,6 +58,8 @@ const ACTOR_TYPE_LABEL: Record<string, string> = {
 const ACTOR_SENTINEL_LABEL: Record<string, string> = {
 	self: 'Self',
 	system: 'System',
+	// `registered_by` on every successor agent the theme-8 migration minted.
+	[SERVICE_ACCOUNT_SUCCESSOR_REGISTRAR]: 'Service-account migration',
 };
 
 /** A subtle type prefix for a known `actor_type`, or undefined otherwise. */
@@ -97,6 +106,18 @@ export function ActorLabel({ actorId, actorType, resolvedName, className }: Acto
 		return (
 			<span className={className} title={actorId}>
 				{sentinel}
+			</span>
+		);
+	}
+
+	// Historical service-account actor (theme 8): nothing left to resolve or
+	// link to, so show the raw `sva_…` id marked as retired. Matches the Monitor
+	// usage label and the enterprise admin console.
+	if (actorType === RETIRED_SERVICE_ACCOUNT_ACTOR_TYPE) {
+		return (
+			<span className={className} title={actorId}>
+				<span className="font-mono">{actorId}</span>{' '}
+				<span className="text-muted-foreground">{RETIRED_SERVICE_ACCOUNT_SUFFIX}</span>
 			</span>
 		);
 	}

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { useLocation, useRoutes } from 'react-router';
 import { renderWithProviders, screen } from '@/__tests__/test-utils';
+import { Toaster } from '@/shared/ui';
 import { ROUTES } from '@/shared/app/routes';
 import { agentsRoutes } from '@/modules/agents/routes';
 
@@ -33,11 +34,16 @@ describe('retired service-account routes (theme 8)', () => {
 			<>
 				<Harness />
 				<LocationProbe />
+				<Toaster />
 			</>,
 			{ route: '/agents/service-accounts/sva_0123456789abcdef' },
 		);
 
 		expect(await screen.findByRole('heading', { name: 'Agents stub' })).toBeInTheDocument();
 		expect(screen.getByTestId('location').textContent).toBe(ROUTES.agents);
+		// OQ-6: a toast explains the redirect.
+		expect(
+			await screen.findByText("Service accounts were retired. They're now agents."),
+		).toBeInTheDocument();
 	});
 });

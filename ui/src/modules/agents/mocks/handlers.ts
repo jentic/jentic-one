@@ -22,6 +22,7 @@
  * Registered additively in src/mocks/handlers.ts.
  */
 import { http, HttpResponse } from 'msw';
+import { SERVICE_ACCOUNT_SUCCESSOR_REGISTRAR } from '@/shared/lib';
 
 type Status = 'pending' | 'active' | 'rejected' | 'disabled' | 'archived';
 
@@ -45,6 +46,12 @@ interface AgentRow {
 	 * copied onto this successor — no rotate/revoke audit row exists for it.
 	 */
 	_migratedKey?: boolean;
+	/**
+	 * Mirrors `agent_credentials.rotated_at`: set when a generate or revoke
+	 * touches an EXISTING credential row. A first-ever generate inserts the
+	 * row, so it stays null.
+	 */
+	_keyRotatedAt?: string;
 }
 
 const ADMIN = 'usr_000000000000000000000admin';
@@ -427,7 +434,7 @@ export function seedServiceAccountSuccessor(): AgentRow {
 			"Successor of service account 'metrics-exporter' (sva_active_1) — theme-8 Phase 1",
 		status: 'active',
 		owner_id: ADMIN,
-		registered_by: 'system:theme8-sa-migration',
+		registered_by: SERVICE_ACCOUNT_SUCCESSOR_REGISTRAR,
 		has_api_key: true,
 		_migratedKey: true,
 	});
@@ -1013,6 +1020,7 @@ export const agentsHandlers = [
 		const row = agents.find((a) => a.id === params.id);
 		if (!row) return new HttpResponse(null, { status: 404 });
 		if (row.status !== 'active') return new HttpResponse(null, { status: 409 });
+		if (row.has_api_key || row._apiKeyRevoked) row._keyRotatedAt = now();
 		row.has_api_key = true;
 		row._apiKeyRevoked = false;
 		row._migratedKey = false;
@@ -1027,6 +1035,7 @@ export const agentsHandlers = [
 		row.has_api_key = false;
 		row._apiKeyRevoked = true;
 		row._migratedKey = false;
+		row._keyRotatedAt = now();
 		return new HttpResponse(null, { status: 204 });
 	}),
 	// Get API key info for an agent.
@@ -1038,8 +1047,12 @@ export const agentsHandlers = [
 			id: `agc_${params.id}`,
 			status: row.has_api_key ? 'active' : 'revoked',
 			created_at: row.created_at,
-			rotated_at: row.has_api_key ? null : now(),
-			created_by: ADMIN,
+			rotated_at: row._keyRotatedAt ?? null,
+			// The migration inserted the successor's credential row itself.
+			created_by:
+				row.registered_by === SERVICE_ACCOUNT_SUCCESSOR_REGISTRAR
+					? row.registered_by
+					: ADMIN,
 		});
 	}),
 	// Get API key history for an agent.

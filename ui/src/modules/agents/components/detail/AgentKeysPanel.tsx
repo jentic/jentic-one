@@ -12,12 +12,13 @@
  * retired account's key digest (`sak_…` / `jntc_live_…` plaintexts keep
  * authenticating). Rotating or revoking replaces that single credential row,
  * so the confirms warn that the migrated key ends for good while it is still
- * the current one (no rotate/revoke in the key history yet).
+ * the current one (the migration-created credential row was never rotated).
  */
 import { useState } from 'react';
 import { Ban, History, KeyRound } from 'lucide-react';
 import { ActorLabel, Badge, Button, DetailSection, LoadingState } from '@/shared/ui';
 import { formatTimestamp, timeAgo } from '@/shared/lib/utils';
+import { SERVICE_ACCOUNT_SUCCESSOR_REGISTRAR } from '@/shared/lib';
 import {
 	useAgentApiKeyInfo,
 	useAgentApiKeyHistory,
@@ -47,9 +48,16 @@ export function AgentKeysPanel({ agent }: { agent: AgentEntity }) {
 	const info = apiKeyInfo.data;
 	const history = apiKeyHistory.data ?? [];
 	const mutating = generateApiKey.isPending || revokeApiKey.isPending;
-	// While the history is still loading (or failed) this errs toward warning.
+	// The migration inserted the successor's credential row itself
+	// (`created_by` = its system actor), and any later generate/revoke stamps
+	// `rotated_at`. So an active, never-rotated, migration-created key is the
+	// original service-account key. This reads the credential row directly
+	// instead of the 50-row-capped audit history.
 	const holdsMigratedKey =
-		isServiceAccountSuccessor(agent) && agent.hasApiKey && history.length === 0;
+		isServiceAccountSuccessor(agent) &&
+		info?.status === 'active' &&
+		info.rotatedAt == null &&
+		info.createdBy === SERVICE_ACCOUNT_SUCCESSOR_REGISTRAR;
 	const migratedKeyWarning = holdsMigratedKey ? (
 		<p className="text-foreground mt-2 font-medium" data-testid="migrated-key-warning">
 			This agent replaced a retired service account and still authenticates with that
