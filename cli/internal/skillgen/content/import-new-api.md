@@ -98,8 +98,9 @@ upstream — the user's agent can execute the API immediately instead of waiting
 review. Skip this step if `jentic doctor` reports the control plane unreachable.
 
 Local import needs the `apis:write` scope, which is not granted by default — ask your operator
-to grant it to this agent in the dashboard (granted scopes land on the next fresh token; tokens
-are short-lived and re-mint automatically), then continue.
+to grant it to this agent in the dashboard. Granted scopes bake into your token at mint time, so
+once they confirm run `jentic logout` (it clears only the cached token, not your identity) and the
+next call mints a fresh token carrying the scope; then continue.
 
 Import the spec with the CLI's own upload command — it reads the local file and sends it inline
 for you (async; prints a job id). Pass `--vendor`/`--name`/`--version` explicitly so attribution

@@ -46,7 +46,7 @@ this file adds the lane-specific detail.
   re-sending duplicates the side effect.
 - A 424 `credential_not_provisioned` error is for your **operator** — it
   carries a `provisioning_url`; relay it so they can connect the account.
-  No tool you can call connects an account.
+  Connecting the account is the operator's step, not yours.
 - Don't call `get_started` on the HTTP mount — it isn't there. Its absence
   is a transport tell (you're on the daemon mount), not an outage; don't
   retry it or report it as a failure.

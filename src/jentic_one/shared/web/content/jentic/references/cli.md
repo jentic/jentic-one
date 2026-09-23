@@ -57,11 +57,11 @@ one complete summary** — the API (vendor/name), the auth type the spec
 declares, the operations you intend to call, your proposed permission
 rules, and why. The operator connects or provisions the credential and
 binds this agent to it in the Jentic One dashboard; granting is always a
-human action and there is no CLI command that files it for you. Bindings
-take effect live — once your operator confirms, just retry the `execute`
-that was blocked. Newly granted **scopes** bake into your token at mint
-time; tokens are short-lived and re-mint automatically, so a granted scope
-lands on the next fresh token.
+human action. Bindings take effect live — once your operator confirms, just
+retry the `execute` that was blocked. Newly granted **scopes** bake into
+your token at mint time, so after a scope grant run `jentic logout` (it
+clears only the cached token, not your identity) before retrying — the next
+call mints a fresh token that carries the scope.
 
 ### The reactive path: denial directives
 
@@ -121,9 +121,8 @@ surface difference, not a state difference.)
 If `import` unexpectedly fails with `403 … requires one of: catalog:import`
 — e.g. you were approved before `catalog:import` became a default scope and
 weren't re-granted — ask your operator to grant the `catalog:import` scope
-to this agent in the dashboard, then retry once they confirm (granted
-scopes land on the next fresh token; tokens are short-lived and re-mint
-automatically):
+to this agent in the dashboard. Once they confirm, run `jentic logout` so
+the next call mints a fresh token carrying the scope, then retry:
 
 ```
 jentic catalog import googleapis.com/sheets

@@ -1,6 +1,6 @@
 """import_api on the mount — the Go table tests, replayed against the port.
 
-Mirrors ``cli/internal/cli/api/mcp_access_test.go``'s import coverage
+Mirrors ``cli/internal/cli/api/mcp_catalog_test.go``'s import coverage
 (validation arms, scope gate, three-outcome tracking, failed-job arm) plus the
 arms only the in-process port has: the duplicate-content short-circuit (the
 worker requeues a duplicate ingest with backoff and dead-letters it, so the

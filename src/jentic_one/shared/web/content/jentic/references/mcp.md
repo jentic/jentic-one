@@ -65,7 +65,7 @@ operator in one complete summary** — the API (vendor/name), the auth type
 the spec declares, the operations you intend to call, your proposed
 permission rules, and why. Granting is always a human action: the operator
 connects or provisions the credential and binds this agent to it in the
-Jentic One dashboard; no tool you can call grants access.
+Jentic One dashboard; your job is to relay the gap, not to grant it.
 
 Bindings resolve live per request on the HTTP mount, so once your operator
 confirms, the very next tool call sees the new access — just retry what was

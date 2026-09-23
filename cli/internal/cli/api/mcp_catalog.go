@@ -114,7 +114,8 @@ func (s *mcpServer) handleSearchCatalog(ctx context.Context, req *mcp.CallToolRe
 					Code: ux.CodeBrokerDenied,
 					Msg:  fmt.Sprintf("reading the catalog requires the capabilities:read scope: %v", err),
 					Actionable: "Ask your human operator to grant this agent the capabilities:read scope " +
-						"in the dashboard, then retry search_catalog once they confirm.",
+						"in the dashboard. Once they confirm, run `jentic logout` (clears only the cached token) " +
+						"so the next call mints a token carrying the scope, then retry search_catalog.",
 				}), nil
 			}
 		}
@@ -288,7 +289,8 @@ func (s *mcpServer) importAPIError(ctx context.Context, apiID string, err error)
 				Code: ux.CodeBrokerDenied,
 				Msg:  fmt.Sprintf("importing a cataloged API requires the catalog:import scope: %v", err),
 				Actionable: "Ask your human operator to grant this agent the catalog:import scope " +
-					"in the dashboard, then retry import_api once they confirm.",
+					"in the dashboard. Once they confirm, run `jentic logout` (clears only the cached token) " +
+					"so the next call mints a token carrying the scope, then retry import_api.",
 			})
 		}
 	}

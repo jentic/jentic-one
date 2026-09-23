@@ -2,7 +2,7 @@
 
 Each handler is the Python twin of the Go stdio server's handler for the same
 tool (``cli/internal/cli/api/mcp_tools.go`` / ``mcp_discovery.go`` /
-``mcp_access.go`` / ``mcp_execute.go``): the same argument normalization
+``mcp_catalog.go`` / ``mcp_execute.go``): the same argument normalization
 (aliases + coercions), the same envelope keys, and the same coded soft-error
 mapping — the golden contract tests replay identical tool calls against both
 implementations. Where the Go server calls REST routes, these handlers call
