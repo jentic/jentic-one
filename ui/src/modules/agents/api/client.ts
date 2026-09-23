@@ -810,6 +810,22 @@ export async function fetchActorAccessRequests(
 	}
 }
 
+/**
+ * The org-wide pending access-request queue, so the Agents window can surface
+ * requests awaiting a decision inline (the same durable queue the Dashboard's
+ * "Pending requests" card reads). Unscoped by actor: these are requests the
+ * VIEWER may need to approve, not requests filed by one agent. The banner
+ * further narrows to rows the caller can decide via `evaluation.can_fulfill`.
+ */
+export async function fetchPendingApproverAccessRequests(): Promise<AccessRequest[]> {
+	try {
+		const page = await listAccessRequests({ status: 'pending', limit: 50 });
+		return page.data;
+	} catch (error) {
+		throw toAgentsError(error, 'Failed to load pending access requests.');
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Audit (read-only actor-scoped lens on the shared /audit endpoint).
 // ---------------------------------------------------------------------------

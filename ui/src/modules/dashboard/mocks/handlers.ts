@@ -137,6 +137,10 @@ interface DashboardAccessRequest {
 	created_by: string;
 	filer_owner_id: string | null;
 	items: DashboardAccessRequestItem[];
+	// Whether the current caller may decide the request. The Agents window's
+	// inline banner narrows the queue to `can_fulfill !== false` rows; a `false`
+	// here belongs to another approver and must not surface there.
+	evaluation?: { can_fulfill: boolean; checks: unknown[] } | null;
 }
 
 export const dashboardPendingAccessRequests: DashboardAccessRequest[] = [
@@ -151,6 +155,8 @@ export const dashboardPendingAccessRequests: DashboardAccessRequest[] = [
 		expires_at: minutesAgo(-1440),
 		created_by: 'usr_admin_1',
 		filer_owner_id: null,
+		// The viewer can decide this one — it surfaces in the Agents banner.
+		evaluation: { can_fulfill: true, checks: [] },
 		items: [
 			{
 				id: 'ari_dash_1',
@@ -202,6 +208,31 @@ export const dashboardPendingAccessRequests: DashboardAccessRequest[] = [
 		items: [
 			{
 				id: 'ari_dash_3',
+				resource_type: 'toolkit',
+				action: 'use',
+				status: 'pending',
+				decision_reason: null,
+			},
+		],
+	},
+	{
+		// Filed against another approver: `can_fulfill: false` keeps it out of the
+		// Agents window's inline banner (it would be noise there) while it still
+		// counts in the org-wide Dashboard queue.
+		id: 'ar_dash_3',
+		actor_id: 'billing-sync',
+		status: 'pending',
+		reason: 'needs an approver who owns the target credential',
+		requested_by: 'usr_admin_2',
+		approve_url: 'https://app.example.test/access-requests/ar_dash_3',
+		filed_at: minutesAgo(20),
+		expires_at: minutesAgo(-1440),
+		created_by: 'usr_admin_2',
+		filer_owner_id: null,
+		evaluation: { can_fulfill: false, checks: [] },
+		items: [
+			{
+				id: 'ari_dash_4',
 				resource_type: 'toolkit',
 				action: 'use',
 				status: 'pending',

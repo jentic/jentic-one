@@ -57,6 +57,7 @@ import {
 	replaceAgentBindingPermissions,
 	testAgentBindingPermissions,
 	fetchActorAccessRequests,
+	fetchPendingApproverAccessRequests,
 	fetchActorUsageDetail,
 	fetchCredentialUsageTotals,
 	fetchActorExecutions,
@@ -157,6 +158,14 @@ export const actorAccessRequestsKey = (actorId: string, status: string) =>
  */
 export const actorAccessRequestsRootKey = (actorId: string) =>
 	['access-requests', 'by-actor', actorId] as const;
+
+/**
+ * The org-wide pending access-request queue the Agents window surfaces inline
+ * (distinct from the per-actor `by-actor` slices above — these are requests the
+ * viewer may need to decide, keyed only by status). Shares the top-level
+ * `access-requests` prefix so a decision made anywhere invalidates it.
+ */
+export const pendingApproverAccessRequestsKey = ['access-requests', 'pending-approver'] as const;
 
 /**
  * OAuth consent grants binding clients to one agent, keyed by
@@ -961,6 +970,28 @@ export function useActorAccessRequests(actorId: string | null, status: string | 
 		queryKey: actorAccessRequestsKey(actorId ?? '', status ?? 'all'),
 		queryFn: () => fetchActorAccessRequests(actorId as string, status),
 		enabled: actorId != null,
+	});
+}
+
+/**
+ * Pending access requests the viewer can act on, for the Agents window's inline
+ * banner. Narrows the org-wide pending queue to rows the caller may decide via
+ * `evaluation.can_fulfill` — a request the viewer can't fulfil belongs to
+ * another approver and would only be noise here. A row with no `evaluation`
+ * (the backend omits it when it wasn't computed) is treated as actionable so
+ * the banner degrades toward showing rather than hiding a decision.
+ *
+ * Polls like the Dashboard's pending-requests card (a new request the viewer
+ * must accept should appear without a reload) and refetches on focus.
+ */
+export function usePendingApproverAccessRequests() {
+	return useQuery<AccessRequest[], Error, AccessRequest[]>({
+		queryKey: pendingApproverAccessRequestsKey,
+		queryFn: fetchPendingApproverAccessRequests,
+		select: (requests) => requests.filter((r) => r.evaluation?.can_fulfill !== false),
+		staleTime: 30_000,
+		refetchInterval: 45_000,
+		refetchOnWindowFocus: true,
 	});
 }
 
