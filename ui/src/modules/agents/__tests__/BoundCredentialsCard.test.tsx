@@ -10,6 +10,7 @@ import {
 	checkA11y,
 } from '@/__tests__/test-utils';
 import { setToken } from '@/shared/api';
+import { AuthProvider } from '@/shared/auth';
 import { Toaster } from '@/shared/ui';
 import { resetAgentsStore } from '@/modules/agents/mocks/handlers';
 import AgentDetailPage from '@/modules/agents/pages/AgentDetailPage';
@@ -34,7 +35,13 @@ function renderAccessTab(route = ROUTE) {
  * import).
  */
 function seedCredentials(
-	creds: Array<{ credential_id: string; name: string; type: string; vendor: string }>,
+	creds: Array<{
+		credential_id: string;
+		name: string;
+		type: string;
+		vendor: string;
+		created_by?: string;
+	}>,
 ) {
 	worker.use(
 		http.get('/credentials', () =>
@@ -47,6 +54,7 @@ function seedCredentials(
 					active: true,
 					api: { vendor: c.vendor, name: 'default', version: '1.0.0' },
 					created_at: '2026-05-01T10:00:00Z',
+					created_by: c.created_by ?? null,
 					updated_at: null,
 				})),
 				has_more: false,
@@ -315,5 +323,56 @@ describe('BoundCredentialsCard (agent detail · Access tab)', () => {
 		expect(await screen.findByText(/approve this agent first/i)).toBeInTheDocument();
 		// …and no bind affordance renders for a pending agent.
 		expect(screen.queryByRole('button', { name: /bind credential/i })).not.toBeInTheDocument();
+	});
+
+	it('offers a non-admin only the credentials they own in the bind picker', async () => {
+		// Binding is ownership-scoped server-side (a non-admin binding a
+		// credential they don't own gets a 404), so the picker hides those rows
+		// rather than offering a dead end.
+		const me = 'usr_member_1';
+		worker.use(
+			http.get('/users/me', () =>
+				HttpResponse.json({
+					id: me,
+					email: 'member@local',
+					first_name: 'Member',
+					last_name: 'User',
+					active: true,
+					permissions: ['agents:read', 'agents:write', 'credentials:read'],
+					must_change_password: false,
+					created_at: '2026-01-01T00:00:00Z',
+					updated_at: null,
+				}),
+			),
+		);
+		seedCredentials([
+			{
+				credential_id: 'cred_mine',
+				name: 'My token',
+				type: 'bearer_token',
+				vendor: 'acme',
+				created_by: me,
+			},
+			{
+				credential_id: 'cred_theirs',
+				name: 'Shared token',
+				type: 'bearer_token',
+				vendor: 'acme',
+				created_by: 'usr_someone_else',
+			},
+		]);
+		const user = userEvent.setup();
+		renderWithProviders(
+			<AuthProvider>
+				<AgentDetailPage />
+			</AuthProvider>,
+			{ route: ROUTE, path: PATH },
+		);
+		await screen.findByRole('heading', { name: /bound credentials/i });
+
+		await user.click(screen.getByRole('button', { name: /^bind credential$/i }));
+		const dialog = await screen.findByRole('dialog');
+		expect(await within(dialog).findByText('My token')).toBeInTheDocument();
+		expect(within(dialog).queryByText('Shared token')).not.toBeInTheDocument();
 	});
 });

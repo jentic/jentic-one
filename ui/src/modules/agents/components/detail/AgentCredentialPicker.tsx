@@ -17,6 +17,7 @@ import { AppLink, Badge, EmptyState, ErrorAlert, LoadingState, SearchInput } fro
 import { ROUTES } from '@/shared/app/routes';
 import { apiIdentityTuple, apiRefDisplayName } from '@/shared/lib';
 import { CREDENTIAL_TYPE_LABELS } from '@/shared/credentials/api';
+import { ORG_ADMIN, useOptionalCurrentUser } from '@/shared/auth';
 import { useBindableCredentialsForAgent, type AgentBindableCredential } from '@/modules/agents/api';
 
 /** The shared label map widened for lookup by the picker's plain-string
@@ -51,7 +52,19 @@ export function AgentCredentialPicker({
 	enabled = true,
 }: AgentCredentialPickerProps) {
 	const [query, setQuery] = useState('');
-	const { data, isLoading, error } = useBindableCredentialsForAgent({ enabled });
+	const { data: fetched, isLoading, error } = useBindableCredentialsForAgent({ enabled });
+	const currentUser = useOptionalCurrentUser();
+
+	// Only credentials the caller may bind: an `org:admin` binds any; everyone
+	// else only the ones they own (the server 404s the rest — e.g. an enterprise
+	// share is visible but not bindable). Unknown user → no filter; the server
+	// still enforces.
+	const data = useMemo(() => {
+		if (!fetched || !currentUser || currentUser.permissions?.includes(ORG_ADMIN)) {
+			return fetched;
+		}
+		return fetched.filter((c) => c.createdBy === currentUser.id);
+	}, [fetched, currentUser]);
 
 	const available = useMemo(() => {
 		const all = data ?? [];
