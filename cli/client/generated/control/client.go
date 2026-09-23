@@ -5211,8 +5211,8 @@ type ClientInterface interface {
 	//
 	// Directly bind a credential to an agent (theme 5 phase 1).
 	//
-	// The caller must be able to see the target credential; a credential that
-	// does not exist or is outside the caller's visibility returns 404.
+	// The caller must own the target credential (or hold ``org:admin``); a
+	// credential that does not exist or that the caller does not own returns 404.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -5223,8 +5223,8 @@ type ClientInterface interface {
 	//
 	// Directly bind a credential to an agent (theme 5 phase 1).
 	//
-	// The caller must be able to see the target credential; a credential that
-	// does not exist or is outside the caller's visibility returns 404.
+	// The caller must own the target credential (or hold ``org:admin``); a
+	// credential that does not exist or that the caller does not own returns 404.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -8195,8 +8195,8 @@ func (c *Client) ListAgentCredentials(ctx context.Context, agentId string, reqEd
 //
 // Directly bind a credential to an agent (theme 5 phase 1).
 //
-// The caller must be able to see the target credential; a credential that
-// does not exist or is outside the caller's visibility returns 404.
+// The caller must own the target credential (or hold “org:admin“); a
+// credential that does not exist or that the caller does not own returns 404.
 //
 // Takes any type of body and a specified content type.
 //
@@ -8217,8 +8217,8 @@ func (c *Client) BindAgentCredentialWithBody(ctx context.Context, agentId string
 //
 // Directly bind a credential to an agent (theme 5 phase 1).
 //
-// The caller must be able to see the target credential; a credential that
-// does not exist or is outside the caller's visibility returns 404.
+// The caller must own the target credential (or hold “org:admin“); a
+// credential that does not exist or that the caller does not own returns 404.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -21673,8 +21673,8 @@ type ClientWithResponsesInterface interface {
 	//
 	// Directly bind a credential to an agent (theme 5 phase 1).
 	//
-	// The caller must be able to see the target credential; a credential that
-	// does not exist or is outside the caller's visibility returns 404.
+	// The caller must own the target credential (or hold ``org:admin``); a
+	// credential that does not exist or that the caller does not own returns 404.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -21685,8 +21685,8 @@ type ClientWithResponsesInterface interface {
 	//
 	// Directly bind a credential to an agent (theme 5 phase 1).
 	//
-	// The caller must be able to see the target credential; a credential that
-	// does not exist or is outside the caller's visibility returns 404.
+	// The caller must own the target credential (or hold ``org:admin``); a
+	// credential that does not exist or that the caller does not own returns 404.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -38860,8 +38860,8 @@ func (c *ClientWithResponses) ListAgentCredentialsWithResponse(ctx context.Conte
 //
 // Directly bind a credential to an agent (theme 5 phase 1).
 //
-// The caller must be able to see the target credential; a credential that
-// does not exist or is outside the caller's visibility returns 404.
+// The caller must own the target credential (or hold “org:admin“); a
+// credential that does not exist or that the caller does not own returns 404.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -38878,8 +38878,8 @@ func (c *ClientWithResponses) BindAgentCredentialWithBodyWithResponse(ctx contex
 //
 // Directly bind a credential to an agent (theme 5 phase 1).
 //
-// The caller must be able to see the target credential; a credential that
-// does not exist or is outside the caller's visibility returns 404.
+// The caller must own the target credential (or hold “org:admin“); a
+// credential that does not exist or that the caller does not own returns 404.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //

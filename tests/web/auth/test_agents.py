@@ -28,7 +28,7 @@ from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import InviteState, StoredCredentialType
 from jentic_one.shared.models.events import EventType
-from tests.web.auth.conftest import _build_app
+from tests.web.auth.conftest import OWNER_EMAIL, _build_app, _make_token
 
 pytestmark = pytest.mark.integration
 
@@ -358,6 +358,58 @@ def test_bind_visibility(
     )
     assert resp.status_code == 404
     assert resp.json()["type"] == "credential_not_found"
+
+
+@pytest.mark.parametrize(
+    "credential_permissions",
+    [["credentials:read"], ["credentials:write"], ["credentials:read", "credentials:write"]],
+)
+def test_bind_foreign_credential_denied_despite_credentials_scopes(
+    web_context: Context,
+    owner_user_id: str,
+    binding_agent_id: str,
+    control_credential_id: str,
+    foreign_credential_id: str,
+    credential_permissions: list[str],
+) -> None:
+    """``credentials:*`` does not let a user bind another user's credential (issue #88).
+
+    A binding hands the agent the credential's secret at the broker, so a
+    non-admin may bind only credentials they own — whatever credential scopes
+    they hold. The foreign credential is a 404 (existence must not leak); the
+    caller's own credential still binds.
+    """
+    token = _make_token(
+        web_context,
+        owner_user_id,
+        OWNER_EMAIL,
+        ["agents:read", "agents:write", *credential_permissions],
+    )
+    app = _build_app(web_context)
+    with TestClient(app, headers={"Authorization": f"Bearer {token}"}) as client:
+        resp = client.post(
+            f"/agents/{binding_agent_id}/credentials",
+            json={"credential_id": foreign_credential_id},
+        )
+        assert resp.status_code == 404
+        assert resp.json()["type"] == "credential_not_found"
+
+        resp = client.post(
+            f"/agents/{binding_agent_id}/credentials",
+            json={"credential_id": control_credential_id},
+        )
+        assert resp.status_code == 201
+
+
+def test_admin_can_bind_any_credential(
+    admin_client: TestClient, binding_agent_id: str, foreign_credential_id: str
+) -> None:
+    """``org:admin`` administers every credential, so it may bind one it did not create."""
+    resp = admin_client.post(
+        f"/agents/{binding_agent_id}/credentials",
+        json={"credential_id": foreign_credential_id},
+    )
+    assert resp.status_code == 201
 
 
 @pytest.fixture()

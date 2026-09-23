@@ -65,6 +65,9 @@ class CachingToolkitDeriver:
     ``identity_mismatch`` are cached under the same TTL as the toolkit list;
     those drive recovery guidance, never authorization, so bounded staleness is
     acceptable — the same argument that justifies caching the toolkit list.
+    ``credentials_by_toolkit`` IS the toolkit path's injection boundary, so a
+    toolkit→credential unbind reaches injection only once the TTL lapses — the
+    same bounded staleness the toolkit list itself already has.
     """
 
     def __init__(

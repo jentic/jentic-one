@@ -51,7 +51,7 @@ from jentic_one.shared.models import ActorStatus, ActorType, ActorVerb
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.pagination import Page, decode_cursor_str, encode_cursor
 from jentic_one.shared.schemas import ServedApiRef
-from jentic_one.shared.scopes import DEFAULT_AGENT_SCOPES
+from jentic_one.shared.scopes import DEFAULT_AGENT_SCOPES, ORG_ADMIN, OWNER_CREDENTIALS_READ
 
 logger = structlog.get_logger(__name__)
 
@@ -464,20 +464,32 @@ class AgentService:
                 ]
         return views
 
-    def _can_see_credential(self, identity: Identity, created_by: str | None) -> bool:
-        """Visibility policy for the direct bind path (theme 5 phase 1).
+    def _can_bind_credential(self, identity: Identity, created_by: str | None) -> bool:
+        """Bind authorization for the direct bind path.
 
-        The caller can bind an agent to a credential they administer
-        (``org:admin`` or a ``credentials:*`` scope — ``credentials:write``
-        implies read at the gate but arrives unexpanded on the API-key path,
-        so both are listed) or one they created. Finer owner-delegation
-        semantics (an owner's agents seeing the owner's credentials) stay on
-        the control-side scoping seam, not here.
+        A binding hands the agent the credential's secret at the broker, so
+        this is an ownership check, not a read-visibility check: ``org:admin``
+        may bind any credential; everyone else only one they created, or — a
+        delegated agent holding ``owner:credentials:read`` — one its owner
+        created. This is the owner axis of ``credential_owner_scope`` (the
+        access-request ``credential:bind`` effect), so both bind paths agree.
+
+        ``credentials:read`` / ``credentials:write`` deliberately do **not**
+        widen this: they gate the credential routes, whose rows are still
+        owner-scoped, so honouring them here would let any holder bind another
+        user's credential to their own agent and have it injected.
         """
-        allowed = {"org:admin", "credentials:read", "credentials:write"}
-        if allowed & set(identity.permissions):
+        if ORG_ADMIN in identity.permissions:
             return True
-        return created_by is not None and created_by == identity.sub
+        if created_by is None:
+            return False
+        if created_by == identity.sub:
+            return True
+        return (
+            OWNER_CREDENTIALS_READ in identity.permissions
+            and identity.parent_actor_id is not None
+            and created_by == identity.parent_actor_id
+        )
 
     async def list_credentials(
         self, agent_id: str, *, identity: Identity
@@ -524,7 +536,7 @@ class AgentService:
         if self._ctx.is_db_allowed("control"):
             async with self._ctx.control_db.session() as session:
                 ref = await CredentialRefRepository.get_by_id(session, credential_id)
-        if ref is None or not self._can_see_credential(identity, ref.created_by):
+        if ref is None or not self._can_bind_credential(identity, ref.created_by):
             raise CredentialNotVisibleError(credential_id)
         async with self._ctx.admin_db.transaction() as session:
             try:

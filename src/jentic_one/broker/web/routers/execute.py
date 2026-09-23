@@ -14,6 +14,7 @@ pipeline stages / runner decorators (``services/execution/pipeline.py``,
 from __future__ import annotations
 
 import base64
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlencode, urlparse, urlunparse
@@ -428,6 +429,19 @@ async def _emit_toolkit_binding_unserved(
         )
 
 
+@dataclass(frozen=True, slots=True)
+class ToolkitSelection:
+    """The toolkit an execution runs against, and its injection boundary.
+
+    ``credential_ids`` are the selected toolkit's bound credentials that cover
+    the API — the only credentials the toolkit path may inject. Empty means
+    nothing may resolve (fail closed), never "no filter".
+    """
+
+    toolkit_id: str
+    credential_ids: tuple[str, ...]
+
+
 async def select_toolkit(
     *,
     deriver: ToolkitDeriverProtocol,
@@ -435,7 +449,7 @@ async def select_toolkit(
     api: APIReference,
     header_toolkit: str | None,
     instance: str,
-) -> str:
+) -> ToolkitSelection:
     """Derive the toolkit for this execution from the caller's bindings.
 
     ``0 → 403`` (no binding / credential identity mismatch), ``1 → use it``,
@@ -483,7 +497,7 @@ async def select_toolkit(
                     directive=ambiguous_toolkit_directive(candidates),
                 )
             raise _empty_derivation_denial(derivation, api, instance=instance)
-        return header_toolkit
+        return _selection(derivation, header_toolkit)
 
     if not candidates:
         raise _empty_derivation_denial(derivation, api, instance=instance)
@@ -504,7 +518,14 @@ async def select_toolkit(
             },
             directive=ambiguous_toolkit_directive(candidates),
         )
-    return candidates[0]
+    return _selection(derivation, candidates[0])
+
+
+def _selection(derivation: ToolkitDerivation, toolkit_id: str) -> ToolkitSelection:
+    return ToolkitSelection(
+        toolkit_id=toolkit_id,
+        credential_ids=tuple(derivation.credentials_by_toolkit.get(toolkit_id, ())),
+    )
 
 
 def _empty_credential_derivation_denial(
@@ -675,12 +696,18 @@ async def _resolve_credentials(
     credential_name: str | None = None,
     *,
     preresolved: ResolvedCredential | None = None,
+    allowed_credential_ids: list[str] | None = None,
+    credential_id: str | None = None,
 ) -> InjectedAuth:
     """Resolve + inject credentials via the shared ``CredentialService``.
 
     ``preresolved`` carries the direct path's already-selected credential so
     injection never re-resolves (and cannot pick a different credential than
-    the one the rules were evaluated against).
+    the one the rules were evaluated against). ``allowed_credential_ids`` is
+    the injection boundary for a path that resolves here (the toolkit path):
+    only these ids may resolve, and an empty list resolves nothing.
+    ``credential_id`` (``Jentic-Credential-Id``) disambiguates *within* that
+    boundary — it can never select a credential outside it.
     """
     return await CredentialService(ctx).inject(
         api_vendor=ctx_req.api_vendor or "",
@@ -688,6 +715,8 @@ async def _resolve_credentials(
         api_version=ctx_req.api_version or "",
         identity=identity,
         credential_name=credential_name,
+        credential_id=credential_id,
+        allowed_credential_ids=allowed_credential_ids,
         trace_id=ctx_req.trace_id,
         preresolved=preresolved,
     )
@@ -950,7 +979,7 @@ async def _handle(
         # Toolkit is derived from the discovered API identity (never the inbound
         # header verbatim); drives credential injection and execution attribution.
         try:
-            ctx_req.toolkit_id = await select_toolkit(
+            selection = await select_toolkit(
                 deriver=deriver,
                 identity=identity,
                 api=resolved.api,
@@ -966,6 +995,12 @@ async def _handle(
             if _is_unserved_no_toolkit_binding(exc):
                 await _emit_toolkit_binding_unserved(ctx, api=resolved.api, identity=identity)
             raise
+        ctx_req.toolkit_id = selection.toolkit_id
+        # Injection boundary for the toolkit path: only the selected toolkit's
+        # bound credentials may resolve. Without it the resolver would consider
+        # every credential in the tenant for this vendor — including another
+        # user's, reachable by name via Jentic-Credential-Name.
+        allowed_credential_ids = list(selection.credential_ids)
 
         # Evaluate toolkit permission rules — default-deny when no rule matches.
         # Unconditional: even if toolkit_id were empty the evaluator returns a
@@ -1033,7 +1068,11 @@ async def _handle(
             ctx,
             identity,
             selected_credential_id=(
-                selected_credential.credential_id if selected_credential else None
+                selected_credential.credential_id
+                if selected_credential
+                # Toolkit path: the caller's Jentic-Credential-Id, bounded by
+                # allowed_credential_ids at the worker's injection.
+                else request.headers.get("jentic-credential-id")
             ),
             allowed_credential_ids=allowed_credential_ids,
         )
@@ -1058,6 +1097,7 @@ async def _handle(
             runner,
             upstream_cfg,
             preresolved=selected_credential,
+            allowed_credential_ids=allowed_credential_ids,
         )
 
     # Buffer the body once (needed for the idempotency fingerprint and the call).
@@ -1093,7 +1133,13 @@ async def _handle(
 
     credential_name = request.headers.get("jentic-credential-name")
     injection = await _resolve_credentials(
-        ctx_req, ctx, identity, credential_name, preresolved=selected_credential
+        ctx_req,
+        ctx,
+        identity,
+        credential_name,
+        preresolved=selected_credential,
+        allowed_credential_ids=allowed_credential_ids,
+        credential_id=request.headers.get("jentic-credential-id"),
     )
     ctx_req.upstream_url, auth_headers = _apply_injection(ctx_req.upstream_url, injection, request)
     ctx_req.credential_id = injection.credential_id
@@ -1143,6 +1189,7 @@ async def _handle_streaming(
     upstream_cfg: UpstreamClientConfig,
     *,
     preresolved: ResolvedCredential | None = None,
+    allowed_credential_ids: list[str] | None = None,
 ) -> Response:
     """Sync, non-idempotent streaming passthrough.
 
@@ -1158,7 +1205,13 @@ async def _handle_streaming(
     body = await _read_request_body(request, ctx_req.method, ctx)
     credential_name = request.headers.get("jentic-credential-name")
     injection = await _resolve_credentials(
-        ctx_req, ctx, identity, credential_name, preresolved=preresolved
+        ctx_req,
+        ctx,
+        identity,
+        credential_name,
+        preresolved=preresolved,
+        allowed_credential_ids=allowed_credential_ids,
+        credential_id=request.headers.get("jentic-credential-id"),
     )
     ctx_req.upstream_url, auth_headers = _apply_injection(ctx_req.upstream_url, injection, request)
     ctx_req.credential_id = injection.credential_id
@@ -1268,10 +1321,11 @@ async def _handle_async(
 ) -> Response:
     """Enqueue an async (202) execution. The worker shares the same pipeline.
 
-    On the direct-binding path the payload pins the credential the edge
-    selected (and the allowed set derived from the caller's bindings) so the
-    worker's injection replays the exact same selection under the same
-    injection boundary (Q-02) — rules were already enforced here at the edge.
+    The payload carries the injection boundary (``allowed_credential_ids`` —
+    the caller's bound credentials on the direct path, the selected toolkit's
+    on the toolkit path) and, when known, the credential id, so the worker's
+    injection replays the same selection under the same boundary (Q-02) —
+    rules were already enforced here at the edge.
     """
     execution_id = mint_execution_id()
     body = await _read_request_body(request, ctx_req.method, ctx)
