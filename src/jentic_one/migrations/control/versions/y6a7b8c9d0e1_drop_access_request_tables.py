@@ -4,7 +4,9 @@ Theme 7 removes the access-request feature end to end: the ``/access-requests``
 REST surface, service, repos, and ORM models are gone, so the backing tables
 go with them. Rows are not archived — the epic (jentic/jentic-one#1372)
 retires the workflow outright; historical *events* and *audit* rows referencing
-access requests survive in their own stores and stay readable.
+access requests survive in their own stores and stay readable (the admin-DB
+migration f1a2b3c4d5e7 acknowledges the still-actionable ones so the console
+inbox drains).
 
 Child table first (``access_request_items`` carries the FK to
 ``access_requests``), then the parent. ``downgrade()`` recreates both tables at
