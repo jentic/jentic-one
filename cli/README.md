@@ -21,8 +21,8 @@ Run `jenticctl` or `jentic` (no args) for the grouped command list, or
 | Binary | Area | Commands | What you get |
 | ------ | ---- | -------- | ------------ |
 | `jenticctl` | **Setup & lifecycle** | `install` · `wizard` · `setup` · `doctor` · `status` · `start` · `stop` · `logs` · `update` · `reset-password` · `uninstall` | Stand up Jentic One locally (source venv or Docker) through an interactive wizard, then manage the running app: health checks, start/stop, log tailing, updates, password reset, and teardown. |
-| `jentic` | **Identity & access** | `register` · `setup` · `logout` · `context` · `env` · `identity` · `migrate` | Each identity is an agent keypair scoped to an environment; a **context** binds environment + identity + mode and is what commands act through. Register an agent (Ed25519 + RFC 7523), switch/inspect contexts, and `migrate` a legacy `~/.jentic` profile store into the XDG layout. |
-| `jentic` | **APIs** | `catalog` · `apis` · `endpoints` · `credentials` | Browse, search, and import APIs from the public catalog, then manage the ones in your local registry (revisions, operations, promote/archive, spec download) with interactive TUI browsers. `endpoints` prints the platform's own endpoint + scope reference; `credentials` lists the credentials the control plane holds. |
+| `jentic` | **Identity & access** | `register` · `setup` · `logout` · `whoami` · `context` · `env` · `identity` · `migrate` | Each identity is an agent keypair scoped to an environment; a **context** binds environment + identity + mode and is what commands act through. Register an agent (Ed25519 + RFC 7523), switch/inspect contexts, `whoami` to see your identity/scopes/bindings as the control plane does, and `migrate` a legacy `~/.jentic` profile store into the XDG layout. |
+| `jentic` | **APIs** | `catalog` · `apis` · `endpoints` · `credentials` · `connect` | Browse, search, and import APIs from the public catalog, then manage the ones in your local registry (revisions, operations, promote/archive, spec download) with interactive TUI browsers. `endpoints` prints the platform's own endpoint + scope reference; `credentials` lists the credentials the control plane holds; `connect <vendor>` starts a vendor connect session (prints the approval URL a human approves — `--wait` polls it). |
 | `jentic` | **Find and run operations** | `search` · `inspect` · `execute` · `history` · `events` · `api` | The agent loop: find imported operations, inspect their method/params/schemas, and call them through the broker. `history export` audits a trace; `events watch` streams live events; `api` is a `gh api`-style authenticated passthrough to any control-plane route (self-describing via `api ops` / `api describe`). |
 | `jentic` | **Local agent client** | `skill` · `run` · `reset` · `doctor` | `skill` installs the "how to use Jentic" skill into agent runtimes (Claude Code, Cursor, Codex, …); `run` launches a coding agent in an isolated local account; `reset` wipes local state; `doctor` is the agent-side read-only self-check. Flow + examples: [`docs/guides/local-agent.md`](../docs/guides/local-agent.md). |
 | `jentic` | **Administration** | `admin` · `theme` | `admin config providers` manages the platform's credential-provider configuration; `theme` sets the persisted color theme. |
@@ -250,8 +250,10 @@ jentic register                                       # local install (defaults 
 # …or, for a remote server:
 jentic register --url https://jentic.example.com --broker-url https://broker.jentic.example.com
 jentic catalog
-jentic api GET /me                                    # a fresh agent is bound to no APIs
-# ask your operator to connect a credential and bind this agent (dashboard)
+jentic whoami                                         # a fresh agent is bound to no APIs
+jentic connect <vendor>       # start connecting a registry vendor's credential — a human
+                              # approves the printed approval_url; for anything else, ask your
+                              # operator to connect a credential and bind this agent (dashboard)
 jentic execute <operation>
 ```
 
@@ -320,8 +322,10 @@ jentic register --url http://127.0.0.1:8000
 # Approve the agent in the console, then:
 jentic doctor                 # identity + reachability + clock-skew report
 jentic catalog                # browse APIs
-jentic api GET /me            # a fresh agent starts bound to no APIs
-# ask your operator to connect a credential and bind this agent (dashboard)
+jentic whoami                 # a fresh agent starts bound to no APIs
+jentic connect <vendor>       # start connecting a registry vendor's credential (a human
+                              # approves the approval_url); for anything else, ask your
+                              # operator to connect a credential and bind this agent (dashboard)
 jentic execute listPets       # routed through http://127.0.0.1:8100 automatically
 ```
 

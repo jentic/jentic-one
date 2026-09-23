@@ -27,7 +27,7 @@ Every API endpoint grouped by its **typical caller**, then by surface, annotated
 
 > The grouping and the _Typical caller_ column are an **advisory hint** at who usually calls a route, inferred from the scope family. They are **not** an enforced restriction: access is gated by the **scope**, not the actor kind, so any actor holding the required scope can call the endpoint.
 
-_Total endpoints: **185**._
+_Total endpoints: **186**._
 
 
 ## Agent-facing (typically agent / service-account) (33)
@@ -230,7 +230,7 @@ _Total endpoints: **185**._
 | POST | `/users/{user_id}:enable` | `users:write` | operator | Enable User |
 | POST | `/users/{user_id}:reissue-invite` | `users:write` | operator | Reissue Invite |
 
-## Any authenticated actor (71)
+## Any authenticated actor (72)
 
 
 ### `admin`
@@ -277,6 +277,7 @@ _Total endpoints: **185**._
 
 | Method | Path | Scope(s) | Typical caller | Summary |
 |---|---|---|---|---|
+| GET | `/connect-sessions` | `credentials:read`, `owner:credentials:read` | any | List connect sessions |
 | GET | `/connect-sessions/{session_id}` | `credentials:write` | any | Get review data for a connect session |
 | GET | `/connect-sessions/{session_id}/status` | `credentials:connect`, `credentials:write` | any | Poll a connect session's status |
 | POST | `/connect-sessions/{session_id}:cancel` | `credentials:connect`, `credentials:write` | any | Cancel an in-flight connect session |

@@ -12,6 +12,7 @@ only the router's own logic.
 
 from __future__ import annotations
 
+import datetime as dt
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -26,6 +27,8 @@ from jentic_one.control.services.integrations.connect_session_service import (
     DeviceAuthorizationConfirmResult,
     ReviewData,
     ScopeView,
+    SessionPage,
+    SessionSummary,
     StatusResult,
 )
 from jentic_one.control.services.integrations.device_authorization import (
@@ -44,6 +47,7 @@ from jentic_one.control.web.deps import get_connect_session_service
 from jentic_one.control.web.routers import integrations as integrations_router
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.models import ActorType
+from jentic_one.shared.pagination import InvalidCursorError
 from jentic_one.shared.resilience import RateLimiter
 from jentic_one.shared.state import MemoryStateBackend
 from jentic_one.shared.web import deps as shared_deps
@@ -416,6 +420,119 @@ def test_status_maps_invalid_poll_token_uniformly_to_403() -> None:
     with TestClient(app) as client:
         resp = client.get("/connect-sessions/sess_x/status", params={"poll_token": "t"})
     assert resp.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# GET /connect-sessions — console list
+# ---------------------------------------------------------------------------
+
+_READER_IDENTITY = Identity(sub="usr_reader", permissions=["credentials:read"])
+
+
+def _summary(session_id: str = "cs_1", state: str = "created") -> SessionSummary:
+    return SessionSummary(
+        session_id=session_id,
+        state=state,
+        vendor_key="gh",
+        vendor_display_name="GitHub",
+        agent_id="agnt_scout",
+        requested_by_actor_id="usr_reader",
+        reason="need repo access",
+        connected_as=None,
+        error_code=None,
+        created_at=dt.datetime(2026, 9, 16, 12, 0, 0, tzinfo=dt.UTC),
+    )
+
+
+def test_list_sessions_returns_paginated_envelope() -> None:
+    svc = AsyncMock(spec=ConnectSessionService)
+    svc.list_all = AsyncMock(
+        return_value=SessionPage(
+            data=[_summary("cs_1"), _summary("cs_2", state="connected")],
+            has_more=True,
+            next_cursor="opaque-cursor",
+        )
+    )
+    app = _build_app(svc=svc, identity=_READER_IDENTITY)
+    with TestClient(app) as client:
+        resp = client.get("/connect-sessions", params={"cursor": "c0", "limit": 2})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert [row["session_id"] for row in body["data"]] == ["cs_1", "cs_2"]
+    assert body["has_more"] is True
+    assert body["next_cursor"] == "opaque-cursor"
+    call = svc.list_all.await_args
+    assert call is not None
+    assert call.kwargs["cursor"] == "c0"
+    assert call.kwargs["limit"] == 2
+    assert call.kwargs["identity"].sub == "usr_reader"
+
+
+def test_list_sessions_forwards_state_and_vendor_filters() -> None:
+    svc = AsyncMock(spec=ConnectSessionService)
+    svc.list_all = AsyncMock(return_value=SessionPage(data=[], has_more=False, next_cursor=None))
+    app = _build_app(svc=svc, identity=_READER_IDENTITY)
+    with TestClient(app) as client:
+        resp = client.get("/connect-sessions", params={"state": "polling", "vendor": "gh"})
+    assert resp.status_code == 200
+    call = svc.list_all.await_args
+    assert call is not None
+    assert call.kwargs["state"] == "polling"
+    assert call.kwargs["vendor"] == "gh"
+
+
+def test_list_sessions_rejects_unknown_state_with_422() -> None:
+    # ``state`` is a closed vocabulary (the session state machine) — an
+    # unknown value is schema-invalid, not an empty result set.
+    svc = AsyncMock(spec=ConnectSessionService)
+    app = _build_app(svc=svc, identity=_READER_IDENTITY)
+    with TestClient(app) as client:
+        resp = client.get("/connect-sessions", params={"state": "bogus"})
+    assert resp.status_code == 422
+    svc.list_all.assert_not_called()
+
+
+def test_list_sessions_never_includes_poll_token() -> None:
+    # The poll_token is the capability that gates /status and :cancel —
+    # leaking it through the console list would let any credentials:read
+    # holder drive someone else's in-flight session.
+    svc = AsyncMock(spec=ConnectSessionService)
+    svc.list_all = AsyncMock(
+        return_value=SessionPage(data=[_summary()], has_more=False, next_cursor=None)
+    )
+    app = _build_app(svc=svc, identity=_READER_IDENTITY)
+    with TestClient(app) as client:
+        resp = client.get("/connect-sessions")
+    assert resp.status_code == 200
+    row = resp.json()["data"][0]
+    assert "poll_token" not in row
+    assert set(row) == {
+        "session_id",
+        "state",
+        "vendor_key",
+        "vendor_display_name",
+        "agent_id",
+        "requested_by_actor_id",
+        "reason",
+        "connected_as",
+        "error_code",
+        "created_at",
+    }
+
+
+def test_list_sessions_maps_invalid_cursor_to_400() -> None:
+    # InvalidCursorError is mapped by the surface's cursor_error_handler
+    # (registered via control/web/app.get_exception_handlers), not inline
+    # in the router — register it on the test app the same way the
+    # combined app factory does.
+    svc = AsyncMock(spec=ConnectSessionService)
+    svc.list_all = AsyncMock(side_effect=InvalidCursorError("Invalid pagination cursor"))
+    app = _build_app(svc=svc, identity=_READER_IDENTITY)
+    for exc_class, handler in get_exception_handlers():
+        app.add_exception_handler(exc_class, handler)
+    with TestClient(app) as client:
+        resp = client.get("/connect-sessions", params={"cursor": "not-base64"})
+    assert resp.status_code == 400
 
 
 # ---------------------------------------------------------------------------

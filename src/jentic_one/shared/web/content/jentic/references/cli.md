@@ -45,19 +45,37 @@ context).
 ## Step 2 — access
 
 See your own identity, status, scopes, and credential bindings (with the
-APIs each one serves) via the authenticated `/me` passthrough:
+APIs each one serves):
 
 ```
-jentic api GET /me
+jentic whoami
 ```
+
+(`jentic api GET /me` returns the same view; `whoami` is the nicer form.)
 
 Decide access from that view first (see `SKILL.md` step 2 for the
-doctrine). When something is missing, **report the gap to your operator in
+doctrine). When the missing credential is for a vendor in the deployment's
+connect registry, **start the connection yourself**:
+
+```
+jentic connect github --reason "read open PRs to summarise them"
+```
+
+It prints the `approval_url` (and the resolved flow) — relay the URL to
+your human operator, who opens it in their browser and approves the
+connection and its scopes; you never open or approve it. `--scopes` names
+vendor scopes to request (write scopes are flagged for the approver);
+`--wait` polls until the session connects or ends (rejected, expired, or cancelled;
+exit 3 if the timeout lapses while still pending). Once they confirm,
+re-check `jentic whoami` — an agent-initiated connect binds you at
+approval — and retry the `execute` that was blocked.
+
+For APIs outside the registry, **report the gap to your operator in
 one complete summary** — the API (vendor/name), the auth type the spec
 declares, the operations you intend to call, your proposed permission
-rules, and why. The operator connects or provisions the credential and
-binds this agent to it in the Jentic One dashboard; granting is always a
-human action. Bindings take effect live — once your operator confirms, just
+rules, and why. Approval is always a human action, and so are binding an
+existing credential and scope grants: the operator acts in the Jentic One
+dashboard. Bindings take effect live — once your operator confirms, just
 retry the `execute` that was blocked. Newly granted **scopes** bake into
 your token at mint time, so after a scope grant run `jentic logout` (it
 clears only the cached token, not your identity) before retrying — the next
@@ -75,14 +93,20 @@ live in `references/recovery.md`; what follows is this lane's mechanics per
 code:
 
 - **`no_credential_binding` (403)** — with `api_served: false` no credential
-  is provisioned for the API at all: ask your operator to connect or
-  provision one in the dashboard and bind you to it; propose the auth type
-  and permission rules you read from the API spec (see `SKILL.md` step 2).
+  is provisioned for the API at all: if the directive carries a
+  `suggested_command` (`jentic connect <vendor>`), run it and relay the
+  printed `approval_url` to your operator; otherwise ask them to connect or
+  provision a credential in the dashboard and bind you to it, proposing the
+  auth type and permission rules you read from the API spec (see `SKILL.md`
+  step 2).
   With `api_served: true` a credential already serves the API and you just
   aren't bound: ask your operator to bind you to it (dashboard, or
   `POST /agents/{agent_id}/credentials`). Then retry.
-- **`credential_not_provisioned` (424)** — the directive carries a
-  `provisioning_url`: hand it to your operator to connect the account, then
+- **`credential_not_provisioned` (424)** — if the directive carries a
+  `suggested_command` (`jentic connect <key>`), the vendor is in the
+  connect registry: run it and relay the printed `approval_url` to your
+  operator; otherwise relay the directive's `provisioning_url` (when
+  present) — or report the gap — so they can connect the account. Then
   retry.
 - **`credential_undecryptable` (424)** — ask your operator to remove and
   re-add the credential, then retry; this is not agent-recoverable.

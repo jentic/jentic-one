@@ -86,6 +86,12 @@ var fencingExemptPrefixes = []string{
 	// Agent-facing self-check (read-only) and login/logout of the agent's own
 	// session (not an operator context switch).
 	"doctor", "whoami", "login", "logout",
+	// Agent-initiable credential provisioning (theme-7 Phase 1b): starts a
+	// connect session server-side (scope credentials:connect) and prints the
+	// approval_url — approval always blocks on a human in the browser, and no
+	// host management state is touched. It is the agent's own recovery
+	// surface, so fencing it would defeat the point.
+	"connect",
 	// The MCP stdio server: serves the agent's data-plane surface to a local
 	// MCP client. Read-only host-wise (it writes only its own log file), never
 	// prompts, never switches or reveals a non-active context; every backend

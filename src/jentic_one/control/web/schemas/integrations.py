@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
@@ -75,6 +76,43 @@ class IntegrationsConnectResponse(BaseModel):
     approval_url: str
     poll_token: str
     resolved_flow: str
+
+
+# ---------------------------------------------------------------------------
+# GET /connect-sessions   (console list)
+# ---------------------------------------------------------------------------
+
+
+#: The states a listed row can hold. A session never persists in a terminal
+#: failure state: ``_mark_terminal`` deletes its pending credential, and the
+#: FK cascade takes the session row with it — so the list only ever sees live
+#: (``created``/``polling``) or ``connected`` sessions.
+ConnectSessionState = Literal["created", "polling", "connected"]
+
+
+class ConnectSessionSummaryResponse(BaseModel):
+    """Slim list row for the console — deliberately excludes ``poll_token``."""
+
+    session_id: str
+    state: ConnectSessionState
+    vendor_key: str
+    vendor_display_name: str
+    agent_id: str | None = None
+    requested_by_actor_id: str
+    reason: str | None = None
+    connected_as: str | None = None
+    # Reserved: a failed session is deleted on its terminal transition, so a
+    # listed row carries no error_code today.
+    error_code: str | None = None
+    created_at: datetime
+
+
+class ConnectSessionListResponse(BaseModel):
+    """Cursor-paginated envelope of connect-session summaries."""
+
+    data: list[ConnectSessionSummaryResponse]
+    has_more: bool
+    next_cursor: str | None = None
 
 
 # ---------------------------------------------------------------------------

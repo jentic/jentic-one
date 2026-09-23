@@ -2,12 +2,14 @@
 
 Each handler is the Python twin of the Go stdio server's handler for the same
 tool (``cli/internal/cli/api/mcp_tools.go`` / ``mcp_discovery.go`` /
-``mcp_catalog.go`` / ``mcp_execute.go``): the same argument normalization
+``mcp_catalog.go`` / ``mcp_execute.go`` / ``mcp_request_connection.go``): the
+same argument normalization
 (aliases + coercions), the same envelope keys, and the same coded soft-error
 mapping — the golden contract tests replay identical tool calls against both
 implementations. Where the Go server calls REST routes, these handlers call
 the owning services **in-process** (registry search/inspect/catalog, admin
-jobs, auth identity); the execute family proxies to the broker server-side
+jobs, auth identity, connect sessions); the execute family proxies to the
+broker server-side
 (the broker stays MCP-free).
 
 Scope enforcement mirrors the REST routes fronted: the same
@@ -47,6 +49,16 @@ from jentic_one.auth.web.routers.identity import (
     _resolve_service_account,
     _resolve_user,
 )
+from jentic_one.control.services.integrations.connect_session_service import (
+    ConnectSessionService,
+)
+from jentic_one.control.services.integrations.errors import NoOpForFlowError
+from jentic_one.control.services.vendors.service import (
+    UnknownVendorError,
+    UnsupportedFlowError,
+    VendorNotConfiguredError,
+)
+from jentic_one.control.web.routers.integrations import _CONNECT_BURST, _CONNECT_RPM
 from jentic_one.mcp import execute as ex
 from jentic_one.mcp.envelopes import (
     CODE_BROKER_DENIED,
@@ -82,7 +94,10 @@ from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.permission_catalog import compute_effective
 from jentic_one.shared.auth.permissions import has_effective_permission
 from jentic_one.shared.context import Context
+from jentic_one.shared.models import ActorType
 from jentic_one.shared.pagination import InvalidCursorError, InvalidSearchCursorError
+from jentic_one.shared.resilience import RateLimiter
+from jentic_one.shared.state import MemoryStateBackend
 
 _INVALID_PARAMS = mcp_types.INVALID_PARAMS
 
@@ -1136,6 +1151,168 @@ async def _attach_job_result(env: CallEnv, job_id: str, payload: dict[str, Any])
             payload["result"] = raw.decode("utf-8", errors="replace")
 
 
+# ── request_connection ────────────────────────────────────────────────────────
+
+_REQUEST_CONNECTION_PARAMS = [
+    ParamSpec("vendor", "string"),
+    ParamSpec("requested_scopes", "string_list", ("scopes",)),
+    ParamSpec("reason", "string"),
+]
+
+#: The operator-relay guidance stamped on every successful result (Go:
+#: ``requestConnectionInstruction`` in ``mcp_request_connection.go``).
+#: Lane-invariant by construction: it names only whoami and the human
+#: approval step, never a stdio-only tool.
+_REQUEST_CONNECTION_INSTRUCTION = (
+    "Relay the approval_url to your human operator — they open it in their browser and "
+    "approve (or reject) the connection; you cannot open it or approve it yourself. Once "
+    "they confirm, call whoami to see the new credential binding, then retry the call "
+    "that was blocked."
+)
+
+#: the route's ``reason`` bound (``IntegrationsConnectRequest.reason`` —
+#: ``max_length=1024``), enforced here because the in-process call skips the
+#: route's pydantic validation.
+_REQUEST_CONNECTION_REASON_MAX = 1024
+
+#: Upper bound on ``requested_scopes`` — the Go mount's ``connectScopesMax``
+#: twin, so neither mount forwards an unbounded list to the vendor authorize URL.
+_REQUEST_CONNECTION_SCOPES_MAX = 100
+
+#: Per-actor rate-limit twin of the route's: the mount calls the
+#: connect-session service in-process, bypassing the route's app-state
+#: limiter, so it carries its own with the SAME policy knobs (imported from
+#: the route module — one place owns the policy). In-memory / per-worker like
+#: the route's — sufficient for the abuse case (one actor spamming the
+#: vendor's authorize endpoint), not a coordinated-cluster limit.
+_connect_limiter = RateLimiter(
+    MemoryStateBackend(),
+    default_rpm=_CONNECT_RPM,
+    burst=_CONNECT_BURST,
+    namespace="mcp_integrations_connect",
+)
+
+
+async def handle_request_connection(
+    env: CallEnv, arguments: dict[str, Any]
+) -> mcp_types.CallToolResult:
+    """POST /integrations:connect in-process (Go: ``handleRequestConnection``).
+
+    Create-only (theme-7 Phase 1b): starts a connect session for a registry
+    vendor and returns ``{session_id, approval_url, resolved_flow}`` plus the
+    operator-relay instruction. ``poll_token`` is not surfaced as a separate
+    field — this surface serves no poll leg (the recovery loop is relay
+    approval_url → operator approves → confirm via whoami → retry); it still
+    rides the approval_url's query string, which the approving human needs. ``agent_id``
+    is never taken from arguments: the caller *is* the agent (the route
+    refuses a supplied agent_id with 403 for the same reason).
+    """
+    args = normalize_tool_args(arguments, _REQUEST_CONNECTION_PARAMS)
+    vendor = args.get("vendor", "")
+    if not vendor:
+        raise invalid_params(
+            'request_connection requires "vendor": the vendor registry key, '
+            'e.g. {"vendor": "github"}'
+        )
+    reason = args.get("reason", "")
+    if len(reason) > _REQUEST_CONNECTION_REASON_MAX:
+        raise invalid_params(
+            f"reason must be at most {_REQUEST_CONNECTION_REASON_MAX} characters, got {len(reason)}"
+        )
+    requested_scopes = args.get("requested_scopes") or None
+    if requested_scopes is not None and len(requested_scopes) > _REQUEST_CONNECTION_SCOPES_MAX:
+        raise invalid_params(
+            f"requested_scopes must list at most {_REQUEST_CONNECTION_SCOPES_MAX} scopes, "
+            f"got {len(requested_scopes)}"
+        )
+    try:
+        # The route's any-of gate (credentials:connect | credentials:write);
+        # agents hold credentials:connect by default.
+        require_scopes(env.identity, ["credentials:connect", "credentials:write"])
+    except ToolError as exc:
+        # The Go special case (requestConnectionError's 403 arm): a 403 on
+        # THIS route is the missing credentials:connect scope — an access gap
+        # the operator closes with a dashboard grant, not a revoked identity.
+        raise ToolError(
+            CODE_BROKER_DENIED,
+            f"starting a connect session requires the credentials:connect scope: {exc}",
+            actionable="Ask your human operator to grant this agent the "
+            "credentials:connect scope in the dashboard, then retry "
+            "request_connection once they confirm.",
+        ) from None
+
+    outcome = await _connect_limiter.acquire(env.identity.sub)
+    if not outcome.allowed:
+        raise ToolError(
+            CODE_TRANSPORT_ERROR,
+            "connect sessions are rate limited (http 429: rate limit exceeded)",
+            actionable="Wait briefly and retry request_connection; do not loop on it.",
+            extra={"retryable": True, "retry_after_s": outcome.retry_after_s},
+        )
+
+    # Mirror the route's identity injection: an agent caller connects for
+    # itself; a user/service-account caller over this mount connects an
+    # unbound credential (the tool surface carries no agent_id).
+    agent_id = env.identity.sub if env.identity.actor_type == ActorType.AGENT else None
+    try:
+        created = await ConnectSessionService(env.ctx).create_session(
+            vendor_key=vendor,
+            agent_id=agent_id,
+            initiator_actor_id=env.identity.sub,
+            requested_scopes=requested_scopes,
+            preferred_flow=None,
+            reason=reason or None,
+        )
+    except UnknownVendorError as exc:
+        raise ToolError(
+            CODE_RESOLVE_FAILED,
+            f"cannot start a connect session for vendor {vendor!r}: {exc}",
+            actionable='Pass a vendor registry key this deployment supports (e.g. "github"). '
+            "If the vendor is not in the registry, this tool cannot connect it: find the "
+            "API with search_catalog and ask your human operator to connect a credential "
+            "for it in the dashboard instead.",
+            next_tool="search_catalog",
+        ) from None
+    except (UnsupportedFlowError, NoOpForFlowError) as exc:
+        # Aligned with the Go mount's 400/404 arm (review L1): the route
+        # answers 400 for an unusable flow (404 for an unknown vendor), and the
+        # recovery is the same caller-shaped step — this vendor cannot be
+        # connected here, so rediscover or route to the operator.
+        raise ToolError(
+            CODE_RESOLVE_FAILED,
+            f"cannot start a connect session for vendor {vendor!r}: {exc}",
+            actionable="This vendor's connect flow is not usable on this deployment, so "
+            "this tool cannot connect it: find the API with search_catalog and ask your "
+            "human operator to connect a credential for it in the dashboard instead.",
+            next_tool="search_catalog",
+        ) from None
+    except VendorNotConfiguredError as exc:
+        raise ToolError(
+            CODE_BROKER_DENIED,
+            f"vendor {vendor!r} is registered but not configured on this deployment: {exc}",
+            actionable=f"Ask your human operator to configure the {vendor!r} vendor's "
+            "OAuth client on this deployment (or connect the credential in the "
+            "dashboard), then retry.",
+        ) from None
+
+    logger.info(
+        "mcp_request_connection",
+        vendor=vendor,
+        session_id=created.session_id,
+        flow=created.resolved_flow,
+    )
+    return tool_result(
+        env.ctx,
+        {
+            "schema_version": SCHEMA_VERSION,
+            "session_id": created.session_id,
+            "approval_url": created.approval_url,
+            "resolved_flow": created.resolved_flow,
+            "instruction": _REQUEST_CONNECTION_INSTRUCTION,
+        },
+    )
+
+
 # ── dispatch ──────────────────────────────────────────────────────────────────
 
 #: name → handler for every tool this mount serves (must cover
@@ -1149,6 +1326,7 @@ HANDLERS: dict[str, Handler] = {
     "execute": handle_execute,
     "execute_read": handle_execute_read,
     "get_execution_result": handle_get_execution_result,
+    "request_connection": handle_request_connection,
 }
 
 

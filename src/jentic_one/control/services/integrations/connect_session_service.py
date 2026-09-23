@@ -26,6 +26,7 @@ from jentic_one.control.repos import (
 )
 from jentic_one.control.repos.connect_session_repo import ConnectSessionRepository
 from jentic_one.control.repos.effects_repo import EffectsRepository
+from jentic_one.control.scoping.filters import build_access_filters
 from jentic_one.control.services.credentials.state import consume_callback_state
 from jentic_one.control.services.integrations import identity_echo
 from jentic_one.control.services.integrations.errors import (
@@ -47,6 +48,7 @@ from jentic_one.control.services.integrations.flow_handlers import (
 from jentic_one.control.services.integrations.flow_handlers.base import SuccessTokens
 from jentic_one.control.services.vendors.service import (
     ResolvedScope,
+    UnknownVendorError,
     VendorRegistryService,
 )
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_best_effort
@@ -57,6 +59,7 @@ from jentic_one.shared.metrics import get_meter
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.models.actors import actor_type_from_id
 from jentic_one.shared.models.api_identity import canonical_credential_scope
+from jentic_one.shared.pagination import decode_cursor_str, encode_cursor
 
 _logger = structlog.get_logger(__name__)
 
@@ -129,6 +132,31 @@ class ReviewData:
     api_vendor: str
     api_name: str | None
     api_version: str | None
+
+
+@dataclass(slots=True, frozen=True)
+class SessionSummary:
+    """Slim list-row projection for the console list (never the poll_token)."""
+
+    session_id: str
+    state: str
+    vendor_key: str
+    vendor_display_name: str
+    agent_id: str | None
+    requested_by_actor_id: str
+    reason: str | None
+    connected_as: str | None
+    error_code: str | None
+    created_at: datetime
+
+
+@dataclass(slots=True, frozen=True)
+class SessionPage:
+    """Cursor-paginated envelope of :class:`SessionSummary` rows."""
+
+    data: list[SessionSummary]
+    has_more: bool
+    next_cursor: str | None
 
 
 @dataclass(slots=True, frozen=True)
@@ -463,6 +491,80 @@ class ConnectSessionService:
             api_name=credential.api_name if credential else None,
             api_version=api_version,
         )
+
+    # ---- list ---------------------------------------------------------------
+
+    async def list_all(
+        self,
+        *,
+        cursor: str | None = None,
+        limit: int = 50,
+        state: str | None = None,
+        vendor: str | None = None,
+        identity: Identity,
+    ) -> SessionPage:
+        """List connect sessions with cursor pagination, scoped to the caller.
+
+        Visibility follows the credential axis (``build_access_filters``):
+        plain callers see sessions they initiated, ``org:admin`` sees all,
+        and a delegated agent holding ``owner:credentials:read`` also sees
+        its owner's sessions. Rows are slim summaries — the ``poll_token``
+        capability never leaves the service on this path.
+        """
+        decoded_cursor = None
+        if cursor is not None:
+            ts, sid = decode_cursor_str(cursor)
+            decoded_cursor = (ts, sid)
+
+        access_filters = build_access_filters(identity, ConnectSession)
+
+        async with self._ctx.control_db.session() as session:
+            rows = await ConnectSessionRepository.list_all(
+                session,
+                cursor=decoded_cursor,
+                limit=limit,
+                state=state,
+                vendor=vendor,
+                filters=access_filters,
+            )
+
+            has_more = len(rows) > limit
+            if has_more:
+                rows = rows[:limit]
+
+            data = [self._to_summary(r) for r in rows]
+            next_cursor = None
+            if has_more and rows:
+                last = rows[-1]
+                next_cursor = encode_cursor(last.created_at, last.id)
+
+        return SessionPage(data=data, has_more=has_more, next_cursor=next_cursor)
+
+    def _to_summary(self, row: ConnectSession) -> SessionSummary:
+        return SessionSummary(
+            session_id=row.id,
+            state=row.state,
+            vendor_key=row.vendor,
+            vendor_display_name=self._vendor_display_name(row.vendor),
+            agent_id=row.agent_id,
+            requested_by_actor_id=row.initiator_actor_id,
+            reason=row.reason,
+            connected_as=row.connected_as,
+            error_code=row.error_code,
+            created_at=row.created_at,
+        )
+
+    def _vendor_display_name(self, vendor_key: str) -> str:
+        """Resolve a vendor key to its display name, tolerating removed vendors.
+
+        The vendor registry is config-seeded — an operator can drop an entry
+        after sessions referencing it were persisted, and the list must not
+        500 on such historical rows. Fall back to the raw key.
+        """
+        try:
+            return self._vendors.get(vendor_key).display_name
+        except UnknownVendorError:
+            return vendor_key
 
     # ---- confirm ----------------------------------------------------------
 

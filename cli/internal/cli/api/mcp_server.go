@@ -218,8 +218,9 @@ var inspectOperationSchema = map[string]any{
 // toolSpecs declares the served tool surface: the 1-A pre-auth pair
 // (get_started, whoami), the 1-B discovery pair (search_apis,
 // inspect_operation), the 1-C execute surface (execute, execute_read,
-// get_execution_result — mcp_execute.go), and the catalog tools
-// (search_catalog, import_api — mcp_catalog.go). Docstrings
+// get_execution_result — mcp_execute.go), the catalog tools
+// (search_catalog, import_api — mcp_catalog.go), and the connect tool
+// (request_connection — mcp_request_connection.go). Docstrings
 // encode the flow (get_started first, whoami before discovery, search →
 // inspect → execute, access is granted by a human operator — never probe by
 // executing) per §3.2, with concrete argument examples a model can copy.
@@ -227,7 +228,8 @@ func (s *mcpServer) toolSpecs() []mcpToolSpec {
 	readOnly := &mcp.ToolAnnotations{ReadOnlyHint: true}
 	execSpecs := s.executeToolSpecs()
 	catalogSpecs := s.catalogToolSpecs()
-	specs := make([]mcpToolSpec, 0, 4+len(execSpecs)+len(catalogSpecs))
+	connectSpecs := s.connectToolSpecs()
+	specs := make([]mcpToolSpec, 0, 4+len(execSpecs)+len(catalogSpecs)+len(connectSpecs))
 	specs = append(specs, []mcpToolSpec{
 		{
 			tool: &mcp.Tool{
@@ -315,14 +317,15 @@ func (s *mcpServer) toolSpecs() []mcpToolSpec {
 		},
 	}...)
 	specs = append(specs, execSpecs...)
-	return append(specs, catalogSpecs...)
+	specs = append(specs, catalogSpecs...)
+	return append(specs, connectSpecs...)
 }
 
 // registerTools applies the serving filters. --exclude-tools drops by name;
 // --read-only drops everything whose OWN ReadOnlyHint annotation is absent —
 // the advertised annotation is the single source of truth, so
-// that is exactly execute (1-C) and import_api (execute_read,
-// get_execution_result, and search_catalog stay).
+// that is exactly execute (1-C), import_api, and request_connection
+// (execute_read, get_execution_result, and search_catalog stay).
 func (s *mcpServer) registerTools() {
 	for _, spec := range s.toolSpecs() {
 		if s.excluded[spec.tool.Name] {

@@ -24,6 +24,9 @@ class ConnectSession(AuditableMixin, ControlBase):
         Index("ix_connect_sessions_agent", "agent_id", "state"),
         Index("ix_connect_sessions_credential", "credential_id"),
         Index("ix_connect_sessions_poll_token", "poll_token", unique=True),
+        # Serves the admin-console list (GET /connect-sessions): filter by
+        # state + keyset pagination on created_at.
+        Index("ix_connect_sessions_state_created_at", "state", "created_at"),
     )
 
     id: Mapped[str] = mapped_column(

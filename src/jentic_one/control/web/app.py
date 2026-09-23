@@ -19,6 +19,7 @@ from jentic_one.control.services.vendors.service import (
 from jentic_one.control.web.errors import (
     connect_session_error_handler,
     credential_service_error_handler,
+    cursor_error_handler,
     database_error_handler,
     device_authorization_error_handler,
     vendor_error_handler,
@@ -35,6 +36,7 @@ from jentic_one.shared.db.errors import (
     DatabaseIntegrityError,
     DatabaseUnavailableError,
 )
+from jentic_one.shared.pagination import InvalidCursorError
 from jentic_one.shared.web.app_factory import create_surface_app
 from jentic_one.shared.web.container import AppContainer
 from jentic_one.shared.web.health import make_health_router
@@ -62,6 +64,7 @@ def get_exception_handlers() -> list[tuple[type[Exception], Any]]:
         (UnknownVendorError, vendor_error_handler),
         (UnsupportedFlowError, vendor_error_handler),
         (VendorNotConfiguredError, vendor_error_handler),
+        (InvalidCursorError, cursor_error_handler),
         (DatabaseIntegrityError, database_error_handler),
         (DatabaseDataError, database_error_handler),
         (DatabaseUnavailableError, database_error_handler),
