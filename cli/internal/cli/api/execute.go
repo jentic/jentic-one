@@ -147,7 +147,7 @@ func (a *app) executeE(cmd *cobra.Command, opts *executeOptions, target string) 
 					st.EnvironmentName),
 			}
 		}
-		// SEC-21: in a machine mode (agent/service-account) the broker host is
+		// SEC-21: in machine (agent) mode the broker host is
 		// pinned to the environment's configured broker_url. An agent must not
 		// be able to redirect its bearer + injected upstream context at an
 		// arbitrary host via --broker-host/--broker-scheme. A human operator

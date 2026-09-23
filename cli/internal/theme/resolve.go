@@ -14,7 +14,7 @@ import (
 var stdoutIsTTY = func() bool { return term.IsTerminal(os.Stdout.Fd()) }
 
 // ResolveTheme applies the HUMAN-mode precedence ladder and returns the resolved
-// Palette. The Stage-0 Mode gate (agent/service-account -> no-color) is applied by
+// Palette. The Stage-0 Mode gate (agent -> no-color) is applied by
 // the root interceptor (impl/3.2 §2) BEFORE this function and overrides everything
 // here; this function only owns the human-mode ladder (impl/1.4 §3):
 //

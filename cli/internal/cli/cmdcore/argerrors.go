@@ -85,7 +85,7 @@ func reportInvocationError(cmd *cobra.Command, ce *ux.CodedError) {
 	case clictx.ModeHuman:
 		aud = ux.NewHumanUX(ux.Palette{}, false)
 	default:
-		// Agent, service-account, and any unknown/typo'd mode fail closed to the
+		// Agent (incl. the deprecated service-account alias) and any unknown/typo'd mode fail closed to the
 		// machine envelope — matching the fencing interceptor's fail-closed rule.
 		aud = ux.NewAgentUX(false)
 	}

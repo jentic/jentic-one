@@ -5,7 +5,7 @@ import (
 )
 
 // fenced marks a command as host-mutating management surface that must NOT run in
-// agent/service-account mode (impl/3.2 §2a). The root interceptor reads this
+// agent mode (impl/3.2 §2a). The root interceptor reads this
 // annotation off the RESOLVED leaf command and blocks the command with a
 // FENCED_COMMAND error when the audience IsFenced(). A command that forgets this
 // annotation is silently NOT fenced — the arch guard Test1C asserts the canonical

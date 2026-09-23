@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/jentic/jentic-one/cli/internal/cli/ux"
@@ -74,5 +75,62 @@ func TestFencing_ContextListIsFencedInAgentMode(t *testing.T) {
 	}
 	if coded.Code != ux.CodeFenced {
 		t.Errorf("error code = %q, want %q", coded.Code, ux.CodeFenced)
+	}
+}
+
+// TestFencing_ServiceAccountModeRunsAsAgent pins theme-8 D4: the retired
+// service-account mode is a deprecated alias of agent. It is fenced exactly
+// like agent, and the deprecation notice goes to stderr as a JSON slog line
+// (13 §1: stdout stays reserved for the single JSON document).
+func TestFencing_ServiceAccountModeRunsAsAgent(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		env  string
+		args []string
+	}{
+		{"env", "service-account", []string{"reset"}},
+		{"flag", "", []string{"--mode", "service-account", "reset"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("JENTIC_MODE", tc.env)
+
+			app := testApp(t)
+			root := newAPIRootCmd(app.App)
+			out := new(bytes.Buffer)
+			root.SetOut(out)
+			root.SetErr(new(bytes.Buffer))
+			root.SetArgs(tc.args)
+
+			err := root.Execute()
+			var coded *ux.CodedError
+			if !errors.As(err, &coded) || coded.Code != ux.CodeFenced {
+				t.Fatalf("service-account mode must be fenced like agent, got %v", err)
+			}
+			stderr := app.Err.(*bytes.Buffer).String()
+			for _, want := range []string{`"msg":"deprecated mode; running in agent mode"`, `"mode":"service-account"`, `"replacement":"agent"`} {
+				if !strings.Contains(stderr, want) {
+					t.Errorf("stderr missing %s:\n%s", want, stderr)
+				}
+			}
+			if strings.Contains(out.String(), "deprecated") {
+				t.Errorf("deprecation notice leaked onto stdout: %q", out.String())
+			}
+		})
+	}
+}
+
+// TestFencing_AgentModeHasNoDeprecationNotice: canonical agent mode stays quiet.
+func TestFencing_AgentModeHasNoDeprecationNotice(t *testing.T) {
+	t.Setenv("JENTIC_MODE", "agent")
+
+	app := testApp(t)
+	root := newAPIRootCmd(app.App)
+	root.SetOut(new(bytes.Buffer))
+	root.SetErr(new(bytes.Buffer))
+	root.SetArgs([]string{"reset"})
+	_ = root.Execute()
+
+	if s := app.Err.(*bytes.Buffer).String(); strings.Contains(s, "deprecated mode") {
+		t.Errorf("agent mode must not warn:\n%s", s)
 	}
 }

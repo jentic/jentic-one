@@ -2,6 +2,7 @@ package cmdcore
 
 import (
 	"context"
+	"log/slog"
 	"os"
 	"time"
 
@@ -76,21 +77,22 @@ func installInterceptor(app *App, root *cobra.Command) {
 			// The embedded ResolvedState must be non-nil: commands that reach
 			// clictx.GetControlClient on this degraded state would otherwise
 			// nil-deref (panic, runtime exit 2 — colliding with ExitDenied).
-			fallbackMode, fallbackExplicit := clictx.ResolveModeExplicit(flagValue(cmd, "mode"), "")
+			fallbackMode, fallbackExplicit, fallbackDeprecated := clictx.ResolveModeLadder(flagValue(cmd, "mode"), "")
 			state = &clictx.ActiveState{
-				ResolvedState: &sdkconfig.ResolvedState{},
-				Mode:          fallbackMode,
-				ModeExplicit:  fallbackExplicit,
-				ThemeName:     "no-color",
+				ResolvedState:  &sdkconfig.ResolvedState{},
+				Mode:           fallbackMode,
+				ModeExplicit:   fallbackExplicit,
+				DeprecatedMode: fallbackDeprecated,
+				ThemeName:      "no-color",
 			}
 		}
 
-		// 2. Resolve theme. STAGE 0 — mode gate: agent/service-account force
+		// 2. Resolve theme. STAGE 0 — mode gate: agent mode forces
 		// no-color, beating --theme/JENTIC_THEME/NO_COLOR/config so machine output is
 		// never corrupted by ANSI. Human falls through to the normal ladder.
 		var palette ux.Palette
 		var themeName string
-		if state.Mode == clictx.ModeAgent || state.Mode == clictx.ModeServiceAccount {
+		if state.Mode == clictx.ModeAgent {
 			palette, themeName = theme.Themes["no-color"], "no-color"
 		} else {
 			palette, themeName = theme.ResolveThemeWithName(flagValue(cmd, "theme"), state.ThemeName)
@@ -104,18 +106,27 @@ func installInterceptor(app *App, root *cobra.Command) {
 		switch state.Mode {
 		case clictx.ModeHuman:
 			audience = ux.NewHumanUX(palette, assumeYes)
-		case clictx.ModeAgent, clictx.ModeServiceAccount:
+		case clictx.ModeAgent:
 			audience = ux.NewAgentUX(assumeYes)
 		default:
 			audience = ux.NewAgentUX(assumeYes)
 		}
 
 		// 3.5. Diagnostics bootstrap (impl/3.2 §2d): install the mode-dependent
-		// slog default (text for human, JSON for agent/service-account), always to
-		// stderr and redacted. This is the ONLY slog.SetDefault call in the process,
-		// so every later log line — including the SDK's via the default logger —
-		// carries the mode-appropriate, secret-scrubbed handler.
+		// slog default (text for human, JSON for agent), always to stderr and
+		// redacted. This is the ONLY slog.SetDefault call in the process, so every
+		// later log line — including the SDK's via the default logger — carries
+		// the mode-appropriate, secret-scrubbed handler.
 		setupSlog(app, state.Mode, boolFlag(cmd, "verbose"))
+
+		// The retired service-account mode runs as agent (same AgentUX). Warn on
+		// stderr only, so stdout stays one JSON document (13 §1).
+		if state.DeprecatedMode != "" {
+			slog.Warn("deprecated mode; running in agent mode",
+				"mode", state.DeprecatedMode,
+				"replacement", clictx.ModeAgent,
+				"action", "use --mode agent or JENTIC_MODE=agent; for a persisted context, set mode: agent in config.yaml")
+		}
 
 		// 4. FENCING (guardrail; the enforced boundary is server-side scope + OS
 		// isolation). Block a fenced management command in a fenced mode.
@@ -145,7 +156,7 @@ func installInterceptor(app *App, root *cobra.Command) {
 		ctx = theme.WithThemeName(ctx, themeName)
 
 		// Non-interactive modes get a wall-clock deadline (F3, review round-3 #7):
-		// an agent/service-account orchestrating jentic against an unresponsive
+		// an agent orchestrating jentic against an unresponsive
 		// Control Plane would otherwise hang forever (the shared control client
 		// leaves http.Client.Timeout zero, deferring to per-call contexts that
 		// today carry no deadline). Human mode stays undeadlined so interactive
@@ -153,7 +164,7 @@ func installInterceptor(app *App, root *cobra.Command) {
 		// above) are exempt: their lifetime is caller-owned and they bound their
 		// own per-call contexts. The cancel is released in PersistentPostRunE
 		// above.
-		if (state.Mode == clictx.ModeAgent || state.Mode == clictx.ModeServiceAccount) &&
+		if state.Mode == clictx.ModeAgent &&
 			cmd.Annotations[LongRunningAnnotation] != "true" {
 			//nolint:gosec // G118: the cancel is stored in cancelTimeout and invoked in the root PersistentPostRunE above (one invocation runs one command to completion); a leaked timer would in any case be reclaimed at process exit.
 			ctx, cancelTimeout = context.WithTimeout(ctx, agentTimeout)
