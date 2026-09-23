@@ -8,12 +8,30 @@ from fastapi import APIRouter, FastAPI
 
 from jentic_one.control.services.access_requests.errors import AccessRequestServiceError
 from jentic_one.control.services.credentials.errors import CredentialServiceError
+from jentic_one.control.services.integrations.device_authorization import (
+    DeviceAuthorizationError,
+)
+from jentic_one.control.services.integrations.errors import ConnectSessionServiceError
+from jentic_one.control.services.vendors.service import (
+    UnknownVendorError,
+    UnsupportedFlowError,
+    VendorNotConfiguredError,
+)
 from jentic_one.control.web.errors import (
     access_request_service_error_handler,
+    connect_session_error_handler,
     credential_service_error_handler,
     database_error_handler,
+    device_authorization_error_handler,
+    vendor_error_handler,
 )
-from jentic_one.control.web.routers import access_requests, credentials, mcp
+from jentic_one.control.web.routers import (
+    access_requests,
+    credentials,
+    integrations,
+    mcp,
+    vendors,
+)
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.errors import (
     DatabaseDataError,
@@ -34,6 +52,8 @@ def get_routers() -> list[tuple[APIRouter, str, list[str]]]:
         (credentials.router, "", []),
         (access_requests.router, "", []),
         (mcp.router, "", []),
+        (vendors.router, "", []),
+        (integrations.router, "", []),
     ]
 
 
@@ -42,6 +62,11 @@ def get_exception_handlers() -> list[tuple[type[Exception], Any]]:
     return [
         (CredentialServiceError, credential_service_error_handler),
         (AccessRequestServiceError, access_request_service_error_handler),
+        (ConnectSessionServiceError, connect_session_error_handler),
+        (DeviceAuthorizationError, device_authorization_error_handler),
+        (UnknownVendorError, vendor_error_handler),
+        (UnsupportedFlowError, vendor_error_handler),
+        (VendorNotConfiguredError, vendor_error_handler),
         (DatabaseIntegrityError, database_error_handler),
         (DatabaseDataError, database_error_handler),
         (DatabaseUnavailableError, database_error_handler),

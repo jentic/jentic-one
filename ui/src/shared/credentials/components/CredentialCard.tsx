@@ -36,7 +36,12 @@ export function CredentialCard({ cred, onEdit, onDelete, onConnect }: Credential
 	const details = credentialDetails(cred);
 	const isOAuth = cred.type === CredentialType.OAUTH2;
 	const managed = isManagedProvider(cred.provider);
-	const connected = isOAuth && !!cred.provider_account_ref;
+	const connected = isOAuth && (!!cred.provider_account_ref || details.connected === true);
+	// The connect flow mints its credential row upfront; until the vendor
+	// round-trip completes (or the TTL sweeper reaps an abandoned
+	// attempt) the row is a pending shell, not a usable credential —
+	// surface that so it can't be mistaken for a live one.
+	const pendingSignIn = isOAuth && !cred.provider_account_ref && details.connected === false;
 	const vendor = cred.api.vendor ?? cred.name;
 	// Heading = the user's own `cred.name` when they've set one, so renaming a
 	// credential updates the card's title (matching the edit sheet's intent).
@@ -72,7 +77,9 @@ export function CredentialCard({ cred, onEdit, onDelete, onConnect }: Credential
 	return (
 		<div
 			data-testid="credential-card"
-			className="group border-border/60 bg-card hover:border-border focus-within:border-primary/50 relative flex h-full min-w-0 flex-col gap-3 overflow-hidden rounded-xl border p-4 text-left transition-all hover:shadow-sm"
+			className={`group border-border/60 bg-card hover:border-border focus-within:border-primary/50 relative flex h-full min-w-0 flex-col gap-3 overflow-hidden rounded-xl border p-4 text-left transition-all hover:shadow-sm ${
+				pendingSignIn ? 'border-dashed opacity-80' : ''
+			}`}
 		>
 			{/* Full-card click target → edit, for pointer users. Hidden from the
 			    a11y tree (aria-hidden + tabIndex=-1) so screen-reader/keyboard
@@ -90,20 +97,23 @@ export function CredentialCard({ cred, onEdit, onDelete, onConnect }: Credential
 			<div className="pointer-events-none relative flex items-center gap-3">
 				<AgentBadge id={vendor} name={vendor} kind="API" size="lg" className="rounded-xl" />
 				<div className="min-w-0 flex-1">
-					<div className="flex items-center gap-2">
-						<h3 className="font-heading text-foreground min-w-0 flex-1 truncate text-sm font-semibold">
-							{title}
-						</h3>
-						{connected && (
-							<Badge variant="success" className="shrink-0">
-								Connected
-							</Badge>
-						)}
-						<CredentialTypeBadge type={cred.type} />
-					</div>
+					{/* Title gets the full row — badges used to sit inline
+					    (``truncate`` on the h3, ``shrink-0`` on the pills)
+					    and a long OAuth 2.0 · Authorization Code label
+					    dominated the space, ellipsising the name a user is
+					    trying to read. Chips move onto their own row below
+					    so the name is the visual anchor. */}
+					<h3 className="font-heading text-foreground truncate text-base font-semibold">
+						{title}
+					</h3>
 					<p className="text-muted-foreground mt-0.5 truncate font-mono text-xs">
 						{formatApiReference(cred.api)}
 					</p>
+					<div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+						{connected && <Badge variant="success">Connected</Badge>}
+						{pendingSignIn && <Badge variant="pending">Pending sign-in</Badge>}
+						<CredentialTypeBadge credential={cred} />
+					</div>
 				</div>
 			</div>
 

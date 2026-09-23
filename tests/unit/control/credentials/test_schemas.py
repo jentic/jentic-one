@@ -8,12 +8,12 @@ from pydantic import ValidationError
 
 from jentic_one.control.services.credentials.schemas import (
     ConnectCallback,
-    ConnectChallenge,
     ConnectRequest,
     ConnectState,
     ProvisionResult,
     RefreshResult,
 )
+from jentic_one.control.services.credentials.schemas.connect import AuthCodeChallenge
 
 
 def test_connect_request_defaults() -> None:
@@ -23,9 +23,10 @@ def test_connect_request_defaults() -> None:
 
 
 def test_connect_challenge_validates() -> None:
-    c = ConnectChallenge(authorize_url="https://example.com/auth", state="abc123")
+    c = AuthCodeChallenge(authorize_url="https://example.com/auth", state="abc123")
     assert c.authorize_url == "https://example.com/auth"
     assert c.state == "abc123"
+    assert c.kind == "authorization_code"
 
 
 def test_connect_state_validates() -> None:

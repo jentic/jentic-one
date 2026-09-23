@@ -127,7 +127,10 @@ export type { APIReference } from '@/shared/api/generated/models/APIReference';
 export type { APIReferenceRequest } from '@/shared/api/generated/models/APIReferenceRequest';
 export type { RuntimeConfig } from '@/shared/api/generated/models/RuntimeConfig';
 export type { ConnectRequestBody } from '@/shared/api/generated/models/ConnectRequestBody';
-export type { ConnectChallengeResponse } from '@/shared/api/generated/models/ConnectChallengeResponse';
+// The `POST /credentials/{id}/connect` response is a Pydantic discriminated
+// union (authorization_code | device_code); the codegen collapses it to `any`.
+// The hand-authored `ConnectChallengeResponse` in `shared/credentials/api/types.ts`
+// is the source of truth for the wire shape — import from there.
 export type { CredentialCreateResponse } from '@/shared/api/generated/models/CredentialCreateResponse';
 export type { CredentialListResponse } from '@/shared/api/generated/models/CredentialListResponse';
 export type { CredentialRedactedResponse } from '@/shared/api/generated/models/CredentialRedactedResponse';

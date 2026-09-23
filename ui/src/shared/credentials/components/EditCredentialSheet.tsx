@@ -117,7 +117,16 @@ export function EditCredentialSheet({
 			{},
 			{
 				onSuccess: (challenge) => {
-					window.location.assign(challenge.authorize_url);
+					if (challenge.kind === 'authorization_code') {
+						window.location.assign(challenge.authorize_url);
+						return;
+					}
+					// device_code challenges are handled by the CredentialsPage
+					// connect action (which mounts the human-step dialog).
+					toast({
+						title: 'Use Connect on the credential row for this sign-in.',
+						variant: 'error',
+					});
 				},
 				onError: () => {
 					toast({ title: 'Could not start the OAuth flow', variant: 'error' });
@@ -180,7 +189,7 @@ export function EditCredentialSheet({
 										{apiLabel}
 									</p>
 								</div>
-								<CredentialTypeBadge type={cred.type} />
+								<CredentialTypeBadge credential={cred} />
 							</div>
 
 							<div className="space-y-1.5">

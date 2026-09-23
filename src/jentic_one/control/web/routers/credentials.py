@@ -24,6 +24,7 @@ from jentic_one.control.services.credentials.providers.base import (
     ProviderError,
 )
 from jentic_one.control.services.credentials.schemas.connect import (
+    AuthCodeChallenge,
     ConnectCallback,
     ConnectRequest,
 )
@@ -34,12 +35,18 @@ from jentic_one.control.services.credentials.schemas.credentials import (
 )
 from jentic_one.control.services.credentials.schemas.provision import APIReference
 from jentic_one.control.services.credentials.service import CredentialService
+from jentic_one.control.services.credentials.state import StateError, decode_state
+from jentic_one.control.services.integrations.connect_session_service import (
+    ConnectSessionService,
+)
 from jentic_one.control.web.deps import (
     get_connect_service,
+    get_connect_session_service,
     get_credential_service,
 )
 from jentic_one.control.web.schemas.credentials import (
     APIReferenceResponse,
+    AuthCodeConnectChallengeResponse,
     ConnectChallengeResponse,
     ConnectRequestBody,
     CredentialAgentListResponse,
@@ -49,6 +56,7 @@ from jentic_one.control.web.schemas.credentials import (
     CredentialListResponse,
     CredentialRedactedResponse,
     CredentialUpdateRequest,
+    DeviceAuthorizationConnectChallengeResponse,
     ProviderDiscoveryEntryResponse,
     ProviderDiscoveryResponse,
     RuleSetAttachRequest,
@@ -67,8 +75,9 @@ from jentic_one.control.web.schemas.permission_rules import (
     PermissionTestResponse,
 )
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.context import Context
 from jentic_one.shared.models.credentials import CredentialType
-from jentic_one.shared.web import get_current_identity
+from jentic_one.shared.web import get_ctx, get_current_identity
 from jentic_one.shared.web.openapi_responses import conflict, not_found, with_responses
 from jentic_one.shared.web.static import SPA_MOUNT_PATH
 
@@ -244,7 +253,9 @@ async def oauth_callback(
     code: str | None = Query(default=None),
     state: str | None = Query(default=None),
     error: str | None = Query(default=None),
+    ctx: Context = Depends(get_ctx),
     svc: ConnectService = Depends(get_connect_service),
+    session_svc: ConnectSessionService = Depends(get_connect_session_service),
 ) -> Response:
     """Handle the OAuth callback from the IdP.
 
@@ -278,6 +289,70 @@ async def oauth_callback(
             error=error,
         )
         return _oauth_callback_error()
+
+    # Peek the state to see if this callback belongs to a connect-session
+    # (agent-driven integration flow). The ``sid`` claim is set by
+    # ``AuthCodeFlowHandler.begin`` — its presence routes completion to
+    # ``ConnectSessionService.complete_from_callback`` instead of the
+    # standalone-credential path. One URL, two consumers; the peek runs the
+    # verify + one-shot nonce consume inside whichever service we dispatch
+    # to, so no bypass around replay protection.
+    state_secret = ctx.config.credentials.connect.state_secret.get_secret_value()
+    session_id: str | None
+    try:
+        session_id = decode_state(state_secret, state).session_id
+    except StateError:
+        # Fall through to the standalone path — it'll re-verify + surface
+        # the canonical error.
+        session_id = None
+
+    if session_id is not None:
+        if error or not code:
+            # Pass the raw state so the error branch runs the same
+            # ``consume_callback_state`` prologue (signature verify +
+            # one-shot nonce consume) as the success branch — a replayed
+            # callback URL carrying ``error=access_denied`` must not be
+            # able to terminate (and cascade-delete) a session that
+            # already connected.
+            try:
+                await session_svc.mark_terminal_from_callback(
+                    raw_state=state, error=error or "no_code_returned"
+                )
+            except StateError as exc:
+                _logger.warning(
+                    "oauth_callback.connect_session.state_invalid",
+                    session_id=session_id,
+                    error=str(exc),
+                    error_type=type(exc).__name__,
+                )
+            except Exception as exc:
+                _logger.warning(
+                    "oauth_callback.connect_session_error",
+                    session_id=session_id,
+                    error=str(exc),
+                )
+            return _oauth_callback_error()
+        try:
+            # Pass the raw state so ``complete_from_callback`` runs the
+            # shared ``consume_callback_state`` prologue (signature
+            # verify + one-shot nonce consume) — never trust the sid
+            # we peeked at above as a bypass around replay protection.
+            await session_svc.complete_from_callback(raw_state=state, code=code)
+        except StateError as exc:
+            _logger.warning(
+                "oauth_callback.connect_session.state_invalid",
+                session_id=session_id,
+                error=str(exc),
+                error_type=type(exc).__name__,
+            )
+            return _oauth_callback_error()
+        except Exception as exc:
+            _logger.warning(
+                "oauth_callback.connect_session_error", session_id=session_id, error=str(exc)
+            )
+            return _oauth_callback_error()
+        _logger.info("oauth_callback.connect_session.connected", session_id=session_id)
+        return _oauth_callback_success()
 
     callback = ConnectCallback(code=code, error=error)
 
@@ -757,14 +832,21 @@ async def delete_credential(
     "/credentials/{credential_id}/connect",
     summary="Begin OAuth connect flow",
     responses=with_responses(not_found(), conflict("Credential is not connectable")),
+    response_model=None,
 )
 async def connect_credential(
     credential_id: str,
     body: ConnectRequestBody,
     identity: Identity = get_current_identity(required_permissions=["credentials:write"]),
     svc: ConnectService = Depends(get_connect_service),
-) -> ConnectChallengeResponse:
-    """Initiate the OAuth connect flow for a credential."""
+) -> ConnectChallengeResponse | JSONResponse:
+    """Initiate the OAuth connect flow for a credential.
+
+    Discriminates on the provider's returned challenge: OAuth2
+    authorization-code providers return an ``authorize_url`` for popup
+    redirect; device-flow providers return ``user_code`` /
+    ``verification_uri`` for the RFC 8628 human step.
+    """
     connect_req = ConnectRequest(scopes=body.scopes, extra=body.extra)
     try:
         challenge = await svc.begin(
@@ -774,9 +856,18 @@ async def connect_credential(
             actor_type=identity.actor_type,
         )
     except CredentialNotFoundError:
-        return JSONResponse(status_code=404, content={"detail": "Credential not found"})  # type: ignore[return-value]
+        return JSONResponse(status_code=404, content={"detail": "Credential not found"})
     except NotConnectableError as exc:
-        return JSONResponse(status_code=409, content={"detail": str(exc)})  # type: ignore[return-value]
+        return JSONResponse(status_code=409, content={"detail": str(exc)})
     except ProviderError as exc:
-        return JSONResponse(status_code=400, content={"detail": str(exc)})  # type: ignore[return-value]
-    return ConnectChallengeResponse(authorize_url=challenge.authorize_url, state=challenge.state)
+        return JSONResponse(status_code=400, content={"detail": str(exc)})
+    if isinstance(challenge, AuthCodeChallenge):
+        return AuthCodeConnectChallengeResponse(
+            authorize_url=challenge.authorize_url, state=challenge.state
+        )
+    return DeviceAuthorizationConnectChallengeResponse(
+        user_code=challenge.user_code,
+        verification_uri=challenge.verification_uri,
+        verification_uri_complete=challenge.verification_uri_complete,
+        poll_interval_seconds=challenge.poll_interval_seconds,
+    )

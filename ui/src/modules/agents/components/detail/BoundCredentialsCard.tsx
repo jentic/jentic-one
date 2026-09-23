@@ -23,7 +23,6 @@ import {
 	Edit2,
 	Key,
 	KeyRound,
-	Link as LinkIcon,
 	PauseCircle,
 	PlayCircle,
 	ShieldCheck,
@@ -39,10 +38,36 @@ import {
 	useResumeAgentCredentialBinding,
 	useUnbindAgentCredential,
 	type AgentEntity,
+	type BindingPermissionRule,
 	type CredentialBindingEntity,
 } from '@/modules/agents/api';
-import { BindAgentCredentialDialog } from '@/modules/agents/components/detail/BindAgentCredentialDialog';
 import { AgentBindingPermissionsEditor } from '@/modules/agents/components/detail/AgentBindingPermissionsEditor';
+import { CreateCredentialDialog } from '@/shared/credentials/components/CreateCredentialDialog';
+import { PostConnectBindMore } from '@/shared/credentials/components/PostConnectBindMore';
+import { OperationImpactPreview } from '@/shared/credentials/components/OperationImpactPreview';
+import { useCredential } from '@/shared/credentials/api';
+import type { PermissionRule as PreviewPermissionRule } from '@/shared/credentials/api/vendors-types';
+
+/**
+ * Adapt a stored ``BindingPermissionRule`` (agent-module wire type) into
+ * the ``PermissionRule`` shape ``OperationImpactPreview`` consumes.
+ * Structurally identical for our fields; explicit narrow makes a future
+ * divergence in either type a build-time error.
+ */
+function bindingRuleToPreview(rule: BindingPermissionRule): PreviewPermissionRule {
+	return {
+		effect: rule.effect === 'deny' ? 'deny' : 'allow',
+		methods: rule.methods ?? null,
+		path: rule.path ?? null,
+		match_mode:
+			rule.match_mode === 'prefix' ||
+			rule.match_mode === 'exact' ||
+			rule.match_mode === 'regex'
+				? rule.match_mode
+				: undefined,
+		operations: rule.operations ?? null,
+	};
+}
 import { InlineConfirm } from '@/modules/agents/components/InlineConfirm';
 import { panelMotion, rowMotion, toDisplayRules } from '@/modules/agents/components/detail/shared';
 
@@ -76,6 +101,17 @@ function BindingRow({
 }) {
 	const permissions = useAgentBindingPermissions(agentId, binding.credentialId);
 	const displayRules = toDisplayRules(permissions.data);
+	// Resolve the vendor's OpenAPI version from the credential — the
+	// binding's ``serves`` entry has ``(vendor, name)`` but rarely a
+	// version, whereas the credential's ``api`` field always carries
+	// a full ``(vendor, name, version)`` tuple. Feed either into the
+	// ops preview; the preview shows a skeleton while this is loading.
+	const credential = useCredential(binding.credentialId);
+	const apiReference = useMemo(() => {
+		const api = credential.data?.api;
+		if (!api) return null;
+		return { vendor: api.vendor, name: api.name, version: api.version };
+	}, [credential.data]);
 
 	// Heading = the credential's human name (control-DB enrichment) with the
 	// id as the never-blank fallback; subtitle = the served API's machine
@@ -213,6 +249,27 @@ function BindingRow({
 						</p>
 					)}
 				</div>
+				{/*
+				 * Effective-access preview is always visible on the row (not
+				 * gated on the Edit-rules toggle) so users can see the
+				 * binding's real surface at a glance. Uses the resolved
+				 * ``apiReference`` sourced from the credential's ``api``
+				 * field — the binding's ``serves`` entry only has
+				 * ``(vendor, name)``, but the credential always carries a
+				 * concrete version. Renders a skeleton while the credential
+				 * query resolves.
+				 */}
+				{apiReference && !permissions.isPending && (
+					<div className="w-full pt-1">
+						<OperationImpactPreview
+							api={apiReference}
+							rules={(permissions.data ?? [])
+								.filter((r) => !r._system)
+								.map(bindingRuleToPreview)}
+							label="Effective access for this binding"
+						/>
+					</div>
+				)}
 			</div>
 			<AnimatePresence initial={false}>
 				{editing && !permissions.isPending && !permissions.isError && (
@@ -223,6 +280,21 @@ function BindingRow({
 							credentialLabel={heading}
 							initialRules={permissions.data ?? []}
 							onClose={onToggleEdit}
+							apiReference={
+								// Credential-driven version (see above) — the
+								// binding's ``serves`` entry rarely carries a
+								// version, whereas the credential's ``api``
+								// field always does. Fall back to serves only
+								// when the credential query hasn't resolved.
+								apiReference ??
+								(serves && serves.vendor && serves.name && serves.version
+									? {
+											vendor: serves.vendor,
+											name: serves.name,
+											version: serves.version,
+										}
+									: null)
+							}
 						/>
 					</motion.div>
 				)}
@@ -242,17 +314,13 @@ export function BoundCredentialsCard({
 	const unbind = useUnbindAgentCredential(agentId);
 	const resume = useResumeAgentCredentialBinding(agentId);
 
-	const [bindOpen, setBindOpen] = useState(false);
+	const [connectOpen, setConnectOpen] = useState(false);
 	const [editingCredId, setEditingCredId] = useState<string | null>(null);
 
 	// Approval gate: only a vouched-for (active) agent may gain capabilities.
 	const canBind = agentStatus === 'active';
 
 	const rows = useMemo(() => bindings.data ?? [], [bindings.data]);
-	// Memoised so the picker's internal useMemos don't invalidate on every
-	// parent re-render. Suspended bindings stay in the set — they are still
-	// bound; re-binding would 409.
-	const boundIds = useMemo(() => new Set(rows.map((b) => b.credentialId)), [rows]);
 
 	return (
 		<>
@@ -260,14 +328,19 @@ export function BoundCredentialsCard({
 				title={`Bound credentials (${rows.length})`}
 				icon={<ShieldCheck className="h-4 w-4" />}
 				action={
+					// Single entry point: the connect wizard runs the vendor
+					// OAuth flow with this agent pre-selected AND handles the
+					// pick-existing-credential path via its API picker. Gated
+					// on the agent being active (approval vouches for the
+					// identity before capability accrues).
 					canBind
 						? {
 								label: (
 									<>
-										<LinkIcon className="h-4 w-4" /> Bind credential
+										<KeyRound className="h-4 w-4" /> Connect integration
 									</>
 								),
-								onClick: () => setBindOpen(true),
+								onClick: () => setConnectOpen(true),
 							}
 						: undefined
 				}
@@ -284,10 +357,10 @@ export function BoundCredentialsCard({
 								<Button
 									variant="ghost"
 									size="sm"
-									onClick={() => setBindOpen(true)}
+									onClick={() => setConnectOpen(true)}
 									className="text-primary h-auto px-1 py-0 text-xs font-medium"
 								>
-									<KeyRound className="h-3 w-3" /> Bind a credential
+									<KeyRound className="h-3 w-3" /> Connect an integration
 								</Button>{' '}
 								to grant it API access.
 							</>
@@ -330,14 +403,25 @@ export function BoundCredentialsCard({
 				)}
 			</DetailSection>
 
-			{/* Two-step bind wizard (mounted once — its draft survives dismissal,
-			    resets only on a successful bind: dialog-state rule). */}
-			<BindAgentCredentialDialog
-				agentId={agentId}
-				open={bindOpen}
-				onClose={() => setBindOpen(false)}
-				boundIds={boundIds}
-			/>
+			{/* Vendor-connect flow with agent locked to this page's agent —
+			    dropdown greys out via ``preselectedAgentId``. On success the
+			    credential is bound + rules-authored in one shot. Mounted
+			    conditionally so its child effects (``:connect`` on mount)
+			    don't fire until the user actually clicks the button. */}
+			{connectOpen && (
+				<CreateCredentialDialog
+					open
+					onClose={() => setConnectOpen(false)}
+					onCreated={() => setConnectOpen(false)}
+					preselectedAgentId={agentId}
+					renderPostConnect={({ credentialId, boundAgentId }) => (
+						<PostConnectBindMore
+							credentialId={credentialId}
+							boundAgentId={boundAgentId}
+						/>
+					)}
+				/>
+			)}
 		</>
 	);
 }

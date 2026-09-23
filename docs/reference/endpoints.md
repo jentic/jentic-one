@@ -27,10 +27,10 @@ Every API endpoint grouped by its **typical caller**, then by surface, annotated
 
 > The grouping and the _Typical caller_ column are an **advisory hint** at who usually calls a route, inferred from the scope family. They are **not** an enforced restriction: access is gated by the **scope**, not the actor kind, so any actor holding the required scope can call the endpoint.
 
-_Total endpoints: **184**._
+_Total endpoints: **191**._
 
 
-## Agent-facing (typically agent / service-account) (31)
+## Agent-facing (typically agent / service-account) (33)
 
 
 ### `apis`
@@ -108,6 +108,13 @@ _Total endpoints: **184**._
 | Method | Path | Scope(s) | Typical caller | Summary |
 |---|---|---|---|---|
 | POST | `/search` | `apis:read` | agent | Search operations |
+
+### `vendors`
+
+| Method | Path | Scope(s) | Typical caller | Summary |
+|---|---|---|---|---|
+| GET | `/vendors` | `capabilities:read` | agent | List verified vendors |
+| GET | `/vendors/{vendor_key}/auth-capabilities` | `capabilities:read` | agent | Get a vendor's SSO capabilities |
 
 ## Operator-facing (typically a human operator / admin) (52)
 
@@ -229,7 +236,7 @@ _Total endpoints: **184**._
 | POST | `/users/{user_id}:enable` | `users:write` | operator | Enable User |
 | POST | `/users/{user_id}:reissue-invite` | `users:write` | operator | Reissue Invite |
 
-## Any authenticated actor (71)
+## Any authenticated actor (76)
 
 
 ### `access-requests`
@@ -282,6 +289,15 @@ _Total endpoints: **184**._
 | POST | `/apis/{vendor}/{name}/{version}/revisions/{revision_id}:archive` | `apis:write` | any | Archive Revision |
 | POST | `/apis/{vendor}/{name}/{version}/revisions/{revision_id}:promote` | `apis:write` | any | Promote Revision |
 
+### `connect-sessions`
+
+| Method | Path | Scope(s) | Typical caller | Summary |
+|---|---|---|---|---|
+| GET | `/connect-sessions/{session_id}` | `credentials:write` | any | Get review data for a connect session |
+| GET | `/connect-sessions/{session_id}/status` | `credentials:connect`, `credentials:write` | any | Poll a connect session's status |
+| POST | `/connect-sessions/{session_id}:cancel` | `credentials:connect`, `credentials:write` | any | Cancel an in-flight connect session |
+| POST | `/connect-sessions/{session_id}:confirm` | `credentials:write` | any | Confirm scopes + permissions and kick off the vendor flow |
+
 ### `credentials`
 
 | Method | Path | Scope(s) | Typical caller | Summary |
@@ -306,6 +322,12 @@ _Total endpoints: **184**._
 | Method | Path | Scope(s) | Typical caller | Summary |
 |---|---|---|---|---|
 | GET | `/governed-hosts` | `credentials:read`, `owner:credentials:read` | any | Get Governed Hosts |
+
+### `integrations:connect`
+
+| Method | Path | Scope(s) | Typical caller | Summary |
+|---|---|---|---|---|
+| POST | `/integrations:connect` | `credentials:connect`, `credentials:write` | any | Start an integration connect session |
 
 ### `jobs`
 

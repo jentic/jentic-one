@@ -1,15 +1,25 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { motion, type Variants } from 'framer-motion';
-import { ChevronRight, Loader2, PencilLine, Search, SearchX, Sparkles } from 'lucide-react';
-import { AgentBadge, Badge, EmptyState, ErrorAlert, Input, LoadingState } from '@/shared/ui';
+import { ChevronRight, Loader2, PencilLine, Search, SearchX, Sparkles, Zap } from 'lucide-react';
+import {
+	AgentBadge,
+	Badge,
+	EmptyState,
+	ErrorAlert,
+	Input,
+	LoadingState,
+	VendorIcon,
+} from '@/shared/ui';
 import { useDebouncedValue } from '@/shared/hooks';
 import { apiRefDisplayName } from '@/shared/lib';
 import {
 	useApis,
 	useCatalog,
+	useVendors,
 	type ApiResponse,
 	type CatalogEntryResponse,
 	type SelectedApi,
+	type VendorSummary,
 } from '@/shared/credentials/api';
 
 /**
@@ -27,6 +37,13 @@ import {
  */
 export interface ApiPickerProps {
 	onSelect: (api: SelectedApi) => void;
+	/**
+	 * User picked a verified vendor (agent-driven SSO / device-flow path) — the
+	 * caller should switch to the vendor connect flow instead of building the
+	 * credential form. The picker sits above this by design: verified vendors
+	 * are the "one-click sign-in" path; API + manual entry are the fallback.
+	 */
+	onVendorSelect?: (vendor: VendorSummary) => void;
 	/** Escape hatch — drop into the legacy free-text API reference form. */
 	onManualEntry: () => void;
 }
@@ -108,7 +125,7 @@ function catalogToSelected(entry: CatalogEntryResponse): SelectedApi {
 	};
 }
 
-export function ApiPicker({ onSelect, onManualEntry }: ApiPickerProps) {
+export function ApiPicker({ onSelect, onVendorSelect, onManualEntry }: ApiPickerProps) {
 	const [query, setQuery] = useState('');
 	const debouncedQuery = useDebouncedValue(query, 250);
 	const inputRef = useRef<HTMLInputElement>(null);
@@ -119,6 +136,22 @@ export function ApiPicker({ onSelect, onManualEntry }: ApiPickerProps) {
 
 	const apisQuery = useApis({});
 	const catalogQuery = useCatalog(debouncedQuery);
+	const vendorsQuery = useVendors();
+
+	// Verified vendors — filter by query. The verified section is only meaningful
+	// if the parent wired up `onVendorSelect`; otherwise there's nowhere to route.
+	const filteredVendors = useMemo(() => {
+		if (!onVendorSelect) return [];
+		const rows = vendorsQuery.data?.data ?? [];
+		const q = debouncedQuery.trim().toLowerCase();
+		if (!q) return rows;
+		return rows.filter(
+			(v) =>
+				v.display_name.toLowerCase().includes(q) ||
+				v.vendor.toLowerCase().includes(q) ||
+				v.key.toLowerCase().includes(q),
+		);
+	}, [onVendorSelect, vendorsQuery.data, debouncedQuery]);
 
 	const localRows = useMemo(() => {
 		const q = debouncedQuery.trim().toLowerCase();
@@ -174,9 +207,15 @@ export function ApiPicker({ onSelect, onManualEntry }: ApiPickerProps) {
 		!isSearching &&
 		!showLoading &&
 		debouncedQuery.trim().length > 0 &&
+		filteredVendors.length === 0 &&
 		localRows.length === 0 &&
 		catalogRows.length === 0;
-	const isInitialEmpty = !showLoading && !debouncedQuery && localRows.length === 0 && !error;
+	const isInitialEmpty =
+		!showLoading &&
+		!debouncedQuery &&
+		filteredVendors.length === 0 &&
+		localRows.length === 0 &&
+		!error;
 
 	return (
 		<div className="space-y-4">
@@ -208,6 +247,29 @@ export function ApiPicker({ onSelect, onManualEntry }: ApiPickerProps) {
 			{error && <ErrorAlert message={error} />}
 
 			{showLoading && <LoadingState message="Loading workspace APIs…" />}
+
+			{filteredVendors.length > 0 && onVendorSelect && (
+				<section aria-labelledby="picker-vendors-heading">
+					<SectionHeading id="picker-vendors-heading">
+						<span className="inline-flex items-center gap-1.5">
+							<Zap className="text-primary h-3 w-3" />
+							One-click sign-in
+						</span>
+					</SectionHeading>
+					<motion.ul
+						className="grid gap-2 sm:grid-cols-2"
+						variants={LIST_VARIANTS}
+						initial="hidden"
+						animate="show"
+					>
+						{filteredVendors.map((vendor) => (
+							<motion.li key={vendor.key} variants={ROW_VARIANTS}>
+								<VendorTile vendor={vendor} onSelect={onVendorSelect} />
+							</motion.li>
+						))}
+					</motion.ul>
+				</section>
+			)}
 
 			{localRows.length > 0 && (
 				<section aria-labelledby="picker-local-heading">
@@ -367,6 +429,34 @@ function CatalogRow({
 				</Badge>
 			)}
 			<ChevronRight className="text-muted-foreground group-hover:text-foreground h-4 w-4 shrink-0 transition-colors" />
+		</button>
+	);
+}
+
+function VendorTile({
+	vendor,
+	onSelect,
+}: {
+	vendor: VendorSummary;
+	onSelect: (vendor: VendorSummary) => void;
+}) {
+	return (
+		<button
+			type="button"
+			onClick={(): void => onSelect(vendor)}
+			data-testid="vendor-tile"
+			className="group hover:border-primary/60 bg-background border-border relative flex w-full items-center gap-3 rounded-xl border px-3 py-3 text-left transition-all hover:shadow-md"
+		>
+			<VendorIcon name={vendor.display_name} vendor={vendor.vendor} size="md" />
+			<div className="min-w-0 flex-1">
+				<p className="text-foreground truncate text-sm font-semibold">
+					Sign in with {vendor.display_name}
+				</p>
+				<p className="text-muted-foreground mt-0.5 truncate text-xs">
+					Instant OAuth · no keys to copy
+				</p>
+			</div>
+			<ChevronRight className="text-muted-foreground group-hover:text-primary h-4 w-4 shrink-0 transition-colors" />
 		</button>
 	);
 }
