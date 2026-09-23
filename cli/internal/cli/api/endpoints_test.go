@@ -1,7 +1,11 @@
 package api
 
 import (
+	"errors"
+	"strings"
 	"testing"
+
+	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 )
 
 const sampleReference = `{
@@ -65,6 +69,22 @@ func TestParseEndpoints(t *testing.T) {
 	}
 	if got := byPath["GET /health"]; !got.Public {
 		t.Errorf("/health should be public")
+	}
+}
+
+// A reference payload under another schema id (e.g. the pre-rename
+// `jentic.endpoint-scope-tree/v1`, whose endpoints carry `required_scopes`)
+// must be refused rather than decoded into endpoints that require nothing.
+func TestParseEndpointsRejectsUnknownSchema(t *testing.T) {
+	body := `{"schema":"jentic.endpoint-scope-tree/v1","endpoints":[` +
+		`{"method":"GET","path":"/agents","required_scopes":["agents:read"]}]}`
+	_, err := parseEndpoints([]byte(body))
+	var ce *ux.CodedError
+	if !errors.As(err, &ce) {
+		t.Fatalf("parseEndpoints error = %v, want a *ux.CodedError", err)
+	}
+	if !strings.Contains(ce.Msg, "jentic.endpoint-scope-tree/v1") {
+		t.Errorf("Msg = %q, want it to name the server's schema", ce.Msg)
 	}
 }
 
