@@ -173,6 +173,7 @@ async def test_sak_key_with_inactive_successor_fails_closed(
     fail_closed = [log for log in logs if log["event"] == "migrated_key_fail_closed"]
     assert len(fail_closed) == 1
     assert fail_closed[0]["reason"] == "successor_inactive"
+    assert fail_closed[0]["agent_id"] == "agnt_successor"  # names the kill lever
 
 
 @pytest.mark.asyncio
@@ -213,6 +214,45 @@ async def test_stamped_sa_fallback_fails_closed(
     assert len(fail_closed) == 1
     assert fail_closed[0]["reason"] == "stamped_service_account"
     assert fail_closed[0]["service_account_id"] == "sva_456"
+    assert fail_closed[0]["successor_agent_id"] == "agnt_successor"
+    assert "successor agent no longer carries the digest" in fail_closed[0]["actionable_step"]
+
+
+@pytest.mark.asyncio
+async def test_skip_stamped_sa_fallback_fails_closed_without_successor_claim(
+    resolver: ApiKeyResolver, admin_db: MagicMock
+) -> None:
+    """A skip-but-stamp SA (pending/rejected/archived at migration) never had a
+    successor — the WARNING must not claim one lost the digest."""
+    sa_row = SARow(service_account_id="sva_789", status="pending", migrated_to_actor_id="skipped")
+
+    session_mock = AsyncMock()
+    call_count = 0
+
+    async def _execute(stmt: object, params: dict[str, object]) -> object:
+        nonlocal call_count
+        call_count += 1
+        result = MagicMock()
+        result.one_or_none.return_value = None if call_count == 1 else sa_row
+        return result
+
+    session_mock.execute = _execute
+    ctx_mgr = AsyncMock()
+    ctx_mgr.__aenter__.return_value = session_mock
+    ctx_mgr.__aexit__.return_value = None
+    admin_db.session.return_value = ctx_mgr
+
+    with structlog.testing.capture_logs() as logs:
+        identity = await resolver.resolve("sak_skip_stamped")
+
+    assert identity is None
+    fail_closed = [log for log in logs if log["event"] == "migrated_key_fail_closed"]
+    assert len(fail_closed) == 1
+    assert fail_closed[0]["reason"] == "stamped_service_account"
+    assert fail_closed[0]["successor_agent_id"] is None
+    step = fail_closed[0]["actionable_step"]
+    assert "without a successor agent" in step
+    assert "no longer carries the digest" not in step
 
 
 @pytest.mark.asyncio
