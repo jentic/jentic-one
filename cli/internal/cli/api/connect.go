@@ -286,7 +286,7 @@ func connectCoded(vendor string, err error) *ux.CodedError {
 	var he *HTTPError
 	if errors.As(err, &he) {
 		switch he.StatusCode {
-		case 400, 404:
+		case http.StatusBadRequest, http.StatusNotFound:
 			return &ux.CodedError{
 				Code: ux.CodeResolveFailed,
 				Msg:  fmt.Sprintf("cannot start a connect session for vendor %q: %v", vendor, err),
@@ -294,7 +294,7 @@ func connectCoded(vendor string, err error) *ux.CodedError {
 					"For an API outside the registry, ask your operator to connect a credential " +
 					"in the dashboard instead.",
 			}
-		case 403:
+		case http.StatusForbidden:
 			return &ux.CodedError{
 				Code: ux.CodeBrokerDenied,
 				Msg:  fmt.Sprintf("starting a connect session requires the credentials:connect scope: %v", err),
@@ -302,13 +302,13 @@ func connectCoded(vendor string, err error) *ux.CodedError {
 					"scope in the dashboard. Once they confirm, run `jentic logout` (clears only the cached " +
 					"token) so the next call mints a token carrying the scope, then retry `jentic connect`.",
 			}
-		case 429:
+		case http.StatusTooManyRequests:
 			return &ux.CodedError{
 				Code:       ux.CodeTransportError,
 				Msg:        fmt.Sprintf("connect sessions are rate limited: %v", err),
 				Actionable: "Wait briefly and retry `jentic connect`; do not loop on it.",
 			}
-		case 503:
+		case http.StatusServiceUnavailable:
 			return &ux.CodedError{
 				Code: ux.CodeBrokerDenied,
 				Msg:  fmt.Sprintf("vendor %q is registered but not configured on this deployment: %v", vendor, err),

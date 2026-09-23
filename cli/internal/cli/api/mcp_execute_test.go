@@ -167,22 +167,38 @@ func TestMCPExecute_DenialNextToolKeysOnProblemType(t *testing.T) {
 		body     string
 		wantTool string
 	}{
-		{"no_credential_binding_no_directive", http.StatusForbidden,
-			`{"type":"no_credential_binding","detail":"denied"}`, "whoami"},
-		{"no_toolkit_binding_no_directive", http.StatusForbidden,
-			`{"type":"no_toolkit_binding","detail":"denied"}`, "whoami"},
-		{"credential_not_provisioned_off_registry", http.StatusFailedDependency,
-			`{"type":"credential_not_provisioned","detail":"denied","agent_directive":{"strategy":"prompt_human","parameters":{"vendor":"acme.com"},"human_readable_instruction":"Ask your operator to connect a credential."}}`, "whoami"},
-		{"no_credential_binding_registry_vendor", http.StatusForbidden,
-			`{"type":"no_credential_binding","detail":"denied","agent_directive":{"strategy":"prompt_human","parameters":{"suggested_command":"jentic connect acme"},"human_readable_instruction":"Run jentic connect acme (or request_connection) and relay the approval_url."}}`, "request_connection"},
-		{"credential_not_provisioned_registry_vendor", http.StatusFailedDependency,
-			`{"type":"credential_not_provisioned","detail":"denied","agent_directive":{"strategy":"prompt_human","parameters":{"suggested_command":"jentic connect acme"},"human_readable_instruction":"Run jentic connect acme (or request_connection)."}}`, "request_connection"},
-		{"action_denied", http.StatusForbidden,
-			`{"type":"action_denied","detail":"a permission rule forbids this operation"}`, "whoami"},
-		{"credential_identity_mismatch", http.StatusForbidden,
-			`{"type":"credential_identity_mismatch","detail":"denied"}`, "whoami"},
-		{"credential_undecryptable", http.StatusFailedDependency,
-			`{"type":"credential_undecryptable","detail":"denied"}`, "whoami"},
+		{
+			"no_credential_binding_no_directive", http.StatusForbidden,
+			`{"type":"no_credential_binding","detail":"denied"}`, "whoami",
+		},
+		{
+			"no_toolkit_binding_no_directive", http.StatusForbidden,
+			`{"type":"no_toolkit_binding","detail":"denied"}`, "whoami",
+		},
+		{
+			"credential_not_provisioned_off_registry", http.StatusFailedDependency,
+			`{"type":"credential_not_provisioned","detail":"denied","agent_directive":{"strategy":"prompt_human","parameters":{"vendor":"acme.com"},"human_readable_instruction":"Ask your operator to connect a credential."}}`, "whoami",
+		},
+		{
+			"no_credential_binding_registry_vendor", http.StatusForbidden,
+			`{"type":"no_credential_binding","detail":"denied","agent_directive":{"strategy":"prompt_human","parameters":{"suggested_command":"jentic connect acme"},"human_readable_instruction":"Run jentic connect acme (or request_connection) and relay the approval_url."}}`, "request_connection",
+		},
+		{
+			"credential_not_provisioned_registry_vendor", http.StatusFailedDependency,
+			`{"type":"credential_not_provisioned","detail":"denied","agent_directive":{"strategy":"prompt_human","parameters":{"suggested_command":"jentic connect acme"},"human_readable_instruction":"Run jentic connect acme (or request_connection)."}}`, "request_connection",
+		},
+		{
+			"action_denied", http.StatusForbidden,
+			`{"type":"action_denied","detail":"a permission rule forbids this operation"}`, "whoami",
+		},
+		{
+			"credential_identity_mismatch", http.StatusForbidden,
+			`{"type":"credential_identity_mismatch","detail":"denied"}`, "whoami",
+		},
+		{
+			"credential_undecryptable", http.StatusFailedDependency,
+			`{"type":"credential_undecryptable","detail":"denied"}`, "whoami",
+		},
 		{"unknown_403", http.StatusForbidden, `{"detail":"denied"}`, "whoami"},
 		{"unparseable_403", http.StatusForbidden, `not json`, "whoami"},
 	}
