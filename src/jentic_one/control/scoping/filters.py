@@ -25,7 +25,7 @@ _OWNER_MODELS: dict[type[Any], Any] = {
     ConnectSession: ConnectSession.initiator_actor_id,
 }
 
-_DELEGATION_SCOPES: dict[type[Any], str] = {
+_DELEGATION_PERMISSIONS: dict[type[Any], str] = {
     Credential: OWNER_CREDENTIALS_READ,
     ConnectSession: OWNER_CREDENTIALS_READ,
 }
@@ -129,10 +129,10 @@ def build_access_filters(
 
     if model in _OWNER_MODELS:
         col = _OWNER_MODELS[model]
-        delegation_scope = _DELEGATION_SCOPES.get(model)
+        delegation_permission = _DELEGATION_PERMISSIONS.get(model)
         if (
-            delegation_scope is not None
-            and delegation_scope in identity.permissions
+            delegation_permission is not None
+            and delegation_permission in identity.permissions
             and identity.parent_actor_id is not None
         ):
             owner_clause: ColumnElement[bool] = or_(

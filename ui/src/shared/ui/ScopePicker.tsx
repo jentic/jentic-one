@@ -28,7 +28,6 @@ import {
  * chrome uses via {@link ScopePickerProps.vocabulary}, which is forwarded to
  * every {@link ScopeGroup} so the group headers announce the same noun.
  */
-
 export interface ScopePickerProps {
 	scopes: EnhancedScope[];
 	selectedScopes: string[];
