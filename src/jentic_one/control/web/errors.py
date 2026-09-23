@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import json
+
+from fastapi import Request
+from fastapi.responses import JSONResponse
+
 from jentic_one.control.services.credentials.errors import (
     AgentBindingNotFoundError,
     CredentialNotFoundError,

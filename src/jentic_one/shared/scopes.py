@@ -33,7 +33,8 @@ RETIRED_SCOPES: frozenset[str] = frozenset(
         "toolkits:read",
         "toolkits:write",
         "owner:toolkits:read",
-        }
+        "owner:access-requests:read",
+    }
 )
 
 DEFAULT_AGENT_SCOPES: tuple[str, ...] = (
