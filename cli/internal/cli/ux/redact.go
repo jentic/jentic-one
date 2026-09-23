@@ -1,6 +1,6 @@
 // Package ux is the CLI's audience-aware I/O layer (impl/3.1, impl/3.2). Commands
 // never call fmt.Println / huh directly — they go through an Audience, so the CLI
-// shape-shifts by mode (human vs agent/service-account) and every output byte,
+// shape-shifts by mode (human vs agent) and every output byte,
 // on BOTH stdout and stderr, passes the fail-closed redaction funnel in this file.
 package ux
 

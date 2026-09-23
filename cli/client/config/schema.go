@@ -31,7 +31,7 @@ type Config struct {
 type Context struct {
 	Environment string `yaml:"environment"`
 	Identity    string `yaml:"identity"`
-	Mode        string `yaml:"mode"` // canonical: "human", "agent", "service-account"
+	Mode        string `yaml:"mode"` // canonical: "human", "agent" ("service-account" is a deprecated alias of agent)
 }
 
 // Env is a deployment target. BaseURL and BrokerURL are separate, explicit fields

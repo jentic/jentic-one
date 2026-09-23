@@ -44,7 +44,7 @@ func newProbeRoot(t *testing.T, capture *func(ctx context.Context)) *cobra.Comma
 }
 
 // TestInterceptor_AgentModeSetsWallClockDeadline pins F3 (round-3 #7): in
-// agent/service-account mode the interceptor derives a wall-clock deadline so a
+// agent mode the interceptor derives a wall-clock deadline so a
 // wedged Control Plane can't hang the CLI forever.
 func TestInterceptor_AgentModeSetsWallClockDeadline(t *testing.T) {
 	var seen context.Context

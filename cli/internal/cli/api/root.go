@@ -57,7 +57,7 @@ func newAPIRootCmd(core *cmdcore.App) *cobra.Command {
 	// interaction mode (closed enum, fail-closed to agent); --theme overrides the
 	// human-mode palette.
 	root.PersistentFlags().String("context", "", "Context to act on (overrides the active context; $JENTIC_CONTEXT)")
-	root.PersistentFlags().String("mode", "", "Interaction mode: human|agent|service-account ($JENTIC_MODE)")
+	root.PersistentFlags().String("mode", "", "Interaction mode: human|agent ($JENTIC_MODE)")
 	root.PersistentFlags().String("theme", "", "Color theme: dark|light|no-color ($JENTIC_THEME)")
 
 	cmdcore.AddGrouped(root, "identity", fenced(bootstrapSafe(localagentcmd.NewSetupCmd(app.App)))) // fenced (AGT-5): registers + waits on a HUMAN approval and writes skill files — agents run `register`

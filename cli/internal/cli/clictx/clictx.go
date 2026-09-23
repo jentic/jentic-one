@@ -26,10 +26,27 @@ import (
 
 // Canonical mode strings (14 BC-9; mirrored in client/config Context.Mode docs).
 const (
-	ModeHuman          = "human"
-	ModeAgent          = "agent"
-	ModeServiceAccount = "service-account"
+	ModeHuman = "human"
+	ModeAgent = "agent"
+	// LegacyModeServiceAccount is the retired third mode. Theme 8 removed the
+	// platform service-account actor (migrated accounts are agents), and the
+	// mode already shared AgentUX byte-for-byte (impl/3.1 §0), so it collapses
+	// into agent. It is still accepted from --mode, $JENTIC_MODE and persisted
+	// contexts as a deprecated alias (13 forbids removing a contract value
+	// outside a flagged breaking release); the root interceptor warns on stderr.
+	LegacyModeServiceAccount = "service-account"
 )
+
+// CanonicalMode maps a deprecated mode alias onto its canonical mode.
+// deprecated is the alias that was rewritten, or "" when mode was already
+// canonical (or unknown — unknown values are left for the interceptor to fail
+// closed on).
+func CanonicalMode(mode string) (canonical, deprecated string) {
+	if mode == LegacyModeServiceAccount {
+		return ModeAgent, mode
+	}
+	return mode, ""
+}
 
 // ActiveState is the CLI's resolved view of the world: the SDK's UX-free
 // ResolvedState plus the CLI-only Mode/ThemeName the SDK deliberately leaves
@@ -38,8 +55,13 @@ const (
 type ActiveState struct {
 	*sdkconfig.ResolvedState
 
-	// Mode is the resolved canonical mode ("human"/"agent"/"service-account").
+	// Mode is the resolved canonical mode ("human"/"agent"; a deprecated alias is
+	// already rewritten, see DeprecatedMode).
 	Mode string
+	// DeprecatedMode is the deprecated alias the ladder rewrote into Mode
+	// ("service-account"), or "" when none was used. The root interceptor warns
+	// on it.
+	DeprecatedMode string
 	// ModeExplicit records whether Mode came from an explicit source (--mode,
 	// $JENTIC_MODE, or the persisted context mode) rather than the ladder's
 	// human default. Output rendering uses it (UX-5): an EXPLICIT human mode
@@ -51,9 +73,9 @@ type ActiveState struct {
 	ThemeName string
 }
 
-// IsMachine reports whether this is a fenced machine mode (agent or
-// service-account) rather than a human session — the single canonical
-// "is machine mode?" predicate the CLI keys off. Any non-human mode counts:
+// IsMachine reports whether this is a fenced machine mode (agent) rather than
+// a human session — the single canonical "is machine mode?" predicate the CLI
+// keys off. Any non-human mode counts:
 // unknown modes fail closed to agent at Audience construction (root
 // interceptor), so treating "not human" as machine matches that fail-closed
 // posture. Output rendering (JSONOrPretty), progress-line suppression
@@ -79,12 +101,13 @@ func ResolveActiveState(contextOverride, modeOverride string) (*ActiveState, err
 		return nil, err
 	}
 
-	mode, explicit := ResolveModeExplicit(modeOverride, rs.PersistedMode)
+	mode, explicit, deprecated := ResolveModeLadder(modeOverride, rs.PersistedMode)
 	return &ActiveState{
-		ResolvedState: rs,
-		Mode:          mode,
-		ModeExplicit:  explicit,
-		ThemeName:     rs.PersistedTheme,
+		ResolvedState:  rs,
+		Mode:           mode,
+		ModeExplicit:   explicit,
+		DeprecatedMode: deprecated,
+		ThemeName:      rs.PersistedTheme,
 	}, nil
 }
 
@@ -107,6 +130,20 @@ func ResolveMode(flagOverride, persisted string) string {
 // needs the distinction (UX-5): explicit human pins pretty output in pipes,
 // default human keeps the non-TTY→JSON heuristic.
 func ResolveModeExplicit(flagOverride, persisted string) (mode string, explicit bool) {
+	mode, explicit, _ = ResolveModeLadder(flagOverride, persisted)
+	return mode, explicit
+}
+
+// ResolveModeLadder is ResolveModeExplicit plus the deprecated alias (if any)
+// the winning rung carried: a "service-account" rung resolves to agent and
+// reports the alias so the interceptor can warn.
+func ResolveModeLadder(flagOverride, persisted string) (mode string, explicit bool, deprecated string) {
+	raw, explicit := rawMode(flagOverride, persisted)
+	mode, deprecated = CanonicalMode(raw)
+	return mode, explicit, deprecated
+}
+
+func rawMode(flagOverride, persisted string) (string, bool) {
 	if flagOverride != "" {
 		return flagOverride, true
 	}
