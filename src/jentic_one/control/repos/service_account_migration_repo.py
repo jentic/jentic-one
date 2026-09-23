@@ -130,6 +130,19 @@ _REVOKE_REFRESH_TOKENS = text(
     " AND revoked_at IS NULL"
 )
 
+# ``--diff-only`` preview: the rows ``revoke_tokens`` would touch (same WHERE).
+_COUNT_REVOCABLE_ACCESS_TOKENS = text(
+    "SELECT count(*) AS n FROM access_tokens"
+    " WHERE actor_id = :actor_id AND actor_type = 'service_account'"
+    " AND revoked_at IS NULL"
+)
+
+_COUNT_REVOCABLE_REFRESH_TOKENS = text(
+    "SELECT count(*) AS n FROM refresh_tokens"
+    " WHERE actor_id = :actor_id AND actor_type = 'service_account'"
+    " AND revoked_at IS NULL"
+)
+
 _STAMP = text(
     "UPDATE service_accounts"
     " SET migrated_to_actor_id = :stamp, migrated_at = :now"
@@ -303,6 +316,35 @@ class ServiceAccountMigrationRepository:
                 },
             )
         return len(toolkit_rows), len(credential_rows)
+
+    @staticmethod
+    async def count_copy_candidates(
+        session: AsyncSession, *, service_account_id: str
+    ) -> tuple[int, int, int]:
+        """``--diff-only`` preview: ``(scopes, toolkit bindings, credential
+        bindings)`` that :meth:`copy_scope_grants` / :meth:`copy_bindings`
+        would copy — the same source queries and retired-scope filter, no
+        writes."""
+        grants = (await session.execute(_SELECT_GRANTS, {"actor_id": service_account_id})).all()
+        toolkit_rows = (
+            await session.execute(_SELECT_TOOLKIT_BINDINGS, {"actor_id": service_account_id})
+        ).all()
+        credential_rows = (
+            await session.execute(_SELECT_CREDENTIAL_BINDINGS, {"actor_id": service_account_id})
+        ).all()
+        scopes = sum(1 for row in grants if row.scope not in THEME8_RETIRED_SCOPES)
+        return scopes, len(toolkit_rows), len(credential_rows)
+
+    @staticmethod
+    async def count_revocable_tokens(
+        session: AsyncSession, *, service_account_id: str
+    ) -> tuple[int, int]:
+        """``--diff-only`` preview: ``(access, refresh)`` rows
+        :meth:`revoke_tokens` would revoke (same predicate, no writes)."""
+        params = {"actor_id": service_account_id}
+        access = (await session.execute(_COUNT_REVOCABLE_ACCESS_TOKENS, params)).one()
+        refresh = (await session.execute(_COUNT_REVOCABLE_REFRESH_TOKENS, params)).one()
+        return int(access.n), int(refresh.n)
 
     @staticmethod
     async def revoke_tokens(

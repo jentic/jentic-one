@@ -16,6 +16,7 @@ import pytest
 
 from jentic_one.control.services.service_account_migration import (
     ServiceAccountMigrationService,
+    _PreviewCounts,
 )
 from jentic_one.shared.models import ActorStatus
 
@@ -72,26 +73,38 @@ def test_disposition_switch(status: str, label: str, successor_status: str | Non
 def test_preview_labels_and_skip_reason() -> None:
     svc = ServiceAccountMigrationService(MagicMock())
 
-    active = svc._preview(_row("active"))
+    active = svc._preview(_row("active"), _PreviewCounts(stored_scopes=3))
     assert active.outcome == "migrated"
     assert active.reason is None
     assert active.owner_visibility_note is not None  # OQ-5 report line
+    assert active.stored_scope_count == 3  # the computed preview counts are carried
 
-    skipped = svc._preview(_row("pending"))
+    skipped = svc._preview(_row("pending"), _PreviewCounts(access_tokens=1))
     assert skipped.outcome == "skipped-non-active"
     assert skipped.reason == "status=pending"
     assert skipped.owner_visibility_note is None  # no successor, nothing to see
+    assert skipped.access_tokens_revoked == 1
+
+
+def test_preview_without_counts_reports_not_computed() -> None:
+    """No counts → ``None`` (not computed), never a misleading zero."""
+    svc = ServiceAccountMigrationService(MagicMock())
+    outcome = svc._preview(_row("active"), None)
+    assert outcome.stored_scope_count is None
+    assert outcome.access_tokens_revoked is None
 
 
 def test_preview_short_circuits_on_stamp() -> None:
     """A stamped row is done — successor surfaced, skip sentinel maps to None."""
     svc = ServiceAccountMigrationService(MagicMock())
 
-    migrated = svc._preview(_row("active", migrated_to_actor_id="agnt_successor"))
+    migrated = svc._preview(_row("active", migrated_to_actor_id="agnt_successor"), None)
     assert migrated.outcome == "already_migrated"
     assert migrated.successor_agent_id == "agnt_successor"
+    assert migrated.stored_scope_count is None  # stamped: counts not computed
+    assert migrated.permission_rule_count is None
 
-    skipped = svc._preview(_row("pending", migrated_to_actor_id="skipped"))
+    skipped = svc._preview(_row("pending", migrated_to_actor_id="skipped"), None)
     assert skipped.outcome == "already_migrated"
     assert skipped.successor_agent_id is None
 
@@ -103,5 +116,5 @@ def test_preview_short_circuits_on_stamp() -> None:
 def test_had_client_secret_iff_hash_present(client_secret_hash: str | None, expected: bool) -> None:
     """OQ-1: the report names every client-credentials holder before Phase 2."""
     svc = ServiceAccountMigrationService(MagicMock())
-    outcome = svc._preview(_row("active", client_secret_hash=client_secret_hash))
+    outcome = svc._preview(_row("active", client_secret_hash=client_secret_hash), None)
     assert outcome.had_client_secret is expected

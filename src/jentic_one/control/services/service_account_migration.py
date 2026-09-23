@@ -96,6 +96,9 @@ def _log_fields(fields: dict[str, Any]) -> dict[str, Any]:
     return {_LOG_KEY_RENAMES.get(key, key): value for key, value in fields.items()}
 
 
+_VERIFY_SUMMARY_CATEGORY = "verify_summary"
+
+
 class _ConcurrentWinnerError(Exception):
     """A concurrent run stamped this SA first — roll back, report already_migrated."""
 
@@ -112,13 +115,18 @@ class ServiceAccountMigrationOutcome:
     outcome: str  # migrated | migrated-disabled | skipped-non-active |
     #             # already_migrated | failed
     successor_agent_id: str | None = None
-    stored_scope_count: int = 0
-    toolkit_binding_count: int = 0
-    credential_binding_count: int = 0
+    #: The count fields are what this run copied/revoked — or, under
+    #: ``--diff-only``, what it WOULD (same source queries). ``None`` means
+    #: "not computed": the ``--diff-only`` preview of an already-stamped row,
+    #: whose re-run copies nothing new but whose historical counts are not
+    #: reconstructed — never a misleading zero.
+    stored_scope_count: int | None = 0
+    toolkit_binding_count: int | None = 0
+    credential_binding_count: int | None = 0
     #: Control-DB ``agent_permission_rules`` rows copied sva_ → agnt_ (H2).
-    permission_rule_count: int = 0
-    access_tokens_revoked: int = 0
-    refresh_tokens_revoked: int = 0
+    permission_rule_count: int | None = 0
+    access_tokens_revoked: int | None = 0
+    refresh_tokens_revoked: int | None = 0
     #: OQ-1 — operators get the client-credentials holder list before Phase 2
     #: kills the grant.
     had_client_secret: bool = False
@@ -138,6 +146,18 @@ class ServiceAccountMigrationOutcome:
     reason: str | None = None
 
 
+@dataclass(frozen=True)
+class _PreviewCounts:
+    """What a real run would copy/revoke for one unstamped SA (``--diff-only``)."""
+
+    stored_scopes: int = 0
+    toolkit_bindings: int = 0
+    credential_bindings: int = 0
+    permission_rules: int = 0
+    access_tokens: int = 0
+    refresh_tokens: int = 0
+
+
 @dataclass
 class SweepOutcome:
     """Result of one sweep pass."""
@@ -150,6 +170,25 @@ class SweepOutcome:
     refresh_tokens_revoked: int = 0
     #: Control-DB ``sva_``-keyed inline rules deleted (H2).
     permission_rules_deleted: int = 0
+    #: Per-SA JSONL report lines (``--sweep-migrated --report``), one per
+    #: swept row, in sweep order.
+    rows: list[dict[str, Any]] = field(default_factory=list)
+
+    def report_lines(self, *, ignore_age_gate: bool) -> list[dict[str, Any]]:
+        """The sweep's JSONL report: one ``sweep_row`` per SA + a summary."""
+        return [
+            *self.rows,
+            {
+                "category": "sweep_summary",
+                "swept": len(self.swept),
+                "skipped_young": self.skipped_young,
+                "access_tokens_revoked": self.access_tokens_revoked,
+                "refresh_tokens_revoked": self.refresh_tokens_revoked,
+                "permission_rules_deleted": self.permission_rules_deleted,
+                "ignore_age_gate": ignore_age_gate,
+                "tool_version": __version__,
+            },
+        ]
 
 
 @dataclass
@@ -166,8 +205,34 @@ class VerificationResult:
     #: twin holds a different rule count. Not persisted on the ack row (the
     #: sentinel is only written when every count is zero).
     inline_rule_mismatch_count: int = 0
+    #: JSONL report lines. The first is always the ``verify_summary`` line
+    #: (the run's counts + tool version) — report context, not a finding.
     findings: list[dict[str, Any]] = field(default_factory=list)
     acknowledged: bool = False
+
+    @property
+    def finding_count(self) -> int:
+        """Report lines that are actual findings — the summary excluded, so a
+        clean verify records 0 on the acknowledgement row."""
+        return sum(1 for f in self.findings if f.get("category") != _VERIFY_SUMMARY_CATEGORY)
+
+    @property
+    def only_sweep_healable_failures(self) -> bool:
+        """True when the verify failed only on criteria the sweep heals.
+
+        Unrevoked SA sessions (criterion 3 — the sweep revokes them; a
+        migrate re-run of a stamped row does not) and inline-rule mismatches
+        on unswept rows (criterion 6 — the sweep re-copies, then drops the
+        ``sva_`` rows). Any other failing criterion needs the migration
+        itself (or operator repair), not the sweep.
+        """
+        return (
+            not self.passed
+            and self.unstamped_count == 0
+            and self.grant_twin_missing_count == 0
+            and self.digest_mismatch_count == 0
+            and self.post_stamp_mutation_count == 0
+        )
 
 
 class ServiceAccountMigrationService:
@@ -188,7 +253,10 @@ class ServiceAccountMigrationService:
         outcomes: list[ServiceAccountMigrationOutcome] = []
         for row in rows:
             if diff_only:
-                outcome = self._preview(row)
+                counts = (
+                    await self._preview_counts(row) if row.migrated_to_actor_id is None else None
+                )
+                outcome = self._preview(row, counts)
             else:
                 outcome = await self._migrate_one(row)
             outcomes.append(outcome)
@@ -206,8 +274,52 @@ class ServiceAccountMigrationService:
             return "migrated-disabled", ActorStatus.DISABLED.value
         return "skipped-non-active", None
 
-    def _preview(self, row: Any) -> ServiceAccountMigrationOutcome:
-        """Dry-run disposition for one SA row (no writes)."""
+    async def _preview_counts(self, row: Any) -> _PreviewCounts:
+        """Read-only counts of what :meth:`_migrate_one` would copy/revoke.
+
+        Same source queries as the real copy/revoke steps (retired-scope
+        filter included). The successor does not exist yet, so every
+        ``sva_``-keyed inline rule would be copied. Skip-but-stamp rows get
+        no successor — only their token revocation is counted.
+        """
+        _label, successor_status = self._disposition(row.status)
+        scopes = toolkit_bindings = credential_bindings = rules = 0
+        async with self._ctx.admin_db.session() as session:
+            access, refresh = await ServiceAccountMigrationRepository.count_revocable_tokens(
+                session, service_account_id=row.id
+            )
+            if successor_status is not None:
+                (
+                    scopes,
+                    toolkit_bindings,
+                    credential_bindings,
+                ) = await ServiceAccountMigrationRepository.count_copy_candidates(
+                    session, service_account_id=row.id
+                )
+        if successor_status is not None and self._ctx.has_db("control"):
+            async with self._ctx.control_db.session() as control_session:
+                by_binding = (
+                    await ServiceAccountMigrationRepository.count_permission_rules_by_binding(
+                        control_session, [row.id]
+                    )
+                )
+            rules = sum(by_binding.values())
+        return _PreviewCounts(
+            stored_scopes=scopes,
+            toolkit_bindings=toolkit_bindings,
+            credential_bindings=credential_bindings,
+            permission_rules=rules,
+            access_tokens=access,
+            refresh_tokens=refresh,
+        )
+
+    def _preview(self, row: Any, counts: _PreviewCounts | None) -> ServiceAccountMigrationOutcome:
+        """Dry-run disposition for one SA row (no writes).
+
+        ``counts`` comes from :meth:`_preview_counts`; ``None`` (always, for
+        an already-stamped row) reports the count fields as ``None`` — not
+        computed — rather than zeros.
+        """
         if row.migrated_to_actor_id is not None:
             return ServiceAccountMigrationOutcome(
                 service_account_id=row.id,
@@ -215,12 +327,25 @@ class ServiceAccountMigrationService:
                 successor_agent_id=(
                     None if row.migrated_to_actor_id == SKIPPED_STAMP else row.migrated_to_actor_id
                 ),
+                stored_scope_count=None,
+                toolkit_binding_count=None,
+                credential_binding_count=None,
+                permission_rule_count=None,
+                access_tokens_revoked=None,
+                refresh_tokens_revoked=None,
                 had_client_secret=row.client_secret_hash is not None,
             )
         label, _successor_status = self._disposition(row.status)
+        c = counts
         return ServiceAccountMigrationOutcome(
             service_account_id=row.id,
             outcome=label,
+            stored_scope_count=None if c is None else c.stored_scopes,
+            toolkit_binding_count=None if c is None else c.toolkit_bindings,
+            credential_binding_count=None if c is None else c.credential_bindings,
+            permission_rule_count=None if c is None else c.permission_rules,
+            access_tokens_revoked=None if c is None else c.access_tokens,
+            refresh_tokens_revoked=None if c is None else c.refresh_tokens,
             had_client_secret=row.client_secret_hash is not None,
             reason=None if label != "skipped-non-active" else f"status={row.status}",
             owner_visibility_note=(
@@ -595,6 +720,20 @@ class ServiceAccountMigrationService:
             outcome.swept.append(row.id)
             outcome.access_tokens_revoked += access_revoked
             outcome.refresh_tokens_revoked += refresh_revoked
+            outcome.rows.append(
+                {
+                    "category": "sweep_row",
+                    "service_account_id": row.id,
+                    "successor_agent_id": (
+                        None
+                        if row.migrated_to_actor_id == SKIPPED_STAMP
+                        else row.migrated_to_actor_id
+                    ),
+                    "archived": archived,
+                    "access_tokens_revoked": access_revoked,
+                    "refresh_tokens_revoked": refresh_revoked,
+                }
+            )
             logger.info(
                 "service_account_migration_swept",
                 service_account_id=row.id,
@@ -690,7 +829,7 @@ class ServiceAccountMigrationService:
         )
         result.findings.append(
             {
-                "category": "verify_summary",
+                "category": _VERIFY_SUMMARY_CATEGORY,
                 "passed": result.passed,
                 "unstamped_count": unstamped,
                 "grant_twin_missing_count": twin_missing,
@@ -722,7 +861,7 @@ class ServiceAccountMigrationService:
                     unrevoked_token_count=unrevoked,
                     digest_mismatch_count=digest_mismatch,
                     post_stamp_mutation_count=post_stamp,
-                    report_finding_count=len(result.findings),
+                    report_finding_count=result.finding_count,
                     tool_version=__version__,
                 )
             result.acknowledged = True
