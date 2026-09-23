@@ -247,7 +247,7 @@ func TestConnect_403IsOperatorScopeGrant(t *testing.T) {
 
 func TestConnect_TooManyScopesIsArgumentError(t *testing.T) {
 	withXDG(t)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
 		t.Error("an over-cap --scopes must never reach the wire")
 	}))
 	defer srv.Close()
@@ -268,7 +268,7 @@ func TestConnect_OverlongReasonIsArgumentError(t *testing.T) {
 	// client-side — a clear argument error before any request, never a route
 	// 422 rendered as a retryable transport failure.
 	withXDG(t)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
 		t.Error("an overlong --reason must never reach the wire")
 	}))
 	defer srv.Close()
@@ -290,7 +290,7 @@ func TestConnect_WaitWithNonPositiveTimeoutIsArgumentError(t *testing.T) {
 	// A zero/negative --timeout with --wait is a contradiction, not a request
 	// for the default — it must error before any session is created.
 	withXDG(t)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
 		t.Error("--wait with a non-positive --timeout must never reach the wire")
 	}))
 	defer srv.Close()
