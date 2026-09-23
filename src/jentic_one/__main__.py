@@ -328,9 +328,9 @@ async def _reset_password(
 async def _retire_toolkit_keys(*, owner_email: str | None) -> int:
     """Run the theme-5 Phase 4 toolkit-key retirement job.
 
-    Converts every resolvable ``jntc_live_`` key into a service account
+    Converts every resolvable ``jntc_live_`` key into a successor agent
     carrying exactly ``capabilities:execute``; the unchanged plaintext keeps
-    authenticating as that account. One JSONL report line per key goes to
+    authenticating as that agent. One JSONL report line per key goes to
     stdout. Idempotent — safe to re-run after a partial failure.
     """
     config = load_config()
@@ -604,12 +604,12 @@ def main(argv: list[str] | None = None) -> int:
 
     retire_keys = sub.add_parser(
         "retire-toolkit-keys",
-        help=("Migrate jntc_live_ toolkit keys to service accounts (theme-5 Phase 4; idempotent)."),
+        help=("Migrate jntc_live_ toolkit keys to successor agents (theme-5 Phase 4; idempotent)."),
     )
     retire_keys.add_argument(
         "--owner",
         help=(
-            "Email of the user to own service accounts whose toolkit key has "
+            "Email of the user to own successor agents whose toolkit key has "
             "no resolvable creator (such keys are skipped and reported otherwise)."
         ),
     )

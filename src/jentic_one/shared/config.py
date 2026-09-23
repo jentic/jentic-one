@@ -1379,9 +1379,9 @@ class BrokerConfig(BaseModel):
     # (agent_credential_bindings + agent_permission_rules /
     # permission_rule_sets). Setting False is an emergency fallback onto the
     # legacy toolkit-derivation path, which survives until Phase 6b removes it
-    # (and this flag with it). Service accounts migrated from jntc_live_
-    # toolkit keys (Phase 4) hold both binding forms, so they work under
-    # either setting.
+    # (and this flag with it). Successor agents cut from jntc_live_ toolkit
+    # keys (theme-5 Phase 4, re-homed onto agents by theme-8) hold both
+    # binding forms, so they work under either setting.
     direct_bindings_enabled: bool = True
     # Absolute public base URL of the admin jobs API, used to build the 202
     # `_links.self` pointer for async executions (e.g. "https://api.example.com").

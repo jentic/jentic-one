@@ -30,7 +30,7 @@ Every API endpoint grouped by its **typical caller**, then by surface, annotated
 _Total endpoints: **174**._
 
 
-## Agent-facing (typically agent / service-account) (32)
+## Agent-facing (typically an agent) (32)
 
 
 ### `apis`

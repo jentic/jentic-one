@@ -306,6 +306,10 @@ run the Phase-1 migration (above) first — the boot job still does it.
   `org:admin`; stored grants of them are tolerated (a re-submitted scope
   set containing them is not a 422) and simply grant nothing.
 - **Actor directory:** `GET /actors` lists users and agents only.
+- **CLI:** the generated control client drops the service-account
+  operations, and `jentic api endpoints --actor service_account` no longer
+  matches any endpoint (agents are the only machine actor — filter with
+  `--actor agent`).
 
 ## Deprecations
 

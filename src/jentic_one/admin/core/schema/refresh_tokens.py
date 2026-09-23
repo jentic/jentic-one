@@ -41,7 +41,7 @@ class RefreshToken(AuditableMixin, AdminBase):
     replaced_by_id: Mapped[str | None] = mapped_column(String(30), nullable=True)
     # Scoped to third-party delegation only: set when tokens are issued via the
     # authorization code flow through a registered OAuth client. NULL for platform
-    # client logins (the SPA), agent JWKS assertions, and service account auth.
+    # client logins (the SPA) and agent JWKS assertions.
     oauth_client_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     # Grant-channel lineage (D4): mirrors access_tokens.oauth_grant_id.
     # Refresh rotation re-checks the grant row on every turn (revoked → fail

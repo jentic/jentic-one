@@ -122,15 +122,11 @@ docs/design/designs/platform-actors/
   openapi-sketch.yaml               — design-time OpenAPI sketch (not production spec)
   actors/
     README.md                       — index for actor-type subdirs
-    actors.md                       — entity model: Users, Agents, ServiceAccounts
+    actors.md                       — entity model: Users, Agents
     agent/
       README.md
       auth.md                       — DCR + JWT Bearer flow; token model; key rotation
       endpoints.md                  — agent-specific HTTP surface
-    service-account/
-      README.md
-      auth.md
-      endpoints.md
     users/
       README.md
       auth.md

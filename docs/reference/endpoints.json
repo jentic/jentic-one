@@ -917,7 +917,7 @@
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account)",
+      "group": "Agent-facing (typically an agent)",
       "implied_scopes": {
         "apis:read": []
       },
@@ -989,7 +989,7 @@
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account)",
+      "group": "Agent-facing (typically an agent)",
       "implied_scopes": {
         "apis:read": []
       },
@@ -1036,7 +1036,7 @@
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account)",
+      "group": "Agent-facing (typically an agent)",
       "implied_scopes": {
         "apis:read": []
       },
@@ -1058,7 +1058,7 @@
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account)",
+      "group": "Agent-facing (typically an agent)",
       "implied_scopes": {
         "apis:read": []
       },
@@ -1080,7 +1080,7 @@
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account)",
+      "group": "Agent-facing (typically an agent)",
       "implied_scopes": {
         "apis:read": []
       },
@@ -1152,7 +1152,7 @@
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account)",
+      "group": "Agent-facing (typically an agent)",
       "implied_scopes": {
         "apis:read": []
       },
@@ -1247,7 +1247,7 @@
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account)",
+      "group": "Agent-facing (typically an agent)",
       "implied_scopes": {
         "apis:read": []
       },
@@ -1294,7 +1294,7 @@
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account)",
+      "group": "Agent-facing (typically an agent)",
       "implied_scopes": {
         "apis:read": []
       },
@@ -1316,7 +1316,7 @@
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account)",
+      "group": "Agent-facing (typically an agent)",
       "implied_scopes": {
         "apis:read": []
       },
@@ -1338,7 +1338,7 @@
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account)",
+      "group": "Agent-facing (typically an agent)",
       "implied_scopes": {
         "apis:read": []
       },
@@ -1410,7 +1410,7 @@
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account)",
+      "group": "Agent-facing (typically an agent)",
       "implied_scopes": {
         "apis:read": []
       },
@@ -1553,7 +1553,7 @@
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account)",
+      "group": "Agent-facing (typically an agent)",
       "implied_scopes": {
         "capabilities:read": []
       },
@@ -1575,7 +1575,7 @@
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account)",
+      "group": "Agent-facing (typically an agent)",
       "implied_scopes": {
         "capabilities:read": []
       },
@@ -1597,7 +1597,7 @@
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account)",
+      "group": "Agent-facing (typically an agent)",
       "implied_scopes": {
         "capabilities:read": []
       },
@@ -1619,7 +1619,7 @@
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account)",
+      "group": "Agent-facing (typically an agent)",
       "implied_scopes": {
         "catalog:import": [
           "apis:read"
@@ -2254,7 +2254,7 @@
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account)",
+      "group": "Agent-facing (typically an agent)",
       "implied_scopes": {
         "events:read": []
       },
@@ -2276,7 +2276,7 @@
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account)",
+      "group": "Agent-facing (typically an agent)",
       "implied_scopes": {
         "events:read": []
       },
@@ -2298,7 +2298,7 @@
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account)",
+      "group": "Agent-facing (typically an agent)",
       "implied_scopes": {
         "events:read": []
       },
@@ -2344,7 +2344,7 @@
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account)",
+      "group": "Agent-facing (typically an agent)",
       "implied_scopes": {
         "executions:read": []
       },
@@ -2366,7 +2366,7 @@
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account)",
+      "group": "Agent-facing (typically an agent)",
       "implied_scopes": {
         "executions:read": []
       },
@@ -2427,7 +2427,7 @@
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account)",
+      "group": "Agent-facing (typically an agent)",
       "implied_scopes": {
         "apis:read": []
       },
@@ -2491,7 +2491,7 @@
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account)",
+      "group": "Agent-facing (typically an agent)",
       "implied_scopes": {
         "jobs:read": []
       },
@@ -2513,7 +2513,7 @@
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account)",
+      "group": "Agent-facing (typically an agent)",
       "implied_scopes": {
         "jobs:read": []
       },
@@ -2535,7 +2535,7 @@
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account)",
+      "group": "Agent-facing (typically an agent)",
       "implied_scopes": {
         "jobs:read": []
       },
@@ -3309,7 +3309,7 @@
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account)",
+      "group": "Agent-facing (typically an agent)",
       "implied_scopes": {
         "apis:read": []
       },
@@ -3627,7 +3627,7 @@
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account)",
+      "group": "Agent-facing (typically an agent)",
       "implied_scopes": {
         "capabilities:read": []
       },
@@ -3649,7 +3649,7 @@
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account)",
+      "group": "Agent-facing (typically an agent)",
       "implied_scopes": {
         "capabilities:read": []
       },
@@ -3670,7 +3670,7 @@
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account)",
+      "group": "Agent-facing (typically an agent)",
       "implied_scopes": {
         "capabilities:execute": [
           "apis:read",
@@ -3695,7 +3695,7 @@
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account)",
+      "group": "Agent-facing (typically an agent)",
       "implied_scopes": {
         "capabilities:execute": [
           "apis:read",
@@ -3720,7 +3720,7 @@
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account)",
+      "group": "Agent-facing (typically an agent)",
       "implied_scopes": {
         "capabilities:execute": [
           "apis:read",
@@ -3745,7 +3745,7 @@
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account)",
+      "group": "Agent-facing (typically an agent)",
       "implied_scopes": {
         "capabilities:execute": [
           "apis:read",
@@ -3770,7 +3770,7 @@
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account)",
+      "group": "Agent-facing (typically an agent)",
       "implied_scopes": {
         "capabilities:execute": [
           "apis:read",
@@ -3791,7 +3791,7 @@
     }
   ],
   "groups": [
-    "Agent-facing (typically agent / service-account)",
+    "Agent-facing (typically an agent)",
     "Operator-facing (typically a human operator / admin)",
     "Any authenticated actor",
     "Public (unauthenticated)"
