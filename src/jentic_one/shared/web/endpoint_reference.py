@@ -68,7 +68,7 @@ _BROKER_PROXY_METHODS: tuple[str, ...] = ("DELETE", "GET", "PATCH", "POST", "PUT
 # real gate). Endpoints are scope-gated, not actor-gated, so we group by who
 # usually calls a route rather than by an enforced actor restriction.
 GROUP_PUBLIC = "Public (unauthenticated)"
-GROUP_AGENT = "Agent-facing (typically agent / service-account)"
+GROUP_AGENT = "Agent-facing (typically an agent)"
 GROUP_OPERATOR = "Operator-facing (typically a human operator / admin)"
 GROUP_ANY = "Any authenticated actor"
 

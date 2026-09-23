@@ -1498,7 +1498,7 @@
             {
               "name": "actor",
               "type": "string",
-              "usage": "only endpoints callable by this actor type (user, agent, service_account)"
+              "usage": "only endpoints callable by this actor type (user, agent)"
             },
             {
               "name": "context",
@@ -2049,7 +2049,7 @@
           "use": "api \u003cMETHOD\u003e \u003cPATH\u003e",
           "short": "Authenticated passthrough to the control plane",
           "long": "api sends an arbitrary request to the control plane, reusing the same\nauth, session, and transport as every other command. The PATH must match a\nroute in the CLI's embedded OpenAPI spec (use --live to allow routes the\nconnected server serves that this binary predates). Discover routes with\n`jentic api ops` and their contract with `jentic api describe`.\n\nRequest body (mirrors `jentic execute`): -d/--data inline JSON, -d - for\nstdin, --data-file \u003cpath\u003e, or auto-stdin when a body is piped/redirected.\n\nBy default any transport-successful response (2xx or 4xx/5xx) exits 0 and\nthe body is emitted as-is; --fail-on-error maps non-2xx to exit 1.",
-          "example": "  jentic api GET /credentials\n  jentic api POST /service-accounts -d '{\"name\":\"clarity\"}'\n  jentic api POST /apis \u003c api.json\n  jentic api GET \"/apis?limit=10\"",
+          "example": "  jentic api GET /credentials\n  jentic api POST /agents -d '{\"name\":\"clarity\"}'\n  jentic api POST /apis \u003c api.json\n  jentic api GET \"/apis?limit=10\"",
           "group_title": "Find and run operations",
           "flags": [
             {
