@@ -27,6 +27,7 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import { cn } from '@/shared/lib/utils';
+import { useCoversRightEdge } from '@/shared/ui/rightEdge';
 
 export interface SheetPrimitiveProps {
 	/** Whether the sheet is open. */
@@ -118,6 +119,11 @@ export function SheetPrimitive({
 	const [mounted, setMounted] = useState(false);
 
 	const styles = SIDE_STYLES[side];
+
+	// A right-hand sheet covers the right edge from its first frame until it starts
+	// closing, so corner overlays (toasts) move beside it instead of over its
+	// footer actions.
+	useCoversRightEdge(sheetRef, side === 'right' && open && animationState !== 'closed');
 
 	useEffect(() => {
 		setMounted(true);
