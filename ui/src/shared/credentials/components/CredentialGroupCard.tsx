@@ -30,10 +30,11 @@ interface CredentialGroupCardProps {
  *   [vendor badge] [API name] [vendor/name · version] ........ [N credentials]
  *                  [where the secret goes, when every row agrees]
  *   ─ row: [name] [connected] [type] ............ connect · edit · delete
- *          [usage · added · …id tail]
+ *          [usage · added · …id tail when the name repeats]
  *
- * Rows carry the id tail because sibling names often repeat the API's own. Each
- * row is a click target for edit, the way a single card is.
+ * A row whose name another row shares carries its id tail — then it is the only
+ * thing telling the two apart; a unique name needs nothing more. Each row is a
+ * click target for edit, the way a single card is.
  */
 export function CredentialGroupCard({
 	credentials,
@@ -56,8 +57,7 @@ export function CredentialGroupCard({
 	// One placement line in the header when the rows agree; per row otherwise.
 	const placements = new Set(credentials.map(credentialAuthPlacement));
 	const sharedPlacement = placements.size === 1 ? [...placements][0] : null;
-	const names = credentials.map((cred) => cred.name.trim().toLowerCase());
-	const namesCollide = new Set(names).size < names.length;
+	const repeatedNames = repeatedCredentialNames(credentials);
 
 	return (
 		<section
@@ -91,7 +91,8 @@ export function CredentialGroupCard({
 						{sharedPlacement ? `${sharedPlacement}. ` : ''}
 						Any of these can be bound to an agent — you choose which when you add the
 						API.
-						{namesCollide && ' Some share a name; rename one to tell them apart.'}
+						{repeatedNames.size > 0 &&
+							' Some share a name; rename one to tell them apart.'}
 					</p>
 				</div>
 			</header>
@@ -102,6 +103,7 @@ export function CredentialGroupCard({
 						key={cred.credential_id}
 						cred={cred}
 						placement={sharedPlacement ? null : credentialAuthPlacement(cred)}
+						showIdTail={repeatedNames.has(normalizedName(cred))}
 						onEdit={onEdit}
 						onDelete={onDelete}
 						onConnect={onConnect}
@@ -113,9 +115,26 @@ export function CredentialGroupCard({
 	);
 }
 
+function normalizedName(cred: Credential): string {
+	return cred.name.trim().toLowerCase();
+}
+
+/** Names two or more rows share, case-insensitively — the rows only an id tells apart. */
+function repeatedCredentialNames(credentials: readonly Credential[]): Set<string> {
+	const seen = new Set<string>();
+	const repeated = new Set<string>();
+	for (const cred of credentials) {
+		const name = normalizedName(cred);
+		if (seen.has(name)) repeated.add(name);
+		seen.add(name);
+	}
+	return repeated;
+}
+
 function CredentialRow({
 	cred,
 	placement,
+	showIdTail,
 	onEdit,
 	onDelete,
 	onConnect,
@@ -123,6 +142,7 @@ function CredentialRow({
 }: {
 	cred: Credential;
 	placement: string | null;
+	showIdTail: boolean;
 	onEdit: (cred: Credential) => void;
 	onDelete: (cred: Credential) => void;
 	onConnect: (cred: Credential) => void;
@@ -158,7 +178,7 @@ function CredentialRow({
 					cred={cred}
 					usedByAgentCount={usage.usedByAgentCount}
 					callsLast7d={usage.callsLast7d}
-					showIdTail
+					showIdTail={showIdTail}
 					className="mt-0.5"
 				/>
 			</div>
