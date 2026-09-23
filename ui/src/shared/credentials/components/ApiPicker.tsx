@@ -7,6 +7,7 @@ import { apiRefDisplayName } from '@/shared/lib';
 import { cn } from '@/shared/lib/utils';
 import { apiRefKey } from '@/shared/credentials/lib/apiIdentity';
 import {
+	apiRowToSelected,
 	useApis,
 	useCatalog,
 	type ApiResponse,
@@ -56,29 +57,6 @@ const ROW_VARIANTS: Variants = {
 	hidden: { opacity: 0, y: 6 },
 	show: { opacity: 1, y: 0, transition: { duration: 0.18, ease: 'easeOut' } },
 };
-
-function localToSelected(row: ApiResponse): SelectedApi {
-	const ref = row.api;
-	// Friendly primary line: explicit display_name, else the persisted catalog
-	// slug (`nytimes.com/article_search` → `Article Search`), else the legacy
-	// vendor/name humanisation — the exact case #631 flags on the credentials
-	// page's "Add credential" picker.
-	const label = apiRefDisplayName({
-		displayName: row.display_name,
-		catalogApiId: row.catalog_api_id,
-		vendor: ref.vendor,
-		name: ref.name,
-	});
-	return {
-		source: 'local',
-		vendor: ref.vendor,
-		name: ref.name,
-		version: ref.version,
-		apiId: row.catalog_api_id ?? undefined,
-		securitySchemeTypes: row.security_schemes ?? [],
-		label,
-	};
-}
 
 function catalogToSelected(entry: CatalogEntryResponse): SelectedApi {
 	// Catalog `api_id` is a flat slug (e.g. "stripe.com"). We split path-like
@@ -435,7 +413,7 @@ function LocalApiRow({
 	onSelect: (api: SelectedApi) => void;
 	selection?: RowSelection;
 }) {
-	const api = localToSelected(row);
+	const api = apiRowToSelected(row);
 	const schemes = api.securitySchemeTypes ?? [];
 	return (
 		<PickerRow

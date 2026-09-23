@@ -57,8 +57,8 @@ export function AddApisTray({
 	const headingId = 'add-apis-tray-title';
 	const [picks, setPicks] = useState<SelectedApi[]>([]);
 	/** Spec upload. First-class here because "the API I need isn't in the catalog"
-	 * is otherwise a dead end mid-flow; a successful import invalidates the picker's
-	 * list, so the new API is searchable without leaving the tray. */
+	 * is otherwise a dead end mid-flow; a successful import lands in the selection,
+	 * so the operator never has to search for what they just uploaded. */
 	const [uploadOpen, setUploadOpen] = useState(false);
 
 	// The draft belongs to ONE agent, so it resets when the agent changes — never
@@ -118,6 +118,13 @@ export function AddApisTray({
 
 	const remove = (key: string): void =>
 		setPicks((current) => current.filter((p) => apiRefKey(p) !== key));
+
+	// Append, never toggle: re-uploading an API already picked must not drop it.
+	const addImported = (apis: SelectedApi[]): void =>
+		setPicks((current) => {
+			const keys = new Set(current.map(apiRefKey));
+			return [...current, ...apis.filter((api) => !keys.has(apiRefKey(api)))];
+		});
 
 	const preflightReady = credentialsSource.complete && !credentialsSource.error;
 	const canContinue = preflightReady && tally.actionable > 0;
@@ -266,7 +273,11 @@ export function AddApisTray({
 
 			{/* Inside the sheet, like the queue's credential wizard: a native
 			    `<dialog>` renders in the top layer, over the tray that owns the picks. */}
-			<ImportSpecDialog open={uploadOpen} onClose={(): void => setUploadOpen(false)} />
+			<ImportSpecDialog
+				open={uploadOpen}
+				onClose={(): void => setUploadOpen(false)}
+				onImported={addImported}
+			/>
 		</SheetPrimitive>
 	);
 }

@@ -108,6 +108,23 @@ function tallyLines(): string[] {
 	return screen.queryAllByTestId('tray-tally-line').map((el) => el.textContent ?? '');
 }
 
+/** An import that completes on submit and registers `api` — no job polling. */
+function stubCompletedImport({ row }: ReturnType<typeof makeMockApi>): void {
+	const { vendor, name, version } = row.api;
+	worker.use(
+		http.post('/apis', () =>
+			HttpResponse.json(
+				{ job_id: 'job_upload', status: 'completed', _links: { self: '/jobs/job_upload' } },
+				{ status: 202 },
+			),
+		),
+		http.get('/jobs/job_upload/result', () =>
+			HttpResponse.json({ revisions: [{ api: { vendor, name, version } }] }),
+		),
+		http.get(`/apis/${vendor}/${name}/${version}`, () => HttpResponse.json(row)),
+	);
+}
+
 async function closeTray(user: ReturnType<typeof userEvent.setup>): Promise<void> {
 	await user.click(screen.getByRole('button', { name: 'Cancel' }));
 	await waitFor(() => expect(screen.queryByTestId('sheet-primitive')).not.toBeInTheDocument(), {
@@ -353,6 +370,26 @@ describe('AddApisTray — multi-select picks and the preflight tally', () => {
 		await user.click(within(dialog).getByRole('button', { name: 'Close' }));
 		await waitFor(() => expect(screen.getByTestId('import-spec-dialog')).not.toBeVisible());
 		expect(selectionRows()).toHaveLength(1);
+	});
+
+	it('selects an uploaded API alongside the existing picks', async () => {
+		stubCompletedImport(makeMockApi({ vendor: 'acme.io', name: 'main', displayName: 'Acme' }));
+		const user = userEvent.setup();
+		renderWithProviders(<TrayHarness />);
+
+		await user.click(await row(/Stripe/));
+		await waitFor(() => expect(selectionRows()).toHaveLength(1));
+
+		await user.click(screen.getByRole('button', { name: 'Upload an API' }));
+		await waitFor(() => expect(screen.getByTestId('import-spec-dialog')).toBeVisible());
+		await user.type(screen.getByTestId('import-spec-url'), 'https://acme.io/openapi.json');
+		await user.click(screen.getByTestId('import-spec-submit'));
+
+		// The operator never has to find what they just uploaded: it is picked.
+		await waitFor(() => expect(selectionRows()).toHaveLength(2));
+		expect(selectionRows()[1]).toHaveTextContent('Acme');
+		expect(selectionRows()[0]).toHaveTextContent('Stripe');
+		await waitFor(() => expect(screen.getByTestId('import-spec-dialog')).not.toBeVisible());
 	});
 
 	it('passes an accessibility audit with picks and a tally on screen', async () => {

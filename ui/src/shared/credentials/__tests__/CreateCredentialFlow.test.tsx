@@ -2,14 +2,37 @@
  * CreateCredentialFlow — the shell `surface` switches, and nothing else; the
  * wizard's own behaviour is covered where it runs end to end (`CredentialsPage`,
  * `ApiSetupQueue`, `CredentialInventorySheet`). Pins the drawer default, the
- * top-layer host's centred dialog, and that no backdrop click discards a draft.
+ * top-layer host's centred dialog, that no backdrop click discards a draft, and
+ * that an uploaded spec lands on the credential form for the API it registered.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { http, HttpResponse } from 'msw';
 import { userEvent as browserUser } from 'vitest/browser';
-import { renderWithProviders, screen, waitFor } from '@/__tests__/test-utils';
+import { renderWithProviders, screen, waitFor, userEvent } from '@/__tests__/test-utils';
+import { worker } from '@/mocks/browser';
 import { setToken } from '@/shared/api';
-import { resetApisStore } from '@/shared/credentials/mocks/handlers';
+import { makeMockApi, resetApisStore } from '@/shared/credentials/mocks/handlers';
 import { CreateCredentialFlow } from '@/shared/credentials/components/CreateCredentialFlow';
+
+const ACME = makeMockApi({ vendor: 'acme.io', name: 'main', displayName: 'Acme' });
+
+/** An import that completes on submit and registers ACME — no job polling. */
+function stubCompletedImport(): void {
+	worker.use(
+		http.post('/apis', () =>
+			HttpResponse.json(
+				{ job_id: 'job_upload', status: 'completed', _links: { self: '/jobs/job_upload' } },
+				{ status: 202 },
+			),
+		),
+		http.get('/jobs/job_upload/result', () =>
+			HttpResponse.json({
+				revisions: [{ api: { vendor: 'acme.io', name: 'main', version: '1.0.0' } }],
+			}),
+		),
+		http.get('/apis/acme.io/main/1.0.0', () => HttpResponse.json(ACME.row)),
+	);
+}
 
 describe('CreateCredentialFlow', () => {
 	beforeEach(() => {
@@ -55,5 +78,32 @@ describe('CreateCredentialFlow', () => {
 		// Escape is a deliberate dismissal and keeps working.
 		await browserUser.keyboard('{Escape}');
 		await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+	});
+
+	it('offers an upload from the pick step', async () => {
+		renderWithProviders(<CreateCredentialFlow open onClose={vi.fn()} onCreated={vi.fn()} />);
+		await screen.findByRole('dialog', { name: /Choose an API/ });
+
+		// Reachable before any search: an operator who knows the API isn't
+		// catalogued shouldn't have to prove it first.
+		expect(screen.getByRole('button', { name: 'Upload an API' })).toBeVisible();
+	});
+
+	it('lands on the credential form for the API an upload registered', async () => {
+		stubCompletedImport();
+		const user = userEvent.setup();
+		renderWithProviders(<CreateCredentialFlow open onClose={vi.fn()} onCreated={vi.fn()} />);
+		await screen.findByRole('dialog', { name: /Choose an API/ });
+
+		await user.click(screen.getByRole('button', { name: 'Upload an API' }));
+		await waitFor(() => expect(screen.getByTestId('import-spec-dialog')).toBeVisible());
+		await user.type(screen.getByTestId('import-spec-url'), 'https://acme.io/openapi.json');
+		await user.click(screen.getByTestId('import-spec-submit'));
+
+		await waitFor(() =>
+			expect(screen.getByRole('dialog', { name: /Add credential — Acme/ })).toBeVisible(),
+		);
+		expect(screen.getByTestId('selected-api-summary')).toHaveTextContent('Acme');
+		await waitFor(() => expect(screen.getByTestId('import-spec-dialog')).not.toBeVisible());
 	});
 });

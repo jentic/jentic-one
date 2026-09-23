@@ -2,13 +2,15 @@
  * ImportSpecDialog — register a new API by importing an OpenAPI spec.
  *
  * Shared because uploading a spec belongs wherever a selected API is shown
- * — the Workspace page's own Import action, and the agents Add-APIs tray,
- * where "the API I need isn't listed" is a dead end without it.
+ * — the Workspace page's own Import action, the agents Add-APIs tray, and the
+ * add-credential flow, where "the API I need isn't listed" is a dead end
+ * without it. The mid-flow surfaces take `onImported` to select what landed.
  *
  * Scoped to **APIs only**
  * (no Arazzo/workflow kind — that's another module) and wired to jentic-one's
  * **async** import contract: `POST /apis` returns 202 + a job id, then the hook
- * polls `/jobs/{id}` to a terminal state. On `completed` we toast + close; on
+ * polls `/jobs/{id}` to a terminal state. On `completed` we toast, report the
+ * imported APIs, and close; on
  * `failed` we keep the dialog open and surface the job's `error` inline (e.g.
  * the backend embeddings-extra gap verified against the live backend).
  *
@@ -34,13 +36,22 @@ import {
 import { Button, Dialog, Input, Textarea } from '@/shared/ui';
 import { cn } from '@/shared/lib/utils';
 import { OptionCardSelector } from '@/shared/credentials/components/OptionCardSelector';
-import { jobSucceeded, useImportSpec, type ImportSource } from '@/shared/credentials/api';
+import {
+	jobSucceeded,
+	useImportSpec,
+	type ImportSource,
+	type SelectedApi,
+} from '@/shared/credentials/api';
 
 type InputMode = 'url' | 'paste' | 'file';
 
 export interface ImportSpecDialogProps {
 	open: boolean;
 	onClose: () => void;
+	/** Called on a successful import, before the dialog closes, with the APIs it
+	 * registered — so a surface that uploads mid-flow can select them. Empty when
+	 * the import succeeded but its result could not be read. */
+	onImported?: (apis: SelectedApi[]) => void;
 }
 
 const ACCEPTED_EXTENSIONS = '.json,.yaml,.yml,application/json,application/yaml,text/yaml';
@@ -48,7 +59,7 @@ const URL_PLACEHOLDER = 'https://example.com/openapi.json';
 const PASTE_PLACEHOLDER =
 	'{\n  "openapi": "3.1.0",\n  "info": { "title": "My API", … },\n  "paths": { … }\n}';
 
-export function ImportSpecDialog({ open, onClose }: ImportSpecDialogProps) {
+export function ImportSpecDialog({ open, onClose, onImported }: ImportSpecDialogProps) {
 	const fieldId = useId();
 	const { importSpec, isImporting } = useImportSpec();
 
@@ -177,6 +188,7 @@ export function ImportSpecDialog({ open, onClose }: ImportSpecDialogProps) {
 			const job = await importSpec([source]);
 			if (jobSucceeded(job)) {
 				resetDraft();
+				onImported?.(job.imported);
 				onClose();
 				return;
 			}

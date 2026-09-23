@@ -14,6 +14,7 @@ import {
 	JobsService,
 	type ApiImportResponse,
 	type ApiListResponse,
+	type ApiResponse,
 	type CatalogListResponse,
 } from '@/shared/api';
 
@@ -142,6 +143,37 @@ export async function getJob(jobId: string): Promise<JobStatus> {
 	} catch (error) {
 		throw toImportError(error, 'Failed to read the import job.');
 	}
+}
+
+/** The identity of one API an import job registered. */
+export interface ImportedApiRef {
+	vendor: string;
+	name: string;
+	version: string;
+}
+
+/**
+ * Read which APIs a completed import registered, via `GET /jobs/{id}/result`.
+ * The result lists one revision per ingested source; a revision the job reused
+ * or superseded still names the API it landed on, so every entry counts.
+ */
+export async function getImportedApiRefs(jobId: string): Promise<ImportedApiRef[]> {
+	const body = (await JobsService.getJobResult({ jobId })) as {
+		revisions?: Array<{ api?: Partial<ImportedApiRef> | null }> | null;
+	} | null;
+	const refs: ImportedApiRef[] = [];
+	for (const revision of body?.revisions ?? []) {
+		const api = revision.api;
+		if (api?.vendor && api.name && api.version) {
+			refs.push({ vendor: api.vendor, name: api.name, version: api.version });
+		}
+	}
+	return refs;
+}
+
+/** GET /apis/{vendor}/{name}/{version} — one workspace API row. */
+export function getApi(vendor: string, name: string, version: string): Promise<ApiResponse> {
+	return ApIsService.getApi({ vendor, name, version });
 }
 
 /**

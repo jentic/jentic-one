@@ -1,6 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { ArrowLeft, Download, Info, Loader2, X } from 'lucide-react';
+import { ArrowLeft, Download, Info, Loader2, Upload, X } from 'lucide-react';
 import {
 	Button,
 	Dialog,
@@ -36,6 +36,7 @@ import {
 } from '@/shared/credentials/lib/formBody';
 import { managedProviderUnavailableMessage, providerOptions } from '@/shared/credentials/config';
 import { ApiPicker } from '@/shared/credentials/components/ApiPicker';
+import { ImportSpecDialog } from '@/shared/credentials/components/ImportSpecDialog';
 import { AuthTypeCards } from '@/shared/credentials/components/AuthTypeCards';
 import { ServerVariablesSection } from '@/shared/credentials/components/ServerVariablesSection';
 import {
@@ -132,6 +133,8 @@ export function CreateCredentialFlow({
 	const [step, setStep] = useState<Step>(pinnedApi ? 'form' : 'pick');
 	const [selectedApi, setSelectedApi] = useState<SelectedApi | null>(pinnedApi ?? null);
 	const [manualMode, setManualMode] = useState(false);
+	/** Spec upload from the pick step — "the API isn't listed" is otherwise a dead end. */
+	const [uploadOpen, setUploadOpen] = useState(false);
 	const [type, setType] = useState<CredentialType>(initialType ?? CredentialType.BEARER_TOKEN);
 	/** When non-null, the spec drove the type (UI hides the manual toggle). */
 	const [activeScheme, setActiveScheme] = useState<SchemeOption | null>(null);
@@ -258,6 +261,7 @@ export function CreateCredentialFlow({
 		setStep(pinnedApi ? 'form' : 'pick');
 		setSelectedApi(pinnedApi ?? null);
 		setManualMode(false);
+		setUploadOpen(false);
 		setActiveScheme(null);
 		setState(pinnedApi ? seedFormFromSelectedApi(EMPTY_FORM, pinnedApi, false) : EMPTY_FORM);
 		setErrors({});
@@ -509,8 +513,30 @@ export function CreateCredentialFlow({
 		setErrors({});
 	};
 
+	const openUpload = (): void => setUploadOpen(true);
+
+	// A successful upload is a pick: straight on to the form for that API. A
+	// result that couldn't be read leaves the picker, whose list the import
+	// refreshed, so the API is one search away.
+	const handleImported = (apis: SelectedApi[]): void => {
+		if (apis[0]) handlePickApi(apis[0]);
+	};
+
 	const footer =
-		step === 'form' ? (
+		step === 'pick' ? (
+			// Always reachable, not only from no-results: an operator who knows the
+			// API isn't catalogued shouldn't have to search first.
+			<Button
+				variant="ghost"
+				size="sm"
+				onClick={openUpload}
+				type="button"
+				className="text-muted-foreground hover:text-foreground mr-auto"
+			>
+				<Upload className="h-3.5 w-3.5" />
+				Upload an API
+			</Button>
+		) : step === 'form' ? (
 			<>
 				{!pinnedApi && (
 					<Button
@@ -547,8 +573,25 @@ export function CreateCredentialFlow({
 	const body = (
 		<>
 			{step === 'pick' && (
-				<ApiPicker onSelect={handlePickApi} onManualEntry={handleManualEntry} />
+				<ApiPicker
+					onSelect={handlePickApi}
+					onManualEntry={handleManualEntry}
+					emptyAction={
+						<Button variant="secondary" size="sm" onClick={openUpload} type="button">
+							<Upload className="h-4 w-4" />
+							Upload an API
+						</Button>
+					}
+				/>
 			)}
+
+			{/* Mounted across steps so its close survives the jump to the form. A
+			    native `<dialog>` renders in the top layer, over this flow. */}
+			<ImportSpecDialog
+				open={uploadOpen}
+				onClose={(): void => setUploadOpen(false)}
+				onImported={handleImported}
+			/>
 
 			{step === 'form' && (
 				<form id="create-credential-form" onSubmit={handleSubmit} className="space-y-5">
@@ -831,7 +874,6 @@ export function CreateCredentialFlow({
 
 				<div className="flex-1 overflow-y-auto px-5 py-4">{body}</div>
 
-				{/* The pick step commits by picking, so it carries no action row. */}
 				{footer && (
 					<footer className="border-border flex shrink-0 flex-wrap items-center justify-end gap-2 border-t px-5 py-3">
 						{footer}

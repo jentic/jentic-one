@@ -9,6 +9,7 @@
  *   POST /apis                                    — enqueue import (202 + job)
  *   POST /apis/{v}/{n}/{ver}/revisions/{id}:promote|:archive
  *   GET  /jobs/{id}                               — poll import job
+ *   GET  /jobs/{id}/result                        — the API a completed import registered
  *
  * Shapes mirror the REAL wire payloads verified against the running backend on
  * :8000 (incl. the draft-only `no_current_revision` 404 and the async import →
@@ -758,8 +759,60 @@ function keyOf(params: Record<string, string | readonly string[] | undefined>): 
 	return `${params.vendor}/${params.name}/${params.version}`;
 }
 
+interface MockImportJob {
+	status: string;
+	error: string | null;
+	polls: number;
+	/** The API the import registered, named by `GET /jobs/{id}/result`. */
+	api: ReturnType<typeof apiRef>;
+}
+
 /** In-memory job table so a polled import transitions queued → succeeded. */
-const jobs = new Map<string, { status: string; error: string | null; polls: number }>();
+const jobs = new Map<string, MockImportJob>();
+
+/**
+ * Register a workspace row for an uploaded spec, so the result's API resolves
+ * through `GET /apis/{v}/{n}/{ver}` like a real import. The vendor comes from
+ * the URL's host or the filename; a re-upload of the same source reuses its row.
+ */
+function registerUploadedApi(source: { type?: string; url?: string; filename?: string }) {
+	let vendor = 'uploaded';
+	if (source.type === 'url' && source.url) {
+		try {
+			vendor = new URL(source.url).hostname.replace(/^api\./, '') || vendor;
+		} catch {
+			// An unparseable URL keeps the placeholder vendor.
+		}
+	} else if (source.filename) {
+		vendor = source.filename.replace(/\.(json|ya?ml)$/i, '') || vendor;
+	}
+	const ref = apiRef(vendor, 'main', '1.0.0', null);
+	const key = `${ref.vendor}/${ref.name}/${ref.version}`;
+	const self = `/apis/${key}`;
+	if (!APIS.some((a) => `${a.api.vendor}/${a.api.name}/${a.api.version}` === key)) {
+		APIS.push({
+			api: ref,
+			display_name: vendor,
+			description: 'Imported from an uploaded OpenAPI spec.',
+			icon_url: null,
+			current_revision_id: 'rev_uploaded_live',
+			revision_count: 1,
+			operation_count: 1,
+			security_schemes: ['apiKey'],
+			source: 'local',
+			registered: true,
+			created_at: '2026-01-01T00:00:00Z',
+			updated_at: null,
+			_links: {
+				self,
+				revisions: `${self}/revisions`,
+				current_revision: `${self}/revisions/rev_uploaded_live`,
+				import: null,
+			},
+		});
+	}
+	return ref;
+}
 
 export const workspaceHandlers = [
 	http.get(`/apis`, ({ request }) => {
@@ -949,18 +1002,54 @@ export const workspaceHandlers = [
 		return new HttpResponse(null, { status: 404 });
 	}),
 
-	http.post(`/apis`, () => {
+	http.post(`/apis`, async ({ request }) => {
+		const body = (await request.json().catch(() => null)) as {
+			sources?: Array<{ type?: string; url?: string; filename?: string }>;
+		} | null;
 		const jobId = `job_${Math.random().toString(36).slice(2, 10)}`;
-		jobs.set(jobId, { status: 'queued', error: null, polls: 0 });
+		const api = registerUploadedApi(body?.sources?.[0] ?? {});
+		jobs.set(jobId, { status: 'queued', error: null, polls: 0, api });
 		return HttpResponse.json(
 			{ job_id: jobId, status: 'queued', _links: { self: `/jobs/${jobId}` } },
 			{ status: 202 },
 		);
 	}),
 
+	http.get(`/jobs/:jobId/result`, ({ params }) => {
+		const jobId = String(params.jobId);
+		const job = jobs.get(jobId);
+		if (!job) {
+			return HttpResponse.json(
+				{ type: 'not_found', status: 404, detail: 'Job not found' },
+				{ status: 404 },
+			);
+		}
+		if (job.status !== 'completed') {
+			return HttpResponse.json(
+				{ type: 'conflict', status: 409, detail: 'Job has not completed' },
+				{ status: 409 },
+			);
+		}
+		return HttpResponse.json({
+			revisions: [
+				{
+					api: { vendor: job.api.vendor, name: job.api.name, version: job.api.version },
+					revision_id: 'rev_uploaded_live',
+					superseded_revision_id: null,
+					state: 'active',
+				},
+			],
+		});
+	}),
+
 	http.get(`/jobs/:jobId`, ({ params }) => {
 		const jobId = String(params.jobId);
-		const job = jobs.get(jobId) ?? { status: 'completed', error: null, polls: 99 };
+		const job = jobs.get(jobId) ?? {
+			status: 'completed',
+			error: null,
+			polls: 99,
+			api: apiRef('uploaded', 'main', '1.0.0', null),
+		};
 		// Transition to `completed` — the backend's own terminal success spelling
 		// (`shared/models/jobs.py`) — after the first poll, so the happy path
 		// resolves quickly in dev/tests without hanging on a fake "queued" forever.

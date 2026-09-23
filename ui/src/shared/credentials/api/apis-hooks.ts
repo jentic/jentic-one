@@ -21,15 +21,19 @@ import type {
 	CatalogListResponse,
 } from '@/shared/api';
 import { toast } from '@/shared/ui';
+import { apiRefDisplayName } from '@/shared/lib';
 import { useEagerCursorDrain, type DrainedList } from '@/shared/hooks/useEagerCursorDrain';
 import {
 	fetchPublicSpec,
+	getApi,
 	getApiSpec,
+	getImportedApiRefs,
 	getJob,
 	importCatalogEntry,
 	importSources,
 	listApis,
 	listCatalog,
+	type ImportedApiRef,
 	type ImportSource,
 	type JobStatus,
 } from './apis';
@@ -77,6 +81,40 @@ export interface SelectedApi {
 	securitySchemeTypes?: string[];
 	/** Human display name (falls back to vendor/name). */
 	label: string;
+}
+
+/** A workspace `/apis` row as a pick. */
+export function apiRowToSelected(row: ApiResponse): SelectedApi {
+	const ref = row.api;
+	// Friendly primary line: explicit display_name, else the persisted catalog
+	// slug (`nytimes.com/article_search` → `Article Search`), else the legacy
+	// vendor/name humanisation.
+	const label = apiRefDisplayName({
+		displayName: row.display_name,
+		catalogApiId: row.catalog_api_id,
+		vendor: ref.vendor,
+		name: ref.name,
+	});
+	return {
+		source: 'local',
+		vendor: ref.vendor,
+		name: ref.name,
+		version: ref.version,
+		apiId: row.catalog_api_id ?? undefined,
+		securitySchemeTypes: row.security_schemes ?? [],
+		label,
+	};
+}
+
+/** A pick built from the bare identity, for when the full row can't be read. */
+function importedRefToSelected(ref: ImportedApiRef): SelectedApi {
+	return {
+		source: 'local',
+		vendor: ref.vendor,
+		name: ref.name,
+		version: ref.version,
+		label: apiRefDisplayName({ vendor: ref.vendor, name: ref.name }),
+	};
 }
 
 /** List workspace APIs (cursor pagination policy owned here). */
@@ -290,16 +328,57 @@ export async function pollJobToTerminal(initial: JobStatus): Promise<JobStatus> 
 	return status;
 }
 
+/** The terminal job state, plus the APIs a successful import registered. */
+export interface ImportSpecResult extends JobStatus {
+	/** Empty unless the job succeeded AND its result could be read. */
+	imported: SelectedApi[];
+}
+
 export interface UseImportSpec {
-	importSpec: (sources: ImportSource[]) => Promise<JobStatus>;
+	importSpec: (sources: ImportSource[]) => Promise<ImportSpecResult>;
 	isImporting: boolean;
+}
+
+/**
+ * Resolve what a completed import registered, as picks. Best-effort: the import
+ * already succeeded, so an unreadable result (`jobs:read` missing, the result
+ * expired) yields no picks rather than a failure, and an unreadable row falls
+ * back to the bare identity.
+ */
+async function resolveImported(jobId: string): Promise<SelectedApi[]> {
+	let refs: ImportedApiRef[];
+	try {
+		refs = await getImportedApiRefs(jobId);
+	} catch {
+		return [];
+	}
+	const unique = refs.filter(
+		(ref, i) =>
+			refs.findIndex(
+				(other) =>
+					other.vendor === ref.vendor &&
+					other.name === ref.name &&
+					other.version === ref.version,
+			) === i,
+	);
+	// `.catch` after `.then`, not an onRejected: a row too malformed to map falls
+	// back to the bare ref like a failed read, rather than failing the import.
+	return Promise.all(
+		unique.map((ref) =>
+			getApi(ref.vendor, ref.name, ref.version)
+				.then(apiRowToSelected)
+				.catch(() => importedRefToSelected(ref)),
+		),
+	);
 }
 
 /**
  * Enqueue a spec import and poll the job to a terminal state. Returns the terminal
  * `JobStatus` rather than throwing, so the dialog can show the job's own `error`
- * instead of losing a pasted spec to a toast. Invalidates both the Workspace list
- * and the picker's slice, so the new API is findable where it was uploaded.
+ * instead of losing a pasted spec to a toast. On success it also returns the APIs
+ * the import registered, so the surface that uploaded can select them. Invalidates
+ * both the Workspace list and the picker's slice, so the new API is findable where
+ * it was uploaded.
  */
 export function useImportSpec(): UseImportSpec {
 	const queryClient = useQueryClient();
@@ -316,7 +395,7 @@ export function useImportSpec(): UseImportSpec {
 	}, []);
 
 	const importSpec = useCallback(
-		async (sources: ImportSource[]): Promise<JobStatus> => {
+		async (sources: ImportSource[]): Promise<ImportSpecResult> => {
 			setIsImporting(true);
 			try {
 				const job = await importSources(sources);
@@ -325,18 +404,24 @@ export function useImportSpec(): UseImportSpec {
 					status: job.status,
 					error: null,
 				});
+				if (!jobSucceeded(status)) return { ...status, imported: [] };
 
-				if (jobSucceeded(status)) {
-					toast({
-						variant: 'success',
-						title: 'API imported',
-						description: `Import job ${status.jobId} completed.`,
-					});
-					void queryClient.invalidateQueries({ queryKey: sharedQueryKeys.workspaceApis });
-					void queryClient.invalidateQueries({ queryKey: apiPickerKeys.apisList() });
-					void queryClient.invalidateQueries({ queryKey: apiPickerKeys.catalogList() });
-				}
-				return status;
+				void queryClient.invalidateQueries({ queryKey: sharedQueryKeys.workspaceApis });
+				void queryClient.invalidateQueries({ queryKey: apiPickerKeys.apisList() });
+				void queryClient.invalidateQueries({ queryKey: apiPickerKeys.catalogList() });
+
+				const imported = await resolveImported(status.jobId);
+				toast({
+					variant: 'success',
+					title: 'API imported',
+					description:
+						imported.length === 1
+							? `${imported[0].label} is in your Workspace.`
+							: imported.length > 1
+								? `${imported.length} APIs are in your Workspace.`
+								: 'The API is in your Workspace.',
+				});
+				return { ...status, imported };
 			} finally {
 				if (activeRef.current) setIsImporting(false);
 			}

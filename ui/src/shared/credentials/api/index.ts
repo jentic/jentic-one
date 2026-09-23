@@ -428,12 +428,14 @@ export type { DrainedList } from '@/shared/hooks/useEagerCursorDrain';
 
 export {
 	apiPickerKeys,
+	apiRowToSelected,
 	useApis,
 	useAllApis,
 	useApiSchemes,
 	useCatalog,
 	useImportCatalogEntry,
 	useImportSpec,
+	type ImportSpecResult,
 	type SelectedApi,
 	type ServerVarDef,
 	type UseImportSpec,
