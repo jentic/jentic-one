@@ -30,8 +30,8 @@ export type { DangerZoneProps, DangerZoneAction } from '@/shared/ui/DangerZone';
 export { IdentitySettingsCard } from '@/shared/ui/IdentitySettingsCard';
 export type { IdentitySettingsCardProps } from '@/shared/ui/IdentitySettingsCard';
 
-export { Badge, MethodBadge, StatusBadge } from '@/shared/ui/Badge';
-export type { Variant as BadgeVariant } from '@/shared/ui/Badge';
+export { Badge, MethodBadge, StatusBadge, StatusText, Tag } from '@/shared/ui/Badge';
+export type { Variant as BadgeVariant, StatusTone } from '@/shared/ui/Badge';
 
 export { AgentBadge, agentInitials } from '@/shared/ui/AgentBadge';
 export type { AgentBadgeSize } from '@/shared/ui/AgentBadge';

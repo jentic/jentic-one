@@ -71,14 +71,10 @@ export function CredentialOptions({
 					badges={
 						<>
 							{credential.credential_id === linkedCredentialId && (
-								<Badge variant="success" className="text-[10px]">
-									Already linked
-								</Badge>
+								<Badge variant="success">Already linked</Badge>
 							)}
 							{credentialAwaitsConsent(credential) && (
-								<Badge variant="pending" className="text-[10px]">
-									Sign-in needed
-								</Badge>
+								<Badge variant="pending">Sign-in needed</Badge>
 							)}
 							<CredentialTypeBadge type={credential.type} />
 						</>

@@ -9,8 +9,20 @@
  * The selection survives a dismissal and clears on commit or an agent change.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDown, KeyRound, Plus, Upload, X } from 'lucide-react';
-import { Badge, Button, ErrorAlert, LoadingState, SheetPrimitive } from '@/shared/ui';
+import {
+	Check,
+	ChevronDown,
+	CircleCheck,
+	CircleDot,
+	CirclePlus,
+	KeyRound,
+	LogIn,
+	Plus,
+	Upload,
+	X,
+	type LucideIcon,
+} from 'lucide-react';
+import { Button, ErrorAlert, LoadingState, SheetPrimitive } from '@/shared/ui';
 import { cn } from '@/shared/lib/utils';
 import { useAllCredentials, useProviders, type SelectedApi } from '@/shared/credentials/api';
 import { apiRefKey } from '@/shared/credentials/lib/apiIdentity';
@@ -31,14 +43,29 @@ import type { CredentialBindingEntity } from '@/modules/agents/api/types';
 import type { CredentialChoice } from '@/shared/credentials/lib/credentialIdentity';
 import { CredentialOptions } from '@/shared/credentials/components/CredentialOptions';
 
-/** Badge colour per outcome — cheapest reads as success, costliest as neutral. */
-const OUTCOME_VARIANT: Record<PreflightOutcome, 'default' | 'success' | 'warning' | 'pending'> = {
-	reuse: 'success',
-	oauth: 'pending',
-	choose: 'warning',
-	form: 'default',
-	attached: 'default',
+/** Glyph and colour per outcome — cheapest reads as success, a pending choice
+ * as amber, and a new credential as plain work still to do. */
+const OUTCOME_STYLE: Record<PreflightOutcome, { icon: LucideIcon; tone: string }> = {
+	reuse: { icon: CircleCheck, tone: 'text-success' },
+	oauth: { icon: LogIn, tone: 'text-accent-orange' },
+	choose: { icon: CircleDot, tone: 'text-warning' },
+	form: { icon: CirclePlus, tone: 'text-muted-foreground' },
+	attached: { icon: Check, tone: 'text-muted-foreground' },
 };
+
+/** The row's outcome as an icon and a short line — lighter than a pill, so the
+ * API name stays the loudest thing on the row. */
+function OutcomeLabel({ item }: { item: PreflightItem }) {
+	const { icon: Icon, tone } = OUTCOME_STYLE[item.outcome];
+	return (
+		<span className={cn('inline-flex shrink-0 items-center gap-1.5 text-xs font-medium', tone)}>
+			<Icon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+			{item.outcome === 'attached' && item.attachedVia
+				? `Already added via ${item.attachedVia}`
+				: PREFLIGHT_LABELS[item.outcome]}
+		</span>
+	);
+}
 
 export interface AddApisTrayProps {
 	open: boolean;
@@ -218,14 +245,7 @@ export function AddApisTray({
 										<span className="text-foreground min-w-0 flex-1 truncate">
 											{item.api.label}
 										</span>
-										<Badge
-											variant={OUTCOME_VARIANT[item.outcome]}
-											className="shrink-0 text-[10px]"
-										>
-											{item.outcome === 'attached' && item.attachedVia
-												? `Already added via ${item.attachedVia}`
-												: PREFLIGHT_LABELS[item.outcome]}
-										</Badge>
+										<OutcomeLabel item={item} />
 										<Button
 											variant="ghost"
 											size="sm"

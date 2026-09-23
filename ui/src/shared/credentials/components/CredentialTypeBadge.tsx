@@ -1,18 +1,17 @@
-import { Badge } from '@/shared/ui';
+import { Cloud, KeyRound, LockOpen, LogIn, Ticket, UserRound, type LucideIcon } from 'lucide-react';
+import { Tag } from '@/shared/ui';
 import { CredentialType, CREDENTIAL_TYPE_LABELS } from '@/shared/credentials/api';
 
-const VARIANT: Record<CredentialType, 'default' | 'success' | 'warning' | 'pending'> = {
-	[CredentialType.BEARER_TOKEN]: 'default',
-	[CredentialType.API_KEY]: 'success',
-	[CredentialType.BASIC]: 'warning',
-	[CredentialType.OAUTH2]: 'pending',
-	[CredentialType.NO_AUTH]: 'default',
-	[CredentialType.SIGV4]: 'success',
+const ICON: Record<CredentialType, LucideIcon> = {
+	[CredentialType.BEARER_TOKEN]: Ticket,
+	[CredentialType.API_KEY]: KeyRound,
+	[CredentialType.BASIC]: UserRound,
+	[CredentialType.OAUTH2]: LogIn,
+	[CredentialType.NO_AUTH]: LockOpen,
+	[CredentialType.SIGV4]: Cloud,
 };
 
-/** Small pill that labels a credential's auth type with a stable color. */
+/** Neutral tag that names a credential's auth type; the icon tells the types apart. */
 export function CredentialTypeBadge({ type }: { type: CredentialType }) {
-	return (
-		<Badge variant={VARIANT[type] ?? 'default'}>{CREDENTIAL_TYPE_LABELS[type] ?? type}</Badge>
-	);
+	return <Tag icon={ICON[type]}>{CREDENTIAL_TYPE_LABELS[type] ?? type}</Tag>;
 }

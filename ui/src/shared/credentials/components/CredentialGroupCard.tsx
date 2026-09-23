@@ -1,3 +1,4 @@
+import { Layers } from 'lucide-react';
 import { Badge, AgentBadge } from '@/shared/ui';
 import { apiRefDisplayName } from '@/shared/lib';
 import { formatApiReference, type Credential } from '@/shared/credentials/api';
@@ -75,13 +76,13 @@ export function CredentialGroupCard({
 						>
 							{apiTitle}
 						</h3>
-						<Badge
-							variant="default"
-							className="shrink-0"
+						<span
+							className="text-muted-foreground inline-flex shrink-0 items-center gap-1 pt-0.5 text-xs"
 							data-testid="credential-group-count"
 						>
+							<Layers className="h-3.5 w-3.5" aria-hidden="true" />
 							{credentials.length} credentials
-						</Badge>
+						</span>
 					</div>
 					{apiLine && (
 						<p className="text-muted-foreground mt-0.5 truncate text-xs">{apiLine}</p>

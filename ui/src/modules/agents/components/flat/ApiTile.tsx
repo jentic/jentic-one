@@ -7,7 +7,7 @@
  * A suspension outranks the agent-level state.
  */
 import { PauseCircle, PlayCircle, Settings2 } from 'lucide-react';
-import { Badge, Button, Card, Tooltip, VendorIcon } from '@/shared/ui';
+import { Button, Card, StatusText, Tooltip, VendorIcon } from '@/shared/ui';
 import { formatApiVersion } from '@/shared/lib';
 import { cn } from '@/shared/lib/utils';
 import type { BindingRuleSummary } from '@/modules/agents/api';
@@ -178,33 +178,25 @@ export function ApiTile({
 					{/* Exactly one chip, in precedence order: an unfinished sign-in outranks a
 					    pause, which outranks the agent's own state. */}
 					{tile.awaitingConsent ? (
-						<Badge variant="warning" dot data-testid="tile-status-chip">
+						<StatusText tone="warning" data-testid="tile-status-chip">
 							Sign-in needed
-						</Badge>
+						</StatusText>
 					) : tile.suspended ? (
 						// Muted, not tinted: a pause is a state, not a fault, and it ranks
 						// above the agent's own state.
-						<Badge
-							className="bg-muted text-muted-foreground border-border"
-							dot
-							data-testid="tile-status-chip"
-						>
+						<StatusText tone="muted" data-testid="tile-status-chip">
 							Suspended · not serving
-						</Badge>
+						</StatusText>
 					) : !agentServing ? (
 						// A green `Ready` on an agent that serves nothing is the one claim
 						// this tile must never make.
-						<Badge
-							className="bg-muted text-muted-foreground border-border"
-							dot
-							data-testid="tile-status-chip"
-						>
+						<StatusText tone="muted" data-testid="tile-status-chip">
 							Not serving
-						</Badge>
+						</StatusText>
 					) : (
-						<Badge variant="success" dot data-testid="tile-status-chip">
+						<StatusText tone="success" data-testid="tile-status-chip">
 							Ready
-						</Badge>
+						</StatusText>
 					)}
 					{capability && (
 						<span className="text-muted-foreground truncate text-xs">{capability}</span>
