@@ -209,7 +209,9 @@ class ServiceAccountService:
 
     async def archive(self, service_account_id: str, *, identity: Identity) -> None:
         async with self._ctx.admin_db.transaction() as session:
-            sa = await ServiceAccountRepository.get_by_id(session, service_account_id)
+            # FOR UPDATE: serialise with the migration job's locked re-read
+            # so the stamp guard never races a concurrent stamp (H1).
+            sa = await ServiceAccountRepository.get_by_id_for_update(session, service_account_id)
             if sa is None:
                 raise ActorNotFoundError(service_account_id)
             _refuse_if_migrated(sa)
@@ -239,7 +241,9 @@ class ServiceAccountService:
         self, service_account_id: str, scopes: list[str], *, identity: Identity
     ) -> list[str]:
         async with self._ctx.admin_db.transaction() as session:
-            sa = await ServiceAccountRepository.get_by_id(session, service_account_id)
+            # FOR UPDATE: serialise with the migration job's locked re-read
+            # so the stamp guard never races a concurrent stamp (H1).
+            sa = await ServiceAccountRepository.get_by_id_for_update(session, service_account_id)
             if sa is None:
                 raise ActorNotFoundError(service_account_id)
             _refuse_if_migrated(sa)
@@ -274,7 +278,10 @@ class ServiceAccountService:
     async def _check_transition(
         self, session: AsyncSession, service_account_id: str, verb: ActorVerb
     ) -> None:
-        sa = await ServiceAccountRepository.get_by_id(session, service_account_id)
+        # FOR UPDATE: serialise with the migration job's locked re-read so a
+        # transition either lands before the stamp (and the job copies the
+        # fresh status) or sees the stamp and refuses (H1).
+        sa = await ServiceAccountRepository.get_by_id_for_update(session, service_account_id)
         if sa is None:
             raise ActorNotFoundError(service_account_id)
         _refuse_if_migrated(sa)

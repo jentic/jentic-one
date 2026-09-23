@@ -399,7 +399,8 @@ async def _migrate_service_accounts(
                 f"{result.grant_twin_missing_count} grant twin(s) missing, "
                 f"{result.unrevoked_token_count} unrevoked token(s), "
                 f"{result.digest_mismatch_count} digest mismatch(es), "
-                f"{result.post_stamp_mutation_count} post-stamp mutation(s).",
+                f"{result.post_stamp_mutation_count} post-stamp mutation(s), "
+                f"{result.inline_rule_mismatch_count} inline-rule binding mismatch(es).",
                 file=sys.stderr,
                 flush=True,
             )
@@ -417,7 +418,10 @@ async def _migrate_service_accounts(
         if sweep_migrated:
             sweep = await svc.sweep(ignore_age_gate=True)
             print(
-                f"==> swept {len(sweep.swept)} service account(s).",
+                f"==> swept {len(sweep.swept)} service account(s); revoked "
+                f"{sweep.access_tokens_revoked + sweep.refresh_tokens_revoked} SA "
+                f"session token(s); deleted {sweep.permission_rules_deleted} "
+                f"SA-keyed inline permission rule(s).",
                 file=sys.stderr,
                 flush=True,
             )

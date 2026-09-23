@@ -115,7 +115,7 @@ async def test_get_scopes(mock_sa_repo: MagicMock, mock_scope_repo: MagicMock) -
 async def test_replace_scopes(mock_sa_repo: MagicMock, mock_scope_repo: MagicMock) -> None:
     ctx = _make_ctx()
     sa = _mock_sa()
-    mock_sa_repo.get_by_id = AsyncMock(return_value=sa)
+    mock_sa_repo.get_by_id_for_update = AsyncMock(return_value=sa)
     mock_scope_repo.revoke_all = AsyncMock(return_value=2)
     mock_scope_repo.grant = AsyncMock()
 
@@ -135,7 +135,7 @@ async def test_replace_scopes_empty_clears_all(
 ) -> None:
     ctx = _make_ctx()
     sa = _mock_sa()
-    mock_sa_repo.get_by_id = AsyncMock(return_value=sa)
+    mock_sa_repo.get_by_id_for_update = AsyncMock(return_value=sa)
     mock_scope_repo.revoke_all = AsyncMock(return_value=2)
 
     svc = ServiceAccountService(ctx)
@@ -152,7 +152,7 @@ async def test_replace_scopes_not_found(
     mock_sa_repo: MagicMock, mock_scope_repo: MagicMock
 ) -> None:
     ctx = _make_ctx()
-    mock_sa_repo.get_by_id = AsyncMock(return_value=None)
+    mock_sa_repo.get_by_id_for_update = AsyncMock(return_value=None)
 
     svc = ServiceAccountService(ctx)
     with pytest.raises(ActorNotFoundError):
@@ -166,7 +166,7 @@ async def test_replace_scopes_archived_raises(
 ) -> None:
     ctx = _make_ctx()
     sa = _mock_sa(status="archived")
-    mock_sa_repo.get_by_id = AsyncMock(return_value=sa)
+    mock_sa_repo.get_by_id_for_update = AsyncMock(return_value=sa)
 
     svc = ServiceAccountService(ctx)
     with pytest.raises(InvalidTransitionError):

@@ -172,13 +172,32 @@ SA surface survives this release (Phase 2 removes it) but is stamp-guarded.
   `migrate-service-accounts` once at startup (best-effort; the CLI is the
   recovery path). Every service account is copied to a successor agent —
   stored scope grants (empty stays empty; never the default agent scope
-  set), toolkit/credential bindings, and the API-key digest — its
-  outstanding opaque sessions are revoked, and the row is stamped
-  (`migrated_to_actor_id`). **API-key callers are unaffected**: the resolver
-  is now agent-first, so migrated `sak_`/`jntc_live_` plaintexts keep
-  authenticating unchanged — as the successor agent. Non-active SAs
+  set), toolkit/credential bindings, the per-binding inline permission
+  rules (control DB), and the API-key digest — its outstanding opaque
+  sessions are revoked, and the row is stamped (`migrated_to_actor_id`).
+  **API-key callers keep authenticating**: the resolver is now agent-first,
+  so migrated `sak_`/`jntc_live_` plaintexts keep working without a key
+  change — but they now authenticate **as the successor agent**, which
+  changes behaviour on a few endpoints (next bullet). Non-active SAs
   (pending/rejected/archived) are skipped-but-stamped; disabled SAs get a
   disabled successor.
+- **Breaking for migrated `sak_` callers** (they are agents now):
+  `POST /oauth/mint` returns `403` (it requires a service-account actor);
+  `POST /integrations:connect` rejects `agent_id` in the request body (an
+  agent caller *is* the agent); and an agent-initiated connect session can
+  no longer be confirmed by the same caller — agent-initiated sessions need
+  a human on the review page. Move these flows to a user/owner identity
+  before upgrading.
+- **Ownership and visibility shift.** The successor is created with
+  `parent_actor_id` = the SA's owner, so (a) it becomes visible to
+  `owner:agents:read` holders, and (b) any copied `owner:*` delegation scope
+  now widens to the **owner's** resources — review SAs holding `owner:*`
+  grants in the report. (c) Control-DB objects `created_by` the `sva_` id
+  (credentials and access requests, whose owner-scoped reads key on
+  `created_by`) are **not** re-attributed, so the successor loses
+  owner-scoped access to them; re-create or re-assign them if the caller
+  needs them. The JSONL report's `owner_visibility_note` repeats this per
+  migrated SA.
 - **Broker JWTs may only assert `actor_type=agent`.** A trusted-issuer JWT
   claiming `service_account` is now refused (uniform 401; `jwt_refused`
   WARNING with `jwt_actor_type_not_allowed`) — the JWT path reads no DB and
@@ -193,11 +212,12 @@ SA surface survives this release (Phase 2 removes it) but is stamp-guarded.
 
 Run against **production data**; order matters.
 
-1. **Snapshot first**: take an admin-DB snapshot before the first production
-   run. Pre-sweep reversal is stamp-based and lossless (delete successor
-   agents + their credential/grant/binding rows by stamp, clear the stamps —
-   the SA originals are still live); **post-sweep reversal requires the
-   snapshot**. Token revocation is acceptable-irreversible in both stages.
+1. **Snapshot first**: take admin-DB and control-DB snapshots before the
+   first production run. Pre-sweep reversal is stamp-based and lossless
+   (delete successor agents + their credential/grant/binding rows and their
+   control-DB inline permission rules by stamp, clear the stamps — the SA
+   originals are still live); **post-sweep reversal requires the
+   snapshots**. Token revocation is acceptable-irreversible in both stages.
 2. *(Optional)* preview: `jentic_one migrate-service-accounts --diff-only
    --report preview.jsonl` — evaluates dispositions without writing. Review
    the JSONL: `had_client_secret` names every client-credentials holder
@@ -214,14 +234,24 @@ Run against **production data**; order matters.
    disabled successor (or a stamped SA whose successor digest is gone)
    never falls back to the SA row (`migrated_key_fail_closed` WARNING).
    Old-image pods still honour the SA status until the fleet rollout
-   completes.
-5. **Watch the fallback counter**: `service_account_fallback_resolve`
-   (WARNING log + telemetry event) fires on every key still resolving
-   through the SA fallback. Trending to zero is the sweep-readiness signal;
+   completes. **Client-credentials holders** are not cut by either lever —
+   a pre-sweep `client_credentials` login still mints an SA session (step
+   7); the kill lever for them is the sweep: `jentic_one
+   migrate-service-accounts --sweep-migrated` archives the SA (the grant
+   then refuses it) and revokes every SA session it minted since the
+   migration, in one transaction.
+5. **Watch the fallback signal**: every key still resolving through the SA
+   fallback logs a `service_account_fallback_resolve` WARNING and bumps the
+   `auth_service_account_fallback_resolves` OTel counter
+   (`auth_service_account_fallback_resolves_total` on the Prometheus
+   exporter; needs `metrics.exporter` configured — it is an operator
+   metric, not a phone-home telemetry event). Trending to zero is the sweep-readiness signal;
    sustained hits after the fleet rollout mean unmigrated stragglers —
    re-run the job.
 6. **Sweep**: the boot job's automatic sweep archives migrated SAs (deleting
-   the SA-keyed grant/binding rows and NULLing the SA-side digest) only once
+   the SA-keyed grant/binding rows and the `sva_`-keyed inline permission
+   rules, NULLing the SA-side digest, and revoking any SA sessions minted
+   since the migration) only once
    a stamp is older than
    `services.service_account_sweep_min_stamp_age_hours` (default 24 — the
    full-fleet-rollout proxy; `0` disables the gate, a negative value
@@ -229,14 +259,19 @@ Run against **production data**; order matters.
    migrate-service-accounts --sweep-migrated` to sweep immediately — only
    when no old-image pods remain (their SA arm needs the SA-keyed rows).
 7. **Window semantics, stated**: outstanding SA tokens die at migration;
-   API-key callers are unaffected (per-request digest re-resolve); a
-   pre-sweep client-credentials login still mints a fully-scoped SA session
-   (bounded to pre-existing `client_secret_hash` holders — the step-2 report
-   names them; new client secrets cannot be registered, the endpoint is
-   unrouted).
+   API-key callers keep authenticating as the successor agent (per-request
+   digest re-resolve) with the agent-caller behaviour changes listed above;
+   a pre-sweep client-credentials login still mints a fully-scoped SA
+   session (bounded to pre-existing `client_secret_hash` holders — the
+   step-2 report names them; new client secrets cannot be registered, the
+   endpoint is unrouted) until the sweep revokes those sessions and
+   archives the SA (step 4).
 8. **Verify**: `jentic_one migrate-service-accounts --verify` — zero
    unstamped rows, grant-twin parity, zero unrevoked live SA tokens, digest
-   parity, no post-stamp mutation.
+   parity, no post-stamp mutation, and inline-rule parity (every `sva_`
+   binding still holding control-DB rules has a successor twin with the same
+   rule count; swept rows pass). Live SA sessions minted by
+   client-credentials holders fail criterion 3 until the sweep revokes them.
 9. **Acknowledge**: `jentic_one migrate-service-accounts --verify
    --acknowledge` — records the sentinel row
    (`service_account_migration_acks`, admin DB) that the theme-8 Phase-4
@@ -253,7 +288,7 @@ runtime signal an operator can watch, and the earliest removal point.
 | Deprecated | Since | Runtime signal | Removal |
 | ---------- | ----- | -------------- | ------- |
 | `jntc_live_` toolkit API keys (theme-5 Phase 4). No new keys are issued (`POST /toolkits/{id}/keys` → `410 toolkit_keys_retired`); run `jentic_one retire-toolkit-keys` so existing plaintexts keep authenticating as their migrated service accounts (as their successor **agents** once theme-8 Phase 1 migrates them), then rotate holders to the successor's key. | The first release carrying theme-5 Phase 4 (opened 2026-09-11). | `deprecated_toolkit_key_used` WARNING log lines — one per resolve, naming the actor (service account, or successor agent after theme-8 migration) still presenting the retired key form. | The theme-5 toolkit-surface deletion release (Phase 5b), no earlier than **2026-12-01**. |
-| Service accounts (theme-8 Phase 1). Every SA is auto-migrated to a successor agent; the migrated `sak_`/`jntc_live_` plaintext keeps authenticating — as that agent. The SA management surface still answers reads, but mutations on migrated rows return `409 service_account_migrated`, and broker JWTs may no longer assert `actor_type=service_account`. Rotate holders to the successor agent's `jak_` key. | The first release carrying theme-8 Phase 1. | `service_account_fallback_resolve` WARNING log lines / telemetry events — one per resolve still served by the SA fallback arm. | Theme-8 Phase 2 removes the SA surface; Phase 4 drops the tables (gated on the `--verify --acknowledge` sentinel). |
+| Service accounts (theme-8 Phase 1). Every SA is auto-migrated to a successor agent; the migrated `sak_`/`jntc_live_` plaintext keeps authenticating — as that agent. The SA management surface still answers reads, but mutations on migrated rows return `409 service_account_migrated`, and broker JWTs may no longer assert `actor_type=service_account`. Rotate holders to the successor agent's `jak_` key. | The first release carrying theme-8 Phase 1. | `service_account_fallback_resolve` WARNING log lines and the `auth_service_account_fallback_resolves` OTel counter — one per resolve still served by the SA fallback arm. | Theme-8 Phase 2 removes the SA surface; Phase 4 drops the tables (gated on the `--verify --acknowledge` sentinel). |
 
 
 ## One-time setup (repo/org admin)

@@ -27,10 +27,12 @@ from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.refresh_tokens import RefreshToken
 from jentic_one.admin.core.schema.service_account_credentials import ServiceAccountCredential
 from jentic_one.admin.core.schema.service_accounts import ServiceAccount
-from jentic_one.auth.services.errors import ServiceAccountMigratedError
+from jentic_one.auth.services.errors import InvalidGrantError, ServiceAccountMigratedError
 from jentic_one.auth.services.schemas.service_accounts import ServiceAccountCreatePayload
 from jentic_one.auth.services.service_account_auth_service import ServiceAccountAuthService
 from jentic_one.auth.services.service_account_service import ServiceAccountService
+from jentic_one.control.core.schema.agent_permission_rules import AgentPermissionRule
+from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.core.schema.toolkit_keys import ToolkitKey
 from jentic_one.control.core.schema.toolkits import Toolkit
 from jentic_one.control.repos.key_retirement_repo import KeyRetirementRepository
@@ -44,7 +46,7 @@ from jentic_one.shared.auth.api_key_resolver import ApiKeyResolver
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.session import DatabaseSession
-from jentic_one.shared.models import ActorType
+from jentic_one.shared.models import ActorType, StoredCredentialType
 
 pytestmark = pytest.mark.integration
 
@@ -1361,3 +1363,337 @@ async def test_verify_fails_on_missing_grant_twin_and_post_stamp_mutation(
     assert result.passed is False
     assert result.grant_twin_missing_count >= 1
     assert result.post_stamp_mutation_count >= 1
+
+
+# ------------------------------------------------- review follow-ups (PR #1386)
+
+
+async def test_migration_derives_state_from_in_transaction_reread_not_list_snapshot(
+    integration_context: Context, admin_db: DatabaseSession, seed_owner: None
+) -> None:
+    """H1: a key rotation and a disable landing between ``run()``'s list and
+    the per-SA transaction are reflected in the successor — status and digest
+    come from the locked re-read, never the stale snapshot."""
+    old_plaintext = "sak_t8m_stale_snapshot"
+    sa_id = await _seed_sa(
+        admin_db, suffix="snap", scopes=("toolkit:read",), api_key_plaintext=old_plaintext
+    )
+    async with admin_db.session() as session:
+        rows = await ServiceAccountMigrationRepository.list_service_accounts(session)
+    stale = next(r for r in rows if r.id == sa_id)
+    assert stale.status == "active"
+
+    identity = _operator_identity()
+    new_plaintext = await ServiceAccountAuthService(integration_context).register_api_key(
+        sa_id, identity=identity
+    )
+    await ServiceAccountService(integration_context).disable(sa_id, identity=identity)
+
+    outcome = await ServiceAccountMigrationService(integration_context)._migrate_one(stale)
+
+    assert outcome.outcome == "migrated-disabled"
+    agent_id = outcome.successor_agent_id
+    agents = await _rows(admin_db, "SELECT status FROM agents WHERE id = :id", {"id": agent_id})
+    assert [r.status for r in agents] == ["disabled"]
+    digests = await _rows(
+        admin_db,
+        "SELECT api_key_hash FROM agent_credentials WHERE agent_id = :id",
+        {"id": agent_id},
+    )
+    assert [r.api_key_hash for r in digests] == [_digest(new_plaintext)]
+    assert _digest(old_plaintext) != _digest(new_plaintext)
+
+
+@pytest.fixture()
+async def rule_credential(control_db: DatabaseSession) -> AsyncGenerator[str, None]:
+    """A control-DB credential the inline-rule tests hang rules off."""
+    cred_id = "cred_t8m_rules"
+
+    async def _cleanup() -> None:
+        async with control_db.session() as session:
+            await session.execute(
+                text("DELETE FROM agent_permission_rules WHERE credential_id = :c"),
+                {"c": cred_id},
+            )
+            await session.execute(text("DELETE FROM credentials WHERE id = :c"), {"c": cred_id})
+            await session.commit()
+
+    await _cleanup()
+    async with control_db.session() as session:
+        session.add(
+            Credential(
+                id=cred_id,
+                type=StoredCredentialType.API_KEY,
+                name="t8m inline-rule credential",
+                api_vendor="stripe",
+                api_name="payments",
+                api_version="v1",
+            )
+        )
+        await session.commit()
+    yield cred_id
+    await _cleanup()
+
+
+async def _seed_inline_rules(control_db: DatabaseSession, actor_id: str, cred_id: str) -> None:
+    async with control_db.session() as session:
+        session.add_all(
+            [
+                AgentPermissionRule(
+                    agent_id=actor_id,
+                    credential_id=cred_id,
+                    effect="allow",
+                    methods=["GET"],
+                    path="/v1/charges.*",
+                    comment="t8m read charges",
+                    sequence=0,
+                    created_by=_OWNER,
+                ),
+                AgentPermissionRule(
+                    agent_id=actor_id,
+                    credential_id=cred_id,
+                    effect="deny",
+                    methods=["DELETE"],
+                    path=".*",
+                    sequence=1,
+                    created_by=_OWNER,
+                ),
+            ]
+        )
+        await session.commit()
+
+
+async def _inline_rules(
+    control_db: DatabaseSession, actor_id: str
+) -> list[tuple[str, str, int, str | None]]:
+    async with control_db.session() as session:
+        rows = (
+            await session.execute(
+                text(
+                    "SELECT credential_id, effect, sequence, path FROM agent_permission_rules"
+                    " WHERE agent_id = :id ORDER BY credential_id, sequence"
+                ),
+                {"id": actor_id},
+            )
+        ).all()
+    return [(r.credential_id, r.effect, r.sequence, r.path) for r in rows]
+
+
+async def test_inline_permission_rules_are_copied_idempotently_verified_and_swept(
+    integration_context: Context,
+    admin_db: DatabaseSession,
+    control_db: DatabaseSession,
+    seed_owner: None,
+    rule_credential: str,
+) -> None:
+    """H2: control-DB ``agent_permission_rules`` keyed ``(sva_, credential)``
+    are copied onto the successor, re-runs never duplicate them, verify
+    criterion 6 checks per-binding parity, and the sweep drops the sva_ rows."""
+    sa_id = await _seed_sa(
+        admin_db,
+        suffix="rules",
+        api_key_plaintext="sak_t8m_rules",
+        credential_ids=(rule_credential,),
+    )
+    await _seed_inline_rules(control_db, sa_id, rule_credential)
+    source = await _inline_rules(control_db, sa_id)
+    svc = ServiceAccountMigrationService(integration_context)
+
+    first = {o.service_account_id: o for o in await svc.run()}[sa_id]
+    assert first.outcome == "migrated"
+    assert first.permission_rule_count == 2
+    agent_id = first.successor_agent_id
+    assert agent_id is not None
+    assert await _inline_rules(control_db, agent_id) == source
+    assert await _inline_rules(control_db, sa_id) == source  # originals kept (N1)
+
+    # Idempotent re-run (the already_migrated heal path): nothing new.
+    second = {o.service_account_id: o for o in await svc.run()}[sa_id]
+    assert second.outcome == "already_migrated"
+    assert second.permission_rule_count == 0
+    assert await _inline_rules(control_db, agent_id) == source
+
+    verified = await svc.verify()
+    assert verified.inline_rule_mismatch_count == 0
+
+    # Criterion 6 catches a successor binding that drifted from its source.
+    async with control_db.session() as session:
+        await session.execute(
+            text("DELETE FROM agent_permission_rules WHERE agent_id = :id AND sequence = 1"),
+            {"id": agent_id},
+        )
+        await session.commit()
+    drifted = await svc.verify()
+    assert drifted.inline_rule_mismatch_count == 1
+    assert drifted.passed is False
+    # A partially-edited successor binding is never merged into by a re-run.
+    third = {o.service_account_id: o for o in await svc.run()}[sa_id]
+    assert third.permission_rule_count == 0
+    assert len(await _inline_rules(control_db, agent_id)) == 1
+
+    # A lost control step (whole binding missing on the successor) is healed.
+    async with control_db.session() as session:
+        await session.execute(
+            text("DELETE FROM agent_permission_rules WHERE agent_id = :id"), {"id": agent_id}
+        )
+        await session.commit()
+    healed = {o.service_account_id: o for o in await svc.run()}[sa_id]
+    assert healed.outcome == "already_migrated"
+    assert healed.permission_rule_count == 2
+    assert await _inline_rules(control_db, agent_id) == source
+
+    swept = await svc.sweep(ignore_age_gate=True)
+    assert swept.swept == [sa_id]
+    assert swept.permission_rules_deleted == 2
+    assert await _inline_rules(control_db, sa_id) == []
+    assert await _inline_rules(control_db, agent_id) == source
+    after_sweep = await svc.verify()
+    assert after_sweep.inline_rule_mismatch_count == 0
+
+    # A repeated sweep finds nothing left to delete.
+    again = await svc.sweep(ignore_age_gate=True)
+    assert again.permission_rules_deleted == 0
+
+
+async def test_sweep_ensures_the_successor_twin_before_deleting_sva_rules(
+    integration_context: Context,
+    admin_db: DatabaseSession,
+    control_db: DatabaseSession,
+    seed_owner: None,
+    rule_credential: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """H2 x L1: if the migration's control step failed and was never healed,
+    the sweep copies the rules to the successor before dropping the sva_
+    originals — the rules are never lost."""
+    sa_id = await _seed_sa(admin_db, suffix="rulesheal", credential_ids=(rule_credential,))
+    await _seed_inline_rules(control_db, sa_id, rule_credential)
+    source = await _inline_rules(control_db, sa_id)
+
+    async def _failing_copy(session: Any, *, service_account_id: str, agent_id: str) -> int:
+        raise RuntimeError("simulated control-DB outage")
+
+    original = ServiceAccountMigrationRepository.copy_permission_rules
+    monkeypatch.setattr(ServiceAccountMigrationRepository, "copy_permission_rules", _failing_copy)
+    svc = ServiceAccountMigrationService(integration_context)
+    outcome = {o.service_account_id: o for o in await svc.run()}[sa_id]
+    assert outcome.reason == "control_sync_error:RuntimeError"
+    agent_id = outcome.successor_agent_id
+    assert agent_id is not None
+    assert await _inline_rules(control_db, agent_id) == []
+
+    monkeypatch.setattr(ServiceAccountMigrationRepository, "copy_permission_rules", original)
+    swept = await svc.sweep(ignore_age_gate=True)
+    assert swept.permission_rules_deleted == 2
+    assert await _inline_rules(control_db, sa_id) == []
+    assert await _inline_rules(control_db, agent_id) == source
+
+
+async def test_sweep_deletes_inline_rules_left_by_an_interrupted_sweep(
+    integration_context: Context,
+    admin_db: DatabaseSession,
+    control_db: DatabaseSession,
+    seed_owner: None,
+    rule_credential: str,
+) -> None:
+    """H2: the control pass also reaches stamped rows whose admin side a
+    previous sweep already finished (crash between the two DB steps), and
+    skip-stamped rows (no successor) lose their sva_ rules too."""
+    sa_id = await _seed_sa(admin_db, suffix="rulesskip", status="pending")
+    await _seed_inline_rules(control_db, sa_id, rule_credential)
+    svc = ServiceAccountMigrationService(integration_context)
+    await svc.run()
+
+    first = await svc.sweep(ignore_age_gate=True)
+    assert first.swept == [sa_id]
+    assert first.permission_rules_deleted == 2
+
+    # Simulate the lost control step: rules reappear, admin side is done.
+    await _seed_inline_rules(control_db, sa_id, rule_credential)
+    second = await svc.sweep(ignore_age_gate=True)
+    assert second.swept == []  # nothing left on the admin side
+    assert second.permission_rules_deleted == 2
+    assert await _inline_rules(control_db, sa_id) == []
+
+
+async def test_sweep_revokes_client_credentials_sessions_minted_during_the_window(
+    integration_context: Context, admin_db: DatabaseSession, seed_owner: None
+) -> None:
+    """M1: a pre-sweep client-credentials login still mints SA sessions; the
+    sweep revokes them in its transaction (verify criterion 3 then passes
+    without waiting out the refresh TTL) and the archived row refuses the
+    grant afterwards — ``--sweep-migrated`` is the kill lever."""
+    secret = "t8m-client-secret"
+    sa_id = await _seed_sa(
+        admin_db,
+        suffix="ccgrant",
+        scopes=("toolkit:read",),
+        api_key_plaintext="sak_t8m_ccgrant",
+        client_secret_hash=_digest(secret),
+    )
+    svc = ServiceAccountMigrationService(integration_context)
+    await svc.run()
+
+    auth = ServiceAccountAuthService(integration_context)
+    await auth.authenticate_client_credentials(sa_id, secret)
+    live = await svc.verify()
+    assert live.unrevoked_token_count == 2  # the fresh access + refresh pair
+
+    swept = await svc.sweep(ignore_age_gate=True)
+    assert swept.swept == [sa_id]
+    assert swept.access_tokens_revoked == 1
+    assert swept.refresh_tokens_revoked == 1
+    after = await svc.verify()
+    assert after.unrevoked_token_count == 0
+    revokes = await _rows(
+        admin_db,
+        "SELECT id FROM audit_entries WHERE actor_id = 'migrate-service-accounts'"
+        " AND reason = 'theme8_sa_migration_sweep_token_revoke' AND target_id = :id",
+        {"id": sa_id},
+    )
+    assert len(revokes) == 1
+
+    with pytest.raises(InvalidGrantError):
+        await auth.authenticate_client_credentials(sa_id, secret)
+
+
+async def test_control_db_failure_is_a_row_outcome_not_a_run_abort(
+    integration_context: Context,
+    admin_db: DatabaseSession,
+    seed_owner: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """L1: a control-DB error for one SA is reported on that row; the run
+    continues, and the next run heals via the already_migrated path."""
+    poisoned = await _seed_sa(admin_db, suffix="ctl_a", api_key_plaintext="sak_t8m_ctl_a")
+    healthy = await _seed_sa(admin_db, suffix="ctl_b", api_key_plaintext="sak_t8m_ctl_b")
+
+    original = ServiceAccountMigrationRepository.restamp_toolkit_keys
+
+    async def _poisoned_restamp(session: Any, *, service_account_id: str, agent_id: str) -> int:
+        if service_account_id == poisoned:
+            raise RuntimeError("simulated control-DB outage")
+        return await original(session, service_account_id=service_account_id, agent_id=agent_id)
+
+    monkeypatch.setattr(
+        ServiceAccountMigrationRepository, "restamp_toolkit_keys", _poisoned_restamp
+    )
+    svc = ServiceAccountMigrationService(integration_context)
+    outcomes = {o.service_account_id: o for o in await svc.run()}
+
+    assert outcomes[poisoned].outcome == "failed"
+    assert outcomes[poisoned].reason == "control_sync_error:RuntimeError"
+    assert outcomes[poisoned].successor_agent_id is not None  # admin side committed
+    stamp, _ = await _stamp_of(admin_db, poisoned)
+    assert stamp == outcomes[poisoned].successor_agent_id
+    assert outcomes[healthy].outcome == "migrated"
+
+    # Still failing on the already_migrated path: reported, never raised.
+    rerun_failing = {o.service_account_id: o for o in await svc.run()}
+    assert rerun_failing[poisoned].outcome == "failed"
+    assert rerun_failing[poisoned].reason == "control_sync_error:RuntimeError"
+
+    monkeypatch.setattr(ServiceAccountMigrationRepository, "restamp_toolkit_keys", original)
+    healed = {o.service_account_id: o for o in await svc.run()}
+    assert healed[poisoned].outcome == "already_migrated"
+    assert healed[poisoned].reason is None

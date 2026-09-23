@@ -23,9 +23,11 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import text
+from sqlalchemy import func, select, text
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from jentic_one.control.core.schema.agent_permission_rules import AgentPermissionRule
 from jentic_one.shared.db.ids import generate_ksuid
 
 # The job's system actor — stamped as created_by/registered_by/granted_by so
@@ -57,10 +59,20 @@ _LIST_SERVICE_ACCOUNTS = text(
     " ORDER BY sa.id"
 )
 
-_SELECT_STAMP = text("SELECT migrated_to_actor_id FROM service_accounts WHERE id = :id")
-_SELECT_STAMP_FOR_UPDATE = text(
-    "SELECT migrated_to_actor_id FROM service_accounts WHERE id = :id FOR UPDATE"
+_SELECT_SERVICE_ACCOUNT_SQL = (
+    "SELECT sa.id, sa.name, sa.description, sa.owner_id, sa.status,"
+    " sa.migrated_to_actor_id, sa.migrated_at,"
+    " sac.api_key_hash, sac.client_secret_hash"
+    " FROM service_accounts sa"
+    " LEFT JOIN service_account_credentials sac ON sac.service_account_id = sa.id"
+    " WHERE sa.id = :id"
 )
+_SELECT_SERVICE_ACCOUNT = text(_SELECT_SERVICE_ACCOUNT_SQL)
+# ``FOR UPDATE OF sa``: Postgres refuses FOR UPDATE on the nullable side of an
+# outer join. Locking the SA row is enough — every SA-side writer that the
+# migration must serialise with (the service-layer stamp guards, key
+# rotation) takes ``get_by_id_for_update`` on this same row first.
+_SELECT_SERVICE_ACCOUNT_FOR_UPDATE = text(_SELECT_SERVICE_ACCOUNT_SQL + " FOR UPDATE OF sa")
 
 _INSERT_AGENT = text(
     "INSERT INTO agents (id, name, description, owner_id, registered_by, status, created_by)"
@@ -131,7 +143,12 @@ _RESTAMP_TOOLKIT_KEYS = text(
 
 
 class ServiceAccountMigrationRepository:
-    """Admin-DB (and one control-DB) write operations for the SA-migration job."""
+    """Admin-DB (and a few control-DB) operations for the SA-migration job.
+
+    Control-DB methods (``restamp_toolkit_keys``, ``copy_permission_rules``,
+    ``list_service_account_rule_holders``, ``count_permission_rules_by_binding``)
+    must be called with a **control** session; everything else is admin.
+    """
 
     @staticmethod
     async def acquire_migration_lock(session: AsyncSession, service_account_id: str) -> None:
@@ -154,17 +171,22 @@ class ServiceAccountMigrationRepository:
         return list((await session.execute(_LIST_SERVICE_ACCOUNTS)).all())
 
     @staticmethod
-    async def stamp_of(
+    async def get_service_account(
         session: AsyncSession, service_account_id: str, *, for_update: bool = False
-    ) -> str | None:
-        """The row's current stamp (in-transaction re-check; FOR UPDATE on pg)."""
-        stmt = _SELECT_STAMP
+    ) -> Any | None:
+        """One SA row joined to its credential row — the in-transaction re-read.
+
+        Same column shape as :meth:`list_service_accounts`. With
+        ``for_update`` the SA row is locked on Postgres (``FOR UPDATE OF
+        sa``); SQLite needs no row lock — the caller's ``BEGIN IMMEDIATE``
+        already holds the database write lock.
+        """
+        stmt = _SELECT_SERVICE_ACCOUNT
         if for_update:
             dialect = session.bind.dialect.name if session.bind else "sqlite"
             if dialect == "postgresql":
-                stmt = _SELECT_STAMP_FOR_UPDATE
-        row = (await session.execute(stmt, {"id": service_account_id})).one_or_none()
-        return None if row is None else row.migrated_to_actor_id
+                stmt = _SELECT_SERVICE_ACCOUNT_FOR_UPDATE
+        return (await session.execute(stmt, {"id": service_account_id})).one_or_none()
 
     @staticmethod
     async def create_successor_agent(
@@ -320,6 +342,104 @@ class ServiceAccountMigrationRepository:
         )
         return result.rowcount or 0  # type: ignore[attr-defined]
 
+    @staticmethod
+    async def copy_permission_rules(
+        session: AsyncSession, *, service_account_id: str, agent_id: str
+    ) -> int:
+        """Control-DB twin of the SA's per-binding inline permission rules.
+
+        ``agent_permission_rules`` is keyed ``(agent_id, credential_id)`` with
+        no FK to the admin DB, so the ``sva_``-keyed rows would silently stop
+        applying once the key resolves as the successor. Copy them onto the
+        successor (originals stay until the sweep, N1).
+
+        Idempotent at **binding** granularity: a binding the successor already
+        holds any rule for is skipped whole — a re-run (the ``already_migrated``
+        heal path) never merges into, or resurrects rules into, a list the
+        operator has since edited on the successor. ``ON CONFLICT (agent_id,
+        credential_id, sequence) DO NOTHING`` (``uq_agent_permission_rules_
+        binding_seq``) is the belt for a concurrent copier. Returns the number
+        of rule rows inserted.
+        """
+        source = list(
+            (
+                await session.execute(
+                    select(AgentPermissionRule)
+                    .where(AgentPermissionRule.agent_id == service_account_id)
+                    .order_by(AgentPermissionRule.credential_id, AgentPermissionRule.sequence)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if not source:
+            return 0
+        already = set(
+            (
+                await session.execute(
+                    select(AgentPermissionRule.credential_id)
+                    .where(AgentPermissionRule.agent_id == agent_id)
+                    .distinct()
+                )
+            )
+            .scalars()
+            .all()
+        )
+        inserted = 0
+        for rule in source:
+            if rule.credential_id in already:
+                continue
+            stmt = (
+                pg_insert(AgentPermissionRule)
+                .values(
+                    id=generate_ksuid("apr"),
+                    agent_id=agent_id,
+                    credential_id=rule.credential_id,
+                    effect=rule.effect,
+                    methods=rule.methods,
+                    path=rule.path,
+                    match_mode=rule.match_mode,
+                    operations=rule.operations,
+                    is_system=rule.is_system,
+                    comment=rule.comment,
+                    sequence=rule.sequence,
+                    created_by=SYSTEM_ACTOR,
+                )
+                .on_conflict_do_nothing(index_elements=["agent_id", "credential_id", "sequence"])
+            )
+            result = await session.execute(stmt)
+            inserted += result.rowcount or 0  # type: ignore[attr-defined]
+        await session.flush()
+        return inserted
+
+    @staticmethod
+    async def list_service_account_rule_holders(session: AsyncSession) -> set[str]:
+        """Control DB: every ``sva_``-keyed actor id still holding inline rules."""
+        rows = await session.execute(
+            select(AgentPermissionRule.agent_id)
+            .where(AgentPermissionRule.agent_id.startswith("sva_", autoescape=True))
+            .distinct()
+        )
+        return set(rows.scalars().all())
+
+    @staticmethod
+    async def count_permission_rules_by_binding(
+        session: AsyncSession, actor_ids: list[str]
+    ) -> dict[tuple[str, str], int]:
+        """Control DB: ``{(agent_id, credential_id): rule count}`` for ``actor_ids``."""
+        if not actor_ids:
+            return {}
+        rows = await session.execute(
+            select(
+                AgentPermissionRule.agent_id,
+                AgentPermissionRule.credential_id,
+                func.count().label("n"),
+            )
+            .where(AgentPermissionRule.agent_id.in_(actor_ids))
+            .group_by(AgentPermissionRule.agent_id, AgentPermissionRule.credential_id)
+        )
+        return {(r.agent_id, r.credential_id): int(r.n) for r in rows.all()}
+
     # ------------------------------------------------------------------ sweep
 
     @staticmethod
@@ -353,6 +473,42 @@ class ServiceAccountMigrationRepository:
         if stamped_before is not None:
             params["stamped_before"] = stamped_before
         return list((await session.execute(stmt, params)).all())
+
+    @staticmethod
+    async def list_stamped(
+        session: AsyncSession, *, stamped_before: datetime | None
+    ) -> dict[str, str]:
+        """``{sa_id: stamp}`` for every stamped SA (skip-stamped included),
+        optionally age-gated (N3).
+
+        Drives the control-DB half of the sweep, which must also reach rows
+        whose admin-side satellites are already gone (a crash between the
+        admin sweep commit and the control-DB rule delete).
+        """
+        clause = " AND migrated_at <= :stamped_before" if stamped_before is not None else ""
+        params: dict[str, Any] = {}
+        if stamped_before is not None:
+            params["stamped_before"] = stamped_before
+        rows = await session.execute(
+            text(
+                "SELECT id, migrated_to_actor_id FROM service_accounts"
+                " WHERE migrated_to_actor_id IS NOT NULL" + clause
+            ),
+            params,
+        )
+        return {r.id: r.migrated_to_actor_id for r in rows.all()}
+
+    @staticmethod
+    async def list_migrated_pairs(session: AsyncSession) -> list[tuple[str, str]]:
+        """``(service_account_id, successor_agent_id)`` for every fully-migrated SA."""
+        rows = await session.execute(
+            text(
+                "SELECT id, migrated_to_actor_id FROM service_accounts"
+                " WHERE migrated_to_actor_id IS NOT NULL AND migrated_to_actor_id != 'skipped'"
+                " ORDER BY id"
+            )
+        )
+        return [(r.id, r.migrated_to_actor_id) for r in rows.all()]
 
     @staticmethod
     async def sweep_service_account(session: AsyncSession, *, service_account_id: str) -> bool:
