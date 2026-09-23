@@ -1,8 +1,8 @@
 /**
- * Actor (agent / service account) lifecycle status — the SINGLE source of truth
- * for the status vocabulary and its visual mapping, shared across every module
- * that renders an actor's status (agents roster/detail, the service-account detail
- * "Bound Agents" card, the link-agent picker, …).
+ * Actor (agent) lifecycle status — the SINGLE source of truth for the status
+ * vocabulary and its visual mapping, shared across every module that renders
+ * an actor's status (agents roster/detail, the credential "Bound Agents" card,
+ * the link-agent picker, …).
  *
  * Lives in `shared/` so sibling modules can render an actor status identically
  * without importing each other (module-boundary rule). Never re-derive
@@ -62,7 +62,7 @@ export function toActorStatus(status: string): ActorStatus {
 	return (ACTOR_STATUSES as string[]).includes(status) ? (status as ActorStatus) : 'archived';
 }
 
-/** Status pill for an actor (agent / service account) using its lifecycle status. */
+/** Status pill for an actor (agent) using its lifecycle status. */
 export function ActorStatusBadge({
 	status,
 	className,

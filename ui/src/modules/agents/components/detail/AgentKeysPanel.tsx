@@ -7,6 +7,12 @@
  * Generation is only offered for `active` agents (the backend rejects keys
  * for other statuses); metadata for an already-issued key stays visible in
  * every status so a disabled agent's key trail remains auditable.
+ *
+ * Successor agents minted by the theme-8 service-account migration carry the
+ * retired account's key digest (`sak_…` / `jntc_live_…` plaintexts keep
+ * authenticating). Rotating or revoking replaces that single credential row,
+ * so the confirms warn that the migrated key ends for good while it is still
+ * the current one (no rotate/revoke in the key history yet).
  */
 import { useState } from 'react';
 import { Ban, History, KeyRound } from 'lucide-react';
@@ -17,6 +23,7 @@ import {
 	useAgentApiKeyHistory,
 	useGenerateAgentApiKey,
 	useRevokeAgentApiKey,
+	isServiceAccountSuccessor,
 	type AgentEntity,
 } from '@/modules/agents/api';
 import { ApiKeyDialog } from '@/modules/agents/components/ApiKeyDialog';
@@ -40,6 +47,16 @@ export function AgentKeysPanel({ agent }: { agent: AgentEntity }) {
 	const info = apiKeyInfo.data;
 	const history = apiKeyHistory.data ?? [];
 	const mutating = generateApiKey.isPending || revokeApiKey.isPending;
+	// While the history is still loading (or failed) this errs toward warning.
+	const holdsMigratedKey =
+		isServiceAccountSuccessor(agent) && agent.hasApiKey && history.length === 0;
+	const migratedKeyWarning = holdsMigratedKey ? (
+		<p className="text-foreground mt-2 font-medium" data-testid="migrated-key-warning">
+			This agent replaced a retired service account and still authenticates with that
+			account&apos;s original key. Once replaced, that key is gone for good and cannot be
+			restored.
+		</p>
+	) : null;
 
 	async function generate() {
 		try {
@@ -165,7 +182,16 @@ export function AgentKeysPanel({ agent }: { agent: AgentEntity }) {
 			<ConfirmDialog
 				open={confirmRegenerate}
 				title={`Regenerate API key for ${agent.name}`}
-				body="This rotates the credential: the current API key stops working immediately and anything still using it will fail to authenticate until it's updated with the new key."
+				body={
+					<>
+						<p>
+							This rotates the credential: the current API key stops working
+							immediately and anything still using it will fail to authenticate until
+							it&apos;s updated with the new key.
+						</p>
+						{migratedKeyWarning}
+					</>
+				}
 				confirmLabel="Regenerate"
 				pending={generateApiKey.isPending}
 				onConfirm={generate}
@@ -175,7 +201,16 @@ export function AgentKeysPanel({ agent }: { agent: AgentEntity }) {
 			<ConfirmDialog
 				open={confirmRevoke}
 				title={`Revoke API key for ${agent.name}`}
-				body="This will immediately invalidate the agent's current API key. The agent will no longer be able to authenticate until a new key is generated."
+				body={
+					<>
+						<p>
+							This will immediately invalidate the agent&apos;s current API key. The
+							agent will no longer be able to authenticate until a new key is
+							generated.
+						</p>
+						{migratedKeyWarning}
+					</>
+				}
 				confirmLabel="Revoke"
 				pending={revokeApiKey.isPending}
 				onConfirm={async () => {

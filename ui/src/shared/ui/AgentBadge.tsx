@@ -62,7 +62,7 @@ interface AgentBadgeProps {
 	id?: string;
 	/** Display name used for the initials + the accessible label. */
 	name?: string;
-	/** Actor noun for the accessible label (e.g. "Agent", "Service account"). */
+	/** Actor noun for the accessible label (e.g. "Agent"). */
 	kind?: string;
 	size?: AgentBadgeSize;
 	/** When provided, the badge renders as a button (e.g. navigate to detail). */

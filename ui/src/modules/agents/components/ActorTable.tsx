@@ -1,7 +1,5 @@
 /**
- * ActorTable — the fleet table shared by the Agents and Service-accounts
- * tabs, using the same
- * DataTable grammar the Credentials list uses.
+ * ActorTable — the agents fleet table, using the same DataTable grammar the Credentials list uses.
  *
  * Rows are NOT click-through (that would nest the kebab's interactive
  * elements inside a `role="button"` row — an axe violation); instead the

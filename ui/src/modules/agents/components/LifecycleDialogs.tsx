@@ -1,10 +1,9 @@
 /**
  * LifecycleDialogs — the confirm-dialog orchestration for the destructive
  * lifecycle verbs (deny → reason required, disable → confirm, archive →
- * type-to-confirm cascade), shared by the Agents and Service-accounts tabs.
+ * type-to-confirm cascade) for the agents fleet table.
  *
- * Extracted from the two near-identical page sections so the retry contract
- * lives in one place: a failed mutation toasts (the hooks own that) and the
+ * Extracted from the page section so the retry contract lives in one place: a failed mutation toasts (the hooks own that) and the
  * dialog stays open so the operator can retry; success closes it. The
  * stateless confirms are conditionally mounted (no drafts to lose — the
  * dialog-state-lifecycle rule's picker/confirm exception); `DenyDialog` owns
@@ -38,8 +37,7 @@ interface ConfirmMutations {
 interface LifecycleDialogsProps {
 	confirm: PendingConfirm;
 	onClose: () => void;
-	entityType: 'agent' | 'service-account';
-	/** Consequence copy for the disable confirm (differs per actor kind). */
+	/** Consequence copy for the disable confirm. */
 	disableBody: string;
 	mutations: ConfirmMutations;
 }
@@ -47,7 +45,6 @@ interface LifecycleDialogsProps {
 export function LifecycleDialogs({
 	confirm,
 	onClose,
-	entityType,
 	disableBody,
 	mutations,
 }: LifecycleDialogsProps) {
@@ -92,7 +89,7 @@ export function LifecycleDialogs({
 			{confirm?.kind === 'archive' && (
 				<CascadeDeleteDialog
 					open
-					entityType={entityType}
+					entityType="agent"
 					entityName={confirm.name}
 					loading={archive.isPending}
 					error={archive.error}

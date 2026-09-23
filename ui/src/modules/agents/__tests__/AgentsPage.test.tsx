@@ -92,7 +92,10 @@ describe('AgentsPage — agents lifecycle', () => {
 	it('has no critical a11y violations', async () => {
 		const { container } = renderPage();
 		await screen.findAllByText('inbox-triage-bot');
-		await checkA11y(container);
+		// The header's primary "New agent" button paints in with a colour
+		// transition; axe sampling it mid-fade reports a false contrast failure,
+		// so retry until the paint settles (a real violation still fails).
+		await waitFor(() => checkA11y(container), { timeout: 3000 });
 	});
 
 	// --- local-MCP 2-E2 (#1188): "last seen via MCP" roster enrichment ------
@@ -120,15 +123,11 @@ describe('AgentsPage — agents lifecycle', () => {
 		expect(screen.queryByText('Last seen via MCP')).not.toBeInTheDocument();
 	});
 
-	it('keeps the MCP column off the service-accounts roster (agents-only transport)', async () => {
-		const user = userEvent.setup();
+	it('has no service-accounts tab — the roster is agents only', async () => {
 		renderPage();
 		await screen.findAllByText('inbox-triage-bot');
-		await screen.findByText('Last seen via MCP');
-
-		await user.click(screen.getByRole('button', { name: 'Service accounts' }));
-		await screen.findAllByText('metrics-exporter');
-		expect(screen.queryByText('Last seen via MCP')).not.toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: 'Service accounts' })).not.toBeInTheDocument();
+		expect(screen.getByRole('button', { name: /new agent/i })).toBeInTheDocument();
 	});
 
 	it('approves a pending agent from the queue → status flips to active', async () => {

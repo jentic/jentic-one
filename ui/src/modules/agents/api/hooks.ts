@@ -21,32 +21,21 @@ import { useCallback } from 'react';
 import { toast } from '@/shared/ui';
 import {
 	approveAgent,
-	approveServiceAccount,
 	archiveAgent,
-	archiveServiceAccount,
 	createAgent,
-	createServiceAccount,
 	updateAgent,
 	type AgentPatch,
 	denyAgent,
-	denyServiceAccount,
 	disableAgent,
-	disableServiceAccount,
 	enableAgent,
-	enableServiceAccount,
 	generateAgentApiKey,
-	generateServiceAccountApiKey,
 	getAgent,
 	getAgentApiKeyHistory,
 	getAgentApiKeyInfo,
 	getAgentScopes,
-	getServiceAccount,
-	getServiceAccountScopes,
 	listAgents,
 	listPermissions,
-	listServiceAccounts,
 	replaceAgentScopes,
-	replaceServiceAccountScopes,
 	revokeAgentApiKey,
 	listAgentCredentialBindings,
 	bindCredentialToAgent,
@@ -88,7 +77,6 @@ import type {
 	OAuthGrantEntity,
 	PermissionCatalogEntry,
 	PermissionRuleInput,
-	ServiceAccountEntity,
 } from '@/modules/agents/api/types';
 import { sharedQueryKeys } from '@/shared/api';
 import { credentialKeys } from '@/shared/credentials/api';
@@ -116,14 +104,6 @@ const agentsKeys = {
  * (#511/#652) can pin `agentsKeys.all` to `sharedQueryKeys.agentsRoot` without
  * widening the module's public surface. Not for production use. */
 export const agentsKeysForTest = agentsKeys;
-
-const serviceAccountKeys = {
-	all: ['service-accounts'] as const,
-	lists: () => [...serviceAccountKeys.all, 'list'] as const,
-	list: (status: string) => [...serviceAccountKeys.all, 'list', status] as const,
-	detail: (id: string) => [...serviceAccountKeys.all, 'detail', id] as const,
-	scopes: (id: string) => [...serviceAccountKeys.all, 'scopes', id] as const,
-};
 
 /**
  * Platform permission catalogue (`GET /permissions`). Module-private (the
@@ -558,127 +538,6 @@ export function useRevokeAgentApiKey() {
 	});
 }
 
-export function useGenerateServiceAccountApiKey() {
-	return useMutation<ApiKeyResult, Error, string>({
-		mutationFn: (serviceAccountId: string) => generateServiceAccountApiKey(serviceAccountId),
-		onError: (e) => notifyError(e, 'Failed to generate API key.'),
-	});
-}
-
-// ---------------------------------------------------------------------------
-// Service accounts
-// ---------------------------------------------------------------------------
-
-/** Cursor-paginated service accounts — same infinite-query shape as
- * {@link useAgents} so the page renders both tabs with one component. */
-export function useServiceAccounts(params: { status?: string } = {}) {
-	const status = params.status ?? 'all';
-	return useInfiniteQuery<ListResult<ServiceAccountEntity>>({
-		queryKey: serviceAccountKeys.list(status),
-		queryFn: ({ pageParam }) =>
-			listServiceAccounts({
-				status: status === 'all' ? null : status,
-				cursor: (pageParam as string | null) ?? null,
-			}),
-		initialPageParam: null,
-		getNextPageParam: (last) => (last.hasMore ? last.nextCursor : null),
-		placeholderData: keepPreviousData,
-	});
-}
-
-export function useServiceAccount(id: string | null) {
-	return useQuery<ServiceAccountEntity>({
-		queryKey: serviceAccountKeys.detail(id ?? ''),
-		queryFn: () => getServiceAccount(id as string),
-		enabled: id != null,
-	});
-}
-
-export function useCreateServiceAccount() {
-	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: (input: { name: string; description?: string | null; scopes?: string[] }) =>
-			createServiceAccount(input),
-		onSuccess: (sa) => {
-			qc.invalidateQueries({ queryKey: serviceAccountKeys.lists() });
-			// Unlike agents, service accounts are approved at creation (the
-			// backend calls set_approval inside the create transaction).
-			toast({
-				title: 'Service account created',
-				description: `${sa.name} is ready to use.`,
-				variant: 'success',
-			});
-		},
-		onError: (e) => notifyError(e, 'Failed to create the service account.'),
-	});
-}
-
-export function useApproveServiceAccount() {
-	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: (id: string) => approveServiceAccount(id),
-		onSuccess: (sa) => {
-			qc.setQueryData(serviceAccountKeys.detail(sa.id), sa);
-			qc.invalidateQueries({ queryKey: serviceAccountKeys.lists() });
-			toast({ title: 'Service account approved', variant: 'success' });
-		},
-		onError: (e) => notifyError(e, 'Failed to approve the service account.'),
-	});
-}
-
-export function useDenyServiceAccount() {
-	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: ({ id, reason }: { id: string; reason: string }) =>
-			denyServiceAccount(id, reason),
-		onSuccess: (sa) => {
-			qc.setQueryData(serviceAccountKeys.detail(sa.id), sa);
-			qc.invalidateQueries({ queryKey: serviceAccountKeys.lists() });
-			toast({ title: 'Service account denied', variant: 'success' });
-		},
-		onError: (e) => notifyError(e, 'Failed to deny the service account.'),
-	});
-}
-
-export function useDisableServiceAccount() {
-	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: (id: string) => disableServiceAccount(id),
-		onSuccess: (_void, id) => {
-			qc.invalidateQueries({ queryKey: serviceAccountKeys.lists() });
-			qc.invalidateQueries({ queryKey: serviceAccountKeys.detail(id) });
-			toast({ title: 'Service account disabled', variant: 'success' });
-		},
-		onError: (e) => notifyError(e, 'Failed to disable the service account.'),
-	});
-}
-
-export function useEnableServiceAccount() {
-	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: (id: string) => enableServiceAccount(id),
-		onSuccess: (_void, id) => {
-			qc.invalidateQueries({ queryKey: serviceAccountKeys.lists() });
-			qc.invalidateQueries({ queryKey: serviceAccountKeys.detail(id) });
-			toast({ title: 'Service account enabled', variant: 'success' });
-		},
-		onError: (e) => notifyError(e, 'Failed to enable the service account.'),
-	});
-}
-
-export function useArchiveServiceAccount() {
-	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: (id: string) => archiveServiceAccount(id),
-		onSuccess: (_void, id) => {
-			qc.invalidateQueries({ queryKey: serviceAccountKeys.lists() });
-			qc.invalidateQueries({ queryKey: serviceAccountKeys.detail(id) });
-			toast({ title: 'Service account archived', variant: 'success' });
-		},
-		onError: (e) => notifyError(e, 'Failed to archive the service account.'),
-	});
-}
-
 // ---------------------------------------------------------------------------
 // Scopes (#615)
 // ---------------------------------------------------------------------------
@@ -717,26 +576,6 @@ export function useReplaceAgentScopes() {
 	});
 }
 
-export function useServiceAccountScopes(id: string | null) {
-	return useQuery<string[]>({
-		queryKey: serviceAccountKeys.scopes(id ?? ''),
-		queryFn: () => getServiceAccountScopes(id as string),
-		enabled: id != null,
-	});
-}
-
-export function useReplaceServiceAccountScopes() {
-	const qc = useQueryClient();
-	return useMutation<string[], Error, { id: string; scopes: string[] }>({
-		mutationFn: ({ id, scopes }) => replaceServiceAccountScopes(id, scopes),
-		onSuccess: (scopes, { id }) => {
-			qc.setQueryData(serviceAccountKeys.scopes(id), scopes);
-			toast({ title: 'Scopes updated', variant: 'success' });
-		},
-		onError: (e) => notifyError(e, "Failed to update the service account's scopes."),
-	});
-}
-
 /**
  * Per-actor execution stats for the fleet table's activity columns
  * (`GET /monitoring/usage?group_by=agent`, trailing 7 days). Kept under its
@@ -748,10 +587,10 @@ export function useReplaceServiceAccountScopes() {
  * won't open. Any other failure also degrades to no columns (no toast — the
  * roster itself is the page's primary data, usage is enrichment).
  */
-export function useActorsUsage(actorType: 'agent' | 'service_account') {
+export function useActorsUsage() {
 	return useQuery<Map<string, ActorUsage> | null>({
-		queryKey: ['agents-usage', actorType],
-		queryFn: () => fetchActorsUsage(actorType),
+		queryKey: ['agents-usage', 'agent'],
+		queryFn: () => fetchActorsUsage(),
 		staleTime: 60 * 1000,
 		retry: false,
 	});
@@ -856,15 +695,14 @@ export function useRevokeOauthGrant(agentId: string | null) {
 
 /**
  * Actor-scoped audit trail for the detail console's "Recent changes" panel —
- * the lifecycle events recorded against this agent / service account as the
- * TARGET. Non-admins resolve
+ * the lifecycle events recorded against this agent as the TARGET. Non-admins resolve
  * to an empty list (the client maps 401/403), so the panel renders its
  * graceful "no entries" state instead of erroring.
  */
-export function useActorAudit(actorKind: 'agent' | 'service-account', actorId: string | null) {
+export function useActorAudit(actorId: string | null) {
 	return useQuery<ActorAuditEntry[]>({
-		queryKey: ['agents', 'audit', actorKind, actorId],
-		queryFn: () => listActorAudit(actorKind, actorId as string),
+		queryKey: ['agents', 'audit', 'agent', actorId],
+		queryFn: () => listActorAudit(actorId as string),
 		enabled: actorId != null,
 		staleTime: 30 * 1000,
 	});

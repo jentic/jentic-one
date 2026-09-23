@@ -21,7 +21,7 @@ export {
 } from '@/shared/lib/permissionRules';
 
 // Source-agnostic scope primitives — shared by the credentials OAuth2 scope
-// picker and the actor (agent/service-account) platform-permission picker.
+// picker and the agent platform-permission picker.
 export {
 	type ScopeOrigin,
 	type EnhancedScope,

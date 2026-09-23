@@ -24,12 +24,9 @@ export { AuditService } from '@/shared/api/generated/services/AuditService';
 export { JobsService } from '@/shared/api/generated/services/JobsService';
 export { SystemService } from '@/shared/api/generated/services/SystemService';
 
-// Agents / service-accounts / dynamic registration. Agent-side credential
+// Agents / dynamic registration. Agent-side credential
 // bindings live on `AgentsService` (the /agents router).
 export { AgentsService } from '@/shared/api/generated/services/AgentsService';
-// Theme-8 Phase 2 removed the service-account API; the hand-maintained shim
-// keeps the agents module's SA tab compiling until Phase 3 deletes it.
-export { ServiceAccountsService } from '@/shared/api/legacyServiceAccounts';
 export { AgentRegistrationService } from '@/shared/api/generated/services/AgentRegistrationService';
 export type { PermissionRuleReadSchema } from '@/shared/api/generated/models/PermissionRuleReadSchema';
 // The toolkit-era codegen retag namespaced `PermissionRuleSchema` per web
@@ -55,7 +52,7 @@ export type { ChangePasswordRequest } from '@/shared/api/generated/models/Change
 export type { RedeemInviteRequest } from '@/shared/api/generated/models/RedeemInviteRequest';
 export type { HealthResponse } from '@/shared/api/generated/models/HealthResponse';
 
-// Agents / service-accounts / dynamic registration (ui-agents module).
+// Agents / dynamic registration (ui-agents module).
 // Note: AgentsService is already exported above; agents reuses it and does
 // not re-export to avoid dupes.
 export type { AgentCreateRequest } from '@/shared/api/generated/models/AgentCreateRequest';
@@ -65,14 +62,6 @@ export type { ApiKeyInfoResponse } from '@/shared/api/generated/models/ApiKeyInf
 export type { ApiKeyHistoryResponse } from '@/shared/api/generated/models/ApiKeyHistoryResponse';
 export type { ApiKeyHistoryEntryResponse } from '@/shared/api/generated/models/ApiKeyHistoryEntryResponse';
 export type { AgentListResponse } from '@/shared/api/generated/models/AgentListResponse';
-export type {
-	ServiceAccountResponse,
-	ServiceAccountListResponse,
-	ServiceAccountCreateRequest,
-	ServiceAccountDenyRequest,
-	ServiceAccountScopesRequest,
-	ServiceAccountScopesResponse,
-} from '@/shared/api/legacyServiceAccounts';
 export type { RegisterRequest } from '@/shared/api/generated/models/RegisterRequest';
 export type { RegisterResponse } from '@/shared/api/generated/models/RegisterResponse';
 // The DenyRequest name no longer collides (the SA router is gone), so the
@@ -161,9 +150,8 @@ export { HEALTH_QUERY_KEY } from '@/shared/api/health';
 // sibling's cache through this instead of a hand-synced raw key literal.
 export { sharedQueryKeys } from '@/shared/api/queryKeys';
 
-// Actor scopes (#615). The platform permission catalogue + the agent/service-
-// account scope grant endpoints. `AgentsService`/`ServiceAccountsService` are
-// already exported above (agents block); these add the permission catalogue
+// Actor scopes (#615). The platform permission catalogue + the agent scope
+// grant endpoints. `AgentsService` is already exported above (agents block); these add the permission catalogue
 // service and the scope request/response models the agents module wires into
 // the Scopes card. Append-only.
 export { PermissionsService } from '@/shared/api/generated/services/PermissionsService';

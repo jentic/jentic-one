@@ -57,7 +57,7 @@ export function FlowDiagram() {
 				<Node
 					icon={UserRound}
 					title="Actor"
-					subtitle="user · agent · service account"
+					subtitle="user · agent"
 					accent="text-accent-blue"
 				/>
 				<div className="flex justify-center sm:block">

@@ -25,20 +25,9 @@ export {
 	useCreateAgent,
 	useGenerateAgentApiKey,
 	useRevokeAgentApiKey,
-	useGenerateServiceAccountApiKey,
-	useServiceAccounts,
-	useServiceAccount,
-	useCreateServiceAccount,
-	useApproveServiceAccount,
-	useDenyServiceAccount,
-	useDisableServiceAccount,
-	useEnableServiceAccount,
-	useArchiveServiceAccount,
 	usePermissionCatalogue,
 	useAgentScopes,
 	useReplaceAgentScopes,
-	useServiceAccountScopes,
-	useReplaceServiceAccountScopes,
 	useAgentOauthGrants,
 	useRevokeOauthGrant,
 	useActorsUsage,
@@ -94,8 +83,7 @@ export type {
 	PermissionCatalogEntry,
 	PermissionRuleInput,
 	ServedApiEntity,
-	ServiceAccountEntity,
 	Attribution,
 } from '@/modules/agents/api/types';
 
-export { mcpClientLabel } from '@/modules/agents/api/types';
+export { mcpClientLabel, isServiceAccountSuccessor } from '@/modules/agents/api/types';

@@ -10,7 +10,7 @@ import type { RouteObject } from 'react-router';
  * The SPA is served under `/app` same-origin behind the admin API (see
  * src/jentic_one/shared/web/static.py), so the admin API's top-level prefixes
  * (/users, /auth, /jobs, /events, /audit, /executions, /permissions, /agents,
- * /service-accounts, /credentials, …) live in a different namespace and can
+ * /credentials, …) live in a different namespace and can
  * never shadow a UI route on hard refresh.
  *
  * `login` / `changePassword` live outside the authenticated Layout — they must
@@ -55,8 +55,6 @@ export const ROUTES = {
 export const ROUTE_PATHS = {
 	workspaceApi: (apiPath: string) => `${ROUTES.workspace}/${apiPath}`,
 	agent: (agentId: string) => `${ROUTES.agents}/${encodeURIComponent(agentId)}`,
-	serviceAccount: (serviceAccountId: string) =>
-		`${ROUTES.agents}/service-accounts/${encodeURIComponent(serviceAccountId)}`,
 	/**
 	 * Monitor's Executions lens, optionally pre-filtered. The `tab` /
 	 * `actor_id` / `actor_type` names are Monitor's URL vocabulary (read by
@@ -65,10 +63,7 @@ export const ROUTE_PATHS = {
 	 * modules can't import from each other. Monitor's own richer builder is
 	 * `modules/monitor/lib/links`.
 	 */
-	monitorExecutions: (filter?: {
-		actorId?: string;
-		actorType?: 'agent' | 'service_account' | 'user';
-	}) => {
+	monitorExecutions: (filter?: { actorId?: string; actorType?: 'agent' | 'user' }) => {
 		const q = new URLSearchParams({ tab: 'executions' });
 		if (filter?.actorId) q.set('actor_id', filter.actorId);
 		if (filter?.actorType) q.set('actor_type', filter.actorType);

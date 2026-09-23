@@ -89,22 +89,23 @@ describe('#511 — no foreign-module query-key literals', () => {
 		expect(ruleIds(messages)).not.toContain('no-restricted-syntax');
 	});
 
-	// The agents module owns TWO roots ('agents' AND 'service-accounts'), so its
-	// second root is the most error-prone branch of the own/foreign set math:
-	// a sibling must be blocked from it, yet agents itself must stay free.
-	it("rejects a sibling's ['service-accounts', …] root (agents' second root)", async () => {
+	// The settings module owns TWO roots ('settings' AND 'oauth-clients'), so
+	// its second root is the most error-prone branch of the own/foreign set
+	// math: a sibling must be blocked from it, yet settings itself must stay
+	// free.
+	it("rejects a sibling's ['oauth-clients', …] root (settings' second root)", async () => {
 		const messages = await lint(
 			'src/modules/discover/api/bad.ts',
-			"export const k = ['service-accounts', 'list'];\n",
+			"export const k = ['oauth-clients', 'list'];\n",
 		);
 		expect(ruleIds(messages)).toContain('no-restricted-syntax');
-		expect(messages.some((m) => m.message.includes('service-accounts'))).toBe(true);
+		expect(messages.some((m) => m.message.includes('oauth-clients'))).toBe(true);
 	});
 
-	it("accepts the agents module using its OWN second root ['service-accounts', …]", async () => {
+	it("accepts the settings module using its OWN second root ['oauth-clients', …]", async () => {
 		const messages = await lint(
-			'src/modules/agents/api/good.ts',
-			"export const k = ['service-accounts', 'list'];\n",
+			'src/modules/settings/api/good.ts',
+			"export const k = ['oauth-clients', 'list'];\n",
 		);
 		expect(ruleIds(messages)).not.toContain('no-restricted-syntax');
 	});

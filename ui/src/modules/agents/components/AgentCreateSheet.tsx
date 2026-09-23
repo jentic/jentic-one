@@ -1,8 +1,7 @@
 /**
  * AgentCreateSheet — slide-over form to create an agent manually.
  *
- * Mirrors ServiceAccountCreateSheet. A Sheet (not a Dialog) keeps the list
- * context visible while filling the form. Fields reset
+ * A Sheet (not a Dialog) keeps the list context visible while filling the form. Fields reset
  * only after a successful create; a dismissal preserves the draft.
  */
 import { useEffect, useRef, useState } from 'react';
