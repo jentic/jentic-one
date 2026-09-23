@@ -528,8 +528,11 @@ func parseMethodPath(target string) (method, path string) {
 // through the agentops core over the apiClient Inspector seam.
 func (a *app) resolveOperation(ctx context.Context, target, revision string) (*agentops.Operation, error) {
 	// METHOD:/path → broker-relative direct send (uses --broker-host/scheme).
-	if method, path := parseMethodPath(target); method != "" {
-		return &agentops.Operation{Method: method, Path: path}, nil
+	// The agentops core owns the short-circuit — including its executable-
+	// method policy (TRACE is refused) — and never touches the Inspector for
+	// this form, so no session is resolved.
+	if method, _ := parseMethodPath(target); method != "" {
+		return agentops.ResolveOperation(ctx, nil, target, revision)
 	}
 
 	// METHOD URL / METHOD:URL (absolute) and opaque operation_id both resolve

@@ -55,14 +55,18 @@ func ParseMethodPath(target string) (method, path string) {
 // never proxy it: TRACE echoes the request back, which would reflect the
 // credentials the broker injects into the response body. Fail here so the agent
 // gets a coded resolve error locally instead of an opaque 405 from the data plane.
-func ensureExecutableMethod(method, target string) error {
+//
+// recovery is the next step to offer: reading the contract (`jentic inspect`)
+// only works for an inspectable target, so the broker-relative METHOD:/path form
+// points back at discovery instead.
+func ensureExecutableMethod(method, target, recovery string) error {
 	if method != http.MethodTrace {
 		return nil
 	}
 	return &ux.CodedError{
 		Code:       ux.CodeResolveFailed,
 		Msg:        fmt.Sprintf("operation %q is a TRACE operation, which cannot be executed", target),
-		Actionable: fmt.Sprintf("jentic inspect %q", target),
+		Actionable: recovery,
 	}
 }
 
@@ -73,7 +77,7 @@ func ensureExecutableMethod(method, target string) error {
 // coded RESOLVE_FAILED so the caller's exit taxonomy maps them to exit 2.
 func ResolveOperation(ctx context.Context, ins Inspector, target, revision string) (*Operation, error) {
 	if method, path := ParseMethodPath(target); method != "" {
-		if err := ensureExecutableMethod(method, target); err != nil {
+		if err := ensureExecutableMethod(method, target, `jentic search "<what you want to do>"`); err != nil {
 			return nil, err
 		}
 		return &Operation{Method: method, Path: path}, nil
@@ -111,7 +115,7 @@ func ResolveOperation(ctx context.Context, ins Inspector, target, revision strin
 	// execute_read GET/HEAD gate, BuildRequest, logging — assumes the
 	// canonical uppercase form.
 	op.Method = strings.ToUpper(op.Method)
-	if err := ensureExecutableMethod(op.Method, target); err != nil {
+	if err := ensureExecutableMethod(op.Method, target, fmt.Sprintf("jentic inspect %q", target)); err != nil {
 		return nil, err
 	}
 	return &op, nil

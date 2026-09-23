@@ -1122,6 +1122,41 @@ func TestExecuteCmdMethodPathDirect(t *testing.T) {
 	}
 }
 
+// TestExecuteCmdMethodPathRefusesTrace pins the TRACE refusal on the command's
+// real resolve path (app.resolveOperation → agentops.ResolveOperation) for the
+// broker-relative METHOD:/path short-circuit: the request must never be dialed,
+// and the failure is a coded RESOLVE_FAILED (exit 2) — not a 405 with exit 0.
+func TestExecuteCmdMethodPathRefusesTrace(t *testing.T) {
+	var dialed bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		dialed = true
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}))
+	defer srv.Close()
+
+	app := testApp(t)
+	seedRegistered(t, app, "default", srv.URL)
+
+	root := newAPIRootCmd(app.App)
+	root.SetOut(new(bytes.Buffer))
+	root.SetErr(new(bytes.Buffer))
+	root.SetArgs([]string{
+		"execute", "TRACE:/v1/debug",
+		"--json",
+		"--broker-scheme", "http",
+		"--broker-host", srv.Listener.Addr().String(),
+	})
+
+	err := root.Execute()
+	if dialed {
+		t.Fatal("TRACE:/path was sent to the broker; it must be refused at resolve time")
+	}
+	var coded *ux.CodedError
+	if !errors.As(err, &coded) || coded.Code != ux.CodeResolveFailed {
+		t.Fatalf("err = %T (%v), want *ux.CodedError with %q", err, err, ux.CodeResolveFailed)
+	}
+}
+
 func TestExecuteCmdMethodPathWithPathParams(t *testing.T) {
 	var gotPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
