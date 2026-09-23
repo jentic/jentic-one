@@ -139,7 +139,7 @@ async def require_execute_scope(request: Request) -> Identity:
     resolved = await require_broker_identity(request)
 
     # Every executing actor carries BROKER_EXECUTE_SCOPE via actor_scope_grants —
-    # including service accounts the theme-5 Phase 4 retirement job created for
+    # including the successor agents the theme-5 Phase 4 retirement job cut for
     # jntc_live_ toolkit keys (the job grants exactly this scope). Anything
     # beyond "may execute" is gated by the permission rules in the handler,
     # not by scopes.

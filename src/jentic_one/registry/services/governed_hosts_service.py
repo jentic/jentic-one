@@ -88,7 +88,7 @@ class GovernedHostsService:
         """Derive the host set for ``identity`` (canonical order, with digest).
 
         Bindings key on the identity's ``sub`` — ``agent_credential_bindings``
-        holds agents and service accounts alike. A plain **user** token
+        holds agents (the only machine identity). A plain **user** token
         therefore yields an empty set (credentials bind to agents, not users;
         the OAuth agent-consent flow is what leaves an integrator holding an
         agent-scoped token). Suspended bindings and inactive credentials still

@@ -1253,7 +1253,7 @@ async def handle_request_connection(
         )
 
     # Mirror the route's identity injection: an agent caller connects for
-    # itself; a user/service-account caller over this mount connects an
+    # itself; a user caller over this mount connects an
     # unbound credential (the tool surface carries no agent_id).
     agent_id = env.identity.sub if env.identity.actor_type == ActorType.AGENT else None
     try:

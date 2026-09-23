@@ -108,7 +108,8 @@ def make_superset_verifier(ctx: Context) -> Any:
     """Build the full-taxonomy token verifier for combined/standalone apps.
 
     Resolves every platform token shape a signed-in caller can present:
-    agent/service-account API keys (``jak_``/``sak_``), opaque ``at_`` access
+    agent API keys (``jak_``, plus legacy ``sak_`` plaintexts that resolve as
+    their successor agents), opaque ``at_`` access
     tokens (DB-resolved, live permissions), and HS256 web-session JWTs. This is
     the verifier a combined-app assembler should install so admin/enterprise
     routes accept ``at_`` regardless of surface ordering — the auth surface's

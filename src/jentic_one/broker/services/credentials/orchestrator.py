@@ -101,7 +101,7 @@ class CredentialService:
         ``trace_id`` is stamped onto the ``CREDENTIAL_ACCESSED`` audit event so
         an operator inspecting an execution can join the credential-use record
         back to the specific execution that triggered it (#740). Optional so
-        non-execution call-sites (bind-time probes, service accounts) don't
+        non-execution call-sites (e.g. bind-time probes) don't
         have to fabricate one. A malformed value degrades to an uncorrelated
         event rather than failing the injection (#903).
 
