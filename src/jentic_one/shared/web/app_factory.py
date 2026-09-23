@@ -263,17 +263,91 @@ def _start_catalog_update_scanner(
     return scanner, task
 
 
-def _start_key_retirement(ctx: Context, enabled_apps: set[str]) -> asyncio.Task[None] | None:
+async def _run_key_retirement(ctx: Context) -> None:
     """One-shot toolkit-key auto-migration at boot (theme-5 Phase 4).
 
     An upgrade must not silently break headless ``jntc_live_`` callers: the
     resolver that served them is gone, so every resolvable key needs its
-    successor service account before the first request. The job is
-    idempotent (stamped keys short-circuit), so running it on every boot is
-    a cheap no-op after the first. Gate on the control surface owning the
-    toolkit tables plus both DBs being reachable. Best-effort: a failure is
-    loud in the logs but never blocks boot — the ``retire-toolkit-keys``
-    CLI (with ``--owner`` for unresolvable creators) is the recovery path.
+    successor agent before the first request. The job is idempotent (stamped
+    keys short-circuit), so running it on every boot is a cheap no-op after
+    the first. Best-effort: a failure is loud in the logs but never blocks
+    boot (nor the SA migration sequenced after it) — the
+    ``retire-toolkit-keys`` CLI (with ``--owner`` for unresolvable creators)
+    is the recovery path.
+    """
+    try:
+        outcomes = await KeyRetirementService(ctx).run()
+    except Exception:
+        _logger.exception("toolkit_key_retirement_startup_failed")
+        return
+    unresolved = sum(1 for o in outcomes if o.reason == "owner_unresolved")
+    if unresolved:
+        _logger.warning(
+            "toolkit_key_retirement_owner_unresolved",
+            count=unresolved,
+            actionable_step=(
+                "Run `jentic_one retire-toolkit-keys --owner <admin-email>` "
+                "to migrate the remaining keys."
+            ),
+        )
+
+
+async def _run_service_account_migration(ctx: Context) -> None:
+    """One-shot service-account → agent migration at boot (theme-8 Phase 1).
+
+    Loud-but-non-blocking on failure — the ``migrate-service-accounts`` CLI
+    is the recovery path. Re-runs are cheap no-ops (stamp short-circuit),
+    which is also what catches SAs created during the window
+    (``POST /service-accounts`` stays unguarded, F5). After the migration
+    pass the boot arm triggers the **age-gated** automatic sweep (N3) — never
+    the ungated sweep; a negative configured stamp age disables the automatic
+    sweep arm entirely.
+    """
+    _logger.info("service_account_migration_task_started")
+    svc = ServiceAccountMigrationService(ctx)
+    try:
+        outcomes = await svc.run()
+    except Exception:
+        _logger.exception("service_account_migration_startup_failed")
+        return
+    failed = sum(1 for o in outcomes if o.outcome == "failed")
+    if failed:
+        _logger.warning(
+            "service_account_migration_rows_failed",
+            count=failed,
+            actionable_step=(
+                "Run `jentic_one migrate-service-accounts` and inspect the "
+                "JSONL report for the failing rows."
+            ),
+        )
+    if ctx.config.services.service_account_sweep_min_stamp_age_hours < 0:
+        return
+    try:
+        await svc.sweep()
+    except Exception:
+        _logger.exception("service_account_migration_sweep_failed")
+
+
+def _start_boot_migrations(ctx: Context, enabled_apps: set[str]) -> asyncio.Task[None] | None:
+    """Run the boot-time identity migrations as ONE sequenced one-shot task.
+
+    Key retirement first, then the SA → agent migration — never concurrently.
+    Key retirement may reuse an unstamped pre-theme-8 SA crash remnant as a
+    key's successor and bind ``sva_``-keyed rows onto it; the SA migration
+    copies an SA's bindings onto its successor agent and stamps the SA.
+    Running them as independent tasks let those binds land *after* the
+    migration had already copied + stamped the remnant, so the successor
+    missed them and ``verify`` (post-stamp mutations) failed until the sweep.
+    Sequencing makes the in-process order deterministic: the migration always
+    sees the remnant's final binding set. (The repo-level row lock in
+    ``KeyRetirementRepository.find_successor_by_name`` covers the cross-process
+    case — a second replica or an operator CLI run.)
+
+    Both jobs keep their own failure isolation: each step logs and swallows
+    its own errors, so a failing key retirement never prevents the migration.
+    Gate on the control surface owning the tables plus both DBs being
+    reachable (identical for both jobs, so combined and standalone-control
+    deployments start the pair together; broker-only never does).
     """
     if "control" not in enabled_apps:
         return None
@@ -281,72 +355,11 @@ def _start_key_retirement(ctx: Context, enabled_apps: set[str]) -> asyncio.Task[
         return None
 
     async def _run() -> None:
-        try:
-            outcomes = await KeyRetirementService(ctx).run()
-        except Exception:
-            _logger.exception("toolkit_key_retirement_startup_failed")
-            return
-        unresolved = sum(1 for o in outcomes if o.reason == "owner_unresolved")
-        if unresolved:
-            _logger.warning(
-                "toolkit_key_retirement_owner_unresolved",
-                count=unresolved,
-                actionable_step=(
-                    "Run `jentic_one retire-toolkit-keys --owner <admin-email>` "
-                    "to migrate the remaining keys."
-                ),
-            )
+        await _run_key_retirement(ctx)
+        await _run_service_account_migration(ctx)
 
     task = asyncio.create_task(_run())
     _logger.info("toolkit_key_retirement_task_started")
-    return task
-
-
-def _start_service_account_migration(
-    ctx: Context, enabled_apps: set[str]
-) -> asyncio.Task[None] | None:
-    """One-shot service-account → agent migration at boot (theme-8 Phase 1).
-
-    Mirrors ``_start_key_retirement``: gate on the control surface plus both
-    DBs being reachable, fire-and-forget, loud-but-non-blocking on failure —
-    the ``migrate-service-accounts`` CLI is the recovery path. Re-runs are
-    cheap no-ops (stamp short-circuit), which is also what catches SAs
-    created during the window (``POST /service-accounts`` stays unguarded,
-    F5). After the migration pass the boot arm triggers the **age-gated**
-    automatic sweep (N3) — never the ungated sweep; a negative configured
-    stamp age disables the automatic sweep arm entirely.
-    """
-    if "control" not in enabled_apps:
-        return None
-    if not (ctx.has_db("control") and ctx.has_db("admin")):
-        return None
-
-    async def _run() -> None:
-        svc = ServiceAccountMigrationService(ctx)
-        try:
-            outcomes = await svc.run()
-        except Exception:
-            _logger.exception("service_account_migration_startup_failed")
-            return
-        failed = sum(1 for o in outcomes if o.outcome == "failed")
-        if failed:
-            _logger.warning(
-                "service_account_migration_rows_failed",
-                count=failed,
-                actionable_step=(
-                    "Run `jentic_one migrate-service-accounts` and inspect the "
-                    "JSONL report for the failing rows."
-                ),
-            )
-        if ctx.config.services.service_account_sweep_min_stamp_age_hours < 0:
-            return
-        try:
-            await svc.sweep()
-        except Exception:
-            _logger.exception("service_account_migration_sweep_failed")
-
-    task = asyncio.create_task(_run())
-    _logger.info("service_account_migration_task_started")
     return task
 
 
@@ -599,13 +612,12 @@ def create_surface_app(
             )
             scanner_task = _start_expiry_scanner(ctx, enabled_apps)
             catalog_scanner_task = _start_catalog_update_scanner(ctx, enabled_apps)
-            key_retirement_task = _start_key_retirement(ctx, enabled_apps)
+            boot_migrations_task = _start_boot_migrations(ctx, enabled_apps)
             connect_poll_task = _start_connect_poll_scanner(
                 ctx,
                 enabled_apps,
                 catalog_auto_importer=getattr(app.state, "catalog_auto_importer", None),
             )
-            sa_migration_task = _start_service_account_migration(ctx, enabled_apps)
             try:
                 yield
             finally:
@@ -617,8 +629,7 @@ def create_surface_app(
                 gate = getattr(app.state, "broker_admission_gate", None)
                 if gate is not None and hasattr(gate, "start_draining"):
                     gate.start_draining()
-                await _stop_one_shot(sa_migration_task)
-                await _stop_one_shot(key_retirement_task)
+                await _stop_one_shot(boot_migrations_task)
                 await _stop_connect_poll_scanner(connect_poll_task)
                 await _stop_catalog_update_scanner(catalog_scanner_task)
                 await _stop_expiry_scanner(scanner_task)
@@ -720,18 +731,16 @@ def create_combined_app(
             worker_task = _start_worker(ctx, set(apps))
             scanner_task = _start_expiry_scanner(ctx, set(apps))
             catalog_scanner_task = _start_catalog_update_scanner(ctx, set(apps))
-            key_retirement_task = _start_key_retirement(ctx, set(apps))
+            boot_migrations_task = _start_boot_migrations(ctx, set(apps))
             connect_poll_task = _start_connect_poll_scanner(
                 ctx,
                 set(apps),
                 catalog_auto_importer=getattr(app.state, "catalog_auto_importer", None),
             )
-            sa_migration_task = _start_service_account_migration(ctx, set(apps))
             try:
                 yield
             finally:
-                await _stop_one_shot(sa_migration_task)
-                await _stop_one_shot(key_retirement_task)
+                await _stop_one_shot(boot_migrations_task)
                 await _stop_connect_poll_scanner(connect_poll_task)
                 await _stop_catalog_update_scanner(catalog_scanner_task)
                 await _stop_expiry_scanner(scanner_task)

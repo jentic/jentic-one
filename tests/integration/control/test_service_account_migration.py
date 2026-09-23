@@ -1248,6 +1248,41 @@ async def test_key_retirement_find_successor_never_reuses_stamped_sa_remnant(
     assert unstamped is None
 
 
+async def test_key_retirement_remnant_reuse_serialises_with_the_migration(
+    integration_context: Context, admin_db: DatabaseSession, seed_owner: None
+) -> None:
+    """L2: key retirement reusing an unstamped SA remnant holds its row lock
+    (``FOR UPDATE`` on Postgres, ``BEGIN IMMEDIATE`` on SQLite) through its
+    binds, so a concurrent migration of that SA cannot copy + stamp until the
+    binds commit — the successor inherits them and verify sees no post-stamp
+    ``sva_`` mutation."""
+    sa_id = await _seed_sa(admin_db, suffix="l2lock", api_key_plaintext="sak_t8m_l2lock")
+    async with admin_db.session() as session:
+        rows = await ServiceAccountMigrationRepository.list_service_accounts(session)
+    row = next(r for r in rows if r.id == sa_id)
+    svc = ServiceAccountMigrationService(integration_context)
+
+    async with admin_db.transaction() as session:
+        reused = await KeyRetirementRepository.find_successor_by_name(session, name="t8m-l2lock")
+        assert reused == sa_id  # unstamped remnant → reused, now row-locked
+        migration = asyncio.create_task(svc._migrate_one(row))
+        await asyncio.sleep(0.3)
+        assert not migration.done(), "migration stamped the remnant under key retirement"
+        await KeyRetirementRepository.bind_actor_to_toolkit(
+            session, actor_id=sa_id, toolkit_id="tk_t8m_l2lock"
+        )
+
+    outcome = await migration
+    assert outcome.outcome == "migrated"
+    copied = await _rows(
+        admin_db,
+        "SELECT toolkit_id FROM agent_toolkit_bindings WHERE agent_id = :id",
+        {"id": outcome.successor_agent_id},
+    )
+    assert [r.toolkit_id for r in copied] == ["tk_t8m_l2lock"]
+    assert (await svc.verify()).post_stamp_mutation_count == 0
+
+
 async def test_verify_counts_post_stamp_sva_binding_inserts(
     integration_context: Context, admin_db: DatabaseSession, seed_owner: None
 ) -> None:
