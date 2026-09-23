@@ -205,7 +205,7 @@ def classify_denial(status: int, headers: httpx.Headers, body: bytes) -> ToolErr
         "the broker denied this call before it reached the upstream API",
         actionable=instruction or _synthesized_denial_hint(status, problem_type),
         details={"http_status": status},
-        next_tool=_denial_next_tool(problem_type),
+        next_tool=_denial_next_tool(problem_type, directive),
         extra=extra,
     )
 
@@ -224,7 +224,7 @@ _PROVISIONING_PROBLEM_TYPES = frozenset(
 )
 
 
-def _denial_next_tool(problem_type: str) -> str:
+def _denial_next_tool(problem_type: str, directive: dict[str, Any] | None) -> str:
     """Recovery pointer keyed on the problem+json ``type`` (Go: ``denialNextTool``).
 
     Keyed on the type, never the bare HTTP status: 403 also covers
@@ -232,9 +232,17 @@ def _denial_next_tool(problem_type: str) -> str:
     say the opposite of "connect a credential" — a status-keyed fork would
     teach agents to file connect sessions to route around permission rules.
     ``whoami`` is the safe default for anything unrecognized.
+
+    Even a provisioning-shaped denial points at ``request_connection`` only
+    when the directive carries ``parameters.suggested_command`` — the broker
+    sets it exactly when the API maps onto a vendor-registry key. Off the
+    registry (or with no directive naming the vendor) the tool is guaranteed
+    to fail as an unknown vendor, so the pointer stays on ``whoami``.
     """
-    if problem_type in _PROVISIONING_PROBLEM_TYPES:
-        return "request_connection"
+    if problem_type in _PROVISIONING_PROBLEM_TYPES and directive is not None:
+        parameters = directive.get("parameters")
+        if isinstance(parameters, dict) and parameters.get("suggested_command"):
+            return "request_connection"
     return "whoami"
 
 

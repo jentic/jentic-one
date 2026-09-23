@@ -140,7 +140,7 @@ the right ask, then retry once they confirm.
 - `jentic connect <vendor>` — start a connect session for a registry
   vendor (e.g. `jentic connect github`): prints the `approval_url` a human
   approves in the browser (`--scopes`, `--reason` shape the ask; `--wait`
-  polls until connected/failed/expired). You never open or approve the
+  polls until it connects or ends — rejected, expired, or cancelled). You never open or approve the
   URL yourself.
 - `jentic catalog search "<query>"` / `jentic catalog import <vendor/name>`
   — find and import APIs (import first; `search` only sees imported

@@ -1468,11 +1468,8 @@ components:
         state:
           enum:
           - created
-          - confirmed
           - polling
           - connected
-          - expired
-          - failed
           title: State
           type: string
         vendor_display_name:
@@ -12341,11 +12338,8 @@ paths:
           anyOf:
           - enum:
             - created
-            - confirmed
             - polling
             - connected
-            - expired
-            - failed
             type: string
           - type: 'null'
           description: Filter by session state

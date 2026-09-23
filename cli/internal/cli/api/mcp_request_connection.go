@@ -9,9 +9,9 @@ package api
 // operator. It is deliberately create-only: approval always blocks on a human
 // in the browser, so the agent's loop is relay approval_url → operator
 // approves → confirm the new binding with whoami → retry the blocked call.
-// The poll_token is deliberately withheld from the tool result — the tool
-// surface serves no poll leg, so exposing an unusable capability token would
-// only invite the model to invent one.
+// The poll_token is not a separate field of the tool result — the tool
+// surface serves no poll leg. (It still rides the approval_url's query
+// string, which is how the human's browser drives the approve page.)
 
 import (
 	"context"
@@ -73,6 +73,11 @@ type connectResponse struct {
 	ResolvedFlow string `json:"resolved_flow"`
 }
 
+// connectScopesMax mirrors the route's requested_scopes bound
+// (IntegrationsConnectRequest.requested_scopes — max_length=100), enforced
+// client-side for the same reason as connectReasonMax.
+const connectScopesMax = 100
+
 // connectReasonMax mirrors the route's reason bound
 // (IntegrationsConnectRequest.reason — max_length=1024): enforced client-side
 // so an overlong reason is a clear invalid-params error, not a route 422
@@ -97,14 +102,17 @@ func (s *mcpServer) handleRequestConnection(ctx context.Context, req *mcp.CallTo
 	if len(reason) > connectReasonMax {
 		return nil, invalidParams(fmt.Errorf("reason must be at most %d characters, got %d", connectReasonMax, len(reason)))
 	}
-
+	scopes, _ := args["requested_scopes"].([]string)
+	if len(scopes) > connectScopesMax {
+		return nil, invalidParams(fmt.Errorf("requested_scopes must list at most %d scopes, got %d", connectScopesMax, len(scopes)))
+	}
 	client, err := s.app.controlClient(cctx)
 	if err != nil {
 		s.logger.Warn("request_connection failed", "vendor", vendor, "error", redactedErr(err))
 		return s.softError(cctx, err), nil
 	}
 	body := control.IntegrationsConnectRequest{Vendor: vendor}
-	if scopes, ok := args["requested_scopes"].([]string); ok && len(scopes) > 0 {
+	if len(scopes) > 0 {
 		body.RequestedScopes = &scopes
 	}
 	if reason != "" {
@@ -150,7 +158,7 @@ func connectRetryAfter(resp *control.IntegrationsConnectHTTPResp) float64 {
 
 // requestConnectionError maps the route's failure surface onto the coded
 // taxonomy (§3.7 posture):
-//   - 400 (unknown vendor / unsupported flow) — a correctable ask:
+//   - 404 (unknown vendor) / 400 (unsupported flow) — a correctable ask:
 //     RESOLVE_FAILED with the rediscovery/operator step.
 //   - 403 — the missing credentials:connect scope (agents hold it by
 //     default): a scope fact for the operator, not a revoked identity —
@@ -164,7 +172,7 @@ func (s *mcpServer) requestConnectionError(ctx context.Context, vendor string, e
 	var he *HTTPError
 	if errors.As(err, &he) {
 		switch he.StatusCode {
-		case http.StatusBadRequest:
+		case http.StatusBadRequest, http.StatusNotFound:
 			return s.softErrorNext(ctx, &ux.CodedError{
 				Code: ux.CodeResolveFailed,
 				Msg:  fmt.Sprintf("cannot start a connect session for vendor %q: %v", vendor, err),
@@ -178,7 +186,8 @@ func (s *mcpServer) requestConnectionError(ctx context.Context, vendor string, e
 				Code: ux.CodeBrokerDenied,
 				Msg:  fmt.Sprintf("starting a connect session requires the credentials:connect scope: %v", err),
 				Actionable: "Ask your human operator to grant this agent the credentials:connect scope " +
-					"in the dashboard, then retry request_connection once they confirm.",
+					"in the dashboard. Once they confirm, run `jentic logout` (clears only the cached token) " +
+					"so the next call mints a token carrying the scope, then retry request_connection.",
 			})
 		case http.StatusTooManyRequests:
 			extra := map[string]any{"retryable": true}

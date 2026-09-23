@@ -413,7 +413,7 @@ func (s *mcpServer) executeDenialError(ctx context.Context, denial *agentops.Den
 		// UX7's synthesized recovery, tool-flavored: no denial is a dead end.
 		coded.Actionable = synthesizedDenialHint(denial.Status, denial.ProblemType)
 	}
-	return s.softErrorExtra(ctx, coded, denialNextTool(denial.ProblemType), extra)
+	return s.softErrorExtra(ctx, coded, denialNextTool(denial.ProblemType, denial.Directive), extra)
 }
 
 // provisioningProblemTypes are the problem+json types whose recovery
@@ -437,9 +437,18 @@ var provisioningProblemTypes = map[string]bool{
 // opposite of "connect a credential", so a status-keyed fork would teach the
 // model to file connect sessions to route around permission rules. whoami is
 // the safe default for anything unrecognized.
-func denialNextTool(problemType string) string {
-	if provisioningProblemTypes[problemType] {
-		return "request_connection"
+//
+// Even a provisioning-shaped denial points at request_connection only when the
+// broker's directive carries parameters.suggested_command — the broker sets it
+// exactly when the API maps onto a vendor-registry key. Off the registry (or
+// with no directive to name the vendor) request_connection is guaranteed to
+// fail as an unknown vendor, so the pointer stays on whoami and the directive's
+// operator hand-off.
+func denialNextTool(problemType string, directive *ux.Directive) string {
+	if provisioningProblemTypes[problemType] && directive != nil {
+		if cmd, _ := directive.Parameters["suggested_command"].(string); cmd != "" {
+			return "request_connection"
+		}
 	}
 	return "whoami"
 }

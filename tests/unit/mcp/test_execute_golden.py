@@ -175,8 +175,8 @@ async def test_broker_denial_with_directive_is_the_coded_soft_error(broker) -> N
     taxonomy; the broker's verbatim agent_directive rides the payload (the
     same fixture the execute_broker_denial_directive_json golden froze)."""
     directive = {
-        "instruction": "Ask your operator to approve access to acme/pets, then retry.",
-        "next_action": "wait_for_approval",
+        "instruction": "Run `jentic connect acme` and relay the approval_url, then retry.",
+        "parameters": {"suggested_command": "jentic connect acme"},
     }
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -207,9 +207,31 @@ async def test_broker_denial_with_directive_is_the_coded_soft_error(broker) -> N
 @pytest.mark.parametrize(
     ("status", "body", "want_tool"),
     [
-        (403, {"type": "no_credential_binding", "detail": "denied"}, "request_connection"),
-        (403, {"type": "no_toolkit_binding", "detail": "denied"}, "request_connection"),
-        (424, {"type": "credential_not_provisioned", "detail": "denied"}, "request_connection"),
+        (403, {"type": "no_credential_binding", "detail": "denied"}, "whoami"),
+        (403, {"type": "no_toolkit_binding", "detail": "denied"}, "whoami"),
+        (424, {"type": "credential_not_provisioned", "detail": "denied"}, "whoami"),
+        (
+            403,
+            {
+                "type": "no_credential_binding",
+                "agent_directive": {
+                    "instruction": "Run `jentic connect acme`.",
+                    "parameters": {"suggested_command": "jentic connect acme"},
+                },
+            },
+            "request_connection",
+        ),
+        (
+            424,
+            {
+                "type": "credential_not_provisioned",
+                "agent_directive": {
+                    "instruction": "Ask your operator to connect a credential.",
+                    "parameters": {"vendor": "acme.com"},
+                },
+            },
+            "whoami",
+        ),
         (403, {"type": "action_denied", "detail": "a permission rule forbids this"}, "whoami"),
         (403, {"type": "credential_identity_mismatch", "detail": "denied"}, "whoami"),
         (424, {"type": "credential_undecryptable", "detail": "denied"}, "whoami"),
@@ -220,10 +242,13 @@ async def test_denial_next_tool_keys_on_problem_type(
     broker, status: int, body: dict[str, Any], want_tool: str
 ) -> None:
     """The type→next_tool mapping (Phase 1b review M1): request_connection
-    ONLY for the provisioning-shaped problem types; action_denied /
-    identity-mismatch / unknown denials keep whoami — a status-keyed fork
-    would teach the model to file connect sessions to route around
-    permission rules. The synthesized hint must match the pointer."""
+    ONLY for the provisioning-shaped problem types, and only when the
+    directive names a registry vendor (``parameters.suggested_command``) —
+    off the registry the tool would fail as an unknown vendor.
+    action_denied / identity-mismatch / unknown denials keep whoami — a
+    status-keyed fork would teach the model to file connect sessions to
+    route around permission rules. A non-provisioning hint never teaches
+    request_connection."""
 
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
@@ -241,10 +266,12 @@ async def test_denial_next_tool_keys_on_problem_type(
     assert payload["error_code"] == "BROKER_DENIED"
     assert payload["next_tool"] == want_tool
     step = payload["actionable_step"]
-    if want_tool == "whoami":
+    if body.get("type") not in {
+        "no_credential_binding",
+        "no_toolkit_binding",
+        "credential_not_provisioned",
+    }:
         assert "request_connection" not in step
-    else:
-        assert "request_connection" in step
 
 
 async def test_insecure_broker_refusal_is_the_coded_transport_error(broker) -> None:

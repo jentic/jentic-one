@@ -83,7 +83,11 @@ class IntegrationsConnectResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-ConnectSessionState = Literal["created", "confirmed", "polling", "connected", "expired", "failed"]
+#: The states a listed row can hold. A session never persists in a terminal
+#: failure state: ``_mark_terminal`` deletes its pending credential, and the
+#: FK cascade takes the session row with it — so the list only ever sees live
+#: (``created``/``polling``) or ``connected`` sessions.
+ConnectSessionState = Literal["created", "polling", "connected"]
 
 
 class ConnectSessionSummaryResponse(BaseModel):
@@ -97,6 +101,8 @@ class ConnectSessionSummaryResponse(BaseModel):
     requested_by_actor_id: str
     reason: str | None = None
     connected_as: str | None = None
+    # Reserved: a failed session is deleted on its terminal transition, so a
+    # listed row carries no error_code today.
     error_code: str | None = None
     created_at: datetime
 

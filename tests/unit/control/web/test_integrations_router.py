@@ -473,11 +473,11 @@ def test_list_sessions_forwards_state_and_vendor_filters() -> None:
     svc.list_all = AsyncMock(return_value=SessionPage(data=[], has_more=False, next_cursor=None))
     app = _build_app(svc=svc, identity=_READER_IDENTITY)
     with TestClient(app) as client:
-        resp = client.get("/connect-sessions", params={"state": "failed", "vendor": "gh"})
+        resp = client.get("/connect-sessions", params={"state": "polling", "vendor": "gh"})
     assert resp.status_code == 200
     call = svc.list_all.await_args
     assert call is not None
-    assert call.kwargs["state"] == "failed"
+    assert call.kwargs["state"] == "polling"
     assert call.kwargs["vendor"] == "gh"
 
 

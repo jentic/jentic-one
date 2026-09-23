@@ -4,8 +4,8 @@ package api
 // credential provisioning (theme-7 Phase 1b), the CLI twin of the
 // request_connection MCP tool. It starts a connect session over
 // POST /integrations:connect and prints the approval_url the agent relays to
-// its human operator; --wait polls the session's status until it is terminal
-// (the poll_token capability rides GET /connect-sessions/{id}/status).
+// its human operator; --wait polls the session's status until it connects or
+// ends (the poll_token capability rides GET /connect-sessions/{id}/status).
 // Deliberately NOT fenced: connecting a credential is the agent's own
 // recovery surface — approval still blocks on a human in the browser.
 
@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
@@ -30,8 +31,20 @@ import (
 // caller can retry the poll later — the session itself stays alive server-side.
 const connectWaitDefault = 5 * time.Minute
 
+// errConnectSessionEnded is the --wait poll's "session is gone" outcome. An
+// unhappy terminal (operator rejected, TTL expired, vendor error, cancelled)
+// deletes the pending credential and — by FK cascade — the session row, and
+// the status route answers a missing session with the same 403
+// invalid_poll_token as a wrong token (no enumeration oracle). The token was
+// minted by the create call moments earlier, so during --wait a 403 means the
+// session ended without connecting.
+var errConnectSessionEnded = errors.New("connect session ended without connecting")
+
 // connectTerminalStatuses ends the --wait loop
 // (GET /connect-sessions/{id}/status: pending|polling|connected|failed|expired).
+// In practice only "connected" is observed — failed/expired sessions are
+// deleted (errConnectSessionEnded) — but a terminal row the route does report
+// still ends the loop.
 var connectTerminalStatuses = map[string]bool{
 	"connected": true,
 	"failed":    true,
@@ -61,8 +74,9 @@ func newConnectCmd(a *app) *cobra.Command {
 			"Relay that URL to your human operator: they approve the connection and its\n" +
 			"scopes in the browser — this command never completes an approval by itself.\n" +
 			"Once they confirm, check your new binding with `jentic whoami` and retry the\n" +
-			"call that was blocked. --wait polls the session until it is terminal\n" +
-			"(connected, failed, or expired), heartbeating progress on stderr.",
+			"call that was blocked. --wait polls the session until it connects or ends\n" +
+			"(rejected, expired, or cancelled), printing the approval_url and heartbeats\n" +
+			"on stderr and a single JSON result on stdout.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			aud := ux.FromContext(cmd.Context())
@@ -74,6 +88,13 @@ func newConnectCmd(a *app) *cobra.Command {
 					Code:       ux.CodeMissingArgument,
 					Msg:        fmt.Sprintf("--reason must be at most %d characters, got %d", connectReasonMax, len(reason)),
 					Actionable: "Shorten --reason to a one-liner the approver can read at a glance.",
+				})
+			}
+			if len(scopes) > connectScopesMax {
+				return reportCoded(aud, &ux.CodedError{
+					Code:       ux.CodeMissingArgument,
+					Msg:        fmt.Sprintf("--scopes must list at most %d scopes, got %d", connectScopesMax, len(scopes)),
+					Actionable: "Request only the vendor scopes the task needs; the approver confirms the final set.",
 				})
 			}
 			// --timeout only shapes --wait; a zero/negative budget is a
@@ -116,29 +137,48 @@ func newConnectCmd(a *app) *cobra.Command {
 			// token would render as [REDACTED] anyway — and the agent's loop
 			// doesn't need it (--wait polls with the in-memory token; the
 			// binding check is `jentic whoami` either way).
-			aud.Render(map[string]any{
+			envelope := map[string]any{
 				"session_id":    created.SessionID,
 				"approval_url":  created.ApprovalURL,
 				"resolved_flow": created.ResolvedFlow,
 				"next_step": "Relay the approval_url to your human operator — they approve the " +
 					"connection in the browser. Then confirm the new binding with `jentic whoami` " +
 					"and retry the call that was blocked.",
-			})
+			}
 			if !wait {
+				aud.Render(envelope)
 				return nil
 			}
+			// --wait renders ONE stdout document at the end (13 §1). The
+			// operator needs the URL while we wait, so it goes to stderr now.
+			fmt.Fprintln(a.Err, "Relay this approval_url to your human operator: "+created.ApprovalURL)
 			// Ctrl-C during --wait only stops the polling: the connect
 			// session (and its pending credential row) stays alive
 			// server-side until its TTL expires — accepted behavior; the
 			// operator can still approve it and `jentic whoami` shows the
 			// resulting binding.
 			final, err := a.waitForConnectSession(cmd.Context(), client, created.SessionID, created.PollToken, timeout)
+			if errors.Is(err, errConnectSessionEnded) {
+				return reportCoded(aud, &ux.CodedError{
+					Code: ux.CodeResolveFailed,
+					Msg: fmt.Sprintf("connect session %s ended without connecting "+
+						"(rejected, expired, or cancelled)", created.SessionID),
+					Actionable: "Ask your operator whether they rejected it; otherwise run `jentic connect " +
+						args[0] + "` again and relay the fresh approval_url.",
+				})
+			}
 			if err != nil {
 				return reportCoded(aud, asCoded(err))
 			}
-			aud.Render(final)
 			switch final.Status {
 			case "connected":
+				envelope["status"] = final.Status
+				envelope["connected_as"] = final.ConnectedAs
+				envelope["credential_id"] = final.CredentialID
+				envelope["bound_scopes"] = final.BoundScopes
+				envelope["next_step"] = "Connected. Confirm the new binding with `jentic whoami` " +
+					"and retry the call that was blocked."
+				aud.Render(envelope)
 				return nil
 			case "expired":
 				return reportCoded(aud, &ux.CodedError{
@@ -162,7 +202,7 @@ func newConnectCmd(a *app) *cobra.Command {
 	cmd.Flags().StringVar(&reason, "reason", "",
 		"why you need this connection (shown to the approver; max 1024 chars)")
 	cmd.Flags().BoolVar(&wait, "wait", false,
-		"poll the session until it is terminal (connected, failed, or expired)")
+		"poll the session until it connects or ends (rejected, expired, or cancelled)")
 	cmd.Flags().DurationVar(&timeout, "timeout", connectWaitDefault,
 		"how long --wait polls before exiting 3 (TIMEOUT_PENDING)")
 	return cmd
@@ -193,6 +233,10 @@ func (a *app) waitForConnectSession(
 	for {
 		resp, callErr := client.PollConnectSessionStatusWithResponse(ctx, sessionID, params)
 		if err := apiErrorFor(resp, callErr); err != nil {
+			var he *HTTPError
+			if errors.As(err, &he) && he.StatusCode == http.StatusForbidden {
+				return nil, errConnectSessionEnded
+			}
 			return nil, err
 		}
 		var status connectStatusResponse
@@ -235,14 +279,14 @@ func (a *app) waitForConnectSession(
 
 // connectCoded maps the connect route's failure surface onto the coded
 // taxonomy — the CLI twin of requestConnectionError (mcp_request_connection.go):
-// 400 unknown vendor/flow → RESOLVE_FAILED (change the ask), 403 → the missing
+// 404 unknown vendor / 400 unsupported flow → RESOLVE_FAILED (change the ask), 403 → the missing
 // credentials:connect scope (operator grant), 429 → the per-actor rate limit,
 // 503 → the vendor's OAuth client is not configured (operator action).
 func connectCoded(vendor string, err error) *ux.CodedError {
 	var he *HTTPError
 	if errors.As(err, &he) {
 		switch he.StatusCode {
-		case 400:
+		case 400, 404:
 			return &ux.CodedError{
 				Code: ux.CodeResolveFailed,
 				Msg:  fmt.Sprintf("cannot start a connect session for vendor %q: %v", vendor, err),
@@ -255,7 +299,8 @@ func connectCoded(vendor string, err error) *ux.CodedError {
 				Code: ux.CodeBrokerDenied,
 				Msg:  fmt.Sprintf("starting a connect session requires the credentials:connect scope: %v", err),
 				Actionable: "Ask your human operator to grant this agent the credentials:connect " +
-					"scope in the dashboard, then retry once they confirm.",
+					"scope in the dashboard. Once they confirm, run `jentic logout` (clears only the cached " +
+					"token) so the next call mints a token carrying the scope, then retry `jentic connect`.",
 			}
 		case 429:
 			return &ux.CodedError{

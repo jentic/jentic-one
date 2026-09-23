@@ -5,10 +5,11 @@ package api
 // catalog suite: wire-shape assertions (identity is injected — no agent_id
 // ever rides the body), the create-only result shape (poll_token withheld),
 // alias tolerance, and the coded soft-error mappings of the route's failure
-// surface (400/403/429/503).
+// surface (404/403/429/503).
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -185,8 +186,10 @@ func TestMCPRequestConnection_OverlongReasonIsInvalidParams(t *testing.T) {
 	}
 }
 
-func TestMCPRequestConnection_400IsResolveFailedPointingAtSearchCatalog(t *testing.T) {
-	cp := &connectControlPlane{status: http.StatusBadRequest, body: `{"detail":"unknown vendor: 'nope'"}`}
+// The route answers an unknown vendor with 404 unknown_vendor (errors.py
+// _VENDOR_ERROR_MAP) — the Python mount's RESOLVE_FAILED twin.
+func TestMCPRequestConnection_UnknownVendor404IsResolveFailedPointingAtSearchCatalog(t *testing.T) {
+	cp := &connectControlPlane{status: http.StatusNotFound, body: `{"type":"unknown_vendor","detail":"unknown vendor: 'nope'"}`}
 	srv := httptest.NewServer(cp.handler())
 	defer srv.Close()
 
@@ -230,8 +233,8 @@ func TestMCPRequestConnection_403IsOperatorScopeGrant(t *testing.T) {
 	if _, has := payload["next_tool"]; has {
 		t.Errorf("next_tool = %v, want none (the scope grant is an operator action, not a tool call)", payload["next_tool"])
 	}
-	if step, _ := payload["actionable_step"].(string); !strings.Contains(step, "credentials:connect") || !strings.Contains(step, "operator") {
-		t.Errorf("actionable_step %q must name the credentials:connect scope and route to the operator", step)
+	if step, _ := payload["actionable_step"].(string); !strings.Contains(step, "credentials:connect") || !strings.Contains(step, "operator") || !strings.Contains(step, "jentic logout") {
+		t.Errorf("actionable_step %q must name the credentials:connect scope, route to the operator, and re-mint the token", step)
 	}
 }
 
@@ -285,5 +288,21 @@ func TestMCPRequestConnection_503IsOperatorConfigAction(t *testing.T) {
 	}
 	if step, _ := payload["actionable_step"].(string); !strings.Contains(step, "operator") || !strings.Contains(step, "github") {
 		t.Errorf("actionable_step %q must route the vendor's OAuth config to the operator", step)
+	}
+}
+
+func TestMCPRequestConnection_TooManyScopesIsInvalidParams(t *testing.T) {
+	scopes := make([]string, connectScopesMax+1)
+	for i := range scopes {
+		scopes[i] = fmt.Sprintf("%q", fmt.Sprintf("s%d", i))
+	}
+	s := stampedTestMCPServer(t)
+	res, err := s.handleRequestConnection(activeCtx("http://127.0.0.1:0"), callToolRequest("request_connection",
+		`{"vendor":"github","requested_scopes":[`+strings.Join(scopes, ",")+`]}`))
+	if res != nil {
+		t.Fatalf("want a protocol error, got a result: %v", res)
+	}
+	if err == nil || !strings.Contains(err.Error(), "100") {
+		t.Fatalf("err = %v, want an invalid-params error naming the 100-scope bound", err)
 	}
 }

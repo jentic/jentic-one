@@ -29,7 +29,7 @@ export class IntegrationsService {
         /**
          * Filter by session state
          */
-        state?: ('created' | 'confirmed' | 'polling' | 'connected' | 'expired' | 'failed' | null),
+        state?: ('created' | 'polling' | 'connected' | null),
         /**
          * Filter by vendor registry key
          */

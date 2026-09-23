@@ -123,6 +123,17 @@ async def test_overlong_reason_is_invalid_params() -> None:
     assert _FakeConnectSessionService.calls == []
 
 
+async def test_too_many_scopes_is_invalid_params() -> None:
+    """Twin of the Go mount's connectScopesMax cap (100)."""
+    scopes = [f"scope{i}" for i in range(101)]
+    with pytest.raises(MCPError) as err:
+        await tools_mod.handle_request_connection(
+            _env(["credentials:connect"]), {"vendor": "github", "requested_scopes": scopes}
+        )
+    assert "100" in str(err.value)
+    assert _FakeConnectSessionService.calls == []
+
+
 # ── scope gate (the route's any-of: credentials:connect | credentials:write) ──
 
 
@@ -246,8 +257,8 @@ async def test_unusable_default_flow_is_resolve_failed_like_the_go_mount(
     error: Exception,
 ) -> None:
     """Cross-mount alignment (review L1): the route answers 400 for an
-    unusable flow just as for an unknown vendor, and the Go mount renders
-    every 400 as RESOLVE_FAILED + search_catalog — pin the same posture
+    unusable flow (404 for an unknown vendor), and the Go mount renders
+    both as RESOLVE_FAILED + search_catalog — pin the same posture
     here so the two mounts never teach different recoveries for the same
     denial."""
     _FakeConnectSessionService.error = error

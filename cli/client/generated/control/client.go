@@ -245,26 +245,17 @@ func (e BearerTokenUpdateRequestType) Valid() bool {
 
 // Defines values for ConnectSessionSummaryResponseState.
 const (
-	ConnectSessionSummaryResponseStateConfirmed ConnectSessionSummaryResponseState = "confirmed"
 	ConnectSessionSummaryResponseStateConnected ConnectSessionSummaryResponseState = "connected"
 	ConnectSessionSummaryResponseStateCreated   ConnectSessionSummaryResponseState = "created"
-	ConnectSessionSummaryResponseStateExpired   ConnectSessionSummaryResponseState = "expired"
-	ConnectSessionSummaryResponseStateFailed    ConnectSessionSummaryResponseState = "failed"
 	ConnectSessionSummaryResponseStatePolling   ConnectSessionSummaryResponseState = "polling"
 )
 
 // Valid indicates whether the value is a known member of the ConnectSessionSummaryResponseState enum.
 func (e ConnectSessionSummaryResponseState) Valid() bool {
 	switch e {
-	case ConnectSessionSummaryResponseStateConfirmed:
-		return true
 	case ConnectSessionSummaryResponseStateConnected:
 		return true
 	case ConnectSessionSummaryResponseStateCreated:
-		return true
-	case ConnectSessionSummaryResponseStateExpired:
-		return true
-	case ConnectSessionSummaryResponseStateFailed:
 		return true
 	case ConnectSessionSummaryResponseStatePolling:
 		return true
@@ -854,26 +845,17 @@ func (e ListAgentOauthGrantsParamsStatus) Valid() bool {
 
 // Defines values for ListConnectSessionsParamsState.
 const (
-	ListConnectSessionsParamsStateConfirmed ListConnectSessionsParamsState = "confirmed"
 	ListConnectSessionsParamsStateConnected ListConnectSessionsParamsState = "connected"
 	ListConnectSessionsParamsStateCreated   ListConnectSessionsParamsState = "created"
-	ListConnectSessionsParamsStateExpired   ListConnectSessionsParamsState = "expired"
-	ListConnectSessionsParamsStateFailed    ListConnectSessionsParamsState = "failed"
 	ListConnectSessionsParamsStatePolling   ListConnectSessionsParamsState = "polling"
 )
 
 // Valid indicates whether the value is a known member of the ListConnectSessionsParamsState enum.
 func (e ListConnectSessionsParamsState) Valid() bool {
 	switch e {
-	case ListConnectSessionsParamsStateConfirmed:
-		return true
 	case ListConnectSessionsParamsStateConnected:
 		return true
 	case ListConnectSessionsParamsStateCreated:
-		return true
-	case ListConnectSessionsParamsStateExpired:
-		return true
-	case ListConnectSessionsParamsStateFailed:
 		return true
 	case ListConnectSessionsParamsStatePolling:
 		return true

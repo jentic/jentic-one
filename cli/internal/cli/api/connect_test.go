@@ -12,6 +12,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -142,15 +143,32 @@ func TestConnect_WaitPollsUntilConnected(t *testing.T) {
 	if polls < 3 {
 		t.Errorf("polls = %d, want the loop to ride pending to the terminal status", polls)
 	}
-	for _, want := range []string{"connected", "@octocat", "cred_9"} {
+	// One stdout document per invocation (13 §1): the create envelope and the
+	// terminal status are merged into a single final render.
+	dec := json.NewDecoder(strings.NewReader(out))
+	var doc map[string]any
+	if err := dec.Decode(&doc); err != nil {
+		t.Fatalf("decode stdout: %v\n---\n%s", err, out)
+	}
+	if dec.More() {
+		t.Fatalf("--wait wrote more than one JSON document to stdout\n---\n%s", out)
+	}
+	for key, want := range map[string]string{
+		"status": "connected", "connected_as": "@octocat", "credential_id": "cred_9",
+		"session_id": "cs_2", "approval_url": "https://one.example/c/2",
+	} {
 		if !strings.Contains(out, want) {
-			t.Errorf("final render missing %q\n---\n%s", want, out)
+			t.Errorf("final render missing %s=%q\n---\n%s", key, want, out)
 		}
 	}
 }
 
-func TestConnect_WaitExpiredSessionIsResolveFailed(t *testing.T) {
+// An unhappy terminal (rejected/expired/cancelled) deletes the session row, and
+// the status route answers a missing session with 403 invalid_poll_token (the
+// no-enumeration posture) — never a {"status":"expired"} body.
+func TestConnect_WaitEndedSessionIsResolveFailed(t *testing.T) {
 	withXDG(t)
+	polls := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.Method == http.MethodPost {
@@ -158,14 +176,20 @@ func TestConnect_WaitExpiredSessionIsResolveFailed(t *testing.T) {
 			_, _ = w.Write([]byte(`{"session_id":"cs_3","approval_url":"https://one.example/c/3","poll_token":"pt_3","resolved_flow":"authorization_code"}`))
 			return
 		}
-		_, _ = w.Write([]byte(`{"status":"expired"}`))
+		polls++
+		if polls < 2 {
+			_, _ = w.Write([]byte(`{"status":"polling"}`))
+			return
+		}
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"type":"invalid_poll_token","detail":"invalid poll_token"}`))
 	}))
 	defer srv.Close()
 
 	_, err := runConnectTree(t, srv.URL, "connect", "github", "--wait")
 	var coded *ux.CodedError
 	if !errors.As(err, &coded) {
-		t.Fatalf("expired session returned %T (%v), want *ux.CodedError", err, err)
+		t.Fatalf("ended session returned %T (%v), want *ux.CodedError", err, err)
 	}
 	if coded.Code != ux.CodeResolveFailed {
 		t.Errorf("code = %q, want %q (re-running connect mints a fresh session)", coded.Code, ux.CodeResolveFailed)
@@ -175,12 +199,14 @@ func TestConnect_WaitExpiredSessionIsResolveFailed(t *testing.T) {
 	}
 }
 
-func TestConnect_400IsResolveFailed(t *testing.T) {
+// The route answers an unknown vendor with 404 unknown_vendor (errors.py
+// _VENDOR_ERROR_MAP).
+func TestConnect_UnknownVendor404IsResolveFailed(t *testing.T) {
 	withXDG(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte(`{"detail":"unknown vendor: 'nope'"}`))
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"type":"unknown_vendor","detail":"unknown vendor: 'nope'"}`))
 	}))
 	defer srv.Close()
 
@@ -214,8 +240,26 @@ func TestConnect_403IsOperatorScopeGrant(t *testing.T) {
 	if coded.Code != ux.CodeBrokerDenied {
 		t.Errorf("code = %q, want %q", coded.Code, ux.CodeBrokerDenied)
 	}
-	if !strings.Contains(coded.Actionable, "credentials:connect") {
-		t.Errorf("actionable %q must name the credentials:connect scope", coded.Actionable)
+	if !strings.Contains(coded.Actionable, "credentials:connect") || !strings.Contains(coded.Actionable, "jentic logout") {
+		t.Errorf("actionable %q must name the credentials:connect scope and the token re-mint", coded.Actionable)
+	}
+}
+
+func TestConnect_TooManyScopesIsArgumentError(t *testing.T) {
+	withXDG(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		t.Error("an over-cap --scopes must never reach the wire")
+	}))
+	defer srv.Close()
+
+	many := make([]string, connectScopesMax+1)
+	for i := range many {
+		many[i] = fmt.Sprintf("s%d", i)
+	}
+	_, err := runConnectTree(t, srv.URL, "connect", "github", "--scopes", strings.Join(many, ","))
+	var coded *ux.CodedError
+	if !errors.As(err, &coded) || coded.Code != ux.CodeMissingArgument {
+		t.Fatalf("over-cap scopes returned %T (%v), want MISSING_ARGUMENT", err, err)
 	}
 }
 

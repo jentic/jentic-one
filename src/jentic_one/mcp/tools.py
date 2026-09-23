@@ -1175,6 +1175,10 @@ _REQUEST_CONNECTION_INSTRUCTION = (
 #: route's pydantic validation.
 _REQUEST_CONNECTION_REASON_MAX = 1024
 
+#: Upper bound on ``requested_scopes`` — the Go mount's ``connectScopesMax``
+#: twin, so neither mount forwards an unbounded list to the vendor authorize URL.
+_REQUEST_CONNECTION_SCOPES_MAX = 100
+
 #: Per-actor rate-limit twin of the route's: the mount calls the
 #: connect-session service in-process, bypassing the route's app-state
 #: limiter, so it carries its own with the SAME policy knobs (imported from
@@ -1196,10 +1200,10 @@ async def handle_request_connection(
 
     Create-only (theme-7 Phase 1b): starts a connect session for a registry
     vendor and returns ``{session_id, approval_url, resolved_flow}`` plus the
-    operator-relay instruction. The ``poll_token`` is deliberately withheld —
-    this surface serves no poll leg (the recovery loop is relay approval_url →
-    operator approves → confirm via whoami → retry), so exposing an unusable
-    capability token would only invite the model to invent one. ``agent_id``
+    operator-relay instruction. ``poll_token`` is not surfaced as a separate
+    field — this surface serves no poll leg (the recovery loop is relay
+    approval_url → operator approves → confirm via whoami → retry); it still
+    rides the approval_url's query string, which the approving human needs. ``agent_id``
     is never taken from arguments: the caller *is* the agent (the route
     refuses a supplied agent_id with 403 for the same reason).
     """
@@ -1214,6 +1218,12 @@ async def handle_request_connection(
     if len(reason) > _REQUEST_CONNECTION_REASON_MAX:
         raise invalid_params(
             f"reason must be at most {_REQUEST_CONNECTION_REASON_MAX} characters, got {len(reason)}"
+        )
+    requested_scopes = args.get("requested_scopes") or None
+    if requested_scopes is not None and len(requested_scopes) > _REQUEST_CONNECTION_SCOPES_MAX:
+        raise invalid_params(
+            f"requested_scopes must list at most {_REQUEST_CONNECTION_SCOPES_MAX} scopes, "
+            f"got {len(requested_scopes)}"
         )
     try:
         # The route's any-of gate (credentials:connect | credentials:write);
@@ -1249,7 +1259,7 @@ async def handle_request_connection(
             vendor_key=vendor,
             agent_id=agent_id,
             initiator_actor_id=env.identity.sub,
-            requested_scopes=args.get("requested_scopes") or None,
+            requested_scopes=requested_scopes,
             preferred_flow=None,
             reason=reason or None,
         )
@@ -1264,8 +1274,8 @@ async def handle_request_connection(
             next_tool="search_catalog",
         ) from None
     except (UnsupportedFlowError, NoOpForFlowError) as exc:
-        # Aligned with the Go mount's 400 arm (review L1): the route answers
-        # 400 for an unusable flow just as for an unknown vendor, and the
+        # Aligned with the Go mount's 400/404 arm (review L1): the route
+        # answers 400 for an unusable flow (404 for an unknown vendor), and the
         # recovery is the same caller-shaped step — this vendor cannot be
         # connected here, so rediscover or route to the operator.
         raise ToolError(

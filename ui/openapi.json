@@ -2314,11 +2314,8 @@
           "state": {
             "enum": [
               "created",
-              "confirmed",
               "polling",
-              "connected",
-              "expired",
-              "failed"
+              "connected"
             ],
             "title": "State",
             "type": "string"
@@ -21817,11 +21814,8 @@
                 {
                   "enum": [
                     "created",
-                    "confirmed",
                     "polling",
-                    "connected",
-                    "expired",
-                    "failed"
+                    "connected"
                   ],
                   "type": "string"
                 },

@@ -65,7 +65,7 @@ It prints the `approval_url` (and the resolved flow) — relay the URL to
 your human operator, who opens it in their browser and approves the
 connection and its scopes; you never open or approve it. `--scopes` names
 vendor scopes to request (write scopes are flagged for the approver);
-`--wait` polls the session until it is terminal (connected/failed/expired;
+`--wait` polls until the session connects or ends (rejected, expired, or cancelled;
 exit 3 if the timeout lapses while still pending). Once they confirm,
 re-check `jentic whoami` — an agent-initiated connect binds you at
 approval — and retry the `execute` that was blocked.

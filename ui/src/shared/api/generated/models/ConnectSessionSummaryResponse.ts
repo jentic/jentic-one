@@ -20,11 +20,8 @@ export type ConnectSessionSummaryResponse = {
 export namespace ConnectSessionSummaryResponse {
     export enum state {
         CREATED = 'created',
-        CONFIRMED = 'confirmed',
         POLLING = 'polling',
         CONNECTED = 'connected',
-        EXPIRED = 'expired',
-        FAILED = 'failed',
     }
 }
 

@@ -271,4 +271,3 @@ def test_connect_session_agent_without_delegation_scope_is_self_only() -> None:
     sql = str(filters[0].compile(compile_kwargs={"literal_binds": True}))
     assert "agnt_lister" in sql
     assert "usr_owner" not in sql
-

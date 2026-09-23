@@ -1624,7 +1624,7 @@
           "path": "jentic connect",
           "use": "connect \u003cvendor\u003e",
           "short": "Start connecting a credential for a registry vendor (a human approves it)",
-          "long": "connect starts a connect session for a verified vendor from the deployment's\nvendor registry (e.g. `jentic connect github`) and prints the approval_url.\nRelay that URL to your human operator: they approve the connection and its\nscopes in the browser — this command never completes an approval by itself.\nOnce they confirm, check your new binding with `jentic whoami` and retry the\ncall that was blocked. --wait polls the session until it is terminal\n(connected, failed, or expired), heartbeating progress on stderr.",
+          "long": "connect starts a connect session for a verified vendor from the deployment's\nvendor registry (e.g. `jentic connect github`) and prints the approval_url.\nRelay that URL to your human operator: they approve the connection and its\nscopes in the browser — this command never completes an approval by itself.\nOnce they confirm, check your new binding with `jentic whoami` and retry the\ncall that was blocked. --wait polls the session until it connects or ends\n(rejected, expired, or cancelled), printing the approval_url and heartbeats\non stderr and a single JSON result on stdout.",
           "group_title": "APIs",
           "flags": [
             {
@@ -1663,7 +1663,7 @@
               "name": "wait",
               "type": "bool",
               "default": "false",
-              "usage": "poll the session until it is terminal (connected, failed, or expired)"
+              "usage": "poll the session until it connects or ends (rejected, expired, or cancelled)"
             }
           ]
         },
