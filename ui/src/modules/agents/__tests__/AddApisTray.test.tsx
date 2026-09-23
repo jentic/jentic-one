@@ -392,6 +392,97 @@ describe('AddApisTray — multi-select picks and the preflight tally', () => {
 		await waitFor(() => expect(screen.getByTestId('import-spec-dialog')).not.toBeVisible());
 	});
 
+	it('a covered pick names the credential it uses, and can switch to a new one', async () => {
+		const onContinue = vi.fn();
+		const user = userEvent.setup();
+		renderWithProviders(<TrayHarness onContinue={onContinue} />);
+
+		await user.click(await row(/Stripe/));
+		await waitFor(() => expect(selectionRows()).toHaveLength(1));
+		const selection = selectionRows()[0];
+		expect(within(selection).getByText('Stripe key')).toBeVisible();
+		expect(selection).toHaveTextContent(/Uses Stripe key · API key · added .* · …stripe/);
+
+		// Reuse is the default, never the only option.
+		const change = within(selection).getByRole('button', {
+			name: 'Change credential for Stripe',
+		});
+		expect(change).toHaveAttribute('aria-expanded', 'false');
+		await user.click(change);
+		expect(change).toHaveAttribute('aria-expanded', 'true');
+		const options = within(selection).getByRole('group', { name: 'Credential for Stripe' });
+		expect(within(options).getByRole('radio', { name: /Stripe key/ })).toBeChecked();
+
+		await user.click(within(options).getByRole('radio', { name: /Add a new credential/ }));
+		// Choosing closes the options and re-costs the pick.
+		await waitFor(() =>
+			expect(
+				within(selection).queryByRole('group', { name: 'Credential for Stripe' }),
+			).not.toBeInTheDocument(),
+		);
+		expect(within(selection).getByText('Needs a new credential')).toBeVisible();
+		expect(selection).toHaveTextContent('you have 1 for this API already');
+		await waitFor(() => expect(tallyLines()).toEqual(['1 API needs a new credential']));
+
+		await user.click(screen.getByRole('button', { name: 'Continue' }));
+		const [item] = onContinue.mock.calls[0][0] as PreflightItem[];
+		expect(item.outcome).toBe('form');
+		expect(item.candidates).toEqual([]);
+	});
+
+	it('several covering credentials are chosen between, and choosing one settles the pick', async () => {
+		resetCredentialsStore([
+			STRIPE_CREDENTIAL,
+			makeMockCredential({
+				credential_id: 'cred_stripe_sandbox',
+				name: 'Stripe sandbox',
+				type: CredentialType.BEARER_TOKEN,
+				api: { vendor: 'stripe.com', name: 'main', version: '1.0.0' },
+			}),
+		]);
+		const onContinue = vi.fn();
+		const user = userEvent.setup();
+		renderWithProviders(<TrayHarness onContinue={onContinue} />);
+
+		await user.click(await row(/Stripe/));
+		await waitFor(() => expect(selectionRows()).toHaveLength(1));
+		const selection = selectionRows()[0];
+		expect(
+			await within(selection).findByText(/2 of your credentials cover this API/),
+		).toBeVisible();
+		// Choosing may wait for the queue, so the pick still costs a stop.
+		expect(screen.getByRole('button', { name: 'Continue' })).toBeEnabled();
+
+		await user.click(
+			within(selection).getByRole('button', { name: 'Choose credential for Stripe' }),
+		);
+		const options = within(selection).getByRole('group', { name: 'Credential for Stripe' });
+		expect(within(options).getAllByRole('radio')).toHaveLength(3);
+		await user.click(within(options).getByRole('radio', { name: /Stripe sandbox/ }));
+
+		expect(selection).toHaveTextContent(/Uses Stripe sandbox/);
+		await waitFor(() =>
+			expect(screen.getByRole('button', { name: 'Add 1 API' })).toBeEnabled(),
+		);
+		await user.click(screen.getByRole('button', { name: 'Add 1 API' }));
+		const [item] = onContinue.mock.calls[0][0] as PreflightItem[];
+		expect(item.outcome).toBe('reuse');
+		expect(item.candidates.map((c) => c.credential_id)).toEqual(['cred_stripe_sandbox']);
+	});
+
+	it('passes an accessibility audit with credential options open', async () => {
+		const user = userEvent.setup();
+		renderWithProviders(<TrayHarness />);
+
+		await user.click(await row(/Stripe/));
+		await user.click(
+			await screen.findByRole('button', { name: 'Change credential for Stripe' }),
+		);
+		await screen.findByRole('group', { name: 'Credential for Stripe' });
+
+		await checkA11y(document.body, { modal: true });
+	});
+
 	it('passes an accessibility audit with picks and a tally on screen', async () => {
 		const user = userEvent.setup();
 		renderWithProviders(<TrayHarness />);

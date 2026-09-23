@@ -7,6 +7,7 @@
 import { describe, it, expect } from 'vitest';
 import {
 	credentialCoversApi,
+	currentChoice,
 	preflightApi,
 	preflightApis,
 	preflightTally,
@@ -222,11 +223,129 @@ describe('preflightApi', () => {
 		expect(preflightApi(makePick({ source: 'local' }), inputs()).importsApi).toBe(false);
 	});
 
+	it('lists every covering credential, whatever the outcome', () => {
+		const production = makeCredential({ credential_id: 'cred_1' });
+		const sandbox = makeCredential({ credential_id: 'cred_2' });
+		const other = makeCredential({
+			credential_id: 'cred_3',
+			api: { vendor: 'slack.com', name: 'main', version: '1.0.0' },
+		});
+		const item = preflightApi(
+			makePick(),
+			inputs({ credentials: [production, sandbox, other] }),
+		);
+		expect(item.covering.map((c) => c.credential_id)).toEqual(['cred_1', 'cred_2']);
+	});
+
+	it('choosing a new credential over a covering one is a form, not a reuse', () => {
+		const item = preflightApi(
+			makePick(),
+			inputs({
+				credentials: [makeCredential()],
+				choices: { 'stripe-com/main': { kind: 'new' } },
+			}),
+		);
+		expect(item.outcome).toBe('form');
+		expect(item.candidates).toEqual([]);
+		// The covering list stays, so the choice can be changed back.
+		expect(item.covering).toHaveLength(1);
+		expect(item.choice).toEqual({ kind: 'new' });
+	});
+
+	it('a new credential for a managed-OAuth API stays one click', () => {
+		const pick = makePick({ securitySchemeTypes: ['oauth2'] });
+		const item = preflightApi(
+			pick,
+			inputs({
+				credentials: [makeCredential()],
+				managedOAuthAvailable: true,
+				choices: { 'stripe-com/main': { kind: 'new' } },
+			}),
+		);
+		expect(item.outcome).toBe('oauth');
+		expect(item.candidates).toEqual([]);
+	});
+
+	it('choosing one of several credentials settles the pick as a reuse of it', () => {
+		const production = makeCredential({ credential_id: 'cred_1' });
+		const sandbox = makeCredential({ credential_id: 'cred_2' });
+		const item = preflightApi(
+			makePick(),
+			inputs({
+				credentials: [production, sandbox],
+				choices: { 'stripe-com/main': { kind: 'existing', credentialId: 'cred_2' } },
+			}),
+		);
+		expect(item.outcome).toBe('reuse');
+		expect(item.candidates.map((c) => c.credential_id)).toEqual(['cred_2']);
+		expect(item.covering).toHaveLength(2);
+	});
+
+	it('choosing an unconnected OAuth credential still costs its sign-in click', () => {
+		const connected = makeCredential({ credential_id: 'cred_1' });
+		const unconnected = makeCredential({
+			credential_id: 'cred_2',
+			type: CredentialType.OAUTH2,
+			details: { grant_type: 'authorization_code', connected: false },
+		});
+		const item = preflightApi(
+			makePick(),
+			inputs({
+				credentials: [connected, unconnected],
+				choices: { 'stripe-com/main': { kind: 'existing', credentialId: 'cred_2' } },
+			}),
+		);
+		expect(item.outcome).toBe('oauth');
+		expect(item.candidates.map((c) => c.credential_id)).toEqual(['cred_2']);
+	});
+
+	it('a choice naming a credential that no longer covers the pick falls back to the default', () => {
+		const production = makeCredential({ credential_id: 'cred_1' });
+		const sandbox = makeCredential({ credential_id: 'cred_2' });
+		const stale = {
+			'stripe-com/main': { kind: 'existing', credentialId: 'cred_gone' },
+		} as const;
+
+		const several = preflightApi(
+			makePick(),
+			inputs({ credentials: [production, sandbox], choices: stale }),
+		);
+		expect(several.outcome).toBe('choose');
+		expect(several.choice).toBeUndefined();
+
+		const one = preflightApi(makePick(), inputs({ credentials: [production], choices: stale }));
+		expect(one.outcome).toBe('reuse');
+		expect(one.candidates.map((c) => c.credential_id)).toEqual(['cred_1']);
+	});
+
 	it('keys each item by its canonical vendor/name identity', () => {
 		const pick = makePick({ vendor: 'GitHub.com', name: 'Main' });
 		expect(preflightApi(pick, inputs()).key).toBe(apiRefKey(pick));
 		// Slug form, so a raw domain and its stored spelling key alike.
 		expect(preflightApi(pick, inputs()).key).toBe('github-com/main');
+	});
+});
+
+describe('currentChoice', () => {
+	it('is the settled credential, a requested new one, or nothing while choosing', () => {
+		const production = makeCredential({ credential_id: 'cred_1' });
+		const sandbox = makeCredential({ credential_id: 'cred_2' });
+		const one = preflightApi(makePick(), inputs({ credentials: [production] }));
+		expect(currentChoice(one)).toEqual({ kind: 'existing', credentialId: 'cred_1' });
+
+		const several = preflightApi(makePick(), inputs({ credentials: [production, sandbox] }));
+		expect(currentChoice(several)).toBeNull();
+
+		const fresh = preflightApi(
+			makePick(),
+			inputs({
+				credentials: [production],
+				choices: { 'stripe-com/main': { kind: 'new' } },
+			}),
+		);
+		expect(currentChoice(fresh)).toEqual({ kind: 'new' });
+		// No covering credential: nothing to choose between.
+		expect(currentChoice(preflightApi(makePick(), inputs()))).toBeNull();
 	});
 });
 

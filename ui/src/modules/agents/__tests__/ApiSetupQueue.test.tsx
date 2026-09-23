@@ -61,6 +61,7 @@ function makeItem(
 		candidates: [],
 		importsApi: false,
 		...over,
+		covering: over.covering ?? over.candidates ?? [],
 	};
 }
 
@@ -195,14 +196,87 @@ describe('ApiSetupQueue — finishing a batch one API at a time', () => {
 
 		// A credential matches on API identity, not on account, so "none of these"
 		// has to be answerable without dropping the API — there is no third way.
-		expect(
-			await screen.findByText(/if none of these 2 should be used for stripe/),
-		).toBeInTheDocument();
-		await user.click(screen.getByRole('button', { name: 'Use a different credential' }));
+		const options = await screen.findByRole('group', {
+			name: 'You have 2 credentials for stripe. Which should Support bot use?',
+		});
+		expect(within(options).getAllByRole('radio')).toHaveLength(3);
+		await user.click(within(options).getByRole('radio', { name: /Add a new credential/ }));
+		await user.click(screen.getByRole('button', { name: 'Add credential' }));
 
 		expect(
 			await screen.findByText('Fill in the credential details for stripe'),
 		).toBeInTheDocument();
+	});
+
+	it('preselects a new credential chosen in the tray, and can switch back to an existing one', async () => {
+		const { calls } = watchBinds();
+		const user = userEvent.setup();
+		renderWithProviders(
+			<QueueHarness
+				items={[
+					makeItem('stripe.com', 'form', {
+						covering: [makeCredential()],
+						choice: { kind: 'new' },
+					}),
+				]}
+			/>,
+		);
+
+		const options = await screen.findByRole('group', {
+			name: 'You have 1 credential for stripe. Should Support bot use it, or a new one?',
+		});
+		expect(within(options).getByRole('radio', { name: /Add a new credential/ })).toBeChecked();
+		expect(screen.getByRole('button', { name: 'Add credential' })).toBeEnabled();
+
+		// Changing your mind here must not cost a trip back to the tray.
+		await user.click(within(options).getByRole('radio', { name: /Stripe key/ }));
+		expect(screen.queryByRole('button', { name: 'Add credential' })).not.toBeInTheDocument();
+		await user.click(screen.getByRole('button', { name: 'Use this credential' }));
+
+		await waitFor(() => expect(calls).toHaveLength(1));
+		expect(calls[0].body).toEqual({ credential_id: 'cred_stripe' });
+		await waitFor(() => expect(rowFor('stripe')).toHaveTextContent('via Stripe key'));
+	});
+
+	it('a credential awaiting sign-in says so, and a new one stays one card away', async () => {
+		const user = userEvent.setup();
+		const unconnected = makeCredential({
+			credential_id: 'cred_oauth',
+			name: 'Stripe OAuth',
+			type: CredentialType.OAUTH2,
+			details: { grant_type: 'authorization_code', connected: false },
+		});
+		renderWithProviders(
+			<QueueHarness
+				items={[makeItem('stripe.com', 'oauth', { candidates: [unconnected] })]}
+			/>,
+		);
+
+		const options = await screen.findByRole('group', { name: /You have 1 credential/ });
+		const existing = within(options).getByRole('radio', { name: /Stripe OAuth/ });
+		expect(existing).toBeChecked();
+		expect(within(options).getByText('Sign-in needed')).toBeVisible();
+		expect(
+			screen.getByText(/is ready to use — it just needs you to finish signing in/),
+		).toBeVisible();
+		expect(screen.getByRole('button', { name: 'Sign in to stripe' })).toBeEnabled();
+
+		await user.click(within(options).getByRole('radio', { name: /Add a new credential/ }));
+		expect(screen.queryByRole('button', { name: 'Sign in to stripe' })).not.toBeInTheDocument();
+		expect(screen.queryByText(/just needs you to finish signing in/)).not.toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Add credential' })).toBeEnabled();
+	});
+
+	it('an API with no credential of yours shows no options, only the form', async () => {
+		renderWithProviders(<QueueHarness items={[makeItem('slack.com', 'form')]} />);
+
+		expect(await screen.findByRole('button', { name: 'Add credential' })).toBeEnabled();
+		expect(screen.queryByRole('radio')).not.toBeInTheDocument();
+		expect(
+			screen.getByText(
+				'This API needs a new credential. Nothing is stored until you save it.',
+			),
+		).toBeVisible();
 	});
 
 	it('clears the free reuses before stopping on the item that needs attention', async () => {
@@ -434,6 +508,22 @@ describe('ApiSetupQueue — finishing a batch one API at a time', () => {
 		await waitFor(() => expect(rowFor('stripe')).toHaveAttribute('data-status', 'added'));
 		await user.click(screen.getByRole('button', { name: 'Not this one' }));
 		await screen.findByTestId('queue-drop-confirm');
+
+		await checkA11y(document.body, { modal: true });
+	});
+
+	it('passes an accessibility audit with credential options in the pane', async () => {
+		const production = makeCredential({
+			credential_id: 'cred_prod',
+			name: 'Stripe — Production',
+		});
+		const sandbox = makeCredential({ credential_id: 'cred_sandbox', name: 'Stripe — Sandbox' });
+		renderWithProviders(
+			<QueueHarness
+				items={[makeItem('stripe.com', 'choose', { candidates: [production, sandbox] })]}
+			/>,
+		);
+		await screen.findByRole('group', { name: /You have 2 credentials/ });
 
 		await checkA11y(document.body, { modal: true });
 	});

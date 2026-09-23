@@ -5,7 +5,11 @@
  * and an unsettled item is handed back on re-entry rather than lost.
  */
 import type { Credential, SelectedApi } from '@/shared/credentials/api';
-import type { PreflightItem, PreflightOutcome } from '@/modules/agents/lib/apiPreflight';
+import type {
+	CredentialChoice,
+	PreflightItem,
+	PreflightOutcome,
+} from '@/modules/agents/lib/apiPreflight';
 
 /** Where one API is in the queue: `active` = the pane is on it, `working` = a
  * request is in flight, `added`/`dropped` are terminal, `failed` is retryable but
@@ -17,8 +21,12 @@ export interface QueueEntry {
 	key: string;
 	api: SelectedApi;
 	outcome: PreflightOutcome;
-	/** Org credentials that cover this API, from the preflight. */
+	/** The credentials the preflight settled on offering or binding. */
 	candidates: Credential[];
+	/** Every org credential that covers this API, from the preflight. */
+	covering: Credential[];
+	/** The operator's tray choice, carried so a handed-back item keeps it. */
+	choice?: CredentialChoice;
 	/** Accepting this item imports the API into the workspace. */
 	importsApi: boolean;
 	status: QueueStatus;
@@ -60,6 +68,8 @@ export function buildQueue(items: PreflightItem[]): QueueEntry[] {
 		api: item.api,
 		outcome: item.outcome,
 		candidates: item.candidates,
+		covering: item.covering,
+		choice: item.choice,
 		importsApi: item.importsApi,
 		status: 'waiting',
 	});
@@ -161,6 +171,8 @@ export function unfinishedItems(entries: QueueEntry[]): PreflightItem[] {
 			api: e.api,
 			outcome: e.outcome,
 			candidates: e.candidates,
+			covering: e.covering,
+			choice: e.choice,
 			importsApi: e.importsApi,
 		}));
 }

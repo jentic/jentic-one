@@ -47,11 +47,14 @@ function makeItem(vendor: string, outcome: PreflightOutcome, over: Partial<Prefl
 		version: '1.0.0',
 		label: vendor,
 	};
+	const candidates =
+		over.candidates ?? (outcome === 'reuse' || outcome === 'oauth' ? [makeCredential()] : []);
 	return {
 		key: `${vendor}/main`,
 		api,
 		outcome,
-		candidates: outcome === 'reuse' || outcome === 'oauth' ? [makeCredential()] : [],
+		candidates,
+		covering: candidates,
 		importsApi: false,
 		...over,
 	} satisfies PreflightItem;

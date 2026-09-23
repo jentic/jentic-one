@@ -3,27 +3,33 @@
  * `ApiPicker`), see what they will cost, hand the batch to the setup queue.
  *
  * Each pick is preflighted as reuse / one sign-in click / pick-which-credential /
- * needs-a-new-credential, so the cost is on screen before anything commits. The
- * selection survives a dismissal and clears on commit or an agent change.
+ * needs-a-new-credential, so the cost is on screen before anything commits. A pick
+ * that existing credentials cover says which one it will use, and "Change" opens
+ * every covering credential plus "Add a new credential" — an API can hold several.
+ * The selection survives a dismissal and clears on commit or an agent change.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Plus, Upload, X } from 'lucide-react';
+import { ChevronDown, KeyRound, Plus, Upload, X } from 'lucide-react';
 import { Badge, Button, ErrorAlert, LoadingState, SheetPrimitive } from '@/shared/ui';
 import { cn } from '@/shared/lib/utils';
 import { useAllCredentials, useProviders, type SelectedApi } from '@/shared/credentials/api';
 import { apiRefKey } from '@/shared/credentials/lib/apiIdentity';
 import { ApiPicker } from '@/shared/credentials/components/ApiPicker';
 import { ImportSpecDialog } from '@/shared/credentials/components/ImportSpecDialog';
+import { credentialDistinguisher } from '@/shared/credentials/lib/credentialIdentity';
 import {
 	PREFLIGHT_LABELS,
 	PREFLIGHT_TALLY_ORDER,
+	currentChoice,
 	preflightApis,
 	preflightTally,
 	preflightTallyLabel,
+	type CredentialChoice,
 	type PreflightItem,
 	type PreflightOutcome,
 } from '@/modules/agents/lib/apiPreflight';
 import type { CredentialBindingEntity } from '@/modules/agents/api/types';
+import { CredentialOptions } from '@/modules/agents/components/flat/CredentialOptions';
 
 /** Badge colour per outcome — cheapest reads as success, costliest as neutral. */
 const OUTCOME_VARIANT: Record<PreflightOutcome, 'default' | 'success' | 'warning' | 'pending'> = {
@@ -56,6 +62,10 @@ export function AddApisTray({
 }: AddApisTrayProps) {
 	const headingId = 'add-apis-tray-title';
 	const [picks, setPicks] = useState<SelectedApi[]>([]);
+	/** Pick key → which credential it should use, for picks the operator changed. */
+	const [choices, setChoices] = useState<Record<string, CredentialChoice>>({});
+	/** The one pick whose credential options are open. */
+	const [expandedKey, setExpandedKey] = useState<string | null>(null);
 	/** Spec upload. First-class here because "the API I need isn't in the catalog"
 	 * is otherwise a dead end mid-flow; a successful import lands in the selection,
 	 * so the operator never has to search for what they just uploaded. */
@@ -68,6 +78,7 @@ export function AddApisTray({
 		if (lastAgentIdRef.current !== agentId) {
 			lastAgentIdRef.current = agentId;
 			setPicks([]);
+			setChoices({});
 		}
 	}, [agentId]);
 
@@ -86,8 +97,9 @@ export function AddApisTray({
 				credentials: credentialsSource.items,
 				bindings,
 				managedOAuthAvailable,
+				choices,
 			}),
-		[picks, credentialsSource.items, bindings, managedOAuthAvailable],
+		[picks, credentialsSource.items, bindings, managedOAuthAvailable, choices],
 	);
 	const tally = useMemo(() => preflightTally(items), [items]);
 
@@ -107,17 +119,23 @@ export function AddApisTray({
 		return keys;
 	}, [bindings]);
 
-	const toggle = (api: SelectedApi): void => {
-		const key = apiRefKey(api);
-		setPicks((current) =>
-			current.some((p) => apiRefKey(p) === key)
-				? current.filter((p) => apiRefKey(p) !== key)
-				: [...current, api],
-		);
+	const choose = (key: string, next: CredentialChoice | null): void =>
+		setChoices((current) => {
+			const { [key]: _previous, ...rest } = current;
+			return next ? { ...rest, [key]: next } : rest;
+		});
+
+	// A pick taken out forgets its choice, so re-picking starts from the default.
+	const remove = (key: string): void => {
+		setPicks((current) => current.filter((p) => apiRefKey(p) !== key));
+		choose(key, null);
 	};
 
-	const remove = (key: string): void =>
-		setPicks((current) => current.filter((p) => apiRefKey(p) !== key));
+	const toggle = (api: SelectedApi): void => {
+		const key = apiRefKey(api);
+		if (picks.some((p) => apiRefKey(p) === key)) remove(key);
+		else setPicks((current) => [...current, api]);
+	};
 
 	// Append, never toggle: re-uploading an API already picked must not drop it.
 	const addImported = (apis: SelectedApi[]): void =>
@@ -135,6 +153,7 @@ export function AddApisTray({
 		onContinue(actionable);
 		// Reset on commit — the queue owns these picks now.
 		setPicks([]);
+		setChoices({});
 	};
 
 	return (
@@ -192,33 +211,46 @@ export function AddApisTray({
 						aria-label="Selected APIs"
 						className="border-border bg-muted/20 border-t px-5 py-3"
 					>
-						<ul className="mb-3 max-h-40 space-y-1 overflow-y-auto">
+						<ul className="divide-border/50 mb-3 max-h-72 divide-y overflow-y-auto">
 							{items.map((item) => (
-								<li
-									key={item.key}
-									data-testid="tray-selection"
-									className="flex items-center gap-2 text-sm"
-								>
-									<span className="text-foreground min-w-0 flex-1 truncate">
-										{item.api.label}
-									</span>
-									<Badge
-										variant={OUTCOME_VARIANT[item.outcome]}
-										className="shrink-0 text-[10px]"
-									>
-										{item.outcome === 'attached' && item.attachedVia
-											? `Already added via ${item.attachedVia}`
-											: PREFLIGHT_LABELS[item.outcome]}
-									</Badge>
-									<Button
-										variant="ghost"
-										size="sm"
-										aria-label={`Remove ${item.api.label}`}
-										onClick={(): void => remove(item.key)}
-										className="text-muted-foreground hover:text-foreground shrink-0"
-									>
-										<X className="h-3.5 w-3.5" />
-									</Button>
+								<li key={item.key} data-testid="tray-selection" className="py-1.5">
+									<div className="flex items-center gap-2 text-sm">
+										<span className="text-foreground min-w-0 flex-1 truncate">
+											{item.api.label}
+										</span>
+										<Badge
+											variant={OUTCOME_VARIANT[item.outcome]}
+											className="shrink-0 text-[10px]"
+										>
+											{item.outcome === 'attached' && item.attachedVia
+												? `Already added via ${item.attachedVia}`
+												: PREFLIGHT_LABELS[item.outcome]}
+										</Badge>
+										<Button
+											variant="ghost"
+											size="sm"
+											aria-label={`Remove ${item.api.label}`}
+											onClick={(): void => remove(item.key)}
+											className="text-muted-foreground hover:text-foreground shrink-0"
+										>
+											<X className="h-3.5 w-3.5" />
+										</Button>
+									</div>
+									{item.covering.length > 0 && (
+										<PickCredential
+											item={item}
+											expanded={expandedKey === item.key}
+											onToggle={(): void =>
+												setExpandedKey((current) =>
+													current === item.key ? null : item.key,
+												)
+											}
+											onChoose={(next): void => {
+												choose(item.key, next);
+												setExpandedKey(null);
+											}}
+										/>
+									)}
 								</li>
 							))}
 						</ul>
@@ -279,6 +311,86 @@ export function AddApisTray({
 				onImported={addImported}
 			/>
 		</SheetPrimitive>
+	);
+}
+
+/**
+ * Which credential a covered pick uses, said as a sentence with a "Change" link
+ * that opens the {@link CredentialOptions} cards — every covering credential plus
+ * "Add a new credential".
+ */
+function PickCredential({
+	item,
+	expanded,
+	onToggle,
+	onChoose,
+}: {
+	item: PreflightItem;
+	expanded: boolean;
+	onToggle: () => void;
+	onChoose: (choice: CredentialChoice) => void;
+}) {
+	const optionsId = `credential-choice-${item.key}`;
+	const selected = currentChoice(item);
+	const settled = selected?.kind === 'existing' ? item.candidates[0] : null;
+	const count = item.covering.length;
+	const verb = selected ? 'Change' : 'Choose';
+
+	return (
+		<div className="mt-1">
+			<div className="flex items-center gap-2 text-xs">
+				<p className="text-muted-foreground min-w-0 flex-1 truncate">
+					{settled ? (
+						<>
+							<KeyRound
+								className="mr-1 inline h-3 w-3 align-[-2px]"
+								aria-hidden="true"
+							/>
+							Uses <span className="text-foreground font-medium">{settled.name}</span>
+							<span className="text-muted-foreground/80">
+								{' '}
+								· {credentialDistinguisher(settled)}
+							</span>
+						</>
+					) : selected?.kind === 'new' ? (
+						<>
+							<Plus className="mr-1 inline h-3 w-3 align-[-2px]" aria-hidden="true" />
+							Adds a new credential — you have {count} for this API already
+						</>
+					) : (
+						`${count} of your credentials cover this API — choose one now or in the next step`
+					)}
+				</p>
+				<Button
+					variant="ghost"
+					size="sm"
+					aria-expanded={expanded}
+					aria-controls={optionsId}
+					aria-label={`${verb} credential for ${item.api.label}`}
+					onClick={onToggle}
+					className="text-primary hover:text-primary h-6 shrink-0 px-2 text-xs"
+				>
+					{verb}
+					<ChevronDown
+						className={cn('h-3 w-3 transition-transform', expanded && 'rotate-180')}
+						aria-hidden="true"
+					/>
+				</Button>
+			</div>
+
+			{expanded && (
+				<CredentialOptions
+					id={optionsId}
+					legend={`Credential for ${item.api.label}`}
+					legendHidden
+					credentials={item.covering}
+					selected={selected}
+					onSelect={onChoose}
+					newCredentialDetail="Another key or account for this API — you fill it in the next step"
+					className="mt-2"
+				/>
+			)}
+		</div>
 	);
 }
 

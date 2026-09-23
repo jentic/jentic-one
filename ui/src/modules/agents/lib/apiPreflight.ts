@@ -12,10 +12,12 @@ import type { CredentialBindingEntity, ServedApiEntity } from '@/modules/agents/
  * What a pick will cost, worst-to-best as work for the operator.
  *
  * - `attached` — this agent already reaches the API; the tray blocks the pick.
- * - `reuse` — exactly one org credential covers it. Bind and move on.
+ * - `reuse` — an existing credential is settled on: the only one that covers it,
+ *   or the one the operator chose. Bind and move on.
  * - `oauth` — one sign-in click finishes it.
- * - `choose` — several org credentials cover it, so the queue asks which.
- * - `form` — needs a new credential typed in.
+ * - `choose` — several org credentials cover it and none was chosen yet.
+ * - `form` — needs a new credential typed in, because none covers it or the
+ *   operator asked for a new one.
  */
 export type PreflightOutcome = 'attached' | 'reuse' | 'oauth' | 'choose' | 'form';
 
@@ -24,15 +26,25 @@ export interface PreflightItem {
 	key: string;
 	api: SelectedApi;
 	outcome: PreflightOutcome;
-	/** Org credentials whose identity covers this pick, in list order: one for
-	 * `reuse`, several for `choose`, the unconnected one for `oauth`. */
+	/** The credentials the queue offers or binds, in list order: one for `reuse`,
+	 * several for `choose`, the unconnected one for `oauth`, none when a new
+	 * credential is due. Narrowed by the operator's {@link CredentialChoice}. */
 	candidates: Credential[];
+	/** Every org credential that covers this pick, whatever was chosen — the
+	 * options the tray offers alongside a new credential. */
+	covering: Credential[];
+	/** The operator's choice for this pick, when one was made and still applies. */
+	choice?: CredentialChoice;
 	/** `attached` only: the credential the agent already reaches this API
 	 *  through, so the row can say which binding is in the way. */
 	attachedVia?: string;
 	/** True when accepting this pick imports the API into the workspace. */
 	importsApi: boolean;
 }
+
+/** Which credential a pick should use: an existing one, or a new one even though
+ * existing ones cover it. An API can hold any number of credentials. */
+export type CredentialChoice = { kind: 'existing'; credentialId: string } | { kind: 'new' };
 
 export interface PreflightInputs {
 	/** Every org credential — pass a DRAINED list; a first page misclassifies. */
@@ -43,6 +55,9 @@ export interface PreflightInputs {
 	/** A managed OAuth provider is configured, so a new oauth2 credential is a
 	 * sign-in click rather than a client-credentials form. */
 	managedOAuthAvailable: boolean;
+	/** Per-pick choices, keyed like {@link PreflightItem.key}. Absent = the default:
+	 * reuse a lone covering credential, ask which when several cover it. */
+	choices?: Readonly<Record<string, CredentialChoice>>;
 }
 
 /** Does a binding's served reference already cover this pick? Delegates to
@@ -82,37 +97,65 @@ export function preflightApi(api: SelectedApi, inputs: PreflightInputs): Preflig
 	const key = apiRefKey(api);
 	const importsApi = api.source === 'catalog' && !api.registered;
 
-	const covering = inputs.bindings.find((b) => b.serves.some((s) => servedCoversPick(s, api)));
-	if (covering) {
+	const binding = inputs.bindings.find((b) => b.serves.some((s) => servedCoversPick(s, api)));
+	if (binding) {
 		return {
 			key,
 			api,
 			outcome: 'attached',
 			candidates: [],
-			attachedVia: covering.name ?? covering.credentialId,
+			covering: [],
+			attachedVia: binding.name ?? binding.credentialId,
 			importsApi: false,
 		};
 	}
 
-	const candidates = inputs.credentials.filter((c) => credentialCoversApi(c, api));
-
-	if (candidates.length > 1) {
-		return { key, api, outcome: 'choose', candidates, importsApi };
-	}
-	if (candidates.length === 1) {
-		// An OAuth credential whose sign-in never completed is still legitimate reuse —
-		// it just costs the consent click it never got.
-		const outcome = credentialAwaitsConsent(candidates[0]) ? 'oauth' : 'reuse';
-		return { key, api, outcome, candidates, importsApi };
-	}
-
-	return {
+	const covering = inputs.credentials.filter((c) => credentialCoversApi(c, api));
+	const newCredential = (choice?: CredentialChoice): PreflightItem => ({
 		key,
 		api,
 		outcome: newCredentialIsOneClick(api, inputs.managedOAuthAvailable) ? 'oauth' : 'form',
 		candidates: [],
+		covering,
+		choice,
 		importsApi,
-	};
+	});
+	// An OAuth credential whose sign-in never completed is still legitimate reuse —
+	// it just costs the consent click it never got.
+	const reuseExisting = (credential: Credential, choice?: CredentialChoice): PreflightItem => ({
+		key,
+		api,
+		outcome: credentialAwaitsConsent(credential) ? 'oauth' : 'reuse',
+		candidates: [credential],
+		covering,
+		choice,
+		importsApi,
+	});
+
+	const choice = inputs.choices?.[key];
+	if (choice?.kind === 'new' && covering.length > 0) return newCredential(choice);
+	if (choice?.kind === 'existing') {
+		const chosen = covering.find((c) => c.credential_id === choice.credentialId);
+		// A choice whose credential no longer covers the pick falls back to the default.
+		if (chosen) return reuseExisting(chosen, choice);
+	}
+
+	if (covering.length > 1) {
+		return { key, api, outcome: 'choose', candidates: covering, covering, importsApi };
+	}
+	if (covering.length === 1) return reuseExisting(covering[0]);
+	return newCredential();
+}
+
+/** The credential an item stands on right now: a new one when the operator asked
+ * for it, else the existing credential the preflight settled on, else none — a
+ * `choose` item waits for the operator. */
+export function currentChoice(
+	item: Pick<PreflightItem, 'outcome' | 'candidates' | 'choice'>,
+): CredentialChoice | null {
+	if (item.choice?.kind === 'new') return item.choice;
+	const settled = item.outcome === 'choose' ? undefined : item.candidates[0];
+	return settled ? { kind: 'existing', credentialId: settled.credential_id } : null;
 }
 
 /** Classify a whole selection, preserving pick order. */

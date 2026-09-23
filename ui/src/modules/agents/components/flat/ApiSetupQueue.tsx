@@ -20,10 +20,14 @@ import {
 	CreateCredentialFlow,
 	type CreatedCredentialInfo,
 } from '@/shared/credentials/components/CreateCredentialFlow';
-import { CredentialTypeBadge } from '@/shared/credentials/components/CredentialTypeBadge';
 import { useBindAgentCredential } from '@/modules/agents/api';
 import { credentialAwaitsConsent } from '@/modules/agents/lib/apiTiles';
-import type { PreflightItem } from '@/modules/agents/lib/apiPreflight';
+import {
+	currentChoice,
+	type CredentialChoice,
+	type PreflightItem,
+} from '@/modules/agents/lib/apiPreflight';
+import { CredentialOptions } from '@/modules/agents/components/flat/CredentialOptions';
 import {
 	QUEUE_RULES_NOTICE,
 	QUEUE_STATUS_LABELS,
@@ -64,8 +68,9 @@ export function ApiSetupQueue({ open, agentId, agentName, items, onClose }: ApiS
 	const [dropKey, setDropKey] = useState<string | null>(null);
 	/** The entry whose credential wizard is open. */
 	const [formKey, setFormKey] = useState<string | null>(null);
-	/** `choose` panes: entry key → the credential the operator selected. */
-	const [choice, setChoice] = useState<Record<string, string>>({});
+	/** Entry key → the credential choice the operator made in its pane. Absent =
+	 * whatever the tray settled on ({@link currentChoice}). */
+	const [choices, setChoices] = useState<Record<string, CredentialChoice>>({});
 
 	// A new batch replaces the queue outright. Compared by reference: a content
 	// compare would fight the in-progress statuses.
@@ -76,6 +81,7 @@ export function ApiSetupQueue({ open, agentId, agentName, items, onClose }: ApiS
 		setEntries(buildQueue(items));
 		setDropKey(null);
 		setFormKey(null);
+		setChoices({});
 	}, [items]);
 
 	// Silent: every outcome is reported on its own row, so a batch of five would
@@ -223,9 +229,9 @@ export function ApiSetupQueue({ open, agentId, agentName, items, onClose }: ApiS
 							entry={active}
 							agentName={agentName}
 							dropPending={dropKey === active.key}
-							selectedCredentialId={choice[active.key] ?? null}
-							onSelectCredential={(credentialId): void =>
-								setChoice((c) => ({ ...c, [active.key]: credentialId }))
+							selected={choices[active.key] ?? currentChoice(active)}
+							onSelect={(next): void =>
+								setChoices((current) => ({ ...current, [active.key]: next }))
 							}
 							onUseCredential={(credential): void => {
 								void settle(active, credential, {
@@ -307,13 +313,18 @@ export function ApiSetupQueue({ open, agentId, agentName, items, onClose }: ApiS
 	);
 }
 
-/** The pane for the item at the front of the queue. */
+/** The pane for the item at the front of the queue.
+ *
+ * An API that existing credentials cover shows them all as cards, with "Add a new
+ * credential" last and the tray's choice preselected — reuse matches API identity,
+ * not account, so a wrong-tenant match must be rejectable without dropping the
+ * API. The primary action follows the selected card. */
 function ActivePane({
 	entry,
 	agentName,
 	dropPending,
-	selectedCredentialId,
-	onSelectCredential,
+	selected,
+	onSelect,
 	onUseCredential,
 	onOpenForm,
 	onAskDrop,
@@ -323,8 +334,8 @@ function ActivePane({
 	entry: QueueEntry;
 	agentName: string;
 	dropPending: boolean;
-	selectedCredentialId: string | null;
-	onSelectCredential: (credentialId: string) => void;
+	selected: CredentialChoice | null;
+	onSelect: (choice: CredentialChoice) => void;
 	onUseCredential: (credential: Credential) => void;
 	onOpenForm: () => void;
 	onAskDrop: () => void;
@@ -332,13 +343,14 @@ function ActivePane({
 	onConfirmDrop: () => void;
 }) {
 	const working = entry.status === 'working';
-	const signInCandidate = entry.outcome === 'oauth' ? (entry.candidates[0] ?? null) : null;
-	/** The pane is offering an existing credential, so it owes an escape from it. */
-	const hasCandidates = entry.candidates.length > 0;
-	const chosen =
-		entry.outcome === 'choose'
-			? (entry.candidates.find((c) => c.credential_id === selectedCredentialId) ?? null)
+	const count = entry.covering.length;
+	const existing =
+		selected?.kind === 'existing'
+			? (entry.covering.find((c) => c.credential_id === selected.credentialId) ?? null)
 			: null;
+	const wantsNew = count === 0 || selected?.kind === 'new';
+	/** A new credential for this API is one sign-in click — the tray established it. */
+	const newIsSignIn = entry.outcome === 'oauth' && entry.candidates.length === 0;
 
 	return (
 		<section
@@ -369,53 +381,34 @@ function ActivePane({
 				)}
 			</div>
 
-			{entry.outcome === 'choose' && (
-				<fieldset className="space-y-2" disabled={working}>
-					<legend className="text-muted-foreground mb-1 text-xs">
-						{entry.candidates.length} credentials can reach this API. Which one should{' '}
-						{agentName} use?
-					</legend>
-					{entry.candidates.map((candidate) => (
-						<label
-							key={candidate.credential_id}
-							className={cn(
-								'border-border hover:bg-muted/40 flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-2',
-								selectedCredentialId === candidate.credential_id &&
-									'border-primary/60 bg-primary/5',
-							)}
-						>
-							<input
-								type="radio"
-								name={`credential-${entry.key}`}
-								className="accent-primary h-4 w-4 shrink-0"
-								checked={selectedCredentialId === candidate.credential_id}
-								onChange={(): void => onSelectCredential(candidate.credential_id)}
-							/>
-							<span className="text-foreground min-w-0 flex-1 truncate text-sm">
-								{candidate.name}
-							</span>
-							<CredentialTypeBadge type={candidate.type} />
-						</label>
-					))}
-				</fieldset>
+			{count > 0 && (
+				<CredentialOptions
+					id={`queue-credential-${entry.key}`}
+					legend={
+						count === 1
+							? `You have 1 credential for ${entry.api.label}. Should ${agentName} use it, or a new one?`
+							: `You have ${count} credentials for ${entry.api.label}. Which should ${agentName} use?`
+					}
+					credentials={entry.covering}
+					selected={selected}
+					onSelect={onSelect}
+					newCredentialDetail="Another key or account for this API — nothing is stored until you save it"
+					disabled={working || dropPending}
+				/>
 			)}
 
-			{entry.outcome === 'oauth' && signInCandidate && (
+			{existing && credentialAwaitsConsent(existing) && (
 				<p className="text-muted-foreground text-xs">
-					<span className="text-foreground font-medium">{signInCandidate.name}</span> is
-					ready to use — it just needs you to finish signing in.
+					<span className="text-foreground font-medium">{existing.name}</span> is ready to
+					use — it just needs you to finish signing in.
 				</p>
 			)}
 
-			{entry.outcome === 'oauth' && !signInCandidate && (
+			{count === 0 && (
 				<p className="text-muted-foreground text-xs">
-					Sign in once and this API is set up — there is nothing to type in.
-				</p>
-			)}
-
-			{entry.outcome === 'form' && (
-				<p className="text-muted-foreground text-xs">
-					This API needs a new credential. Nothing is stored until you save it.
+					{newIsSignIn
+						? 'Sign in once and this API is set up — there is nothing to type in.'
+						: 'This API needs a new credential. Nothing is stored until you save it.'}
 				</p>
 			)}
 
@@ -443,52 +436,41 @@ function ActivePane({
 				</div>
 			) : (
 				<div className="flex flex-wrap items-center gap-2">
-					{entry.outcome === 'choose' ? (
-						<Button
-							size="sm"
-							disabled={working || !chosen}
-							onClick={(): void => {
-								if (chosen) onUseCredential(chosen);
-							}}
-						>
-							Use this credential
-						</Button>
-					) : signInCandidate ? (
+					{existing ? (
 						<Button
 							size="sm"
 							disabled={working}
-							onClick={(): void => onUseCredential(signInCandidate)}
+							onClick={(): void => onUseCredential(existing)}
 						>
-							<LogIn className="h-4 w-4" />
-							Sign in to {entry.api.label}
+							{credentialAwaitsConsent(existing) ? (
+								<>
+									<LogIn className="h-4 w-4" />
+									Sign in to {entry.api.label}
+								</>
+							) : (
+								<>
+									<Check className="h-4 w-4" />
+									Use this credential
+								</>
+							)}
 						</Button>
-					) : (
+					) : wantsNew ? (
 						<Button size="sm" disabled={working} onClick={onOpenForm}>
 							<KeyRound className="h-4 w-4" />
 							Add credential
 						</Button>
-					)}
-					{/* Reuse matches API identity, not account: a wrong-tenant match has to be
-					    rejectable without dropping the API. */}
-					{hasCandidates && (
-						<Button size="sm" variant="ghost" disabled={working} onClick={onOpenForm}>
-							Use a different credential
+					) : (
+						// Nothing selected yet, which only happens among several: the
+						// button waits for a card rather than guessing one.
+						<Button size="sm" disabled>
+							<Check className="h-4 w-4" />
+							Use this credential
 						</Button>
 					)}
 					<Button size="sm" variant="ghost" disabled={working} onClick={onAskDrop}>
 						Not this one
 					</Button>
 				</div>
-			)}
-
-			{hasCandidates && !dropPending && (
-				// Name what the escape is escaping from, so "different" is a
-				// comparison the operator can actually make.
-				<p className="text-muted-foreground/80 text-xs">
-					{entry.outcome === 'choose'
-						? `A new credential is an option too, if none of these ${entry.candidates.length} should be used for ${entry.api.label}.`
-						: `${entry.candidates[0]?.name} is the only credential you have for ${entry.api.label} — add a new one if it is the wrong account.`}
-				</p>
 			)}
 		</section>
 	);
