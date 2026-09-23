@@ -16,7 +16,12 @@ The contract is the same on every install shape; only the commands differ.
    or the compose file's `migrate` service. Appending `--check` inspects
    without modifying: it prints an
    `OVERALL current|uninitialized|pending` verdict and exits non-zero unless
-   `OVERALL current`, so scripts can branch on it.
+   `OVERALL current`, so scripts can branch on it. A full run (all databases,
+   no `--target`) also performs the release's one-shot **upgrade steps** —
+   data changes that span databases, such as the toolkit → direct-binding
+   cutover — and prints an `==> upgrade step <name>: <action>` line for each.
+   A step that leaves work undone exits `4`: fix the logged cause and re-run
+   before starting the new version.
 4. **Restart both roles** (app and broker) on the new version — don't run
    them split across releases.
 5. **Keep the CLIs on the same release** as the server:

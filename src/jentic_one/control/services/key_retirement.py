@@ -27,10 +27,10 @@ migrated — retirement never widens access — and each is a report line.
 The job logs one structured line per key (``toolkit_key_retirement``); the
 ``retire-toolkit-keys`` CLI additionally emits each outcome as JSONL on
 stdout so operators can archive the run (the Phase-6a report embeds the same
-identifiers). The combined/control server also runs the job once at startup
-(best-effort, idempotent) so an upgrade migrates resolvable keys without an
-operator step — the CLI remains the recovery path for keys needing
-``--owner``.
+identifiers). The migration runner performs the job as an upgrade step before
+the new version serves traffic, and the combined/control server also runs it
+once at startup (best-effort, idempotent) — the CLI remains the recovery path
+for keys needing ``--owner``.
 
 Lives directly under ``control/services/`` since theme-5 Phase 5b deleted the
 toolkits service package; the job itself runs until Phase 6b retires the
@@ -49,6 +49,8 @@ from jentic_one.control.repos.permission_rule_set_repo import PermissionRuleSetR
 from jentic_one.control.repos.toolkit_binding_repo import ToolkitBindingRepository
 from jentic_one.control.repos.toolkit_key_repo import ToolkitKeyRepository
 from jentic_one.control.repos.toolkit_permission_repo import ToolkitPermissionRepository
+from jentic_one.control.repos.upgrade_step_repo import KEY_RETIREMENT_LOCK_KEY
+from jentic_one.control.services.run_lock import hold_run_lock
 from jentic_one.shared.context import Context
 
 if TYPE_CHECKING:
@@ -66,8 +68,9 @@ class KeyRetirementOutcome:
     key_id: str
     toolkit_id: str
     toolkit_name: str
-    action: str  # migrated | already_migrated | skipped
-    reason: str | None = None  # revoked | toolkit_inactive | no_lookup_hash | owner_unresolved
+    action: str  # migrated | already_migrated | skipped | failed
+    #: revoked | toolkit_inactive | no_lookup_hash | owner_unresolved | error
+    reason: str | None = None
     service_account_id: str | None = None
     bound_credential_ids: tuple[str, ...] = ()
     rule_less_credential_ids: tuple[str, ...] = ()
@@ -90,7 +93,19 @@ class KeyRetirementService:
         self._ctx = ctx
 
     async def run(self, *, fallback_owner_email: str | None = None) -> list[KeyRetirementOutcome]:
-        """Retire every resolvable toolkit key; return one outcome per key."""
+        """Retire every resolvable toolkit key; return one outcome per key.
+
+        The run holds the key-retirement run lock: the job runs at boot on
+        every control replica, from the migration runner, and from the CLI,
+        and its find-then-create of the successor account is only safe when
+        runs never interleave. The key list is read under the lock, so a run
+        that waited sees the previous run's stamps and reports those keys
+        ``already_migrated``.
+
+        A key that raises is reported ``failed`` (reason ``error``) and the
+        run continues with the next key — one bad row must not strand every
+        key after it. Its partial writes are re-runnable by construction.
+        """
         fallback_owner_id: str | None = None
         if fallback_owner_email is not None:
             async with self._ctx.admin_db.session() as admin_session:
@@ -102,13 +117,28 @@ class KeyRetirementService:
                 raise ValueError(msg)
 
         outcomes: list[KeyRetirementOutcome] = []
-        async with self._ctx.control_db.session() as control_session:
-            keys = await ToolkitKeyRepository.list_all_with_toolkits(control_session)
+        async with hold_run_lock(self._ctx, KEY_RETIREMENT_LOCK_KEY):
+            async with self._ctx.control_db.session() as control_session:
+                keys = await ToolkitKeyRepository.list_all_with_toolkits(control_session)
 
-        for key, toolkit in keys:
-            outcome = await self._retire_key(key, toolkit, fallback_owner_id=fallback_owner_id)
-            outcomes.append(outcome)
-            logger.info("toolkit_key_retirement", **asdict(outcome))
+            for key, toolkit in keys:
+                try:
+                    outcome = await self._retire_key(
+                        key, toolkit, fallback_owner_id=fallback_owner_id
+                    )
+                except Exception:
+                    logger.exception(
+                        "toolkit_key_retirement_key_failed", key_id=key.id, toolkit_id=toolkit.id
+                    )
+                    outcome = KeyRetirementOutcome(
+                        key_id=key.id,
+                        toolkit_id=toolkit.id,
+                        toolkit_name=toolkit.name,
+                        action="failed",
+                        reason="error",
+                    )
+                outcomes.append(outcome)
+                logger.info("toolkit_key_retirement", **asdict(outcome))
         return outcomes
 
     async def _retire_key(

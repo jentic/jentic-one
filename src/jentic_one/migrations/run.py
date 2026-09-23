@@ -12,21 +12,42 @@ pointing ``script_location`` at the packaged ``migrations`` directory and
 and target schemas are resolved by the existing ``env.py`` from application
 config (``JENTIC__DATABASES__*`` env vars), so there is a single source of
 truth for connection details.
+
+A full upgrade to head (every database, no ``--target``) then runs the
+one-shot **upgrade steps** — data steps that span databases and so cannot live
+in one Alembic tree (``control/services/upgrade_steps.py``). Running them here
+means every install path that migrates performs them before the new version
+serves traffic. ``--skip-upgrade-steps`` defers them to the next full upgrade.
 """
 
 from __future__ import annotations
 
 import argparse
+import asyncio
+import json
 import sys
+from dataclasses import asdict
 from pathlib import Path
 
 from alembic import command
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 
+from jentic_one.control.services.upgrade_steps import UpgradeStepService
 from jentic_one.migrations.targets import DB_TARGETS
+from jentic_one.shared.config import load_config
+from jentic_one.shared.context import Context
 
 _MIGRATIONS_DIR = Path(__file__).resolve().parent
+
+#: Databases the post-migration upgrade steps read and write. The steps run
+#: only when a full upgrade brought every one of them to head.
+_UPGRADE_STEP_DBS = frozenset({"admin", "control"})
+
+#: Exit code when the schema migrated but an upgrade step left work undone the
+#: operator must resolve. Non-zero so a Helm pre-upgrade hook (or any wrapper)
+#: stops before the new version serves traffic.
+EXIT_UPGRADE_STEP_FAILED = 4
 
 
 def _valid_dbs() -> tuple[str, ...]:
@@ -133,6 +154,31 @@ def _run_check(order: list[str]) -> int:
     return 0 if verdict == STATE_CURRENT else CHECK_EXIT_NEEDS_MIGRATION
 
 
+async def _run_upgrade_steps_async() -> int:
+    config = load_config()
+    async with Context(config, allowed_dbs=set(_UPGRADE_STEP_DBS)) as ctx:
+        outcomes = await UpgradeStepService(ctx).run()
+    failed = False
+    for outcome in outcomes:
+        print(f"==> upgrade step {outcome.name}: {outcome.action}", flush=True)
+        print(json.dumps(asdict(outcome)), flush=True)
+        failed = failed or outcome.failed
+    if failed:
+        print(
+            "==> an upgrade step left work undone (see the log lines above); "
+            "resolve it and re-run the migration before starting the new version.",
+            file=sys.stderr,
+            flush=True,
+        )
+        return EXIT_UPGRADE_STEP_FAILED
+    return 0
+
+
+def run_upgrade_steps() -> int:
+    """Run the one-shot post-migration data steps (see ``UpgradeStepService``)."""
+    return asyncio.run(_run_upgrade_steps_async())
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Apply Alembic migrations.")
     parser.add_argument(
@@ -160,6 +206,13 @@ def main(argv: list[str] | None = None) -> int:
         help="Report each database's schema state and exit without changing "
         f"anything. Exits {CHECK_EXIT_NEEDS_MIGRATION} if any database is not at head.",
     )
+    parser.add_argument(
+        "--skip-upgrade-steps",
+        action="store_true",
+        help="After a full upgrade to head, do not run the one-shot post-migration "
+        "data steps (toolkit-key retirement, toolkit flattening). They then run on "
+        "the next full upgrade instead.",
+    )
     args = parser.parse_args(argv)
 
     order = args.db or list(_valid_dbs())
@@ -180,6 +233,11 @@ def main(argv: list[str] | None = None) -> int:
             print(f"==> Migrating {db_name} to {target}", flush=True)
             upgrade(db_name, target)
             print(f"==> {db_name} complete", flush=True)
+        # The steps need every database they touch at head; a partial or
+        # explicitly targeted upgrade leaves them for the next full one.
+        full_upgrade = args.target is None and _UPGRADE_STEP_DBS.issubset(order)
+        if full_upgrade and not args.skip_upgrade_steps:
+            return run_upgrade_steps()
     return 0
 
 
