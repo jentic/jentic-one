@@ -30,7 +30,11 @@ from jentic_one.broker.services.execution.pipeline import (
 from jentic_one.shared.aws.sigv4 import SigV4Material
 from jentic_one.shared.broker.broker import Broker
 from jentic_one.shared.config import SecurityConfig
-from jentic_one.shared.events import emit_event, valid_trace_id_or_none
+from jentic_one.shared.events import (
+    MAX_EVENT_SUMMARY_FIELD_LEN,
+    emit_event,
+    valid_trace_id_or_none,
+)
 from jentic_one.shared.events.repeated_failure import maybe_emit_repeated_failure
 from jentic_one.shared.executions import record_execution
 from jentic_one.shared.metrics import get_meter
@@ -55,7 +59,6 @@ _execution_duration = _meter.create_histogram(
 )
 
 _circuit_event_last_emitted: dict[str, datetime] = {}
-_MAX_EVENT_SUMMARY_LEN = 128
 
 #: Upstream auth-rejection status → third-party ``auth_failure`` tag. 401 is an
 #: RFC-tight authentication rejection; 403 mixes auth + authorization (kept as a
@@ -500,7 +503,7 @@ async def _emit_execution_lifecycle(
                 tags={origin_tag} if origin_tag is not None else None,
             )
         else:
-            sanitized = (error_msg or "unknown")[:_MAX_EVENT_SUMMARY_LEN]
+            sanitized = (error_msg or "unknown")[:MAX_EVENT_SUMMARY_FIELD_LEN]
             failed_tags: set[EventTag] = set(error_tags or ())
             if origin_tag is not None:
                 failed_tags.add(origin_tag)

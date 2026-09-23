@@ -24,19 +24,24 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from jentic_one.admin.core.schema.events import Event
 from jentic_one.admin.core.schema.execution_records import ExecutionRecord
 from jentic_one.shared.config import SecurityConfig
-from jentic_one.shared.events import emit_event
+from jentic_one.shared.events import MAX_EVENT_SUMMARY_FIELD_LEN, emit_event
 from jentic_one.shared.models import ExecutionStatus
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.schemas import OperationInfo
 
 logger = structlog.get_logger(__name__)
 
-# The operation label is the only unbounded value interpolated into the event
-# summary: it comes from the registry's ``operations.path`` (Text), while
-# ``Event.summary`` is ``String(512)``. Bound it at the same width the other
-# emitters use for their variable part — an oversized INSERT here would abort the
-# caller's transaction and take the already-flushed ExecutionRecord with it.
-_MAX_OPERATION_LABEL_LEN = 128
+
+def _bounded(label: str) -> str:
+    """Bound the operation label for ``Event.summary``.
+
+    The label renders the registry's unbounded ``operations.path`` (Text) into a
+    ``String(512)`` column; an oversized INSERT fails the emit. An ellipsis marks
+    the cut so an operator doesn't read a clipped path as the real template.
+    """
+    if len(label) <= MAX_EVENT_SUMMARY_FIELD_LEN:
+        return label
+    return label[: MAX_EVENT_SUMMARY_FIELD_LEN - 1] + "…"
 
 
 async def maybe_emit_repeated_failure(
@@ -95,73 +100,79 @@ async def maybe_emit_repeated_failure(
         axis_data = {"credential_id": credential_id or ""}
 
     try:
-        now = datetime.now(UTC)
-        window_start = now - timedelta(seconds=config.execution_repeated_failure_window_s)
+        # SAVEPOINT: on PostgreSQL a failed statement aborts the whole
+        # transaction, so a bare try/except would swallow the error but leave the
+        # caller's transaction poisoned — taking the already-flushed
+        # ExecutionRecord down with it. Rolling back only the nested block keeps
+        # the best-effort promise for DB-level failures too.
+        async with session.begin_nested():
+            now = datetime.now(UTC)
+            window_start = now - timedelta(seconds=config.execution_repeated_failure_window_s)
 
-        count_stmt = (
-            select(func.count())
-            .select_from(ExecutionRecord)
-            .where(
-                ExecutionRecord.status == ExecutionStatus.FAILED.value,
-                ExecutionRecord.actor_id == actor_id,
-                record_axis,
-                ExecutionRecord.operation_id == operation_id,
-                ExecutionRecord.started_at >= window_start,
+            count_stmt = (
+                select(func.count())
+                .select_from(ExecutionRecord)
+                .where(
+                    ExecutionRecord.status == ExecutionStatus.FAILED.value,
+                    ExecutionRecord.actor_id == actor_id,
+                    record_axis,
+                    ExecutionRecord.operation_id == operation_id,
+                    ExecutionRecord.started_at >= window_start,
+                )
             )
-        )
-        failure_count = int((await session.execute(count_stmt)).scalar_one())
+            failure_count = int((await session.execute(count_stmt)).scalar_one())
 
-        if failure_count < config.execution_repeated_failure_threshold:
-            return
+            if failure_count < config.execution_repeated_failure_threshold:
+                return
 
-        is_critical = failure_count >= config.execution_repeated_failure_critical_threshold
-        severity = EventSeverity.CRITICAL if is_critical else EventSeverity.ERROR
+            is_critical = failure_count >= config.execution_repeated_failure_critical_threshold
+            severity = EventSeverity.CRITICAL if is_critical else EventSeverity.ERROR
 
-        # Per-key window dedup, severity-aware: at most one event of *this*
-        # severity per key per window. Matching the severity (not just the type)
-        # lets a later CRITICAL escalate past an ERROR already emitted earlier in
-        # the same window as failures accumulate. Match on the identifiers we
-        # stamp into ``data`` so the check is exact.
-        dedup_stmt = (
-            select(Event.id)
-            .where(
-                Event.type == EventType.EXECUTION_REPEATED_FAILURE,
-                Event.severity == severity.value,
-                Event.created_at >= window_start,
-                Event.data["actor_id"].as_string() == actor_id,
-                event_axis,
-                Event.data["operation_id"].as_string() == operation_id,
+            # Per-key window dedup, severity-aware: at most one event of *this*
+            # severity per key per window. Matching the severity (not just the type)
+            # lets a later CRITICAL escalate past an ERROR already emitted earlier in
+            # the same window as failures accumulate. Match on the identifiers we
+            # stamp into ``data`` so the check is exact.
+            dedup_stmt = (
+                select(Event.id)
+                .where(
+                    Event.type == EventType.EXECUTION_REPEATED_FAILURE,
+                    Event.severity == severity.value,
+                    Event.created_at >= window_start,
+                    Event.data["actor_id"].as_string() == actor_id,
+                    event_axis,
+                    Event.data["operation_id"].as_string() == operation_id,
+                )
+                .limit(1)
             )
-            .limit(1)
-        )
-        # Best-effort, unlocked read-then-write: two concurrent failed executions
-        # for the same key can both pass this check and emit duplicate events. That
-        # is acceptable for an ops signal (cf. the scanner's at-most-once caveat).
-        if (await session.execute(dedup_stmt)).first() is not None:
-            return
+            # Best-effort, unlocked read-then-write: two concurrent failed executions
+            # for the same key can both pass this check and emit duplicate events. That
+            # is acceptable for an ops signal (cf. the scanner's at-most-once caveat).
+            if (await session.execute(dedup_stmt)).first() is not None:
+                return
 
-        await emit_event(
-            session,
-            type=EventType.EXECUTION_REPEATED_FAILURE,
-            severity=severity,
-            summary=(
-                f"{failure_count} failures for operation "
-                f"{operation.display[:_MAX_OPERATION_LABEL_LEN]} "
-                f"on {axis_label} in {config.execution_repeated_failure_window_s}s"
-            ),
-            requires_action=True,
-            trace_id=trace_id,
-            created_by=actor_id,
-            actor_id=actor_id,
-            actor_type=actor_type,
-            data={
-                "actor_id": actor_id,
-                **axis_data,
-                "operation_id": operation_id,
-                "failure_count": failure_count,
-                "window_s": config.execution_repeated_failure_window_s,
-            },
-        )
+            await emit_event(
+                session,
+                type=EventType.EXECUTION_REPEATED_FAILURE,
+                severity=severity,
+                summary=(
+                    f"{failure_count} failures for operation "
+                    f"{_bounded(operation.display)} "
+                    f"on {axis_label} in {config.execution_repeated_failure_window_s}s"
+                ),
+                requires_action=True,
+                trace_id=trace_id,
+                created_by=actor_id,
+                actor_id=actor_id,
+                actor_type=actor_type,
+                data={
+                    "actor_id": actor_id,
+                    **axis_data,
+                    "operation_id": operation_id,
+                    "failure_count": failure_count,
+                    "window_s": config.execution_repeated_failure_window_s,
+                },
+            )
     except Exception:
         logger.warning(
             "emit_event_failed",

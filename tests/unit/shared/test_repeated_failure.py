@@ -9,10 +9,10 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
-from typing import cast
+from typing import Any, cast
 
 import pytest
-from sqlalchemy import String, Table
+from sqlalchemy import String, Table, func, select
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
@@ -22,10 +22,12 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.pool import StaticPool
 from sqlalchemy.schema import CreateTable
 
+import jentic_one.shared.events.repeated_failure as repeated_failure_mod
 from jentic_one.admin.core.schema.events import Event
 from jentic_one.admin.core.schema.execution_records import ExecutionRecord
 from jentic_one.admin.repos.event_repo import EventRepository
 from jentic_one.shared.config import SecurityConfig
+from jentic_one.shared.events import emit_event
 from jentic_one.shared.events.repeated_failure import maybe_emit_repeated_failure
 from jentic_one.shared.jobs.execution_handler import ExecutionHandler
 from jentic_one.shared.jobs.protocols import UpstreamExecResult
@@ -205,6 +207,31 @@ async def test_summary_fits_the_event_column_for_a_long_path(session: AsyncSessi
     events = await _repeated_events(session)
     assert len(events) == 1
     assert len(events[0].summary) <= summary_width
+    # The cut is marked, so a clipped template isn't read as the real one.
+    assert "…" in events[0].summary
+
+
+async def test_failed_emit_rolls_back_only_its_own_writes(
+    session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The detector runs in a SAVEPOINT: a failure after the event INSERT rolls
+    back just that write — the caller's already-flushed ExecutionRecords survive
+    and the session stays usable (on Postgres a bare try/except would leave the
+    whole transaction aborted, losing the execution record)."""
+
+    async def emit_then_fail(*args: Any, **kwargs: Any) -> None:
+        await emit_event(*args, **kwargs)
+        raise RuntimeError("simulated failure after the event INSERT")
+
+    monkeypatch.setattr(repeated_failure_mod, "emit_event", emit_then_fail)
+    config = SecurityConfig(execution_repeated_failure_threshold=5)
+    await _add_failures(session, 5)
+
+    await _emit(session, config)
+
+    assert await _repeated_events(session) == []
+    records = await session.execute(select(func.count()).select_from(ExecutionRecord))
+    assert records.scalar_one() == 5
 
 
 async def test_repeated_calls_within_window_dedup(session: AsyncSession) -> None:
