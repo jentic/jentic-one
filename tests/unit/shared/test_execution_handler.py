@@ -60,6 +60,7 @@ class _FakeInjector:
     def __init__(self, injection: InjectedAuth) -> None:
         self._injection = injection
         self.last_trace_id: str | None = None
+        self.last_toolkit_id: str | None = None
 
     async def inject(
         self,
@@ -68,10 +69,12 @@ class _FakeInjector:
         api_name: str,
         api_version: str,
         identity: Any,
+        toolkit_id: str,
         credential_name: str | None = None,
         trace_id: str | None = None,
     ) -> InjectedAuth:
         self.last_trace_id = trace_id
+        self.last_toolkit_id = toolkit_id
         return self._injection
 
 
@@ -84,6 +87,7 @@ def _payload(**overrides: Any) -> dict[str, Any]:
         "api_vendor": "example",
         "api_name": "api",
         "api_version": "1.0.0",
+        "toolkit_id": "tk_abc",
     }
     base.update(overrides)
     return base
@@ -371,3 +375,31 @@ async def test_handler_missing_origin_emits_untagged_event() -> None:
         )
 
     assert mock_emit.call_args.kwargs["tags"] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("payload_toolkit", "expected"),
+    [("tk_abc", "tk_abc"), (None, ""), ("", "")],
+)
+async def test_handler_bounds_injection_to_the_payload_toolkit(
+    payload_toolkit: str | None, expected: str
+) -> None:
+    """The worker resolves credentials only within the toolkit the web edge
+    authorized the job against; a payload with no toolkit resolves against the
+    empty toolkit (matches nothing — fail closed), never the whole tenant."""
+    executor = _RecordingExecutor(
+        UpstreamExecResult(status_code=200, body=b"", content_type=None, duration_ms=1)
+    )
+    injector = _FakeInjector(InjectedAuth(headers={}, query_params={}, cookies={}))
+    handler = ExecutionHandler(executor=executor, credential_injector=injector)
+
+    await handler.execute(
+        "job_tk",
+        _FakeSession(),
+        payload=_payload(toolkit_id=payload_toolkit),
+        created_by="agt_abc123",
+        actor_type="agent",
+    )
+
+    assert injector.last_toolkit_id == expected

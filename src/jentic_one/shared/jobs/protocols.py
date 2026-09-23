@@ -60,10 +60,16 @@ class CredentialInjector(Protocol):
         api_name: str,
         api_version: str,
         identity: Identity,
+        toolkit_id: str,
         credential_name: str | None = None,
         trace_id: str | None = None,
     ) -> InjectedAuth:
-        """Return the auth to apply; empty ``InjectedAuth`` when there is no credential path."""
+        """Return the auth to apply; empty ``InjectedAuth`` when there is no credential path.
+
+        ``toolkit_id`` bounds resolution to the credentials bound to the toolkit
+        the execution was authorized against; it is required so no caller can
+        resolve across the whole tenant.
+        """
         ...
 
 

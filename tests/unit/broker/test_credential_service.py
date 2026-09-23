@@ -89,7 +89,7 @@ def _patch_resolver(monkeypatch: pytest.MonkeyPatch, exc: Exception) -> None:
 @pytest.mark.asyncio
 async def test_empty_vendor_returns_empty_injection() -> None:
     result = await CredentialService(_ctx()).inject(
-        api_vendor="", api_name="", api_version="", identity=_IDENTITY
+        api_vendor="", api_name="", api_version="", identity=_IDENTITY, toolkit_id="tk_1"
     )
     assert result.headers == {}
     assert result.query_params == {}
@@ -107,7 +107,7 @@ async def test_not_provisioned_maps_to_424_with_directive_and_url(
 
     with pytest.raises(CredentialNotProvisionedError) as exc:
         await CredentialService(_ctx(account_linking_base_url="https://app.example.com/")).inject(
-            api_vendor="stripe", api_name="", api_version="", identity=_IDENTITY
+            api_vendor="stripe", api_name="", api_version="", identity=_IDENTITY, toolkit_id="tk_1"
         )
 
     err = exc.value
@@ -134,7 +134,7 @@ async def test_not_provisioned_without_base_url_keeps_directive_omits_url(
 
     with pytest.raises(CredentialNotProvisionedError) as exc:
         await CredentialService(_ctx(account_linking_base_url=None)).inject(
-            api_vendor="stripe", api_name="", api_version="", identity=_IDENTITY
+            api_vendor="stripe", api_name="", api_version="", identity=_IDENTITY, toolkit_id="tk_1"
         )
 
     params = exc.value.directive.parameters  # type: ignore[union-attr]
@@ -148,7 +148,7 @@ async def test_ambiguous_maps_to_409(monkeypatch: pytest.MonkeyPatch) -> None:
 
     with pytest.raises(AmbiguousMatchError) as exc:
         await CredentialService(_ctx()).inject(
-            api_vendor="stripe", api_name="", api_version="", identity=_IDENTITY
+            api_vendor="stripe", api_name="", api_version="", identity=_IDENTITY, toolkit_id="tk_1"
         )
     assert exc.value.type == "ambiguous_credential"
 
@@ -159,7 +159,7 @@ async def test_invalid_grant_maps_to_401_reconnect(monkeypatch: pytest.MonkeyPat
 
     with pytest.raises(CredentialNeedsReconnectError) as exc:
         await CredentialService(_ctx()).inject(
-            api_vendor="stripe", api_name="", api_version="", identity=_IDENTITY
+            api_vendor="stripe", api_name="", api_version="", identity=_IDENTITY, toolkit_id="tk_1"
         )
     assert exc.value.type == "credential_needs_reconnect"
     assert exc.value.directive is not None
@@ -172,7 +172,7 @@ async def test_refresh_transient_maps_to_502_upstream(monkeypatch: pytest.Monkey
 
     with pytest.raises(CredentialRefreshTransientError) as exc:
         await CredentialService(_ctx()).inject(
-            api_vendor="stripe", api_name="", api_version="", identity=_IDENTITY
+            api_vendor="stripe", api_name="", api_version="", identity=_IDENTITY, toolkit_id="tk_1"
         )
     assert exc.value.type == "refresh_transient_error"
     assert exc.value.origin == ErrorOrigin.UPSTREAM
@@ -198,6 +198,7 @@ async def test_successful_inject_emits_one_audit_event(monkeypatch: pytest.Monke
         api_name="charges",
         api_version="v1",
         identity=_IDENTITY,
+        toolkit_id="tk_1",
         trace_id="ab" * 16,
     )
 
@@ -251,6 +252,7 @@ async def test_inject_with_invalid_trace_id_emits_uncorrelated_audit_event(
         api_name="charges",
         api_version="v1",
         identity=_IDENTITY,
+        toolkit_id="tk_1",
         trace_id=bad_trace_id,
     )
 
@@ -271,7 +273,7 @@ async def test_failed_resolution_emits_no_audit_event(monkeypatch: pytest.Monkey
 
     with pytest.raises(CredentialNotProvisionedError):
         await CredentialService(_ctx()).inject(
-            api_vendor="stripe", api_name="", api_version="", identity=_IDENTITY
+            api_vendor="stripe", api_name="", api_version="", identity=_IDENTITY, toolkit_id="tk_1"
         )
 
     audit.assert_not_awaited()
@@ -295,7 +297,11 @@ async def test_decryption_error_maps_to_424_undecryptable_with_directive(
 
     with pytest.raises(CredentialUndecryptableError) as exc:
         await CredentialService(_ctx()).inject(
-            api_vendor="stripe", api_name="charges", api_version="v1", identity=_IDENTITY
+            api_vendor="stripe",
+            api_name="charges",
+            api_version="v1",
+            identity=_IDENTITY,
+            toolkit_id="tk_1",
         )
 
     err = exc.value
@@ -342,7 +348,11 @@ async def test_decryption_error_during_oauth_refresh_also_maps(
 
     with pytest.raises(CredentialUndecryptableError) as exc:
         await CredentialService(_ctx()).inject(
-            api_vendor="google", api_name="sheets", api_version="v4", identity=_IDENTITY
+            api_vendor="google",
+            api_name="sheets",
+            api_version="v4",
+            identity=_IDENTITY,
+            toolkit_id="tk_1",
         )
     assert exc.value.type == "credential_undecryptable"
 
@@ -370,7 +380,7 @@ async def test_decryption_error_emits_undecryptable_event_not_access(
 
     with pytest.raises(CredentialUndecryptableError):
         await CredentialService(_ctx()).inject(
-            api_vendor="stripe", api_name="", api_version="", identity=_IDENTITY
+            api_vendor="stripe", api_name="", api_version="", identity=_IDENTITY, toolkit_id="tk_1"
         )
 
     access.assert_not_awaited()

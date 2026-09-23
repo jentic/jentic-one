@@ -68,7 +68,9 @@ async def test_single_match_no_header_resolves_normally() -> None:
         new_callable=AsyncMock,
         return_value=[cred],
     ):
-        result = await CredentialResolver(ctx).resolve(api=api, caller="caller_1")
+        result = await CredentialResolver(ctx).resolve(
+            api=api, caller="caller_1", toolkit_id="tk_1"
+        )
 
     assert result.credential_id == "cred_abc"
 
@@ -89,7 +91,7 @@ async def test_multiple_matches_no_header_raises_ambiguous_with_candidates() -> 
         ),
         pytest.raises(AmbiguousCredentialError) as exc,
     ):
-        await CredentialResolver(ctx).resolve(api=api, caller="caller_1")
+        await CredentialResolver(ctx).resolve(api=api, caller="caller_1", toolkit_id="tk_1")
 
     assert {c.name for c in exc.value.candidates} == {"read-only", "admin"}
     assert {c.id for c in exc.value.candidates} == {"cred_1", "cred_2"}
@@ -110,7 +112,7 @@ async def test_multiple_matches_with_valid_header_resolves_named() -> None:
         return_value=[cred1, cred2],
     ):
         result = await CredentialResolver(ctx).resolve(
-            api=api, caller="caller_1", credential_name="admin"
+            api=api, caller="caller_1", toolkit_id="tk_1", credential_name="admin"
         )
 
     assert result.credential_id == "cred_2"
@@ -133,7 +135,7 @@ async def test_multiple_matches_with_invalid_header_raises_not_found() -> None:
         pytest.raises(CredentialNameNotFoundError) as exc,
     ):
         await CredentialResolver(ctx).resolve(
-            api=api, caller="caller_1", credential_name="nonexistent"
+            api=api, caller="caller_1", toolkit_id="tk_1", credential_name="nonexistent"
         )
 
     assert exc.value.requested_name == "nonexistent"
@@ -153,7 +155,7 @@ async def test_single_match_with_matching_header_resolves() -> None:
         return_value=[cred],
     ):
         result = await CredentialResolver(ctx).resolve(
-            api=api, caller="caller_1", credential_name="production"
+            api=api, caller="caller_1", toolkit_id="tk_1", credential_name="production"
         )
 
     assert result.credential_id == "cred_1"
@@ -174,7 +176,9 @@ async def test_single_match_with_non_matching_header_raises_not_found() -> None:
         ),
         pytest.raises(CredentialNameNotFoundError) as exc,
     ):
-        await CredentialResolver(ctx).resolve(api=api, caller="caller_1", credential_name="staging")
+        await CredentialResolver(ctx).resolve(
+            api=api, caller="caller_1", toolkit_id="tk_1", credential_name="staging"
+        )
 
     assert exc.value.requested_name == "staging"
     assert [c.name for c in exc.value.candidates] == ["production"]

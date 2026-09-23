@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
 from jentic_one.control.core.schema.credentials import Credential
+from jentic_one.control.core.schema.toolkit_credential_bindings import ToolkitCredentialBinding
 from jentic_one.shared.models.api_identity import slugify_api_field
 
 
@@ -65,8 +66,16 @@ class CredentialRepository:
         return credential
 
     @staticmethod
-    async def list_by_vendor(session: AsyncSession, api_vendor: str) -> list[Credential]:
-        """Fetch candidates for a vendor.
+    async def list_by_vendor(
+        session: AsyncSession, api_vendor: str, *, toolkit_id: str
+    ) -> list[Credential]:
+        """Fetch a toolkit's bound credentials for a vendor.
+
+        ``toolkit_id`` is the injection boundary: only credentials bound to that
+        toolkit (``toolkit_credential_bindings``) are returned, so a credential
+        bound to a different toolkit — including another user's — can never
+        become an injection candidate. Required, with no unfiltered fallback; an
+        empty or unknown toolkit id matches nothing.
 
         Widen the prefilter to also match the caller's raw (un-slugified) input so
         historical rows persisted before vendor normalization still surface as
@@ -74,7 +83,15 @@ class CredentialRepository:
         """
         normalized = slugify_api_field(api_vendor)
         result = await session.execute(
-            select(Credential).where(Credential.api_vendor.in_({api_vendor, normalized}))
+            select(Credential)
+            .join(
+                ToolkitCredentialBinding,
+                ToolkitCredentialBinding.credential_id == Credential.id,
+            )
+            .where(
+                ToolkitCredentialBinding.toolkit_id == toolkit_id,
+                Credential.api_vendor.in_({api_vendor, normalized}),
+            )
         )
         return list(result.scalars().all())
 

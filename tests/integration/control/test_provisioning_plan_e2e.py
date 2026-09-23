@@ -431,11 +431,13 @@ async def test_noauth_plan_is_executable_via_broker_resolvers(
         f"(NULL-version credential wildcard); got {derivation.toolkits}"
     )
 
-    #    (b) credential resolver — the credential to inject (a no-op for NO_AUTH).
+    #    (b) credential resolver — the credential to inject (a no-op for NO_AUTH),
+    #        bounded to the toolkit derived in (a).
     cred_resolver = CredentialResolver(ctx)
     resolved = await cred_resolver.resolve(
         api=APIReference(vendor="country-is", name="country-is", version=resolved_version),
         caller=AGENT_SUB,
+        toolkit_id=derivation.toolkits[0],
     )
     assert resolved.credential_id == created_cred.credential_id
     assert resolved.wire_type == CredentialType.NO_AUTH

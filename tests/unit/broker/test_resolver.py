@@ -76,7 +76,7 @@ async def test_resolve_bearer_token() -> None:
         return_value=[cred],
     ):
         resolver = CredentialResolver(ctx)
-        result = await resolver.resolve(api=api, caller="caller_1")
+        result = await resolver.resolve(api=api, caller="caller_1", toolkit_id="tk_1")
 
     assert isinstance(result, ResolvedCredential)
     assert result.credential_id == "cred_abc"
@@ -103,7 +103,7 @@ async def test_resolve_api_key() -> None:
         return_value=[cred],
     ):
         resolver = CredentialResolver(ctx)
-        result = await resolver.resolve(api=api, caller="caller_1")
+        result = await resolver.resolve(api=api, caller="caller_1", toolkit_id="tk_1")
 
     assert result.wire_type == CredentialType.API_KEY
     assert result.encrypted_secret == "enc:key"
@@ -129,7 +129,7 @@ async def test_resolve_basic() -> None:
         return_value=[cred],
     ):
         resolver = CredentialResolver(ctx)
-        result = await resolver.resolve(api=api, caller="caller_1")
+        result = await resolver.resolve(api=api, caller="caller_1", toolkit_id="tk_1")
 
     assert result.wire_type == CredentialType.BASIC
     assert result.username == "admin"
@@ -156,7 +156,7 @@ async def test_resolve_oauth2() -> None:
         return_value=[cred],
     ):
         resolver = CredentialResolver(ctx)
-        result = await resolver.resolve(api=api, caller="caller_1")
+        result = await resolver.resolve(api=api, caller="caller_1", toolkit_id="tk_1")
 
     assert result.wire_type == CredentialType.OAUTH2
     assert result.encrypted_access_token == "enc:at"
@@ -176,7 +176,7 @@ async def test_resolve_not_provisioned() -> None:
     ):
         resolver = CredentialResolver(ctx)
         with pytest.raises(CredentialNotProvisionedError):
-            await resolver.resolve(api=api, caller="caller_1")
+            await resolver.resolve(api=api, caller="caller_1", toolkit_id="tk_1")
 
 
 @pytest.mark.asyncio
@@ -195,7 +195,7 @@ async def test_resolve_ambiguous() -> None:
     ):
         resolver = CredentialResolver(ctx)
         with pytest.raises(AmbiguousCredentialError):
-            await resolver.resolve(api=api, caller="caller_1")
+            await resolver.resolve(api=api, caller="caller_1", toolkit_id="tk_1")
 
 
 @pytest.mark.asyncio
@@ -217,7 +217,7 @@ async def test_resolve_inactive_skipped() -> None:
         return_value=[active_cred, inactive_cred],
     ):
         resolver = CredentialResolver(ctx)
-        result = await resolver.resolve(api=api, caller="caller_1")
+        result = await resolver.resolve(api=api, caller="caller_1", toolkit_id="tk_1")
 
     assert result.credential_id == "cred_active"
 
@@ -241,7 +241,7 @@ async def test_resolve_filters_by_name_and_version() -> None:
         return_value=[cred_match, cred_other],
     ):
         resolver = CredentialResolver(ctx)
-        result = await resolver.resolve(api=api, caller="caller_1")
+        result = await resolver.resolve(api=api, caller="caller_1", toolkit_id="tk_1")
 
     assert result.credential_id == "cred_match"
 
@@ -276,7 +276,7 @@ async def test_resolve_null_version_credential_matches_concrete_version() -> Non
         return_value=[cred],
     ):
         resolver = CredentialResolver(ctx)
-        result = await resolver.resolve(api=api, caller="caller_1")
+        result = await resolver.resolve(api=api, caller="caller_1", toolkit_id="tk_1")
 
     assert result.credential_id == "cred_noauth"
     assert result.wire_type == CredentialType.NO_AUTH
@@ -304,7 +304,7 @@ async def test_resolve_matches_non_slug_stored_name() -> None:
         return_value=[cred],
     ):
         resolver = CredentialResolver(ctx)
-        result = await resolver.resolve(api=api, caller="caller_1")
+        result = await resolver.resolve(api=api, caller="caller_1", toolkit_id="tk_1")
 
     assert result.credential_id == "cred_abc"
     assert result.encrypted_secret == "enc:token"
@@ -328,7 +328,7 @@ async def test_resolve_matches_when_only_casing_differs() -> None:
         return_value=[cred],
     ):
         resolver = CredentialResolver(ctx)
-        result = await resolver.resolve(api=api, caller="caller_1")
+        result = await resolver.resolve(api=api, caller="caller_1", toolkit_id="tk_1")
 
     assert result.credential_id == "cred_abc"
 
@@ -349,7 +349,9 @@ async def test_resolve_vendor_scoped_wildcard_covers_concrete_op() -> None:
         new_callable=AsyncMock,
         return_value=[cred],
     ):
-        result = await CredentialResolver(ctx).resolve(api=api, caller="caller_1")
+        result = await CredentialResolver(ctx).resolve(
+            api=api, caller="caller_1", toolkit_id="tk_1"
+        )
 
     assert result.credential_id == "cred_abc"
     assert result.encrypted_secret == "enc:wild"  # pragma: allowlist secret
@@ -371,7 +373,9 @@ async def test_resolve_empty_string_stored_axis_covers_concrete_op() -> None:
         new_callable=AsyncMock,
         return_value=[cred],
     ):
-        result = await CredentialResolver(ctx).resolve(api=api, caller="caller_1")
+        result = await CredentialResolver(ctx).resolve(
+            api=api, caller="caller_1", toolkit_id="tk_1"
+        )
 
     assert result.credential_id == "cred_abc"
 
@@ -392,7 +396,7 @@ async def test_resolve_wrong_version_does_not_cover() -> None:
         ),
         pytest.raises(CredentialNotProvisionedError),
     ):
-        await CredentialResolver(ctx).resolve(api=api, caller="caller_1")
+        await CredentialResolver(ctx).resolve(api=api, caller="caller_1", toolkit_id="tk_1")
 
 
 @pytest.mark.asyncio
@@ -412,7 +416,9 @@ async def test_resolve_pin_wins_over_vendor_wildcard_no_ambiguity() -> None:
         new_callable=AsyncMock,
         return_value=[wildcard, pinned],
     ):
-        result = await CredentialResolver(ctx).resolve(api=api, caller="caller_1")
+        result = await CredentialResolver(ctx).resolve(
+            api=api, caller="caller_1", toolkit_id="tk_1"
+        )
 
     assert result.credential_id == "cred_pin"
 
@@ -434,7 +440,7 @@ async def test_resolve_same_specificity_tie_is_ambiguous() -> None:
         ),
         pytest.raises(AmbiguousCredentialError),
     ):
-        await CredentialResolver(ctx).resolve(api=api, caller="caller_1")
+        await CredentialResolver(ctx).resolve(api=api, caller="caller_1", toolkit_id="tk_1")
 
 
 @pytest.mark.asyncio
@@ -465,7 +471,7 @@ async def test_resolve_credential_name_selects_less_specific_covering() -> None:
         return_value=[wildcard, pinned],
     ):
         result = await CredentialResolver(ctx).resolve(
-            api=api, caller="caller_1", credential_name="shared-account"
+            api=api, caller="caller_1", toolkit_id="tk_1", credential_name="shared-account"
         )
 
     assert result.credential_id == "cred_wild"

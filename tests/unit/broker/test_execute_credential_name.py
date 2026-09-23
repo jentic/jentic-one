@@ -57,8 +57,11 @@ async def test_credential_name_none_when_header_absent(monkeypatch: pytest.Monke
     )
 
     def fake_resolver(ctx: Any) -> MagicMock:
-        async def _resolve(*, api: Any, caller: str, credential_name: str | None = None) -> Any:
+        async def _resolve(
+            *, api: Any, caller: str, toolkit_id: str, credential_name: str | None = None
+        ) -> Any:
             captured["credential_name"] = credential_name
+            captured["toolkit_id"] = toolkit_id
             return await original_resolve(api=api, caller=caller, credential_name=credential_name)
 
         return MagicMock(resolve=_resolve)
@@ -82,10 +85,12 @@ async def test_credential_name_none_when_header_absent(monkeypatch: pytest.Monke
         api_name="payments",
         api_version="v1",
         identity=_IDENTITY,
+        toolkit_id="tk_1",
         credential_name=None,
     )
 
     assert captured["credential_name"] is None
+    assert captured["toolkit_id"] == "tk_1"
 
 
 @pytest.mark.asyncio
@@ -107,8 +112,11 @@ async def test_credential_name_forwarded_when_header_present(
     )
 
     def fake_resolver(ctx: Any) -> MagicMock:
-        async def _resolve(*, api: Any, caller: str, credential_name: str | None = None) -> Any:
+        async def _resolve(
+            *, api: Any, caller: str, toolkit_id: str, credential_name: str | None = None
+        ) -> Any:
             captured["credential_name"] = credential_name
+            captured["toolkit_id"] = toolkit_id
             return await original_resolve(api=api, caller=caller, credential_name=credential_name)
 
         return MagicMock(resolve=_resolve)
@@ -132,10 +140,12 @@ async def test_credential_name_forwarded_when_header_present(
         api_name="payments",
         api_version="v1",
         identity=_IDENTITY,
+        toolkit_id="tk_1",
         credential_name="admin",
     )
 
     assert captured["credential_name"] == "admin"
+    assert captured["toolkit_id"] == "tk_1"
 
 
 @pytest.mark.asyncio
@@ -163,6 +173,7 @@ async def test_ambiguous_response_contains_candidates(monkeypatch: pytest.Monkey
             api_name="payments",
             api_version="v1",
             identity=_IDENTITY,
+            toolkit_id="tk_1",
         )
 
     candidates = raised.value.extra["candidates"]
@@ -198,6 +209,7 @@ async def test_invalid_credential_name_response_contains_candidates(
             api_name="payments",
             api_version="v1",
             identity=_IDENTITY,
+            toolkit_id="tk_1",
             credential_name="nonexistent",
         )
 
