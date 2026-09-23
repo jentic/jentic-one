@@ -1,8 +1,7 @@
 """Cross-database reads against admin tables for the control module.
 
-Existence checks (access-request prerequisites) and labelling lookups (display
-enrichment) share one seam: raw SQL (text()) so the control module never
-imports admin ORM models.
+Existence checks and cross-DB lookups share one seam: raw SQL (text()) so the
+control module never imports admin ORM models.
 """
 
 from __future__ import annotations
@@ -45,17 +44,8 @@ class AgentCredentialBindingRow(NamedTuple):
     rule_set_id: str | None
 
 
-class UserDisplayRow(NamedTuple):
-    """Display fields for a user, resolved cross-DB for labelling only."""
-
-    user_id: str
-    email: str
-    first_name: str | None
-    last_name: str | None
-
-
 class PrerequisiteRepository:
-    """Cross-DB reads (existence checks + labelling lookups) without admin imports."""
+    """Cross-DB reads (existence checks + lookups) without admin imports."""
 
     @staticmethod
     async def active_user_exists(session: AsyncSession, *, user_id: str) -> bool:
@@ -70,30 +60,6 @@ class PrerequisiteRepository:
             {"user_id": user_id},
         )
         return result.scalar_one_or_none() is not None
-
-    @staticmethod
-    async def get_user_displays(
-        session: AsyncSession, *, user_ids: list[str]
-    ) -> dict[str, UserDisplayRow]:
-        """Batch-resolve user display info by id (admin DB), keyed by user id.
-
-        Labelling only — never authorization. Ids that don't resolve (agents,
-        service accounts, deleted rows) are simply absent from the result, so
-        callers degrade to showing the raw id. Deactivated users ARE returned:
-        a decided request whose owner was later offboarded should still show
-        who owned it.
-        """
-        if not user_ids:
-            return {}
-        placeholders = ", ".join(f":uid_{i}" for i in range(len(user_ids)))
-        params: dict[str, object] = {f"uid_{i}": uid for i, uid in enumerate(user_ids)}
-        result = await session.execute(
-            text(
-                f"SELECT id, email, first_name, last_name FROM users WHERE id IN ({placeholders})"
-            ),
-            params,
-        )
-        return {row[0]: UserDisplayRow(*row) for row in result.fetchall()}
 
     @staticmethod
     async def agent_toolkit_binding_exists(
@@ -133,23 +99,6 @@ class PrerequisiteRepository:
                 f"WHERE agent_id = :agent_id AND toolkit_id IN ({placeholders}) LIMIT 1"
             ),
             params,
-        )
-        return result.scalar_one_or_none() is not None
-
-    @staticmethod
-    async def actor_scope_grant_exists(session: AsyncSession, *, actor_id: str, scope: str) -> bool:
-        """Return True if the actor already holds this scope grant (admin DB).
-
-        Mirrors the uniqueness key of ``EffectsRepository.grant_scope_to_actor``'s
-        idempotent insert (``(actor_id, scope)``), so "exists" here is exactly
-        "the grant effect would be a no-op".
-        """
-        result = await session.execute(
-            text(
-                "SELECT 1 FROM actor_scope_grants "
-                "WHERE actor_id = :actor_id AND scope = :scope LIMIT 1"
-            ),
-            {"actor_id": actor_id, "scope": scope},
         )
         return result.scalar_one_or_none() is not None
 

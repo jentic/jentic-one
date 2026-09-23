@@ -26,10 +26,11 @@ class EventType:
     CREDENTIAL_EXPIRING_SOON = "credential.expiring_soon"
     CREDENTIAL_EXPIRED = "credential.expired"
     CREDENTIAL_ACCESSED = "credential.accessed"
-    ACCESS_REQUEST_FILED = "access_request.filed"
-    ACCESS_REQUEST_APPROVED = "access_request.approved"
-    ACCESS_REQUEST_DENIED = "access_request.denied"
-    ACCESS_REQUEST_WITHDRAWN = "access_request.withdrawn"
+    # The four ``access_request.*`` kinds were retired in theme 7 (the
+    # access-request flow is gone). Stored event rows still carry those kind
+    # strings — the events table is append-only history — so read paths
+    # (``admin/web/routers/events.py``, the UI stream) must tolerate them;
+    # only emission stopped.
     UPSTREAM_CIRCUIT_OPEN = "upstream.circuit_open"
     JOB_FAILED_PERMANENTLY = "job.failed_permanently"
     UNAUTHORIZED_ACCESS_ATTEMPT = "security.unauthorized_access_attempt"
@@ -92,10 +93,7 @@ class EventType:
     # serve the API). Distinct from ``CREDENTIAL_NOT_PROVISIONED`` (424, fires
     # when a bound toolkit's credential is unresolvable at inject time): this
     # event is the *pre-binding* signal, giving operators visibility into
-    # agent-needed APIs before a doomed access request appears. Despite the
-    # ``broker.`` namespace, the control plane also emits it as a file-time
-    # advisory for the same condition (see
-    # ``AccessRequestService._advise_unserved_bind_references``).
+    # agent-needed APIs.
     TOOLKIT_BINDING_UNSERVED = "broker.toolkit_binding_unserved"
     # Direct-binding twin of ``TOOLKIT_BINDING_UNSERVED`` (theme-5 Phase 2):
     # emitted when the broker denies an execute with 403
@@ -149,10 +147,6 @@ class EventType:
             CREDENTIAL_EXPIRING_SOON,
             CREDENTIAL_EXPIRED,
             CREDENTIAL_ACCESSED,
-            ACCESS_REQUEST_FILED,
-            ACCESS_REQUEST_APPROVED,
-            ACCESS_REQUEST_DENIED,
-            ACCESS_REQUEST_WITHDRAWN,
             UPSTREAM_CIRCUIT_OPEN,
             JOB_FAILED_PERMANENTLY,
             UNAUTHORIZED_ACCESS_ATTEMPT,
@@ -408,10 +402,6 @@ EVENT_TYPE_SEVERITIES: dict[str, frozenset[EventSeverity]] = {
     EventType.IMPORT_COMPLETED: frozenset({EventSeverity.INFO}),
     EventType.EXECUTION_COMPLETED: frozenset({EventSeverity.INFO}),
     EventType.CREDENTIAL_ACCESSED: frozenset({EventSeverity.INFO}),
-    EventType.ACCESS_REQUEST_FILED: frozenset({EventSeverity.INFO}),
-    EventType.ACCESS_REQUEST_APPROVED: frozenset({EventSeverity.INFO}),
-    EventType.ACCESS_REQUEST_DENIED: frozenset({EventSeverity.INFO}),
-    EventType.ACCESS_REQUEST_WITHDRAWN: frozenset({EventSeverity.INFO}),
     EventType.CATALOG_UPDATE_AVAILABLE: frozenset({EventSeverity.INFO}),
     EventType.CATALOG_UPDATE_CONFLICTS_OVERLAY: frozenset({EventSeverity.INFO}),
     EventType.OVERLAY_DEPRECATED: frozenset({EventSeverity.INFO}),

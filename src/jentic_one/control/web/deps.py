@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from fastapi import Depends, Request
 
-from jentic_one.control.services.access_requests.service import AccessRequestService
 from jentic_one.control.services.credentials.connect_service import ConnectService
 from jentic_one.control.services.credentials.service import CredentialService
 from jentic_one.control.services.integrations.connect_session_service import (
@@ -25,11 +24,6 @@ def get_credential_service(ctx: Context = Depends(get_ctx)) -> CredentialService
 def get_connect_service(ctx: Context = Depends(get_ctx)) -> ConnectService:
     """Resolve a ConnectService from the request context."""
     return ConnectService(ctx)
-
-
-def get_access_request_service(ctx: Context = Depends(get_ctx)) -> AccessRequestService:
-    """Resolve an AccessRequestService from the request context."""
-    return AccessRequestService(ctx)
 
 
 def get_mcp_service(ctx: Context = Depends(get_ctx)) -> McpService:

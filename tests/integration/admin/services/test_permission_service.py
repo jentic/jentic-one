@@ -32,6 +32,7 @@ from jentic_one.admin.services.permission_service import PermissionService
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import InviteState
+from jentic_one.shared.scopes import RETIRED_SCOPES
 
 pytestmark = pytest.mark.integration
 
@@ -154,6 +155,19 @@ async def test_validate_grants_org_admin_forbidden_for_non_admin(
     service = PermissionService(integration_context)
     with pytest.raises(OrgAdminGrantForbiddenError):
         await service.validate_grants(regular_user, [ORG_ADMIN])
+
+
+async def test_validate_grants_tolerates_retired_scopes(
+    integration_context: Context, admin_user: str
+) -> None:
+    """Every ``RETIRED_SCOPES`` member is accepted and skipped (never a 422).
+
+    A stored grant set written before a scope retirement (theme-5 toolkit
+    scopes, theme-7 ``owner:access-requests:read``) must re-submit unchanged;
+    the retired string is stored as-is and grants nothing.
+    """
+    service = PermissionService(integration_context)
+    await service.validate_grants(admin_user, sorted(RETIRED_SCOPES))  # must not raise
 
 
 async def test_set_assigned(integration_context: Context, admin_user: str) -> None:

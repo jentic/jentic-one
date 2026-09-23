@@ -5,7 +5,9 @@ Theme-5 Phase 5b collapsed the filter builder to the credential/direct axis:
 surface is gone; the tables survive only for the Phase-4 retirement job and
 the flag-off broker fallback until Phase 6b). Visibility widening for agents
 now comes exclusively from ``bound_credential_ids`` — the caller-resolved
-direct ``agent_credential_bindings`` ids.
+direct ``agent_credential_bindings`` ids. Theme 7 then removed the
+``AccessRequest`` axis with the access-request feature, leaving ``Credential``
+as the only scoped model.
 """
 
 from __future__ import annotations
@@ -13,7 +15,6 @@ from __future__ import annotations
 import pytest
 from sqlalchemy import ColumnElement, exists, select
 
-from jentic_one.control.core.schema.access_requests import AccessRequest
 from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.core.schema.toolkits import Toolkit
 from jentic_one.control.scoping import filters as scoping_filters
@@ -24,10 +25,7 @@ from jentic_one.control.scoping.filters import (
 )
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.models import ActorType
-from jentic_one.shared.scopes import (
-    OWNER_ACCESS_REQUESTS_READ,
-    OWNER_CREDENTIALS_READ,
-)
+from jentic_one.shared.scopes import OWNER_CREDENTIALS_READ
 
 
 def _identity(
@@ -224,55 +222,3 @@ def test_admin_ignores_include_shared() -> None:
     """org:admin stays unrestricted even with include_shared."""
     identity = _identity(permissions=["org:admin"])
     assert build_access_filters(identity, Credential, include_shared=True) == []
-
-
-# --- AccessRequest model tests ---
-
-
-def test_access_request_admin_returns_empty_filters() -> None:
-    identity = _identity(permissions=["org:admin"])
-    filters = build_access_filters(identity, AccessRequest)
-    assert filters == []
-
-
-def test_access_request_user_returns_two_sided_filter() -> None:
-    identity = _identity(sub="user_77", permissions=["access-requests:read"])
-    filters = build_access_filters(identity, AccessRequest)
-    assert len(filters) == 1
-    compiled = filters[0].compile(compile_kwargs={"literal_binds": True})
-    sql = str(compiled)
-    assert "user_77" in sql
-    assert "created_by" in sql
-    assert "filer_owner_id" in sql
-
-
-def test_access_request_agent_with_delegation_scope_returns_widened_filter() -> None:
-    identity = _identity(
-        sub="agent_2",
-        permissions=[OWNER_ACCESS_REQUESTS_READ],
-        actor_type=ActorType.AGENT,
-        parent_actor_id="user_owner_2",
-    )
-    filters = build_access_filters(identity, AccessRequest)
-    assert len(filters) == 1
-    compiled = filters[0].compile(compile_kwargs={"literal_binds": True})
-    sql = str(compiled)
-    assert "agent_2" in sql
-    assert "user_owner_2" in sql
-    assert "created_by" in sql
-    assert "filer_owner_id" in sql
-
-
-def test_access_request_agent_without_delegation_scope_returns_self_only() -> None:
-    identity = _identity(
-        sub="agent_3",
-        permissions=["access-requests:read"],
-        actor_type=ActorType.AGENT,
-        parent_actor_id="user_owner_3",
-    )
-    filters = build_access_filters(identity, AccessRequest)
-    assert len(filters) == 1
-    compiled = filters[0].compile(compile_kwargs={"literal_binds": True})
-    sql = str(compiled)
-    assert "agent_3" in sql
-    assert "user_owner_3" not in sql
