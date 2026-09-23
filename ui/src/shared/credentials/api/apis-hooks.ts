@@ -277,13 +277,15 @@ export async function pollJobToTerminal(initial: JobStatus): Promise<JobStatus> 
 		}
 	}
 
-	// Timed out having never managed to read the job: say that, rather than
-	// letting the caller render the stale `queued` as a verdict on the import.
-	if (!TERMINAL_JOB_STATUSES.has(status.status) && readError) {
-		return {
-			...status,
-			error: `Couldn't check the import job (${readError}). The import may still be running.`,
-		};
+	// Timed out short of a terminal state: annotate it so the caller can't render
+	// the stale `queued`/`running` as a verdict on the import. Covers both a poll
+	// that never read the job (a lingering `readError`) and one that read fine but
+	// ran out the deadline before the backend finished.
+	if (!TERMINAL_JOB_STATUSES.has(status.status)) {
+		const detail = readError
+			? `Couldn't check the import job (${readError}).`
+			: `The import job didn't finish in time.`;
+		return { ...status, error: `${detail} The import may still be running.` };
 	}
 	return status;
 }
