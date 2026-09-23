@@ -380,7 +380,7 @@ async def test_me_agent_opaque_token_surfaces_minted_scopes(
     The auth verifier (``_make_auth_verifier``) used to discard the token-row
     scopes for agents and recompute via ``resolve_permissions_for_actor``, whose
     AGENT branch is an unimplemented stub that returns ``[]`` — so an approved
-    ``capabilities:read`` never took effect and ``jentic access refresh`` could
+    ``capabilities:read`` never took effect and re-minting the token could
     not help. Unlike the JWT path in ``test_me_agent`` (which falls back to the
     token's ``scopes`` claim), the opaque-token path has no such claim, and it is
     the path real CLI agents use after the jwt-bearer exchange. token_scopes must

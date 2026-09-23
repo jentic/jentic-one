@@ -1,7 +1,7 @@
 # MCP lane — read this when your session has `jentic` MCP tools
 
 This file carries the MCP-session mechanics for every step of the Jentic
-loop in `SKILL.md` (identity → discover → request access → execute): the
+loop in `SKILL.md` (identity → discover → check access → execute): the
 tool surface, call shapes, error envelopes, and recovery. If your session
 drives Jentic through the `jentic` CLI instead, close this file and read
 `references/cli.md`.
@@ -14,12 +14,12 @@ Two servers expose the same loop; **check `tools/list` to tell them apart**:
   local `jentic mcp` **stdio server** — a machine that has the CLI, so CLI
   recovery *may* also be available (defeasible: `--exclude-tools
   get_started` can hide it there, so treat presence as a strong hint,
-  absence as the reliable direction). The stdio server serves **ten** tools:
-  the nine below plus `get_started`.
+  absence as the reliable direction). The stdio server serves **nine** tools:
+  the eight below plus `get_started`.
 - If `get_started` is **absent**, you are on the daemon's **HTTP `/mcp`
   mount**: **no CLI exists** — never tell the operator to run `jentic …` "on
   this machine"; there is no this-machine. The mount serves exactly the
-  **nine** tools below.
+  **eight** tools below.
 
 Both flavors drive the same loop against the same backend; every tool result
 carries an `instance` stamp (`backend`/`host`/`instance_id`) — your
@@ -58,40 +58,23 @@ invent it.
 
 ## Step 2 — access
 
-The decide-first doctrine (see `SKILL.md` step 2) is driven by `whoami` +
-`request_access`. The filing arm mirrors the composite CLI request — every
-target repeats and combines into one request, always with a `reason`:
+The decide-first doctrine (see `SKILL.md` step 2) is driven by `whoami`:
+read your bindings and the APIs they serve, and decide up front whether the
+job is coverable. When something is missing, **report the gap to your human
+operator in one complete summary** — the API (vendor/name), the auth type
+the spec declares, the operations you intend to call, your proposed
+permission rules, and why. Granting is always a human action: the operator
+connects or provisions the credential and binds this agent to it in the
+Jentic One dashboard; your job is to relay the gap, not to grant it.
 
-```
-request_access {"provision": ["slack.com/api", "googleapis.com/sheets"],
-  "auth": ["slack.com/api=bearer", "googleapis.com/sheets=oauth2"],
-  "rules_json": ["slack.com/api=[{\"effect\":\"allow\",\"methods\":[\"POST\"],\"path\":\"/chat\\\\.postMessage\"}]",
-                 "googleapis.com/sheets=[{\"effect\":\"allow\",\"methods\":[\"GET\"],\"path\":\".*\"}]"],
-  "apis": ["github.com/api"],
-  "reason": "one reason covering the whole job"}
-```
-
-With exactly one `provision`, the bare forms apply — `"auth": ["bearer"]`,
-`"rules_json": [{"effect":"allow","methods":["GET"],"path":".*"}]` — no key
-needed. The result carries a `request_id` and an `approve_url`: **relay the
-`approve_url` to your human operator** (granting is always a human action in
-the dashboard; the tool never approves). Then the poll arm — pass ONLY the
-id:
-
-```
-request_access {"request_id": "<id>"}
-```
-
-Never re-file the same request while one is pending. Be honest about the
-terminal states: **denied** → read the items' `decision_reason` to learn
-*why* before giving up; **partially_approved** → proceed only with what was
-actually granted (read the per-item states); approved **scope** grants land
-live on the HTTP mount (scopes are resolved per request) — but if the
-session's own transport credential was authorized with a narrower consent
-(an OAuth grant that never included the scope), no filed request can widen
-it: tell the operator **re-authorization of the connection is required** —
-never "retry and it will work". Denial recovery in an MCP session arrives as
-coded error envelopes on `execute` (see step 5), not stderr directives.
+Bindings resolve live per request on the HTTP mount, so once your operator
+confirms, the very next tool call sees the new access — just retry what was
+blocked. One exception: if the session's own transport credential was
+authorized with a narrower consent (an OAuth grant that never included a
+scope you need), no dashboard grant can widen it — tell the operator
+**re-authorization of the connection is required** — never "retry and it
+will work". Denial recovery in an MCP session arrives as coded error
+envelopes on `execute` (see step 5), not stderr directives.
 
 To propose permission rules from the spec (the doctrine and honesty rules
 are in `SKILL.md` step 2), read the operation surface first with
@@ -174,16 +157,16 @@ happens out-of-band, and re-sending duplicates the side effect.
   …). Read those as **operator guidance to relay**, never as tools for you
   to call.
 
-And know the CLI-only arms: a `credential_not_provisioned` (424) denial
+And know the operator-only arms: a `credential_not_provisioned` (424) denial
 carries a `provisioning_url` — relay it to your operator to connect the
-account; there is nothing an MCP tool can do to fix it (do **not** file
-`request_access` for it). The denial taxonomy (`no_credential_binding`,
-`credential_undecryptable`, `credential_identity_mismatch`,
+account; there is nothing an MCP tool can do to fix it. The denial taxonomy
+(`no_credential_binding`, `credential_undecryptable`,
+`credential_identity_mismatch`,
 `ambiguous_credential_binding` — the per-code meanings are surface-independent
 and live in `references/recovery.md`) applies unchanged — the same codes,
 delivered in the envelope instead of stderr.
 
-## The 9 mount tools (each maps onto the loop)
+## The 8 mount tools (each maps onto the loop)
 
 - `whoami` — your identity, status, scopes, and credential bindings with the
   APIs each one serves; start here and decide access from it.
@@ -203,15 +186,12 @@ delivered in the envelope instead of stderr.
   the mount reports a duplicate as an `already_imported` success (the stdio
   server reports the same duplicate as a failed dead-letter import; either
   way it's already there).
-- `request_access` — file ONE composite access request
-  (provision/apis/scopes + reason), or poll a filed one with
-  `{"request_id": "<id>"}`; relay `approve_url` to the human.
 
-The stdio server serves these nine plus `get_started` (pre-auth setup
+The stdio server serves these eight plus `get_started` (pre-auth setup
 diagnosis on a CLI machine).
 
 **Structural facts:** every tool result carries an `instance` stamp
 (`backend`/`host`/`instance_id`) — your which-backend check. `get_started`
-and all `jentic` CLI verbs (`setup`, `access refresh`, `context`, `env`,
+and all `jentic` CLI verbs (`setup`, `context`, `env`,
 `doctor`, `api`, `history`, `events`) do **not** exist on the HTTP mount —
 do not invent them.

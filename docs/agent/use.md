@@ -12,7 +12,7 @@ is the map, not the territory.
 Every task against an external API follows the same audited loop:
 
 ```bash
-jentic access whoami                   # 1. what your bindings already SERVE
+jentic api GET /me                     # 1. what your bindings already SERVE
 jentic catalog search "<capability>"   # 2. find an importable API (public catalog)
 jentic catalog import <vendor/name>    #    import it into the local registry
 jentic search "<what you want to do>"  # 3. find the operation — each hit gives its METHOD and URL
@@ -22,17 +22,18 @@ jentic execute GET:https://api.example.com/v1/things/{id} --path id=abc   # 5. c
 
 Key behaviours (details and full flag syntax in the skill):
 
-- **Decide access from `whoami`, don't probe with `execute`.** If nothing you
-  are bound to serves the API, file **one composite**
-  `jentic access request --provision <vendor/name> --auth … --rules-json …
-  --reason … --wait` covering the whole job. A human approves; you never
-  approve yourself, and you never see the credential secret.
+- **Decide access from your bindings (`jentic api GET /me`), don't probe with
+  `execute`.** If nothing you are bound to serves the API, report the gap to
+  your operator in **one summary** covering the whole job (the API, the auth
+  type, the permission rules you read from the spec, and why). A human
+  connects the credential and binds you in the dashboard; you never grant
+  yourself access, and you never see the credential secret.
 - **Import before search.** A fresh registry is empty; `search` returning
   `{"data": []}` means nothing is imported, not that you lack access.
 - **Denials teach you.** A denied `execute` exits 2 and prints an
   `agent_directive` on stderr with the exact recovery
   (`no_credential_binding`, `credential_not_provisioned`, …). Follow its
-  `suggested_command`; never re-send the same call.
+  instruction; never re-send the same call.
 - The broker is a **forward proxy**: an execute target is always the
   operation's method plus its **full upstream URL** (`METHOD:https://…` —
   scheme, host, and path), never a host-relative path. Take the `METHOD URL`
@@ -45,17 +46,11 @@ Key behaviours (details and full flag syntax in the skill):
    like `catalog --update` or `import` do not exist. Before the first use of
    any command, run `jentic <command> --help`; every failure also prints the
    exact next command on stderr, so read the error before trying anything else.
-2. **A freshly imported API has no credential.** Your **first** access request
-   for it must be `--provision <vendor/name>` (which describes the whole path:
-   credential, rules, binding). A bare `--api <vendor/name>`
-   request will be denied — nothing serves the API yet.
-3. **Withdraw mistakes before re-filing.** A new access request for the same
-   target can be merged into your still-pending earlier request — so a
-   `--provision` filed after a doomed `--api` can inherit its denial. If
-   you filed a bad request, run `jentic access withdraw <request_id>` first,
-   then file the correct one fresh.
-4. **One composite request per job**, always with `--reason` — never thrash
-   with per-operation or duplicate requests.
+2. **A freshly imported API has no credential.** Your operator must first
+   connect/provision a credential for it in the dashboard (auth type +
+   permission rules), then bind you to it — importing alone grants nothing.
+3. **One report per job**, always with the reason — never thrash your
+   operator with per-operation or duplicate asks.
 
 ## How to do an action (worked example)
 
@@ -64,20 +59,18 @@ imported, no access yet.
 
 ```bash
 # 1. What can I already call? (nothing yet, on a fresh install)
-jentic access whoami
+jentic api GET /me
 
 # 2. Find and import the API from the public catalog
 jentic catalog search "crypto prices"
 jentic catalog import coincap-io/coincap-io
 
-# 3. First access request for a just-imported API: --provision, never --api
-jentic access request --provision coincap-io/coincap-io \
-  --auth api_key \
-  --rules-json '[{"effect":"allow","methods":["GET"],"path":".*"}]' \
-  --reason "read current crypto prices for the user" \
-  --wait
-# → a human fulfils and approves this in the dashboard; --wait blocks until they do.
-#   Filed something wrong first? `jentic access withdraw <request_id>`, then re-file.
+# 3. Report the access gap to your operator, once, with everything they need:
+#    "I need coincap-io/coincap-io. Auth type: api_key. Rules:
+#     [{"effect":"allow","methods":["GET"],"path":".*"}].
+#     Reason: read current crypto prices for the user."
+# → a human connects the credential and binds you in the dashboard; re-check
+#   your bindings (jentic api GET /me) once they confirm.
 
 # 4. Find the operation — the hit gives you its METHOD and URL
 jentic search "get current asset price"
@@ -88,20 +81,19 @@ jentic execute GET:https://rest.coincap.io/v3/assets/{id} --path id=bitcoin
 ```
 
 If step 5 is denied (exit 2), the `agent_directive` on stderr names the exact
-recovery — follow its `suggested_command` instead of retrying the same call.
+recovery — follow its instruction instead of retrying the same call.
 
 ## Machine-friendly behaviour
 
 - Add `--json` for machine-readable output. It exists on the **leaf**
-  commands (`search`, `execute`, `inspect`, `doctor`, `apis list`,
-  `access status`, …) — the bare group commands (`jentic apis`,
-  `jentic access`) reject it. Do not rely on "non-TTY output is JSON
+  commands (`search`, `execute`, `inspect`, `doctor`, `apis list`, …) — the
+  bare group commands (`jentic apis`) reject it. Do not rely on "non-TTY
+  output is JSON
   automatically": `jentic register` persists `mode: human` in the context it
   creates, and an explicit mode short-circuits the TTY check, so piped
   output is prose on most installs. For a fully machine posture set
   `JENTIC_MODE=agent` — note it also deadlines most commands at 60 s
-  (pass `--timeout` on long waits such as `register` and
-  `access request --wait`).
+  (pass `--timeout` on long waits such as `register`).
 - Exit codes are a coarse contract: **0** ok, **1** transport/unexpected,
   **2** "cannot succeed as asked" (denial, resolve failure, missing context —
   do not blind-retry), **3** timed out still pending (retry later),
@@ -126,7 +118,7 @@ recovery — follow its `suggested_command` instead of retrying the same call.
 | Action | Where the human does it |
 | ------ | ----------------------- |
 | Approve a new agent | `/app/agents` in the console |
-| Approve/fulfil access requests, enter credential secrets | `/app/access-requests` in the console — hand them the request **id**, not the `approve_url` value (that URL is an API route, and its base is unset on most installs) |
+| Connect/provision credentials, bind agents, enter credential secrets | `/app` console (dashboard) — relay your access ask to the operator in prose; they act on it there |
 | Create/manage users | `/app` admin UI |
 | Re-import an updated API spec (`jentic catalog outdated`) | Their call — suggest it, never run it silently |
 

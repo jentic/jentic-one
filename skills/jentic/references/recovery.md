@@ -44,9 +44,9 @@ this file adds the lane-specific detail.
 - Never re-send an execute while its job is pending — poll
   `get_execution_result` with the job id; approval happens out-of-band and
   re-sending duplicates the side effect.
-- Don't file `request_access` to fix a 424 `credential_not_provisioned`
-  error — it carries a `provisioning_url` for your **operator**; an access
-  request cannot connect an account.
+- A 424 `credential_not_provisioned` error is for your **operator** — it
+  carries a `provisioning_url`; relay it so they can connect the account.
+  Connecting the account is the operator's step, not yours.
 - Don't call `get_started` on the HTTP mount — it isn't there. Its absence
   is a transport tell (you're on the daemon mount), not an outage; don't
   retry it or report it as a failure.
@@ -65,36 +65,35 @@ this file adds the lane-specific detail.
 A denied execute carries the same coded taxonomy in both lanes — the CLI
 delivers it as a stderr `agent_directive` plus exit code 2, an MCP session
 as a coded error envelope. The meanings below are surface-independent; the
-CLI delivery mechanics (flags, `suggested_command`, exit codes) live in
+CLI delivery mechanics (flags, exit codes) live in
 `references/cli.md` step 2, the MCP envelope caveats in `references/mcp.md`
-step 5.
+step 5. Every recovery below is performed by your **operator** in the
+Jentic One dashboard — your job is to relay the right ask, then retry once
+they confirm.
 
 - **`no_credential_binding` (403)** — no credential binding of yours covers
-  this API. The recovery forks on the directive/envelope's `api_served`
+  this API. The ask forks on the directive/envelope's `api_served`
   field:
-  - `false` — **no** credential is provisioned for this API at all, so a
-    bare bind request would auto-deny ("No credential covers API …"); filing
-    one is a dead-end. File a **provisioning plan** instead (CLI
-    `--provision`; MCP `request_access {"provision": …}`): it describes the
-    whole path — provision a credential with your proposed auth type and
-    rules, bind you — which a human fulfils and approves in the dashboard.
+  - `false` — **no** credential is provisioned for this API at all. Ask
+    your operator to connect or provision a credential for the API and bind
+    you to it; include the auth type and permission rules you read from the
+    spec so they can set it up in one pass.
   - `true` — a credential already serves this API and you just aren't bound
-    to it; request the binding by API reference (CLI `--api <vendor/name>`;
-    MCP `"apis"`) and wait for approval.
+    to it; ask your operator to bind you to the existing credential.
 - **`credential_not_provisioned` (424)** — you're bound, but no
-  credential (account) is connected. Filing an access request will
-  **not** fix this; the recovery carries a `provisioning_url` — hand it to
+  credential (account) is connected. This is not agent-recoverable; the
+  recovery carries a `provisioning_url` — hand it to
   your operator to connect the account, then retry.
 - **`credential_undecryptable` (424)** — a credential *is* connected, but
   its stored secret can no longer be decrypted (typically the deployment's
   encryption key rotated underneath it, e.g. a reinstall over existing
-  data). Neither an access request nor retrying will fix this — ask your
-  operator to remove and re-add the credential, then retry.
+  data). This is not agent-recoverable and retrying will not fix it — ask
+  your operator to remove and re-add the credential, then retry.
 - **`credential_identity_mismatch` (403)** — a binding exists and a
   credential *is* connected, but that credential's stored identity doesn't
   cover this API (e.g. it targets a different name/version, or was stored
-  in a non-canonical form). Filing an access request will **not** fix this
-  — the binding already exists. `parameters.expected` vs `parameters.found`
+  in a non-canonical form). The binding already exists, so no new binding
+  helps. `parameters.expected` vs `parameters.found`
   name the mismatch; if `parameters.would_match_if_normalized` is `true`
   the credential just needs re-provisioning to canonicalize its identity.
   Either way, ask your operator to fix or re-provision the credential so it
@@ -115,21 +114,10 @@ step 5.
   rendered for humans, next to the HTTP API and Broker API references.
 - `jentic context view` — the active context (environment + identity +
   base_url); start here in a CLI session.
-- `jentic access whoami` — your identity, status, scopes, and credential
-  bindings with the APIs each one **serves** (check this before executing
-  or provisioning).
-- `jentic access request` — ask a human for access. `--provision
-  <vendor/name>` files the whole path to first execution as one plan when
-  nothing serves the API yet; `--api <vendor/name>` asks to be bound to an
-  **existing** credential serving that API; `--scope <scope>` requests a
-  missing scope. All
-  target flags repeat and combine into **one composite request**. Always
-  pass `--reason`; add `--wait` to block on approval (full examples in
-  `references/cli.md`).
-- `jentic access list | status <id> | withdraw <id>` — track your requests.
-- `jentic access refresh` — re-mint your token after an approved **scope**
-  grant that `whoami` flags as not yet on your token. Bindings need no
-  refresh — they are live on approval.
+- `jentic api GET /me` — your identity, status, scopes, and credential
+  bindings with the APIs each one **serves** (check this before executing;
+  when access is missing, report the gap to your operator — granting
+  happens in the dashboard, not through a CLI command).
 - `jentic catalog search "<query>"` / `jentic catalog import <vendor/name>`
   — find and import APIs (import first; `search` only sees imported
   operations).
@@ -166,7 +154,7 @@ step 5.
   connections.
 - Add `--json` to force machine-readable output on a terminal. It exists on
   **leaf** commands (`search`, `execute`, `inspect`, `apis list`,
-  `access list`, `doctor`); the bare group commands reject it. Non-TTY
+  `doctor`); the bare group commands reject it. Non-TTY
   output is not automatically JSON: `register` persists `mode: human`,
   which wins over TTY detection — set `JENTIC_MODE=agent` (or pass
   `--json`) when you need parseable output. (`context view` has no
@@ -177,12 +165,12 @@ step 5.
 
 ## Quick Reference — MCP session
 
-The mount serves exactly nine tools; the stdio server adds `get_started`.
+The mount serves exactly eight tools; the stdio server adds `get_started`.
 Each maps onto the loop — the one-line whens and the structural facts (the
 `instance` stamp; the CLI verbs that do **not** exist on the mount) are in
 `references/mcp.md`, which is the authoritative lane reference. In short:
-`whoami` (identity + bindings; decide access from it) → `request_access`
-(file once, richly; relay `approve_url`) → `search_catalog` → `import_api`
+`whoami` (identity + bindings; decide access from it, and report gaps to
+your operator) → `search_catalog` → `import_api`
 → `search_apis` → `inspect_operation` → `execute` / `execute_read` (prefer
 `execute_read` for reads) → `get_execution_result` (poll jobs; never
 re-send while pending).

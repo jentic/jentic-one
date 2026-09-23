@@ -96,12 +96,12 @@ func TestAgentopsReproducesGoldens(t *testing.T) {
 			"agent_directive": {
 				"strategy": "wait",
 				"parameters": {
-					"suggested_command": "jentic access request --api acme/pets --wait",
+					"suggested_command": "jentic execute --header Jentic-Toolkit-Id=acme/pets ...",
 					"provisioning_url": "https://console.example/connect/acme",
 					"candidates": ["acme/pets", "acme/pets-admin"],
 					"retry_after_seconds": 30
 				},
-				"human_readable_instruction": "You are not bound for 'acme/pets'. File an access request yourself with \u0060jentic access request --api acme/pets --wait\u0060, then ask your operator to approve it — only a human can grant the binding. Once approved, retry this call."
+				"human_readable_instruction": "You are not bound for 'acme/pets'. Ask your operator to bind this agent to the credential serving 'acme/pets' (in the dashboard, or via POST /agents/{agent_id}/credentials) — only a human can grant the binding. Once bound, retry this call."
 			}
 		}`))
 		}))

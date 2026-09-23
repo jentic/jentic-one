@@ -15,7 +15,7 @@ import (
 const skillContentDir = "../../internal/skillgen/content"
 
 // binaryCommandPaths flattens a BuildCLIReference() tree into the set of every
-// valid command invocation path ("jentic access request", "jenticctl install",
+// valid command invocation path ("jentic catalog import", "jenticctl install",
 // …) plus, per path, its set of long flag names (including inherited). It is the
 // ground truth the skill freshness gate checks documented invocations against.
 func binaryCommandPaths(t *testing.T) (paths map[string]bool, flags map[string]map[string]bool) {
@@ -120,9 +120,9 @@ func stripQuoted(s string) string {
 }
 
 // knownPathPrefix reports whether candidate is a real command path OR a valid
-// prefix of one. A skill line like "jentic access" (the group, used mid-sentence
-// before naming a subcommand) is legitimate even when only "jentic access
-// request" is a leaf — cobra runs the group's help. So a candidate is fine if it
+// prefix of one. A skill line like "jentic catalog" (the group, used mid-sentence
+// before naming a subcommand) is legitimate even when only "jentic catalog
+// import" is a leaf — cobra runs the group's help. So a candidate is fine if it
 // exactly matches a path or is a strict prefix of some deeper path.
 func knownPathPrefix(candidate string, paths map[string]bool) bool {
 	if paths[candidate] {

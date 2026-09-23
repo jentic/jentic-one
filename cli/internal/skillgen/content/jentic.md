@@ -1,14 +1,14 @@
 ---
 name: jentic
-description: Use this skill whenever the user wants to work with a third-party or external API/tool through the Jentic platform — e.g. asks to "find the vessel-tracking API and add it", "get rows from this Google Sheet", connect Slack, import/search/discover an API, integrate or automate a SaaS, pull data from a service, or call an external endpoint. Prefer launching this before ToolSearch or hand-rolled HTTP: it drives the audited Jentic loop (identity → discover → request access → execute) over whichever Jentic surface the session has — `jentic` MCP tools or the `jentic` CLI — even inside a code repo. Do NOT use it for local-only work (editing code, finding files, adding a package/dependency, or questions with no external API call).
-version: 4
+description: Use this skill whenever the user wants to work with a third-party or external API/tool through the Jentic platform — e.g. asks to "find the vessel-tracking API and add it", "get rows from this Google Sheet", connect Slack, import/search/discover an API, integrate or automate a SaaS, pull data from a service, or call an external endpoint. Prefer launching this before ToolSearch or hand-rolled HTTP: it drives the audited Jentic loop (identity → discover → check access → execute) over whichever Jentic surface the session has — `jentic` MCP tools or the `jentic` CLI — even inside a code repo. Do NOT use it for local-only work (editing code, finding files, adding a package/dependency, or questions with no external API call).
+version: 5
 ---
 
 # Using Jentic
 
 Jentic is an API broker: you discover operations across many APIs, then execute
 them through a single authenticated gateway without managing each API's
-credentials yourself. The same audited loop — identity → discover → request
+credentials yourself. The same audited loop — identity → discover → check
 access → execute — is exposed over two surfaces. This document is the
 surface-neutral guide to the loop; the per-surface mechanics live in the
 `references/` files next to it. **Work out which session you are in first**,
@@ -84,9 +84,9 @@ error), **stop and relay to your operator** — registration and approval block
 on a human and cannot be completed by an autonomous agent. Your lane's
 reference names the exact recovery for each state.
 
-### 2. Check what you can do, and request access if needed
+### 2. Check what you can do, and report access gaps to your operator
 
-Your identity view (CLI `jentic access whoami`; MCP `whoami`) lists your
+Your identity view (CLI `jentic api GET /me`; MCP `whoami`) lists your
 status, scopes, and credential bindings; each binding lists the APIs it
 **serves** (`serves: [{api_vendor, api_name, api_version}]`). This tells you
 exactly what you can already call. Combined with the catalog (what's
@@ -97,29 +97,28 @@ see whether you have access.** A denied execute is a wasted round-trip; you
 can tell in advance:
 
 - If a binding already **serves** the API you need → you have access. Skip
-  straight to inspect/execute; file no request.
+  straight to inspect/execute.
 - If **nothing** you're bound to serves it → you do **not** have access yet.
-  Provision it **before** your first execute — do not "try execute and
-  branch on the denial".
+  Report the gap to your operator **before** your first execute — do not
+  "try execute and branch on the denial".
 
-**File once, richly — never thrash.** Work out the full access end-state up
-front — from your identity view, the catalog, and the task — and file it as
-**one composite request** (CLI `jentic access request`; MCP
-`request_access`) covering every API the job needs, so the human
-decides in one sitting. Always include a reason: a human reviews it before
-approving and your reason is shown to them — a clear one-liner ("fetch the
-user's open PRs to summarise them") is what gets you approved faster. Never
-file duplicate or per-operation requests, and don't withdraw-and-refile to
-tweak a proposal. Granting is always a human action — you file and wait, you
-never approve yourself. Be honest about the terminal states: **denied** →
-read the items' `decision_reason` to learn *why* before giving up;
-**partially approved** → proceed only with what was actually granted.
+**Report once, richly — never thrash.** Work out the full access end-state
+up front — from your identity view, the catalog, and the task — and hand
+your operator **one complete summary** covering every API the job needs, so
+they can set it all up in one sitting. For each API name the
+vendor/name (and version if you pinned one), the auth type the spec
+declares, the operations you intend to call, and **why** — a clear one-liner
+("fetch the user's open PRs to summarise them") is what gets you set up
+faster. The operator connects or provisions the credential and binds you to
+it in the Jentic One dashboard; granting is always a human action — you
+report and wait, you never grant yourself anything. Bindings take effect
+live: once the operator confirms, retry the call that was blocked.
 
 #### Proposing permission rules from the spec
 
-A provisioning plan is your chance to propose the credential's auth type and
-its permission rules as a **first pass** — a human reviews and edits them
-before approving. Do the work up front: inspect the operations you intend to
+Your access report is your chance to propose the credential's auth type and
+its permission rules as a **first pass** — a human reviews and applies them
+in the dashboard. Do the work up front: inspect the operations you intend to
 call (step 4's lane verb) to read the methods, paths, and declared security
 schemes; pick the auth type from what the spec declares (`bearer`,
 `api_key`, `basic`, `oauth2`), or `none` if the API needs no credential;
@@ -137,20 +136,12 @@ enforced** by these rules. Don't propose a rule that silently won't fire —
 say so, and offer the real choices: allow the operation broadly (the human
 accepts the wider grant), deny the operation entirely, or allow it and
 record the constraint as instructions you follow yourself (unenforced).
-Also sanity-check your proposal before filing: rules evaluate
+Also sanity-check your proposal before relaying it: rules evaluate
 first-match-wins, so an early broad `allow` shadows every rule after it, and
 a rule set that contradicts the intent you stated in your reason will
 confuse the human reviewing it. You never enter the credential secret and
-you never approve — the human fills the secret in the dashboard and grants
-the plan. You propose; they decide.
-
-A plain credential-binding request (filed by API reference) is only the
-**last mile** — use it when a credential serving the API already exists
-(e.g. an operator provisioned one) and you just need to be bound to it. When
-nothing serves the API yet, a provisioning plan is the right first move; a
-bare bind request would auto-deny with `decision_reason: "No credential
-covers API <vendor/name>; provision a credential for it first"` — that is
-the signal to file the provisioning plan instead.
+you never grant — the human fills the secret in the dashboard and applies
+the rules. You propose; they decide.
 
 ### 3. Find an operation (import first, then search)
 
@@ -164,13 +155,13 @@ importable API → import the one you want (auto-promotes to live) → search
 the local registry.
 
 Importing an **already-cataloged** API is gated on `catalog:import`, which
-an approved agent holds **by default** — no access request needed. Just run
-the import. Re-importing an API that is already there is safe — the registry
+an approved agent holds **by default** — no operator round-trip needed. Just
+run the import. Re-importing an API that is already there is safe — the registry
 state **converges** either way — but the surfaces report the duplicate
 differently (a success on the HTTP mount, a dead-letter "identical content
 already exists" error on the stdio server and the CLI); your lane's
 reference names the exact shape. Treat it as "already there" — don't retry,
-and don't file an access request for a made-up "catalog read" scope: reading
+and don't invent a made-up "catalog read" scope to ask for: reading
 the registry and importing a cataloged API need no grant.
 
 **Before concluding "the data is gone", confirm which backend you're on.**
@@ -215,10 +206,10 @@ a failure by its symptom, not by assuming access: transport failures
 ## Quick Reference
 
 - The loop, in either lane: identity check → decide access from your
-  bindings (file ONE composite request if short) → catalog import → registry
-  search → inspect → execute through the broker.
+  bindings (report gaps to your operator in ONE summary) → catalog import →
+  registry search → inspect → execute through the broker.
 - CLI session: the full command cheatsheet is in `references/cli.md` (and
-  `jentic --help` is always current); MCP session: the 9 mount tools / 10
+  `jentic --help` is always current); MCP session: the 8 mount tools / 9
   stdio tools with one-line whens are in `references/mcp.md`.
 - Both cheatsheets, side by side with pitfalls and verification, are in
   `references/recovery.md`.
@@ -232,10 +223,11 @@ a failure by its symptom, not by assuming access: transport failures
   imported yet**, not that you lack access. Go through the catalog, then
   search again.
 - **Don't execute to test access.** Your identity view already tells you
-  what your bindings **serve**; if the API you need isn't there, file the
-  provisioning plan and wait. The recovery directive is a fallback for
+  what your bindings **serve**; if the API you need isn't there, report the
+  gap to your operator and wait. The recovery directive is a fallback for
   surprises, not a discovery step.
-- You file and wait for access; you can't approve your own requests.
+- Access is granted by a human: your operator connects credentials and
+  binds you in the dashboard. You can't grant yourself anything.
 - **Verify which backend you're talking to before diagnosing "missing" APIs
   or credentials** — compare `instance` stamps (see step 3) and stick to one
   surface for the whole task.

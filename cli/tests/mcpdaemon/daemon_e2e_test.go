@@ -53,7 +53,7 @@ func TestRelayPumpsGoldenTranscriptsThroughLiveDaemon(t *testing.T) {
 	for _, tool := range tools.Tools {
 		names[tool.Name] = true
 	}
-	for _, want := range []string{"get_started", "whoami", "search_apis", "inspect_operation", "execute", "execute_read", "get_execution_result", "search_catalog", "import_api", "request_access"} {
+	for _, want := range []string{"get_started", "whoami", "search_apis", "inspect_operation", "execute", "execute_read", "get_execution_result", "search_catalog", "import_api"} {
 		if !names[want] {
 			t.Errorf("tools/list is missing %q through the relay", want)
 		}
