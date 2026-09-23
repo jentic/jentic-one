@@ -181,7 +181,10 @@ export function buildUpdateBody(
 				...svPatch,
 				client_secret: secret(state.clientSecret),
 				token_url: state.tokenUrl.trim() || undefined,
-				scopes: parseScopes(state.scopes),
+				// An emptied field sends `[]` (clear every scope), not `undefined`:
+				// on update, omitting the key would keep the stored scopes, so a
+				// deliberate "remove all" would never persist.
+				scopes: parseScopes(state.scopes) ?? [],
 			};
 		case CredentialType.NO_AUTH:
 			// Nothing to rotate — only name/server-variable edits apply.
