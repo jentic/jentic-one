@@ -39,6 +39,8 @@ export {
 	RETIRED_SERVICE_ACCOUNT_ACTOR_TYPE,
 	RETIRED_SERVICE_ACCOUNT_SUFFIX,
 	retiredServiceAccountLabel,
+	MIGRATED_SERVICE_ACCOUNT_KEY_WARNING,
+	holdsMigratedServiceAccountKey,
 } from '@/shared/lib/retiredActors';
 
 // Canonical per-severity event icon — the single source of truth shared by

@@ -18,13 +18,12 @@ import { useState } from 'react';
 import { Ban, History, KeyRound } from 'lucide-react';
 import { ActorLabel, Badge, Button, DetailSection, LoadingState } from '@/shared/ui';
 import { formatTimestamp, timeAgo } from '@/shared/lib/utils';
-import { SERVICE_ACCOUNT_SUCCESSOR_REGISTRAR } from '@/shared/lib';
+import { MIGRATED_SERVICE_ACCOUNT_KEY_WARNING, holdsMigratedServiceAccountKey } from '@/shared/lib';
 import {
 	useAgentApiKeyInfo,
 	useAgentApiKeyHistory,
 	useGenerateAgentApiKey,
 	useRevokeAgentApiKey,
-	isServiceAccountSuccessor,
 	type AgentEntity,
 } from '@/modules/agents/api';
 import { ApiKeyDialog } from '@/modules/agents/components/ApiKeyDialog';
@@ -48,21 +47,15 @@ export function AgentKeysPanel({ agent }: { agent: AgentEntity }) {
 	const info = apiKeyInfo.data;
 	const history = apiKeyHistory.data ?? [];
 	const mutating = generateApiKey.isPending || revokeApiKey.isPending;
-	// The migration inserted the successor's credential row itself
-	// (`created_by` = its system actor), and any later generate/revoke stamps
-	// `rotated_at`. So an active, never-rotated, migration-created key is the
-	// original service-account key. This reads the credential row directly
-	// instead of the 50-row-capped audit history.
-	const holdsMigratedKey =
-		isServiceAccountSuccessor(agent) &&
-		info?.status === 'active' &&
-		info.rotatedAt == null &&
-		info.createdBy === SERVICE_ACCOUNT_SUCCESSOR_REGISTRAR;
+	const holdsMigratedKey = holdsMigratedServiceAccountKey({
+		registeredBy: agent.attribution.registeredBy,
+		keyStatus: info?.status,
+		keyRotatedAt: info?.rotatedAt,
+		keyCreatedBy: info?.createdBy,
+	});
 	const migratedKeyWarning = holdsMigratedKey ? (
 		<p className="text-foreground mt-2 font-medium" data-testid="migrated-key-warning">
-			This agent replaced a retired service account and still authenticates with that
-			account&apos;s original key. Once replaced, that key is gone for good and cannot be
-			restored.
+			{MIGRATED_SERVICE_ACCOUNT_KEY_WARNING}
 		</p>
 	) : null;
 
