@@ -173,6 +173,9 @@ export interface AgentBindableCredential {
 	 * preferred friendly-title source. */
 	catalogApiId: string | null;
 	provider: string | null;
+	/** The credential's owner (creator). Only the owner — or an `org:admin` —
+	 * may bind it, so the picker hides the rest (e.g. enterprise shares). */
+	createdBy: string | null;
 }
 
 /** A stored permission rule on a direct binding (includes system fields). */

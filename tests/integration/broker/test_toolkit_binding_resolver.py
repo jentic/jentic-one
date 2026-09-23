@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections.abc import AsyncGenerator
 
 import pytest
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 
 from jentic_one.admin.core.schema.agent_toolkit_bindings import AgentToolkitBinding
 from jentic_one.admin.core.schema.agents import Agent
@@ -348,3 +348,44 @@ async def test_nearest_miss_none_when_no_bound_credentials(
 
     assert result.toolkits == ()
     assert result.identity_mismatch is None
+
+
+async def _credential_ids_bound_to(control_db: DatabaseSession, toolkit_id: str) -> list[str]:
+    async with control_db.session() as session:
+        rows = await session.execute(
+            select(ToolkitCredentialBinding.credential_id).where(
+                ToolkitCredentialBinding.toolkit_id == toolkit_id
+            )
+        )
+        return sorted(rows.scalars().all())
+
+
+async def test_derive_toolkits_carries_each_derived_toolkits_own_credentials(
+    admin_db: DatabaseSession, control_db: DatabaseSession, clean_tables: None
+) -> None:
+    """The injection boundary per toolkit is that toolkit's covering credentials only.
+
+    Another owner's toolkit serving the same API must contribute nothing — its
+    credential ids never appear in the agent's derivation (issue #88 shape).
+    """
+    mine = await _seed_toolkit_with_credential(
+        control_db, toolkit_name="tk-mine", vendor="acme.com", name="pets-api", version="v1"
+    )
+    theirs = await _seed_toolkit_with_credential(
+        control_db, toolkit_name="tk-theirs", vendor="acme.com", name="pets-api", version="v1"
+    )
+    agent_id = await _seed_agent_with_toolkits(admin_db, toolkit_ids=[mine])
+
+    resolver = ToolkitBindingResolver(admin_db, control_db)
+    result = await resolver.derive_toolkits(
+        agent_id=agent_id, vendor="acme.com", name="pets-api", version="v1"
+    )
+
+    assert result.toolkits == (mine,)
+    my_creds = await _credential_ids_bound_to(control_db, mine)
+    their_creds = await _credential_ids_bound_to(control_db, theirs)
+    assert dict(result.credentials_by_toolkit) == {mine: tuple(my_creds)}
+    flattened = {c for ids in result.credentials_by_toolkit.values() for c in ids}
+    assert flattened.isdisjoint(their_creds)
+    # The other toolkit still counts as "serving" the API (truthiness only).
+    assert theirs in result.api_served_toolkits

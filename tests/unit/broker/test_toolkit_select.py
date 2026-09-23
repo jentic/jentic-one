@@ -17,6 +17,7 @@ from jentic_one.broker.core.exceptions import (
 )
 from jentic_one.broker.web.errors import install_broker_error_handlers
 from jentic_one.broker.web.routers.execute import (
+    ToolkitSelection,
     _emit_toolkit_binding_unserved,
     _is_unserved_no_toolkit_binding,
     select_toolkit,
@@ -47,8 +48,10 @@ class _StubDeriver:
         toolkit_serves_api: bool = True,
         agent_bound_any: bool | None = None,
         mismatch: IdentityMismatch | None = None,
+        credentials_by_toolkit: dict[str, tuple[str, ...]] | None = None,
     ) -> None:
         self.candidates = candidates
+        self._credentials_by_toolkit = credentials_by_toolkit or {}
         self._toolkit_serves_api = toolkit_serves_api
         self._agent_bound_any = agent_bound_any
         self._mismatch = mismatch
@@ -75,6 +78,7 @@ class _StubDeriver:
             agent_bound_any=bound or bool(self.candidates),
             api_served_toolkits=served,
             identity_mismatch=self._mismatch,
+            credentials_by_toolkit=self._credentials_by_toolkit,
         )
 
 
@@ -88,7 +92,7 @@ def _identity(actor_type: str = "agent") -> Identity:
     )
 
 
-async def _select(deriver: _StubDeriver, *, header_toolkit: str | None) -> str:
+async def _select(deriver: _StubDeriver, *, header_toolkit: str | None) -> ToolkitSelection:
     return await select_toolkit(
         deriver=deriver,
         identity=_identity(),
@@ -100,7 +104,7 @@ async def _select(deriver: _StubDeriver, *, header_toolkit: str | None) -> str:
 
 async def test_single_candidate_no_header_uses_it() -> None:
     result = await _select(_StubDeriver(["tk_only"]), header_toolkit=None)
-    assert result == "tk_only"
+    assert result.toolkit_id == "tk_only"
 
 
 async def test_zero_candidates_no_header_toolkit_serves_recommends_binding() -> None:
@@ -206,7 +210,27 @@ async def test_multiple_candidates_no_header_raises_409_with_candidates() -> Non
 
 async def test_header_present_and_bound_uses_it() -> None:
     result = await _select(_StubDeriver(["tk_a", "tk_b"]), header_toolkit="tk_b")
-    assert result == "tk_b"
+    assert result.toolkit_id == "tk_b"
+
+
+@pytest.mark.parametrize("header_toolkit", [None, "tk_b"])
+async def test_selection_carries_only_the_selected_toolkits_credentials(
+    header_toolkit: str | None,
+) -> None:
+    """The injection boundary is the *selected* toolkit's credentials — never a sibling's."""
+    candidates = ["tk_b"] if header_toolkit is None else ["tk_a", "tk_b"]
+    deriver = _StubDeriver(
+        candidates,
+        credentials_by_toolkit={"tk_a": ("cred_a",), "tk_b": ("cred_b1", "cred_b2")},
+    )
+    result = await _select(deriver, header_toolkit=header_toolkit)
+    assert result == ToolkitSelection(toolkit_id="tk_b", credential_ids=("cred_b1", "cred_b2"))
+
+
+async def test_selection_without_bound_credentials_is_empty_not_unbounded() -> None:
+    """A toolkit missing from the derivation map yields an empty boundary (fail closed)."""
+    result = await _select(_StubDeriver(["tk_only"]), header_toolkit=None)
+    assert result.credential_ids == ()
 
 
 async def test_header_present_but_not_bound_raises_403() -> None:
