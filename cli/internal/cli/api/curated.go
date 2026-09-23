@@ -93,8 +93,9 @@ func CuratedBindings() []CuratedBinding {
 				"reason":           "reason",
 			},
 			NotExposed: map[string]string{
-				"agent_id":       "never sent: an agent caller IS the agent (identity injected server-side; an override is refused 403); connecting FOR an agent is a dashboard action",
-				"preferred_flow": "the deployment's registry default flow is the right answer on this surface; flow selection is reachable via `jentic api IntegrationsConnect`",
+				"agent_id":                   "never sent: an agent caller IS the agent (identity injected server-side; an override is refused 403); connecting FOR an agent is a dashboard action",
+				"preferred_flow":             "the deployment's registry default flow is the right answer on this surface; flow selection is reachable via `jentic api IntegrationsConnect`",
+				"requested_permission_rules": "a nested rule list has no sane flag shape; the approver sets rules on the approve page, and a pre-filled ask is reachable via `jentic api IntegrationsConnect`",
 			},
 		},
 		{
