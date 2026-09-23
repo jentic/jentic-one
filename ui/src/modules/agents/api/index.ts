@@ -31,6 +31,7 @@ export {
 	useArchiveAgent,
 	useCreateAgent,
 	useGenerateAgentApiKey,
+	useIsGeneratingAgentApiKey,
 	useRevokeAgentApiKey,
 	useGenerateServiceAccountApiKey,
 	useServiceAccount,

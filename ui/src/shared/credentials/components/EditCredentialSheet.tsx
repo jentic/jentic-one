@@ -111,6 +111,9 @@ export function EditCredentialSheet({
 			accessKeyId: typeof details.access_key_id === 'string' ? details.access_key_id : '',
 			awsRegion: typeof details.aws_region === 'string' ? details.aws_region : '',
 			awsService: typeof details.aws_service === 'string' ? details.aws_service : '',
+			// oauth2: scopes are non-secret; seeding them keeps an untouched field from
+			// clearing the stored scopes on save.
+			scopes: Array.isArray(details.scopes) ? details.scopes.join(' ') : '',
 			serverVars: cred.server_variables ?? {},
 		};
 		setState(seeded);

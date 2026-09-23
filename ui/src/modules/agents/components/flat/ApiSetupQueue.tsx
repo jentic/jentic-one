@@ -176,21 +176,39 @@ export function ApiSetupQueue({ open, agentId, agentName, items, onClose }: ApiS
 		setDropKey(null);
 	};
 
+	/** Bind a credential the wizard just created. The wizard already imported an
+	 * unregistered catalog API on save. */
+	const settleCreated = (
+		entry: QueueEntry,
+		created: NonNullable<QueueEntry['created']>,
+	): Promise<void> =>
+		settle(entry, created, { connect: created.needsConnect, alreadyImported: true });
+
 	const handleCreated = (entry: QueueEntry, info: CreatedCredentialInfo): void => {
 		setFormKey(null);
-		// The wizard already imported an unregistered catalog API on save.
-		void settle(
-			entry,
-			{ credential_id: info.credentialId, name: info.name },
-			{ connect: info.needsConnect, alreadyImported: true },
-		);
+		const created = {
+			credential_id: info.credentialId,
+			name: info.name,
+			needsConnect: info.needsConnect,
+		};
+		setEntries((current) => patchEntry(current, entry.key, { created }));
+		void settleCreated(entry, created);
 	};
 
+	const retry = (key: string): void => {
+		const entry = entries.find((e) => e.key === key);
+		if (entry?.created) void settleCreated(entry, entry.created);
+		else setEntries((current) => retryEntry(current, key));
+	};
+
+	// A bind in flight has to land before the queue can hand its item back —
+	// reopening on it would bind the same credential again.
+	const busy = entries.some((e) => e.status === 'working');
 	const close = (): void => onClose(unfinishedItems(entries));
 	// The wizard stacks as a second SheetPrimitive and both see the same Escape —
 	// dismissing it must leave the operator in the queue.
 	const guardedClose = (): void => {
-		if (formKey != null) return;
+		if (formKey != null || busy) return;
 		close();
 	};
 
@@ -216,6 +234,7 @@ export function ApiSetupQueue({ open, agentId, agentName, items, onClose }: ApiS
 						size="sm"
 						aria-label="Close"
 						onClick={close}
+						disabled={busy}
 						className="text-muted-foreground hover:text-foreground shrink-0"
 					>
 						<X className="h-4 w-4" />
@@ -251,7 +270,7 @@ export function ApiSetupQueue({ open, agentId, agentName, items, onClose }: ApiS
 					<ProgressList
 						entries={entries}
 						activeKey={active?.key ?? null}
-						onRetry={(key): void => setEntries((current) => retryEntry(current, key))}
+						onRetry={retry}
 					/>
 				</div>
 
@@ -278,6 +297,7 @@ export function ApiSetupQueue({ open, agentId, agentName, items, onClose }: ApiS
 								size="sm"
 								variant={summary.done ? 'primary' : 'outline'}
 								onClick={close}
+								disabled={busy}
 								className="shrink-0"
 							>
 								{summary.done ? 'Done' : 'Close for now'}

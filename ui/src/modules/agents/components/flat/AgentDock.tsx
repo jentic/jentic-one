@@ -230,29 +230,30 @@ function ServingToggle({ agent }: { agent: AgentEntity }) {
 					variant: 'success',
 					action: {
 						label: 'Undo',
-						onClick: () => {
-							setServing.mutate(
-								{ id: agent.id, serving: true },
-								{
-									onSuccess: () =>
-										toast({
-											title: `${agent.name} is serving traffic again`,
-											variant: 'success',
-										}),
-									onError: (error) =>
-										toast({
-											title:
-												error instanceof ServingRefreshError
-													? error.message
-													: `Couldn't re-enable ${agent.name}`,
-											description:
-												error instanceof ServingRefreshError
-													? 'Reload to see its current state.'
-													: error.message,
-											variant: 'error',
-										}),
-								},
-							);
+						// The toast outlives the dock, so Undo awaits the write rather
+						// than passing `mutate` callbacks — those are dropped once this
+						// toggle unmounts, and the outcome would never be shown.
+						onClick: async () => {
+							try {
+								await setServing.mutateAsync({ id: agent.id, serving: true });
+								toast({
+									title: `${agent.name} is serving traffic again`,
+									variant: 'success',
+								});
+							} catch (error) {
+								const refreshFailed = error instanceof ServingRefreshError;
+								toast({
+									title: refreshFailed
+										? error.message
+										: `Couldn't re-enable ${agent.name}`,
+									description: refreshFailed
+										? 'Reload to see its current state.'
+										: error instanceof Error
+											? error.message
+											: undefined,
+									variant: 'error',
+								});
+							}
 						},
 					},
 				});

@@ -32,6 +32,9 @@ export interface QueueEntry {
 	/** That credential's label, shown on the finished row. A `reuse` item binds
 	 * without a pane, so without it the operator is never told which was chosen. */
 	credentialName?: string;
+	/** A credential this queue created for the item. Kept so `Try again` after a
+	 * failed bind binds it, instead of opening the wizard to create another. */
+	created?: { credential_id: string; name: string; needsConnect: boolean };
 	/** Why it failed, shown on the row next to `Try again`. */
 	error?: string;
 	/** An honest qualifier on a terminal row — e.g. an OAuth sign-in that was

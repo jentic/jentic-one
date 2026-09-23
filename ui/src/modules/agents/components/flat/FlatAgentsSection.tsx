@@ -781,11 +781,12 @@ function SelectedAgentPanel({
 			)}
 
 			{/* The tray keeps its draft across a dismissal so it stays mounted; the queue
-			    mounts only while it owns a batch. */}
+			    mounts only while it owns a batch. The tray opens once bindings load —
+			    before that, every bound API would look new and invite a duplicate bind. */}
 			{canBind && (
 				<>
 					<AddApisTray
-						open={addStep === 'tray'}
+						open={addStep === 'tray' && bindings !== undefined}
 						onClose={() => setAddStep('closed')}
 						agentId={agent.id}
 						agentName={agent.name}

@@ -384,6 +384,10 @@ export function AccessRequestDialog({
 	const missingReason = partition.denied.some(
 		(item) => (drafts[item.id]?.reason ?? '').trim().length === 0,
 	);
+	// Approve never approves a bind still waiting for its credential, so an
+	// approved one here is a credential just created and not yet in the refreshed
+	// list — submitting now would skip its amend and let the platform pick one.
+	const awaitingNewCredential = partition.approved.some((item) => awaitsCredential(item.id));
 
 	// When the operator lands on confirm with reasonless denials (e.g. after
 	// "Deny all"), pull focus to the first empty reason field so it's obvious
@@ -405,7 +409,7 @@ export function AccessRequestDialog({
 	}, [step]);
 
 	async function submit() {
-		if (!request || !hasAnyDecision || missingReason) return;
+		if (!request || !hasAnyDecision || missingReason || awaitingNewCredential) return;
 		setSubmitting(true);
 		setError(null);
 		const decisions: ItemDecision[] = [];
@@ -581,7 +585,7 @@ export function AccessRequestDialog({
 					<Button
 						onClick={() => void submit()}
 						loading={submitting}
-						disabled={missingReason}
+						disabled={missingReason || awaitingNewCredential}
 					>
 						{submitting ? (
 							'Submitting…'

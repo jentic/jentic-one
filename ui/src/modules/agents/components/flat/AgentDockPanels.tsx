@@ -7,7 +7,7 @@
  */
 import { Fingerprint, X } from 'lucide-react';
 import { Button, DetailSection, SheetPrimitive } from '@/shared/ui';
-import type { AgentEntity } from '@/modules/agents/api';
+import { useIsGeneratingAgentApiKey, type AgentEntity } from '@/modules/agents/api';
 import { AgentKeysPanel } from '@/modules/agents/components/detail/AgentKeysPanel';
 import { ActivityPanel } from '@/modules/agents/components/detail/ActivityPanel';
 import { ActorAuditPanel } from '@/modules/agents/components/detail/ActorAuditPanel';
@@ -66,13 +66,19 @@ export function AgentKeysSheet({
 	onClose: () => void;
 }) {
 	const headingId = 'agent-keys-sheet-title';
+	// A new key's plaintext is revealed once, by the panel inside this sheet —
+	// closing mid-generate would unmount it before the key lands and lose it.
+	const generating = useIsGeneratingAgentApiKey();
+	const guardedClose = (): void => {
+		if (!generating) onClose();
+	};
 	return (
-		<SheetPrimitive open={open} onClose={onClose} ariaLabelledBy={headingId}>
+		<SheetPrimitive open={open} onClose={guardedClose} ariaLabelledBy={headingId}>
 			<DockSheetFrame
 				title="API key"
 				subtitle={agent.name}
 				headingId={headingId}
-				onClose={onClose}
+				onClose={guardedClose}
 			>
 				<AgentKeysPanel agent={agent} />
 			</DockSheetFrame>

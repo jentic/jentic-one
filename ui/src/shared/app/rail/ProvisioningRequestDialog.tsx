@@ -1648,15 +1648,18 @@ export function ProvisioningRequestDialog({
 			{/* A dialog, not the flow's default drawer: this wizard is itself a
 			    native modal `<dialog>`, which the browser renders in the top
 			    layer above every sheet — a drawer opened from here would be
-			    hidden behind the wizard and unreachable. */}
-			<CreateCredentialFlow
-				open={credentialDialogOpen}
-				onClose={() => setCredentialDialogOpen(false)}
-				onCreated={handleCredentialCreated}
-				initialType={initialCredentialType}
-				pinnedApi={pinnedApi}
-				surface="dialog"
-			/>
+			    hidden behind the wizard and unreachable. Mounted only while open, so
+			    it seeds from the chain's API as it is now, not as it was at mount. */}
+			{credentialDialogOpen && (
+				<CreateCredentialFlow
+					open
+					onClose={() => setCredentialDialogOpen(false)}
+					onCreated={handleCredentialCreated}
+					initialType={initialCredentialType}
+					pinnedApi={pinnedApi}
+					surface="dialog"
+				/>
+			)}
 
 			{/* Cancel-with-orphans confirmation — a styled in-dialog step rather
 			    than a jarring, unstyled native browser confirm(). */}

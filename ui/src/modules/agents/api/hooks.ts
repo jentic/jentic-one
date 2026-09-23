@@ -14,6 +14,7 @@ import {
 	isCancelledError,
 	keepPreviousData,
 	useInfiniteQuery,
+	useIsMutating,
 	useMutation,
 	useQueries,
 	useQuery,
@@ -110,6 +111,8 @@ const agentsKeys = {
 	apiKeyInfo: (id: string) => [...agentsKeys.all, 'api-key-info', id] as const,
 	apiKeyHistory: (id: string) => [...agentsKeys.all, 'api-key-history', id] as const,
 	scopes: (id: string) => [...agentsKeys.all, 'scopes', id] as const,
+	/** Mutation key for API-key generation, so a surface can tell one is in flight. */
+	generateApiKey: () => [...agentsKeys.all, 'generate-api-key'] as const,
 	/** Direct credential bindings for one agent (`GET /agents/{id}/credentials`). */
 	credentialBindings: (id: string) => [...agentsKeys.all, 'credential-bindings', id] as const,
 	/** Prefix over every agent's binding list — a credential delete removes
@@ -742,6 +745,7 @@ export function useUpdateAgent() {
 export function useGenerateAgentApiKey() {
 	const qc = useQueryClient();
 	return useMutation<ApiKeyResult, Error, string>({
+		mutationKey: agentsKeys.generateApiKey(),
 		mutationFn: (agentId: string) => generateAgentApiKey(agentId),
 		onSuccess: (_result, agentId) => {
 			qc.invalidateQueries({ queryKey: agentsKeys.detail(agentId) });
@@ -750,6 +754,12 @@ export function useGenerateAgentApiKey() {
 		},
 		onError: (e) => notifyError(e, 'Failed to generate API key.'),
 	});
+}
+
+/** True while any agent API key is being generated — its plaintext is shown once,
+ * so a surface hosting the reveal holds itself open until the key lands. */
+export function useIsGeneratingAgentApiKey(): boolean {
+	return useIsMutating({ mutationKey: agentsKeys.generateApiKey() }) > 0;
 }
 
 export function useRevokeAgentApiKey() {
