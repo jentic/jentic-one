@@ -440,6 +440,85 @@ describe('CredentialInventorySheet — page-level org-wide inventory', () => {
 		});
 	});
 
+	describe('several credentials for one API', () => {
+		beforeEach(() => {
+			// Two more Slack secrets, one sharing the first's name — the case where
+			// identical cards gave no way to tell them apart.
+			resetCredentialsStore([
+				...inventorySeed(),
+				makeMockCredential({
+					credential_id: 'cred_slack_2',
+					name: 'Slack workspace B',
+					type: CredentialType.BEARER_TOKEN,
+					api: { vendor: 'slack.com', name: 'default', version: '1.0.0' },
+				}),
+				makeMockCredential({
+					credential_id: 'cred_slack_3',
+					name: 'Slack bot token',
+					type: CredentialType.API_KEY,
+					api: { vendor: 'slack.com', name: 'default', version: '2.0.0' },
+				}),
+			]);
+		});
+
+		async function openInventory(): Promise<HTMLElement> {
+			const user = userEvent.setup();
+			renderPage('/?agent=agnt_active_1');
+			await screen.findByTestId('agent-dock');
+			await user.click(headerTrigger());
+			const sheet = await screen.findByTestId('sheet-primitive');
+			await within(sheet).findByText('Slack workspace B');
+			return sheet;
+		}
+
+		it('say the API once, with a row per credential', async () => {
+			const sheet = await openInventory();
+
+			const groups = within(sheet).getAllByTestId('credential-group');
+			expect(groups).toHaveLength(1);
+			const [slack] = groups;
+			expect(within(slack).getByTestId('credential-group-count')).toHaveTextContent(
+				'3 credentials',
+			);
+			// The section is named by its API, so assistive tech hears the grouping too.
+			expect(slack).toHaveAccessibleName(/Slack/);
+			expect(within(slack).getAllByTestId('credential-card')).toHaveLength(3);
+			expect(slack).toHaveTextContent(/Any of these can be bound to an agent/);
+			// Two rows share a name, so the id tail is what sets them apart.
+			expect(slack).toHaveTextContent('Some share a name; rename one to tell them apart.');
+			expect(slack).toHaveTextContent('…lack_1');
+			expect(slack).toHaveTextContent('…lack_3');
+
+			// An API with one credential keeps its standalone card.
+			const github = within(sheet).getByText('GitHub PAT').closest('[data-testid]');
+			expect(github).toHaveAttribute('data-testid', 'credential-card');
+			expect(github?.closest('[data-testid="credential-group"]')).toBeNull();
+		});
+
+		it('each row keeps its own usage figure and its own actions', async () => {
+			const sheet = await openInventory();
+			const slack = within(sheet).getByTestId('credential-group');
+			const [first] = within(slack).getAllByTestId('credential-card');
+
+			await waitFor(() =>
+				expect(within(first).getByTestId('cred-used-by')).toHaveTextContent(
+					'used by 1 agent',
+				),
+			);
+
+			const user = userEvent.setup();
+			await user.click(
+				within(slack).getByRole('button', { name: 'Delete credential Slack workspace B' }),
+			);
+			await screen.findByRole('dialog', { name: 'Delete credential' });
+		});
+
+		it('passes an accessibility audit with a grouped API on screen', async () => {
+			await openInventory();
+			await checkA11y(document.body, { modal: true });
+		});
+	});
+
 	it('390px: the trigger stays reachable and the sheet opens full-screen', async () => {
 		await page.viewport(390, 844);
 		const user = userEvent.setup();
