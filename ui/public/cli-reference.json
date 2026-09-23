@@ -1599,8 +1599,8 @@
           "path": "jentic search",
           "use": "search \u003cquery\u003e",
           "short": "Search for operations by natural-language query",
-          "long": "search finds API operations whose descriptions, names, or paths match a\nquery. Results are ranked by lexical (full-text) relevance. The\nquery can also be passed via -q for piping.\n\nEach hit's method + url join as the METHOD:url target for\ninspect/execute. A hit whose spec declares no servers carries a\nhost-relative url (e.g. /pets) — that form does not resolve as\nMETHOD:url; pass that hit's operation_id instead.\n\nOutput defaults to JSON when stdout is not a TTY (agent-friendly);\nuse --json to force JSON on a terminal.",
-          "example": "  jentic search \"list users\"\n  jentic search -q \"create issue\" --api github-com/api-github-com --limit 5\n  jentic search \"list pets\" --all --json | jq -r '.data[] | \"\\(.method):\\(.url)\"'",
+          "long": "search finds API operations whose descriptions, names, or paths match a\nquery. Results are ranked by lexical (full-text) relevance. The\nquery can also be passed via -q for piping.\n\nEach hit carries a `target` to pass verbatim to inspect/execute:\nits METHOD:url pair, or its operation_id when the spec declares no\nservers (a host-relative url such as /pets can't form METHOD:url).\n\nOutput defaults to JSON when stdout is not a TTY (agent-friendly);\nuse --json to force JSON on a terminal.",
+          "example": "  jentic search \"list users\"\n  jentic search -q \"create issue\" --api github-com/api-github-com --limit 5\n  jentic search \"list pets\" --all --json | jq -r '.data[].target'",
           "group_title": "Find and run operations",
           "flags": [
             {
@@ -1661,7 +1661,7 @@
           "use": "inspect \u003cMETHOD:url\u003e",
           "short": "Inspect an operation's contract (schema, parameters, examples)",
           "long": "inspect resolves an operation to its full structural detail: HTTP\nmethod, URL, parameters, request/response schemas, and examples. The\ntarget is a discovered operation's METHOD:url (the same form\n`jentic search` prints, e.g. GET:https://rest.coincap.io/v3/markets).\nAn opaque registry operation_id also still resolves, for compatibility\n— prefer the METHOD:url form. The output format is negotiated with the\nserver: JSON for machine consumption, Markdown for human reading.\n\nThe space form (`GET \u003curl\u003e`) is also accepted, but the colon form is\ncanonical (it needs no shell quoting).\n\nDefault format: JSON when stdout is not a TTY, Markdown when it is.",
-          "example": "  jentic inspect GET:https://rest.coincap.io/v3/markets --format json | jq .method\n  jentic inspect POST:https://api.example.com/v1/users --format markdown\n  jentic search \"list users\" --json | jq -r '.data[0] | \"\\(.method):\\(.url)\"' | xargs jentic inspect",
+          "example": "  jentic inspect GET:https://rest.coincap.io/v3/markets --format json | jq .method\n  jentic inspect POST:https://api.example.com/v1/users --format markdown\n  jentic search \"list users\" --json | jq -r '.data[0].target' | xargs jentic inspect",
           "group_title": "Find and run operations",
           "flags": [
             {

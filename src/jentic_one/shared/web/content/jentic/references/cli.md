@@ -159,7 +159,7 @@ Always follow the `agent_directive`'s `suggested_command` /
 `provisioning_url` rather than assuming which recovery applies. You can also
 request access proactively before you're denied. To propose rules from the
 spec, read the operation surface first: `jentic apis operations
-<vendor/name/version>` and `jentic inspect <METHOD:url>` show methods,
+<vendor/name/version>` and `jentic inspect <target>` show methods,
 paths, and the declared auth.
 
 ## Step 3 — find an operation (import first, then search)
@@ -194,15 +194,13 @@ directly with `jentic apis import <file|url> --vendor <vendor> --name <name>
 --version <version>` (reads a local file inline or fetches a URL; async,
 prints a job id). This needs `apis:write` rather than `catalog:import`.
 
-`search` returns JSON when piped. Each hit carries the operation's `method`
-and `url` — join them as `METHOD:url` (e.g. `GET:https://…`) and pass that
-to `inspect`/`execute`; the hit's `_links.inspect` decodes to the same
-`METHOD URL` pair. One exception: a hit whose spec declares no servers
-carries a host-relative `url` (e.g. `/pets`) — that form doesn't resolve
-as `METHOD:url`, so pass that hit's registry `operation_id` instead.
-(Hits also carry that `operation_id`, and the id shown by `jentic catalog
-show` is the spec's `operationId`; both still resolve as compatibility
-fallbacks, but prefer the `METHOD:url` form.)
+`search` returns JSON when piped. Each hit carries a `target` — pass it
+verbatim to `inspect`/`execute`. It is the hit's `METHOD:url` pair (e.g.
+`GET:https://…`), or its registry `operation_id` when the spec declares no
+servers (a host-relative `url` such as `/pets` can't form a `METHOD:url`
+target). Don't build targets yourself from `method` + `url`. (The id shown
+by `jentic catalog show` is the spec's `operationId`; it also resolves, as
+a compatibility fallback.)
 
 If `search` returns no results, it prints a hint to run `jentic catalog
 search` / `jentic catalog import` first — that almost always means nothing
@@ -230,14 +228,15 @@ one (null otherwise).
 ## Step 4 — inspect
 
 ```
-jentic inspect "$(jentic search 'get spreadsheet values' --json | jq -r '.data[0] | "\(.method):\(.url)"')"
+jentic inspect "$(jentic search 'get spreadsheet values' --json | jq -r '.data[0].target')"
 jentic inspect 'GET https://sheets.googleapis.com/v4/spreadsheets/{spreadsheetId}/values/{range}'
 ```
 
 On a 404, `inspect` prints the reason and a hint on stderr and exits 2 (it
-is not silent). If a target doesn't resolve, use the `METHOD URL` pair that
-the hit's `_links.inspect` decodes to (or the hit's `method` + `url`) —
-don't guess ids.
+is not silent). If a target doesn't resolve, re-run `search` and use a
+hit's `target` — don't guess ids. A `METHOD:url` target that matches more
+than one operation fails as an ambiguous match (409): pin `--revision`, or
+pass the hit's `operation_id`, which always names exactly one operation.
 
 ## Step 5 — execute
 

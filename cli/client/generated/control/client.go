@@ -1936,10 +1936,10 @@ type ExecutionResponse struct {
 	HttpStatus      *int                 `json:"http_status,omitempty"`
 	OperationId     *string              `json:"operation_id,omitempty"`
 
-	// OperationMethod The operation's HTTP method, e.g. GET. Null on records predating the column.
+	// OperationMethod The operation's HTTP method, e.g. GET. Null whenever operation_path is null.
 	OperationMethod *string `json:"operation_method,omitempty"`
 
-	// OperationPath The operation's spec path template, e.g. /repos/{owner}/{repo}. Null on records predating the column; display surfaces show a placeholder for such rows — the opaque operation_id is a machine key, not a human fallback.
+	// OperationPath The operation's spec path template, e.g. /repos/{owner}/{repo}. Null when the record carries no human-readable operation identity: records predating the column, executions of a URL that resolved to no registered operation, and async jobs enqueued with only an operation_id. Display surfaces show a placeholder for such rows — the opaque operation_id is a machine key, not a human fallback.
 	OperationPath   *string                 `json:"operation_path,omitempty"`
 	Origin          *string                 `json:"origin,omitempty"`
 	PinnedRevisions *map[string]interface{} `json:"pinned_revisions,omitempty"`
@@ -2667,14 +2667,17 @@ type OperationResultResponse struct {
 	UnderscoreLinks SearchLinksResponse `json:"_links"`
 
 	// Api Core API identifier triple plus derived host.
-	Api            ApiReferenceResponse         `json:"api"`
-	Description    *string                      `json:"description,omitempty"`
-	Method         string                       `json:"method"`
-	Name           *string                      `json:"name,omitempty"`
-	OperationId    string                       `json:"operation_id"`
-	RelevanceScore float32                      `json:"relevance_score"`
-	Type           *OperationResultResponseType `json:"type,omitempty"`
-	Url            string                       `json:"url"`
+	Api            ApiReferenceResponse `json:"api"`
+	Description    *string              `json:"description,omitempty"`
+	Method         string               `json:"method"`
+	Name           *string              `json:"name,omitempty"`
+	OperationId    string               `json:"operation_id"`
+	RelevanceScore float32              `json:"relevance_score"`
+
+	// Target The value to pass as the operation target to inspect/execute (CLI argument; MCP operation_id argument). METHOD:url when url is absolute; the registry operation_id when the operation's spec declares no servers (url is then host-relative and does not resolve as METHOD:url).
+	Target string                       `json:"target"`
+	Type   *OperationResultResponseType `json:"type,omitempty"`
+	Url    string                       `json:"url"`
 }
 
 // OperationResultResponseType defines model for OperationResultResponse.Type.

@@ -208,7 +208,7 @@ var inspectOperationSchema = map[string]any{
 		"operation_id": map[string]any{
 			"type": "string",
 			"description": "The operation to inspect (required; \"id\" and \"uuid\" are accepted aliases): a METHOD:url " +
-				"pair like \"GET:https://api.example.com/v1/things\" — build it from a search_apis hit's method + url. " +
+				"pair like \"GET:https://api.example.com/v1/things\" — pass a search_apis hit's target verbatim. " +
 				"(A registry operation id also resolves, for compatibility — prefer METHOD:url.)",
 		},
 		"revision": map[string]any{
@@ -287,11 +287,10 @@ func (s *mcpServer) toolSpecs() []mcpToolSpec {
 					"(whoami → search_apis → inspect_operation → execute): call it whenever " +
 					"you need an operation you don't already know the method + URL of. " +
 					`Example: {"query": "create github issue", "limit": 5}. Returns one page ` +
-					"as {data, has_more, next_cursor}; build each hit's METHOD:url target " +
-					"(method + url) to pass to inspect_operation — except a hit whose url " +
-					"is host-relative (its spec declares no servers, e.g. /pets): pass " +
-					"that hit's operation_id instead. When has_more is true, pass " +
-					"next_cursor back " +
+					"as {data, has_more, next_cursor}; each hit carries a target (its " +
+					"METHOD:url, or its operation_id when the spec declares no servers) — " +
+					"pass it verbatim as inspect_operation's operation_id. When has_more " +
+					"is true, pass next_cursor back " +
 					"as cursor for the next page. Optionally restrict to specific APIs with " +
 					`apis (vendor/name/version slugs from earlier hits), e.g. ` +
 					`{"query": "list pets", "apis": ["acme/pets/v1"]}. An empty data array ` +
@@ -310,7 +309,7 @@ func (s *mcpServer) toolSpecs() []mcpToolSpec {
 					"This is the read-contract step of the flow (whoami → search_apis → " +
 					"inspect_operation → execute) — always inspect before you execute. " +
 					`Example: {"operation_id": "GET:https://rest.coincap.io/v3/markets"} — ` +
-					"a METHOD:url pair built from a search_apis hit's method + url. " +
+					"a search_apis hit's target, passed verbatim. " +
 					"Optionally pin a revision " +
 					"for reproducibility. If the operation is not found, call search_apis " +
 					"to rediscover the right target.",

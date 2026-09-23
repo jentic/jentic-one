@@ -143,7 +143,7 @@ func (s *mcpServer) executeTool(ctx context.Context, req *mcp.CallToolRequest, r
 	target, _ := args["operation_id"].(string)
 	if target == "" {
 		return nil, invalidParams(errors.New(toolName + ` requires "operation_id" (aliases: "id", "uuid"): ` +
-			`a METHOD:url pair like "GET:https://api.example.com/v1/things" (from a search_apis hit's method + url)`))
+			`a METHOD:url pair like "GET:https://api.example.com/v1/things" (a search_apis hit's target)`))
 	}
 	body, _ := args["body"].(json.RawMessage)
 	if readOnlyVariant && len(body) > 0 {
@@ -635,7 +635,7 @@ func executeInputSchema(withBody bool) map[string]any {
 		"operation_id": map[string]any{
 			"type": "string",
 			"description": "The operation to execute (required; \"id\" and \"uuid\" are accepted aliases): a METHOD:url " +
-				"pair like \"GET:https://api.example.com/v1/things\" — build it from a search_apis hit's method + url. " +
+				"pair like \"GET:https://api.example.com/v1/things\" — pass a search_apis hit's target verbatim. " +
 				"(A registry operation id also resolves, for compatibility — prefer METHOD:url.)",
 		},
 		"inputs": map[string]any{

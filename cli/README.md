@@ -322,7 +322,7 @@ jentic doctor                 # identity + reachability + clock-skew report
 jentic catalog                # browse APIs
 jentic access whoami          # a fresh agent starts bound to no APIs
 jentic access request --api <vendor/name> --wait  # ask a human to grant access
-jentic execute listPets       # routed through http://127.0.0.1:8100 automatically
+jentic execute GET:https://api.example.com/v1/pets  # routed through http://127.0.0.1:8100 automatically
 ```
 
 If an environment already exists without a broker URL (e.g. created before this

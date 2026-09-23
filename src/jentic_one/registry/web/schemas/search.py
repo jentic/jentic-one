@@ -54,6 +54,15 @@ class OperationResultResponse(BaseModel):
     operation_id: str
     method: str
     url: str
+    target: str = Field(
+        description=(
+            "The value to pass as the operation target to inspect/execute "
+            "(CLI argument; MCP operation_id argument). METHOD:url when url is "
+            "absolute; the registry operation_id when the operation's spec "
+            "declares no servers (url is then host-relative and does not "
+            "resolve as METHOD:url)."
+        ),
+    )
     name: str | None = None
     description: str | None = None
     relevance_score: float

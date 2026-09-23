@@ -109,9 +109,9 @@ jentic inspect <operation>    # its method, params, and schemas
 jentic execute GET:https://httpbin.org/get --json
 ```
 
-`execute` takes the operation's full upstream URL (the form `search` and
-`inspect` report) or its operation_id — the broker is a forward proxy, not a
-path router. It checks the agent's permissions, attaches the stored credential
+`execute` takes a search hit's `target` — the operation's method plus full
+upstream URL (`METHOD:url`) — the broker is a forward proxy, not a path
+router. It checks the agent's permissions, attaches the stored credential
 after the check, forwards the request, and writes an execution record —
 visible under **Monitor → Executions** in the dashboard (the audit trail is
 for control-plane mutations, so your call appears in Executions, not Audit).

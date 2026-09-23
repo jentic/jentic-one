@@ -51,6 +51,7 @@ def test_operation_result_response_serializes_snake_case() -> None:
         operation_id="op_abc123",
         method="POST",
         url="https://api.stripe.com/v1/payment_intents",
+        target="POST:https://api.stripe.com/v1/payment_intents",
         name="Create a PaymentIntent",
         description="Creates a new payment intent",
         relevance_score=0.91,
@@ -81,6 +82,7 @@ def test_operation_result_response_no_camel_case_fields() -> None:
         operation_id="op_1",
         method="GET",
         url="/test",
+        target="op_1",
         name=None,
         description=None,
         relevance_score=0.5,
@@ -105,6 +107,7 @@ def test_operation_result_response_has_required_spec_fields() -> None:
         operation_id="op_1",
         method="GET",
         url="/test",
+        target="op_1",
         name=None,
         description=None,
         relevance_score=0.5,
@@ -117,6 +120,7 @@ def test_operation_result_response_has_required_spec_fields() -> None:
         "operation_id",
         "method",
         "url",
+        "target",
         "relevance_score",
         "_links",
     }
@@ -130,6 +134,7 @@ def test_operation_result_response_no_leaked_revision_id_or_api_id() -> None:
         operation_id="op_1",
         method="GET",
         url="/test",
+        target="op_1",
         name=None,
         description=None,
         relevance_score=0.5,
@@ -177,6 +182,7 @@ def test_operation_result_dataclass_has_type_field() -> None:
         relevance_score=0.8,
         api=ApiRef(vendor="example", name="users", version="1.0", host="example.com"),
         inspect_link="/inspect?id=GET%20https%3A//example.com/users",
+        target="GET:https://example.com/users",
     )
     assert result.type == "operation"
     assert result.url == "https://example.com/users"

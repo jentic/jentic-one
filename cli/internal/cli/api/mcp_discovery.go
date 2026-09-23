@@ -146,7 +146,7 @@ func (s *mcpServer) handleInspectOperation(ctx context.Context, req *mcp.CallToo
 	target, _ := args["operation_id"].(string)
 	if target == "" {
 		return nil, invalidParams(errors.New(`inspect_operation requires "operation_id" (aliases: "id", "uuid"): ` +
-			`a METHOD:url pair like "GET:https://api.example.com/v1/things" (from a search_apis hit's method + url)`))
+			`a METHOD:url pair like "GET:https://api.example.com/v1/things" (a search_apis hit's target)`))
 	}
 	revision, _ := args["revision"].(string)
 
@@ -166,7 +166,7 @@ func (s *mcpServer) handleInspectOperation(ctx context.Context, req *mcp.CallToo
 				Code: ux.CodeResolveFailed,
 				Msg:  fmt.Sprintf("operation %q not found", target),
 				Actionable: "Call search_apis with a natural-language description of what you want to do, " +
-					"then inspect the METHOD:url built from one of its hits (method + url).",
+					"then inspect the target from one of its hits.",
 			}, "search_apis"), nil
 		}
 		s.logger.Warn("inspect_operation failed", "error", redactedErr(err))

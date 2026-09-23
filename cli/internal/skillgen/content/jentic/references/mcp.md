@@ -118,12 +118,12 @@ as a failed (dead-letter) import whose error says identical content already
 exists — read that as "already there", never as something to retry. If the
 result carries a non-terminal `status` (queued, tracking timed out), poll
 `get_execution_result` with the `job_id` from that result rather than
-re-importing. Each `search_apis` hit carries the operation's `method` and
-`url` — join them as `METHOD:url` and pass that straight to
-`inspect_operation`/`execute` (the tools' `operation_id` argument takes
-this form). One exception: a hit whose spec declares no servers carries a
-host-relative `url` (e.g. `/pets`) — that form doesn't resolve as
-`METHOD:url`, so pass that hit's `operation_id` instead.
+re-importing. Each `search_apis` hit carries a `target` — pass it verbatim
+as the `operation_id` argument of `inspect_operation`/`execute`. It is the
+hit's `METHOD:url` pair (or its registry `operation_id` when the spec
+declares no servers, since a host-relative url can't form one); don't build
+it yourself from `method` + `url`. If a `METHOD:url` target fails as an
+ambiguous match (409), pin `revision` or pass the hit's `operation_id`.
 
 If APIs or credentials you know existed appear missing, compare `instance`
 stamps before diagnosing (see `SKILL.md` step 3): an MCP server on a remote
@@ -192,8 +192,8 @@ delivered in the envelope instead of stderr.
 - `whoami` — your identity, status, scopes, and credential bindings with the
   APIs each one serves; start here and decide access from it.
 - `search_apis` — search the imported registry for operations by
-  natural-language query; each hit carries the `method` + `url` to join as
-  the `METHOD:url` target.
+  natural-language query; each hit carries the `target` to pass to
+  `inspect_operation`/`execute`.
 - `inspect_operation` — one operation's full contract (method, URL,
   parameters, schemas, security); always inspect before executing.
 - `execute` — run an operation through the broker (full upstream URL; the

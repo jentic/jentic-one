@@ -52,6 +52,7 @@ class OperationResult:
     relevance_score: float
     api: ApiRef
     inspect_link: str
+    target: str
 
 
 def compute_relevance_score(distance: float) -> float:
@@ -75,6 +76,21 @@ def _resolve_operation_url(operation: Operation) -> str:
     server = servers[0]
     base = expand_server_variables(server.url, server.variables)
     return merge_paths(base, operation.path)
+
+
+def build_execute_target(method: str, url: str, operation_id: str) -> str:
+    """The ready-to-pass inspect/execute target for a search hit.
+
+    ``METHOD:url`` when the hit's url is absolute — the canonical target form.
+    A spec that declares no servers yields a host-relative url (``/pets``), which
+    does not resolve as ``METHOD:url`` (clients read ``METHOD:/path`` as a
+    broker-relative path), so such a hit's target is its registry
+    ``operation_id`` instead. Computing it here keeps that rule in one place
+    rather than in every agent that joins ``method`` + ``url``.
+    """
+    if url.startswith(("http://", "https://")):
+        return f"{method.upper()}:{url}"
+    return operation_id
 
 
 def _build_inspect_link(method: str, url: str) -> str:
@@ -257,6 +273,7 @@ class SearchService:
                     relevance_score=compute_relevance_score(hit.distance),
                     api=api_ref,
                     inspect_link=_build_inspect_link(method, url),
+                    target=build_execute_target(method, url, hit.operation_id),
                 )
             )
 

@@ -35,7 +35,7 @@ func newInspectCmd(app *app) *cobra.Command {
 			"Default format: JSON when stdout is not a TTY, Markdown when it is.",
 		Example: "  jentic inspect GET:https://rest.coincap.io/v3/markets --format json | jq .method\n" +
 			"  jentic inspect POST:https://api.example.com/v1/users --format markdown\n" +
-			"  jentic search \"list users\" --json | jq -r '.data[0] | \"\\(.method):\\(.url)\"' | xargs jentic inspect",
+			"  jentic search \"list users\" --json | jq -r '.data[0].target' | xargs jentic inspect",
 		Args: exactNamedArgs("<METHOD:url>", "target"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return app.inspectE(cmd, opts, args[0])
@@ -79,8 +79,8 @@ func (a *app) inspectE(cmd *cobra.Command, opts *inspectOptions, operationID str
 				Code: ux.CodeResolveFailed,
 				Msg:  fmt.Sprintf("operation %q not found", operationID),
 				Actionable: "inspect resolves a METHOD:url pair (e.g. " +
-					"jentic inspect GET:https://api.example.com/v1/things) — the form `jentic search` " +
-					"prints; build it from a hit's method + url. A registry operation id (from " +
+					"jentic inspect GET:https://api.example.com/v1/things) — pass a `jentic search` " +
+					"hit's `target` verbatim. A registry operation id (from " +
 					"`jentic search` / `jentic apis operations`) and a unique spec operationId " +
 					"(from `jentic catalog show`) also resolve, as fallbacks.",
 			}

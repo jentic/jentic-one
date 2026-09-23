@@ -15,6 +15,10 @@ export type OperationResultResponse = {
     name?: (string | null);
     operation_id: string;
     relevance_score: number;
+    /**
+     * The value to pass as the operation target to inspect/execute (CLI argument; MCP operation_id argument). METHOD:url when url is absolute; the registry operation_id when the operation's spec declares no servers (url is then host-relative and does not resolve as METHOD:url).
+     */
+    target: string;
     type?: string;
     url: string;
 };

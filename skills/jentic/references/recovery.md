@@ -29,11 +29,15 @@ this file adds the lane-specific detail.
   arbitrary URL/inline specs via `POST /apis` is the only import path that
   needs `apis:write`.) Don't invent other "catalog read" scopes; they're
   rejected.
-- Address operations by their `METHOD URL` pair — a search hit's `method` +
-  `url` (what `_links.inspect` decodes to). The registry `operation_id` and
-  the spec `operationId` from `catalog show` still resolve as fallbacks —
-  reach for the hit's `operation_id` only when its `url` is host-relative
-  (a spec with no servers, e.g. `/pets`) — and never guess ids.
+- Address operations by a search hit's `target` — pass it verbatim. It is
+  the `METHOD:url` pair (or, for a spec that declares no servers, the
+  registry `operation_id`, since a host-relative url can't form one). The
+  spec `operationId` from `catalog show` also resolves, as a fallback.
+  Never build targets by hand and never guess ids.
+- A `METHOD:url` that matches more than one operation fails with an
+  ambiguous-match error (HTTP 409): pin the revision (`--revision`) or fall
+  back to the hit's `operation_id`, which always names exactly one
+  operation.
 - Backend mismatch shows as *silent wrong answers*, not errors: verify with
   `jentic api GET /instance` / `jentic context view` before concluding
   anything is missing, and stick to one surface for the whole task.
@@ -134,8 +138,8 @@ step 5.
 - `jentic catalog search "<query>"` / `jentic catalog import <vendor/name>`
   — find and import APIs (import first; `search` only sees imported
   operations).
-- `jentic search "<query>"` → `jentic inspect <METHOD:url>` →
-  `jentic execute <METHOD:url>` — discover, inspect, and
+- `jentic search "<query>"` → `jentic inspect <target>` →
+  `jentic execute <target>` — discover, inspect, and
   call operations through the broker (use the full upstream URL; the broker
   is a forward proxy, not a path router).
 - `jentic register` / `jentic setup` — operator commands that create and
