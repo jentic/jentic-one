@@ -1,0 +1,34 @@
+{{- /*
+One PodDisruptionBudget per enabled surface, off by default.
+
+Off by default because the chart's own default is `replicas: 1`: a PDB with
+minAvailable 1 over a single replica has no spare pod to give up, so it blocks
+every voluntary eviction — node drains, cluster upgrades and autoscaler
+scale-downs all hang. It only helps once a surface runs more than one replica,
+which is the operator's decision, so it is theirs to turn on too.
+
+The bundled Postgres is deliberately excluded: it is a single instance with one
+PVC (charts/postgresql), so a budget there would block drains permanently rather
+than protect availability.
+*/ -}}
+{{- if .Values.podDisruptionBudget.enabled }}
+{{- range $name := (list "app" "admin" "registry" "control" "broker" "gateway") }}
+{{- $svc := index $.Values $name }}
+{{- if and $svc $svc.enabled }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ $.Release.Name }}-{{ $name }}
+  labels:
+    app.kubernetes.io/name: {{ $name }}
+    app.kubernetes.io/instance: {{ $.Release.Name }}
+spec:
+  minAvailable: {{ $.Values.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ $name }}
+      app.kubernetes.io/instance: {{ $.Release.Name }}
+{{- end }}
+{{- end }}
+{{- end }}

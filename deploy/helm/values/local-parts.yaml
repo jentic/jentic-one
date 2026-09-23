@@ -85,6 +85,11 @@ control:
             redirect_uri: "http://127.0.0.1:30080/credentials/oauth/callback"
 
 global:
+  # These overlays deliberately run without the admin JWT secret / invite pepper
+  # / connect state secret (the chart's `production` default would refuse to
+  # boot without them). The config loader mints ephemeral per-process values
+  # instead, which is fine for a single-replica kind cluster and for nothing else.
+  jenticEnv: development
   postgresql:
     enabled: true
   # Dev-only literals (must match docker/local-setup/init-schemas.sql). The
