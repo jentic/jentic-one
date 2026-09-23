@@ -5,6 +5,7 @@ import {
 	CredentialType,
 	credentialDetails,
 	formatApiReference,
+	useAllCredentials,
 	useConnectCredential,
 	useCredential,
 	useProviders,
@@ -19,6 +20,8 @@ import {
 } from '@/shared/credentials/components/CredentialTypeFields';
 import { buildUpdateBody, validateUpdate } from '@/shared/credentials/lib/formBody';
 import { BoundAgentsSection } from '@/shared/credentials/components/BoundAgentsSection';
+import { credentialNameClash } from '@/shared/credentials/lib/credentialIdentity';
+import { CredentialNameClashNote } from '@/shared/credentials/components/CredentialNameClashNote';
 
 interface EditCredentialSheetProps {
 	credentialId: string | null;
@@ -55,6 +58,7 @@ export function EditCredentialSheet({
 	const updateMutation = useUpdateCredential(credentialId ?? '');
 	const connectMutation = useConnectCredential(credentialId ?? '');
 	const providersQuery = useProviders();
+	const credentialsSource = useAllCredentials({ enabled: open });
 
 	const [state, setState] = useState<CredentialFormState>(EMPTY_FORM);
 	const [errors, setErrors] = useState<Partial<Record<keyof CredentialFormState, string>>>({});
@@ -67,6 +71,21 @@ export function EditCredentialSheet({
 	const [initialState, setInitialState] = useState<CredentialFormState>(EMPTY_FORM);
 
 	const originalName = cred?.name ?? '';
+
+	// A name a sibling for the same API holds — including the one it was saved
+	// with, so opening a duplicate says so. A warning only; the save still goes.
+	const nameClash = useMemo(
+		() =>
+			cred
+				? credentialNameClash(
+						credentialsSource.items,
+						{ vendor: cred.api.vendor ?? '', name: cred.api.name ?? '' },
+						state.name,
+						cred.credential_id,
+					)
+				: null,
+		[cred, credentialsSource.items, state.name],
+	);
 	// sigv4: does the stored credential currently carry a session token? Drives
 	// the "Clear session token" affordance in the edit form.
 	const hasStoredSessionToken = useMemo(
@@ -202,7 +221,17 @@ export function EditCredentialSheet({
 										setState((s) => ({ ...s, name: e.target.value }))
 									}
 									error={errors.name}
+									aria-describedby={nameClash ? `${nameId}-clash` : undefined}
 								/>
+								{nameClash && (
+									<CredentialNameClashNote
+										id={`${nameId}-clash`}
+										{...nameClash}
+										onUseSuggestion={(name): void =>
+											setState((s) => ({ ...s, name }))
+										}
+									/>
+								)}
 							</div>
 
 							<div className="space-y-4">

@@ -88,3 +88,77 @@ export function credentialsServingReference(
 	const exact = serving.filter((cred) => cred.api.name?.trim());
 	return exact.length > 0 ? exact : serving;
 }
+
+/** How two credential names compare: case and surrounding space never tell them apart. */
+function nameKey(name: string): string {
+	return name.trim().toLowerCase();
+}
+
+/**
+ * The credentials a new one for `vendor`/`name` would sit beside — the same
+ * vendor, and the same API name or none (a vendor-wide credential serves every
+ * API of its vendor). Their names are the ones a caller picks between with
+ * `Jentic-Credential-Name`, so a new name should differ from all of them.
+ */
+export function credentialsSharingApi(
+	credentials: readonly Credential[],
+	api: { vendor: string; name: string },
+): Credential[] {
+	const vendor = slugifyApiField(api.vendor);
+	if (!vendor) return [];
+	const name = slugifyApiField(api.name);
+	return credentials.filter((cred) => {
+		if (slugifyApiField(cred.api.vendor) !== vendor) return false;
+		const credName = slugifyApiField(cred.api.name ?? '');
+		return !name || !credName || credName === name;
+	});
+}
+
+/** The credential in `siblings` already called `name`, if any. */
+export function credentialNamed(
+	siblings: readonly Credential[],
+	name: string,
+): Credential | undefined {
+	const key = nameKey(name);
+	if (!key) return undefined;
+	return siblings.find((cred) => nameKey(cred.name) === key);
+}
+
+/**
+ * `name` when no sibling holds it, else the first free `name 2`, `name 3`, …
+ * A name that already ends in a number counts on from it, so a clash on
+ * `airlabs.co 2` suggests `airlabs.co 3` rather than `airlabs.co 2 2`.
+ */
+export function suggestUniqueName(name: string, siblings: readonly Credential[]): string {
+	const trimmed = name.trim();
+	const taken = new Set(siblings.map((cred) => nameKey(cred.name)));
+	if (!taken.has(nameKey(trimmed))) return trimmed;
+	const match = /^(.*\S)\s+(\d+)$/.exec(trimmed);
+	const base = match ? match[1] : trimmed;
+	let n = match ? Number(match[2]) + 1 : 2;
+	while (taken.has(nameKey(`${base} ${n}`))) n += 1;
+	return `${base} ${n}`;
+}
+
+/** A name another credential for the API already holds, with a free one to use instead. */
+export interface CredentialNameClash {
+	clash: Credential;
+	suggestion: string;
+}
+
+/**
+ * Whether `name` repeats a credential that shares `api` — `excludeId` leaves out
+ * the credential being renamed, so its own current name never clashes with itself.
+ */
+export function credentialNameClash(
+	credentials: readonly Credential[],
+	api: { vendor: string; name: string },
+	name: string,
+	excludeId?: string,
+): CredentialNameClash | null {
+	const siblings = credentialsSharingApi(credentials, api).filter(
+		(cred) => cred.credential_id !== excludeId,
+	);
+	const clash = credentialNamed(siblings, name);
+	return clash ? { clash, suggestion: suggestUniqueName(name, siblings) } : null;
+}

@@ -90,11 +90,15 @@ export function useCredentials(
  * EVERY credential in the workspace — the cursor pages drained eagerly, for
  * consumers that join against credentials rather than list them. `complete` is
  * true only when every page loaded; until then the join may not assert
- * credential-derived states like the auth label or awaiting-consent.
+ * credential-derived states like the auth label or awaiting-consent. `enabled`
+ * gates the read to when the host is actually open.
  */
-export function useAllCredentials(): DrainedList<CredentialRedactedResponse> {
+export function useAllCredentials(
+	opts: { enabled?: boolean } = {},
+): DrainedList<CredentialRedactedResponse> {
 	const query = useInfiniteQuery({
 		queryKey: credentialKeys.listAll(),
+		enabled: opts.enabled ?? true,
 		queryFn: ({ pageParam }): Promise<CredentialListResponse> =>
 			listCredentials({ cursor: pageParam }),
 		initialPageParam: null as string | null,

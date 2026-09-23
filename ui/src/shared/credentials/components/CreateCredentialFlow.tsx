@@ -14,6 +14,7 @@ import {
 import {
 	CREDENTIAL_TYPE_ORDER,
 	CredentialType,
+	useAllCredentials,
 	useApiSchemes,
 	useCreateCredential,
 	useImportCatalogEntry,
@@ -34,6 +35,8 @@ import {
 	validateCreate,
 	validateServerVars,
 } from '@/shared/credentials/lib/formBody';
+import { credentialNameClash } from '@/shared/credentials/lib/credentialIdentity';
+import { CredentialNameClashNote } from '@/shared/credentials/components/CredentialNameClashNote';
 import { managedProviderUnavailableMessage, providerOptions } from '@/shared/credentials/config';
 import { ApiPicker } from '@/shared/credentials/components/ApiPicker';
 import { ImportSpecDialog } from '@/shared/credentials/components/ImportSpecDialog';
@@ -174,6 +177,28 @@ export function CreateCredentialFlow({
 	const createMutation = useCreateCredential();
 	const importMutation = useImportCatalogEntry();
 	const providersQuery = useProviders();
+	const credentialsSource = useAllCredentials({ enabled: open });
+
+	// A name another credential for this API already holds. Once saved, the new
+	// credential is in the list itself and would clash with its own name while the
+	// flow closes.
+	const nameClash = useMemo(
+		() =>
+			createMutation.isSuccess
+				? null
+				: credentialNameClash(
+						credentialsSource.items,
+						{ vendor: state.apiVendor, name: state.apiName },
+						state.name,
+					),
+		[
+			createMutation.isSuccess,
+			credentialsSource.items,
+			state.apiVendor,
+			state.apiName,
+			state.name,
+		],
+	);
 
 	const callbackUrl = useMemo(() => {
 		const entry = providersQuery.data?.providers?.find((p) => p.id === state.provider);
@@ -694,10 +719,22 @@ export function CreateCredentialFlow({
 								}}
 								placeholder="Production API key"
 								error={errors.name}
+								aria-describedby={nameClash ? `${fieldId}-name-clash` : undefined}
 							/>
-							<p className="text-muted-foreground text-xs">
-								A label to recognise this credential later.
-							</p>
+							{nameClash ? (
+								<CredentialNameClashNote
+									id={`${fieldId}-name-clash`}
+									{...nameClash}
+									onUseSuggestion={(name): void => {
+										nameDirty.current = true;
+										patch({ name });
+									}}
+								/>
+							) : (
+								<p className="text-muted-foreground text-xs">
+									A label to recognise this credential later.
+								</p>
+							)}
 						</div>
 					</div>
 

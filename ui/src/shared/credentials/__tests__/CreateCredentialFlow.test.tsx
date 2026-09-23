@@ -3,7 +3,8 @@
  * wizard's own behaviour is covered where it runs end to end (`CredentialsPage`,
  * `ApiSetupQueue`, `CredentialInventorySheet`). Pins the drawer default, the
  * top-layer host's centred dialog, that no backdrop click discards a draft, and
- * that an uploaded spec lands on the credential form for the API it registered.
+ * that an uploaded spec lands on the credential form for the API it registered,
+ * and that a name another credential for the API holds is warned about, not blocked.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
@@ -11,10 +12,29 @@ import { userEvent as browserUser } from 'vitest/browser';
 import { renderWithProviders, screen, waitFor, userEvent } from '@/__tests__/test-utils';
 import { worker } from '@/mocks/browser';
 import { setToken } from '@/shared/api';
-import { makeMockApi, resetApisStore } from '@/shared/credentials/mocks/handlers';
+import {
+	makeMockApi,
+	makeMockCredential,
+	resetApisStore,
+	resetCredentialsStore,
+} from '@/shared/credentials/mocks/handlers';
 import { CreateCredentialFlow } from '@/shared/credentials/components/CreateCredentialFlow';
+import type { SelectedApi } from '@/shared/credentials/api';
 
 const ACME = makeMockApi({ vendor: 'acme.io', name: 'main', displayName: 'Acme' });
+
+const PINNED_ACME: SelectedApi = {
+	source: 'local',
+	vendor: 'acme.io',
+	name: 'main',
+	version: '1.0.0',
+	label: 'Acme',
+};
+
+/** A credential for ACME already called `name`. */
+function existingAcmeCredential(name: string) {
+	return makeMockCredential({ name, api: { vendor: 'acme.io', name: 'main', version: '' } });
+}
 
 /** An import that completes on submit and registers ACME — no job polling. */
 function stubCompletedImport(): void {
@@ -39,7 +59,10 @@ describe('CreateCredentialFlow', () => {
 		setToken('test-token');
 		resetApisStore([]);
 	});
-	afterEach(() => resetApisStore());
+	afterEach(() => {
+		resetApisStore();
+		resetCredentialsStore();
+	});
 
 	it('is a drawer by default, named by its step', async () => {
 		renderWithProviders(<CreateCredentialFlow open onClose={vi.fn()} onCreated={vi.fn()} />);
@@ -105,5 +128,54 @@ describe('CreateCredentialFlow', () => {
 		);
 		expect(screen.getByTestId('selected-api-summary')).toHaveTextContent('Acme');
 		await waitFor(() => expect(screen.getByTestId('import-spec-dialog')).not.toBeVisible());
+	});
+
+	describe('a name another credential for the API holds', () => {
+		beforeEach(() => resetApisStore([ACME]));
+
+		it('keeps the default name and suggests a free one', async () => {
+			resetCredentialsStore([existingAcmeCredential('Acme')]);
+			renderWithProviders(
+				<CreateCredentialFlow
+					open
+					onClose={vi.fn()}
+					onCreated={vi.fn()}
+					pinnedApi={PINNED_ACME}
+				/>,
+			);
+
+			const name = await screen.findByLabelText(/^Name/);
+			const clash = await screen.findByTestId('credential-name-clash');
+			expect(name).toHaveValue('Acme');
+			expect(clash).toHaveTextContent('Suggested: Acme 2');
+		});
+
+		it('warns on a typed duplicate and offers a free name, without blocking', async () => {
+			resetCredentialsStore([existingAcmeCredential('Production')]);
+			const user = userEvent.setup();
+			renderWithProviders(
+				<CreateCredentialFlow
+					open
+					onClose={vi.fn()}
+					onCreated={vi.fn()}
+					pinnedApi={PINNED_ACME}
+				/>,
+			);
+
+			const name = await screen.findByLabelText(/^Name/);
+			await user.clear(name);
+			await user.type(name, 'production');
+
+			const clash = await screen.findByTestId('credential-name-clash');
+			expect(clash).toHaveTextContent('You already have a credential named Production');
+			expect(clash).toHaveTextContent('Suggested: production 2');
+			expect(name).toHaveAttribute('aria-describedby', clash.id);
+			// A warning, not an error: the field stays valid and editable.
+			expect(name).not.toHaveAttribute('aria-invalid');
+
+			await user.click(screen.getByRole('button', { name: 'Use this name' }));
+			expect(name).toHaveValue('production 2');
+			expect(screen.queryByTestId('credential-name-clash')).not.toBeInTheDocument();
+		});
 	});
 });
