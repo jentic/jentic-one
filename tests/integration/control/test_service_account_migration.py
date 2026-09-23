@@ -904,6 +904,48 @@ async def test_diff_only_writes_nothing(
     assert successors == []
 
 
+async def test_diff_only_preview_counts_match_the_real_run(
+    integration_context: Context,
+    admin_db: DatabaseSession,
+    control_db: DatabaseSession,
+    seed_owner: None,
+    rule_credential: str,
+) -> None:
+    """The preview reports what the real run WILL copy/revoke (same queries,
+    retired scopes excluded), and never a misleading zero for a stamped row."""
+    sa_id = await _seed_sa(
+        admin_db,
+        suffix="pvcount",
+        scopes=("toolkit:read", "credentials:read", "service-accounts:read"),
+        api_key_plaintext="sak_t8m_pvcount",
+        with_tokens=True,
+        toolkit_ids=("tk_t8m_pvcount",),
+        credential_ids=(rule_credential,),
+    )
+    await _seed_inline_rules(control_db, sa_id, rule_credential)
+    svc = ServiceAccountMigrationService(integration_context)
+
+    preview = {o.service_account_id: o for o in await svc.run(diff_only=True)}[sa_id]
+    real = {o.service_account_id: o for o in await svc.run()}[sa_id]
+
+    assert real.outcome == "migrated"
+    counted = (
+        "stored_scope_count",
+        "toolkit_binding_count",
+        "credential_binding_count",
+        "permission_rule_count",
+        "access_tokens_revoked",
+        "refresh_tokens_revoked",
+    )
+    assert {f: getattr(preview, f) for f in counted} == {f: getattr(real, f) for f in counted}
+    assert (preview.stored_scope_count, preview.permission_rule_count) == (2, 2)
+    assert (preview.access_tokens_revoked, preview.refresh_tokens_revoked) == (1, 1)
+
+    stamped = {o.service_account_id: o for o in await svc.run(diff_only=True)}[sa_id]
+    assert stamped.outcome == "already_migrated"
+    assert all(getattr(stamped, f) is None for f in counted)  # not computed
+
+
 # ---------------------------------------------------------------- W3 sweep
 
 
@@ -1258,7 +1300,8 @@ async def test_verify_passes_after_migration_and_acknowledge_writes_sentinel(
     acks = await _rows(
         admin_db,
         "SELECT unstamped_count, grant_twin_missing_count, unrevoked_token_count,"
-        " digest_mismatch_count, post_stamp_mutation_count, tool_version"
+        " digest_mismatch_count, post_stamp_mutation_count, report_finding_count,"
+        " tool_version"
         " FROM service_account_migration_acks",
         {},
     )
@@ -1269,8 +1312,11 @@ async def test_verify_passes_after_migration_and_acknowledge_writes_sentinel(
         acks[0].unrevoked_token_count,
         acks[0].digest_mismatch_count,
         acks[0].post_stamp_mutation_count,
-    ) == (0, 0, 0, 0, 0)
+        acks[0].report_finding_count,  # the verify summary is not a finding
+    ) == (0, 0, 0, 0, 0, 0)
     assert acks[0].tool_version
+    # ...but it stays in the report.
+    assert [f["category"] for f in result.findings] == ["verify_summary"]
 
 
 async def test_verify_fails_on_missing_grant_twin_and_post_stamp_mutation(
@@ -1613,11 +1659,16 @@ async def test_sweep_revokes_sa_sessions_minted_during_the_window(
         await session.commit()
     live = await svc.verify()
     assert live.unrevoked_token_count == 2  # the window access + refresh pair
+    assert live.only_sweep_healable_failures  # the refusal hint names the sweep
 
     swept = await svc.sweep(ignore_age_gate=True)
     assert swept.swept == [sa_id]
     assert swept.access_tokens_revoked == 1
     assert swept.refresh_tokens_revoked == 1
+    row_line, summary = swept.report_lines(ignore_age_gate=True)
+    assert row_line["service_account_id"] == sa_id
+    assert (row_line["access_tokens_revoked"], row_line["refresh_tokens_revoked"]) == (1, 1)
+    assert summary["category"] == "sweep_summary" and summary["swept"] == 1
     after = await svc.verify()
     assert after.unrevoked_token_count == 0
     revokes = await _rows(

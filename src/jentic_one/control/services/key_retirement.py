@@ -79,6 +79,20 @@ class KeyRetirementOutcome:
     rule_less_credential_ids: tuple[str, ...] = ()
 
 
+#: Report-field → log-key renames: ``credential`` is a redactor key substring
+#: (``shared/redaction.py``), which would blank the id lists on the log line.
+#: Renamed per the redaction rule; the CLI's JSONL keeps the field names.
+_LOG_KEY_RENAMES: dict[str, str] = {
+    "bound_credential_ids": "bound_cred_ids",
+    "rule_less_credential_ids": "rule_less_cred_ids",
+}
+
+
+def _log_fields(outcome: KeyRetirementOutcome) -> dict[str, Any]:
+    """The outcome as structured-log fields, with redactor-safe key names."""
+    return {_LOG_KEY_RENAMES.get(key, key): value for key, value in asdict(outcome).items()}
+
+
 def _rule_set_name(toolkit_id: str, credential_id: str) -> str:
     """Deterministic per-pair name — the job's control-side idempotency key."""
     return f"theme5-key-retirement:{toolkit_id}:{credential_id}"
@@ -114,7 +128,7 @@ class KeyRetirementService:
         for key, toolkit in keys:
             outcome = await self._retire_key(key, toolkit, fallback_owner_id=fallback_owner_id)
             outcomes.append(outcome)
-            logger.info("toolkit_key_retirement", **asdict(outcome))
+            logger.info("toolkit_key_retirement", **_log_fields(outcome))
         return outcomes
 
     async def _retire_key(

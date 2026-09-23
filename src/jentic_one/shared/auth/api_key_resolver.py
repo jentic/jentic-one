@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import enum
 import hashlib
+from dataclasses import dataclass
 from typing import Any
 
 import structlog
@@ -47,11 +48,28 @@ class _AgentArm(enum.Enum):
     that EXISTS in ``agent_credentials`` but belongs to an inactive agent must
     FAIL CLOSED — the successor agent is the operator's kill lever during the
     coexistence window, and falling through to the still-active SA row would
-    resurrect the key the operator just cut.
+    resurrect the key the operator just cut. The inactive outcome is
+    :class:`_InactiveAgent` (it carries the agent id for the WARNING).
     """
 
     MISS = "miss"  # digest not present in agent_credentials
-    INACTIVE = "inactive"  # digest present, but the agent is not active
+
+
+@dataclass(frozen=True)
+class _InactiveAgent:
+    """Agent-arm outcome: the digest is present, but its agent is not active.
+
+    Carries the agent id so the fail-closed WARNING can name the successor
+    the operator must re-enable.
+    """
+
+    agent_id: str
+
+
+#: Mirrors ``control.repos.service_account_migration_repo.SKIPPED_STAMP``
+#: (shared must not import control): the stamp on a skip-but-stamp SA
+#: (pending/rejected/archived at migration time) — no successor exists.
+_SKIPPED_STAMP = "skipped"
 
 
 class ApiKeyResolver:
@@ -110,7 +128,7 @@ class ApiKeyResolver:
                         ),
                     )
                 return arm
-            if arm is _AgentArm.INACTIVE:
+            if isinstance(arm, _InactiveAgent):
                 # H1: the digest EXISTS on the agent side — the successor is
                 # the authoritative identity and it is disabled/archived.
                 # FAIL CLOSED; never consult the SA fallback (it would
@@ -118,6 +136,7 @@ class ApiKeyResolver:
                 logger.warning(
                     "migrated_key_fail_closed",
                     reason="successor_inactive",
+                    agent_id=arm.agent_id,
                     actionable_step=(
                         "This key's successor agent is not active; re-enable "
                         "the agent (or mint it a fresh jak_ key) if this cut "
@@ -133,14 +152,25 @@ class ApiKeyResolver:
                 # row was skip-but-stamped. FAIL CLOSED regardless of SA
                 # status: the SA surface is gone, so nothing can kill the
                 # key through the SA row and this arm must not keep it alive.
+                skip_stamped = sa_row.migrated_to_actor_id == _SKIPPED_STAMP
                 logger.warning(
                     "migrated_key_fail_closed",
                     reason="stamped_service_account",
                     service_account_id=sa_row.service_account_id,
+                    successor_agent_id=None if skip_stamped else sa_row.migrated_to_actor_id,
                     actionable_step=(
-                        "This key's account is migrated and its successor "
-                        "agent no longer carries the digest; mint the "
-                        "successor a fresh jak_ key if access should resume."
+                        (
+                            "This key's account was not active at migration "
+                            "time, so it was stamped without a successor agent "
+                            "and its key no longer authenticates; register an "
+                            "agent (with its own jak_ key) if access should resume."
+                        )
+                        if skip_stamped
+                        else (
+                            "This key's account is migrated and its successor "
+                            "agent no longer carries the digest; mint the "
+                            "successor a fresh jak_ key if access should resume."
+                        )
                     ),
                 )
                 return None
@@ -179,7 +209,7 @@ class ApiKeyResolver:
         arm = await self._lookup_agent(raw_key)
         return arm if isinstance(arm, Identity) else None
 
-    async def _lookup_agent(self, raw_key: str) -> Identity | _AgentArm:
+    async def _lookup_agent(self, raw_key: str) -> Identity | _AgentArm | _InactiveAgent:
         key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
         stmt = text(
             "SELECT a.id AS agent_id, a.status, a.owner_id"
@@ -193,7 +223,7 @@ class ApiKeyResolver:
         if row is None:
             return _AgentArm.MISS
         if row.status != "active":
-            return _AgentArm.INACTIVE
+            return _InactiveAgent(agent_id=row.agent_id)
 
         permissions = await self._load_permissions(row.agent_id, ActorType.AGENT)
         return Identity(

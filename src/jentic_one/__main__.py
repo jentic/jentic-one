@@ -26,6 +26,7 @@ from jentic_one.auth.web.app import install_on_app as _install_auth_verifier
 from jentic_one.control.services.key_retirement import KeyRetirementService
 from jentic_one.control.services.service_account_migration import (
     ServiceAccountMigrationService,
+    VerificationResult,
 )
 from jentic_one.control.services.toolkit_export import ToolkitExportError, ToolkitExportService
 from jentic_one.control.services.toolkit_flattening import Finding, ToolkitFlatteningService
@@ -380,7 +381,8 @@ async def _migrate_service_accounts(
     Default mode migrates every SA (copy→revoke→stamp→audit; idempotent via
     the stamp) and emits one JSONL line per SA. ``--diff-only`` evaluates
     dispositions without writing. ``--sweep-migrated`` runs the W3 sweep
-    ignoring the stamp-age gate (operators who know the fleet is uniform).
+    ignoring the stamp-age gate (operators who know the fleet is uniform) and
+    emits one JSONL line per swept SA plus a summary line.
     ``--verify [--acknowledge]`` runs the acceptance queries and optionally
     writes the Phase-4 gate sentinel (only on pass, same invocation).
     """
@@ -406,10 +408,7 @@ async def _migrate_service_accounts(
             )
             if acknowledge:
                 print(
-                    "==> acknowledgement recorded — theme-8 Phase 4 drops are unblocked."
-                    if result.acknowledged
-                    else "==> acknowledgement REFUSED: verification failed; run "
-                    "migrate-service-accounts first, then re-verify.",
+                    _sa_acknowledge_message(result),
                     file=sys.stderr,
                     flush=True,
                 )
@@ -417,6 +416,7 @@ async def _migrate_service_accounts(
 
         if sweep_migrated:
             sweep = await svc.sweep(ignore_age_gate=True)
+            _write_report_lines(sweep.report_lines(ignore_age_gate=True), report_path)
             print(
                 f"==> swept {len(sweep.swept)} service account(s); revoked "
                 f"{sweep.access_tokens_revoked + sweep.refresh_tokens_revoked} SA "
@@ -442,6 +442,27 @@ async def _migrate_service_accounts(
         flush=True,
     )
     return 1 if failed else 0
+
+
+def _sa_acknowledge_message(result: VerificationResult) -> str:
+    """The ``--verify --acknowledge`` outcome line, with the right next step.
+
+    A verify that fails only on what the sweep heals (live SA sessions,
+    unswept inline-rule rows) points at ``--sweep-migrated``; re-running the
+    migration would not help — stamped rows short-circuit it.
+    """
+    if result.acknowledged:
+        return "==> acknowledgement recorded — theme-8 Phase 4 drops are unblocked."
+    if result.only_sweep_healable_failures:
+        return (
+            "==> acknowledgement REFUSED: verification failed only on unrevoked SA "
+            "session(s) / unswept inline-rule row(s); run "
+            "`migrate-service-accounts --sweep-migrated`, then re-verify."
+        )
+    return (
+        "==> acknowledgement REFUSED: verification failed; run "
+        "migrate-service-accounts first, then re-verify."
+    )
 
 
 def _write_report_lines(lines: list[dict[str, object]], report_path: str | None) -> None:
