@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.admin.repos import (
     AccessTokenRepository,
-    ActorScopeGrantRepository,
+    ActorPermissionGrantRepository,
     AgentRepository,
     OAuthClientGrantRepository,
     OAuthClientRepository,
@@ -82,9 +82,14 @@ async def resolve_effective_scopes(
 ) -> list[str]:
     """The scope set the live resolvers actually enforce for a token.
 
+    Named for what it returns, not for what it reads: the result is a token's
+    OAuth2 scope set, even though the live arm reads internal permission grants to
+    compute it. The same applies to :func:`_apply_scope_ceiling` — a ceiling is an
+    OAuth2 concept.
+
     Non-ephemeral AGENT/SERVICE_ACCOUNT tokens draw scopes *live* from
-    ``actor_scope_grants`` — the mint-time snapshot is dead weight for
-    enforcement on these actor types (scope edits take effect immediately by
+    ``actor_permission_grants`` — the mint-time snapshot is dead weight for
+    enforcement on these actor types (permission edits take effect immediately by
     design). Ephemeral mints and USER tokens keep their snapshot. Either
     starting set is then intersected with the issuing client's
     ``allowed_scopes`` ceiling and the consent grant's scope set.
@@ -100,10 +105,10 @@ async def resolve_effective_scopes(
     """
     scopes = snapshot_scopes
     if not is_ephemeral and actor_type in (ActorType.AGENT, ActorType.SERVICE_ACCOUNT):
-        grants = await ActorScopeGrantRepository.list_for_actor(
+        grants = await ActorPermissionGrantRepository.list_for_actor(
             session, actor_id, actor_type=actor_type
         )
-        scopes = [g.scope for g in grants]
+        scopes = [g.permission for g in grants]
     scopes = _apply_scope_ceiling(scopes, client_ceiling)
     return _apply_scope_ceiling(scopes, grant_ceiling)
 
@@ -288,7 +293,7 @@ class TokenService:
 
         ``scopes`` is the rotated access token's *effective* set, computed at
         rotation time exactly the way the live resolvers enforce it
-        (:func:`resolve_effective_scopes`): live ``actor_scope_grants`` ∩
+        (:func:`resolve_effective_scopes`): live ``actor_permission_grants`` ∩
         client ceiling ∩ grant scopes for non-ephemeral AGENT/SA actors, the
         family snapshot ∩ ceilings for USER actors. The token rows still
         carry the family's mint-time snapshot — enforcement for AGENT/SA
@@ -562,7 +567,7 @@ class TokenService:
 
         For long-lived agent and service-account tokens (an access+refresh pair,
         ``is_ephemeral=False``), scopes are resolved *live* from the actor's
-        current ``ActorScopeGrant`` rows rather than the frozen snapshot stored
+        current ``ActorPermissionGrant`` rows rather than the frozen snapshot stored
         on the token. This makes scope edits (grant/revoke, replace) take
         effect immediately without forcing a re-mint — the token row's
         ``scopes`` column is only a mint-time snapshot.
@@ -571,7 +576,7 @@ class TokenService:
         ``is_ephemeral=True``) keep their frozen snapshot: their scopes are a
         deliberate downscoped subset of the host's grants and must not be
         re-broadened. User tokens also keep their snapshot (their permissions do
-        not come from ``ActorScopeGrant``).
+        not come from ``ActorPermissionGrant``).
 
         The verdict also re-checks the actor's own status (#1136): a disabled
         or archived actor's outstanding tokens resolve as inactive immediately,

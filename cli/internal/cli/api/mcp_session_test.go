@@ -227,7 +227,7 @@ func TestMCPSession_FullRoundTrip(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/me":
-			_, _ = w.Write([]byte(`{"type":"agent","id":"agent_1","name":"pets-agent","scopes":["execute"],"status":"active","token_scopes":["execute"],"toolkit_bindings":[],"credential_bindings":[]}`))
+			_, _ = w.Write([]byte(`{"type":"agent","id":"agent_1","name":"pets-agent","permissions":["execute"],"status":"active","token_permissions":["execute"],"toolkit_bindings":[],"credential_bindings":[]}`))
 		case "/search":
 			_, _ = w.Write([]byte(`{
 				"data": [{"type":"operation","api":{"vendor":"acme","name":"pets","version":"v1","host":"acme.com"},"operation_id":"op1","method":"GET","url":"/pets","name":"List Pets","relevance_score":0.9,"_links":{"inspect":"/inspect?id=GET%20/pets"}}],

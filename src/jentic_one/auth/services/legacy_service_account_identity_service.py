@@ -38,12 +38,14 @@ class LegacyServiceAccountIdentityService:
             row = await LegacyServiceAccountReadRepository.get_identity(session, identity.sub)
             if row is None:
                 raise ActorNotFoundError(identity.sub)
-            scopes = await LegacyServiceAccountReadRepository.list_scopes(session, identity.sub)
+            permissions = await LegacyServiceAccountReadRepository.list_permissions(
+                session, identity.sub
+            )
         return LegacyServiceAccountIdentityView(
             id=row.id,
             name=row.name,
             status=row.status,
             registered_by=row.registered_by,
             approved_by=row.approved_by,
-            scopes=scopes,
+            permissions=permissions,
         )

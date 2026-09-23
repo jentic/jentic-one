@@ -2,7 +2,7 @@
  * Global search index for the docs portal.
  *
  * The top navbar search spans *everything* on the page — narrative sections,
- * CLI commands, scopes, and API endpoints — and jumps to the matching anchor.
+ * CLI commands, permissions, and API endpoints — and jumps to the matching anchor.
  * To do that we flatten each source into a uniform `SearchItem` with a stable
  * `anchor` (an element id already present in the DOM) and a `kind` for grouping
  * + iconography in the results dropdown.
@@ -15,7 +15,7 @@ import type { CliBinary, CliCommand, ReferencePayload } from '@/modules/docs/api
 import { DOCS_SECTIONS } from '@/modules/docs/lib/nav';
 import { operationAnchorId, modelAnchorId } from '@/modules/docs/lib/anchor';
 
-export type SearchKind = 'section' | 'cli' | 'scope' | 'endpoint' | 'model';
+export type SearchKind = 'section' | 'cli' | 'permission' | 'endpoint' | 'model';
 
 export interface SearchItem {
 	kind: SearchKind;
@@ -78,14 +78,14 @@ export function buildSearchIndex(
 		walkCli(b, b.commands, items);
 	}
 
-	// Scopes (conceptual catalogue) — jump to the Permissions section.
-	for (const scope of reference?.scopes?.scopes ?? []) {
+	// Permissions (conceptual catalogue) — jump to the Permissions section.
+	for (const permission of reference?.permissions?.permissions ?? []) {
 		items.push({
-			kind: 'scope',
-			title: scope.name,
-			subtitle: scope.description,
+			kind: 'permission',
+			title: permission.name,
+			subtitle: permission.description,
 			anchor: 'permissions',
-			haystack: `${scope.name} ${scope.description}`.toLowerCase(),
+			haystack: `${permission.name} ${permission.description}`.toLowerCase(),
 		});
 	}
 

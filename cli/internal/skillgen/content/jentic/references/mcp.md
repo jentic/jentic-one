@@ -34,7 +34,7 @@ An authenticated MCP connection. The credential (an OAuth grant your
 operator authorized when connecting the client, or a bearer token/API key
 the client presents at the transport) is attached by the MCP client on every
 request — you never run setup, never handle token refresh, and never see the
-raw credential. On the HTTP mount your scopes and bindings are resolved live
+raw credential. On the HTTP mount your permissions and bindings are resolved live
 per request, so an approved grant works on the very next tool call with no
 re-mint step (one exception: the session's OAuth consent ceiling — see the
 access step).
@@ -42,7 +42,7 @@ access step).
 ## Step 1 — identity
 
 Call `whoami` — it answers with your identity as the control plane sees it:
-id, **status**, scopes, and credential bindings.
+id, **status**, permissions, and credential bindings.
 
 ```
 whoami {}
@@ -188,7 +188,7 @@ delivered in the envelope instead of stderr.
 
 ## The 9 mount tools (each maps onto the loop)
 
-- `whoami` — your identity, status, scopes, and credential bindings with the
+- `whoami` — your identity, status, permissions, and credential bindings with the
   APIs each one serves; start here and decide access from it.
 - `request_connection` — start a connect session for a registry vendor when
   no binding serves the API you need; relay the returned `approval_url` to

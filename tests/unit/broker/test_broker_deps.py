@@ -1,9 +1,9 @@
-"""Unit tests for broker web deps — token validation + execute-scope enforcement.
+"""Unit tests for broker web deps — token validation + execute-permission enforcement.
 
 Toolkit *binding* enforcement moved out of ``deps.py`` into ``select_toolkit``
 (handler-side, after discovery) in §03 — see ``test_toolkit_select.py``. These
 tests cover only what the dependency still owns: authenticate + require the
-execute scope.
+execute permission.
 """
 
 from __future__ import annotations
@@ -20,8 +20,8 @@ from jentic_one.broker.core.token_validation import CachedTokenValidator
 from jentic_one.broker.services.auth import DualTokenValidator, JwtTokenValidator, JwtVerifier
 from jentic_one.broker.web.deps import RequireToolkitAccess
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.auth.permission_catalog import BROKER_EXECUTE_PERMISSION
 from jentic_one.shared.models import ActorType
-from jentic_one.shared.scopes import BROKER_EXECUTE_SCOPE
 
 _JWT_SECRET = "broker-deps-test-secret-32-bytes-long!!"  # pragma: allowlist secret
 
@@ -36,7 +36,7 @@ def _make_identity(
     return Identity(
         sub=sub,
         actor_type=actor_type,
-        permissions=permissions or [BROKER_EXECUTE_SCOPE],
+        permissions=permissions or [BROKER_EXECUTE_PERMISSION],
         expires_at=datetime.now(UTC) + timedelta(hours=1),
         active=active,
     )
@@ -67,7 +67,7 @@ def _create_test_app(resolver_return: Identity | object | None = _SENTINEL) -> T
     return TestClient(app, raise_server_exceptions=False)
 
 
-def test_returns_200_with_valid_token_and_scope() -> None:
+def test_returns_200_with_valid_token_and_permission() -> None:
     client = _create_test_app()
     resp = client.post("/execute", headers={"Authorization": "Bearer at_valid"})
     assert resp.status_code == 200
@@ -91,7 +91,7 @@ def test_returns_401_with_inactive_token() -> None:
     assert resp.status_code == 401
 
 
-def test_returns_403_with_insufficient_scope() -> None:
+def test_returns_403_without_execute_permission() -> None:
     client = _create_test_app(resolver_return=_make_identity(permissions=["read:only"]))
     resp = client.post("/execute", headers={"Authorization": "Bearer at_limited"})
     assert resp.status_code == 403

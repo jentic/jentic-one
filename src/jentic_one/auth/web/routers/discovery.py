@@ -29,9 +29,9 @@ from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 
 from jentic_one.shared.auth import CachedJWKSPublisher
+from jentic_one.shared.auth.permission_catalog import MCP_TOOL_SCOPES
 from jentic_one.shared.config import AuthConfig
 from jentic_one.shared.context import Context
-from jentic_one.shared.scopes import MCP_TOOL_SCOPES
 from jentic_one.shared.web.deps import get_ctx
 from jentic_one.shared.web.links import deployment_base_url
 

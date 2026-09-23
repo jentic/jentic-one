@@ -3,7 +3,7 @@
 The retirement job runs in the control module (toolkit keys, toolkits, and
 permission rule sets live in the control DB) but creates the successor actor
 in the **admin** DB (an agent since theme-8 Phase 1: its row, credential
-hash, scope grant, and binding rows). The control module must not import
+hash, permission grant, and binding rows). The control module must not import
 admin ORM models, so — like ``EffectsRepository`` — every admin-side
 statement here is raw SQL, idempotent via natural keys (deterministic
 successor name, ON CONFLICT DO NOTHING on uniquely-constrained binding
@@ -46,7 +46,7 @@ _FIND_SERVICE_ACCOUNT_BY_NAME_FOR_UPDATE = text(_FIND_SERVICE_ACCOUNT_BY_NAME_SQ
 # (the boot job must not be an SA producer the SA→agent migration then has to
 # chase). Raw SQL, never AgentService.create()/approve(): the F1 constraint
 # applies identically — a toolkit key was exactly ``capabilities:execute``,
-# and the service path's DEFAULT_AGENT_SCOPES default would be a 1→13
+# and the service path's DEFAULT_AGENT_PERMISSIONS default would be a 1→13
 # escalation.
 _INSERT_AGENT = text(
     "INSERT INTO agents"
@@ -60,11 +60,11 @@ _INSERT_AGENT_CREDENTIAL = text(
     " VALUES (:id, :agent_id, :api_key_hash, :created_by)"
 )
 
-_INSERT_SCOPE_GRANT = text(
-    "INSERT INTO actor_scope_grants"
-    " (id, actor_id, actor_type, scope, granted_by, created_by)"
-    " VALUES (:id, :actor_id, 'agent', :scope, :granted_by, :created_by)"
-    " ON CONFLICT (actor_id, scope) DO NOTHING"
+_INSERT_PERMISSION_GRANT = text(
+    "INSERT INTO actor_permission_grants"
+    " (id, actor_id, actor_type, permission, granted_by, created_by)"
+    " VALUES (:id, :actor_id, 'agent', :permission, :granted_by, :created_by)"
+    " ON CONFLICT (actor_id, permission) DO NOTHING"
 )
 
 _INSERT_TOOLKIT_BINDING = text(
@@ -227,7 +227,7 @@ class KeyRetirementRepository:
         key and matches ``api_key_hash`` regardless of prefix; agent-first
         since theme-8 Phase 1). The grant is exactly ``capabilities:execute``:
         a toolkit key *was* the execute capability and nothing else — never
-        the default agent scope set (theme-5 plan, toolkit-keys decision;
+        the default agent permission set (theme-5 plan, toolkit-keys decision;
         theme-8 F1).
         """
         agent_id = generate_ksuid("agnt")
@@ -252,11 +252,11 @@ class KeyRetirementRepository:
             },
         )
         await session.execute(
-            _INSERT_SCOPE_GRANT,
+            _INSERT_PERMISSION_GRANT,
             {
                 "id": generate_ksuid("asg"),
                 "actor_id": agent_id,
-                "scope": "capabilities:execute",
+                "permission": "capabilities:execute",
                 "granted_by": SYSTEM_ACTOR,
                 "created_by": SYSTEM_ACTOR,
             },

@@ -59,7 +59,7 @@ async def clean_tables(
             for table in (
                 "agent_credential_bindings",
                 "agent_toolkit_bindings",
-                "actor_scope_grants",
+                "actor_permission_grants",
             ):
                 column = "agent_id" if table.startswith("agent_") else "actor_id"
                 await session.execute(
@@ -250,13 +250,15 @@ async def test_happy_path_creates_all_successor_artifacts(
     )
     assert [row.api_key_hash for row in creds] == [lookup]
 
-    # 3) Exactly the execute grant — never the default agent scope set.
+    # 3) Exactly the execute grant — never the default agent permission set.
     grants = await _admin_rows(
         admin_db,
-        "SELECT scope, actor_type FROM actor_scope_grants WHERE actor_id = :sid",
+        "SELECT permission, actor_type FROM actor_permission_grants WHERE actor_id = :sid",
         {"sid": successor_id},
     )
-    assert [(row.scope, row.actor_type) for row in grants] == [("capabilities:execute", "agent")]
+    assert [(row.permission, row.actor_type) for row in grants] == [
+        ("capabilities:execute", "agent")
+    ]
 
     # 4) The flag-off path: one toolkit binding for the successor actor.
     toolkit_bindings = await _admin_rows(
@@ -389,7 +391,7 @@ async def test_rerun_is_idempotent(
     for query in (
         "SELECT id FROM agents WHERE name = :name",
         "SELECT id FROM agent_credentials WHERE agent_id = :sid",
-        "SELECT id FROM actor_scope_grants WHERE actor_id = :sid",
+        "SELECT id FROM actor_permission_grants WHERE actor_id = :sid",
         "SELECT id FROM agent_toolkit_bindings WHERE agent_id = :sid",
         "SELECT id FROM agent_credential_bindings WHERE agent_id = :sid",
     ):

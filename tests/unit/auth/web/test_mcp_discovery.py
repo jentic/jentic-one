@@ -19,8 +19,8 @@ from fastapi.testclient import TestClient
 from jentic_one.auth.web import app as auth_app
 from jentic_one.auth.web.routers import discovery
 from jentic_one.mcp.installer import install_mcp_challenge_placeholder
+from jentic_one.shared.auth.permission_catalog import MCP_TOOL_SCOPES
 from jentic_one.shared.config import AuthConfig, ServerConfig
-from jentic_one.shared.scopes import MCP_TOOL_SCOPES
 
 _BASE = "https://auth.example.com"
 

@@ -13,7 +13,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.admin.core.schema.agents import Agent
-from jentic_one.admin.repos import ActorScopeGrantRepository
+from jentic_one.admin.repos import ActorPermissionGrantRepository
 from jentic_one.admin.repos.agent_repo import AgentRepository
 from jentic_one.auth.core.claim import get_claim_token_minter
 from jentic_one.auth.services.errors import InvalidGrantError, RegistrationAccessDeniedError
@@ -134,11 +134,11 @@ class RegistrationService:
                 await session.flush()
             if scope:
                 for scope_value in list(dict.fromkeys(scope.split())):
-                    await ActorScopeGrantRepository.grant(
+                    await ActorPermissionGrantRepository.grant(
                         session,
                         actor_id=agent.id,
                         actor_type=ActorType.AGENT,
-                        scope=scope_value,
+                        permission=scope_value,
                         granted_by=None,
                         created_by="dcr",
                     )

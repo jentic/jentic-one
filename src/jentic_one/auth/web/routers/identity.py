@@ -74,7 +74,7 @@ async def _resolve_user(request: Request, identity: Identity, user_svc: UserServ
         email=user.email,
         admin="org:admin" in identity.permissions,
         status=ActorStatus.ACTIVE if user.active else ActorStatus.DISABLED,
-        scopes=identity.permissions,
+        permissions=identity.permissions,
         must_change_password=identity.must_change_password,
     )
 
@@ -84,11 +84,11 @@ async def _resolve_agent(request: Request, identity: Identity, agent_svc: AgentS
         agent = await agent_svc.get_agent(identity.sub, identity=identity)
         toolkits = await agent_svc.list_toolkits(identity.sub, identity=identity)
         credentials = await agent_svc.list_credentials(identity.sub, identity=identity)
-        # Read the live grants rather than echoing the token's scopes, so an
+        # Read the live grants rather than echoing the token's permissions, so an
         # approved grant shows up here immediately even when the presented token
-        # was minted before the grant (#673). `token_scopes` exposes the token's
-        # own view so the agent can detect (and act on) the staleness gap.
-        granted_scopes = await agent_svc.get_scopes(identity.sub, identity=identity)
+        # was minted before the grant (#673). `token_permissions` exposes the
+        # token's own view so the agent can detect (and act on) the staleness gap.
+        granted_permissions = await agent_svc.get_permissions(identity.sub, identity=identity)
     except ActorNotFoundError:
         raise Unauthorized(
             detail="Agent referenced by token no longer exists",
@@ -99,8 +99,8 @@ async def _resolve_agent(request: Request, identity: Identity, agent_svc: AgentS
         id=agent.id,
         name=agent.name,
         status=agent.status,
-        scopes=granted_scopes,
-        token_scopes=identity.permissions,
+        permissions=granted_permissions,
+        token_permissions=identity.permissions,
         parent_agent_id=agent.parent_agent_id,
         approved_by=agent.approved_by,
         toolkit_bindings=[
@@ -145,14 +145,14 @@ async def _resolve_service_account(
             instance=request.url.path,
             type="unauthorized",
         ) from None
-    # Mirror the agent path: live grants as `scopes`, the token's own view as
-    # `token_scopes`, so any staleness gap is detectable (#673).
+    # Mirror the agent path: live grants as `permissions`, the token's own view
+    # as `token_permissions`, so any staleness gap is detectable (#673).
     return MeServiceAccount(
         id=sa.id,
         name=sa.name,
         status=sa.status,
-        scopes=sa.scopes,
-        token_scopes=identity.permissions,
+        permissions=sa.permissions,
+        token_permissions=identity.permissions,
         registered_by=sa.registered_by,
         approved_by=sa.approved_by,
     )

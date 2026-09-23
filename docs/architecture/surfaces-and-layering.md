@@ -42,7 +42,7 @@ no `test_auth_does_not_import_admin`. All other
 cross-surface needs are met three ways:
 
 - **[`shared/`](../../src/jentic_one/shared/)** — config, `Context`, the DB session layer, the `Broker`
-  protocol, jobs, events, audit, scopes, telemetry. Its independence is
+  protocol, jobs, events, audit, permissions, telemetry. Its independence is
   enforced only in specific directions: `shared/` never imports `broker`,
   never imports `auth`, and never imports `admin.core.permissions`
   (`test_module_boundaries.py`). It does reach other surfaces where it
@@ -96,10 +96,10 @@ and the test that enforces each:
 [`registry/`](../../src/jentic_one/registry/), [`control/`](../../src/jentic_one/control/), and [`admin/`](../../src/jentic_one/admin/) each carry a `scoping/filters.py` whose
 `build_access_filters(identity, model)` returns the WHERE clauses a repo
 applies for row-level visibility: `org:admin` sees everything, an owner sees
-their own rows, and an operator holding a delegation scope
+their own rows, and an operator holding a delegation permission
 (`owner:<resource>:read`) sees the rows of the agents they own. Services pass the
 filters in; repos apply them; neither knows the other's internals. See
-[identity and authorization](identity-and-authorization.md) for the scope
+[identity and authorization](identity-and-authorization.md) for the permission
 model these filters implement.
 
 ### A request, layer by layer

@@ -5,9 +5,9 @@
 import type { AgentCreateRequest } from '../models/AgentCreateRequest';
 import type { AgentListResponse } from '../models/AgentListResponse';
 import type { AgentPatchRequest } from '../models/AgentPatchRequest';
+import type { AgentPermissionsRequest } from '../models/AgentPermissionsRequest';
+import type { AgentPermissionsResponse } from '../models/AgentPermissionsResponse';
 import type { AgentResponse } from '../models/AgentResponse';
-import type { AgentScopesRequest } from '../models/AgentScopesRequest';
-import type { AgentScopesResponse } from '../models/AgentScopesResponse';
 import type { ApiKeyHistoryResponse } from '../models/ApiKeyHistoryResponse';
 import type { ApiKeyInfoResponse } from '../models/ApiKeyInfoResponse';
 import type { ApiKeyResponse } from '../models/ApiKeyResponse';
@@ -86,7 +86,7 @@ export class AgentsService {
      * Archive an agent — terminal-but-kept.
      *
      * The row is retained for history, but the action is not reversible and
-     * the agent's authority is swept: scope grants, credential bindings, and
+     * the agent's authority is swept: permission grants, credential bindings, and
      * OAuth consent grants are revoked. For the reversible kill switch use
      * ``:disable`` / ``:enable`` instead.
      * @returns void
@@ -438,19 +438,19 @@ export class AgentsService {
         });
     }
     /**
-     * Get Agent Scopes
-     * List scopes granted to an agent.
-     * @returns AgentScopesResponse Successful Response
+     * Get Agent Permissions
+     * List permissions granted to an agent.
+     * @returns AgentPermissionsResponse Successful Response
      * @throws ApiError
      */
-    public static getAgentScopes({
+    public static getAgentPermissions({
         agentId,
     }: {
         agentId: string,
-    }): CancelablePromise<AgentScopesResponse> {
+    }): CancelablePromise<AgentPermissionsResponse> {
         return __request(OpenAPI, {
             method: 'GET',
-            url: '/agents/{agent_id}/scopes',
+            url: '/agents/{agent_id}/permissions',
             path: {
                 'agent_id': agentId,
             },
@@ -465,21 +465,21 @@ export class AgentsService {
         });
     }
     /**
-     * Replace Agent Scopes
-     * Replace all scopes for an agent.
-     * @returns AgentScopesResponse Successful Response
+     * Replace Agent Permissions
+     * Replace all permissions for an agent.
+     * @returns AgentPermissionsResponse Successful Response
      * @throws ApiError
      */
-    public static replaceAgentScopes({
+    public static replaceAgentPermissions({
         agentId,
         requestBody,
     }: {
         agentId: string,
-        requestBody: AgentScopesRequest,
-    }): CancelablePromise<AgentScopesResponse> {
+        requestBody: AgentPermissionsRequest,
+    }): CancelablePromise<AgentPermissionsResponse> {
         return __request(OpenAPI, {
             method: 'PUT',
-            url: '/agents/{agent_id}/scopes',
+            url: '/agents/{agent_id}/permissions',
             path: {
                 'agent_id': agentId,
             },
@@ -539,7 +539,7 @@ export class AgentsService {
      * ``allow_expired_password=True`` is intentional (matching ``GET /agents/{id}``):
      * claiming is an onboarding step a brand-new user may hit before they have
      * rotated a temporary password, so a must-change-password state must not block
-     * it. The claim only sets ownership — it grants no scopes and cannot act as the
+     * it. The claim only sets ownership — it grants no permissions and cannot act as the
      * agent — so allowing it under an expired password is low-risk.
      * @returns AgentResponse Successful Response
      * @throws ApiError

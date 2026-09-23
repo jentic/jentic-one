@@ -34,7 +34,7 @@ class AgentCreatePayload(BaseModel):
 
     name: str
     description: str | None = None
-    scopes: list[str] | None = None
+    permissions: list[str] | None = None
 
 
 class ToolkitBindingView(BaseModel):

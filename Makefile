@@ -87,7 +87,7 @@ config-schema: ## Regenerate the backend config JSON Schema (config/config-schem
 config-reference: ## Regenerate the configuration reference (docs/reference/config.md) from the AppConfig model
 	uv run python -m tools.config_reference
 	@echo "Regenerated docs/reference/config.md."
-endpoints: ## Regenerate the endpoint + scope reference (docs/reference/endpoints.{md,json}) from code
+endpoints: ## Regenerate the endpoint + permission reference (docs/reference/endpoints.{md,json}) from code
 	uv run python -m tools.endpoint_tree
 	@echo "Regenerated docs/reference/endpoints.md and docs/reference/endpoints.json."
 

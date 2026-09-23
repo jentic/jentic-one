@@ -4,8 +4,8 @@
  * The spec drives everything (see lib/apiSpec.parseSpec): we render every tag
  * group, tag, operation, request/response body schema, and the component
  * schemas ("Models") in standard OpenAPI ordering (x-tagGroups → tags →
- * operations). Each operation is enriched with our scope reference (the one
- * thing the spec lacks) joined on `(method,path)`.
+ * operations). Each operation is enriched with our permission reference (the
+ * one thing the spec lacks) joined on `(method,path)`.
  *
  * Layout mirrors the CLI reference: a sticky grouped index on the left + one
  * scrolling document on the right + scroll-spy, so the two reference sections
@@ -31,7 +31,7 @@ import {
 	operationAnchorId,
 	scrollToAnchor,
 } from '@/modules/docs/lib/anchor';
-import { ScopePanel } from '@/modules/docs/components/ScopePanel';
+import { PermissionPanel } from '@/modules/docs/components/PermissionPanel';
 import { SchemaView, modelAnchorId } from '@/modules/docs/components/SchemaView';
 import { useScrollSpy } from '@/modules/docs/lib/useScrollSpy';
 import { MethodBadge, Markdown, Input, LazyMount } from '@/shared/ui';
@@ -424,7 +424,7 @@ function ParamRow({ p }: { p: SpecOperation['parameters'][number] }) {
 
 /* ---- operation ----------------------------------------------------------- */
 
-/** A compact auth chip for the operation header (public vs. scoped). */
+/** A compact auth chip for the operation header (public vs. permission-gated). */
 function AuthChip({ endpoint }: { endpoint: ReferenceEndpoint | undefined }) {
 	if (!endpoint) return null;
 	if (!endpoint.authenticated) {
@@ -435,14 +435,14 @@ function AuthChip({ endpoint }: { endpoint: ReferenceEndpoint | undefined }) {
 			</span>
 		);
 	}
-	const scopes = endpoint.required_scopes ?? [];
+	const permissions = endpoint.required_permissions ?? [];
 	return (
 		<span className="text-foreground/55 inline-flex items-center gap-1 text-[11px]">
 			<Lock className="h-3 w-3" aria-hidden="true" />
-			{scopes.length > 0 ? (
+			{permissions.length > 0 ? (
 				<code className="font-mono">
-					{scopes[0]}
-					{scopes.length > 1 ? ` +${scopes.length - 1}` : ''}
+					{permissions[0]}
+					{permissions.length > 1 ? ` +${permissions.length - 1}` : ''}
 				</code>
 			) : (
 				'Authenticated'
@@ -501,7 +501,7 @@ const OperationBlock = memo(function OperationBlock({
 			{/* Authorization — the unique value of this reference, kept prominent. */}
 			{endpoint && (
 				<div className="mt-4">
-					<ScopePanel endpoint={endpoint} />
+					<PermissionPanel endpoint={endpoint} />
 				</div>
 			)}
 

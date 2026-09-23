@@ -56,7 +56,7 @@ export const DOCS_NAV: DocsNavGroup[] = [
 		title: 'Concepts',
 		sections: [
 			{ id: 'architecture', label: 'Architecture', icon: Boxes },
-			{ id: 'permissions', label: 'Permissions & scopes', icon: ShieldCheck },
+			{ id: 'permissions', label: 'Permissions', icon: ShieldCheck },
 		],
 	},
 	{

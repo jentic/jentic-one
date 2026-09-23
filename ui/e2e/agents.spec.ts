@@ -141,12 +141,12 @@ test('rename an agent from the Settings tab round-trips to the list', async ({ p
 });
 
 /**
- * Scopes flow (#615): open an active agent's detail page, grant a platform
- * permission via the Scopes editor, save (full-list PUT), and verify the new
- * scope renders as a chip and is reflected when the editor is reopened (read
- * back from the mock store within the session).
+ * Permissions flow (#615): open an active agent's detail page, grant a platform
+ * permission via the Permissions editor, save (full-list PUT), and verify the
+ * new permission renders as a chip and is reflected when the editor is reopened
+ * (read back from the mock store within the session).
  */
-test('grant a scope to an agent via the Scopes editor', async ({ page }) => {
+test('grant a permission to an agent via the Permissions editor', async ({ page }) => {
 	await page.goto('/app/agents/agnt_active_1');
 
 	await page.getByLabel('Email').fill('admin@local');
@@ -155,31 +155,32 @@ test('grant a scope to an agent via the Scopes editor', async ({ page }) => {
 
 	await expect(page.getByRole('heading', { name: 'support-agent' })).toBeVisible();
 
-	// Scopes live on the detail page's Access tab.
+	// Permissions live on the detail page's Access tab.
 	await page.getByRole('tab', { name: 'Access' }).click();
 
-	const scopeList = page.getByRole('list', { name: 'Granted scopes' });
-	await expect(scopeList.getByText('capabilities:execute')).toBeVisible();
-	await expect(scopeList.getByText('credentials:read')).toHaveCount(0);
+	const permissionList = page.getByRole('list', { name: 'Granted permissions' });
+	await expect(permissionList.getByText('capabilities:execute')).toBeVisible();
+	await expect(permissionList.getByText('credentials:read')).toHaveCount(0);
 
-	await page.getByRole('button', { name: 'Edit scopes for support-agent' }).click();
+	await page.getByRole('button', { name: 'Edit permissions for support-agent' }).click();
 	const dialog = page.getByRole('dialog');
-	await dialog.getByLabel('Search scopes').fill('credentials:read');
+	await dialog.getByLabel('Search permissions').fill('credentials:read');
 	// `exact` avoids colliding with `owner:credentials:read`, which the search
 	// substring-matches too.
 	await dialog.getByRole('checkbox', { name: 'credentials:read', exact: true }).click();
-	await dialog.getByRole('button', { name: 'Save scopes' }).click();
+	await dialog.getByRole('button', { name: 'Save permissions' }).click();
 
 	// New grant renders as a chip immediately (cache seeded from the PUT response).
-	await expect(scopeList.getByText('credentials:read', { exact: true })).toBeVisible();
-	// The synthetic non-catalogue scope the agent already held (legacy:orphaned:read
-	// is absent from /permissions) must survive the save untouched.
-	await expect(scopeList.getByText('legacy:orphaned:read', { exact: true })).toBeVisible();
+	await expect(permissionList.getByText('credentials:read', { exact: true })).toBeVisible();
+	// The synthetic non-catalogue permission the agent already held
+	// (legacy:orphaned:read is absent from /permissions) must survive the save
+	// untouched.
+	await expect(permissionList.getByText('legacy:orphaned:read', { exact: true })).toBeVisible();
 
-	// Reopen the editor → the saved scope reads back as already selected.
-	await page.getByRole('button', { name: 'Edit scopes for support-agent' }).click();
+	// Reopen the editor → the saved permission reads back as already selected.
+	await page.getByRole('button', { name: 'Edit permissions for support-agent' }).click();
 	const reopened = page.getByRole('dialog');
-	await reopened.getByLabel('Search scopes').fill('credentials:read');
+	await reopened.getByLabel('Search permissions').fill('credentials:read');
 	await expect(
 		reopened.getByRole('checkbox', { name: 'credentials:read', exact: true }),
 	).toBeChecked();

@@ -26,6 +26,8 @@ export {
 	type ScopeOrigin,
 	type EnhancedScope,
 	type ScopeGroup,
+	type ScopeVocabulary,
+	VOCABULARY_NOUNS,
 	extractResourceFromScope,
 	formatResourceName,
 	groupScopesByResource,

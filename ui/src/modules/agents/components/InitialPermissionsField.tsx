@@ -1,13 +1,13 @@
 /**
- * InitialScopesField — optional "start with these scopes" section for the
- * agent create sheet (POST /agents already accepts `scopes[]`, so a new
+ * InitialPermissionsField — optional "start with these permissions" section for
+ * the agent create sheet (POST /agents already accepts `permissions[]`, so a new
  * agent shouldn't need a follow-up PUT from its detail page just to get its
  * first grants).
  *
- * Collapsed by default behind a disclosure — most creates don't grant scopes,
- * and the picker is tall. Selection state is lifted to the sheet so it can be
- * included in the POST body and reset on success. Non-grantable catalogue
- * entries are rendered disabled, mirroring the Edit-scopes dialog.
+ * Collapsed by default behind a disclosure — most creates don't grant
+ * permissions, and the picker is tall. Selection state is lifted to the sheet so
+ * it can be included in the POST body and reset on success. Non-grantable
+ * catalogue entries are rendered disabled, mirroring the Edit-permissions dialog.
  */
 import { useMemo, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
@@ -15,48 +15,54 @@ import { ErrorAlert, LoadingState, ScopePicker } from '@/shared/ui';
 import { cn } from '@/shared/lib/utils';
 import { extractResourceFromScope } from '@/shared/lib';
 import { usePermissionCatalogue } from '@/modules/agents/api';
-import { catalogueToScopes } from '@/modules/agents/components/ScopesCard';
+import { catalogueToPickerItems } from '@/modules/agents/components/PermissionsCard';
 
-interface InitialScopesFieldProps {
+interface InitialPermissionsFieldProps {
 	selected: string[];
-	onChange: (scopes: string[]) => void;
+	onChange: (permissions: string[]) => void;
 	/** Unique id prefix so two sheets never collide on aria wiring. */
 	idPrefix: string;
 }
 
-export function InitialScopesField({ selected, onChange, idPrefix }: InitialScopesFieldProps) {
+export function InitialPermissionsField({
+	selected,
+	onChange,
+	idPrefix,
+}: InitialPermissionsFieldProps) {
 	const [open, setOpen] = useState(false);
 	// Only fetch the catalogue once the section is opened — keeps the common
-	// "create without scopes" path free of an extra request.
+	// "create without permissions" path free of an extra request.
 	const catalogue = usePermissionCatalogue({ enabled: open });
 
 	const entries = useMemo(() => catalogue.data ?? [], [catalogue.data]);
-	const scopes = useMemo(() => catalogueToScopes(entries), [entries]);
-	const disabledScopes = useMemo(
+	const items = useMemo(() => catalogueToPickerItems(entries), [entries]);
+	const disabledPermissions = useMemo(
 		() => entries.filter((p) => !p.grantableByCaller).map((p) => p.name),
 		[entries],
 	);
-	const disabledSet = useMemo(() => new Set(disabledScopes), [disabledScopes]);
+	const disabledSet = useMemo(() => new Set(disabledPermissions), [disabledPermissions]);
 
-	const toggle = (scope: string): void => {
-		if (disabledSet.has(scope)) return;
+	const toggle = (permission: string): void => {
+		if (disabledSet.has(permission)) return;
 		onChange(
-			selected.includes(scope) ? selected.filter((s) => s !== scope) : [...selected, scope],
+			selected.includes(permission)
+				? selected.filter((p) => p !== permission)
+				: [...selected, permission],
 		);
 	};
 	const selectAll = (group?: string): void => {
-		const pool = scopes.filter(
-			(s) =>
-				!disabledSet.has(s.scope) &&
-				(!group || extractResourceFromScope(s.scope) === group),
+		const pool = items.filter(
+			(i) =>
+				!disabledSet.has(i.scope) &&
+				(!group || extractResourceFromScope(i.scope) === group),
 		);
-		onChange(Array.from(new Set([...selected, ...pool.map((s) => s.scope)])));
+		onChange(Array.from(new Set([...selected, ...pool.map((i) => i.scope)])));
 	};
 	const deselectAll = (group?: string): void => {
-		onChange(group ? selected.filter((s) => extractResourceFromScope(s) !== group) : []);
+		onChange(group ? selected.filter((p) => extractResourceFromScope(p) !== group) : []);
 	};
 
-	const bodyId = `${idPrefix}-initial-scopes`;
+	const bodyId = `${idPrefix}-initial-permissions`;
 
 	return (
 		<div className="border-border/60 rounded-lg border">
@@ -70,7 +76,7 @@ export function InitialScopesField({ selected, onChange, idPrefix }: InitialScop
 				onClick={() => setOpen((v) => !v)}
 			>
 				<span>
-					Initial scopes{' '}
+					Initial permissions{' '}
 					<span className="text-muted-foreground font-normal">
 						{selected.length > 0 ? `· ${selected.length} selected` : '(optional)'}
 					</span>
@@ -91,9 +97,10 @@ export function InitialScopesField({ selected, onChange, idPrefix }: InitialScop
 						<ErrorAlert message={catalogue.error as Error} />
 					) : (
 						<ScopePicker
-							scopes={scopes}
+							vocabulary="permission"
+							scopes={items}
 							selectedScopes={selected}
-							disabledScopes={disabledScopes}
+							disabledScopes={disabledPermissions}
 							showRecommended={false}
 							onScopeToggle={toggle}
 							onSelectAll={selectAll}

@@ -120,13 +120,13 @@ from jentic_one.shared.auth.permission_catalog import (
     ALL_PERMISSIONS,
     CREDENTIALS_READ,
     CREDENTIALS_WRITE,
+    OIDC_PASSTHROUGH_SCOPES,
     compute_implies_transitive,
 )
 from jentic_one.shared.context import Context
 from jentic_one.shared.db import DatabaseIntegrityError
 from jentic_one.shared.models import ActorStatus, ActorType
 from jentic_one.shared.models.oauth_clients import OAuthClientApprovalStatus, OAuthConsentModel
-from jentic_one.shared.scopes import OIDC_PASSTHROUGH_SCOPES
 from jentic_one.shared.web import get_current_identity
 from jentic_one.shared.web.deps import derive_origin, get_ctx
 from jentic_one.shared.web.sensitive import SENSITIVE
@@ -607,9 +607,9 @@ _APPROVAL_PENDING_SCRIPT = """<script>
         fetch(cfg.me_url, { headers: { Authorization: "Bearer " + token } })
             .then(function (resp) { return resp.ok ? resp.json() : null; })
             .then(function (me) {
-                var scopes = (me && me.scopes) || [];
+                var permissions = (me && me.permissions) || [];
                 if (me && (me.admin === true ||
-                        scopes.indexOf("oauth-clients:write") !== -1)) {
+                        permissions.indexOf("oauth-clients:write") !== -1)) {
                     adminPanel.hidden = false;
                     anonPanel.hidden = true;
                 }
@@ -1605,6 +1605,13 @@ def _scope_to_permission_description(scope: str) -> str | None:
     Returns None for scopes that should not be displayed (e.g. openid).
     Falls back to the permission catalog description for platform scopes,
     or a generic label for completely unknown scopes.
+
+    A vocabulary crossing point: the argument is a scope off the authorization
+    request, the result describes the permission the user is about to grant. The
+    lookup into :data:`ALL_PERMISSIONS` works because the two formats are the same
+    colon-form strings — see
+    :func:`jentic_one.shared.auth.verify.scopes_to_permissions`, the other place
+    that depends on that identity.
     """
     if scope in _HIDDEN_SCOPES:
         return None
@@ -1668,9 +1675,13 @@ def _claims_from_params(params: dict[str, object]) -> IdpClaims | None:
 def _effective_agent_scopes(
     requested: list[str],
     allowlist: frozenset[str] | None,
-    agent_scopes: frozenset[str],
+    agent_permissions: frozenset[str],
 ) -> list[str]:
-    """The D2 grant-scope intersection: requested ∩ client allowlist ∩ agent live scopes.
+    """The D2 grant-scope intersection: requested ∩ client allowlist ∩ the agent's
+    live permissions.
+
+    Named for what it returns — a set of OAuth2 scopes for the grant row — even
+    though the third operand is read from ``actor_permission_grants``.
 
     ``openid``/OIDC passthrough scopes are stripped first (D11): agent-bound
     grants carry no OIDC identity, so they must never enter the granted set.
@@ -1679,7 +1690,7 @@ def _effective_agent_scopes(
     effective = [s for s in requested if s not in OIDC_PASSTHROUGH_SCOPES]
     if allowlist is not None:
         effective = [s for s in effective if s in allowlist]
-    return [s for s in effective if s in agent_scopes]
+    return [s for s in effective if s in agent_permissions]
 
 
 # ---------- inline agent creation on the consent page (P4) ----------
@@ -1919,8 +1930,8 @@ def _render_agent_options(
     """Render the agent picker: one radio per active agent.
 
     Each agent shows the candidate scope set (requested ∩ client allowlist,
-    OIDC stripped) marked granted/lacking against its live scopes — the user
-    sees the ceiling; the submit path recomputes the math server-side.
+    OIDC stripped) marked granted/lacking against the agent's live permissions —
+    the user sees the ceiling; the submit path recomputes the math server-side.
     """
     blocks: list[str] = []
     for idx, agent in enumerate(agents):
@@ -1929,12 +1940,12 @@ def _render_agent_options(
             desc = _scope_to_permission_description(scope_name)
             if desc is None:
                 continue
-            if scope_name in agent.scopes:
+            if scope_name in agent.permissions:
                 items.append(f'<li class="granted">{html_mod.escape(desc)}</li>')
             else:
                 items.append(
                     f'<li class="lacking">{html_mod.escape(desc)}'
-                    " &mdash; not granted (agent lacks this scope)</li>"
+                    " &mdash; not granted (agent lacks this permission)</li>"
                 )
         if not items:
             items.append('<li class="lacking">No requested permissions available</li>')
@@ -2311,7 +2322,7 @@ async def _approve_agent_consent(
     allowlist = (
         frozenset(oauth_client.allowed_scopes) if oauth_client.allowed_scopes is not None else None
     )
-    effective = _effective_agent_scopes(requested, allowlist, selected.scopes)
+    effective = _effective_agent_scopes(requested, allowlist, selected.permissions)
     if not effective:
         logger.warning("oauth_consent_no_grantable_scopes", client_id=client_id, agent_id=agent_id)
         return RedirectResponse(url="/error?error=no_grantable_scopes", status_code=302)
@@ -2497,7 +2508,7 @@ async def consent_agent_create(
         create_status = ActorStatus.ACTIVE if can_create_active else ActorStatus.PENDING
         # Owner is ALWAYS the consenting user resolved from the server-side
         # handle — the form carries no owner input. Scopes=None applies the
-        # platform's DEFAULT_AGENT_SCOPES on the ACTIVE arm, exactly like the
+        # platform's DEFAULT_AGENT_PERMISSIONS on the ACTIVE arm, exactly like the
         # SPA path (the PENDING arm defers scopes to approve(), exactly like
         # /register); the service records the same REGISTER audit +
         # agent.created event either way.
@@ -2509,7 +2520,7 @@ async def consent_agent_create(
         )
         try:
             view = await agent_svc.create(
-                AgentCreatePayload(name=name, description=None, scopes=None),
+                AgentCreatePayload(name=name, description=None, permissions=None),
                 owner_id=user_id,
                 identity=identity,
                 status=create_status,

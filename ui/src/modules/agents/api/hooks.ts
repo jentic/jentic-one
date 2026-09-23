@@ -32,10 +32,10 @@ import {
 	getAgent,
 	getAgentApiKeyHistory,
 	getAgentApiKeyInfo,
-	getAgentScopes,
+	getAgentPermissions,
 	listAgents,
 	listPermissions,
-	replaceAgentScopes,
+	replaceAgentPermissions,
 	revokeAgentApiKey,
 	listAgentCredentialBindings,
 	bindCredentialToAgent,
@@ -92,7 +92,7 @@ const agentsKeys = {
 	detail: (id: string) => [...agentsKeys.all, 'detail', id] as const,
 	apiKeyInfo: (id: string) => [...agentsKeys.all, 'api-key-info', id] as const,
 	apiKeyHistory: (id: string) => [...agentsKeys.all, 'api-key-history', id] as const,
-	scopes: (id: string) => [...agentsKeys.all, 'scopes', id] as const,
+	permissions: (id: string) => [...agentsKeys.all, 'permissions', id] as const,
 	/** Direct credential bindings for one agent (`GET /agents/{id}/credentials`). */
 	credentialBindings: (id: string) => [...agentsKeys.all, 'credential-bindings', id] as const,
 	/** The ordered rules on one direct (agent, credential) binding. */
@@ -456,8 +456,11 @@ export function useArchiveAgent() {
 export function useCreateAgent() {
 	const qc = useQueryClient();
 	return useMutation({
-		mutationFn: (input: { name: string; description?: string | null; scopes?: string[] }) =>
-			createAgent(input),
+		mutationFn: (input: {
+			name: string;
+			description?: string | null;
+			permissions?: string[];
+		}) => createAgent(input),
 		onSuccess: (agent) => {
 			// Invalidate the whole agents root (not just lists()) so the
 			// persistent pending-agents nav badge — keyed under agentsRoot, not
@@ -539,13 +542,13 @@ export function useRevokeAgentApiKey() {
 }
 
 // ---------------------------------------------------------------------------
-// Scopes (#615)
+// Permissions (#615)
 // ---------------------------------------------------------------------------
 
 /**
  * The platform permission catalogue. Small + slow-changing, so it's cached
- * generously; the Scopes editor maps it into the picker's scope list and uses
- * `grantableByCaller` to disable scopes the operator can't grant.
+ * generously; the Permissions editor maps it into the picker's list and uses
+ * `grantableByCaller` to disable permissions the operator can't grant.
  */
 export function usePermissionCatalogue(options: { enabled?: boolean } = {}) {
 	return useQuery<PermissionCatalogEntry[]>({
@@ -556,23 +559,23 @@ export function usePermissionCatalogue(options: { enabled?: boolean } = {}) {
 	});
 }
 
-export function useAgentScopes(id: string | null) {
+export function useAgentPermissions(id: string | null) {
 	return useQuery<string[]>({
-		queryKey: agentsKeys.scopes(id ?? ''),
-		queryFn: () => getAgentScopes(id as string),
+		queryKey: agentsKeys.permissions(id ?? ''),
+		queryFn: () => getAgentPermissions(id as string),
 		enabled: id != null,
 	});
 }
 
-export function useReplaceAgentScopes() {
+export function useReplaceAgentPermissions() {
 	const qc = useQueryClient();
-	return useMutation<string[], Error, { id: string; scopes: string[] }>({
-		mutationFn: ({ id, scopes }) => replaceAgentScopes(id, scopes),
-		onSuccess: (scopes, { id }) => {
-			qc.setQueryData(agentsKeys.scopes(id), scopes);
-			toast({ title: 'Scopes updated', variant: 'success' });
+	return useMutation<string[], Error, { id: string; permissions: string[] }>({
+		mutationFn: ({ id, permissions }) => replaceAgentPermissions(id, permissions),
+		onSuccess: (permissions, { id }) => {
+			qc.setQueryData(agentsKeys.permissions(id), permissions);
+			toast({ title: 'Permissions updated', variant: 'success' });
 		},
-		onError: (e) => notifyError(e, "Failed to update the agent's scopes."),
+		onError: (e) => notifyError(e, "Failed to update the agent's permissions."),
 	});
 }
 

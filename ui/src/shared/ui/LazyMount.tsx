@@ -2,7 +2,7 @@
  * LazyMount — render heavy children only when they're near the viewport.
  *
  * The API reference mounts ~100 operations and ~160 model schemas; eagerly
- * rendering every parameter table, schema tree, and scope panel is tens of
+ * rendering every parameter table, schema tree, and permission panel is tens of
  * thousands of DOM nodes and React work up front, which is what makes the page
  * janky. This wrapper keeps the *anchor element* (with its `id`) always in the
  * DOM — so scroll-spy and hash navigation keep working — but swaps the expensive

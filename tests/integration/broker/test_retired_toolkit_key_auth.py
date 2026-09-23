@@ -21,9 +21,9 @@ from sqlalchemy import text
 
 from jentic_one.control.repos.toolkit_key_gen import generate_toolkit_key
 from jentic_one.shared.auth.api_key_resolver import ApiKeyResolver
+from jentic_one.shared.auth.permission_catalog import BROKER_EXECUTE_PERMISSION
 from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.models import ActorType
-from jentic_one.shared.scopes import BROKER_EXECUTE_SCOPE
 
 pytestmark = pytest.mark.integration
 
@@ -41,7 +41,7 @@ async def clean_tables(admin_db: DatabaseSession) -> AsyncGenerator[None, None]:
         async with admin_db.session() as session:
             await session.execute(
                 text(
-                    "DELETE FROM actor_scope_grants "
+                    "DELETE FROM actor_permission_grants "
                     "WHERE actor_id IN ('sva_rtka_active', 'sva_rtka_disabled',"
                     " 'agnt_rtka_active')"
                 )
@@ -115,13 +115,14 @@ async def _seed_service_account(
         )
         await session.execute(
             text(
-                "INSERT INTO actor_scope_grants (id, actor_id, actor_type, scope, created_by) "
-                "VALUES (:id, :actor_id, 'service_account', :scope, 'system:test')"
+                "INSERT INTO actor_permission_grants "
+                "(id, actor_id, actor_type, permission, created_by) "
+                "VALUES (:id, :actor_id, 'service_account', :permission, 'system:test')"
             ),
             {
                 "id": f"asg_{service_account_id}",
                 "actor_id": service_account_id,
-                "scope": BROKER_EXECUTE_SCOPE,
+                "permission": BROKER_EXECUTE_PERMISSION,
             },
         )
         await session.commit()
@@ -149,13 +150,14 @@ async def _seed_agent_successor(admin_db: DatabaseSession, *, plaintext: str) ->
         )
         await session.execute(
             text(
-                "INSERT INTO actor_scope_grants (id, actor_id, actor_type, scope, created_by) "
-                "VALUES (:id, :actor_id, 'agent', :scope, 'system:test')"
+                "INSERT INTO actor_permission_grants"
+                " (id, actor_id, actor_type, permission, created_by) "
+                "VALUES (:id, :actor_id, 'agent', :permission, 'system:test')"
             ),
             {
                 "id": f"asg_{_ACTIVE_AGENT}",
                 "actor_id": _ACTIVE_AGENT,
-                "scope": BROKER_EXECUTE_SCOPE,
+                "permission": BROKER_EXECUTE_PERMISSION,
             },
         )
         await session.commit()
@@ -176,7 +178,7 @@ async def test_migrated_retired_key_resolves_to_agent_identity(
     assert identity is not None
     assert identity.sub == _ACTIVE_AGENT
     assert identity.actor_type is ActorType.AGENT
-    assert identity.permissions == [BROKER_EXECUTE_SCOPE]
+    assert identity.permissions == [BROKER_EXECUTE_PERMISSION]
     # No fallback — the agent arm served it. The theme-5 deprecation signal
     # still fires (M3: the caller is presenting a retired jntc_live_ form),
     # now naming the successor agent.
@@ -216,7 +218,7 @@ async def test_retired_key_resolves_to_service_account_identity(
     assert identity is not None
     assert identity.sub == _ACTIVE_SA
     assert identity.actor_type is ActorType.SERVICE_ACCOUNT
-    assert identity.permissions == [BROKER_EXECUTE_SCOPE]
+    assert identity.permissions == [BROKER_EXECUTE_PERMISSION]
     assert identity.active is True
 
 

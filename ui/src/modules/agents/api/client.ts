@@ -368,17 +368,17 @@ export async function testAgentBindingPermissions(
 export async function createAgent(params: {
 	name: string;
 	description?: string | null;
-	scopes?: string[] | null;
+	permissions?: string[] | null;
 }): Promise<AgentEntity> {
 	try {
 		const res = await AgentsService.createAgent({
 			requestBody: {
 				name: params.name,
 				description: params.description ?? null,
-				// Optional initial grants — POST /agents accepts scopes[] so a
+				// Optional initial grants — POST /agents accepts permissions[] so a
 				// manually created agent can start with the permissions it needs
 				// instead of a follow-up PUT from the detail page.
-				scopes: params.scopes?.length ? params.scopes : null,
+				permissions: params.permissions?.length ? params.permissions : null,
 			},
 		});
 		return agentToEntity(res);
@@ -464,12 +464,12 @@ export async function getAgentApiKeyHistory(agentId: string): Promise<ApiKeyHist
 }
 
 // ---------------------------------------------------------------------------
-// Scopes (#615) — platform permission catalogue + per-actor scope grants.
+// Permissions (#615) — platform permission catalogue + per-actor grants.
 //
-// Two scope vocabularies exist in this codebase; these are the PLATFORM
-// permission scopes (`org:admin`, `agents:write`, …) drawn from
-// `GET /permissions` — NOT the OAuth2 provider scopes the credentials picker
-// uses. `PUT .../scopes` replaces the entire set (no partial grant/revoke), so
+// These are internal-authorization PERMISSIONS (`org:admin`, `agents:write`, …)
+// drawn from `GET /permissions` — NOT the OAuth2 provider scopes the credentials
+// picker uses, which are a separate vocabulary. `PUT .../permissions` replaces
+// the entire set (no partial grant/revoke), so
 // callers read the full list, edit it, and write it back.
 // ---------------------------------------------------------------------------
 
@@ -487,24 +487,27 @@ export async function listPermissions(): Promise<PermissionCatalogEntry[]> {
 	}
 }
 
-export async function getAgentScopes(agentId: string): Promise<string[]> {
+export async function getAgentPermissions(agentId: string): Promise<string[]> {
 	try {
-		const res = await AgentsService.getAgentScopes({ agentId });
-		return res.scopes;
+		const res = await AgentsService.getAgentPermissions({ agentId });
+		return res.permissions;
 	} catch (error) {
-		throw toAgentsError(error, "Failed to load the agent's scopes.");
+		throw toAgentsError(error, "Failed to load the agent's permissions.");
 	}
 }
 
-export async function replaceAgentScopes(agentId: string, scopes: string[]): Promise<string[]> {
+export async function replaceAgentPermissions(
+	agentId: string,
+	permissions: string[],
+): Promise<string[]> {
 	try {
-		const res = await AgentsService.replaceAgentScopes({
+		const res = await AgentsService.replaceAgentPermissions({
 			agentId,
-			requestBody: { scopes },
+			requestBody: { permissions },
 		});
-		return res.scopes;
+		return res.permissions;
 	} catch (error) {
-		throw toAgentsError(error, "Failed to update the agent's scopes.");
+		throw toAgentsError(error, "Failed to update the agent's permissions.");
 	}
 }
 

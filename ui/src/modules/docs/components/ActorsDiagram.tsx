@@ -91,9 +91,9 @@ export function ActorsDiagram() {
 
 			<p className="text-foreground/50 border-border/50 mt-4 border-t pt-3 text-[11px] leading-relaxed">
 				The type says <em>who</em> an identity is. What it may actually do is governed
-				separately by scopes and ownership — see{' '}
+				separately by permissions and ownership — see{' '}
 				<a href="#permissions" className="text-primary underline">
-					Permissions &amp; scopes
+					Permissions
 				</a>
 				.
 			</p>

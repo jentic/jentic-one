@@ -15,7 +15,7 @@ import jentic_one.shared.auth.api_key_resolver as _resolver_mod
 from jentic_one.shared.auth.api_key_resolver import ApiKeyResolver
 from jentic_one.shared.models import ActorType
 
-Row = namedtuple("Row", ["scope"])
+Row = namedtuple("Row", ["permission"])
 AgentRow = namedtuple("AgentRow", ["agent_id", "status", "owner_id"])
 SARow = namedtuple("SARow", ["service_account_id", "status", "migrated_to_actor_id"])
 
@@ -33,7 +33,7 @@ def resolver(admin_db: MagicMock) -> ApiKeyResolver:
 @pytest.mark.asyncio
 async def test_resolve_agent_key_active(resolver: ApiKeyResolver, admin_db: MagicMock) -> None:
     agent_row = AgentRow(agent_id="agnt_123", status="active", owner_id="usr_owner")
-    scope_rows = [Row(scope="broker:execute"), Row(scope="toolkit:read")]
+    permission_rows = [Row(permission="broker:execute"), Row(permission="toolkit:read")]
 
     session_mock = AsyncMock()
     call_count = 0
@@ -45,7 +45,7 @@ async def test_resolve_agent_key_active(resolver: ApiKeyResolver, admin_db: Magi
         if call_count == 1:
             result.one_or_none.return_value = agent_row
         else:
-            result.all.return_value = scope_rows
+            result.all.return_value = permission_rows
         return result
 
     session_mock.execute = _execute
@@ -72,7 +72,7 @@ async def test_resolve_service_account_key_falls_back_after_agent_miss(
     """Theme-8 Phase 1 (H-2): ``sak_`` tries the agent arm first; an unmigrated
     key misses it and resolves identically through the SA fallback."""
     sa_row = SARow(service_account_id="sva_456", status="active", migrated_to_actor_id=None)
-    scope_rows = [Row(scope="broker:execute")]
+    permission_rows = [Row(permission="broker:execute")]
 
     session_mock = AsyncMock()
     call_count = 0
@@ -86,7 +86,7 @@ async def test_resolve_service_account_key_falls_back_after_agent_miss(
         elif call_count == 2:  # SA fallback
             result.one_or_none.return_value = sa_row
         else:  # permission load
-            result.all.return_value = scope_rows
+            result.all.return_value = permission_rows
         return result
 
     session_mock.execute = _execute
@@ -112,7 +112,7 @@ async def test_migrated_sak_key_resolves_as_agent_first(
     """A migrated key's digest lives in agent_credentials — the agent arm
     wins and the SA fallback is never consulted."""
     agent_row = AgentRow(agent_id="agnt_successor", status="active", owner_id="usr_owner")
-    scope_rows = [Row(scope="broker:execute")]
+    permission_rows = [Row(permission="broker:execute")]
 
     session_mock = AsyncMock()
     call_count = 0
@@ -124,7 +124,7 @@ async def test_migrated_sak_key_resolves_as_agent_first(
         if call_count == 1:
             result.one_or_none.return_value = agent_row
         else:
-            result.all.return_value = scope_rows
+            result.all.return_value = permission_rows
         return result
 
     session_mock.execute = _execute

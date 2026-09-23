@@ -363,7 +363,7 @@ sequence is:
    (required — replayed or missing `jti` values are rejected).
 4. Discover: `POST {base}/search` to search operations across APIs;
    `GET {base}/apis` to list registered APIs;
-   `GET {base}/reference/endpoints.json` for the full endpoint + scope map.
+   `GET {base}/reference/endpoints.json` for the full endpoint + permission map.
 5. Check access: `GET {base}/me` lists the credentials you are bound to. If
    the API you need isn't covered, report the gap to your human operator —
    they connect the credential and bind it to you in the dashboard.
@@ -377,8 +377,8 @@ sequence is:
 - [Agent onboarding skill]({base}{SKILL_PATH}): canonical "how to use Jentic"
   guide for agents; same canonical content as the CLI-installed skill
 - [OpenAPI specification]({base}/openapi.json): the control-plane API
-- [Endpoint and scope reference]({base}/reference/endpoints.json): every
-  endpoint with required scopes and typical caller (agent / operator)
+- [Endpoint and permission reference]({base}/reference/endpoints.json): every
+  endpoint with required permissions and typical caller (agent / operator)
 - [OAuth discovery]({base}/.well-known/oauth-authorization-server): RFC 8414
   metadata — token endpoint, registration endpoint, supported grants
 - [Interactive API docs]({base}/docs): Swagger UI over the live spec

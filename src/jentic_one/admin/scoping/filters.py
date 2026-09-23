@@ -10,7 +10,7 @@ from sqlalchemy.sql.elements import ColumnElement
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.users import User
 from jentic_one.shared.auth.identity import Identity
-from jentic_one.shared.scopes import OWNER_AGENTS_READ
+from jentic_one.shared.auth.permission_catalog import OWNER_AGENTS_READ
 
 ORG_ADMIN = "org:admin"
 
@@ -23,7 +23,7 @@ _ID_MODELS: dict[type[Any], Any] = {
     Agent: Agent.id,
 }
 
-_DELEGATION_SCOPES: dict[type[Any], str] = {
+_DELEGATION_PERMISSIONS: dict[type[Any], str] = {
     Agent: OWNER_AGENTS_READ,
 }
 
@@ -47,15 +47,15 @@ def build_access_filters(identity: Identity, model: type[Any]) -> list[ColumnEle
     if model in _OWNER_MODELS:
         col = _OWNER_MODELS[model]
         id_col = _ID_MODELS.get(model)
-        delegation_scope = _DELEGATION_SCOPES.get(model)
+        delegation_permission = _DELEGATION_PERMISSIONS.get(model)
 
         conditions = [col == identity.sub]
         if id_col is not None:
             conditions.append(id_col == identity.sub)
 
         if (
-            delegation_scope is not None
-            and delegation_scope in identity.permissions
+            delegation_permission is not None
+            and delegation_permission in identity.permissions
             and identity.parent_actor_id is not None
         ):
             conditions.append(col == identity.parent_actor_id)

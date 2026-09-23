@@ -23,10 +23,10 @@ _GET_SERVICE_ACCOUNT = text(
     " FROM service_accounts WHERE id = :service_account_id"
 )
 
-_LIST_SERVICE_ACCOUNT_SCOPES = text(
-    "SELECT scope FROM actor_scope_grants"
+_LIST_SERVICE_ACCOUNT_PERMISSIONS = text(
+    "SELECT permission FROM actor_permission_grants"
     " WHERE actor_id = :service_account_id AND actor_type = :actor_type"
-    " ORDER BY scope"
+    " ORDER BY permission"
 )
 
 
@@ -42,13 +42,13 @@ class LegacyServiceAccountReadRepository:
         return result.first()
 
     @staticmethod
-    async def list_scopes(session: AsyncSession, service_account_id: str) -> list[str]:
-        """Return the account's live ``actor_scope_grants`` scopes."""
+    async def list_permissions(session: AsyncSession, service_account_id: str) -> list[str]:
+        """Return the account's live ``actor_permission_grants`` permissions."""
         result = await session.execute(
-            _LIST_SERVICE_ACCOUNT_SCOPES,
+            _LIST_SERVICE_ACCOUNT_PERMISSIONS,
             {
                 "service_account_id": service_account_id,
                 "actor_type": ActorType.SERVICE_ACCOUNT.value,
             },
         )
-        return [row.scope for row in result]
+        return [row.permission for row in result]

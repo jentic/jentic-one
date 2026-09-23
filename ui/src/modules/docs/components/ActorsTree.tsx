@@ -2,11 +2,11 @@
  * ActorExplorer — the visual twin of the `jentic endpoints` CLI command.
  *
  * The CLI prints every control-plane endpoint grouped by its typical caller and
- * the scope(s) it requires, filterable by `--actor`. This renders the *same*
- * join interactively: pick an actor identity (user / agent)
+ * the permission(s) it requires, filterable by `--actor`. This renders the
+ * *same* join interactively: pick an actor identity (user / agent)
  * and see exactly which endpoints that actor can be the caller of,
  * grouped into the same caller buckets (Agent-facing / Operator-facing / Any /
- * Public) the CLI uses, each row showing its required scopes.
+ * Public) the CLI uses, each row showing its required permissions.
  *
  * Because both this and the CLI consume `/reference/endpoints.json` through the
  * identical filter+group rules (see `lib/actors.ts` ↔ `cli/.../endpoints.go`),
@@ -48,16 +48,16 @@ const ACTOR_META: Record<
 	},
 };
 
-function ScopeTags({ scopes, public: pub }: { scopes: string[]; public: boolean }) {
+function PermissionTags({ permissions, public: pub }: { permissions: string[]; public: boolean }) {
 	if (pub) {
 		return <span className="text-success text-xs font-medium">public — no auth</span>;
 	}
-	if (scopes.length === 0) {
+	if (permissions.length === 0) {
 		return <span className="text-foreground/65 text-xs">any authenticated</span>;
 	}
 	return (
 		<span className="flex flex-wrap gap-1">
-			{scopes.map((s) => (
+			{permissions.map((s) => (
 				<code
 					key={s}
 					className="border-border/70 bg-muted/40 text-foreground/80 rounded border px-1.5 py-0.5 font-mono text-[11px]"
@@ -177,9 +177,9 @@ export function ActorExplorer({ payload }: ActorExplorerProps) {
 							<code className="text-foreground/70 font-mono">
 								jentic endpoints --actor {actor}
 							</code>
-							. Actor type is <em>who</em> calls; the scope is the gate — see{' '}
+							. Actor type is <em>who</em> calls; the permission is the gate — see{' '}
 							<a href="#permissions" className="text-primary underline">
-								the scope tree
+								the permission tree
 							</a>{' '}
 							below.
 						</p>
@@ -238,7 +238,10 @@ function CallerBucketBlock({
 							<span className="text-foreground/30" aria-hidden="true">
 								→
 							</span>
-							<ScopeTags scopes={e.required_scopes} public={e.public} />
+							<PermissionTags
+								permissions={e.required_permissions}
+								public={e.public}
+							/>
 							{e.summary && (
 								<span className="text-foreground/65 w-full truncate pl-1 text-xs">
 									{e.summary}

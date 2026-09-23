@@ -7,7 +7,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button, Input, Label, Textarea, SheetPrimitive } from '@/shared/ui';
 import { useCreateAgent } from '@/modules/agents/api';
-import { InitialScopesField } from '@/modules/agents/components/InitialScopesField';
+import { InitialPermissionsField } from '@/modules/agents/components/InitialPermissionsField';
 
 interface AgentCreateSheetProps {
 	open: boolean;
@@ -17,7 +17,7 @@ interface AgentCreateSheetProps {
 export function AgentCreateSheet({ open, onClose }: AgentCreateSheetProps) {
 	const [name, setName] = useState('');
 	const [description, setDescription] = useState('');
-	const [scopes, setScopes] = useState<string[]>([]);
+	const [permissions, setPermissions] = useState<string[]>([]);
 	const [error, setError] = useState<string | null>(null);
 	const nameRef = useRef<HTMLInputElement>(null);
 	const create = useCreateAgent();
@@ -36,11 +36,11 @@ export function AgentCreateSheet({ open, onClose }: AgentCreateSheetProps) {
 			await create.mutateAsync({
 				name: trimmed,
 				description: description.trim() || null,
-				scopes,
+				permissions,
 			});
 			setName('');
 			setDescription('');
-			setScopes([]);
+			setPermissions([]);
 			setError(null);
 			onClose();
 		} catch {
@@ -89,9 +89,9 @@ export function AgentCreateSheet({ open, onClose }: AgentCreateSheetProps) {
 						maxLength={1024}
 					/>
 				</div>
-				<InitialScopesField
-					selected={scopes}
-					onChange={setScopes}
+				<InitialPermissionsField
+					selected={permissions}
+					onChange={setPermissions}
 					idPrefix="agent-create"
 				/>
 			</div>

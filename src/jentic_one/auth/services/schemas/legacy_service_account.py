@@ -13,4 +13,4 @@ class LegacyServiceAccountIdentityView(BaseModel):
     status: str
     registered_by: str
     approved_by: str | None = None
-    scopes: list[str]
+    permissions: list[str]

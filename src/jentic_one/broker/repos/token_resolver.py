@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from sqlalchemy import Boolean, text
 
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.auth.verify import scopes_to_permissions
 from jentic_one.shared.db import DatabaseSession
 from jentic_one.shared.models import ActorType
 
@@ -87,25 +88,27 @@ class InProcessTokenResolver:
             if row is None:
                 return None
 
-            permissions = _as_scope_list(row.scopes)
+            # The mint-time snapshot is an OAuth2 scope set; cross it into the
+            # permission vocabulary the rest of the platform enforces on.
+            permissions = scopes_to_permissions(_as_scope_list(row.scopes))
 
-            # Long-lived agent/SA tokens (is_ephemeral=False) resolve scopes live
-            # from actor_scope_grants so scope edits take effect immediately.
-            # Ephemeral minted tokens keep their downscoped snapshot; user tokens
-            # do not draw scopes from actor_scope_grants.
+            # Long-lived agent/SA tokens (is_ephemeral=False) resolve permissions
+            # live from actor_permission_grants so grant edits take effect
+            # immediately. Ephemeral minted tokens keep their downscoped snapshot;
+            # user tokens do not draw permissions from actor_permission_grants.
             if not row.is_ephemeral and row.actor_type in (
                 ActorType.AGENT.value,
                 ActorType.SERVICE_ACCOUNT.value,
             ):
                 grants = await session.execute(
                     text(
-                        "SELECT scope FROM actor_scope_grants"
+                        "SELECT permission FROM actor_permission_grants"
                         " WHERE actor_id = :actor_id AND actor_type = :actor_type"
-                        " ORDER BY scope"
+                        " ORDER BY permission"
                     ),
                     {"actor_id": row.actor_id, "actor_type": row.actor_type},
                 )
-                permissions = [str(g.scope) for g in grants.all()]
+                permissions = [str(g.permission) for g in grants.all()]
 
         # SQLite returns DATETIME columns from a ``text()`` query as ISO strings
         # (Postgres returns aware ``datetime``); normalise so comparisons and the

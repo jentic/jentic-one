@@ -55,14 +55,14 @@ func TestCLIReferenceShape(t *testing.T) {
 		t.Error("context should carry its group title")
 	}
 
-	// endpoints should carry the --context selector + the --scope filter.
+	// endpoints should carry the --context selector + the --permission filter.
 	endpoints, ok := findCommand(jentic.Commands, "endpoints")
 	if !ok {
 		t.Fatal("jentic missing endpoints command")
 		return // unreachable; satisfies SA5011 when noreturn facts are cold
 	}
-	if !hasFlag(endpoints.Flags, "context") || !hasFlag(endpoints.Flags, "scope") {
-		t.Errorf("endpoints flags = %+v, want context + scope", endpoints.Flags)
+	if !hasFlag(endpoints.Flags, "context") || !hasFlag(endpoints.Flags, "permission") {
+		t.Errorf("endpoints flags = %+v, want context + permission", endpoints.Flags)
 	}
 
 	if _, ok := byName["jenticctl"]; !ok {

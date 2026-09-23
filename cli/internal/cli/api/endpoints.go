@@ -15,31 +15,35 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// endpointReferenceSchema is the payload schema id of /reference/endpoints.json
+// this CLI understands (tools/endpoint_tree.py and endpoint_reference.py emit it).
+const endpointReferenceSchema = "jentic.endpoint-permission-tree/v1"
+
 // endpointsOptions holds flags for `jentic endpoints`.
 type endpointsOptions struct {
-	json  bool
-	scope string
-	actor string
+	json       bool
+	permission string
+	actor      string
 }
 
 func newEndpointsCmd(app *app) *cobra.Command {
 	o := &endpointsOptions{}
 	cmd := &cobra.Command{
 		Use:   "endpoints",
-		Short: "Browse the API endpoint + scope reference",
+		Short: "Browse the API endpoint + permission reference",
 		Long: "endpoints prints every control-plane API endpoint grouped by its typical\n" +
-			"caller and the scope(s) it requires. The grouping is an advisory hint — the\n" +
-			"scope is the real gate. It reads the server's public endpoint reference\n" +
-			"(/reference/endpoints.json, no token needed) — the same join published in\n" +
-			"docs/reference/endpoints.md.\n" +
-			"Filter with --scope or --actor, or use --json for a machine-readable dump.",
+			"caller and the permission(s) it requires. The grouping is an advisory hint —\n" +
+			"the permission is the real gate. It reads the server's public endpoint\n" +
+			"reference (/reference/endpoints.json, no token needed) — the same join\n" +
+			"published in docs/reference/endpoints.md.\n" +
+			"Filter with --permission or --actor, or use --json for a machine-readable dump.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return app.endpointsE(cmd.Context(), o)
 		},
 	}
 	cmd.Flags().BoolVar(&o.json, "json", false, "emit JSON instead of formatted output")
-	cmd.Flags().StringVar(&o.scope, "scope", "", "only endpoints requiring this scope")
+	cmd.Flags().StringVar(&o.permission, "permission", "", "only endpoints requiring this permission")
 	cmd.Flags().StringVar(&o.actor, "actor", "", "only endpoints callable by this actor type (user, agent)")
 	return cmd
 }
@@ -51,7 +55,7 @@ type endpoint struct {
 	Summary       string   `json:"summary"`
 	Public        bool     `json:"public"`
 	ActorTypes    []string `json:"actor_types"`
-	Scopes        []string `json:"required_scopes"`
+	Permissions   []string `json:"required_permissions"`
 	AuthNote      string   `json:"auth_note,omitempty"`
 	TypicalCaller string   `json:"typical_caller,omitempty"`
 }
@@ -85,7 +89,7 @@ func (a *app) endpointsE(ctx context.Context, o *endpointsOptions) error {
 	if err != nil {
 		return err
 	}
-	eps = filterEndpoints(eps, o.scope, o.actor)
+	eps = filterEndpoints(eps, o.permission, o.actor)
 
 	if o.json {
 		if eps == nil {
@@ -98,15 +102,29 @@ func (a *app) endpointsE(ctx context.Context, o *endpointsOptions) error {
 }
 
 // parseEndpoints reads the endpoint reference payload served at
-// /reference/endpoints.json (schema jentic.endpoint-scope-tree/v1). The server
-// builds it from its curated scope map, so the CLI consumes the join directly
+// /reference/endpoints.json (schema jentic.endpoint-permission-tree/v1). The
+// server builds it from its curated permission map, so the CLI consumes the join directly
 // rather than re-deriving authorization from the OpenAPI document.
+//
+// The payload's `schema` id is checked, not just decoded: its field names are
+// part of the contract (`required_permissions`), so a server on another release
+// would otherwise decode into endpoints that silently require nothing.
 func parseEndpoints(body []byte) ([]endpoint, error) {
 	var doc struct {
+		Schema    string     `json:"schema"`
 		Endpoints []endpoint `json:"endpoints"`
 	}
 	if err := json.Unmarshal(body, &doc); err != nil {
 		return nil, fmt.Errorf("parse endpoint reference: %w", err)
+	}
+	if doc.Schema != endpointReferenceSchema {
+		return nil, &ux.CodedError{
+			Code: ux.CodeInternalError,
+			Msg: fmt.Sprintf("the server's endpoint reference uses schema %q; this CLI reads %q",
+				doc.Schema, endpointReferenceSchema),
+			Actionable: "Keep the CLI on the same release as the server: run `jenticctl update`, " +
+				"or ask your operator which release the server runs.",
+		}
 	}
 	eps := doc.Endpoints
 	sort.Slice(eps, func(i, j int) bool {
@@ -118,13 +136,13 @@ func parseEndpoints(body []byte) ([]endpoint, error) {
 	return eps, nil
 }
 
-func filterEndpoints(eps []endpoint, scope, actor string) []endpoint {
-	if scope == "" && actor == "" {
+func filterEndpoints(eps []endpoint, permission, actor string) []endpoint {
+	if permission == "" && actor == "" {
 		return eps
 	}
 	var out []endpoint
 	for _, ep := range eps {
-		if scope != "" && !contains(ep.Scopes, scope) {
+		if permission != "" && !contains(ep.Permissions, permission) {
 			continue
 		}
 		if actor != "" && !contains(ep.ActorTypes, actor) {
@@ -136,8 +154,8 @@ func filterEndpoints(eps []endpoint, scope, actor string) []endpoint {
 }
 
 // group classifies an endpoint by its typical caller, mirroring
-// tools/endpoint_tree.py. The grouping is an advisory hint (the scope is the real
-// gate). The fields come from the /reference/endpoints.json payload — the
+// tools/endpoint_tree.py. The grouping is an advisory hint (the permission is the
+// real gate). The fields come from the /reference/endpoints.json payload — the
 // server reports typical_caller (agent/operator/any) and a public flag, so the
 // Public flag is the authority for public, not any OpenAPI vendor extension.
 func (ep endpoint) group() string {
@@ -170,7 +188,7 @@ var groupOrder = []string{
 
 func (a *app) printEndpoints(ctx context.Context, eps []endpoint) {
 	st := theme.StylesFromContext(ctx)
-	fmt.Fprintln(a.Out, st.Heading.Render("Endpoint & scope reference"))
+	fmt.Fprintln(a.Out, st.Heading.Render("Endpoint & permission reference"))
 	if len(eps) == 0 {
 		fmt.Fprintln(a.Out, "  "+st.Dim.Render("no endpoints match the filter"))
 		return
@@ -197,15 +215,15 @@ func (a *app) printEndpoints(ctx context.Context, eps []endpoint) {
 
 func endpointLine(st theme.Styles, ep endpoint) string {
 	line := st.Command.Render(fmt.Sprintf("%-6s", ep.Method)) + " " + ep.Path
-	scopes := "public — no auth"
+	permissions := "public — no auth"
 	if !ep.Public {
-		if len(ep.Scopes) > 0 {
-			scopes = strings.Join(ep.Scopes, ", ")
+		if len(ep.Permissions) > 0 {
+			permissions = strings.Join(ep.Permissions, ", ")
 		} else {
-			scopes = "any authenticated"
+			permissions = "any authenticated"
 		}
 	}
-	line += "  " + st.Dim.Render("→ "+scopes)
+	line += "  " + st.Dim.Render("→ "+permissions)
 	if !ep.Public && ep.TypicalCaller != "" && ep.TypicalCaller != "any" {
 		line += " " + st.Dim.Render("[typically: "+ep.TypicalCaller+"]")
 	}

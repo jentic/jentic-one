@@ -4,7 +4,7 @@ Pins: the zero-agents agent-model consent page renders the create-agent form
 (never the terminal empty state) whenever the handle names a provisionable
 subject; POST /oauth/consent/agent verifies + burns the single-use
 ``agent-create`` blob, re-validates the handle and the D7 gate, creates the
-agent as the consenting user through ``AgentService.create`` (default scopes),
+agent as the consenting user through ``AgentService.create`` (default permissions),
 and 303s back into consent where a single agent renders pre-selected; the
 replay/expiry/splice/validation/race arms fail closed without creating
 anything.
@@ -290,7 +290,7 @@ def test_nonzero_agents_keeps_the_picker_no_create_form(
     mock_client_svc_cls.return_value.get_by_client_id = AsyncMock(return_value=_client_view())
     svc = _mock_authorize_svc(
         user_id="usr_new",
-        agents=[AgentConsentOption(id="agnt_1", name="mine", scopes=frozenset({"apis:read"}))],
+        agents=[AgentConsentOption(id="agnt_1", name="mine", permissions=frozenset({"apis:read"}))],
     )
     mock_authorize_cls.return_value = svc
 
@@ -339,9 +339,9 @@ def test_create_happy_path_creates_agent_and_reenters_consent(
     mock_authorize_cls: MagicMock,
     mock_agent_svc_cls: MagicMock,
 ) -> None:
-    """Happy path: agent created as the consenting user with default scopes
-    (scopes=None → DEFAULT_AGENT_SCOPES in the service), then a 303 back into
-    GET /oauth/consent where the single new agent renders pre-selected."""
+    """Happy path: agent created as the consenting user with default permissions
+    (permissions=None → DEFAULT_AGENT_PERMISSIONS in the service), then a 303 back
+    into GET /oauth/consent where the single new agent renders pre-selected."""
     client, backend, ctx = _make_app()
     _seed_consent_handle(backend)
     mock_client_svc_cls.return_value.get_by_client_id = AsyncMock(return_value=_client_view())
@@ -363,7 +363,7 @@ def test_create_happy_path_creates_agent_and_reenters_consent(
     call = agent_svc.create.await_args
     payload = call.args[0]
     assert payload.name == "my-assistant"  # whitespace-stripped
-    assert payload.scopes is None  # platform default scopes, never invented
+    assert payload.permissions is None  # platform defaults, never invented
     assert call.kwargs["owner_id"] == "usr_new"
     assert call.kwargs["status"] is ActorStatus.ACTIVE  # agents:write holder → ACTIVE arm
     identity = call.kwargs["identity"]
@@ -376,7 +376,7 @@ def test_create_happy_path_creates_agent_and_reenters_consent(
     # Follow the redirect: the picker now renders the new agent pre-checked.
     svc.list_consentable_agents = AsyncMock(
         return_value=[
-            AgentConsentOption(id="agnt_created", name="my-assistant", scopes=frozenset())
+            AgentConsentOption(id="agnt_created", name="my-assistant", permissions=frozenset())
         ]
     )
     followup = client.get("/oauth/consent", params={"ch": _HANDLE})
@@ -701,7 +701,7 @@ def test_create_race_agent_appeared_skips_creation_and_reenters_consent(
     mock_client_svc_cls.return_value.get_by_client_id = AsyncMock(return_value=_client_view())
     svc = _mock_authorize_svc(
         user_id="usr_new",
-        agents=[AgentConsentOption(id="agnt_race", name="appeared", scopes=frozenset())],
+        agents=[AgentConsentOption(id="agnt_race", name="appeared", permissions=frozenset())],
     )
     mock_authorize_cls.return_value = svc
     agent_svc = _mock_agent_svc()

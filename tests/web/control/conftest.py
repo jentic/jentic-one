@@ -134,7 +134,7 @@ def bound_orphan_client(web_context: Context, seed_binding: None) -> Iterator[Te
 
 # --- Permission-gating clients (least-privilege enforcement) ---
 
-# A delegated agent minted the DEFAULT_AGENT_SCOPES owner-read scope (never the
+# A delegated agent minted the DEFAULT_AGENT_PERMISSIONS owner-read scope (never the
 # bare credentials:read). The route guard must admit it via the OR-listed owner
 # scope so the control/scoping delegation filter can run.
 DELEGATED_AGENT_IDENTITY = Identity(

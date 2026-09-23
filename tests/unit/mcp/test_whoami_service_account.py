@@ -71,7 +71,7 @@ async def test_me_answers_for_fallback_resolved_service_account() -> None:
         status="active",
         registered_by="usr_owner",
         approved_by="usr_admin",
-        scopes=["capabilities:execute", "capabilities:read"],
+        permissions=["capabilities:execute", "capabilities:read"],
     )
 
     result = await handle_whoami(_env(), {})
@@ -82,8 +82,8 @@ async def test_me_answers_for_fallback_resolved_service_account() -> None:
     assert payload["type"] == "service_account"
     assert payload["id"] == "sva_legacy"
     assert payload["name"] == "legacy-sa"
-    assert payload["scopes"] == ["capabilities:execute", "capabilities:read"]
-    assert payload["token_scopes"] == ["capabilities:execute"]
+    assert payload["permissions"] == ["capabilities:execute", "capabilities:read"]
+    assert payload["token_permissions"] == ["capabilities:execute"]
     assert payload["registered_by"] == "usr_owner"
     assert payload["approved_by"] == "usr_admin"
 

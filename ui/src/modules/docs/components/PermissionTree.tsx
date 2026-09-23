@@ -1,35 +1,35 @@
 /**
- * ScopeTree — the conceptual "Scopes" view: resource families with their
- * scopes laid out as an expandable implication tree.
+ * PermissionTree — the conceptual "Permissions" view: resource families with
+ * their permissions laid out as an expandable implication tree.
  *
- *   - Scopes are grouped into resource **families** (Agents, Credentials, …),
- *     each a card with a one-line blurb.
- *   - Within a family, each scope is a node tinted by its **tier**
+ *   - Permissions are grouped into resource **families** (Agents, Credentials,
+ *     …), each a card with a one-line blurb.
+ *   - Within a family, each permission is a node tinted by its **tier**
  *     (admin / write / execute / read), showing its plain-English meaning.
- *   - A scope that **implies** others renders those children indented beneath
- *     it with a connector, so the implication hierarchy is visible at a glance
- *     (e.g. `agents:write → agents:read`).
+ *   - A permission that **implies** others renders those children indented
+ *     beneath it with a connector, so the implication hierarchy is visible at a
+ *     glance (e.g. `agents:write → agents:read`).
  *   - Each node shows how many endpoints in *this* instance it gates, and
  *     expands to list them.
  *
  * `org:admin` is pulled out into a separate superuser banner (it implies every
- * scope), so it doesn't dominate the family grid. The data comes from the same
- * `/reference/endpoints.json` payload as everything else.
+ * permission), so it doesn't dominate the family grid. The data comes from the
+ * same `/reference/endpoints.json` payload as everything else.
  */
 import { useMemo, useState } from 'react';
 import { ChevronRight, Crown, Pencil, Eye, Zap, ShieldCheck } from 'lucide-react';
 import type { ReferencePayload } from '@/modules/docs/api/types';
 import {
-	buildScopeFamilies,
-	endpointsForScope,
-	type ScopeNode,
-	type ScopeTier,
-} from '@/modules/docs/lib/scopeTree';
+	buildPermissionFamilies,
+	endpointsForPermission,
+	type PermissionNode,
+	type PermissionTier,
+} from '@/modules/docs/lib/permissionTree';
 import { MethodBadge } from '@/shared/ui';
 import { cn } from '@/shared/lib/utils';
 
 const TIER_STYLE: Record<
-	ScopeTier,
+	PermissionTier,
 	{ label: string; chip: string; dot: string; ring: string; Icon: typeof Eye }
 > = {
 	admin: {
@@ -62,7 +62,7 @@ const TIER_STYLE: Record<
 	},
 };
 
-function TierChip({ tier }: { tier: ScopeTier }) {
+function TierChip({ tier }: { tier: PermissionTier }) {
 	const s = TIER_STYLE[tier];
 	return (
 		<span
@@ -77,12 +77,21 @@ function TierChip({ tier }: { tier: ScopeTier }) {
 	);
 }
 
-function ScopeEndpoints({ payload, scope }: { payload: ReferencePayload; scope: string }) {
-	const endpoints = useMemo(() => endpointsForScope(payload, scope), [payload, scope]);
+function PermissionEndpoints({
+	payload,
+	permission,
+}: {
+	payload: ReferencePayload;
+	permission: string;
+}) {
+	const endpoints = useMemo(
+		() => endpointsForPermission(payload, permission),
+		[payload, permission],
+	);
 	if (endpoints.length === 0) {
 		return (
 			<p className="text-foreground/50 px-3 py-2 text-xs italic">
-				No endpoint in this instance requires this scope directly.
+				No endpoint in this instance requires this permission directly.
 			</p>
 		);
 	}
@@ -101,17 +110,17 @@ function ScopeEndpoints({ payload, scope }: { payload: ReferencePayload; scope: 
 	);
 }
 
-function ScopeCard({
-	scope,
+function PermissionCard({
+	permission,
 	payload,
 	impliedNames,
 }: {
-	scope: ScopeNode;
+	permission: PermissionNode;
 	payload: ReferencePayload;
 	impliedNames: string[];
 }) {
 	const [open, setOpen] = useState(false);
-	const s = TIER_STYLE[scope.tier];
+	const s = TIER_STYLE[permission.tier];
 
 	return (
 		<div className={cn('bg-card overflow-hidden rounded-lg border', s.ring)}>
@@ -128,12 +137,12 @@ function ScopeCard({
 				<span className="min-w-0 flex-1">
 					<span className="flex flex-wrap items-center gap-2">
 						<code className="text-foreground font-mono text-sm font-semibold">
-							{scope.name}
+							{permission.name}
 						</code>
-						<TierChip tier={scope.tier} />
+						<TierChip tier={permission.tier} />
 					</span>
 					<span className="text-foreground/70 mt-1 block text-sm">
-						{scope.description}
+						{permission.description}
 					</span>
 					{impliedNames.length > 0 && (
 						<span className="text-foreground/55 mt-1.5 block text-xs">
@@ -149,7 +158,8 @@ function ScopeCard({
 				</span>
 				<span className="flex shrink-0 items-center gap-2">
 					<span className="text-foreground/55 text-xs">
-						{scope.endpointCount} endpoint{scope.endpointCount === 1 ? '' : 's'}
+						{permission.endpointCount} endpoint
+						{permission.endpointCount === 1 ? '' : 's'}
 					</span>
 					<ChevronRight
 						className={cn(
@@ -162,16 +172,22 @@ function ScopeCard({
 			</button>
 			{open && (
 				<div className="border-border/60 border-t">
-					<ScopeEndpoints payload={payload} scope={scope.name} />
+					<PermissionEndpoints payload={payload} permission={permission.name} />
 				</div>
 			)}
 		</div>
 	);
 }
 
-/** A prominent, collapsed-by-default banner for the superuser scope so it
- *  stops visually dominating (it implies every other scope). */
-function SuperuserBanner({ scope, payload }: { scope: ScopeNode; payload: ReferencePayload }) {
+/** A prominent, collapsed-by-default banner for the superuser permission so it
+ *  stops visually dominating (it implies every other permission). */
+function SuperuserBanner({
+	permission,
+	payload,
+}: {
+	permission: PermissionNode;
+	payload: ReferencePayload;
+}) {
 	const [open, setOpen] = useState(false);
 	return (
 		<div className="border-danger/40 bg-danger/5 overflow-hidden rounded-xl border">
@@ -185,7 +201,7 @@ function SuperuserBanner({ scope, payload }: { scope: ScopeNode; payload: Refere
 				<span className="min-w-0 flex-1">
 					<span className="flex flex-wrap items-center gap-2">
 						<code className="text-foreground font-mono text-sm font-semibold">
-							{scope.name}
+							{permission.name}
 						</code>
 						<span className="text-danger inline-flex items-center gap-1 text-[10px] font-semibold tracking-wide uppercase">
 							<ShieldCheck className="h-3 w-3" aria-hidden="true" />
@@ -193,12 +209,14 @@ function SuperuserBanner({ scope, payload }: { scope: ScopeNode; payload: Refere
 						</span>
 					</span>
 					<span className="text-foreground/70 mt-1 block text-sm">
-						{scope.description} It implies <strong>every</strong> other scope and
-						bypasses endpoint scope checks at runtime — grant it sparingly.
+						{permission.description} It implies <strong>every</strong> other permission
+						and bypasses endpoint permission checks at runtime — grant it sparingly.
 					</span>
 				</span>
 				<span className="flex shrink-0 items-center gap-2">
-					<span className="text-foreground/55 text-xs">{scope.endpointCount} direct</span>
+					<span className="text-foreground/55 text-xs">
+						{permission.endpointCount} direct
+					</span>
 					<ChevronRight
 						className={cn(
 							'text-foreground/40 h-4 w-4 transition-transform',
@@ -210,34 +228,34 @@ function SuperuserBanner({ scope, payload }: { scope: ScopeNode; payload: Refere
 			</button>
 			{open && (
 				<div className="border-danger/30 border-t">
-					<ScopeEndpoints payload={payload} scope={scope.name} />
+					<PermissionEndpoints payload={payload} permission={permission.name} />
 				</div>
 			)}
 		</div>
 	);
 }
 
-export interface ScopeTreeProps {
+export interface PermissionTreeProps {
 	payload: ReferencePayload;
 }
 
-export function ScopeTree({ payload }: ScopeTreeProps) {
-	const families = useMemo(() => buildScopeFamilies(payload), [payload]);
+export function PermissionTree({ payload }: PermissionTreeProps) {
+	const families = useMemo(() => buildPermissionFamilies(payload), [payload]);
 
 	if (!families) {
 		return (
 			<p className="text-foreground/60 text-sm">
-				This server doesn't publish the scope catalogue yet (it predates jentic-one #602).
-				The API reference still works.
+				This server doesn't publish the permission catalogue yet (it predates jentic-one
+				#602). The API reference still works.
 			</p>
 		);
 	}
 
-	// Pull the superuser scope out of the normal grid so it doesn't dominate.
-	const superuser = families.flatMap((f) => f.scopes).find((s) => s.is_superuser) ?? null;
+	// Pull the superuser permission out of the normal grid so it doesn't dominate.
+	const superuser = families.flatMap((f) => f.permissions).find((p) => p.is_superuser) ?? null;
 	const regularFamilies = families
-		.map((f) => ({ ...f, scopes: f.scopes.filter((s) => !s.is_superuser) }))
-		.filter((f) => f.scopes.length > 0);
+		.map((f) => ({ ...f, permissions: f.permissions.filter((p) => !p.is_superuser) }))
+		.filter((f) => f.permissions.length > 0);
 
 	return (
 		<div className="space-y-5">
@@ -248,17 +266,17 @@ export function ScopeTree({ payload }: ScopeTreeProps) {
 					<TierChip key={tier} tier={tier} />
 				))}
 				<span className="text-foreground/50 ml-auto text-xs">
-					Indented scopes are <em>implied</em> — holding the parent grants them.
+					Indented permissions are <em>implied</em> — holding the parent grants them.
 				</span>
 			</div>
 
-			{superuser && <SuperuserBanner scope={superuser} payload={payload} />}
+			{superuser && <SuperuserBanner permission={superuser} payload={payload} />}
 
 			{regularFamilies.map((family) => (
 				<section
 					key={family.name}
 					className="border-border bg-card/40 rounded-xl border p-4"
-					aria-label={`${family.label} scopes`}
+					aria-label={`${family.label} permissions`}
 				>
 					<header className="mb-3">
 						<h3 className="text-foreground flex items-baseline gap-2 text-base font-semibold">
@@ -274,37 +292,37 @@ export function ScopeTree({ payload }: ScopeTreeProps) {
 
 					<div className="space-y-2">
 						{(() => {
-							// Within a family, a scope implied by a sibling is rendered nested
-							// under that sibling, never again at top level — so each scope
+							// Within a family, a permission implied by a sibling is rendered
+							// nested under that sibling, never again at top level — so each
 							// appears exactly once. (Cross-family implications, e.g.
 							// capabilities:execute → apis:read, are shown via the "Grants:" line.)
-							const names = new Set(family.scopes.map((s) => s.name));
+							const names = new Set(family.permissions.map((p) => p.name));
 							const impliedBySibling = new Set<string>();
-							for (const s of family.scopes) {
-								for (const child of s.implies) {
+							for (const p of family.permissions) {
+								for (const child of p.implies) {
 									if (names.has(child)) impliedBySibling.add(child);
 								}
 							}
-							const roots = family.scopes.filter(
-								(s) => !impliedBySibling.has(s.name),
+							const roots = family.permissions.filter(
+								(p) => !impliedBySibling.has(p.name),
 							);
-							return roots.map((scope) => {
-								const childNodes = family.scopes.filter((s) =>
-									scope.implies.includes(s.name),
+							return roots.map((permission) => {
+								const childNodes = family.permissions.filter((p) =>
+									permission.implies.includes(p.name),
 								);
 								return (
-									<div key={scope.name}>
-										<ScopeCard
-											scope={scope}
+									<div key={permission.name}>
+										<PermissionCard
+											permission={permission}
 											payload={payload}
-											impliedNames={scope.implies}
+											impliedNames={permission.implies}
 										/>
 										{childNodes.length > 0 && (
 											<div className="border-border/50 mt-2 ml-4 space-y-2 border-l-2 pl-4">
 												{childNodes.map((child) => (
-													<ScopeCard
+													<PermissionCard
 														key={child.name}
-														scope={child}
+														permission={child}
 														payload={payload}
 														impliedNames={child.implies}
 													/>

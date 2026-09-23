@@ -173,8 +173,8 @@ SA surface survives this release (Phase 2 removes it) but is stamp-guarded.
 - **Migration is automatic and idempotent.** The combined/control server runs
   `migrate-service-accounts` once at startup (best-effort; the CLI is the
   recovery path). Every service account is copied to a successor agent —
-  stored scope grants (empty stays empty; never the default agent scope
-  set), toolkit/credential bindings, the per-binding inline permission
+  stored permission grants (empty stays empty; never the default agent
+  permission set), toolkit/credential bindings, the per-binding inline permission
   rules (control DB), and the API-key digest — its outstanding opaque
   sessions are revoked, and the row is stamped (`migrated_to_actor_id`).
   **API-key callers keep authenticating**: the resolver is now agent-first,
@@ -192,7 +192,7 @@ SA surface survives this release (Phase 2 removes it) but is stamp-guarded.
   before upgrading.
 - **Ownership and visibility shift.** The successor is created with
   `parent_actor_id` = the SA's owner, so (a) it becomes visible to
-  `owner:agents:read` holders, and (b) any copied `owner:*` delegation scope
+  `owner:agents:read` holders, and (b) any copied `owner:*` delegation permission
   now widens to the **owner's** resources — review SAs holding `owner:*`
   grants in the report. (c) Control-DB objects `created_by` the `sva_` id
   (credentials and access requests, whose owner-scoped reads key on
@@ -310,6 +310,44 @@ run the Phase-1 migration (above) first — the boot job still does it.
   operations, and `jentic api endpoints --actor service_account` no longer
   matches any endpoint (agents are the only machine actor — filter with
   `--actor agent`).
+
+## Upgrading to the permissions-rename release
+
+Internal authorization is spelled "permission" on every surface (OAuth2/OIDC
+names — `scope`, `allowed_scopes`, `scopes_supported`, `insufficient_scope` —
+are unchanged). There are no compatibility aliases; read this before rolling
+it out.
+
+- **Schema.** The admin migration `d1e2f3a4b5c6` renames the table
+  `actor_scope_grants` → `actor_permission_grants` and its column `scope` →
+  `permission` (plus the unique constraint, primary key, and indexes). Stored
+  values are unchanged (`agents:write` stays `agents:write`), and so are the
+  `asg_…` row ids.
+- **Expect an authentication gap during a rolling upgrade.** The previous
+  release reads `actor_scope_grants` directly when it resolves API keys and
+  opaque tokens for agents (and for unmigrated service-account keys). Once the
+  migration has run, pods still on the previous release fail those lookups
+  until they are replaced. The [upgrade contract](../operations/upgrades.md#the-contract)
+  already treats old code on a new schema as unsupported — here it is an
+  observable outage, so schedule the upgrade in a maintenance window, or scale
+  the app and broker to zero before the migration and back up after it. With
+  Helm, the migration runs as a `pre-upgrade` hook, so the window lasts from
+  the hook until the rollout completes.
+- **HTTP API.** `GET|PUT /agents/{id}/scopes` is now
+  `/agents/{id}/permissions`, with `{"permissions": […]}` bodies; `GET /me`
+  (including the service-account variant) reports `permissions` /
+  `token_permissions` instead of `scopes` / `token_scopes`. The endpoint
+  reference emits `required_permissions` under schema
+  `jentic.endpoint-permission-tree/v1`. Audit rows keep their `scopes` payload
+  key and `reason` strings.
+- **CLI and Go SDK.** `jentic endpoints --scope` is now `--permission`.
+  The generated control client renames `AgentScopesRequest`/`Response` to
+  `AgentPermissionsRequest`/`Response`, and `MeAgent` exposes
+  `Permissions`/`TokenPermissions` — a breaking change for Go importers of
+  `github.com/jentic/jentic-one/cli`. Upgrade the CLI with the
+  server: a mismatched CLI refuses `/me` and the endpoint reference with an
+  error naming the version skew, rather than reporting an empty permission
+  set.
 
 ## Deprecations
 

@@ -10,14 +10,14 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import delete
 
-from jentic_one.admin.core.schema.actor_scope_grants import ActorScopeGrant
+from jentic_one.admin.core.schema.actor_permission_grants import ActorPermissionGrant
 from jentic_one.admin.core.schema.agent_credential_bindings import AgentCredentialBinding
 from jentic_one.admin.core.schema.agent_toolkit_bindings import AgentToolkitBinding
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.events import Event
 from jentic_one.admin.core.schema.users import User
 from jentic_one.admin.repos import (
-    ActorScopeGrantRepository,
+    ActorPermissionGrantRepository,
     AgentRepository,
     EventRepository,
     UserRepository,
@@ -143,11 +143,11 @@ async def archive_target_agent_id(
             registered_by=owner_user_id,
             created_by="usr_test",
         )
-        await ActorScopeGrantRepository.grant(
+        await ActorPermissionGrantRepository.grant(
             session,
             actor_id=agent.id,
             actor_type="agent",
-            scope="test:scope",
+            permission="test:scope",
             created_by="usr_test",
         )
         await AgentToolkitBindingRepository.bind(
@@ -156,7 +156,9 @@ async def archive_target_agent_id(
     yield agent.id
 
     async with web_context.admin_db.session() as session:
-        await session.execute(delete(ActorScopeGrant).where(ActorScopeGrant.actor_id == agent.id))
+        await session.execute(
+            delete(ActorPermissionGrant).where(ActorPermissionGrant.actor_id == agent.id)
+        )
         await session.execute(
             delete(AgentToolkitBinding).where(AgentToolkitBinding.agent_id == agent.id)
         )
@@ -174,7 +176,9 @@ async def test_archive_agent(
         agent = await AgentRepository.get_by_id(session, archive_target_agent_id)
         assert agent is not None
         assert agent.status == "archived"
-        grants = await ActorScopeGrantRepository.list_for_actor(session, archive_target_agent_id)
+        grants = await ActorPermissionGrantRepository.list_for_actor(
+            session, archive_target_agent_id
+        )
         assert grants == []
         bindings = await AgentToolkitBindingRepository.list_for_agent(
             session, archive_target_agent_id
@@ -212,7 +216,9 @@ async def binding_agent_id(web_context: Context, owner_user_id: str) -> AsyncGen
     yield agent.id
 
     async with web_context.admin_db.session() as session:
-        await session.execute(delete(ActorScopeGrant).where(ActorScopeGrant.actor_id == agent.id))
+        await session.execute(
+            delete(ActorPermissionGrant).where(ActorPermissionGrant.actor_id == agent.id)
+        )
         await session.execute(
             delete(AgentCredentialBinding).where(AgentCredentialBinding.agent_id == agent.id)
         )

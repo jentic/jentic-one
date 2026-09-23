@@ -11,7 +11,7 @@
  *   - Activity  → this agent's execution volume + recent executions
  *                 (GET /monitoring/usage?agent_id=…, GET /executions?actor_id=…)
  *                 with a pre-filtered "Open Monitor" deep-link
- *   - Access    → platform scopes (#615)
+ *   - Access    → platform permissions (#615)
  *   - Keys      → API-key metadata, generate/regenerate/revoke, rotation history
  *   - MCP       → per-agent MCP config card + session history (local-MCP 2-E2:
  *                 MCP is a transport of this agent, so the surface lives here)
@@ -67,7 +67,7 @@ import {
 	type AgentAction,
 } from '@/modules/agents/api';
 import { ActorStatusBadge } from '@/modules/agents/components/ActorStatusBadge';
-import { ScopesCard } from '@/modules/agents/components/ScopesCard';
+import { PermissionsCard } from '@/modules/agents/components/PermissionsCard';
 import { ConnectedClientsCard } from '@/modules/agents/components/detail/ConnectedClientsCard';
 import {
 	LifecycleDialogs,
@@ -404,8 +404,8 @@ export default function AgentDetailPage() {
 						{/* Direct credential bindings (theme 5 phase 5a) — what this
 						    agent may call, first: the tab's primary capability story. */}
 						<BoundCredentialsCard agentId={agent.id} agentStatus={agent.status} />
-						{/* Scopes — platform permissions granted to this agent (#615). */}
-						<ScopesCard actorId={agent.id} actorName={agent.name} />
+						{/* Platform permissions granted to this agent (#615). */}
+						<PermissionsCard actorId={agent.id} actorName={agent.name} />
 						{/* OAuth clients holding a consent→agent grant. */}
 						<ConnectedClientsCard agentId={agent.id} agentName={agent.name} />
 					</>

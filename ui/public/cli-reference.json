@@ -725,8 +725,8 @@
           "name": "whoami",
           "path": "jentic whoami",
           "use": "whoami",
-          "short": "Show who you are: identity, status, scopes, and credential bindings",
-          "long": "whoami answers with your identity as the control plane sees it — the\nauthenticated GET /me response, verbatim. For an agent that is the id,\nstatus, scopes, and credential bindings with the APIs each one serves;\nuser and service-account tokens render their own /me variant. Check it\nbefore executing anything new — access is decided from your bindings,\nnever by probing with execute.",
+          "short": "Show who you are: identity, status, permissions, and credential bindings",
+          "long": "whoami answers with your identity as the control plane sees it — the\nauthenticated GET /me response, verbatim. For an agent that is the id,\nstatus, permissions, and credential bindings with the APIs each one serves;\nuser and service-account tokens render their own /me variant. Check it\nbefore executing anything new — access is decided from your bindings,\nnever by probing with execute.",
           "group_title": "Identity \u0026 access",
           "flags": [
             {
@@ -1491,8 +1491,8 @@
           "name": "endpoints",
           "path": "jentic endpoints",
           "use": "endpoints",
-          "short": "Browse the API endpoint + scope reference",
-          "long": "endpoints prints every control-plane API endpoint grouped by its typical\ncaller and the scope(s) it requires. The grouping is an advisory hint — the\nscope is the real gate. It reads the server's public endpoint reference\n(/reference/endpoints.json, no token needed) — the same join published in\ndocs/reference/endpoints.md.\nFilter with --scope or --actor, or use --json for a machine-readable dump.",
+          "short": "Browse the API endpoint + permission reference",
+          "long": "endpoints prints every control-plane API endpoint grouped by its typical\ncaller and the permission(s) it requires. The grouping is an advisory hint —\nthe permission is the real gate. It reads the server's public endpoint\nreference (/reference/endpoints.json, no token needed) — the same join\npublished in docs/reference/endpoints.md.\nFilter with --permission or --actor, or use --json for a machine-readable dump.",
           "group_title": "APIs",
           "flags": [
             {
@@ -1517,9 +1517,9 @@
               "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
             },
             {
-              "name": "scope",
+              "name": "permission",
               "type": "string",
-              "usage": "only endpoints requiring this scope"
+              "usage": "only endpoints requiring this permission"
             },
             {
               "name": "theme",

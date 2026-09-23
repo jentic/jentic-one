@@ -50,7 +50,7 @@ def _row(
         status=status,
         migrated_to_actor_id=migrated_to_actor_id,
         migrated_at=None,
-        api_key_hash="digest",
+        api_key_hash="digest",  # pragma: allowlist secret
         client_secret_hash=client_secret_hash,
     )
 
@@ -73,11 +73,11 @@ def test_disposition_switch(status: str, label: str, successor_status: str | Non
 def test_preview_labels_and_skip_reason() -> None:
     svc = ServiceAccountMigrationService(MagicMock())
 
-    active = svc._preview(_row("active"), _PreviewCounts(stored_scopes=3))
+    active = svc._preview(_row("active"), _PreviewCounts(stored_permissions=3))
     assert active.outcome == "migrated"
     assert active.reason is None
     assert active.owner_visibility_note is not None  # OQ-5 report line
-    assert active.stored_scope_count == 3  # the computed preview counts are carried
+    assert active.stored_permission_count == 3  # the computed preview counts are carried
 
     skipped = svc._preview(_row("pending"), _PreviewCounts(access_tokens=1))
     assert skipped.outcome == "skipped-non-active"
@@ -90,7 +90,7 @@ def test_preview_without_counts_reports_not_computed() -> None:
     """No counts → ``None`` (not computed), never a misleading zero."""
     svc = ServiceAccountMigrationService(MagicMock())
     outcome = svc._preview(_row("active"), None)
-    assert outcome.stored_scope_count is None
+    assert outcome.stored_permission_count is None
     assert outcome.access_tokens_revoked is None
 
 
@@ -101,7 +101,7 @@ def test_preview_short_circuits_on_stamp() -> None:
     migrated = svc._preview(_row("active", migrated_to_actor_id="agnt_successor"), None)
     assert migrated.outcome == "already_migrated"
     assert migrated.successor_agent_id == "agnt_successor"
-    assert migrated.stored_scope_count is None  # stamped: counts not computed
+    assert migrated.stored_permission_count is None  # stamped: counts not computed
     assert migrated.permission_rule_count is None
 
     skipped = svc._preview(_row("pending", migrated_to_actor_id="skipped"), None)

@@ -2,7 +2,7 @@
 
 from jentic_one.admin.repos.access_token_repo import AccessTokenRepository
 from jentic_one.admin.repos.actor_directory_repo import ActorDirectoryRepository
-from jentic_one.admin.repos.actor_scope_grant_repo import ActorScopeGrantRepository
+from jentic_one.admin.repos.actor_permission_grant_repo import ActorPermissionGrantRepository
 from jentic_one.admin.repos.agent_credential_binding_repo import AgentCredentialBindingRepository
 from jentic_one.admin.repos.agent_credential_repo import AgentCredentialRepository
 from jentic_one.admin.repos.agent_repo import AgentRepository
@@ -30,7 +30,7 @@ from jentic_one.admin.repos.user_secret_repo import UserSecretRepository
 __all__ = [
     "AccessTokenRepository",
     "ActorDirectoryRepository",
-    "ActorScopeGrantRepository",
+    "ActorPermissionGrantRepository",
     "AgentCredentialBindingRepository",
     "AgentCredentialRepository",
     "AgentRepository",

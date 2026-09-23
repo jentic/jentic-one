@@ -1,4 +1,4 @@
-"""Generate the endpoint → typical-caller → scope reference tree.
+"""Generate the endpoint → typical-caller → permission reference tree.
 
 Joins every control-plane operation with the standalone broker surface and
 renders three artifacts:
@@ -13,7 +13,7 @@ in the wheel) so the committed ``endpoints.json`` and the live
 This module is the *offline renderer* on top of that builder.
 
 The generated files carry a ``DO NOT EDIT`` header; the source of truth is code
-plus the curated map in ``jentic_one.shared.web.endpoint_scopes``. Regenerate via
+plus the curated map in ``jentic_one.shared.web.endpoint_permissions``. Regenerate via
 ``make endpoints``.
 
 Run directly::
@@ -51,21 +51,22 @@ DEFAULT_CONFIG = REPO_ROOT / "config" / "local-sqlite.yaml"
 _GENERATED_HEADER_MD = """<!--
 GENERATED FILE — DO NOT EDIT.
 
-This endpoint + scope reference is generated from code by `make endpoints`
+This endpoint + permission reference is generated from code by `make endpoints`
 (tools/endpoint_tree.py). Editing it by hand will be overwritten and will fail
 the drift-guard test.
 
 How to update (humans & agents)
 -------------------------------
-- The scope of a route is read from its `get_current_identity(required_permissions=[...])`
-  dependency. To make a route's scope appear here, add that argument upstream.
-- For routes whose scope is enforced in the service layer, edit the curated map
-  `PATH_SCOPE_OVERRIDES` / `ACTOR_TYPE_OVERRIDES` in
-  `src/jentic_one/shared/web/endpoint_scopes.py`.
+- The permission of a route is read from its
+  `get_current_identity(required_permissions=[...])` dependency. To make a route's
+  permission appear here, add that argument upstream.
+- For routes whose permission is enforced in the service layer, edit the curated
+  map `PATH_PERMISSION_OVERRIDES` / `ACTOR_TYPE_OVERRIDES` in
+  `src/jentic_one/shared/web/endpoint_permissions.py`.
 - Then run `make endpoints` (regenerates this file + endpoints.json) and
   `make openapi` (regenerates the specs), and commit code + artifacts together.
 
-Agents: treat `src/jentic_one/shared/web/endpoint_scopes.py` as the editable
+Agents: treat `src/jentic_one/shared/web/endpoint_permissions.py` as the editable
 source of truth, never this file.
 -->
 """
@@ -74,7 +75,8 @@ source of truth, never this file.
 #: so a reader landing on the .md needs an on-page do-not-edit notice).
 _GENERATED_BANNER_MD = (
     "> **Generated file — do not edit by hand.** Produced by `make endpoints` from "
-    "code. To correct an entry, edit `src/jentic_one/shared/web/endpoint_scopes.py` "
+    "code. To correct an entry, edit "
+    "`src/jentic_one/shared/web/endpoint_permissions.py` "
     "and regenerate (see [docs/reference/README.md](README.md))."
 )
 
@@ -128,16 +130,21 @@ def _grouped(endpoints: list[Endpoint]) -> dict[str, dict[str, list[Endpoint]]]:
 
 def render_markdown(endpoints: list[Endpoint]) -> str:
     grouped = _grouped(endpoints)
-    lines = [_GENERATED_HEADER_MD, "# Endpoint & scope reference\n", _GENERATED_BANNER_MD + "\n"]
+    lines = [
+        _GENERATED_HEADER_MD,
+        "# Endpoint & permission reference\n",
+        _GENERATED_BANNER_MD + "\n",
+    ]
     lines.append(
         "Every API endpoint grouped by its **typical caller**, then by surface, "
-        "annotated with the **scope(s)** it requires.\n"
+        "annotated with the **permission(s)** it requires.\n"
     )
     lines.append(
         "> The grouping and the _Typical caller_ column are an **advisory hint** at "
-        "who usually calls a route, inferred from the scope family. They are **not** "
-        "an enforced restriction: access is gated by the **scope**, not the actor "
-        "kind, so any actor holding the required scope can call the endpoint.\n"
+        "who usually calls a route, inferred from the permission family. They are "
+        "**not** an enforced restriction: access is gated by the **permission**, not "
+        "the actor kind, so any actor holding the required permission can call the "
+        "endpoint.\n"
     )
     total = len(endpoints)
     lines.append(f"_Total endpoints: **{total}**._\n")
@@ -149,22 +156,25 @@ def render_markdown(endpoints: list[Endpoint]) -> str:
         lines.append(f"\n## {group} ({count})\n")
         for surface in sorted(surfaces):
             lines.append(f"\n### `{surface}`\n")
-            lines.append("| Method | Path | Scope(s) | Typical caller | Summary |")
+            lines.append("| Method | Path | Permission(s) | Typical caller | Summary |")
             lines.append("|---|---|---|---|---|")
             for ep in surfaces[surface]:
                 if ep.public or not ep.authenticated:
-                    scopes = "_public — no auth_"
+                    permissions = "_public — no auth_"
                     typical = "—"
                 else:
-                    scopes = (
-                        ", ".join(f"`{s}`" for s in ep.required_scopes) or "_any authenticated_"
+                    permissions = (
+                        ", ".join(f"`{p}`" for p in ep.required_permissions)
+                        or "_any authenticated_"
                     )
                     typical = ep.typical_caller or "any"
                 summary = ep.summary.replace("|", "\\|") if ep.summary else ""
                 if ep.auth_note:
                     note = ep.auth_note.replace("|", "\\|")
                     summary = f"{summary} _({note})_" if summary else f"_{note}_"
-                lines.append(f"| {ep.method} | `{ep.path}` | {scopes} | {typical} | {summary} |")
+                lines.append(
+                    f"| {ep.method} | `{ep.path}` | {permissions} | {typical} | {summary} |"
+                )
     lines.append("")
     return "\n".join(lines)
 
@@ -175,7 +185,7 @@ def render_json(endpoints: list[Endpoint]) -> str:
     payload = {
         "_generated": (
             "Generated by `make endpoints` from code — do not edit by hand. "
-            "Source of truth: src/jentic_one/shared/web/endpoint_scopes.py. "
+            "Source of truth: src/jentic_one/shared/web/endpoint_permissions.py. "
             "See docs/reference/README.md."
         ),
         **payload,
@@ -202,7 +212,7 @@ def render_ansi(endpoints: list[Endpoint], color: bool = True) -> str:
 
     grouped = _grouped(endpoints)
     out: list[str] = []
-    out.append(c("Endpoint & scope reference", "bold"))
+    out.append(c("Endpoint & permission reference", "bold"))
     for group in GROUP_ORDER:
         surfaces = grouped.get(group)
         if not surfaces:
@@ -213,11 +223,12 @@ def render_ansi(endpoints: list[Endpoint], color: bool = True) -> str:
             out.append(c(f"  {surface}/", "magenta"))
             for ep in surfaces[surface]:
                 if ep.public or not ep.authenticated:
-                    scopes = "public — no auth"
+                    permissions = "public — no auth"
                 else:
-                    scopes = ", ".join(ep.required_scopes) or "any authenticated"
+                    permissions = ", ".join(ep.required_permissions) or "any authenticated"
                 out.append(
-                    f"    {c(ep.method.ljust(6), 'green')} {ep.path}  {c('→ ' + scopes, 'yellow')}"
+                    f"    {c(ep.method.ljust(6), 'green')} {ep.path}  "
+                    f"{c('→ ' + permissions, 'yellow')}"
                 )
     return "\n".join(out) + "\n"
 

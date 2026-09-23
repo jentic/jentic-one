@@ -26,7 +26,7 @@ func meServer(t *testing.T) *httptest.Server {
 			http.NotFound(w, r)
 			return
 		}
-		_, _ = w.Write([]byte(`{"type":"agent","id":"agnt_test","status":"active","scopes":["apis:read"]}`))
+		_, _ = w.Write([]byte(`{"type":"agent","id":"agnt_test","status":"active","permissions":["apis:read"]}`))
 	}))
 }
 

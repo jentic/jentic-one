@@ -40,7 +40,7 @@ class AccessToken(AuditableMixin, AdminBase):
     # True for short-lived ephemeral mint tokens (issue_access_only), which carry
     # a deliberately downscoped snapshot and must NOT be re-broadened to the
     # actor's live grants at resolution time. False for long-lived access+refresh
-    # pairs, whose scopes are resolved live from actor_scope_grants.
+    # pairs, whose scopes are resolved live from actor_permission_grants.
     is_ephemeral: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=text("false"), nullable=False
     )

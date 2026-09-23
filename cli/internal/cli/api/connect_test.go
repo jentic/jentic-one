@@ -318,7 +318,7 @@ func TestWhoami_RendersAgentVariant(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"type":"agent","id":"agnt_1","name":"test-agent","status":"active",
-			"scopes":["apis:read"],"token_scopes":["apis:read"],"toolkit_bindings":[],
+			"permissions":["apis:read"],"token_permissions":["apis:read"],"toolkit_bindings":[],
 			"credential_bindings":[{"credential_id":"cred_1","name":"github main","bound_at":"2026-09-01T00:00:00Z",
 			"serves":[{"vendor":"github-com","name":"github-com-api-github-com","version":"1.0.0"}]}]}`))
 	}))
@@ -328,7 +328,7 @@ func TestWhoami_RendersAgentVariant(t *testing.T) {
 	if err != nil {
 		t.Fatalf("whoami: %v\n%s", err, out)
 	}
-	// The verbatim union: identity, live scopes, and — the load-bearing part —
+	// The verbatim union: identity, live permissions, and — the load-bearing part —
 	// the credential bindings with the APIs they serve (the redaction funnel
 	// must not swallow credential_bindings; it is binding metadata, no secret).
 	for _, want := range []string{"agnt_1", "apis:read", "cred_1", "github-com-api-github-com"} {
@@ -346,7 +346,7 @@ func TestWhoami_RendersNonAgentVariantsVerbatim(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"type":"user","id":"usr_7","name":"Op","email":"op@example.com",
-			"admin":true,"status":"active","scopes":["credentials:write"],"must_change_password":false}`))
+			"admin":true,"status":"active","permissions":["credentials:write"],"must_change_password":false}`))
 	}))
 	defer srv.Close()
 
@@ -363,13 +363,13 @@ func TestWhoami_RendersNonAgentVariantsVerbatim(t *testing.T) {
 
 func TestWhoami_RendersServiceAccountVariant(t *testing.T) {
 	// The third /me discriminator (MeServiceAccount): whoami must render it
-	// verbatim too — its live scopes vs token_scopes split is exactly the
+	// verbatim too — its live permissions vs token_permissions split is exactly the
 	// "re-mint to pick up a grant" signal the caller reads (#673).
 	withXDG(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"type":"service_account","id":"sva_9","name":"ci-runner","status":"active",
-			"scopes":["apis:read","credentials:connect"],"token_scopes":["apis:read"],
+			"permissions":["apis:read","credentials:connect"],"token_permissions":["apis:read"],
 			"registered_by":"usr_7","approved_by":"usr_1"}`))
 	}))
 	defer srv.Close()
@@ -378,7 +378,7 @@ func TestWhoami_RendersServiceAccountVariant(t *testing.T) {
 	if err != nil {
 		t.Fatalf("whoami (service-account token): %v\n%s", err, out)
 	}
-	for _, want := range []string{"sva_9", "ci-runner", `"service_account"`, "credentials:connect", "token_scopes"} {
+	for _, want := range []string{"sva_9", "ci-runner", `"service_account"`, "credentials:connect", "token_permissions"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("whoami output missing %q\n---\n%s", want, out)
 		}

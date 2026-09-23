@@ -26,11 +26,11 @@ from jentic_one.admin.services.oauth_client_service import OAuthClientService
 from jentic_one.auth.services.errors import InvalidClientMetadataError
 from jentic_one.auth.services.oauth_dcr_service import OAuthDcrService
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.auth.permission_catalog import MCP_TOOL_SCOPES
 from jentic_one.shared.context import Context
 from jentic_one.shared.models.audit import AuditAction, AuditTargetType
 from jentic_one.shared.models.events import EventType
 from jentic_one.shared.models.oauth_clients import OAuthClientApprovalStatus
-from jentic_one.shared.scopes import MCP_TOOL_SCOPES
 
 pytestmark = pytest.mark.integration
 

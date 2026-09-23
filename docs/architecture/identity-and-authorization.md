@@ -1,7 +1,7 @@
 # Identity and authorization
 
 Who can call what, and where that decision is made. This is the conceptual
-map; per-route scope requirements live in
+map; per-route permission requirements live in
 [`docs/reference/endpoints.md`](../reference/endpoints.md), and the auth
 surface's protocol details (discovery documents, registration endpoints) in
 [`docs/reference/`](../reference/README.md).
@@ -113,27 +113,51 @@ the admin DB ([`shared/auth/api_key_resolver.py`](../../src/jentic_one/shared/au
 asymmetric tokens allows only asymmetric algorithms — `alg: none` and all
 HMAC algorithms are rejected ([`shared/auth/jwt_verification.py`](../../src/jentic_one/shared/auth/jwt_verification.py)).
 
-## Scopes
+## Permissions
 
-Scopes shared across surfaces are canonical constants in
-[`shared/scopes.py`](../../src/jentic_one/shared/scopes.py). The shape of the system:
+Two vocabularies meet here, and keeping them apart is what makes the code
+readable:
 
-- **`capabilities:execute`** is the one scope the broker's data plane
+- A **permission** is what an actor may do inside this platform — the string
+  stored in `actor_permission_grants`, carried on `Identity.permissions`, and
+  checked by route guards, the UI, and the CLI.
+- A **scope** is the same string travelling over this deployment's own
+  OAuth2/OIDC plane: a client's `allowed_scopes`, `scopes_supported` in
+  discovery, the consent-time set on a grant, `access_tokens.scopes` on a
+  minted token. (Third-party credential scopes are a third, unrelated thing —
+  they belong to the upstream API, not to us.)
+
+The two formats are identical today, and
+[`shared/auth/verify.scopes_to_permissions`](../../src/jentic_one/shared/auth/verify.py)
+is the named boundary where a token's scopes become an identity's permissions.
+Symbols are **named for what they return, not for what they read**:
+`resolve_effective_scopes` ([`auth/services/token_service.py`](../../src/jentic_one/auth/services/token_service.py))
+reads internal permission grants but returns a token's OAuth2 scope set, so it
+is named for scopes.
+
+Permissions shared across surfaces are canonical constants in
+[`shared/auth/permission_catalog.py`](../../src/jentic_one/shared/auth/permission_catalog.py),
+re-exported by [`admin/core/permissions.py`](../../src/jentic_one/admin/core/permissions.py)
+so admin stays the documented home for the concepts. The shape of the system:
+
+- **`capabilities:execute`** is the one permission the broker's data plane
   requires. Every accepted credential kind must carry it.
-- **`DEFAULT_AGENT_SCOPES`** is the safe agent baseline: execute, reads
+- **`DEFAULT_AGENT_PERMISSIONS`** is the safe agent baseline: execute, reads
   (`apis:read`, `executions:read`, `jobs:read`, `events:read`,
   `capabilities:read`), `catalog:import`, `credentials:connect` (start a
   vendor connect flow — narrower than `credentials:write`), and the
-  `owner:*:read` delegation scopes for resources, agents, and credentials.
-- **There is no self-service scope elevation.** Scopes are granted by an
-  operator on the agent detail surface, so the privileged scopes —
+  `owner:*:read` delegation permissions for resources, agents, and credentials.
+  `MCP_TOOL_SCOPES` is the same set seen from the OAuth2 plane — the ceiling on
+  what a client registered at the anonymous DCR door may ask for.
+- **There is no self-service permission elevation.** Permissions are granted
+  by an operator on the agent detail surface, so the privileged permissions —
   `org:admin`, `agents:write`, `overlays:confirm` — can never be reached
   through an agent-facing path: neither an agent nor a merely agent-owning
   operator can escalate.
-- **`owner:<resource>:read`** scopes power delegation: an operator holding
-  them sees their agents' rows (e.g. credentials)
-  without being org admin. The `scoping/filters.py` modules translate these
-  into row-level filters (see
+- **`owner:<resource>:read`** permissions power delegation: an operator
+  holding them sees their agents' rows (e.g. credentials) without being org
+  admin. The `scoping/filters.py` modules translate these into row-level
+  filters (see
   [surfaces and layering](surfaces-and-layering.md#the-scoping-packages)).
 
 ## Enforcement points
@@ -144,7 +168,7 @@ different questions:
 1. **Route admission** (`web/`): every non-health router declares an auth
    dependency (enforced by [`tests/arch/test_web_layer.py`](../../tests/arch/test_web_layer.py)); the dependency
    verifies the credential, resolves the `Identity`, and checks the route's
-   scope. On the broker, `CachedTokenValidator`
+   permission. On the broker, `CachedTokenValidator`
    ([`broker/core/token_validation.py`](../../src/jentic_one/broker/core/token_validation.py)) fronts the resolvers with a short-TTL
    cache keyed on the token's SHA-256 (both hits and misses cached, LRU
    bounded).
@@ -160,7 +184,7 @@ different questions:
 
 The chain for an agent's first real call is therefore: registration
 approval (human) → credential binding, via a consented vendor connect flow
-or an operator-made bind (human) → scope check (route) → permission rule
+or an operator-made bind (human) → permission check (route) → permission rule
 (call). Each step is auditable, and none is implied by the previous one.
 
 ## Related
