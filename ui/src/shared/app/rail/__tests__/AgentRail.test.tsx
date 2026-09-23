@@ -21,6 +21,7 @@ import {
 	matchesToastScope,
 	primaryDestinationFor,
 	recentFailureCount,
+	resolveSupersededRows,
 	severityForWire,
 	severityStripeClass,
 	streamDayKey,
@@ -218,6 +219,59 @@ describe('agentStream — wire adaptation + pure helpers', () => {
 		expect(isFailureSeverity('error')).toBe(true);
 		expect(isFailureSeverity('warning')).toBe(false);
 		expect(isFailureSeverity('info')).toBe(false);
+	});
+
+	it('resolveSupersededRows resolves actionable rows whose decision is in the feed', () => {
+		const filed = makeEvent({
+			id: 'f1',
+			type: 'access_request.filed',
+			requiresAction: true,
+			tokens: { access_request_id: 'ar_1' },
+		});
+		const otherFiled = makeEvent({
+			id: 'f2',
+			type: 'access_request.filed',
+			requiresAction: true,
+			tokens: { access_request_id: 'ar_2' },
+		});
+		const selfReg = makeEvent({
+			id: 's1',
+			type: 'agent.self_registered',
+			requiresAction: true,
+			tokens: { agent_id: 'agt_1' },
+		});
+		const oauthReg = makeEvent({
+			id: 'o1',
+			type: 'oauth_client.registered',
+			requiresAction: true,
+			tokens: { oauth_client_id: 'oc_1' },
+		});
+		// Decisions may sit on either side of their row (backlog pages, reconnects).
+		const events = [
+			makeEvent({
+				id: 'd1',
+				type: 'access_request.denied',
+				tokens: { access_request_id: 'ar_1' },
+			}),
+			filed,
+			otherFiled,
+			selfReg,
+			oauthReg,
+			makeEvent({
+				id: 'd2',
+				type: 'agent.registration_approved',
+				tokens: { agent_id: 'agt_1' },
+			}),
+		];
+		const out = resolveSupersededRows(events);
+		const resolvedIds = out.filter((e) => e.resolved).map((e) => e.id);
+		expect(resolvedIds.sort()).toEqual(['f1', 's1']);
+		// A resolved row loses its decision actions (no resurrected View/Deny).
+		expect(inlineActionsFor(out.find((e) => e.id === 'f1')!)).toEqual([]);
+		// Nothing to resolve → same array (keeps setState a no-op).
+		expect(resolveSupersededRows([otherFiled, oauthReg])).toEqual([otherFiled, oauthReg]);
+		const untouched = [otherFiled];
+		expect(resolveSupersededRows(untouched)).toBe(untouched);
 	});
 
 	it('recentFailureCount counts error/critical failures in the window (#671)', () => {

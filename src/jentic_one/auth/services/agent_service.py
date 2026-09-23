@@ -137,9 +137,9 @@ class AgentService:
                 actor_type=identity.actor_type.value,
             )
             if status is ActorStatus.PENDING:
-                # Same actionable event as the /register door — surfaces the
-                # self-registration in the admins' queue so the awaiting page
-                # stops polling once an admin approves/denies.
+                # Same actionable event as the /register door — without it the
+                # self-registration never surfaces to admins, so nobody decides
+                # it and the awaiting page polls forever.
                 await emit_event_best_effort(
                     session,
                     type=EventType.AGENT_SELF_REGISTERED,

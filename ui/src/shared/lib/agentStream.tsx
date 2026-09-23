@@ -116,10 +116,10 @@ export type StreamLinks = {
 /**
  * UI-shaped view of a single platform event. A faithful adaptation of
  * `EventResponse` — `id`/`tsMs`/`title` map to `event_id`/`created_at`/
- * `summary`; `requiresAction` drives the inline action slot, and the
- * local-only `resolved` flag lets the live session hide an actionable row the
- * instant its action is taken (decided/withdrawn) without waiting for a backlog
- * refetch — the backend keeps events as append-only history.
+ * `summary`; `requiresAction` drives the inline action slot. The backend keeps
+ * events as append-only history, so `resolved` is derived client-side: a row
+ * resolves when the loaded feed holds the decision that supersedes it (see
+ * `resolveSupersededRows`), or optimistically the instant its action is taken.
  */
 export type StreamEvent = {
 	id: string;
@@ -132,7 +132,7 @@ export type StreamEvent = {
 	tokens: StreamTokens;
 	links: StreamLinks;
 	requiresAction: boolean;
-	/** Local-only: this actionable row's action was taken in this session. */
+	/** Client-derived: this actionable row's action has been taken (see type doc). */
 	resolved: boolean;
 	resolvedAt?: number;
 	/** Conflict digests for a `catalog.update_conflicts_overlay` event (L5 "why"). */
@@ -542,11 +542,17 @@ export function AgentStreamProvider({
 				}
 				// Same id already present. Live upserts (`front`) are authoritative
 				// — a re-delivered event carries the server's current truth, so
-				// reconcile in place. Backlog pages (`!front`) are historical and
-				// must NOT clobber a local optimistic resolve, so they're ignored
-				// on collision.
+				// reconcile in place. The server never carries `resolved` (it is
+				// client-derived), so a local resolve survives the reconcile.
+				// Backlog pages (`!front`) are historical and are ignored on
+				// collision.
 				if (front && existing !== ev) {
-					byId.set(ev.id, ev);
+					byId.set(
+						ev.id,
+						existing.resolved
+							? { ...ev, resolved: true, resolvedAt: existing.resolvedAt }
+							: ev,
+					);
 					changed = true;
 				}
 			}
@@ -556,7 +562,7 @@ export function AgentStreamProvider({
 			const base = prev.map((e) => byId.get(e.id) ?? e);
 			const merged = front ? [...appended, ...base] : [...base, ...appended];
 			merged.sort((a, b) => b.tsMs - a.tsMs);
-			return merged.slice(0, MAX_EVENTS);
+			return resolveSupersededRows(merged.slice(0, MAX_EVENTS));
 		});
 	}, []);
 
@@ -628,63 +634,9 @@ export function AgentStreamProvider({
 						}
 					}
 					upsert([ev], true);
-					// Settlement mirrors run on EVERY delivery, not just the
-					// first: they're idempotent (only unresolved matching
-					// rows flip), and in the late-commit race the actionable
-					// row can land AFTER its decision event was first seen —
-					// a re-delivered decision must still be able to resolve it.
-					if (
-						ev.kind === 'agent' &&
-						(ev.type === 'agent.registration_approved' ||
-							ev.type === 'agent.registration_denied') &&
-						ev.tokens.agent_id
-					) {
-						// Approve/deny is the review that the self_registered row
-						// prompted; mirror on local rows so the live session drops
-						// the stale actionable row immediately.
-						setEvents((prev) =>
-							prev.map((row) =>
-								row.type === 'agent.self_registered' &&
-								row.tokens.agent_id === ev.tokens.agent_id &&
-								!row.resolved
-									? markResolved(row)
-									: row,
-							),
-						);
-					}
-					if (
-						ev.kind === 'access_request' &&
-						(ev.type === 'access_request.approved' ||
-							ev.type === 'access_request.denied' ||
-							ev.type === 'access_request.withdrawn') &&
-						ev.tokens.access_request_id
-					) {
-						// Same for the filed alert: the decision supersedes it,
-						// so without this mirror a re-delivered filed
-						// event (reconnect overlap) could resurrect View/Deny
-						// buttons for an already-decided request.
-						setEvents((prev) =>
-							prev.map((row) =>
-								row.type === 'access_request.filed' &&
-								row.tokens.access_request_id === ev.tokens.access_request_id &&
-								!row.resolved
-									? markResolved(row)
-									: row,
-							),
-						);
-					}
-					if (
-						ev.kind === 'oauth' &&
-						ev.type === 'oauth_client.approved' &&
-						ev.tokens.oauth_client_id
-					) {
-						// An approval supersedes the actionable
-						// oauth_client.registered row; mirror on local rows so the
-						// live session drops the stale "Review" prompt immediately.
-						// (A deny emits no event, so the deny mutation calls this
-						// same resolve directly — see settleOAuthClientRegistration.)
-						settleOAuthClientRegistration(ev.tokens.oauth_client_id);
-					}
+					// `upsert` re-derives `resolved` over the whole feed on every
+					// delivery (see `resolveSupersededRows`), so a decision resolves
+					// its actionable row whichever of the two lands first.
 					if (!firstDelivery) return;
 					setLatest(ev);
 					// Bridge: a filed/decided access request changes the durable
@@ -711,8 +663,6 @@ export function AgentStreamProvider({
 		invalidateApprovalSurfaces,
 		invalidateAgentSurfaces,
 		invalidateOAuthSurfaces,
-		markResolved,
-		settleOAuthClientRegistration,
 	]);
 
 	const decide = useCallback(
@@ -874,6 +824,51 @@ export function recentFailureCount(events: StreamEvent[]): number {
 		if (isFailureSeverity(ev.severity)) n += 1;
 	}
 	return n;
+}
+
+/**
+ * Decision event → the actionable row type it supersedes, and the token both
+ * carry. Events are append-only, so this is how an actionable row is known to
+ * be handled: its decision is present in the loaded feed. (An OAuth deny emits
+ * no event; the deny mutation resolves that row via
+ * `settleOAuthClientRegistration`.)
+ */
+const SUPERSEDED_BY: Record<string, { target: string; token: keyof StreamTokens }> = {
+	'access_request.approved': { target: 'access_request.filed', token: 'access_request_id' },
+	'access_request.denied': { target: 'access_request.filed', token: 'access_request_id' },
+	'access_request.withdrawn': { target: 'access_request.filed', token: 'access_request_id' },
+	'agent.registration_approved': { target: 'agent.self_registered', token: 'agent_id' },
+	'agent.registration_denied': { target: 'agent.self_registered', token: 'agent_id' },
+	'oauth_client.approved': { target: 'oauth_client.registered', token: 'oauth_client_id' },
+};
+
+/**
+ * Mark every actionable row whose superseding decision is in `events` as
+ * resolved. Pure and idempotent; returns the same array when nothing changes.
+ * Applied on every upsert, so it covers the backlog seed, "load older" pages
+ * (a decision and its filed row can land on different pages, in either order)
+ * and live re-deliveries — without it a reload would resurrect View/Deny/Review
+ * buttons on requests, agents and OAuth clients that were already decided.
+ */
+export function resolveSupersededRows(events: StreamEvent[]): StreamEvent[] {
+	const decided = new Set<string>();
+	for (const ev of events) {
+		const rule = SUPERSEDED_BY[ev.type];
+		const id = rule ? ev.tokens[rule.token] : undefined;
+		if (rule && id) decided.add(`${rule.target}|${id}`);
+	}
+	if (decided.size === 0) return events;
+	let changed = false;
+	const out = events.map((ev) => {
+		if (ev.resolved || !ev.requiresAction) return ev;
+		const hit = Object.values(SUPERSEDED_BY).find(
+			(r) => r.target === ev.type && ev.tokens[r.token],
+		);
+		if (!hit || !decided.has(`${ev.type}|${ev.tokens[hit.token]}`)) return ev;
+		changed = true;
+		return { ...ev, resolved: true };
+	});
+	return changed ? out : events;
 }
 
 /**
