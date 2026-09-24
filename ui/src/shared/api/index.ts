@@ -267,3 +267,16 @@ export type { CredentialBindingListResponse } from '@/shared/api/generated/model
 export type { CredentialAgentResponse } from '@/shared/api/generated/models/CredentialAgentResponse';
 export type { CredentialAgentListResponse } from '@/shared/api/generated/models/CredentialAgentListResponse';
 export type { ServedApiRef } from '@/shared/api/generated/models/ServedApiRef';
+
+// OAuth App Registrations — admin-managed shared OAuth applications that
+// users on this instance SSO through. The registrations service + its
+// request/response models are exposed here for the module's api tier;
+// views still go through the module's own hooks. Append-only.
+export { OAuthAppRegistrationsService } from '@/shared/api/generated/services/OAuthAppRegistrationsService';
+export { OAuthAppRegistrationFlowKind } from '@/shared/api/generated/models/OAuthAppRegistrationFlowKind';
+export type { OAuthAppRegistrationResponse } from '@/shared/api/generated/models/OAuthAppRegistrationResponse';
+export type { OAuthAppRegistrationListResponse } from '@/shared/api/generated/models/OAuthAppRegistrationListResponse';
+export type { OAuthAppRegistrationUpdateRequest } from '@/shared/api/generated/models/OAuthAppRegistrationUpdateRequest';
+export type { OAuthAppRegistrationRotateSecretRequest } from '@/shared/api/generated/models/OAuthAppRegistrationRotateSecretRequest';
+export type { AuthorizationCodeRegistrationCreateRequest } from '@/shared/api/generated/models/AuthorizationCodeRegistrationCreateRequest';
+export type { DeviceAuthorizationRegistrationCreateRequest } from '@/shared/api/generated/models/DeviceAuthorizationRegistrationCreateRequest';

@@ -1,7 +1,15 @@
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { ArrowLeft, Download, Info, Loader2 } from 'lucide-react';
-import { Button, Dialog, ErrorAlert, Input, Label, Skeleton, toast } from '@/shared/ui';
+import { ArrowLeft, Download, Info, Loader2, Users } from 'lucide-react';
+import { Button, Checkbox, Dialog, ErrorAlert, Input, Label, Skeleton, toast } from '@/shared/ui';
+import { ORG_ADMIN, usePermission } from '@/shared/auth/usePermission';
+import {
+	OAuthAppRegistrationFlowKind,
+	OAuthAppRegistrationsService,
+	type AuthorizationCodeRegistrationCreateRequest,
+	type DeviceAuthorizationRegistrationCreateRequest,
+} from '@/shared/api';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
 	CREDENTIAL_TYPE_ORDER,
 	CredentialType,
@@ -127,6 +135,13 @@ export function CreateCredentialDialog({
 	const [selectedVendor, setSelectedVendor] = useState<VendorSummary | null>(null);
 	const [manualMode, setManualMode] = useState(false);
 	const [type, setType] = useState<CredentialType>(CredentialType.BEARER_TOKEN);
+	// Admin-only toggle: when on, submit hits POST /oauth-app-registrations
+	// instead of creating a personal credential, so any user on the instance
+	// can SSO through the resulting shared OAuth app. Only meaningful on the
+	// direct_oauth2 provider path (user provides their own client_id/secret).
+	const [shareWithOrg, setShareWithOrg] = useState(false);
+	const isAdmin = usePermission(ORG_ADMIN);
+	const registrationMutation = useCreateRegistrationMutation();
 	/** When non-null, the spec drove the type (UI hides the manual toggle). */
 	const [activeScheme, setActiveScheme] = useState<SchemeOption | null>(null);
 	const [state, setState] = useState<CredentialFormState>(EMPTY_FORM);
@@ -256,8 +271,10 @@ export function CreateCredentialDialog({
 		hasUserInteractedWithScopes.current = false;
 		nameDirty.current = false;
 		setType(CredentialType.BEARER_TOKEN);
+		setShareWithOrg(false);
 		createMutation.reset();
 		importMutation.reset();
+		registrationMutation.reset();
 	};
 
 	// Closing the dialog must always reset internal state — otherwise reopening
@@ -399,6 +416,82 @@ export function CreateCredentialDialog({
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [isOAuth2, availableScopes, selectedScopeList.length]);
 
+	// Whether the "make this an org-shared registration" toggle is meaningful
+	// for the current form state. Only the direct_oauth2 path (user brings
+	// their own client_id + secret + endpoints) is eligible — the managed
+	// Pipedream flow and the platform-shipped-vendor path have no admin-owned
+	// OAuth app to share.
+	const canShareWithOrg =
+		isAdmin &&
+		type === CredentialType.OAUTH2 &&
+		state.provider === 'direct_oauth2' &&
+		(state.grantType.trim() === 'authorization_code' ||
+			state.grantType.trim() === 'device_code');
+
+	// Submit path when the admin flipped "Available to everyone in the org":
+	// creates a shared OAuth app registration instead of a personal credential.
+	// Field mapping mirrors CredentialFormState onto the registration API:
+	// authorize_url / token_url on auth-code, authorization_endpoint /
+	// token_endpoint on device flow. Grant type discriminates flow_kind.
+	const submitAsRegistration = async (): Promise<void> => {
+		const grantType = state.grantType.trim();
+		const scopes = state.scopes
+			.split(/\s+/)
+			.map((s) => s.trim())
+			.filter(Boolean);
+		const commonMissing: Partial<Record<keyof CredentialFormState, string>> = {};
+		if (!state.name.trim()) commonMissing.name = 'Required for an org-shared registration.';
+		if (!state.apiVendor.trim()) commonMissing.apiVendor = 'Required.';
+		if (!state.clientId.trim()) commonMissing.clientId = 'Required.';
+		if (!state.authorizeUrl.trim()) commonMissing.authorizeUrl = 'Required.';
+		if (!state.tokenUrl.trim()) commonMissing.tokenUrl = 'Required.';
+		if (grantType === 'authorization_code' && !state.clientSecret.trim()) {
+			commonMissing.clientSecret = 'Required for authorization-code flow.';
+		}
+		if (Object.keys(commonMissing).length > 0) {
+			setErrors(commonMissing);
+			return;
+		}
+
+		try {
+			if (grantType === 'authorization_code') {
+				const body: AuthorizationCodeRegistrationCreateRequest = {
+					name: state.name.trim(),
+					api_vendor: state.apiVendor.trim(),
+					flow_kind: OAuthAppRegistrationFlowKind.AUTHORIZATION_CODE,
+					client_id: state.clientId.trim(),
+					client_secret: state.clientSecret,
+					authorize_url: state.authorizeUrl.trim(),
+					token_url: state.tokenUrl.trim(),
+					default_scopes: scopes.length ? scopes : null,
+				};
+				await registrationMutation.mutateAsync(body);
+			} else {
+				const body: DeviceAuthorizationRegistrationCreateRequest = {
+					name: state.name.trim(),
+					api_vendor: state.apiVendor.trim(),
+					flow_kind: OAuthAppRegistrationFlowKind.DEVICE_AUTHORIZATION,
+					client_id: state.clientId.trim(),
+					// The dialog reuses `authorizeUrl` / `tokenUrl` as the device
+					// flow's authorization + token endpoints (see the
+					// device-code branch in CredentialTypeFields).
+					authorization_endpoint: state.authorizeUrl.trim(),
+					token_endpoint: state.tokenUrl.trim(),
+					default_scopes: scopes.length ? scopes : null,
+				};
+				await registrationMutation.mutateAsync(body);
+			}
+			toast({
+				title: 'Shared OAuth app registered',
+				description: `${state.name.trim()} is now available to everyone in the organization.`,
+				variant: 'success',
+			});
+			onClose();
+		} catch {
+			// registrationMutation.error surfaces below the form.
+		}
+	};
+
 	const handleSubmit = async (e: React.FormEvent): Promise<void> => {
 		e.preventDefault();
 		const validation = validateCreate(type, state);
@@ -406,6 +499,11 @@ export function CreateCredentialDialog({
 		const svErrors = validateServerVars(schemesResult.serverVars, state.serverVars);
 		setServerVarErrors(svErrors);
 		if (Object.keys(validation).length > 0 || Object.keys(svErrors).length > 0) return;
+
+		if (canShareWithOrg && shareWithOrg) {
+			await submitAsRegistration();
+			return;
+		}
 
 		const body = buildCreateBody(type, state);
 
@@ -534,10 +632,16 @@ export function CreateCredentialDialog({
 					type="submit"
 					form="create-credential-form"
 					variant="primary"
-					loading={createMutation.isPending || importMutation.isPending}
+					loading={
+						createMutation.isPending ||
+						importMutation.isPending ||
+						registrationMutation.isPending
+					}
 					disabled={specPending}
 				>
-					Create credential
+					{canShareWithOrg && shareWithOrg
+						? 'Register for organization'
+						: 'Create credential'}
 				</Button>
 			</>
 		) : undefined;
@@ -596,6 +700,36 @@ export function CreateCredentialDialog({
 							onSubmit={handleSubmit}
 							className="space-y-5"
 						>
+							{canShareWithOrg && (
+								// Sticky-top so the toggle stays visible as the admin
+								// scrolls through vendor / auth-type / scope fields.
+								// ``-mx-5 -mt-4 px-5 pt-4`` extends edge-to-edge inside
+								// the Dialog's scroll container (which owns ``px-5 py-4``).
+								<div className="bg-card border-border sticky top-0 z-10 -mx-5 -mt-4 border-b px-5 pt-4 pb-3">
+									<div className="flex items-start gap-3">
+										<Checkbox
+											id={`${fieldId}-share`}
+											checked={shareWithOrg}
+											onChange={(checked): void => setShareWithOrg(checked)}
+											className="mt-0.5"
+										/>
+										<label
+											htmlFor={`${fieldId}-share`}
+											className="min-w-0 flex-1 cursor-pointer select-none"
+										>
+											<div className="text-foreground flex items-center gap-1.5 text-sm font-medium">
+												<Users className="h-3.5 w-3.5" />
+												Available to everyone in the organization
+											</div>
+											<p className="text-muted-foreground mt-0.5 text-xs leading-snug">
+												Shared apps let any user on this instance connect
+												with your registered client_id/secret.
+											</p>
+										</label>
+									</div>
+								</div>
+							)}
+
 							{apiSummary && (
 								<div
 									className="bg-muted/40 border-border flex items-center gap-3 rounded-xl border px-3 py-2.5"
@@ -683,10 +817,18 @@ export function CreateCredentialDialog({
 							)}
 
 							<div className="space-y-2">
-								<FormSectionLabel>Credential details</FormSectionLabel>
+								<FormSectionLabel>
+									{canShareWithOrg && shareWithOrg
+										? 'Registration details'
+										: 'Credential details'}
+								</FormSectionLabel>
 								<div className="space-y-1.5">
 									<Label htmlFor={`${fieldId}-name`} required>
-										Name
+										{canShareWithOrg && shareWithOrg
+											? 'Registration name'
+											: canShareWithOrg
+												? 'Credential name'
+												: 'Name'}
 									</Label>
 									<Input
 										id={`${fieldId}-name`}
@@ -695,11 +837,21 @@ export function CreateCredentialDialog({
 											nameDirty.current = true;
 											patch({ name: e.target.value });
 										}}
-										placeholder="Production API key"
+										placeholder={
+											canShareWithOrg && shareWithOrg
+												? 'MyOrg Google'
+												: canShareWithOrg
+													? 'Google (personal)'
+													: 'Production API key'
+										}
 										error={errors.name}
 									/>
 									<p className="text-muted-foreground text-xs">
-										A label to recognise this credential later.
+										{canShareWithOrg && shareWithOrg
+											? "Admin-facing label for this shared OAuth app (e.g. 'MyOrg Google')."
+											: canShareWithOrg
+												? "Your name for this credential (e.g. 'Google (personal)'). You can create multiple credentials from a shared app with different names."
+												: 'A label to recognise this credential later.'}
 									</p>
 								</div>
 							</div>
@@ -835,6 +987,10 @@ export function CreateCredentialDialog({
 										<ErrorAlert message={createMutation.error} />
 									);
 								})()}
+
+							{registrationMutation.isError && (
+								<ErrorAlert message={registrationMutation.error} />
+							)}
 						</form>
 					)}
 				</>
@@ -854,6 +1010,30 @@ function FormSectionLabel({ children }: { children: React.ReactNode }) {
 			{children}
 		</p>
 	);
+}
+
+/**
+ * Colocated mutation that POSTs to `/oauth-app-registrations` when the admin
+ * flips the "Available to everyone in the org" toggle in the create dialog.
+ *
+ * Lives here (not in the oauth-app-registrations module's api/hooks) because
+ * this dialog is the shared surface where an org-shared registration might
+ * be created — hoisting one small hook keeps the dialog self-contained and
+ * avoids `@/shared/credentials` importing a feature module. The admin
+ * management page uses its own module-scoped hook for reads/updates.
+ */
+function useCreateRegistrationMutation() {
+	const qc = useQueryClient();
+	return useMutation({
+		mutationFn: (
+			body:
+				| AuthorizationCodeRegistrationCreateRequest
+				| DeviceAuthorizationRegistrationCreateRequest,
+		) => OAuthAppRegistrationsService.createOauthAppRegistration({ requestBody: body }),
+		onSuccess: () => {
+			void qc.invalidateQueries({ queryKey: ['oauth-app-registrations'] });
+		},
+	});
 }
 
 /**
