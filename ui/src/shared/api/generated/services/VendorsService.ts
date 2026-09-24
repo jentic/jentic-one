@@ -9,9 +9,13 @@ import { request as __request } from '../core/request';
 export class VendorsService {
     /**
      * List verified vendors
-     * Public metadata for every vendor in the config-seeded registry.
+     * Public metadata for every vendor known to the platform.
      *
-     * Used by the UI's "Add integration" picker. Never returns secrets.
+     * Unioned across two sources: admin-registered ``oauth_app_registrations``
+     * rows and the platform-shipped ``vendors`` config. When a vendor slug
+     * exists in both, the DB row wins so admin-managed registrations always
+     * take precedence in the UI's "Add integration" picker. Never returns
+     * secrets.
      * @returns VendorListResponse Successful Response
      * @throws ApiError
      */

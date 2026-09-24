@@ -123,6 +123,12 @@ export interface StatusResponse {
 
 export interface ConnectRequest {
 	vendor: string;
+	/**
+	 * Optional user-facing label for the resulting credential. Defaults to
+	 * the vendor's display name when omitted. Lets a user distinguish
+	 * multiple credentials minted from the same vendor.
+	 */
+	name?: string | null;
 	agent_id?: string | null;
 	requested_scopes?: string[];
 	preferred_flow?: string | null;

@@ -154,6 +154,7 @@ async def integrations_connect(
         ],
         preferred_flow=body.preferred_flow,
         reason=body.reason,
+        credential_name=body.name,
     )
 
     return IntegrationsConnectResponse(

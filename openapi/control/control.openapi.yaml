@@ -2539,6 +2539,12 @@ components:
           - type: string
           - type: 'null'
           title: Agent Id
+        name:
+          anyOf:
+          - maxLength: 255
+            type: string
+          - type: 'null'
+          title: Name
         preferred_flow:
           anyOf:
           - type: string
