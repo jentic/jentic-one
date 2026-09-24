@@ -34,9 +34,11 @@ from jentic_one.shared.config import (
     _csv_to_list,
     _deep_merge,
     _env_overrides,
+    bind_origin,
     check_public_url_consistency,
     effective_auth_base_url,
     load_config,
+    resolved_auth_base_url,
 )
 
 
@@ -1176,6 +1178,141 @@ def test_check_public_url_consistency_never_crashes_on_bad_port(tmp_path: Path):
     # crash the consistency check at startup — the "warn, don't crash" contract.
     with pytest.raises(ConfigError):
         _load(tmp_path, {"auth": {"canonical_base_url": "http://h:99999"}})
+
+
+@pytest.mark.parametrize(
+    ("host", "port", "expected"),
+    [
+        ("0.0.0.0", 8000, "http://127.0.0.1:8000"),
+        ("::", 8020, "http://127.0.0.1:8020"),
+        ("127.0.0.1", 8020, "http://127.0.0.1:8020"),
+        ("localhost", 9000, "http://localhost:9000"),
+        ("::1", 8000, "http://[::1]:8000"),
+        ("10.0.0.5", 8000, "http://10.0.0.5:8000"),
+    ],
+)
+def test_bind_origin(tmp_path: Path, host: str, port: int, expected: str):
+    config = _load(tmp_path, {"server": {"host": host, "port": port}})
+    assert bind_origin(config) == expected
+
+
+def test_resolved_auth_base_url_falls_back_to_bind(tmp_path: Path):
+    # Request-less consumers (issuer, JWT-Bearer audience, DCR) follow the port
+    # with nothing pinned — the #818 any-port contract.
+    config = _load(tmp_path, {"server": {"host": "127.0.0.1", "port": 8020}})
+    assert effective_auth_base_url(config) == ""
+    assert resolved_auth_base_url(config) == "http://127.0.0.1:8020"
+
+    config = _load(
+        tmp_path,
+        {"server": {"host": "127.0.0.1", "port": 8020, "public_base_url": "https://x.example"}},
+    )
+    assert resolved_auth_base_url(config) == "https://x.example"
+
+
+def _spa_redirects(config: AppConfig) -> list[str]:
+    return next(
+        pc.redirect_uris for pc in config.auth.platform_clients if pc.client_id == "jentic-one-spa"
+    )
+
+
+def test_spa_platform_client_derived_from_loopback_bind(tmp_path: Path):
+    config = _load(tmp_path, {"server": {"host": "127.0.0.1", "port": 8020}})
+    assert _spa_redirects(config) == [
+        "http://127.0.0.1:8020/app/auth/callback",
+        "http://localhost:8020/app/auth/callback",
+    ]
+
+
+def test_spa_platform_client_derived_from_public_base_url(tmp_path: Path):
+    config = _load(tmp_path, {"server": {"public_base_url": "https://jentic.example.com"}})
+    assert _spa_redirects(config) == ["https://jentic.example.com/app/auth/callback"]
+
+
+def test_spa_platform_client_explicit_wins(tmp_path: Path):
+    explicit = {"client_id": "jentic-one-spa", "redirect_uris": ["https://spa.example/cb"]}
+    config = _load(
+        tmp_path,
+        {
+            "server": {"public_base_url": "https://jentic.example.com"},
+            "auth": {"platform_clients": [explicit]},
+        },
+    )
+    assert _spa_redirects(config) == ["https://spa.example/cb"]
+
+
+def test_spa_platform_client_skipped_for_plain_http_lan_bind(tmp_path: Path):
+    # Platform redirect URIs refuse plain http off localhost; config must still
+    # load (SPA login then needs an explicit https public_base_url).
+    config = _load(tmp_path, {"server": {"host": "10.0.0.5", "port": 8000}})
+    assert not any(pc.client_id == "jentic-one-spa" for pc in config.auth.platform_clients)
+
+
+def test_check_public_url_consistency_flags_loopback_public_url_on_wrong_port(tmp_path: Path):
+    # The #818 repro: a loopback bind on 8020 with public_base_url still pinned
+    # to :8000 — every derived URL is unreachable.
+    config = _load(
+        tmp_path,
+        {"server": {"host": "127.0.0.1", "port": 8020, "public_base_url": "http://127.0.0.1:8000"}},
+    )
+    mismatches = check_public_url_consistency(config)
+    assert [m.field for m in mismatches] == ["server.public_base_url"]
+    assert mismatches[0].expected == "http://127.0.0.1:8020"
+
+
+def test_check_public_url_consistency_flags_stale_loopback_redirect_uri(tmp_path: Path):
+    config = _load(
+        tmp_path,
+        {
+            "server": {"host": "127.0.0.1", "port": 8020},
+            "credentials": {
+                "providers": {
+                    "direct_oauth2": {
+                        "kind": "direct_oauth2",
+                        "redirect_uri": "http://127.0.0.1:8000/credentials/oauth/callback",
+                    }
+                }
+            },
+        },
+    )
+    mismatches = check_public_url_consistency(config)
+    assert [m.field for m in mismatches] == ["credentials.providers.direct_oauth2.redirect_uri"]
+
+
+def test_check_public_url_consistency_loopback_check_skips_all_interfaces_bind(tmp_path: Path):
+    # A 0.0.0.0 bind can sit behind a port mapping / NodePort that legitimately
+    # fronts it on another loopback port — no warning.
+    config = _load(
+        tmp_path,
+        {"server": {"host": "0.0.0.0", "port": 8000, "public_base_url": "http://localhost:30080"}},
+    )
+    assert check_public_url_consistency(config) == []
+
+
+def test_check_public_url_consistency_loopback_check_ignores_non_loopback_urls(tmp_path: Path):
+    # A loopback bind behind a same-host reverse proxy serving a real hostname.
+    config = _load(
+        tmp_path,
+        {
+            "server": {
+                "host": "127.0.0.1",
+                "port": 8000,
+                "public_base_url": "https://jentic.example.com",
+            }
+        },
+    )
+    assert check_public_url_consistency(config) == []
+
+
+def test_shipped_local_configs_follow_the_port(monkeypatch: pytest.MonkeyPatch):
+    # Guards against re-pinning :8000 in the shipped local configs.
+    monkeypatch.setenv("JENTIC__SERVER__PORT", "8020")
+    root = Path(__file__).resolve().parents[2]
+    for name in ("local.yaml", "local-sqlite.yaml"):
+        config = load_config(root / "config" / name)
+        assert resolved_auth_base_url(config) == "http://127.0.0.1:8020", name
+        assert "http://127.0.0.1:8020/app/auth/callback" in _spa_redirects(config), name
+        assert check_public_url_consistency(config) == [], name
 
 
 def test_telemetry_host_os_defaults_to_none():

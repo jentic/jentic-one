@@ -12,9 +12,10 @@ identity of the backend it is talking to, so it can label its responses and a
 human/agent can tell local from remote at a glance. It intentionally exposes
 only non-sensitive identity/deployment metadata: the operator-declared
 ``backend`` locality (``server.backend``), the instance's own canonical base
-URL / host (from ``auth.canonical_base_url``, with any userinfo stripped before
-echoing), whether the ``/mcp`` endpoint is served, and the broker (data plane)
-URL clients need for ``execute`` (``server.mcp.broker_url``, when honestly
+URL / host (``auth.canonical_base_url``, else ``server.public_base_url``, else
+the serving bind — with any userinfo stripped before echoing), whether the
+``/mcp`` endpoint is served, and the broker (data plane) URL clients need for
+``execute`` (``server.mcp.broker_url``, when honestly
 advertisable — see ``_advertised_broker_url``). The ``instance_id`` is a
 one-way digest *derived from* the telemetry instance id — distinct installs get
 distinct values, but the durable telemetry identifier itself is never
@@ -31,7 +32,7 @@ from urllib.parse import urlsplit, urlunsplit
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
-from jentic_one.shared.config import effective_auth_base_url
+from jentic_one.shared.config import resolved_auth_base_url
 from jentic_one.shared.context import Context
 from jentic_one.shared.web.deps import get_ctx
 
@@ -61,8 +62,9 @@ class InstanceIdentityResponse(BaseModel):
     )
     canonical_base_url: str = Field(
         description=(
-            "The instance's own canonical base URL (auth.canonical_base_url), with "
-            "any userinfo stripped; '' if unset."
+            "The instance's own canonical base URL (auth.canonical_base_url, else "
+            "server.public_base_url, else the serving bind origin), with any "
+            "userinfo stripped."
         )
     )
     host: str = Field(
@@ -173,7 +175,7 @@ def _advertised_broker_url(config_broker_url: str, backend: str) -> str | None:
 
 def resolve_instance_identity(ctx: Context) -> InstanceIdentityResponse:
     """Build the backend-identity payload from the live application ``Context``."""
-    canonical_base_url = effective_auth_base_url(ctx.config)
+    canonical_base_url = resolved_auth_base_url(ctx.config)
     canonical_base_url, host = (
         _sanitized_url_parts(canonical_base_url) if canonical_base_url else ("", "")
     )

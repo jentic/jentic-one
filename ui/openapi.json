@@ -4284,7 +4284,7 @@
             "title": "Broker Url"
           },
           "canonical_base_url": {
-            "description": "The instance's own canonical base URL (auth.canonical_base_url), with any userinfo stripped; '' if unset.",
+            "description": "The instance's own canonical base URL (auth.canonical_base_url, else server.public_base_url, else the serving bind origin), with any userinfo stripped.",
             "title": "Canonical Base Url",
             "type": "string"
           },

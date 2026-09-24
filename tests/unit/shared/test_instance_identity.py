@@ -171,10 +171,13 @@ def test_resolve_instance_identity_honours_remote(sample_config_dict: dict[str, 
 
 
 def test_resolve_instance_identity_unset_base_url(sample_config_dict: dict[str, Any]) -> None:
+    """With no public URL configured, the instance reports its serving bind —
+    the same origin the JWT-Bearer audience is built from, so a client can
+    register against exactly what ``/instance`` advertises."""
     identity = resolve_instance_identity(_ctx(sample_config_dict, ""))
     assert identity.backend == "local"
-    assert identity.canonical_base_url == ""
-    assert identity.host == ""
+    assert identity.canonical_base_url == "http://127.0.0.1:8000"
+    assert identity.host == "127.0.0.1:8000"
 
 
 def test_config_rejects_userinfo_in_canonical_base_url(sample_config_dict: dict[str, Any]) -> None:

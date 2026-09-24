@@ -40,7 +40,7 @@ from jentic_one.auth.core.idp import (
 from jentic_one.auth.services.errors import InvalidGrantError, UserNotAdmittedError
 from jentic_one.auth.services.token_service import TokenService, resolve_effective_scopes
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
-from jentic_one.shared.config import AuthConfig, effective_auth_base_url
+from jentic_one.shared.config import AuthConfig, resolved_auth_base_url
 from jentic_one.shared.context import Context
 from jentic_one.shared.db import DatabaseIntegrityError
 from jentic_one.shared.models import (
@@ -640,7 +640,7 @@ class AuthorizeService:
 
         id_token = issue_id_token(
             self._auth_config,
-            issuer=effective_auth_base_url(self._ctx.config),
+            issuer=resolved_auth_base_url(self._ctx.config),
             sub=user.id,
             email=user.email,
             aud=client_id,

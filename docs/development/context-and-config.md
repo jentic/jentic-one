@@ -164,28 +164,30 @@ Resolution, per URL:
    `broker.account_linking_base_url`, `credentials.providers.<id>.redirect_uri`),
    then
 2. `server.public_base_url`, then
-3. for request-scoped URLs (OAuth callback, issuer), the **incoming request's
-   origin**.
+3. for request-scoped URLs (the OAuth connect callback, discovery issuer, SPA
+   links), the **incoming request's origin**; for request-less URLs (the
+   `id_token` issuer, JWT-Bearer assertion audience, DCR
+   `registration_client_uri`, `GET /instance`, the default SPA login
+   callback), the **serving bind** — `http://{server.host}:{server.port}`,
+   with `0.0.0.0` reported as `127.0.0.1`.
 
-> **Note — the JWT-Bearer assertion audience is not request-scoped.** It is
-> built request-lessly from step 1→2 only. With **both** `auth.canonical_base_url`
-> and `server.public_base_url` unset it collapses to `/oauth/token` (while the
-> discovery document, being request-scoped, advertises the request origin). So
-> "any-port zero config" covers the OAuth connect callback and discovery, **not**
-> the agent JWT-Bearer assertion flow — set `public_base_url` for that. (This is
-> pre-existing behaviour, unchanged by the public-origin work.)
+So local development on any port works with **zero** configuration: change
+`server.port` and every URL follows, fixing the "connect breaks on any port
+but 8000" trap. Don't pin `public_base_url` to a loopback URL in local
+configs; set it (or an override) only when the app can't infer its public
+origin, i.e. behind a reverse proxy / ingress / port mapping.
 
-Because of (3), local development on any port works with **zero** configuration
-— the OAuth callback tracks whatever host/port you actually browsed to, fixing
-the "connect breaks on any port but 8000" trap. Set `public_base_url` (or an
-override) only when the app can't infer its public origin from the request,
-i.e. behind a reverse proxy / ingress. At startup, any *explicitly configured*
-server-published public URL whose origin disagrees with the serving origin (and
-isn't explained by `public_base_url`) logs a `public_url_origin_mismatch`
-warning — the server still starts. (Per-provider `redirect_uri` overrides are
-excluded from that check: an OAuth callback is reached by the operator's
-browser, which behind a gateway legitimately hits a different origin than the
-in-cluster `public_base_url` — that is exactly why the override exists.)
+At startup, `public_url_origin_mismatch` is logged (the server still starts)
+when:
+
+- an explicitly configured per-surface override disagrees with
+  `public_base_url` (or, when unset, the serving bind); or
+- the server binds a **loopback** host and `public_base_url` or a provider
+  `redirect_uri` names a loopback origin on a *different* port — nothing can
+  forward that port to a loopback-only listener, so the URL is unreachable.
+  All-interfaces binds (containers, clusters) are exempt from this second
+  check, since a port mapping / NodePort legitimately fronts them on another
+  port.
 
 > **Behind a TLS-terminating reverse proxy**, set `public_base_url` explicitly.
 > The request-origin fallback (3) reconstructs the scheme/host from the incoming
@@ -232,11 +234,11 @@ curl -s http://127.0.0.1:8000/instance
   authorization signal.
 - `canonical_base_url` / `host` reflect the deployment's public origin —
   `server.public_base_url` (or the advanced per-surface override
-  `auth.canonical_base_url` when set). Set `server.public_base_url` in
-  [`config/local.yaml`](../../config/local.yaml) to `http://127.0.0.1:8000` for local runs; a hosted
-  platform sets its own public URL. This is the instance describing *itself*,
-  so it is the value to trust over any client-side assumption. Any userinfo
-  embedded in the configured URL is stripped before echoing.
+  `auth.canonical_base_url` when set), else the serving bind (e.g.
+  `http://127.0.0.1:8000` for [`config/local.yaml`](../../config/local.yaml)).
+  A hosted platform sets its own public URL. This is the instance describing
+  *itself*, so it is the value to trust over any client-side assumption. Any
+  userinfo embedded in the configured URL is stripped before echoing.
 - `instance_id` is an opaque digest *derived from* the telemetry instance id
   (never the id itself). It only disambiguates two installs sharing a host when
   both have telemetry enabled — it is `null` whenever telemetry has not

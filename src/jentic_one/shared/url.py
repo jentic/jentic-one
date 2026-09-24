@@ -1,7 +1,8 @@
-"""Shared URL utilities for server-variable substitution."""
+"""Shared URL utilities: server-variable substitution and public-origin helpers."""
 
 from __future__ import annotations
 
+import ipaddress
 import re
 from urllib.parse import quote, urlsplit
 
@@ -115,3 +116,24 @@ def origins_equivalent(a: str, b: str) -> bool:
     if host_a == host_b:
         return True
     return host_a in _EQUIVALENT_HOSTS and host_b in _EQUIVALENT_HOSTS
+
+
+def is_loopback_host(host: str) -> bool:
+    """Whether *host* (a bind host or URL hostname) names this machine only.
+
+    ``localhost`` and any ``127.0.0.0/8`` / ``::1`` literal. The all-interfaces
+    binds (``0.0.0.0`` / ``::``) are deliberately **not** loopback.
+    """
+    host = host.strip("[]").lower()
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def is_loopback_url(url: str) -> bool:
+    """Whether *url*'s hostname is loopback (see ``is_loopback_host``)."""
+    hostname = urlsplit(url).hostname
+    return bool(hostname) and is_loopback_host(hostname or "")

@@ -13,7 +13,7 @@ from jentic_one.auth.services.errors import InvalidGrantError
 from jentic_one.auth.services.token_service import TokenService
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
 from jentic_one.shared.auth import resolve_agent_key
-from jentic_one.shared.config import effective_auth_base_url
+from jentic_one.shared.config import resolved_auth_base_url
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import ActorStatus, ActorType
 
@@ -175,7 +175,7 @@ class AssertionService:
     def _expected_audience(self) -> str:
         # Normalized like deployment_base_url so a trailing slash in the
         # configured canonical_base_url can't break assertion validation.
-        base = effective_auth_base_url(self._ctx.config)
+        base = resolved_auth_base_url(self._ctx.config)
         return f"{base}/oauth/token"
 
     def _validate_timing(self, payload: dict[str, Any]) -> None:
