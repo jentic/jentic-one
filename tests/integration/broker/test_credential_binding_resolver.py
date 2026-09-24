@@ -62,6 +62,7 @@ async def _seed_credential(
     api_name: str | None,
     version: str | None,
     active: bool = True,
+    owner_user_id: str | None = None,
 ) -> str:
     credential = Credential(
         type="token_value",
@@ -70,6 +71,7 @@ async def _seed_credential(
         api_name=api_name,
         api_version=version,
         active=active,
+        owner_user_id=owner_user_id,
     )
     async with control_db.session() as session:
         session.add(credential)
@@ -291,3 +293,163 @@ async def test_wildcard_credential_covers(
     )
 
     assert [bc.credential_id for bc in result.credentials] == [cred_id]
+
+
+# ---------------------------------------------------------------------------
+# Owner scoping (shared OAuth application registrations).
+# ---------------------------------------------------------------------------
+
+
+async def test_owner_none_caller_sees_only_shared_rows(
+    admin_db: DatabaseSession, control_db: DatabaseSession, clean_tables: None
+) -> None:
+    """No owner scope (service-account agent, unparented agent) → only NULL-owner rows."""
+    shared_id = await _seed_credential(
+        control_db,
+        name="shared",
+        vendor="acme.com",
+        api_name="pets-api",
+        version="v1",
+        owner_user_id=None,
+    )
+    personal_id = await _seed_credential(
+        control_db,
+        name="alice-personal",
+        vendor="acme.com",
+        api_name="pets-api",
+        version="v1",
+        owner_user_id="usr_alice",
+    )
+    agent_id = await _seed_agent(admin_db)
+    await _bind(admin_db, agent_id=agent_id, credential_id=shared_id)
+    await _bind(admin_db, agent_id=agent_id, credential_id=personal_id)
+
+    resolver = CredentialBindingResolver(admin_db, control_db)
+    result = await resolver.derive_credentials(
+        agent_id=agent_id,
+        vendor="acme.com",
+        name="pets-api",
+        version="v1",
+        owner_user_id=None,
+    )
+
+    assert [bc.credential_id for bc in result.credentials] == [shared_id]
+
+
+async def test_owner_caller_sees_own_and_shared_rows(
+    admin_db: DatabaseSession, control_db: DatabaseSession, clean_tables: None
+) -> None:
+    """A user (or agent whose parent is a user) sees their own + shared rows."""
+    shared_id = await _seed_credential(
+        control_db,
+        name="shared",
+        vendor="acme.com",
+        api_name="pets-api",
+        version="v1",
+        owner_user_id=None,
+    )
+    personal_id = await _seed_credential(
+        control_db,
+        name="alice-personal",
+        vendor="acme.com",
+        api_name="pets-api",
+        version="v1",
+        owner_user_id="usr_alice",
+    )
+    agent_id = await _seed_agent(admin_db)
+    await _bind(admin_db, agent_id=agent_id, credential_id=shared_id)
+    await _bind(admin_db, agent_id=agent_id, credential_id=personal_id)
+
+    resolver = CredentialBindingResolver(admin_db, control_db)
+    result = await resolver.derive_credentials(
+        agent_id=agent_id,
+        vendor="acme.com",
+        name="pets-api",
+        version="v1",
+        owner_user_id="usr_alice",
+    )
+
+    assert sorted(bc.credential_id for bc in result.credentials) == sorted([shared_id, personal_id])
+
+
+async def test_owner_caller_does_not_see_other_users_rows(
+    admin_db: DatabaseSession, control_db: DatabaseSession, clean_tables: None
+) -> None:
+    """A user must not see another user's personal-owned rows even if bound."""
+    other_id = await _seed_credential(
+        control_db,
+        name="bob-personal",
+        vendor="acme.com",
+        api_name="pets-api",
+        version="v1",
+        owner_user_id="usr_bob",
+    )
+    agent_id = await _seed_agent(admin_db)
+    await _bind(admin_db, agent_id=agent_id, credential_id=other_id)
+
+    resolver = CredentialBindingResolver(admin_db, control_db)
+    result = await resolver.derive_credentials(
+        agent_id=agent_id,
+        vendor="acme.com",
+        name="pets-api",
+        version="v1",
+        owner_user_id="usr_alice",
+    )
+
+    assert result.credentials == ()
+    # The binding exists but the covering-credential query filtered it out —
+    # the agent is bound to something (``agent_bound_any``) but nothing serves
+    # the API within the caller's owner scope, so ``api_served`` is False.
+    assert result.agent_bound_any is True
+    assert result.api_served is False
+
+
+async def test_precedence_owner_row_wins_over_shared(
+    admin_db: DatabaseSession, control_db: DatabaseSession, clean_tables: None
+) -> None:
+    """When both a caller-owned row and a shared row cover the API, the owned row leads."""
+    # Force id-lex order to put the shared row first, so the ORDER BY (not the
+    # id sort) is what determines precedence. Ids are 30 chars ("cred_" + 25),
+    # matching the ``credentials.id`` column length.
+    shared_id = "cred_00000000000000000000shr"
+    personal_id = "cred_99999999999999999999own"
+    async with control_db.session() as session:
+        session.add(
+            Credential(
+                id=shared_id,
+                type="token_value",
+                name="shared",
+                api_vendor="acme.com",
+                api_name="pets-api",
+                api_version="v1",
+                owner_user_id=None,
+            )
+        )
+        session.add(
+            Credential(
+                id=personal_id,
+                type="token_value",
+                name="alice-personal",
+                api_vendor="acme.com",
+                api_name="pets-api",
+                api_version="v1",
+                owner_user_id="usr_alice",
+            )
+        )
+        await session.commit()
+
+    agent_id = await _seed_agent(admin_db)
+    await _bind(admin_db, agent_id=agent_id, credential_id=shared_id)
+    await _bind(admin_db, agent_id=agent_id, credential_id=personal_id)
+
+    resolver = CredentialBindingResolver(admin_db, control_db)
+    result = await resolver.derive_credentials(
+        agent_id=agent_id,
+        vendor="acme.com",
+        name="pets-api",
+        version="v1",
+        owner_user_id="usr_alice",
+    )
+
+    # Owned row precedes shared row regardless of id-lex order.
+    assert [bc.credential_id for bc in result.credentials] == [personal_id, shared_id]

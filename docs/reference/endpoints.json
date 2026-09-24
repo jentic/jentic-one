@@ -2823,6 +2823,234 @@
       "typical_caller": "any"
     },
     {
+      "actor_types": [
+        "user",
+        "agent"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "credentials:read": []
+      },
+      "method": "GET",
+      "operation_id": "listOauthAppRegistrations",
+      "path": "/oauth-app-registrations",
+      "public": false,
+      "required_scopes": [
+        "credentials:read"
+      ],
+      "summary": "List OAuth app registrations",
+      "surface": "oauth-app-registrations",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Operator-facing (typically a human operator / admin)",
+      "implied_scopes": {
+        "org:admin": [
+          "agents:read",
+          "agents:write",
+          "apis:read",
+          "apis:write",
+          "audit:read",
+          "capabilities:execute",
+          "capabilities:read",
+          "catalog:import",
+          "config:read",
+          "config:write",
+          "credentials:connect",
+          "credentials:read",
+          "credentials:write",
+          "events:read",
+          "events:write",
+          "executions:read",
+          "jobs:read",
+          "jobs:write",
+          "oauth-clients:read",
+          "oauth-clients:write",
+          "overlays:confirm",
+          "users:read",
+          "users:write"
+        ]
+      },
+      "method": "POST",
+      "operation_id": "createOauthAppRegistration",
+      "path": "/oauth-app-registrations",
+      "public": false,
+      "required_scopes": [
+        "org:admin"
+      ],
+      "summary": "Register a shared OAuth application",
+      "surface": "oauth-app-registrations",
+      "typical_caller": "operator"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Operator-facing (typically a human operator / admin)",
+      "implied_scopes": {
+        "org:admin": [
+          "agents:read",
+          "agents:write",
+          "apis:read",
+          "apis:write",
+          "audit:read",
+          "capabilities:execute",
+          "capabilities:read",
+          "catalog:import",
+          "config:read",
+          "config:write",
+          "credentials:connect",
+          "credentials:read",
+          "credentials:write",
+          "events:read",
+          "events:write",
+          "executions:read",
+          "jobs:read",
+          "jobs:write",
+          "oauth-clients:read",
+          "oauth-clients:write",
+          "overlays:confirm",
+          "users:read",
+          "users:write"
+        ]
+      },
+      "method": "DELETE",
+      "operation_id": "deleteOauthAppRegistration",
+      "path": "/oauth-app-registrations/{id}",
+      "public": false,
+      "required_scopes": [
+        "org:admin"
+      ],
+      "summary": "Delete an OAuth app registration",
+      "surface": "oauth-app-registrations",
+      "typical_caller": "operator"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "credentials:read": []
+      },
+      "method": "GET",
+      "operation_id": "getOauthAppRegistration",
+      "path": "/oauth-app-registrations/{id}",
+      "public": false,
+      "required_scopes": [
+        "credentials:read"
+      ],
+      "summary": "Get an OAuth app registration",
+      "surface": "oauth-app-registrations",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Operator-facing (typically a human operator / admin)",
+      "implied_scopes": {
+        "org:admin": [
+          "agents:read",
+          "agents:write",
+          "apis:read",
+          "apis:write",
+          "audit:read",
+          "capabilities:execute",
+          "capabilities:read",
+          "catalog:import",
+          "config:read",
+          "config:write",
+          "credentials:connect",
+          "credentials:read",
+          "credentials:write",
+          "events:read",
+          "events:write",
+          "executions:read",
+          "jobs:read",
+          "jobs:write",
+          "oauth-clients:read",
+          "oauth-clients:write",
+          "overlays:confirm",
+          "users:read",
+          "users:write"
+        ]
+      },
+      "method": "PATCH",
+      "operation_id": "updateOauthAppRegistration",
+      "path": "/oauth-app-registrations/{id}",
+      "public": false,
+      "required_scopes": [
+        "org:admin"
+      ],
+      "summary": "Update an OAuth app registration",
+      "surface": "oauth-app-registrations",
+      "typical_caller": "operator"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Operator-facing (typically a human operator / admin)",
+      "implied_scopes": {
+        "org:admin": [
+          "agents:read",
+          "agents:write",
+          "apis:read",
+          "apis:write",
+          "audit:read",
+          "capabilities:execute",
+          "capabilities:read",
+          "catalog:import",
+          "config:read",
+          "config:write",
+          "credentials:connect",
+          "credentials:read",
+          "credentials:write",
+          "events:read",
+          "events:write",
+          "executions:read",
+          "jobs:read",
+          "jobs:write",
+          "oauth-clients:read",
+          "oauth-clients:write",
+          "overlays:confirm",
+          "users:read",
+          "users:write"
+        ]
+      },
+      "method": "POST",
+      "operation_id": "rotateOauthAppRegistrationSecret",
+      "path": "/oauth-app-registrations/{id}:rotate-secret",
+      "public": false,
+      "required_scopes": [
+        "org:admin"
+      ],
+      "summary": "Rotate the client secret",
+      "surface": "oauth-app-registrations",
+      "typical_caller": "operator"
+    },
+    {
       "actor_types": [],
       "auth_note": null,
       "authenticated": false,
@@ -4608,5 +4836,5 @@
     ],
     "total": 27
   },
-  "total": 174
+  "total": 180
 }

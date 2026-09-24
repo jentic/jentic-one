@@ -62,6 +62,17 @@ class InProcessTokenResolver:
             "    FROM users u WHERE u.id = t.actor_id)"
             "  ELSE 'active'"
             " END AS actor_status,"
+            # Owner attribution: an agent's ``parent_actor_id`` is its
+            # ``agents.owner_id``. The forthcoming owner-based credential
+            # binding filter keys off this — mint it here at the broker edge
+            # (mirrors ``auth/services/token_service._resolve_from_row`` and
+            # ``shared/auth/api_key_resolver._lookup_agent``) so every entry
+            # path yields the same Identity shape. NULL for non-agents.
+            " CASE t.actor_type"
+            "  WHEN 'agent' THEN"
+            "   (SELECT a.owner_id FROM agents a WHERE a.id = t.actor_id)"
+            "  ELSE NULL"
+            " END AS parent_actor_id,"
             " (SELECT c.active FROM oauth_clients c"
             "  WHERE c.client_id = t.oauth_client_id) AS oauth_client_active,"
             " (SELECT c.approval_status = 'approved' FROM oauth_clients c"
@@ -141,6 +152,7 @@ class InProcessTokenResolver:
             permissions=permissions,
             expires_at=expires_at,
             active=active,
+            parent_actor_id=row.parent_actor_id,
             oauth_client_id=oauth_client_id,
             oauth_grant_id=oauth_grant_id,
         )

@@ -27,7 +27,7 @@ Every API endpoint grouped by its **typical caller**, then by surface, annotated
 
 > The grouping and the _Typical caller_ column are an **advisory hint** at who usually calls a route, inferred from the scope family. They are **not** an enforced restriction: access is gated by the **scope**, not the actor kind, so any actor holding the required scope can call the endpoint.
 
-_Total endpoints: **174**._
+_Total endpoints: **180**._
 
 
 ## Agent-facing (typically an agent) (32)
@@ -110,7 +110,7 @@ _Total endpoints: **174**._
 | GET | `/vendors` | `capabilities:read` | agent | List verified vendors |
 | GET | `/vendors/{vendor_key}/auth-capabilities` | `capabilities:read` | agent | Get a vendor's SSO capabilities |
 
-## Operator-facing (typically a human operator / admin) (41)
+## Operator-facing (typically a human operator / admin) (45)
 
 
 ### `actors`
@@ -195,6 +195,15 @@ _Total endpoints: **174**._
 |---|---|---|---|---|
 | POST | `/oauth/session/continue` | _any authenticated_ | operator | Exchange a live platform session for an authorize continuation |
 
+### `oauth-app-registrations`
+
+| Method | Path | Scope(s) | Typical caller | Summary |
+|---|---|---|---|---|
+| POST | `/oauth-app-registrations` | `org:admin` | operator | Register a shared OAuth application |
+| DELETE | `/oauth-app-registrations/{id}` | `org:admin` | operator | Delete an OAuth app registration |
+| PATCH | `/oauth-app-registrations/{id}` | `org:admin` | operator | Update an OAuth app registration |
+| POST | `/oauth-app-registrations/{id}:rotate-secret` | `org:admin` | operator | Rotate the client secret |
+
 ### `users`
 
 | Method | Path | Scope(s) | Typical caller | Summary |
@@ -209,7 +218,7 @@ _Total endpoints: **174**._
 | POST | `/users/{user_id}:enable` | `users:write` | operator | Enable User |
 | POST | `/users/{user_id}:reissue-invite` | `users:write` | operator | Reissue Invite |
 
-## Any authenticated actor (71)
+## Any authenticated actor (73)
 
 
 ### `admin`
@@ -328,6 +337,13 @@ _Total endpoints: **174**._
 | POST | `/oauth/approval/decision` | `oauth-clients:write` | any | Approve or deny a pending client inline (approval-pending page) |
 | POST | `/oauth/introspect` | _any authenticated_ | any | Introspect Endpoint |
 | POST | `/oauth/revoke` | _any authenticated_ | any | Revoke Endpoint _(Dual-arm (RFC 7009): form-encoded requests authenticate by OAuth client_id lineage binding (public clients, auth method 'none' — the token is revoked only if it was issued to the supplied client_id); JSON requests keep the platform bearer-token contract.)_ |
+
+### `oauth-app-registrations`
+
+| Method | Path | Scope(s) | Typical caller | Summary |
+|---|---|---|---|---|
+| GET | `/oauth-app-registrations` | `credentials:read` | any | List OAuth app registrations |
+| GET | `/oauth-app-registrations/{id}` | `credentials:read` | any | Get an OAuth app registration |
 
 ### `oauth-grants`
 
