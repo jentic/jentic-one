@@ -43,24 +43,38 @@ class ResolvedScope:
 class VendorEntry(BaseModel):
     """Unified vendor read view spanning admin-DB rows and config entries.
 
-    Only carries fields that are meaningful on both sides of the seam:
+    Multiple DB registrations for the same vendor slug surface as separate
+    entries — each admin-registered OAuth app is its own pick in the vendor
+    picker. The ``entry_id`` is stable per-row (registration id when
+    source=db; vendor key when source=config).
 
-    * ``key`` — the slug callers pass into the service. For DB rows this is
-      the ``api_vendor`` column; for config rows it is the ``entries`` dict
-      key.
-    * ``flow_kind`` — the discriminator that determines which OAuth flow the
-      caller should run. Config entries can offer multiple flows; this field
-      surfaces the preferred one (first entry in ``flows``) so callers of the
-      unified view do not need to reason about multi-flow config shapes.
-    * ``source`` — records where the row came from so surfaces can differentiate
-      admin-managed vs platform-shipped registrations.
+    * ``entry_id`` — stable UI key for one picker card.
+    * ``registration_id`` — the ``oar_...`` id when ``source == "db"``,
+      else ``None``.
+    * ``key`` — vendor slug (``api_vendor`` for DB rows, ``entries`` dict
+      key for config rows). Two DB entries for the same vendor share this.
+    * ``name`` — the human label to render as the card's primary text. For
+      DB entries this is the admin-picked registration name; for config
+      entries this is the vendor's config ``display_name``.
+    * ``display_name`` — the vendor's family name (from config, or falling
+      back to the admin's registration name when no matching config
+      entry). Lets the UI show a subtitle for DB entries whose name differs
+      from the vendor family label.
+    * ``flow_kind`` — discriminator determining which OAuth flow the caller
+      should run.
+    * ``source`` — records where the row came from so surfaces can
+      differentiate admin-managed vs platform-shipped registrations.
 
-    Secrets are never surfaced here — ``client_secret`` and other flow-specific
-    endpoint detail are dereferenced by the connect-time handlers.
+    Secrets are never surfaced here — ``client_secret`` and other
+    flow-specific endpoint detail are dereferenced by the connect-time
+    handlers.
     """
 
+    entry_id: str
+    registration_id: str | None = None
     key: str
     display_name: str
+    name: str
     flow_kind: VendorFlowKind
     client_id: str
     has_client_secret: bool = False

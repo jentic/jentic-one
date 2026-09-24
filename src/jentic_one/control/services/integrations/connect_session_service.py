@@ -38,6 +38,7 @@ from jentic_one.control.services.integrations.errors import (
     AgentNotFoundError,
     ConfirmationForbiddenError,
     CredentialMissingCreatorError,
+    InvalidOAuthAppRegistrationError,
     InvalidPollTokenError,
     InvalidStateTransitionError,
     NoOpForFlowError,
@@ -418,6 +419,11 @@ class ConnectSessionService:
         # user distinguish multiple credentials minted from the same vendor
         # (or shared registration). Falls back to the vendor's display name.
         credential_name: str | None = None,
+        # Optional pin to a specific admin-registered OAuth app. Required
+        # when the vendor has multiple active registrations and the caller
+        # wants to disambiguate; falls back to ``get_preferred_for_vendor``
+        # otherwise.
+        oauth_app_registration_id: str | None = None,
     ) -> CreatedSession:
         """Create a pending session + upfront credential row.
 
@@ -439,8 +445,15 @@ class ConnectSessionService:
 
         # DB-first / config-fallback: prefer an admin-registered OAuth app
         # for this vendor+flow when one exists (any user can SSO through it),
-        # else fall back to the config-shipped ``VendorFlowConfig``.
-        session_app = await self._resolve_session_app(vendor_key, flow)
+        # else fall back to the config-shipped ``VendorFlowConfig``. When the
+        # caller pinned a specific registration id, load that one and refuse
+        # the request loudly on any mismatch (missing / inactive / different
+        # vendor) — silent fall-through would mint against the wrong app.
+        session_app = await self._resolve_session_app(
+            vendor_key,
+            flow,
+            pinned_registration_id=oauth_app_registration_id,
+        )
         owner_user_id = _owner_user_id_from_initiator(initiator_actor_id, initiator_parent_actor_id)
 
         poll_token = secrets.token_urlsafe(32)
@@ -552,6 +565,8 @@ class ConnectSessionService:
         self,
         vendor_key: str,
         flow: Any,
+        *,
+        pinned_registration_id: str | None = None,
     ) -> SessionApp:
         """Resolve the OAuth-app config for this session, DB-first / config-fallback.
 
@@ -561,8 +576,31 @@ class ConnectSessionService:
         per-tenant OAuth-app plumbing, one client_id + secret managed by
         admins. Falls back to the operator-config flow when no active DB
         registration exists (legacy embedded path stays wired).
+
+        When ``pinned_registration_id`` is set (caller supplied a specific
+        registration on ``:connect``), we bypass ``get_preferred_for_vendor``
+        and refuse the request on any mismatch: missing row, inactive row,
+        or wrong ``api_vendor``. Silent fall-through would mint credentials
+        through an unintended shared app.
         """
         registration: OAuthAppRegistration | None
+        if pinned_registration_id is not None:
+            async with self._ctx.control_db.session() as session:
+                registration = await OAuthAppRegistrationRepository.get_by_id(
+                    session, pinned_registration_id
+                )
+            if registration is None:
+                raise InvalidOAuthAppRegistrationError(pinned_registration_id, "not found")
+            if not registration.is_active:
+                raise InvalidOAuthAppRegistrationError(pinned_registration_id, "inactive")
+            if registration.api_vendor != vendor_key:
+                raise InvalidOAuthAppRegistrationError(
+                    pinned_registration_id,
+                    f"api_vendor mismatch (expected {vendor_key!r}, "
+                    f"registration is {registration.api_vendor!r})",
+                )
+            return _session_app_from_registration(self._ctx, registration)
+
         async with self._ctx.control_db.session() as session:
             registration = await OAuthAppRegistrationRepository.get_preferred_for_vendor(
                 session, api_vendor=vendor_key, flow_kind=flow.kind

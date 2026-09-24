@@ -148,6 +148,7 @@ export function ApiPicker({ onSelect, onVendorSelect, onManualEntry }: ApiPicker
 		return rows.filter(
 			(v) =>
 				v.display_name.toLowerCase().includes(q) ||
+				v.name.toLowerCase().includes(q) ||
 				v.vendor.toLowerCase().includes(q) ||
 				v.key.toLowerCase().includes(q),
 		);
@@ -263,7 +264,7 @@ export function ApiPicker({ onSelect, onVendorSelect, onManualEntry }: ApiPicker
 						animate="show"
 					>
 						{filteredVendors.map((vendor) => (
-							<motion.li key={vendor.key} variants={ROW_VARIANTS}>
+							<motion.li key={vendor.entry_id} variants={ROW_VARIANTS}>
 								<VendorTile vendor={vendor} onSelect={onVendorSelect} />
 							</motion.li>
 						))}
@@ -450,10 +451,12 @@ function VendorTile({
 			<VendorIcon name={vendor.display_name} vendor={vendor.vendor} size="md" />
 			<div className="min-w-0 flex-1">
 				<p className="text-foreground truncate text-sm font-semibold">
-					Sign in with {vendor.display_name}
+					{vendor.source === 'db' ? vendor.name : `Sign in with ${vendor.display_name}`}
 				</p>
 				<p className="text-muted-foreground mt-0.5 truncate text-xs">
-					Instant OAuth · no keys to copy
+					{vendor.source === 'db' && vendor.name !== vendor.display_name
+						? `${vendor.display_name} · shared org app`
+						: 'Instant OAuth · no keys to copy'}
 				</p>
 			</div>
 			<ChevronRight className="text-muted-foreground group-hover:text-primary h-4 w-4 shrink-0 transition-colors" />

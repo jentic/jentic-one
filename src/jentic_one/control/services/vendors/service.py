@@ -158,33 +158,51 @@ class VendorRegistryService:
         return entry
 
     async def list_all(self) -> list[VendorAuthConfig]:
-        """List every vendor known to the platform, DB rows winning on collisions.
+        """List every vendor known to the platform.
 
-        Sorted by display_name so the UI's "Add integration" picker does not
-        shuffle between polls.
+        Every active DB registration becomes its own :class:`VendorAuthConfig`;
+        a vendor that has ≥1 DB registration hides its config-shipped entry
+        (DB replaces config, matching the single-vendor ``get`` /
+        ``resolve_flow`` semantics). Sorted by display_name so the UI's
+        picker does not shuffle between polls.
         """
         registrations = await self._registrations.list_active()
-        merged: dict[str, VendorAuthConfig] = dict(self._config.entries)
-        for row in registrations:
-            merged[row.api_vendor] = _synthesize_from_registration(
-                row.api_vendor, row, self._config.entries.get(row.api_vendor), self._ctx
+        vendors_with_db = {row.api_vendor for row in registrations}
+        result: list[VendorAuthConfig] = [
+            _synthesize_from_registration(
+                row.api_vendor,
+                row,
+                self._config.entries.get(row.api_vendor),
+                self._ctx,
             )
-        return sorted(merged.values(), key=lambda v: v.display_name)
+            for row in registrations
+        ]
+        for key, cfg in self._config.entries.items():
+            if key not in vendors_with_db:
+                result.append(cfg)
+        return sorted(result, key=lambda v: v.display_name)
 
     async def list_entries(self) -> list[VendorEntry]:
         """List every vendor as a compact ``VendorEntry`` view.
 
-        Thin projection over :meth:`list_all` that carries the extra
-        ``source`` + ``flow_kind`` discriminators the UI's picker uses to
-        show admin-managed vs platform-shipped badges.
+        One entry per active DB registration — two admin-registered OAuth
+        apps for the same vendor slug surface as two picker cards. Vendors
+        with ≥1 DB registration hide their config-shipped entry.
         """
         registrations = await self._registrations.list_active()
-        entries: dict[str, VendorEntry] = {}
+        vendors_with_db = {row.api_vendor for row in registrations}
+        entries: list[VendorEntry] = [
+            _project_db_registration(
+                row.api_vendor,
+                row,
+                cfg=self._config.entries.get(row.api_vendor),
+            )
+            for row in registrations
+        ]
         for key, cfg in self._config.entries.items():
-            entries[key] = _project_config_entry(key, cfg)
-        for row in registrations:
-            entries[row.api_vendor] = _project_db_registration(row.api_vendor, row)
-        return sorted(entries.values(), key=lambda e: e.display_name)
+            if key not in vendors_with_db:
+                entries.append(_project_config_entry(key, cfg))
+        return sorted(entries, key=lambda e: (e.display_name, e.name))
 
     async def get_entry(
         self,
@@ -201,7 +219,11 @@ class VendorRegistryService:
             api_vendor=vendor_key, flow_kind=flow_kind
         )
         if registration is not None:
-            return _project_db_registration(vendor_key, registration)
+            return _project_db_registration(
+                vendor_key,
+                registration,
+                cfg=self._config.entries.get(vendor_key),
+            )
         cfg = self._config.entries.get(vendor_key)
         if cfg is None:
             raise UnknownVendorError(vendor_key)
@@ -402,13 +424,27 @@ def _extension_default_scopes(registration: OAuthAppRegistration) -> list[str] |
     return None
 
 
-def _project_db_registration(key: str, registration: OAuthAppRegistration) -> VendorEntry:
-    """Project a DB registration into the compact ``VendorEntry`` view."""
+def _project_db_registration(
+    key: str,
+    registration: OAuthAppRegistration,
+    *,
+    cfg: VendorAuthConfig | None = None,
+) -> VendorEntry:
+    """Project a DB registration into the compact ``VendorEntry`` view.
+
+    ``cfg`` supplies the vendor's family display name when a matching
+    config entry exists — the picker uses that as the subtitle when it
+    differs from the admin's registration name.
+    """
     default_scopes = _extension_default_scopes(registration)
     flow_kind: VendorFlowKind = _cast_flow_kind(registration.flow_kind)
+    family_display = cfg.display_name if cfg is not None else registration.name
     return VendorEntry(
+        entry_id=registration.id,
+        registration_id=registration.id,
         key=key,
-        display_name=registration.name,
+        display_name=family_display,
+        name=registration.name,
         flow_kind=flow_kind,
         client_id=registration.client_id,
         has_client_secret=registration.authorization_code_details is not None,
@@ -429,8 +465,11 @@ def _project_config_entry(key: str, cfg: VendorAuthConfig) -> VendorEntry:
     has_secret = flow.kind == "authorization_code"
     default_scopes = [s.name for s in cfg.scopes if s.default] or None
     return VendorEntry(
+        entry_id=key,
+        registration_id=None,
         key=key,
         display_name=cfg.display_name,
+        name=cfg.display_name,
         flow_kind=flow_kind,
         client_id=flow.client_id,
         has_client_secret=has_secret,

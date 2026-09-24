@@ -202,7 +202,7 @@ export type { UserListResponse } from './models/UserListResponse';
 export type { UserResponse } from './models/UserResponse';
 export type { UserUpdateRequest } from './models/UserUpdateRequest';
 export type { VendorListResponse } from './models/VendorListResponse';
-export type { VendorSummaryResponse } from './models/VendorSummaryResponse';
+export { VendorSummaryResponse } from './models/VendorSummaryResponse';
 export type { VersionResponse } from './models/VersionResponse';
 
 export { ActorsService } from './services/ActorsService';

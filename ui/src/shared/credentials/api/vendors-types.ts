@@ -129,6 +129,13 @@ export interface ConnectRequest {
 	 * multiple credentials minted from the same vendor.
 	 */
 	name?: string | null;
+	/**
+	 * Optional pin to a specific admin-registered OAuth app. Required when
+	 * the vendor has multiple active registrations and the caller wants to
+	 * disambiguate; falls back to the most-recently-updated active row
+	 * otherwise.
+	 */
+	oauth_app_registration_id?: string | null;
 	agent_id?: string | null;
 	requested_scopes?: string[];
 	preferred_flow?: string | null;
@@ -146,9 +153,32 @@ export interface ConnectResponse {
 // ---------------------------------------------------------------------------
 
 export interface VendorSummary {
+	/**
+	 * Stable per-row UI key. For admin-registered rows this is the
+	 * ``oar_...`` registration id; for platform-shipped config entries it is
+	 * the vendor slug. Two admin registrations for the same vendor share
+	 * ``key`` but differ on ``entry_id`` — key the picker off this so cards
+	 * do not collapse.
+	 */
+	entry_id: string;
+	/** Present when the row came from an ``oauth_app_registrations`` row. */
+	registration_id?: string | null;
+	/** Vendor slug shared by every registration for the same vendor. */
 	key: string;
+	/**
+	 * Config-side fully-qualified vendor id when available; falls back to
+	 * ``key`` for DB-only vendors.
+	 */
 	vendor: string;
+	/** Vendor's family display name (e.g. "Gmail"). */
 	display_name: string;
+	/**
+	 * Per-row human label. For DB rows this is the admin-picked registration
+	 * name; for config rows this equals ``display_name``.
+	 */
+	name: string;
+	/** ``db`` = admin registration, ``config`` = platform-shipped entry. */
+	source: 'db' | 'config';
 	flow_kinds: string[];
 }
 

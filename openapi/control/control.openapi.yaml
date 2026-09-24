@@ -2545,6 +2545,12 @@ components:
             type: string
           - type: 'null'
           title: Name
+        oauth_app_registration_id:
+          anyOf:
+          - maxLength: 30
+            type: string
+          - type: 'null'
+          title: Oauth App Registration Id
         preferred_flow:
           anyOf:
           - type: string
@@ -6268,6 +6274,9 @@ components:
         display_name:
           title: Display Name
           type: string
+        entry_id:
+          title: Entry Id
+          type: string
         flow_kinds:
           items:
             type: string
@@ -6276,13 +6285,30 @@ components:
         key:
           title: Key
           type: string
+        name:
+          title: Name
+          type: string
+        registration_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Registration Id
+        source:
+          enum:
+          - db
+          - config
+          title: Source
+          type: string
         vendor:
           title: Vendor
           type: string
       required:
+      - entry_id
       - key
       - vendor
       - display_name
+      - name
+      - source
       - flow_kinds
       title: VendorSummaryResponse
       type: object

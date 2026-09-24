@@ -38,9 +38,13 @@ import type {
  */
 
 const vendor = {
+	entry_id: 'github',
+	registration_id: null,
 	key: 'github',
 	vendor: 'github.com',
 	display_name: 'GitHub',
+	name: 'GitHub',
+	source: 'config' as const,
 	flow_kinds: ['device_authorization'],
 };
 
@@ -285,6 +289,73 @@ describe('VendorConnectFlow — self mode', () => {
 		// payload always carries a ``name``. Sending the same string
 		// server-side is functionally equivalent to omitting it.
 		expect(capturedBody).toMatchObject({ vendor: 'github', name: 'GitHub' });
+	});
+
+	it('threads oauth_app_registration_id when the vendor prop carries one', async () => {
+		stubCapabilities();
+		let capturedBody: Record<string, unknown> | null = null;
+		worker.use(
+			http.post('/integrations:connect', async ({ request }) => {
+				capturedBody = (await request.json()) as Record<string, unknown>;
+				return HttpResponse.json({
+					session_id: 'sess_pinned',
+					approval_url: '/x',
+					poll_token: 'tok_pinned',
+					resolved_flow: 'device_authorization',
+				});
+			}),
+		);
+		const vendorPinned = {
+			...vendor,
+			entry_id: 'oar_prod',
+			registration_id: 'oar_prod',
+			name: 'MyOrg Prod GitHub',
+			source: 'db' as const,
+		};
+		renderWithProviders(
+			<VendorConnectFlow
+				mode="self"
+				vendor={vendorPinned}
+				onBack={vi.fn()}
+				onDone={vi.fn()}
+			/>,
+		);
+		const user = userEvent.setup();
+		await waitFor(() =>
+			expect(screen.getByRole('button', { name: /^continue$/i })).not.toBeDisabled(),
+		);
+		await user.click(screen.getByRole('button', { name: /^continue$/i }));
+		await waitFor(() => expect(capturedBody).not.toBeNull());
+		expect(capturedBody).toMatchObject({
+			vendor: 'github',
+			oauth_app_registration_id: 'oar_prod',
+		});
+	});
+
+	it('omits oauth_app_registration_id when the vendor prop has no registration', async () => {
+		stubCapabilities();
+		let capturedBody: Record<string, unknown> | null = null;
+		worker.use(
+			http.post('/integrations:connect', async ({ request }) => {
+				capturedBody = (await request.json()) as Record<string, unknown>;
+				return HttpResponse.json({
+					session_id: 'sess_cfg',
+					approval_url: '/x',
+					poll_token: 'tok_cfg',
+					resolved_flow: 'device_authorization',
+				});
+			}),
+		);
+		renderWithProviders(
+			<VendorConnectFlow mode="self" vendor={vendor} onBack={vi.fn()} onDone={vi.fn()} />,
+		);
+		const user = userEvent.setup();
+		await waitFor(() =>
+			expect(screen.getByRole('button', { name: /^continue$/i })).not.toBeDisabled(),
+		);
+		await user.click(screen.getByRole('button', { name: /^continue$/i }));
+		await waitFor(() => expect(capturedBody).not.toBeNull());
+		expect(capturedBody).not.toHaveProperty('oauth_app_registration_id');
 	});
 });
 

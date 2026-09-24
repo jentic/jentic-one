@@ -232,6 +232,12 @@ function VendorSelfConnectFlow({
 				// (vendor display name) kicks in instead of storing an
 				// empty label.
 				...(trimmedName ? { name: trimmedName } : {}),
+				// Pin the specific admin-registered app when the picker
+				// entry references one — required to disambiguate when
+				// multiple registrations exist for the same vendor.
+				...(vendor.registration_id
+					? { oauth_app_registration_id: vendor.registration_id }
+					: {}),
 			});
 			const next = { id: result.session_id, pollToken: result.poll_token };
 			sessionRef.current = next;
