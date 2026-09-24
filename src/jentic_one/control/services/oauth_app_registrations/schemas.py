@@ -30,6 +30,11 @@ class OAuthAppRegistrationView(BaseModel):
     id: str
     name: str
     api_vendor: str
+    # Catalog API slug the OAuth app targets. Nullable for pre-refactor
+    # rows; every new registration requires it at create time.
+    catalog_api_id: str | None
+    # Vendor family label ("Gmail"). Nullable for pre-refactor rows.
+    display_name: str | None
     flow_kind: OAuthAppRegistrationFlowKind
     client_id: str
     is_active: bool

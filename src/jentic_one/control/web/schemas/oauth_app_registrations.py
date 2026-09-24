@@ -24,6 +24,22 @@ class OAuthAppRegistrationResponse(BaseModel):
     id: str
     name: str
     api_vendor: str
+    catalog_api_id: str | None = Field(
+        default=None,
+        description=(
+            "Catalog API slug this OAuth app targets (e.g. 'googleapis-com/gmail'). "
+            "Feeds credential.catalog_api_id at connect time so the operations "
+            "preview resolves against a real registered API. Nullable on pre-refactor "
+            "rows only — new registrations always carry a value."
+        ),
+    )
+    display_name: str | None = Field(
+        default=None,
+        description=(
+            "Vendor family label ('Gmail'), shown alongside the admin's per-registration "
+            "'name' on the picker card. Nullable on pre-refactor rows only."
+        ),
+    )
     flow_kind: OAuthAppRegistrationFlowKind
     client_id: str
     is_active: bool
@@ -55,6 +71,8 @@ class AuthorizationCodeRegistrationCreateRequest(BaseModel):
                 {
                     "name": "MyOrg GitHub",
                     "api_vendor": "github",
+                    "catalog_api_id": "github.com/api.github.com",
+                    "display_name": "GitHub",
                     "flow_kind": "authorization_code",
                     "client_id": "Iv1.a1b2c3d4",
                     "client_secret": "<paste-client-secret-from-vendor-console>",
@@ -68,6 +86,26 @@ class AuthorizationCodeRegistrationCreateRequest(BaseModel):
 
     name: Annotated[str, Field(min_length=1, max_length=255)]
     api_vendor: Annotated[str, Field(min_length=1, max_length=100)]
+    catalog_api_id: Annotated[
+        str,
+        Field(
+            min_length=1,
+            max_length=255,
+            description=(
+                "Catalog API slug this OAuth app targets (e.g. 'github.com/api.github.com'). "
+                "The credential minted through this registration carries the same slug "
+                "so its operations preview resolves against a real registered API."
+            ),
+        ),
+    ]
+    display_name: Annotated[
+        str,
+        Field(
+            min_length=1,
+            max_length=255,
+            description="Vendor family label ('GitHub'), shown on picker cards.",
+        ),
+    ]
     flow_kind: Literal[OAuthAppRegistrationFlowKind.AUTHORIZATION_CODE]
     client_id: Annotated[str, Field(min_length=1, max_length=255)]
     client_secret: Annotated[str, Field(min_length=1, json_schema_extra=SENSITIVE)]
@@ -85,6 +123,8 @@ class DeviceAuthorizationRegistrationCreateRequest(BaseModel):
                 {
                     "name": "MyOrg GitHub (device flow)",
                     "api_vendor": "github",
+                    "catalog_api_id": "github.com/api.github.com",
+                    "display_name": "GitHub",
                     "flow_kind": "device_authorization",
                     "client_id": "Iv1.a1b2c3d4",
                     "authorization_endpoint": "https://github.com/login/device/code",
@@ -97,6 +137,24 @@ class DeviceAuthorizationRegistrationCreateRequest(BaseModel):
 
     name: Annotated[str, Field(min_length=1, max_length=255)]
     api_vendor: Annotated[str, Field(min_length=1, max_length=100)]
+    catalog_api_id: Annotated[
+        str,
+        Field(
+            min_length=1,
+            max_length=255,
+            description=(
+                "Catalog API slug this OAuth app targets (e.g. 'github.com/api.github.com')."
+            ),
+        ),
+    ]
+    display_name: Annotated[
+        str,
+        Field(
+            min_length=1,
+            max_length=255,
+            description="Vendor family label ('GitHub'), shown on picker cards.",
+        ),
+    ]
     flow_kind: Literal[OAuthAppRegistrationFlowKind.DEVICE_AUTHORIZATION]
     client_id: Annotated[str, Field(min_length=1, max_length=255)]
     authorization_endpoint: Annotated[str, Field(min_length=1, max_length=2048)]
@@ -113,6 +171,7 @@ class OAuthAppRegistrationUpdateRequest(BaseModel):
     """Partial update — fields not present are left untouched."""
 
     name: Annotated[str, Field(min_length=1, max_length=255)] | None = None
+    display_name: Annotated[str, Field(min_length=1, max_length=255)] | None = None
     is_active: bool | None = None
     default_scopes: list[str] | None = None
     authorize_url: Annotated[str, Field(min_length=1, max_length=2048)] | None = None

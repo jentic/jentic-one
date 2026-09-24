@@ -9,6 +9,7 @@ export type OAuthAppRegistrationUpdateRequest = {
     authorization_endpoint?: (string | null);
     authorize_url?: (string | null);
     default_scopes?: (Array<string> | null);
+    display_name?: (string | null);
     is_active?: (boolean | null);
     name?: (string | null);
     token_endpoint?: (string | null);

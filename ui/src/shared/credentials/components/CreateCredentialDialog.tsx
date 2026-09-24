@@ -452,12 +452,28 @@ export function CreateCredentialDialog({
 			setErrors(commonMissing);
 			return;
 		}
+		// The catalog API id + family label ride off the picked API. The
+		// wizard's picker step gates the form: the admin has to pick an API
+		// before ``shareWithOrg`` is even reachable, so ``selectedApi`` is
+		// present with a real ``apiId`` for any registration create.
+		if (!selectedApi?.apiId) {
+			setErrors({
+				name:
+					'Pick a catalog API before sharing this OAuth app. ' +
+					'The registration needs a real API id so users see operations for it.',
+			});
+			return;
+		}
+		const catalogApiId = selectedApi.apiId;
+		const displayName = selectedApi.label;
 
 		try {
 			if (grantType === 'authorization_code') {
 				const body: AuthorizationCodeRegistrationCreateRequest = {
 					name: state.name.trim(),
 					api_vendor: state.apiVendor.trim(),
+					catalog_api_id: catalogApiId,
+					display_name: displayName,
 					flow_kind: OAuthAppRegistrationFlowKind.AUTHORIZATION_CODE,
 					client_id: state.clientId.trim(),
 					client_secret: state.clientSecret,
@@ -470,6 +486,8 @@ export function CreateCredentialDialog({
 				const body: DeviceAuthorizationRegistrationCreateRequest = {
 					name: state.name.trim(),
 					api_vendor: state.apiVendor.trim(),
+					catalog_api_id: catalogApiId,
+					display_name: displayName,
 					flow_kind: OAuthAppRegistrationFlowKind.DEVICE_AUTHORIZATION,
 					client_id: state.clientId.trim(),
 					// The dialog reuses `authorizeUrl` / `tokenUrl` as the device

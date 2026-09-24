@@ -955,11 +955,13 @@ components:
       examples:
       - api_vendor: github
         authorize_url: https://github.com/login/oauth/authorize
+        catalog_api_id: github.com/api.github.com
         client_id: Iv1.a1b2c3d4
         client_secret: <paste-client-secret-from-vendor-console>
         default_scopes:
         - repo
         - read:user
+        display_name: GitHub
         flow_kind: authorization_code
         name: MyOrg GitHub
         token_url: https://github.com/login/oauth/access_token
@@ -973,6 +975,12 @@ components:
           maxLength: 2048
           minLength: 1
           title: Authorize Url
+          type: string
+        catalog_api_id:
+          description: Catalog API slug this OAuth app targets (e.g. 'github.com/api.github.com'). The credential minted through this registration carries the same slug so its operations preview resolves against a real registered API.
+          maxLength: 255
+          minLength: 1
+          title: Catalog Api Id
           type: string
         client_id:
           maxLength: 255
@@ -991,6 +999,12 @@ components:
             type: array
           - type: 'null'
           title: Default Scopes
+        display_name:
+          description: Vendor family label ('GitHub'), shown on picker cards.
+          maxLength: 255
+          minLength: 1
+          title: Display Name
+          type: string
         flow_kind:
           const: authorization_code
           title: Flow Kind
@@ -1008,6 +1022,8 @@ components:
       required:
       - name
       - api_vendor
+      - catalog_api_id
+      - display_name
       - flow_kind
       - client_id
       - client_secret
@@ -2017,9 +2033,11 @@ components:
       examples:
       - api_vendor: github
         authorization_endpoint: https://github.com/login/device/code
+        catalog_api_id: github.com/api.github.com
         client_id: Iv1.a1b2c3d4
         default_scopes:
         - repo
+        display_name: GitHub
         flow_kind: device_authorization
         name: MyOrg GitHub (device flow)
         token_endpoint: https://github.com/login/oauth/access_token
@@ -2034,6 +2052,12 @@ components:
           minLength: 1
           title: Authorization Endpoint
           type: string
+        catalog_api_id:
+          description: Catalog API slug this OAuth app targets (e.g. 'github.com/api.github.com').
+          maxLength: 255
+          minLength: 1
+          title: Catalog Api Id
+          type: string
         client_id:
           maxLength: 255
           minLength: 1
@@ -2046,6 +2070,12 @@ components:
             type: array
           - type: 'null'
           title: Default Scopes
+        display_name:
+          description: Vendor family label ('GitHub'), shown on picker cards.
+          maxLength: 255
+          minLength: 1
+          title: Display Name
+          type: string
         flow_kind:
           const: device_authorization
           title: Flow Kind
@@ -2063,6 +2093,8 @@ components:
       required:
       - name
       - api_vendor
+      - catalog_api_id
+      - display_name
       - flow_kind
       - client_id
       - authorization_endpoint
@@ -3324,6 +3356,12 @@ components:
           - type: string
           - type: 'null'
           title: Authorize Url
+        catalog_api_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Catalog API slug this OAuth app targets (e.g. 'googleapis-com/gmail'). Feeds credential.catalog_api_id at connect time so the operations preview resolves against a real registered API. Nullable on pre-refactor rows only — new registrations always carry a value.
+          title: Catalog Api Id
         client_id:
           title: Client Id
           type: string
@@ -3346,6 +3384,12 @@ components:
         dependent_credential_count:
           title: Dependent Credential Count
           type: integer
+        display_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Vendor family label ('Gmail'), shown alongside the admin's per-registration 'name' on the picker card. Nullable on pre-refactor rows only.
+          title: Display Name
         flow_kind:
           $ref: '#/components/schemas/OAuthAppRegistrationFlowKind'
         has_client_secret:
@@ -3431,6 +3475,13 @@ components:
             type: array
           - type: 'null'
           title: Default Scopes
+        display_name:
+          anyOf:
+          - maxLength: 255
+            minLength: 1
+            type: string
+          - type: 'null'
+          title: Display Name
         is_active:
           anyOf:
           - type: boolean

@@ -172,6 +172,8 @@ async def _seed_active_registration(ctx: Context) -> OAuthAppRegistration:
             session,
             name="Org GitHub App",
             api_vendor=_VENDOR_KEY,
+            catalog_api_id=_VENDOR_API_ID,
+            display_name="Shared Dev",
             client_id="shared-registration-client",
             encrypted_client_secret=ctx.encryption.encrypt("shared-registration-secret"),
             authorize_url="https://idp.example.com/authorize",

@@ -41,6 +41,8 @@ class OAuthAppRegistrationService:
         *,
         name: str,
         api_vendor: str,
+        catalog_api_id: str,
+        display_name: str,
         client_id: str,
         client_secret: str,
         authorize_url: str,
@@ -58,6 +60,8 @@ class OAuthAppRegistrationService:
                 encrypted_client_secret=encrypted,
                 authorize_url=authorize_url,
                 token_url=token_url,
+                catalog_api_id=catalog_api_id,
+                display_name=display_name,
                 default_scopes=default_scopes,
                 created_by=identity.sub,
             )
@@ -73,6 +77,8 @@ class OAuthAppRegistrationService:
             after={
                 "name": name,
                 "api_vendor": api_vendor,
+                "catalog_api_id": catalog_api_id,
+                "display_name": display_name,
                 "flow_kind": FLOW_KIND_AUTH_CODE,
                 "client_id": client_id,
             },
@@ -85,6 +91,8 @@ class OAuthAppRegistrationService:
         *,
         name: str,
         api_vendor: str,
+        catalog_api_id: str,
+        display_name: str,
         client_id: str,
         authorization_endpoint: str,
         token_endpoint: str,
@@ -99,6 +107,8 @@ class OAuthAppRegistrationService:
                 client_id=client_id,
                 authorization_endpoint=authorization_endpoint,
                 token_endpoint=token_endpoint,
+                catalog_api_id=catalog_api_id,
+                display_name=display_name,
                 default_scopes=default_scopes,
                 created_by=identity.sub,
             )
@@ -114,6 +124,8 @@ class OAuthAppRegistrationService:
             after={
                 "name": name,
                 "api_vendor": api_vendor,
+                "catalog_api_id": catalog_api_id,
+                "display_name": display_name,
                 "flow_kind": FLOW_KIND_DEVICE_AUTHORIZATION,
                 "client_id": client_id,
             },
@@ -156,6 +168,7 @@ class OAuthAppRegistrationService:
         registration_id: str,
         *,
         name: str | None = None,
+        display_name: str | None = None,
         default_scopes: list[str] | None = None,
         authorize_url: str | None = None,
         token_url: str | None = None,
@@ -171,9 +184,13 @@ class OAuthAppRegistrationService:
 
             before = _snapshot(registration)
 
-            if name is not None or is_active is not None:
+            if name is not None or display_name is not None or is_active is not None:
                 await OAuthAppRegistrationRepository.update_base(
-                    session, registration_id, name=name, is_active=is_active
+                    session,
+                    registration_id,
+                    name=name,
+                    display_name=display_name,
+                    is_active=is_active,
                 )
 
             if registration.flow_kind == FLOW_KIND_AUTH_CODE:
@@ -317,6 +334,8 @@ def _project(
         id=registration.id,
         name=registration.name,
         api_vendor=registration.api_vendor,
+        catalog_api_id=registration.catalog_api_id,
+        display_name=registration.display_name,
         flow_kind=OAuthAppRegistrationFlowKind(registration.flow_kind),
         client_id=registration.client_id,
         is_active=registration.is_active,
@@ -350,6 +369,8 @@ def _snapshot(registration: OAuthAppRegistration) -> dict[str, object]:
     snap: dict[str, object] = {
         "name": registration.name,
         "api_vendor": registration.api_vendor,
+        "catalog_api_id": registration.catalog_api_id,
+        "display_name": registration.display_name,
         "flow_kind": registration.flow_kind,
         "client_id": registration.client_id,
         "is_active": registration.is_active,
