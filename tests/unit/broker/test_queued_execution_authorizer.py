@@ -44,7 +44,13 @@ class _DenyingCredentialDeriver:
         self.calls = 0
 
     async def derive_credentials(
-        self, *, agent_id: str, vendor: str, name: str, version: str
+        self,
+        *,
+        agent_id: str,
+        vendor: str,
+        name: str,
+        version: str,
+        owner_user_id: str | None = None,
     ) -> CredentialDerivation:
         self.calls += 1
         raise ActionDeniedError(

@@ -30,7 +30,7 @@ from jentic_one.broker.core.exceptions import (
 from jentic_one.broker.services.credentials.orchestrator import CredentialService
 from jentic_one.broker.services.credentials.resolver import ResolvedCredential
 from jentic_one.shared.access_guidance import connect_vendor_key
-from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.auth.identity import Identity, owner_user_id_from_identity
 from jentic_one.shared.broker.protocols import (
     AgentRuleEvaluatorProtocol,
     CredentialDerivation,
@@ -196,6 +196,7 @@ async def derive_credential_bindings(
         vendor=api.vendor,
         name=api.name,
         version=api.version,
+        owner_user_id=owner_user_id_from_identity(identity),
     )
     if not derivation.credentials:
         denial = _empty_credential_derivation_denial(
