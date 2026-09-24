@@ -41,9 +41,13 @@ async def list_vendors(
     return VendorListResponse(
         data=[
             VendorSummaryResponse(
+                entry_id=e.entry_id,
+                registration_id=e.registration_id,
                 key=e.key,
                 vendor=(config_entries[e.key].vendor if e.key in config_entries else e.key),
                 display_name=e.display_name,
+                name=e.name,
+                source=e.source,
                 flow_kinds=[e.flow_kind],
             )
             for e in entries

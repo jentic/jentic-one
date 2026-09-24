@@ -25,6 +25,7 @@ from jentic_one.control.services.integrations.errors import (
     AgentNotFoundError,
     ConfirmationForbiddenError,
     ConnectSessionServiceError,
+    InvalidOAuthAppRegistrationError,
     InvalidPollTokenError,
     InvalidStateTransitionError,
     NoOpForFlowError,
@@ -82,6 +83,7 @@ _CONNECT_SESSION_ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     AgentNotFoundError: (400, "connect_session_agent_not_found"),
     ScopeValidationError: (400, "connect_session_unknown_scopes"),
     NoOpForFlowError: (400, "connect_session_unsupported_flow"),
+    InvalidOAuthAppRegistrationError: (400, "invalid_oauth_app_registration"),
     ConnectSessionServiceError: (500, "connect_session_error"),
 }
 

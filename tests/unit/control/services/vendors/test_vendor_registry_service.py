@@ -78,6 +78,7 @@ class _FakeRegistration:
     name: str
     flow_kind: str
     client_id: str
+    id: str = "oar_test"
     authorization_code_details: _FakeDetails | None = None
     device_authorization_details: _FakeDetails | None = None
 
@@ -205,10 +206,16 @@ async def test_get_entry_prefers_db_over_like_keyed_config() -> None:
     entry = await svc.get_entry("github")
 
     assert entry.source == "db"
-    assert entry.display_name == "MyOrg GitHub App"
+    # ``display_name`` is the vendor's family label (from the matching
+    # config entry when one exists); ``name`` is the admin's registration
+    # name — used as the picker card's primary label.
+    assert entry.display_name == "GitHub (config)"
+    assert entry.name == "MyOrg GitHub App"
     assert entry.client_id == "db-cid"
     assert entry.flow_kind == "device_authorization"
     assert entry.default_scopes == ["repo"]
+    assert entry.entry_id == entry.registration_id
+    assert entry.registration_id is not None
 
 
 @pytest.mark.asyncio()
@@ -219,8 +226,11 @@ async def test_get_entry_falls_back_to_config_when_no_db_row() -> None:
 
     assert entry.source == "config"
     assert entry.display_name == "GitHub (config)"
+    assert entry.name == "GitHub (config)"
     assert entry.client_id == "config-cid"
     assert entry.flow_kind == "device_authorization"
+    assert entry.entry_id == "github"
+    assert entry.registration_id is None
 
 
 @pytest.mark.asyncio()
@@ -284,12 +294,15 @@ async def test_list_entries_unions_db_and_config_with_db_winning() -> None:
 
     entries = await svc.list_entries()
 
-    keys = [(e.key, e.source, e.display_name) for e in entries]
-    assert ("github", "db", "GitHub (DB)") in keys
+    # DB row's family display_name is the config vendor's, its ``name`` is
+    # the admin registration name.
+    github = next(e for e in entries if e.key == "github" and e.source == "db")
+    assert github.name == "GitHub (DB)"
+    assert github.display_name == "GitHub (config)"
     # Slack has no DB row — the config entry surfaces.
-    assert ("slack", "config", "Slack (config)") in keys
-    # No duplicate github row.
-    assert sum(1 for e in entries if e.key == "github") == 1
+    assert any(e.key == "slack" and e.source == "config" for e in entries)
+    # DB replaces config: no config-sourced github entry.
+    assert not any(e.key == "github" and e.source == "config" for e in entries)
 
 
 @pytest.mark.asyncio()
@@ -339,6 +352,44 @@ async def test_list_entries_stable_display_name_ordering() -> None:
 async def test_list_entries_empty_when_neither_source_has_vendors() -> None:
     svc = _service()
     assert await svc.list_entries() == []
+
+
+@pytest.mark.asyncio()
+async def test_list_entries_yields_one_entry_per_registration_for_same_vendor() -> None:
+    """Two admin-registered OAuth apps for the same ``api_vendor`` surface
+    as two picker rows — earlier dedupe-by-vendor was the bug that made the
+    second registration invisible to users.
+    """
+    prod = _FakeRegistration(
+        api_vendor="googleapis-com",
+        id="oar_prod",
+        name="MyOrg Prod Gmail",
+        flow_kind="authorization_code",
+        client_id="prod-cid",
+        authorization_code_details=_FakeDetails(default_scopes=["mail.readonly"]),
+    )
+    sandbox = _FakeRegistration(
+        api_vendor="googleapis-com",
+        id="oar_sandbox",
+        name="MyOrg Sandbox Gmail",
+        flow_kind="authorization_code",
+        client_id="sandbox-cid",
+        authorization_code_details=_FakeDetails(default_scopes=["mail.readonly"]),
+    )
+    svc = _service(registrations=[prod, sandbox])
+
+    entries = await svc.list_entries()
+
+    # Two rows, both keyed by the same vendor slug but with distinct entry
+    # ids and admin-picked names.
+    gmails = [e for e in entries if e.key == "googleapis-com"]
+    assert len(gmails) == 2
+    ids = {e.entry_id for e in gmails}
+    assert ids == {"oar_prod", "oar_sandbox"}
+    names = {e.name for e in gmails}
+    assert names == {"MyOrg Prod Gmail", "MyOrg Sandbox Gmail"}
+    # Both entries carry the registration id, both are source=db.
+    assert all(e.registration_id is not None and e.source == "db" for e in gmails)
 
 
 # ---------------------------------------------------------------------------
