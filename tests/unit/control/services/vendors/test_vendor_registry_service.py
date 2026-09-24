@@ -23,6 +23,9 @@ from dataclasses import dataclass
 
 import pytest
 
+from jentic_one.control.services.integrations.errors import (
+    InvalidOAuthAppRegistrationError,
+)
 from jentic_one.control.services.vendors.errors import UnknownVendorError
 from jentic_one.control.services.vendors.schemas import VendorEntry
 from jentic_one.control.services.vendors.service import (
@@ -81,6 +84,7 @@ class _FakeRegistration:
     id: str = "oar_test"
     authorization_code_details: _FakeDetails | None = None
     device_authorization_details: _FakeDetails | None = None
+    is_active: bool = True
 
 
 class _FakeRegistrationSource:
@@ -107,6 +111,12 @@ class _FakeRegistrationSource:
 
     async def list_active(self) -> list[_FakeRegistration]:
         return list(self._rows)
+
+    async def get_by_id(self, registration_id: str) -> _FakeRegistration | None:
+        for row in self._rows:
+            if row.id == registration_id:
+                return row
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -517,3 +527,128 @@ async def test_projected_entry_is_a_pydantic_model() -> None:
     svc = _service(config_entries={"github": _github_config_entry()})
     entry = await svc.get_entry("github")
     assert isinstance(entry, VendorEntry)
+
+
+# ---------------------------------------------------------------------------
+# resolve_by_pin: the single seam every vendor read routes through
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_resolve_by_pin_returns_pinned_registration_over_preferred() -> None:
+    """Two Gmail registrations with different default_scopes — pinning the
+    non-preferred one returns *its* scopes, not the preferred-active one's.
+
+    Uses device-flow registrations so the synthesizer doesn't hit encryption
+    (auth-code decrypts ``encrypted_client_secret`` through ``ctx.encryption``,
+    which isn't configured in these pure-unit tests). The scope-per-pin
+    invariant is flow-kind-agnostic.
+    """
+    prod = _FakeRegistration(
+        api_vendor="googleapis-com",
+        id="oar_prod",
+        name="MyOrg Prod Gmail",
+        flow_kind="device_authorization",
+        client_id="prod-cid",
+        device_authorization_details=_FakeDetails(default_scopes=["mail.readonly"]),
+    )
+    sandbox = _FakeRegistration(
+        api_vendor="googleapis-com",
+        id="oar_sandbox",
+        name="MyOrg Sandbox Gmail",
+        flow_kind="device_authorization",
+        client_id="sandbox-cid",
+        device_authorization_details=_FakeDetails(default_scopes=["mail.send", "mail.compose"]),
+    )
+    svc = _service(registrations=[prod, sandbox])
+
+    # Pinning sandbox returns sandbox's scopes + client_id, regardless of
+    # which one ``get_preferred_active`` would have returned.
+    entry = await svc.resolve_by_pin("googleapis-com", registration_id="oar_sandbox")
+    scope_names = {s.name for s in entry.scopes}
+    assert scope_names == {"mail.send", "mail.compose"}
+    assert entry.flows[0].client_id == "sandbox-cid"
+
+
+@pytest.mark.asyncio()
+async def test_resolve_by_pin_raises_on_missing_registration() -> None:
+    svc = _service(config_entries={"github": _github_config_entry()})
+    with pytest.raises(InvalidOAuthAppRegistrationError) as excinfo:
+        await svc.resolve_by_pin("github", registration_id="oar_nope")
+    assert "not found" in str(excinfo.value)
+
+
+@pytest.mark.asyncio()
+async def test_resolve_by_pin_raises_on_vendor_mismatch() -> None:
+    """A pin whose ``api_vendor`` doesn't match the requested vendor slug is
+    refused — silent fall-through would mint credentials against the wrong
+    vendor's OAuth app.
+    """
+    gmail = _FakeRegistration(
+        api_vendor="googleapis-com",
+        id="oar_gmail",
+        name="MyOrg Gmail",
+        flow_kind="device_authorization",
+        client_id="gmail-cid",
+        device_authorization_details=_FakeDetails(default_scopes=["mail.readonly"]),
+    )
+    svc = _service(registrations=[gmail])
+    with pytest.raises(InvalidOAuthAppRegistrationError) as excinfo:
+        # Ask for GitHub but hand over the Gmail pin.
+        await svc.resolve_by_pin("github", registration_id="oar_gmail")
+    assert "api_vendor mismatch" in str(excinfo.value)
+
+
+@pytest.mark.asyncio()
+async def test_resolve_by_pin_raises_on_inactive_registration() -> None:
+    inactive = _FakeRegistration(
+        api_vendor="googleapis-com",
+        id="oar_inactive",
+        name="MyOrg Gmail (retired)",
+        flow_kind="device_authorization",
+        client_id="cid",
+        device_authorization_details=_FakeDetails(default_scopes=["mail.readonly"]),
+        is_active=False,
+    )
+    svc = _service(registrations=[inactive])
+    with pytest.raises(InvalidOAuthAppRegistrationError) as excinfo:
+        await svc.resolve_by_pin("googleapis-com", registration_id="oar_inactive")
+    assert "inactive" in str(excinfo.value)
+
+
+@pytest.mark.asyncio()
+async def test_validate_scopes_honours_pin_when_registrations_differ() -> None:
+    """The user picked sandbox (scopes: send, compose); a request confirming
+    the *preferred* registration's scope (readonly) is rejected as unknown."""
+    prod = _FakeRegistration(
+        api_vendor="googleapis-com",
+        id="oar_prod",
+        name="MyOrg Prod Gmail",
+        flow_kind="device_authorization",
+        client_id="prod-cid",
+        device_authorization_details=_FakeDetails(default_scopes=["mail.readonly"]),
+    )
+    sandbox = _FakeRegistration(
+        api_vendor="googleapis-com",
+        id="oar_sandbox",
+        name="MyOrg Sandbox Gmail",
+        flow_kind="device_authorization",
+        client_id="sandbox-cid",
+        device_authorization_details=_FakeDetails(default_scopes=["mail.send", "mail.compose"]),
+    )
+    svc = _service(registrations=[prod, sandbox])
+
+    unknown = await svc.validate_scopes(
+        "googleapis-com",
+        ["mail.readonly"],
+        registration_id="oar_sandbox",
+    )
+    assert unknown == ["mail.readonly"]
+
+    # And the sandbox-native scope validates cleanly under the same pin.
+    unknown = await svc.validate_scopes(
+        "googleapis-com",
+        ["mail.send"],
+        registration_id="oar_sandbox",
+    )
+    assert unknown == []

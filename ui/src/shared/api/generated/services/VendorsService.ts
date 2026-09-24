@@ -45,14 +45,22 @@ export class VendorsService {
      */
     public static getAuthCapabilities({
         vendorKey,
+        oauthAppRegistrationId,
     }: {
         vendorKey: string,
+        /**
+         * Pin to a specific admin-registered OAuth app when the vendor has more than one. Returns that registration's scopes + client_id, so the picker's tile and the connect payload stay aligned.
+         */
+        oauthAppRegistrationId?: (string | null),
     }): CancelablePromise<any> {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/vendors/{vendor_key}/auth-capabilities',
             path: {
                 'vendor_key': vendorKey,
+            },
+            query: {
+                'oauth_app_registration_id': oauthAppRegistrationId,
             },
             errors: {
                 400: `Bad Request`,

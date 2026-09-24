@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 
 from jentic_one.control.services.vendors.service import VendorRegistryService
 from jentic_one.control.web.deps import get_vendor_registry_service
@@ -62,6 +62,15 @@ async def list_vendors(
 )
 async def get_auth_capabilities(
     vendor_key: str,
+    oauth_app_registration_id: str | None = Query(
+        default=None,
+        max_length=30,
+        description=(
+            "Pin to a specific admin-registered OAuth app when the vendor has "
+            "more than one. Returns that registration's scopes + client_id, so "
+            "the picker's tile and the connect payload stay aligned."
+        ),
+    ),
     identity: Identity = get_current_identity(required_permissions=["capabilities:read"]),
     svc: VendorRegistryService = Depends(get_vendor_registry_service),
 ) -> VendorAuthCapabilitiesResponse:
@@ -71,7 +80,7 @@ async def get_auth_capabilities(
     at response build time). ``UnknownVendorError`` maps to a 404 problem
     detail via the handler registered in ``control/web/app.py``.
     """
-    entry = await svc.get(vendor_key)
+    entry = await svc.resolve_by_pin(vendor_key, registration_id=oauth_app_registration_id)
     return VendorAuthCapabilitiesResponse(
         vendor=entry.vendor,
         display_name=entry.display_name,
