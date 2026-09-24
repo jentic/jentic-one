@@ -19,14 +19,15 @@ import {
 
 interface SharedOAuthAppsSectionProps {
 	/**
-	 * Where the empty state should point admins to register a new shared
-	 * app. Registration happens from the credentials Add dialog with the
-	 * "Available to everyone in the organization" toggle flipped.
+	 * Called from the empty-state CTA to open the enclosing page's
+	 * credentials Add dialog. Registration happens through that dialog with
+	 * the "Available to everyone in the organization" toggle flipped —
+	 * there's no dedicated registration surface.
 	 */
-	credentialsHref: string;
+	onAddCredential: () => void;
 }
 
-export function SharedOAuthAppsSection({ credentialsHref }: SharedOAuthAppsSectionProps) {
+export function SharedOAuthAppsSection({ onAddCredential }: SharedOAuthAppsSectionProps) {
 	const listQuery = useOAuthAppRegistrations({ includeInactive: true });
 	const toggleActive = useUpdateOAuthAppRegistration();
 
@@ -87,7 +88,7 @@ export function SharedOAuthAppsSection({ credentialsHref }: SharedOAuthAppsSecti
 				registrations={listQuery.data}
 				isLoading={listQuery.isLoading}
 				error={listQuery.error}
-				credentialsHref={credentialsHref}
+				onAddCredential={onAddCredential}
 				pendingId={pendingId}
 				onAction={(registration, action): void => {
 					switch (action) {

@@ -8,7 +8,6 @@
  * click — the shortest path to "flip active without opening the edit
  * dialog" — mirroring how other roster surfaces expose a soft-disable.
  */
-import { Link } from 'react-router';
 import { Edit2, KeyRound, RefreshCw, Trash2 } from 'lucide-react';
 import {
 	Badge,
@@ -35,12 +34,11 @@ interface OAuthAppRegistrationsTableProps {
 	isLoading: boolean;
 	error: unknown;
 	/**
-	 * Where the caller should send an admin who wants to register a new app.
-	 * Registration happens from the normal credentials page (with the
-	 * "Available to everyone in the org" toggle flipped), not from this
-	 * management view.
+	 * Opens the credentials Add dialog on the enclosing page. Registration
+	 * happens from that dialog (with the "Available to everyone in the org"
+	 * toggle flipped), not from this management section.
 	 */
-	credentialsHref: string;
+	onAddCredential: () => void;
 	onAction: (registration: OAuthAppRegistration, action: RegistrationRowAction) => void;
 	pendingId?: string | null;
 }
@@ -58,7 +56,7 @@ export function OAuthAppRegistrationsTable({
 	registrations,
 	isLoading,
 	error,
-	credentialsHref,
+	onAddCredential,
 	onAction,
 	pendingId,
 }: OAuthAppRegistrationsTableProps) {
@@ -75,12 +73,8 @@ export function OAuthAppRegistrationsTable({
 			<EmptyState
 				icon={<KeyRound className="h-6 w-6" />}
 				title="No OAuth app registrations"
-				description="Register a shared OAuth application from the credentials page — flip “Available to everyone in the organization” on any OAuth2 create."
-				action={
-					<Link to={credentialsHref}>
-						<Button>Go to credentials</Button>
-					</Link>
-				}
+				description="Register a shared OAuth application from the credentials Add dialog — flip “Available to everyone in the organization” on any OAuth2 create."
+				action={<Button onClick={onAddCredential}>Add credential</Button>}
 			/>
 		);
 	}
