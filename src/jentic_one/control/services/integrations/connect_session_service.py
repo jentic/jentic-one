@@ -14,11 +14,13 @@ from __future__ import annotations
 import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import structlog
 
 from jentic_one.control.core.schema.connect_sessions import ConnectSession
 from jentic_one.control.core.schema.credentials import Credential
+from jentic_one.control.core.schema.oauth_app_registrations import OAuthAppRegistration
 from jentic_one.control.repos import (
     AgentPermissionRuleRepository,
     CredentialRepository,
@@ -26,6 +28,9 @@ from jentic_one.control.repos import (
 )
 from jentic_one.control.repos.connect_session_repo import ConnectSessionRepository
 from jentic_one.control.repos.effects_repo import EffectsRepository
+from jentic_one.control.repos.oauth_app_registration_repo import (
+    OAuthAppRegistrationRepository,
+)
 from jentic_one.control.scoping.filters import build_access_filters
 from jentic_one.control.services.credentials.state import consume_callback_state
 from jentic_one.control.services.integrations import identity_echo
@@ -46,6 +51,7 @@ from jentic_one.control.services.integrations.flow_handlers import (
     handler_for,
 )
 from jentic_one.control.services.integrations.flow_handlers.base import SuccessTokens
+from jentic_one.control.services.integrations.flow_handlers.session_app import SessionApp
 from jentic_one.control.services.vendors.service import (
     ResolvedScope,
     UnknownVendorError,
@@ -210,6 +216,110 @@ _SESSION_TTL_SECONDS = 30 * 60
 # ---------------------------------------------------------------------------
 
 
+def _session_app_from_registration(ctx: Context, registration: OAuthAppRegistration) -> SessionApp:
+    """Project an admin-registered OAuth app row into the handler seam.
+
+    ``client_secret_provider`` is a lazy closure: device flow (a public
+    client) never calls it, and auth-code only invokes it once at
+    ``complete_from_callback`` time. Endpoints come off the flow-specific
+    extension row, which is eager-loaded via ``selectin`` on the ORM model,
+    so no extra DB round-trip is issued here.
+    """
+    if registration.flow_kind == "authorization_code":
+        ac = registration.authorization_code_details
+        assert ac is not None, (
+            "authorization_code registration missing its details extension "
+            "(schema invariant broken)"
+        )
+        encrypted_secret = ac.encrypted_client_secret
+
+        def _decrypt() -> str:
+            return ctx.encryption.decrypt(encrypted_secret)
+
+        return SessionApp(
+            flow_kind="authorization_code",
+            client_id=registration.client_id,
+            client_secret_provider=_decrypt,
+            default_scopes=list(ac.default_scopes or []),
+            registration_id=registration.id,
+            authorize_url=ac.authorize_url,
+            token_url=ac.token_url,
+        )
+    if registration.flow_kind == "device_authorization":
+        dev = registration.device_authorization_details
+        assert dev is not None, (
+            "device_authorization registration missing its details extension "
+            "(schema invariant broken)"
+        )
+        return SessionApp(
+            flow_kind="device_authorization",
+            client_id=registration.client_id,
+            client_secret_provider=None,
+            default_scopes=list(dev.default_scopes or []),
+            registration_id=registration.id,
+            authorization_endpoint=dev.authorization_endpoint,
+            token_endpoint=dev.token_endpoint,
+        )
+    raise NoOpForFlowError(f"unsupported registration flow_kind: {registration.flow_kind!r}")
+
+
+def _session_app_from_flow(flow: Any) -> SessionApp:
+    """Project a config-shipped ``VendorFlowConfig`` into the handler seam.
+
+    ``registration_id`` is None on this path — handlers write the legacy
+    embedded aux row instead of setting the credential's registration FK.
+    """
+    if flow.kind == "authorization_code":
+        secret_value: str = flow.client_secret.get_secret_value()
+
+        def _config_secret() -> str:
+            return secret_value
+
+        return SessionApp(
+            flow_kind="authorization_code",
+            client_id=flow.client_id,
+            client_secret_provider=_config_secret,
+            default_scopes=[],
+            registration_id=None,
+            authorize_url=flow.authorize_url,
+            token_url=flow.token_url,
+        )
+    if flow.kind == "device_authorization":
+        return SessionApp(
+            flow_kind="device_authorization",
+            client_id=flow.client_id,
+            client_secret_provider=None,
+            default_scopes=[],
+            registration_id=None,
+            authorization_endpoint=flow.authorization_endpoint,
+            token_endpoint=flow.token_endpoint,
+        )
+    raise NoOpForFlowError(f"unsupported config flow kind: {flow.kind!r}")
+
+
+def _owner_user_id_from_initiator(
+    initiator_actor_id: str, parent_actor_id: str | None
+) -> str | None:
+    """Derive the ``credentials.owner_user_id`` stamp for one connect session.
+
+    Mirrors ``owner_user_id_from_identity`` at the service surface: a user
+    initiator owns their own credentials; an agent inherits ownership from
+    its ``usr_``-prefixed parent (so on-behalf-of executions can resolve the
+    owner's personal credentials). Anything else — an agent without a user
+    parent — leaves the stamp NULL (org-shared; the broker's owner filter
+    fails closed for callers without ``owner:credentials:read``, so no leak).
+    """
+    if initiator_actor_id.startswith("usr_"):
+        return initiator_actor_id
+    if (
+        initiator_actor_id.startswith("agnt_")
+        and parent_actor_id
+        and parent_actor_id.startswith("usr_")
+    ):
+        return parent_actor_id
+    return None
+
+
 def _scope_view(s: ResolvedScope) -> ScopeView:
     return ScopeView(
         name=s.name,
@@ -299,6 +409,11 @@ class ConnectSessionService:
         # review page so the human owner sees exactly what the agent asked
         # for before committing anything to ``agent_permission_rules``.
         requested_permission_rules: list[dict[str, object]] | None = None,
+        # Parent user id (for agent initiators): threaded through so the
+        # owner-user stamp on the resulting credential covers the "agent
+        # acting on behalf of a user" case. ``None`` for user-initiated
+        # sessions — the initiator itself is the owner.
+        initiator_parent_actor_id: str | None = None,
     ) -> CreatedSession:
         """Create a pending session + upfront credential row.
 
@@ -309,14 +424,20 @@ class ConnectSessionService:
         connecting a credential without granting any agent access to it,
         and can bind an agent later through the credentials API.
         """
-        entry = self._vendors.get(vendor_key)
-        flow = self._vendors.resolve_flow(vendor_key, preferred_flow)
+        entry = await self._vendors.get(vendor_key)
+        flow = await self._vendors.resolve_flow(vendor_key, preferred_flow)
 
         try:
             handler_cls = handler_for(flow.kind)
         except KeyError as exc:
             raise NoOpForFlowError(flow.kind) from exc
         handler = handler_cls(self._ctx)
+
+        # DB-first / config-fallback: prefer an admin-registered OAuth app
+        # for this vendor+flow when one exists (any user can SSO through it),
+        # else fall back to the config-shipped ``VendorFlowConfig``.
+        session_app = await self._resolve_session_app(vendor_key, flow)
+        owner_user_id = _owner_user_id_from_initiator(initiator_actor_id, initiator_parent_actor_id)
 
         poll_token = secrets.token_urlsafe(32)
 
@@ -356,9 +477,10 @@ class ConnectSessionService:
             await handler.prepare(
                 session,
                 credential_id=credential.id,
-                flow=flow,
+                app=session_app,
                 requested_scopes=requested_scopes or [],
                 created_by=initiator_actor_id,
+                owner_user_id=owner_user_id,
             )
             row = await ConnectSessionRepository.create(
                 session,
@@ -424,6 +546,29 @@ class ConnectSessionService:
             resolved_flow=flow.kind,
         )
 
+    async def _resolve_session_app(
+        self,
+        vendor_key: str,
+        flow: Any,
+    ) -> SessionApp:
+        """Resolve the OAuth-app config for this session, DB-first / config-fallback.
+
+        An admin-registered ``oauth_app_registrations`` row for this vendor+flow
+        wins over the config-shipped ``VendorFlowConfig``. The shared
+        registration is what enables any-user-on-the-instance SSO: no
+        per-tenant OAuth-app plumbing, one client_id + secret managed by
+        admins. Falls back to the operator-config flow when no active DB
+        registration exists (legacy embedded path stays wired).
+        """
+        registration: OAuthAppRegistration | None
+        async with self._ctx.control_db.session() as session:
+            registration = await OAuthAppRegistrationRepository.get_preferred_for_vendor(
+                session, api_vendor=vendor_key, flow_kind=flow.kind
+            )
+        if registration is not None and registration.is_active:
+            return _session_app_from_registration(self._ctx, registration)
+        return _session_app_from_flow(flow)
+
     def _approval_url_for(self, session_id: str, poll_token: str) -> str:
         """Build the human-facing approval URL for an agent-initiated session.
 
@@ -465,8 +610,8 @@ class ConnectSessionService:
             # catalog import populates it asynchronously.
             credential = await CredentialRepository.get_by_id(session, row.credential_id)
 
-        entry = self._vendors.get(row.vendor)
-        resolved = self._vendors.merge_scopes(row.vendor, row.requested_scopes or [])
+        entry = await self._vendors.get(row.vendor)
+        resolved = await self._vendors.merge_scopes(row.vendor, row.requested_scopes or [])
         # The credential row's ``api_version`` is set at create-time to
         # ``None`` — the imported OpenAPI decides its own version once the
         # catalog import completes. Look it up live from the registry via
@@ -532,7 +677,7 @@ class ConnectSessionService:
             if has_more:
                 rows = rows[:limit]
 
-            data = [self._to_summary(r) for r in rows]
+            data = [await self._to_summary(r) for r in rows]
             next_cursor = None
             if has_more and rows:
                 last = rows[-1]
@@ -540,12 +685,12 @@ class ConnectSessionService:
 
         return SessionPage(data=data, has_more=has_more, next_cursor=next_cursor)
 
-    def _to_summary(self, row: ConnectSession) -> SessionSummary:
+    async def _to_summary(self, row: ConnectSession) -> SessionSummary:
         return SessionSummary(
             session_id=row.id,
             state=row.state,
             vendor_key=row.vendor,
-            vendor_display_name=self._vendor_display_name(row.vendor),
+            vendor_display_name=await self._vendor_display_name(row.vendor),
             agent_id=row.agent_id,
             requested_by_actor_id=row.initiator_actor_id,
             reason=row.reason,
@@ -554,15 +699,16 @@ class ConnectSessionService:
             created_at=row.created_at,
         )
 
-    def _vendor_display_name(self, vendor_key: str) -> str:
+    async def _vendor_display_name(self, vendor_key: str) -> str:
         """Resolve a vendor key to its display name, tolerating removed vendors.
 
-        The vendor registry is config-seeded — an operator can drop an entry
-        after sessions referencing it were persisted, and the list must not
-        500 on such historical rows. Fall back to the raw key.
+        The vendor registry is DB-first + config-fallback — either tier may
+        drop an entry after sessions referencing it were persisted, and the
+        list must not 500 on such historical rows. Fall back to the raw key.
         """
         try:
-            return self._vendors.get(vendor_key).display_name
+            entry = await self._vendors.get(vendor_key)
+            return entry.display_name
         except UnknownVendorError:
             return vendor_key
 
@@ -604,14 +750,19 @@ class ConnectSessionService:
         # is the authoritative guard against a concurrent confirm.
         _require_state(row, expected="created", action="confirm")
 
-        flow = self._vendors.resolve_flow(row.vendor, row.resolved_flow)
+        flow = await self._vendors.resolve_flow(row.vendor, row.resolved_flow)
         try:
             handler_cls = handler_for(flow.kind)
         except KeyError as exc:
             raise NoOpForFlowError(flow.kind) from exc
         handler = handler_cls(self._ctx)
 
-        unknown = self._vendors.validate_scopes(row.vendor, confirmed_scopes)
+        # Re-resolve the SessionApp at confirm time so the vendor conversation
+        # picks up whatever registration is authoritative *now*: an admin may
+        # have registered a shared app between :connect and :confirm.
+        session_app = await self._resolve_session_app(row.vendor, flow)
+
+        unknown = await self._vendors.validate_scopes(row.vendor, confirmed_scopes)
         if unknown:
             raise ScopeValidationError(unknown)
 
@@ -656,7 +807,7 @@ class ConnectSessionService:
         # signed state token for auth-code). We only own the flow-agnostic
         # state machine + permission-rule capture below.
         try:
-            challenge = await handler.begin(row, flow=flow, confirmed_scopes=confirmed_scopes)
+            challenge = await handler.begin(row, app=session_app, confirmed_scopes=confirmed_scopes)
         except Exception:
             # A vendor-side ``begin`` failure must leave the session
             # retryable — roll the CAS back to ``created`` (undoing a
@@ -970,28 +1121,36 @@ class ConnectSessionService:
     ) -> StatusResult:
         """Session-mode finalise: identity echo → shared write → session close.
 
-        The vendor's ``identity_probe`` comes off the vendor registry entry
-        (session flows always know their vendor_key). A failed echo marks
-        the session ``failed`` and returns without vaulting the token —
-        we can't tie the credential back to a human without it.
+        The vendor's ``identity_probe`` comes off the vendor registry entry.
+        When it's absent — the case for admin-registered OAuth apps whose
+        vendor has no matching config entry — identity echo is skipped and
+        the credential lands with ``connected_as=None``. When present, a
+        failed echo marks the session ``failed`` (no vaulting) so we don't
+        strand a credential we can't tie back to a human.
         """
-        entry = self._vendors.get(row.vendor)
+        entry = await self._vendors.get(row.vendor)
 
-        # Identity echo — outside the DB transaction (external HTTP).
-        try:
-            echo = await identity_echo.echo_identity(
-                probe=entry.identity_probe,
-                access_token=tokens.access_token,
-            )
-            connected_as = echo.display
-        except identity_echo.IdentityEchoError as exc:
-            _logger.warning(
-                "connect_session.identity_echo_failed",
-                session_id=row.id,
-                error=str(exc),
-            )
-            await self._mark_terminal(row.id, "failed", str(exc), error_code="identity_echo_failed")
-            return StatusResult(status="failed", error_code="identity_echo_failed")
+        connected_as: str | None
+        if entry.identity_probe is None:
+            connected_as = None
+        else:
+            # Identity echo — outside the DB transaction (external HTTP).
+            try:
+                echo = await identity_echo.echo_identity(
+                    probe=entry.identity_probe,
+                    access_token=tokens.access_token,
+                )
+                connected_as = echo.display
+            except identity_echo.IdentityEchoError as exc:
+                _logger.warning(
+                    "connect_session.identity_echo_failed",
+                    session_id=row.id,
+                    error=str(exc),
+                )
+                await self._mark_terminal(
+                    row.id, "failed", str(exc), error_code="identity_echo_failed"
+                )
+                return StatusResult(status="failed", error_code="identity_echo_failed")
 
         await self._write_finalise(
             credential_id=row.credential_id,
@@ -1110,6 +1269,17 @@ class ConnectSessionService:
         )
 
         async with self._ctx.control_db.transaction() as session:
+            # Look up the credential once so we can stamp the oauth_tokens
+            # row with the shared-registration provenance (registration_id +
+            # issued_to_user). Both columns are nullable — legacy embedded
+            # credentials just leave them NULL.
+            credential_for_stamp = await CredentialRepository.get_by_id(session, credential_id)
+            registration_id_stamp: str | None = None
+            issued_to_user_stamp: str | None = None
+            if credential_for_stamp is not None:
+                registration_id_stamp = credential_for_stamp.oauth_app_registration_id
+                issued_to_user_stamp = credential_for_stamp.owner_user_id
+
             # Upsert: a re-connect over an existing token row (same
             # credential, fresh grant) MUST update in place rather than
             # INSERT — ``oauth_tokens.credential_id`` is uniquely
@@ -1127,6 +1297,8 @@ class ConnectSessionService:
                     encrypted_refresh_token=encrypted_refresh,
                     expires_at=expires_at,
                     scope=scope_to_persist,
+                    app_registration_id=registration_id_stamp,
+                    issued_to_user=issued_to_user_stamp,
                     created_by=created_by,
                 )
             else:
@@ -1138,6 +1310,13 @@ class ConnectSessionService:
                     expires_at=expires_at,
                     scope=scope_to_persist,
                 )
+                # Refresh the provenance columns on the existing row too so
+                # a re-connect that starts going through a shared registration
+                # (or migrates off one) is reflected on the token row.
+                if registration_id_stamp is not None or issued_to_user_stamp is not None:
+                    existing.app_registration_id = registration_id_stamp
+                    existing.issued_to_user = issued_to_user_stamp
+                    await session.flush()
             await handler.on_finalise(session, credential_id=credential_id)
             credential = await CredentialRepository.get_by_id(session, credential_id)
             if credential is not None:

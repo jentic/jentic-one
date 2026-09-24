@@ -28,6 +28,7 @@ from jentic_one.control.services.integrations.flow_handlers.auth_code import (
     AuthCodeFlowHandler,
 )
 from jentic_one.control.services.integrations.flow_handlers.base import AuthCodeBeginResult
+from jentic_one.control.services.integrations.flow_handlers.session_app import SessionApp
 from jentic_one.shared.config import (
     AppConfig,
     ConnectConfig,
@@ -38,7 +39,6 @@ from jentic_one.shared.config import (
     EncryptionConfig,
     EncryptionKey,
     PipedreamProviderConfig,
-    VendorAuthorizationCodeFlowConfig,
 )
 from jentic_one.shared.context import Context
 
@@ -76,16 +76,27 @@ def _make_context(*, with_direct_oauth2_provider: bool = True) -> Context:
     async def _session():
         yield MagicMock()
 
+    @asynccontextmanager
+    async def _tx():
+        yield MagicMock()
+
     db = MagicMock()
     db.session = _session
+    db.transaction = _tx
     ctx._control_db = db
     return ctx
 
 
-def _flow() -> VendorAuthorizationCodeFlowConfig:
-    return VendorAuthorizationCodeFlowConfig(
+def _app() -> SessionApp:
+    def _secret() -> str:
+        return "app-secret"
+
+    return SessionApp(
+        flow_kind="authorization_code",
         client_id="app-client",
-        client_secret=SecretStr("app-secret"),
+        client_secret_provider=_secret,
+        default_scopes=[],
+        registration_id=None,
         authorize_url="https://idp.example.com/authorize",
         token_url="https://idp.example.com/token",
     )
@@ -98,7 +109,56 @@ def _row(**overrides) -> MagicMock:
     # ``usr_`` prefix routes actor_type_from_id → USER; keeps the JWT
     # actor_type claim populated with a real ActorType value.
     row.initiator_actor_id = overrides.get("initiator_actor_id", "usr_alice")
+    row.pkce_code_verifier = overrides.get("pkce_code_verifier")
     return row
+
+
+def _legacy_credential() -> MagicMock:
+    """Return a credential mock representing the legacy embedded path.
+
+    ``oauth_app_registration_id`` is None, so ``complete_from_callback`` reads
+    client material through ``oauth_client_credentials`` — the branch every
+    pre-existing test in this file was exercising.
+    """
+    credential = MagicMock()
+    credential.oauth_app_registration_id = None
+    credential.owner_user_id = None
+    return credential
+
+
+@pytest.fixture(autouse=True)
+def _patch_credential_lookup():
+    """Return a legacy credential for every ``CredentialRepository.get_by_id``.
+
+    Tests that need the registration branch override the return_value on the
+    yielded mock. Without this, ``complete_from_callback`` would fail loudly
+    on "credential not found" before it ever touched the legacy path.
+    """
+    with patch(
+        "jentic_one.control.services.integrations.flow_handlers.auth_code."
+        "CredentialRepository.get_by_id",
+        new_callable=AsyncMock,
+        return_value=_legacy_credential(),
+    ) as mock:
+        yield mock
+
+
+@pytest.fixture(autouse=True)
+def _patch_pkce_persist():
+    """Neutralise the PKCE-verifier persist inside ``begin``.
+
+    ``begin`` writes ``pkce_code_verifier`` to the connect_sessions row via
+    the repository — the unit-test control-DB mock cannot service that
+    query. Every begin-facing test in this file is orthogonal to the
+    persistence detail, so we short-circuit the write and keep them
+    session-mock-free.
+    """
+    with patch(
+        "jentic_one.control.services.integrations.flow_handlers.auth_code."
+        "ConnectSessionRepository.update_fields",
+        new_callable=AsyncMock,
+    ) as mock:
+        yield mock
 
 
 @pytest.mark.asyncio()
@@ -106,7 +166,7 @@ async def test_begin_returns_challenge_with_state_and_scope() -> None:
     ctx = _make_context()
     handler = AuthCodeFlowHandler(ctx)
     row = _row(id="sess_xyz", credential_id="cred_9")
-    result = await handler.begin(row, flow=_flow(), confirmed_scopes=["repo", "read:user"])
+    result = await handler.begin(row, app=_app(), confirmed_scopes=["repo", "read:user"])
 
     assert isinstance(result, AuthCodeBeginResult)
     parsed = urlparse(result.authorize_url)
@@ -128,7 +188,7 @@ async def test_begin_state_jwt_carries_sid_credential_and_actor() -> None:
     handler = AuthCodeFlowHandler(ctx)
     row = _row(id="sess_xyz", credential_id="cred_9", initiator_actor_id="usr_alice")
 
-    result = await handler.begin(row, flow=_flow(), confirmed_scopes=["scope1"])
+    result = await handler.begin(row, app=_app(), confirmed_scopes=["scope1"])
     assert isinstance(result, AuthCodeBeginResult)
     state_jwt = parse_qs(urlparse(result.authorize_url).query)["state"][0]
     decoded = decode_state(_STATE_SECRET, state_jwt)
@@ -143,7 +203,7 @@ async def test_begin_state_jwt_carries_sid_credential_and_actor() -> None:
 async def test_begin_omits_scope_when_no_confirmed_scopes() -> None:
     ctx = _make_context()
     handler = AuthCodeFlowHandler(ctx)
-    result = await handler.begin(_row(), flow=_flow(), confirmed_scopes=[])
+    result = await handler.begin(_row(), app=_app(), confirmed_scopes=[])
     assert isinstance(result, AuthCodeBeginResult)
     q = parse_qs(urlparse(result.authorize_url).query)
     assert "scope" not in q
@@ -158,7 +218,7 @@ async def test_begin_raises_when_direct_oauth2_redirect_uri_unconfigured() -> No
     ctx = _make_context(with_direct_oauth2_provider=False)
     handler = AuthCodeFlowHandler(ctx)
     with pytest.raises(RuntimeError, match="redirect_uri must be configured"):
-        await handler.begin(_row(), flow=_flow(), confirmed_scopes=[])
+        await handler.begin(_row(), app=_app(), confirmed_scopes=[])
 
 
 @pytest.mark.asyncio()
