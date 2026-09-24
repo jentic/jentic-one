@@ -531,7 +531,9 @@ export class OAuthService {
      * encoding) and JSON (the platform's own contract) bodies. Both arms
      * require a platform bearer identity, and both answer an unknown, invalid,
      * or expired *token value* with 200 ``{"active": false}`` (§2.2) — only a
-     * malformed request body (missing ``token``) is a 400 ``invalid_request``.
+     * malformed request body (missing ``token``) is a 400 ``invalid_request``:
+     * Problem Details on the JSON arm, the RFC 6749 §5.2 error dialect on the
+     * form arm.
      * @returns IntrospectResponse Successful Response
      * @throws ApiError
      */
@@ -549,7 +551,7 @@ export class OAuthService {
             body: requestBody,
             mediaType: 'application/json',
             errors: {
-                400: `Bad Request`,
+                400: `Malformed request body (missing \`token\`). JSON requests get platform Problem Details (\`type: invalid_request\`); form-encoded (RFC 7662 §2.1) requests get the RFC 6749 §5.2 dialect: \`{"error": "invalid_request", "error_description": "..."}\`. An unknown, invalid, or expired token value is never an error — it is 200 \`{"active": false}\` (RFC 7662 §2.2).`,
                 401: `Unauthorized`,
                 403: `Forbidden`,
                 422: `Unprocessable Entity`,

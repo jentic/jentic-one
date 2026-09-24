@@ -6668,7 +6668,9 @@ type ClientInterface interface {
 	// encoding) and JSON (the platform's own contract) bodies. Both arms
 	// require a platform bearer identity, and both answer an unknown, invalid,
 	// or expired *token value* with 200 ``{"active": false}`` (§2.2) — only a
-	// malformed request body (missing ``token``) is a 400 ``invalid_request``.
+	// malformed request body (missing ``token``) is a 400 ``invalid_request``:
+	// Problem Details on the JSON arm, the RFC 6749 §5.2 error dialect on the
+	// form arm.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -6683,7 +6685,9 @@ type ClientInterface interface {
 	// encoding) and JSON (the platform's own contract) bodies. Both arms
 	// require a platform bearer identity, and both answer an unknown, invalid,
 	// or expired *token value* with 200 ``{"active": false}`` (§2.2) — only a
-	// malformed request body (missing ``token``) is a 400 ``invalid_request``.
+	// malformed request body (missing ``token``) is a 400 ``invalid_request``:
+	// Problem Details on the JSON arm, the RFC 6749 §5.2 error dialect on the
+	// form arm.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -6698,7 +6702,9 @@ type ClientInterface interface {
 	// encoding) and JSON (the platform's own contract) bodies. Both arms
 	// require a platform bearer identity, and both answer an unknown, invalid,
 	// or expired *token value* with 200 ``{"active": false}`` (§2.2) — only a
-	// malformed request body (missing ``token``) is a 400 ``invalid_request``.
+	// malformed request body (missing ``token``) is a 400 ``invalid_request``:
+	// Problem Details on the JSON arm, the RFC 6749 §5.2 error dialect on the
+	// form arm.
 	//
 	// Takes a body of the `application/x-www-form-urlencoded` content type.
 	//
@@ -10987,7 +10993,9 @@ func (c *Client) ConsentAgentStatus(ctx context.Context, params *ConsentAgentSta
 // encoding) and JSON (the platform's own contract) bodies. Both arms
 // require a platform bearer identity, and both answer an unknown, invalid,
 // or expired *token value* with 200 “{"active": false}“ (§2.2) — only a
-// malformed request body (missing “token“) is a 400 “invalid_request“.
+// malformed request body (missing “token“) is a 400 “invalid_request“:
+// Problem Details on the JSON arm, the RFC 6749 §5.2 error dialect on the
+// form arm.
 //
 // Takes any type of body and a specified content type.
 //
@@ -11012,7 +11020,9 @@ func (c *Client) IntrospectEndpointWithBody(ctx context.Context, contentType str
 // encoding) and JSON (the platform's own contract) bodies. Both arms
 // require a platform bearer identity, and both answer an unknown, invalid,
 // or expired *token value* with 200 “{"active": false}“ (§2.2) — only a
-// malformed request body (missing “token“) is a 400 “invalid_request“.
+// malformed request body (missing “token“) is a 400 “invalid_request“:
+// Problem Details on the JSON arm, the RFC 6749 §5.2 error dialect on the
+// form arm.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -11037,7 +11047,9 @@ func (c *Client) IntrospectEndpoint(ctx context.Context, body IntrospectEndpoint
 // encoding) and JSON (the platform's own contract) bodies. Both arms
 // require a platform bearer identity, and both answer an unknown, invalid,
 // or expired *token value* with 200 “{"active": false}“ (§2.2) — only a
-// malformed request body (missing “token“) is a 400 “invalid_request“.
+// malformed request body (missing “token“) is a 400 “invalid_request“:
+// Problem Details on the JSON arm, the RFC 6749 §5.2 error dialect on the
+// form arm.
 //
 // Takes a body of the `application/x-www-form-urlencoded` content type.
 //
@@ -23466,7 +23478,9 @@ type ClientWithResponsesInterface interface {
 	// encoding) and JSON (the platform's own contract) bodies. Both arms
 	// require a platform bearer identity, and both answer an unknown, invalid,
 	// or expired *token value* with 200 ``{"active": false}`` (§2.2) — only a
-	// malformed request body (missing ``token``) is a 400 ``invalid_request``.
+	// malformed request body (missing ``token``) is a 400 ``invalid_request``:
+	// Problem Details on the JSON arm, the RFC 6749 §5.2 error dialect on the
+	// form arm.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -23481,7 +23495,9 @@ type ClientWithResponsesInterface interface {
 	// encoding) and JSON (the platform's own contract) bodies. Both arms
 	// require a platform bearer identity, and both answer an unknown, invalid,
 	// or expired *token value* with 200 ``{"active": false}`` (§2.2) — only a
-	// malformed request body (missing ``token``) is a 400 ``invalid_request``.
+	// malformed request body (missing ``token``) is a 400 ``invalid_request``:
+	// Problem Details on the JSON arm, the RFC 6749 §5.2 error dialect on the
+	// form arm.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -23496,7 +23512,9 @@ type ClientWithResponsesInterface interface {
 	// encoding) and JSON (the platform's own contract) bodies. Both arms
 	// require a platform bearer identity, and both answer an unknown, invalid,
 	// or expired *token value* with 200 ``{"active": false}`` (§2.2) — only a
-	// malformed request body (missing ``token``) is a 400 ``invalid_request``.
+	// malformed request body (missing ``token``) is a 400 ``invalid_request``:
+	// Problem Details on the JSON arm, the RFC 6749 §5.2 error dialect on the
+	// form arm.
 	//
 	// Takes a body of the `application/x-www-form-urlencoded` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -41555,7 +41573,9 @@ func (c *ClientWithResponses) ConsentAgentStatusWithResponse(ctx context.Context
 // encoding) and JSON (the platform's own contract) bodies. Both arms
 // require a platform bearer identity, and both answer an unknown, invalid,
 // or expired *token value* with 200 “{"active": false}“ (§2.2) — only a
-// malformed request body (missing “token“) is a 400 “invalid_request“.
+// malformed request body (missing “token“) is a 400 “invalid_request“:
+// Problem Details on the JSON arm, the RFC 6749 §5.2 error dialect on the
+// form arm.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -41576,7 +41596,9 @@ func (c *ClientWithResponses) IntrospectEndpointWithBodyWithResponse(ctx context
 // encoding) and JSON (the platform's own contract) bodies. Both arms
 // require a platform bearer identity, and both answer an unknown, invalid,
 // or expired *token value* with 200 “{"active": false}“ (§2.2) — only a
-// malformed request body (missing “token“) is a 400 “invalid_request“.
+// malformed request body (missing “token“) is a 400 “invalid_request“:
+// Problem Details on the JSON arm, the RFC 6749 §5.2 error dialect on the
+// form arm.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -41597,7 +41619,9 @@ func (c *ClientWithResponses) IntrospectEndpointWithResponse(ctx context.Context
 // encoding) and JSON (the platform's own contract) bodies. Both arms
 // require a platform bearer identity, and both answer an unknown, invalid,
 // or expired *token value* with 200 “{"active": false}“ (§2.2) — only a
-// malformed request body (missing “token“) is a 400 “invalid_request“.
+// malformed request body (missing “token“) is a 400 “invalid_request“:
+// Problem Details on the JSON arm, the RFC 6749 §5.2 error dialect on the
+// form arm.
 //
 // Takes a body of the `application/x-www-form-urlencoded` content type, and returns a wrapper object for the known response body format(s).
 //

@@ -2,9 +2,11 @@
 
 RFC 6749 §4.1.3 (token) and RFC 7662 §2.1 (introspection) prescribe
 ``application/x-www-form-urlencoded`` request bodies; the platform's JSON
-contract stays supported on both endpoints. Route-level content negotiation
-only — grant semantics live in the per-grant test modules, and the revocation
-endpoint's dual arms are pinned in ``test_oauth_revocation_router.py``.
+contract stays supported on both endpoints. Malformed form bodies answer in
+the RFC 6749 §5.2 error dialect; malformed JSON bodies on introspect keep
+platform Problem Details. Route-level content negotiation only — grant
+semantics live in the per-grant test modules, and the revocation endpoint's
+dual arms are pinned in ``test_oauth_revocation_router.py``.
 """
 
 from __future__ import annotations
@@ -120,20 +122,39 @@ def test_introspect_still_accepts_json(mock_token_cls: MagicMock, client: TestCl
     assert resp.json() == {"active": False}
 
 
+@patch("jentic_one.auth.web.routers.oauth.TokenService")
+def test_introspect_form_malformed_body_is_400_rfc6749_dialect(
+    mock_token_cls: MagicMock, client: TestClient
+) -> None:
+    """RFC 7662 §2.1: a form request missing ``token`` answers 400
+    ``invalid_request`` in the RFC 6749 §5.2 dialect an OAuth client parses —
+    not platform Problem Details; the service never runs."""
+    resp = client.post(
+        "/oauth/introspect",
+        data={"token_type_hint": "access_token"},
+        headers={"Authorization": "Bearer platform-token"},
+    )
+    assert resp.status_code == 400
+    body = resp.json()
+    assert body["error"] == "invalid_request"
+    assert body["error_description"]
+    assert "type" not in body
+    mock_token_cls.return_value.introspect.assert_not_called()
+
+
 @pytest.mark.parametrize(
     "kwargs",
     [
-        {"data": {"token_type_hint": "access_token"}},  # form arm, no token
         {"json": {"token_type_hint": "access_token"}},  # JSON arm, no token
         {"content": b""},  # empty body
     ],
 )
 @patch("jentic_one.auth.web.routers.oauth.TokenService")
-def test_introspect_malformed_body_is_400_invalid_request(
+def test_introspect_json_malformed_body_is_400_problem_details(
     mock_token_cls: MagicMock, kwargs: dict[str, object], client: TestClient
 ) -> None:
-    """RFC 7662 §2.1: a request missing the required ``token`` parameter
-    answers 400 ``invalid_request`` on both arms; the service never runs."""
+    """The JSON arm is the platform contract: a malformed body answers 400
+    Problem Details ``invalid_request``; the service never runs."""
     resp = client.post(
         "/oauth/introspect",
         headers={"Authorization": "Bearer platform-token"},

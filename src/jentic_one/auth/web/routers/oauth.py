@@ -13,6 +13,7 @@ import structlog
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
+from jentic.problem_details import ProblemDetail
 from pydantic import ValidationError
 
 from jentic_one.admin.services.oauth_client_service import OAuthClientService
@@ -765,9 +766,52 @@ _INTROSPECT_REQUEST_BODY: dict[str, object] = {
 }
 
 
-@router.post(
+class _IntrospectionRoute(APIRoute):
+    """Route class making the form arm of ``POST /oauth/introspect`` speak RFC 6749 §5.2.
+
+    A form-encoded request comes from an RFC 7662 client, which parses the
+    OAuth error dialect (top-level ``error`` / ``error_description``), not
+    platform Problem Details — so a malformed form body answers 400
+    ``{"error": "invalid_request", …}``. The JSON arm is the platform's own
+    contract and keeps Problem Details, the same split as ``/oauth/revoke``.
+    Wrapping the whole route handler covers errors raised by the
+    ``_parse_introspect_request`` dependency.
+    """
+
+    def get_route_handler(self) -> Callable[[Request], Coroutine[Any, Any, Response]]:
+        original = super().get_route_handler()
+
+        async def handler(request: Request) -> Response:
+            try:
+                return await original(request)
+            except InvalidIntrospectionRequestError as exc:
+                content_type = (
+                    (request.headers.get("content-type") or "").split(";")[0].strip().lower()
+                )
+                if content_type != "application/x-www-form-urlencoded":
+                    raise
+                return _rfc6749_error(400, str(exc))
+
+        return handler
+
+
+introspection_router = APIRouter(route_class=_IntrospectionRoute)
+
+
+@introspection_router.post(
     "/oauth/introspect",
     openapi_extra=_INTROSPECT_REQUEST_BODY,
+    responses={
+        400: {
+            "description": "Malformed request body (missing `token`). JSON requests get "
+            "platform Problem Details (`type: invalid_request`); form-encoded (RFC 7662 "
+            "§2.1) requests get the RFC 6749 §5.2 dialect: "
+            '`{"error": "invalid_request", "error_description": "..."}`. An unknown, '
+            "invalid, or expired token value is never an error — it is 200 "
+            '`{"active": false}` (RFC 7662 §2.2).',
+            "model": ProblemDetail,
+        },
+    },
     # RFC 7662 §2.2: members the server has no value for are omitted from the
     # introspection response, never emitted as JSON null (the inactive-token
     # body is exactly `{"active": false}`).
@@ -787,7 +831,12 @@ async def introspect_endpoint(
     encoding) and JSON (the platform's own contract) bodies. Both arms
     require a platform bearer identity, and both answer an unknown, invalid,
     or expired *token value* with 200 ``{"active": false}`` (§2.2) — only a
-    malformed request body (missing ``token``) is a 400 ``invalid_request``.
+    malformed request body (missing ``token``) is a 400 ``invalid_request``:
+    Problem Details on the JSON arm, the RFC 6749 §5.2 error dialect on the
+    form arm.
     """
     result = await token_svc.introspect(body.token)
     return IntrospectResponse.model_validate(result)
+
+
+router.include_router(introspection_router)
