@@ -233,6 +233,12 @@ class CredentialRedactedView(BaseModel):
         | Sigv4Redacted
     )
     server_variables: dict[str, str] | None = None
+    # Populated when the credential was minted through a shared
+    # ``oauth_app_registrations`` row (either via the connect-session flow
+    # or by an admin's toggle-on create). ``None`` for legacy embedded
+    # OAuth credentials and every non-OAuth type.
+    oauth_app_registration_id: str | None = None
+    oauth_app_registration_name: str | None = None
 
     model_config = {"from_attributes": True}
 

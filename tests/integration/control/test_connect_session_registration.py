@@ -46,6 +46,7 @@ from jentic_one.control.services.credentials.providers.direct_oauth2 import (
     InactiveRegistrationError,
 )
 from jentic_one.control.services.credentials.schemas.provision import OAuthTokenView
+from jentic_one.control.services.credentials.service import CredentialService
 from jentic_one.control.services.integrations import identity_echo
 from jentic_one.control.services.integrations.connect_session_service import (
     AuthCodeConfirmResult,
@@ -237,6 +238,13 @@ async def test_confirm_against_db_registration_stamps_fk_and_skips_occ(
         assert credential.owner_user_id == _USER_ID
         occ = await OAuthClientCredentialRepository.get_by_credential(session, credential.id)
         assert occ is None
+
+    # The redacted read (what the UI card renders) carries the shared
+    # registration's id + name so the card can show a "Shared: <name>" badge.
+    cred_svc = CredentialService(ctx)
+    redacted = await cred_svc.get(row.credential_id, identity=_USER_IDENTITY)
+    assert redacted.oauth_app_registration_id == registration.id
+    assert redacted.oauth_app_registration_name == "Org GitHub App"
 
 
 async def test_refresh_refuses_inactive_registration(
