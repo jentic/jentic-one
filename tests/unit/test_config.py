@@ -931,6 +931,38 @@ def test_broker_jobs_api_base_url_env_override(config_file: Path):
     assert config.broker.jobs_api_base_url == "https://env.example.com"
 
 
+@pytest.mark.parametrize("value", [False, "false"])
+def test_broker_retired_direct_bindings_flag_false_is_rejected(
+    tmp_path: Path, sample_config_dict: dict[str, Any], value: object
+) -> None:
+    """Pinning the deleted toolkit path must fail boot, not silently switch paths."""
+    sample_config_dict["broker"] = {"direct_bindings_enabled": value}
+    path = tmp_path / "cfg.yaml"
+    path.write_text(yaml.dump(sample_config_dict))
+    with pytest.raises(ConfigError, match="direct_bindings_enabled was removed"):
+        load_config(path)
+
+
+def test_broker_retired_direct_bindings_flag_false_env_is_rejected(config_file: Path) -> None:
+    env = {"JENTIC__BROKER__DIRECT_BINDINGS_ENABLED": "false"}
+    with (
+        patch.dict(os.environ, env, clear=False),
+        pytest.raises(ConfigError, match="direct_bindings_enabled was removed"),
+    ):
+        load_config(config_file)
+
+
+def test_broker_retired_direct_bindings_flag_true_is_ignored(
+    tmp_path: Path, sample_config_dict: dict[str, Any]
+) -> None:
+    """``true`` was the 0.40 default: harmless, dropped without error."""
+    sample_config_dict["broker"] = {"direct_bindings_enabled": True}
+    path = tmp_path / "cfg.yaml"
+    path.write_text(yaml.dump(sample_config_dict))
+    config = load_config(path)
+    assert not hasattr(config.broker, "direct_bindings_enabled")
+
+
 def test_server_backend_defaults_to_local(config_file: Path):
     config = load_config(config_file)
     assert config.server.backend == "local"

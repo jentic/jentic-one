@@ -62,6 +62,7 @@ from jentic_one.control.repos.toolkit_flattening_repo import (
     FlatteningAdminRepository,
     FlatteningControlRepository,
     ToolkitPermissionRuleRow,
+    legacy_state_digest,
 )
 from jentic_one.shared.audit import record_audit
 from jentic_one.shared.context import Context
@@ -80,6 +81,24 @@ _EXECUTE_SCOPE = "capabilities:execute"
 
 def _iso(value: dt.datetime | None) -> str | None:
     return value.isoformat() if value is not None else None
+
+
+def _control_state_digest(snapshot: _Snapshot) -> str:
+    """Digest of the control legacy rows the acknowledgement covers."""
+    return legacy_state_digest(
+        {
+            "toolkits": list(snapshot.toolkits),
+            "toolkit_credential_bindings": [row.id for row in snapshot.tcb_rows],
+            "toolkit_permission_rules": [
+                rule.id for rules in snapshot.pair_rules.values() for rule in rules
+            ],
+        }
+    )
+
+
+def _admin_state_digest(snapshot: _Snapshot) -> str:
+    """Digest of the admin legacy rows (``agent_toolkit_bindings``) the ack covers."""
+    return legacy_state_digest({"agent_toolkit_bindings": [row[0] for row in snapshot.atb_rows]})
 
 
 def _rule_row(rule: ToolkitPermissionRuleRow | Any) -> dict[str, Any]:
@@ -724,6 +743,15 @@ class ToolkitFlatteningService:
 
         if acknowledge and result.passed:
             async with self._ctx.control_db.transaction() as control_session:
+                if not await FlatteningControlRepository.ack_evidence_columns_exist(
+                    control_session
+                ):
+                    raise RuntimeError(
+                        "toolkit_flattening_acks lacks the Phase-6b evidence columns; run "
+                        "`python -m jentic_one.migrations.run --db control --target "
+                        "x5f6a7b8c9d0` first, then re-run `flatten-toolkits --verify "
+                        "--acknowledge`"
+                    )
                 ack = await FlatteningControlRepository.record_acknowledgement(
                     control_session,
                     acknowledged_at=dt.datetime.now(dt.UTC),
@@ -731,6 +759,8 @@ class ToolkitFlatteningService:
                     direct_binding_count=result.direct_binding_count,
                     report_finding_count=len(result.findings),
                     tool_version=__version__,
+                    control_state_digest=_control_state_digest(snapshot),
+                    admin_state_digest=_admin_state_digest(snapshot),
                 )
                 ack_id = ack.id
             result.acknowledged = True

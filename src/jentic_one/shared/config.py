@@ -1276,6 +1276,31 @@ class BrokerConfig(BaseModel):
     idempotency: IdempotencyConfig = Field(default_factory=IdempotencyConfig)
     egress: EgressConfig = Field(default_factory=EgressConfig)
 
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_retired_direct_bindings_flag(cls, data: Any) -> Any:
+        """Fail loudly on ``broker.direct_bindings_enabled: false``.
+
+        The flag was deleted in theme-5 Phase 6b along with the toolkit
+        path it selected — direct bindings are the only path. Unknown keys
+        are otherwise ignored here, so without this check an operator who
+        pinned ``false`` to stay on toolkits would boot on direct bindings
+        without noticing. ``true`` (the old default) is harmless and ignored.
+        """
+        if isinstance(data, dict) and "direct_bindings_enabled" in data:
+            value = data["direct_bindings_enabled"]
+            if value is False or str(value).strip().lower() in {"false", "0", "no", "off"}:
+                raise ValueError(
+                    "broker.direct_bindings_enabled was removed in theme-5 Phase 6b: "
+                    "the toolkit path it selected no longer exists and direct "
+                    "agent-credential bindings are the only access path. Remove "
+                    "the setting (config file or JENTIC__BROKER__DIRECT_BINDINGS_ENABLED); "
+                    "if toolkit-bound agents lose access, run the Phase-6a flattening "
+                    "(docs/development/releasing.md)."
+                )
+            data = {k: v for k, v in data.items() if k != "direct_bindings_enabled"}
+        return data
+
 
 class SearchConfig(BaseModel):
     """Search configuration.

@@ -193,7 +193,7 @@ JWKS, then RFC 7523 JWT-bearer assertions exchanged at
   | Prefix | Resource | Notes |
   |---|---|---|
   | `tk_` | Toolkit ID | Retired (theme-5): the toolkit surface and its tables are gone (Phase 6b). Ids still appear in historical records (execution attribution, audit). |
-  | `ck_` | Toolkit-key record | Retired (theme-5): key records are gone with the toolkit tables (Phase 6b) and `jntc_live_` plaintexts no longer authenticate — holders use the `sak_` key of the service account their key was migrated to. Ids survive only in audit history. |
+  | `ck_` | Toolkit-key record | Retired (theme-5): key records are gone with the toolkit tables (Phase 6b). Ids survive only in audit history. |
   | `cred_` | Credential ID | |
   | `exec_` | Execution record | Returned in the `Jentic-Execution-Id` response header on every brokered call. |
   | `job_` | Async job | UUIDs also accepted on inputs for backward compatibility. |
@@ -205,6 +205,7 @@ JWKS, then RFC 7523 JWT-bearer assertions exchanged at
   | `areq_` | Access request | Human-approval ticket for scope grants and credential bindings; see the `Access Requests` tag. |
   | `note_` | Note | ULID-shaped. Free-form annotation attached to a registry resource — see the `Notes` tag. |
   | `ovr_` | Overlay | ULID-shaped. OpenAPI Overlay 1.0 document attached to an `Api` aggregate — see the `Overlays` tag. |
+  | `jntc_live_` | Plaintext toolkit API key value (retired) | Never issued anymore. A value migrated before Phase 6b keeps authenticating — as its migrated service account — until the deprecation window closes (no earlier than 2026-12-01); rotate holders to a key minted for that service account. |
 
   Surfaces still being designed (agent identity, OAuth brokers)
   will add their own prefixes when they land.

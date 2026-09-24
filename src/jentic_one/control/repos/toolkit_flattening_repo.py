@@ -30,6 +30,7 @@ so ORM reads keep parsing) and aware datetimes on Postgres.
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import json
 from dataclasses import dataclass
 
@@ -256,6 +257,28 @@ class FlatteningControlRepository:
         return list(result.scalars().all())
 
     @staticmethod
+    async def ack_evidence_columns_exist(session: AsyncSession) -> bool:
+        """Whether ``toolkit_flattening_acks`` carries the Phase-6b evidence columns.
+
+        Added by control ``x5f6a7b8c9d0``. A Phase-6b tool run against a
+        database still on the previous release's schema must refuse to
+        acknowledge rather than fail mid-insert.
+        """
+        if session.get_bind().dialect.name == "sqlite":
+            probe = text(
+                "SELECT count(*) FROM pragma_table_info('toolkit_flattening_acks')"
+                " WHERE name = 'control_state_digest'"
+            )
+        else:
+            probe = text(
+                "SELECT count(*) FROM information_schema.columns"
+                " WHERE table_schema = current_schema()"
+                "   AND table_name = 'toolkit_flattening_acks'"
+                "   AND column_name = 'control_state_digest'"
+            )
+        return bool(int((await session.execute(probe)).scalar_one()))
+
+    @staticmethod
     async def record_acknowledgement(
         session: AsyncSession,
         *,
@@ -264,19 +287,45 @@ class FlatteningControlRepository:
         direct_binding_count: int,
         report_finding_count: int,
         tool_version: str,
+        control_state_digest: str,
+        admin_state_digest: str,
     ) -> ToolkitFlatteningAck:
-        """Insert the Phase-6b gate row — only call after a passed verification."""
+        """Insert the Phase-6b gate row — only call after a passed verification.
+
+        A passed Phase-6b verification includes the execution-name backfill
+        check, so the row always certifies ``execution_names_backfilled``.
+        """
         ack = ToolkitFlatteningAck(
             acknowledged_at=acknowledged_at,
             legacy_pair_count=legacy_pair_count,
             direct_binding_count=direct_binding_count,
             report_finding_count=report_finding_count,
             tool_version=tool_version,
+            execution_names_backfilled=True,
+            control_state_digest=control_state_digest,
+            admin_state_digest=admin_state_digest,
             created_by=SYSTEM_ACTOR,
         )
         session.add(ack)
         await session.flush()
         return ack
+
+
+def legacy_state_digest(ids_by_table: dict[str, list[str]]) -> str:
+    """SHA-256 over the legacy toolkit rows' ids, table-qualified and sorted.
+
+    Pins *which* legacy rows an acknowledgement covered, so the Phase-6b drop
+    gates can refuse a stale ack (rows added or removed afterwards — e.g. by
+    an old replica during a rolling upgrade). Ids only: they are plain strings
+    on every dialect/driver, where timestamps are not. In-place edits are not
+    detected; the toolkit management surface that could make them is gone.
+
+    Copied verbatim into the drop migrations (``v3d4e5f6a7b8``,
+    ``d1e2f3a4b5c6``), which must not import application code;
+    ``tests/unit/control/test_legacy_state_digest.py`` pins the copies equal.
+    """
+    lines = sorted(f"{table}:{row_id}" for table, ids in ids_by_table.items() for row_id in ids)
+    return hashlib.sha256("\n".join(lines).encode()).hexdigest()
 
 
 _LIST_AGENT_TOOLKIT_BINDINGS = text(

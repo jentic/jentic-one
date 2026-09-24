@@ -13,10 +13,19 @@ nothing would ever retry): the drop proceeds only when EITHER
 
 - every doomed table in this database is empty (fresh installs and CI migrate
   empty schemas; dropping nothing is trivially safe), OR
-- a ``toolkit_flattening_acks`` row exists — written only by
+- a *qualifying* ``toolkit_flattening_acks`` row exists — written only by
   ``jentic_one flatten-toolkits --verify --acknowledge`` after a passed
   verification, i.e. the operator has flattened the toolkit graph and
-  explicitly signed off on the drop.
+  explicitly signed off on the drop. Qualifying means (columns added by
+  ``x5f6a7b8c9d0``):
+
+  - ``execution_names_backfilled`` is true. An ack written by a pre-6b tool
+    never checked the ``execution_records.toolkit_name`` backfill; accepting
+    it would let the drop erase toolkit names from execution history.
+  - ``control_state_digest`` equals the digest of the legacy rows present
+    now. A mismatch means toolkit rows were added or removed after the ack
+    (e.g. by an old replica during a rolling upgrade), so the flatten that
+    was verified no longer covers them.
 
 On PostgreSQL an additional ordering guard runs first: if any table outside
 this set still holds a foreign key into ``toolkits`` (the enterprise
@@ -31,21 +40,22 @@ historical shape (post ``h9c0d1e2f3a4`` lookup_hash, ``m4a5b6c7d8e9``
 match_mode, ``n5b6c7d8e9f0`` permissions-drop, ``t1b2c3d4e5f6``
 migrated_actor_id, ``a8b9c0d1e2f3`` nullable created_by). Rows come back only
 via ``jentic_one export-toolkits --import <file>`` from a pre-drop export —
-see the rollback runbook in ``docs/releasing.md``.
+see the rollback runbook in ``docs/development/releasing.md``.
 
 Revision ID: v3d4e5f6a7b8
-Revises: w4e5f6a7b8c9
+Revises: x5f6a7b8c9d0
 Create Date: 2026-09-11
 
 """
 
+import hashlib
 from collections.abc import Sequence
 
 import sqlalchemy as sa
 from alembic import op
 
 revision: str = "v3d4e5f6a7b8"  # pragma: allowlist secret
-down_revision: str | None = "w4e5f6a7b8c9"  # pragma: allowlist secret
+down_revision: str | None = "x5f6a7b8c9d0"  # pragma: allowlist secret
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -75,16 +85,54 @@ _FOREIGN_FK_QUERY = sa.text(
     "       ('toolkit_permission_rules', 'toolkit_credential_bindings', 'toolkit_keys')"
 )
 
-_REMEDIATION = (
-    "Refusing to drop the toolkit tables: they still hold rows and no "
-    "flattening acknowledgement is on record (toolkit_flattening_acks is "
-    "empty). Run `jentic_one flatten-toolkits` (then re-run it to confirm "
-    "zero creations), then `jentic_one flatten-toolkits --verify "
+_RUNBOOK = (
+    "Run `jentic_one flatten-toolkits` on this release (then re-run it to "
+    "confirm zero creations), then `jentic_one flatten-toolkits --verify "
     "--acknowledge`, and re-run this migration. To discard the toolkit data "
     "instead, take an export first (`jentic_one export-toolkits --out "
     "<file>`), truncate the toolkit tables, and re-run. See the theme-5 "
-    "upgrading runbook in docs/releasing.md."
+    "upgrading runbook in docs/development/releasing.md."
 )
+
+_REMEDIATION_NO_ACK = (
+    "Refusing to drop the toolkit tables: they still hold rows and no "
+    "flattening acknowledgement is on record (toolkit_flattening_acks is "
+    "empty). " + _RUNBOOK
+)
+
+_REMEDIATION_PRE_6B_ACK = (
+    "Refusing to drop the toolkit tables: the flattening acknowledgement on "
+    "record was written by an earlier release, whose verification did not "
+    "confirm the execution-history toolkit-name backfill — dropping now "
+    "would erase toolkit names from execution records. " + _RUNBOOK
+)
+
+_REMEDIATION_STALE_ACK = (
+    "Refusing to drop the toolkit tables: toolkit rows changed after the "
+    "flattening was acknowledged (e.g. edits from an old replica during a "
+    "rolling upgrade), so the verified flatten no longer covers them. " + _RUNBOOK
+)
+
+#: The legacy rows an acknowledgement's ``control_state_digest`` covers, and
+#: the order-independent digest over them. A verbatim copy of
+#: ``control.repos.toolkit_flattening_repo.legacy_state_digest`` (migrations
+#: must not import application code);
+#: ``tests/unit/control/test_legacy_state_digest.py`` pins the two equal.
+_DIGEST_TABLES = ("toolkits", "toolkit_credential_bindings", "toolkit_permission_rules")
+
+
+def _legacy_state_digest(ids_by_table: dict[str, list[str]]) -> str:
+    lines = sorted(f"{table}:{row_id}" for table, ids in ids_by_table.items() for row_id in ids)
+    return hashlib.sha256("\n".join(lines).encode()).hexdigest()
+
+
+def _current_digest(bind: sa.engine.Connection) -> str:
+    return _legacy_state_digest(
+        {
+            table: [str(r[0]) for r in bind.execute(sa.text(f"SELECT id FROM {table}"))]
+            for table in _DIGEST_TABLES
+        }
+    )
 
 
 def _count(bind: sa.engine.Connection, table: str) -> int:
@@ -103,17 +151,28 @@ def _assert_no_foreign_fks(bind: sa.engine.Connection) -> None:
             f"it from outside the toolkit tables: {holders}. Apply the "
             "enterprise migration first (jentic-one-enterprise d47c3a91be02 "
             "drops toolkit_user_grants and its FK), then re-run this "
-            "migration. See the theme-5 upgrading runbook in docs/releasing.md."
+            "migration. See the theme-5 upgrading runbook in "
+            "docs/development/releasing.md."
         )
 
 
 def _assert_gate(bind: sa.engine.Connection) -> None:
-    """Guard-and-raise: empty tables OR an acknowledged flatten unblock the drop."""
+    """Guard-and-raise: empty tables OR a qualifying acknowledgement unblock the drop."""
     if all(_count(bind, table) == 0 for table in _DOOMED_TABLES):
         return
-    if _count(bind, "toolkit_flattening_acks") > 0:
-        return
-    raise RuntimeError(_REMEDIATION)
+    acks = bind.execute(
+        sa.text(
+            "SELECT execution_names_backfilled, control_state_digest FROM toolkit_flattening_acks"
+        )
+    ).all()
+    if not acks:
+        raise RuntimeError(_REMEDIATION_NO_ACK)
+    current = _current_digest(bind)
+    backfilled = [a for a in acks if a.execution_names_backfilled and a.control_state_digest]
+    if not backfilled:
+        raise RuntimeError(_REMEDIATION_PRE_6B_ACK)
+    if not any(a.control_state_digest == current for a in backfilled):
+        raise RuntimeError(_REMEDIATION_STALE_ACK)
 
 
 def upgrade() -> None:
@@ -135,7 +194,7 @@ def downgrade() -> None:
 
     A downgrade alone restores no access: rows come back only via
     ``jentic_one export-toolkits --import <file>`` (rollback = downgrade the
-    drops **plus** re-import — docs/releasing.md). There are no ORM models
+    drops **plus** re-import — docs/development/releasing.md). There are no ORM models
     for these tables any more, so raw inserts on SQLite must supply explicit
     ids (no server-side KSUID there), which the import tool does.
     """

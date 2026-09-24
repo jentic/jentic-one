@@ -42,7 +42,7 @@ from tests.integration.conftest import _alembic_config_for
 pytestmark = pytest.mark.integration
 
 #: Revisions just below the theme-5 Phase 6b drop migrations.
-_CONTROL_PRE_DROP = "u2c3d4e5f6a7"  # pragma: allowlist secret
+_CONTROL_PRE_DROP = "x5f6a7b8c9d0"  # pragma: allowlist secret
 _ADMIN_PRE_DROP = "c0e1f2a3b4c5"  # pragma: allowlist secret
 
 _OWNER = "usr_fltest_owner"
@@ -589,6 +589,12 @@ async def test_verify_gates_acknowledgement_on_coverage(
     assert ack.report_finding_count == len(after.findings)
     assert ack.tool_version
     assert ack.created_by == "system:theme5-flattening"
+    # The drop gates' evidence: this release's verify checked the name
+    # backfill, and the digests pin exactly the legacy rows it covered.
+    assert ack.execution_names_backfilled is True
+    assert ack.control_state_digest and len(ack.control_state_digest) == 64
+    assert ack.admin_state_digest and len(ack.admin_state_digest) == 64
+    assert ack.control_state_digest != ack.admin_state_digest
 
 
 async def test_verify_reports_rule_mismatch_without_failing(

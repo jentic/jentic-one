@@ -53,29 +53,31 @@ def triple(opaque_resolver: AsyncMock, api_key_resolver: AsyncMock) -> Composite
 
 
 @pytest.mark.asyncio
-async def test_retired_toolkit_key_routes_to_opaque_path(
+async def test_retired_toolkit_key_routes_to_api_key_path(
     opaque_resolver: AsyncMock,
     api_key_resolver: AsyncMock,
 ) -> None:
-    """A retired jntc_live_ key no longer routes to the api-key resolver.
+    """A retired jntc_live_ key routes to the api-key resolver, never the opaque path.
 
-    Acceptance ended in theme-5 Phase 6b: the prefix is unknown, so the value
-    falls through to the opaque-token path and fails there like any other
-    invalid token (401).
+    The retirement job (theme-5 Phase 4) migrates each key's digest to a
+    service account, so the api-key path resolves the unchanged plaintext as
+    that account.
     """
-    api_key_resolver.resolve_access_token = AsyncMock()
-    opaque_resolver.resolve_access_token = AsyncMock(return_value=None)
+    api_key_resolver.resolve_access_token = AsyncMock(
+        return_value=_make_identity(sub="sva_migrated1", actor_type=ActorType.SERVICE_ACCOUNT)
+    )
     opaque_cached = CachedTokenValidator(resolver=opaque_resolver, cache_ttl_seconds=5.0)
     api_key_cached = CachedTokenValidator(resolver=api_key_resolver, cache_ttl_seconds=5.0)
     triple = CompositeTokenValidator(opaque=opaque_cached, api_key=api_key_cached, jwt=None)
 
-    with pytest.raises(TokenValidationError, match="unknown_token"):
-        await triple.validate("jntc_live_abc123")  # pragma: allowlist secret
+    result = await triple.validate("jntc_live_abc123")  # pragma: allowlist secret
 
-    api_key_resolver.resolve_access_token.assert_not_called()
-    opaque_resolver.resolve_access_token.assert_called_once_with(
+    assert result.sub == "sva_migrated1"
+    assert result.actor_type is ActorType.SERVICE_ACCOUNT
+    api_key_resolver.resolve_access_token.assert_called_once_with(
         "jntc_live_abc123"  # pragma: allowlist secret
     )
+    opaque_resolver.resolve_access_token.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -148,3 +150,19 @@ async def test_unknown_api_key_raises_typed_error(api_key_resolver: AsyncMock) -
 
     with pytest.raises(TokenValidationError, match="unknown_token"):
         await triple.validate("jak_bad_key")
+
+
+@pytest.mark.asyncio
+async def test_unmigrated_toolkit_key_raises_typed_error(api_key_resolver: AsyncMock) -> None:
+    """A jntc_live_ key with no migrated service account resolves to nothing → 401."""
+    api_key_resolver.resolve_access_token = AsyncMock(return_value=None)
+    opaque_resolver = AsyncMock()
+    opaque_resolver.resolve_access_token = AsyncMock()
+
+    opaque_cached = CachedTokenValidator(resolver=opaque_resolver, cache_ttl_seconds=5.0)
+    api_key_cached = CachedTokenValidator(resolver=api_key_resolver, cache_ttl_seconds=5.0)
+    triple = CompositeTokenValidator(opaque=opaque_cached, api_key=api_key_cached, jwt=None)
+
+    with pytest.raises(TokenValidationError, match="unknown_token"):
+        await triple.validate("jntc_live_unmigrated")  # pragma: allowlist secret
+    opaque_resolver.resolve_access_token.assert_not_called()

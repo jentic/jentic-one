@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Integer, String
+from sqlalchemy import Boolean, Integer, String, text
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
@@ -53,3 +53,20 @@ class ToolkitFlatteningAck(AuditableMixin, ControlBase):
     report_finding_count: Mapped[int] = mapped_column(Integer, nullable=False)
     #: jentic-one package version that ran the verification.
     tool_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    #: True only when the verification that wrote this row also confirmed every
+    #: resolvable ``execution_records.toolkit_name`` was backfilled (Phase-6b
+    #: ``verify`` fails otherwise). Rows written by a pre-6b tool default to
+    #: False, so the drop gate refuses them — their verification never checked
+    #: the backfill, and the drop would lose those names for good.
+    execution_names_backfilled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    #: Digest of the legacy control toolkit rows (``toolkits``,
+    #: ``toolkit_credential_bindings``, ``toolkit_permission_rules`` ids) the
+    #: verification saw. The drop gate recomputes it and refuses a stale ack
+    #: (rows added or removed after acknowledging — e.g. an old replica during
+    #: a rolling upgrade). NULL on pre-6b rows.
+    control_state_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    #: The same digest over the admin ``agent_toolkit_bindings`` ids; checked by
+    #: the admin drop when it can read this table (shared Postgres database).
+    admin_state_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)

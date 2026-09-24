@@ -34,7 +34,7 @@ from tests.integration.conftest import _alembic_config_for
 pytestmark = pytest.mark.integration
 
 #: Revisions just below the theme-5 Phase 6b drop migrations.
-_CONTROL_PRE_DROP = "u2c3d4e5f6a7"  # pragma: allowlist secret
+_CONTROL_PRE_DROP = "x5f6a7b8c9d0"  # pragma: allowlist secret
 _ADMIN_PRE_DROP = "c0e1f2a3b4c5"  # pragma: allowlist secret
 
 _TABLES = (
