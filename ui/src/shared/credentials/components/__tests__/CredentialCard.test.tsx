@@ -4,10 +4,12 @@ import { CredentialCard } from '@/shared/credentials/components/CredentialCard';
 import { CredentialType, type Credential } from '@/shared/credentials/api';
 
 /**
- * The card grew a "Shared: <registration name>" badge when the credential
- * was minted through an admin-registered OAuth app. These two cases pin
- * the render logic — no badge for legacy embedded creds; badge with the
- * registration name when the server hands one back.
+ * The card grew a "Source: <registration name>" badge when the credential
+ * was minted through an admin-registered OAuth app. "Source" (not
+ * "Shared") — the credential itself is per-user; only the underlying
+ * OAuth-app registration is org-shared. These two cases pin the render
+ * logic — no badge for legacy embedded creds; badge with the registration
+ * name when the server hands one back.
  */
 
 function makeCred(overrides: Partial<Credential> = {}): Credential {
@@ -38,7 +40,7 @@ function makeCred(overrides: Partial<Credential> = {}): Credential {
 }
 
 describe('CredentialCard — shared-registration badge', () => {
-	it('shows "Shared: <name>" when the credential is registration-backed', () => {
+	it('shows "Source: <name>" when the credential is registration-backed', () => {
 		renderWithProviders(
 			<CredentialCard
 				cred={makeCred({
@@ -50,7 +52,7 @@ describe('CredentialCard — shared-registration badge', () => {
 				onConnect={vi.fn()}
 			/>,
 		);
-		expect(screen.getByText(/Shared:\s*MyOrg Prod Gmail/i)).toBeInTheDocument();
+		expect(screen.getByText(/Source:\s*MyOrg Prod Gmail/i)).toBeInTheDocument();
 	});
 
 	it('omits the badge for a legacy embedded credential', () => {
@@ -62,6 +64,6 @@ describe('CredentialCard — shared-registration badge', () => {
 				onConnect={vi.fn()}
 			/>,
 		);
-		expect(screen.queryByText(/Shared:/i)).not.toBeInTheDocument();
+		expect(screen.queryByText(/Source:/i)).not.toBeInTheDocument();
 	});
 });
