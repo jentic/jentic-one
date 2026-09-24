@@ -3,12 +3,16 @@
  * over, one API at a time.
  *
  * There is no `Skip for now`, so every API that leaves here has a credential
- * bound: reuse binds without a pane, the only alternative to finishing is
- * dropping, and closing hands the remainder back to the host. Bindings are created
+ * bound: every API stops in a pane — even one a single existing credential
+ * covers is only bound once the operator confirms it — the only alternative to
+ * finishing is dropping, and closing hands the remainder back to the host.
+ * `Back to APIs` returns to the tray to edit the batch; the host keeps this
+ * component mounted meanwhile, and the edited batch is folded back in
+ * ({@link reconcileQueue}) so progress survives the round trip. Bindings are created
  * with no rules — default-deny, so an added API cannot serve traffic yet.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, Check, KeyRound, Loader2, LogIn, Minus, X } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Check, KeyRound, Loader2, LogIn, Minus, X } from 'lucide-react';
 import { Badge, Button, SheetPrimitive } from '@/shared/ui';
 import { cn } from '@/shared/lib/utils';
 import { useImportCatalogEntry, type Credential } from '@/shared/credentials/api';
@@ -18,12 +22,13 @@ import {
 	type CreatedCredentialInfo,
 } from '@/shared/credentials/components/CreateCredentialFlow';
 import { useBindAgentCredential } from '@/modules/agents/api';
+import { ConfirmDialog } from '@/modules/agents/components/confirm/ConfirmDialog';
 import {
 	credentialAwaitsConsent,
 	type CredentialChoice,
 } from '@/shared/credentials/lib/credentialIdentity';
 import { CredentialOptions } from '@/shared/credentials/components/CredentialOptions';
-import { currentChoice, type PreflightItem } from '@/modules/agents/lib/apiPreflight';
+import { defaultChoice, type PreflightItem } from '@/modules/agents/lib/apiPreflight';
 import {
 	QUEUE_RULES_NOTICE,
 	QUEUE_STATUS_LABELS,
@@ -31,12 +36,14 @@ import {
 	buildQueue,
 	dropWarning,
 	markActive,
-	needsPane,
 	patchEntry,
+	queueBackSeed,
 	queueSummary,
 	queueSummaryLine,
+	reconcileQueue,
 	retryEntry,
 	unfinishedItems,
+	type QueueBackSeed,
 	type QueueEntry,
 	type QueueSummary,
 } from '@/modules/agents/lib/setupQueue';
@@ -51,13 +58,24 @@ export interface ApiSetupQueueProps {
 	/** Close, handing back the items that never reached a terminal state — the host
 	 * must keep them, since the queue is the only way an API arrives. */
 	onClose: (remaining: PreflightItem[]) => void;
+	/** Go back to the tray to edit the batch. `remaining` is what {@link onClose}
+	 * would hand back, for a host whose tray is then closed instead of continued.
+	 * The next `items` this queue receives are folded into its progress. */
+	onBack?: (seed: QueueBackSeed, remaining: PreflightItem[]) => void;
 }
 
 function errorText(e: unknown): string {
 	return e instanceof Error && e.message ? e.message : 'Something went wrong.';
 }
 
-export function ApiSetupQueue({ open, agentId, agentName, items, onClose }: ApiSetupQueueProps) {
+export function ApiSetupQueue({
+	open,
+	agentId,
+	agentName,
+	items,
+	onClose,
+	onBack,
+}: ApiSetupQueueProps) {
 	const headingId = 'api-setup-queue-title';
 	const [entries, setEntries] = useState<QueueEntry[]>(() => buildQueue(items));
 	/** The entry whose drop is awaiting confirmation. */
@@ -65,8 +83,17 @@ export function ApiSetupQueue({ open, agentId, agentName, items, onClose }: ApiS
 	/** The entry whose credential wizard is open. */
 	const [formKey, setFormKey] = useState<string | null>(null);
 	/** Entry key → the credential choice the operator made in its pane. Absent =
-	 * whatever the tray settled on ({@link currentChoice}). */
+	 * the pane's starting selection ({@link defaultChoice}). */
 	const [choices, setChoices] = useState<Record<string, CredentialChoice>>({});
+
+	/** Asking before Back throws away a typed-in credential. */
+	const [discardOpen, setDiscardOpen] = useState(false);
+	/** Set by Back: the next batch is the same one, edited in the tray, so it is
+	 * folded into the progress rather than replacing it. */
+	const returningRef = useRef(false);
+	/** After a round trip, the pane — not the header's first button — takes focus. */
+	const [focusPane, setFocusPane] = useState(false);
+	const paneRef = useRef<HTMLElement>(null);
 
 	// A new batch replaces the queue outright. Compared by reference: a content
 	// compare would fight the in-progress statuses.
@@ -74,9 +101,15 @@ export function ApiSetupQueue({ open, agentId, agentName, items, onClose }: ApiS
 	useEffect(() => {
 		if (lastItemsRef.current === items) return;
 		lastItemsRef.current = items;
-		setEntries(buildQueue(items));
 		setDropKey(null);
 		setFormKey(null);
+		if (returningRef.current) {
+			returningRef.current = false;
+			// Pane choices are kept: the entries they belong to may well still be here.
+			setEntries((current) => reconcileQueue(current, items));
+			return;
+		}
+		setEntries(buildQueue(items));
 		setChoices({});
 	}, [items]);
 
@@ -149,25 +182,6 @@ export function ApiSetupQueue({ open, agentId, agentName, items, onClose }: ApiS
 		inFlight.current.delete(entry.key);
 	};
 
-	// `reuse` bypasses the pane: bind it as soon as it reaches the front.
-	useEffect(() => {
-		if (!open || !active || needsPane(active.outcome)) return;
-		if (active.status === 'working') return;
-		const credential = active.candidates[0];
-		if (!credential) {
-			setEntries((current) =>
-				patchEntry(current, active.key, {
-					status: 'failed',
-					error: 'The credential this API was going to reuse is no longer available.',
-				}),
-			);
-			return;
-		}
-		void settle(active, credential);
-		// `settle` is recreated every render; the key and status decide whether it runs.
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [open, active?.key, active?.status]);
-
 	const drop = (entry: QueueEntry): void => {
 		setEntries((current) => patchEntry(current, entry.key, { status: 'dropped' }));
 		setDropKey(null);
@@ -202,6 +216,21 @@ export function ApiSetupQueue({ open, agentId, agentName, items, onClose }: ApiS
 	// reopening on it would bind the same credential again.
 	const busy = entries.some((e) => e.status === 'working');
 	const close = (): void => onClose(unfinishedItems(entries));
+	const goBack = (): void => {
+		if (!onBack) return;
+		setDiscardOpen(false);
+		setFormKey(null);
+		setDropKey(null);
+		returningRef.current = true;
+		setFocusPane(true);
+		onBack(queueBackSeed(entries), unfinishedItems(entries));
+	};
+	/** Back from the credential form: a typed-in draft is confirmed away first; an
+	 * untouched one is nothing to lose. */
+	const backFromForm = (dirty: boolean): void => {
+		if (dirty) setDiscardOpen(true);
+		else goBack();
+	};
 	// The wizard stacks as a second SheetPrimitive and both see the same Escape —
 	// dismissing it must leave the operator in the queue.
 	const guardedClose = (): void => {
@@ -214,11 +243,24 @@ export function ApiSetupQueue({ open, agentId, agentName, items, onClose }: ApiS
 			open={open}
 			onClose={guardedClose}
 			ariaLabelledBy={headingId}
+			initialFocus={focusPane && active ? paneRef : undefined}
 			className="sm:w-[560px] xl:w-[640px]"
 		>
 			<div className="flex h-full flex-col">
 				<header className="border-border flex items-start justify-between gap-3 border-b px-5 py-4">
 					<div className="min-w-0">
+						{onBack && (
+							<Button
+								variant="ghost"
+								size="sm"
+								onClick={goBack}
+								disabled={busy}
+								className="text-muted-foreground hover:text-foreground mb-1 -ml-2 h-7 px-2 text-xs"
+							>
+								<ArrowLeft className="h-3.5 w-3.5" />
+								Back to APIs
+							</Button>
+						)}
 						<h2 id={headingId} className="text-foreground text-base font-semibold">
 							Set up {summary.total} {summary.total === 1 ? 'API' : 'APIs'}
 						</h2>
@@ -241,10 +283,11 @@ export function ApiSetupQueue({ open, agentId, agentName, items, onClose }: ApiS
 				<div className="flex-1 space-y-4 overflow-y-auto px-5 py-4">
 					{active ? (
 						<ActivePane
+							paneRef={paneRef}
 							entry={active}
 							agentName={agentName}
 							dropPending={dropKey === active.key}
-							selected={choices[active.key] ?? currentChoice(active)}
+							selected={choices[active.key] ?? defaultChoice(active)}
 							onSelect={(next): void =>
 								setChoices((current) => ({ ...current, [active.key]: next }))
 							}
@@ -323,8 +366,22 @@ export function ApiSetupQueue({ open, agentId, agentName, items, onClose }: ApiS
 					pinnedApi={formEntry.api}
 					onClose={(): void => setFormKey(null)}
 					onCreated={(info): void => handleCreated(formEntry, info)}
+					back={onBack ? { label: 'Back to APIs', onBack: backFromForm } : undefined}
 				/>
 			)}
+			<ConfirmDialog
+				open={discardOpen}
+				title="Discard this credential?"
+				body={
+					<>
+						What you typed for {formEntry?.api.label ?? 'this API'} won&apos;t be saved.
+						APIs already added stay added.
+					</>
+				}
+				confirmLabel="Discard and go back"
+				onConfirm={goBack}
+				onClose={(): void => setDiscardOpen(false)}
+			/>
 			{deviceDialog}
 		</SheetPrimitive>
 	);
@@ -333,10 +390,12 @@ export function ApiSetupQueue({ open, agentId, agentName, items, onClose }: ApiS
 /** The pane for the item at the front of the queue.
  *
  * An API that existing credentials cover shows them all as cards, with "Add a new
- * credential" last and the tray's choice preselected — reuse matches API identity,
- * not account, so a wrong-tenant match must be rejectable without dropping the
- * API. The primary action follows the selected card. */
+ * credential" last and a lone covering credential preselected — never bound
+ * until confirmed: reuse matches API identity, not account, so a wrong-tenant
+ * match must be rejectable without dropping the API. The primary action follows
+ * the selected card. */
 function ActivePane({
+	paneRef,
 	entry,
 	agentName,
 	dropPending,
@@ -348,6 +407,7 @@ function ActivePane({
 	onCancelDrop,
 	onConfirmDrop,
 }: {
+	paneRef: React.RefObject<HTMLElement | null>;
 	entry: QueueEntry;
 	agentName: string;
 	dropPending: boolean;
@@ -367,13 +427,16 @@ function ActivePane({
 			: null;
 	const wantsNew = count === 0 || selected?.kind === 'new';
 	/** A new credential for this API is one sign-in click — the tray established it. */
-	const newIsSignIn = entry.outcome === 'oauth' && entry.candidates.length === 0;
+	const newIsSignIn = entry.outcome === 'oauth';
 
 	return (
 		<section
+			ref={paneRef}
+			// Programmatic focus only — the landing spot after a Back round trip.
+			tabIndex={-1}
 			aria-label={`Set up ${entry.api.label}`}
 			data-testid="queue-active-pane"
-			className="border-border bg-muted/20 space-y-3 rounded-xl border p-4"
+			className="border-border bg-muted/20 focus-visible:ring-ring space-y-3 rounded-xl border p-4 outline-none focus-visible:ring-2"
 		>
 			<div className="flex items-start gap-3">
 				<span
@@ -579,8 +642,8 @@ function ProgressList({
 					<span className={cn('shrink-0 text-xs', STATUS_STYLE[entry.status])}>
 						{QUEUE_STATUS_LABELS[entry.status]}
 					</span>
-					{/* Which credential it went through. A `reuse` item never showed a
-					    pane, so this row is the only place the choice is disclosed. */}
+					{/* Which credential it went through — the batch's record once the
+					    pane has moved on. */}
 					{entry.status === 'added' && entry.credentialName && (
 						<span className="text-muted-foreground shrink-0 text-xs">
 							via {entry.credentialName}

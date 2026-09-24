@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { motion, type Variants } from 'framer-motion';
 import {
 	Check,
@@ -67,8 +67,12 @@ export interface ApiPickerProps {
 	selectedKeys?: ReadonlySet<string>;
 	/** Rows that cannot be picked, by `apiRefKey`. */
 	disabledKeys?: ReadonlySet<string>;
-	/** Short badge explaining why a `disabledKeys` row is out (e.g. "Already added"). */
-	disabledLabel?: string;
+	/** Short badge explaining why a `disabledKeys` row is out (e.g. "Already added");
+	 * a function labels each row by its `apiRefKey`. */
+	disabledLabel?: string | ((key: string) => string | undefined);
+	/** The search box, for a host that must move focus there itself (e.g. a sheet
+	 * re-opened without remounting the picker). */
+	searchInputRef?: RefObject<HTMLInputElement | null>;
 	/** Rendered in the no-results state, the one moment the operator has proved the
 	 * API they want isn't here. The tray passes its spec upload. */
 	emptyAction?: ReactNode;
@@ -120,14 +124,18 @@ export function ApiPicker({
 	disabledKeys,
 	disabledLabel,
 	emptyAction,
+	searchInputRef,
 }: ApiPickerProps) {
 	const [query, setQuery] = useState('');
 	const debouncedQuery = useDebouncedValue(query, 250);
-	const inputRef = useRef<HTMLInputElement>(null);
+	const ownInputRef = useRef<HTMLInputElement>(null);
+	const inputRef = searchInputRef ?? ownInputRef;
 
+	// Focus on mount. The ref is stable (a host's ref object, or our own), so this
+	// still runs once.
 	useEffect(() => {
 		inputRef.current?.focus();
-	}, []);
+	}, [inputRef]);
 
 	const apisQuery = useApis({});
 	const catalogQuery = useCatalog(debouncedQuery);
@@ -371,7 +379,7 @@ function SectionHeading({ id, children }: { id: string; children: React.ReactNod
 interface RowSelection {
 	selectedKeys: ReadonlySet<string>;
 	disabledKeys?: ReadonlySet<string>;
-	disabledLabel?: string;
+	disabledLabel?: ApiPickerProps['disabledLabel'];
 }
 
 /**
@@ -402,6 +410,10 @@ function PickerRow({
 	const key = apiRefKey(api);
 	const checked = selection ? selection.selectedKeys.has(key) : undefined;
 	const blocked = selection?.disabledKeys?.has(key) ?? false;
+	const blockedLabel =
+		typeof selection?.disabledLabel === 'function'
+			? selection.disabledLabel(key)
+			: selection?.disabledLabel;
 	return (
 		<button
 			type="button"
@@ -427,9 +439,9 @@ function PickerRow({
 				</span>
 				<p className="text-muted-foreground mt-0.5 truncate font-mono text-xs">{meta}</p>
 			</div>
-			{blocked && selection?.disabledLabel ? (
+			{blocked && blockedLabel ? (
 				<Badge variant="default" className="shrink-0 text-[10px]">
-					{selection.disabledLabel}
+					{blockedLabel}
 				</Badge>
 			) : (
 				trailing

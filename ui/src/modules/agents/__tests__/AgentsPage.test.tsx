@@ -1380,3 +1380,108 @@ describe('AgentsPage — flat agents surface', () => {
 		expect(screen.queryByRole('dialog', { name: 'Add APIs' })).not.toBeInTheDocument();
 	});
 });
+
+describe('AgentsPage — Add APIs: Back from the setup queue to the tray', () => {
+	beforeEach(async () => {
+		await page.viewport(1280, 900);
+		setToken('test-token');
+		resetAgentsStore();
+		// Stripe is covered by an existing credential, so it can be added in one
+		// confirm; the rest need a new credential.
+		resetCredentialsStore([
+			makeMockCredential({
+				credential_id: 'cred_stripe_1',
+				name: 'Stripe key',
+				type: CredentialType.BEARER_TOKEN,
+				api: { vendor: 'stripe.com', name: 'default', version: '1.0.0' },
+			}),
+		]);
+		resetApisStore([
+			{ row: apiRow('stripe.com', 'Stripe', 10), spec: {} },
+			{ row: apiRow('notion.so', 'Notion', 10), spec: {} },
+			{ row: apiRow('linear.app', 'Linear', 10), spec: {} },
+			{ row: apiRow('acme.io', 'Acme', 10), spec: {} },
+		]);
+	});
+
+	async function trayRow(name: string): Promise<HTMLElement> {
+		const tray = await screen.findByRole('dialog', { name: 'Add APIs' });
+		return within(tray).findByRole('checkbox', { name: new RegExp(name) });
+	}
+
+	function queueRows(): string[] {
+		return screen
+			.queryAllByTestId('queue-progress-row')
+			.map(
+				(r) =>
+					`${r.textContent?.split(/Now|Waiting|Added|Not added|Failed/)[0]}:${r.dataset.status}`,
+			);
+	}
+
+	it('keeps what was added, drops what was unticked and appends what was ticked', async () => {
+		const user = userEvent.setup();
+		// Disabled stops traffic, not editing — and this agent starts with no bindings.
+		renderPage('/?agent=agnt_disabled_1');
+		await user.click(await screen.findByRole('button', { name: 'Add APIs' }));
+		for (const name of ['Stripe', 'Notion', 'Linear']) await user.click(await trayRow(name));
+		const tray = screen.getByRole('dialog', { name: 'Add APIs' });
+		await waitFor(() =>
+			expect(within(tray).getByRole('button', { name: 'Continue' })).toBeEnabled(),
+		);
+		await user.click(within(tray).getByRole('button', { name: 'Continue' }));
+
+		// Stripe: its one existing credential is confirmed and bound.
+		expect(await screen.findByText('Set up 3 APIs')).toBeInTheDocument();
+		await user.click(await screen.findByRole('button', { name: 'Use this credential' }));
+		await waitFor(() => expect(queueRows()[0]).toBe('Stripe:added'));
+
+		await user.click(screen.getByRole('button', { name: 'Back to APIs' }));
+
+		// Back in the tray: the batch is still ticked, and the added API is locked.
+		const back = await screen.findByRole('dialog', { name: 'Add APIs' });
+		await waitFor(() => expect(within(back).getByLabelText('Search APIs')).toHaveFocus());
+		const stripe = await trayRow('Stripe');
+		expect(stripe).toHaveAttribute('aria-checked', 'true');
+		expect(stripe).toBeDisabled();
+		expect(within(stripe).getByText('Added')).toBeInTheDocument();
+		expect(await trayRow('Notion')).toHaveAttribute('aria-checked', 'true');
+		expect(await trayRow('Linear')).toHaveAttribute('aria-checked', 'true');
+
+		await user.click(await trayRow('Linear'));
+		await user.click(await trayRow('Acme'));
+		await waitFor(() =>
+			expect(within(back).getByRole('button', { name: 'Continue' })).toBeEnabled(),
+		);
+		await user.click(within(back).getByRole('button', { name: 'Continue' }));
+
+		// Progress survives the round trip: Stripe stays added, Linear is gone, Acme
+		// joins the end, and the pane (not the header) has focus again.
+		await waitFor(() =>
+			expect(queueRows()).toEqual(['Stripe:added', 'Notion:active', 'Acme:waiting']),
+		);
+		expect(screen.getByText('1 of 3 done')).toBeInTheDocument();
+		await waitFor(() => expect(screen.getByTestId('queue-active-pane')).toHaveFocus());
+	});
+
+	it('closing the tray mid-edit closes the flow and the batch waits, unedited', async () => {
+		const user = userEvent.setup();
+		renderPage('/?agent=agnt_disabled_1');
+		await user.click(await screen.findByRole('button', { name: 'Add APIs' }));
+		for (const name of ['Notion', 'Linear']) await user.click(await trayRow(name));
+		const tray = screen.getByRole('dialog', { name: 'Add APIs' });
+		await waitFor(() =>
+			expect(within(tray).getByRole('button', { name: 'Continue' })).toBeEnabled(),
+		);
+		await user.click(within(tray).getByRole('button', { name: 'Continue' }));
+		await user.click(await screen.findByRole('button', { name: 'Back to APIs' }));
+
+		await user.click(await trayRow('Linear'));
+		const back = screen.getByRole('dialog', { name: 'Add APIs' });
+		await user.click(within(back).getByRole('button', { name: 'Cancel' }));
+
+		// The untick was never committed, so both still wait for next time.
+		expect(
+			await screen.findByRole('button', { name: 'Finish adding 2 APIs' }),
+		).toBeInTheDocument();
+	});
+});

@@ -1,8 +1,9 @@
 /**
  * ApiSetupQueue — finishing the batch the Add-APIs tray handed over. The state
  * machine has its own unit specs (`setupQueue.test.ts`); these pin what needs the
- * bind endpoint and the credential wizard: silent reuse binds, one failed POST not
- * taking the others, and a mid-way dismissal handing the remainder back.
+ * bind endpoint and the credential wizard: nothing binds until the operator
+ * confirms (even a lone matching credential), one failed POST not taking the
+ * others, and a mid-way dismissal handing the remainder back.
  */
 import { useState } from 'react';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -26,7 +27,10 @@ import {
 } from '@/shared/credentials/mocks/handlers';
 import { resetAgentsStore } from '@/modules/agents/mocks/handlers';
 import { CredentialType, type Credential, type SelectedApi } from '@/shared/credentials/api';
-import { ApiSetupQueue } from '@/modules/agents/components/flat/ApiSetupQueue';
+import {
+	ApiSetupQueue,
+	type ApiSetupQueueProps,
+} from '@/modules/agents/components/flat/ApiSetupQueue';
 import type { PreflightItem, PreflightOutcome } from '@/modules/agents/lib/apiPreflight';
 
 /** An agent with no seeded bindings, so every bind in these specs is the first. */
@@ -58,17 +62,16 @@ function makeItem(
 		key: `${vendor}/main`,
 		api,
 		outcome,
-		candidates: [],
+		covering: [],
 		importsApi: false,
 		...over,
-		covering: over.covering ?? over.candidates ?? [],
 	};
 }
 
-/** A `reuse` item pointing at an existing credential. */
-function reuseItem(vendor: string, credentialId: string): PreflightItem {
-	return makeItem(vendor, 'reuse', {
-		candidates: [
+/** A `choose` item that exactly one existing credential covers. */
+function coveredItem(vendor: string, credentialId: string): PreflightItem {
+	return makeItem(vendor, 'choose', {
+		covering: [
 			makeCredential({
 				credential_id: credentialId,
 				name: `${vendor} key`,
@@ -83,9 +86,11 @@ function reuseItem(vendor: string, credentialId: string): PreflightItem {
 function QueueHarness({
 	items,
 	onClosed,
+	onBack,
 }: {
 	items: PreflightItem[];
 	onClosed?: (remaining: PreflightItem[]) => void;
+	onBack?: ApiSetupQueueProps['onBack'];
 }) {
 	const [batch, setBatch] = useState(items);
 	const [open, setOpen] = useState(true);
@@ -104,6 +109,7 @@ function QueueHarness({
 					setOpen(false);
 					onClosed?.(remaining);
 				}}
+				onBack={onBack}
 			/>
 		</>
 	);
@@ -146,38 +152,38 @@ describe('ApiSetupQueue — finishing a batch one API at a time', () => {
 		]);
 	});
 
-	it('binds reuse picks without ever asking, and reports what it did', async () => {
+	it('never binds a lone matching credential on its own — it is preselected, not chosen', async () => {
 		const { calls } = watchBinds();
-		renderWithProviders(
-			<QueueHarness
-				items={[
-					reuseItem('stripe.com', 'cred_stripe'),
-					reuseItem('slack.com', 'cred_slack'),
-				]}
-			/>,
-		);
+		const user = userEvent.setup();
+		renderWithProviders(<QueueHarness items={[coveredItem('stripe.com', 'cred_stripe')]} />);
 
-		// No pane at all — the whole point of the reuse branch.
-		expect(await screen.findByTestId('queue-done-pane')).toBeInTheDocument();
-		expect(screen.queryByTestId('queue-active-pane')).not.toBeInTheDocument();
-		expect(screen.getByText('2 APIs added')).toBeInTheDocument();
+		// The pane stops on it: a match is API identity, not account, so the
+		// operator confirms it (or picks a new one) before anything binds.
+		const options = await screen.findByRole('group', {
+			name: 'You have 1 credential for stripe. Should Support bot use it, or a new one?',
+		});
+		expect(within(options).getAllByRole('radio')).toHaveLength(2);
+		expect(within(options).getByRole('radio', { name: /stripe\.com key/ })).toBeChecked();
+		expect(
+			within(options).getByRole('radio', { name: /Add a new credential/ }),
+		).not.toBeChecked();
+		expect(screen.queryByTestId('queue-done-pane')).not.toBeInTheDocument();
+		expect(rowFor('stripe')).toHaveAttribute('data-status', 'active');
+		expect(calls).toHaveLength(0);
 
-		await waitFor(() => expect(calls).toHaveLength(2));
-		expect(calls.map((c) => c.agentId)).toEqual([AGENT_ID, AGENT_ID]);
+		await user.click(screen.getByRole('button', { name: 'Use this credential' }));
+
+		await waitFor(() => expect(calls).toHaveLength(1));
+		expect(calls[0].agentId).toBe(AGENT_ID);
 		// Least privilege: the binding starts with no rules, and the footer
 		// says so rather than leaving the operator to assume access.
 		expect(calls[0].body).toEqual({ credential_id: 'cred_stripe' });
+		expect(await screen.findByTestId('queue-done-pane')).toBeInTheDocument();
+		expect(screen.getByText('1 API added')).toBeInTheDocument();
 		expect(
 			screen.getByText(/Added APIs start with no access rules, so calls are blocked/),
 		).toBeInTheDocument();
-	});
-
-	it('names the credential a silent reuse was bound through', async () => {
-		renderWithProviders(<QueueHarness items={[reuseItem('stripe.com', 'cred_stripe')]} />);
-
-		// The reuse branch shows no pane, so the finished row is the only place the
-		// flow can disclose WHICH credential it picked.
-		await waitFor(() => expect(rowFor('stripe')).toHaveAttribute('data-status', 'added'));
+		// The finished row keeps the record of which credential it went through.
 		expect(rowFor('stripe')).toHaveTextContent('via stripe.com key');
 	});
 
@@ -190,7 +196,7 @@ describe('ApiSetupQueue — finishing a batch one API at a time', () => {
 		const sandbox = makeCredential({ credential_id: 'cred_sandbox', name: 'Stripe — Sandbox' });
 		renderWithProviders(
 			<QueueHarness
-				items={[makeItem('stripe.com', 'choose', { candidates: [production, sandbox] })]}
+				items={[makeItem('stripe.com', 'choose', { covering: [production, sandbox] })]}
 			/>,
 		);
 
@@ -208,25 +214,23 @@ describe('ApiSetupQueue — finishing a batch one API at a time', () => {
 		).toBeInTheDocument();
 	});
 
-	it('preselects a new credential chosen in the tray, and can switch back to an existing one', async () => {
+	it('a lone matching credential can be swapped for a new one, and back', async () => {
 		const { calls } = watchBinds();
 		const user = userEvent.setup();
 		renderWithProviders(
 			<QueueHarness
-				items={[
-					makeItem('stripe.com', 'form', {
-						covering: [makeCredential()],
-						choice: { kind: 'new' },
-					}),
-				]}
+				items={[makeItem('stripe.com', 'choose', { covering: [makeCredential()] })]}
 			/>,
 		);
 
 		const options = await screen.findByRole('group', {
 			name: 'You have 1 credential for stripe. Should Support bot use it, or a new one?',
 		});
-		expect(within(options).getByRole('radio', { name: /Add a new credential/ })).toBeChecked();
+		await user.click(within(options).getByRole('radio', { name: /Add a new credential/ }));
 		expect(screen.getByRole('button', { name: 'Add credential' })).toBeEnabled();
+		expect(
+			screen.queryByRole('button', { name: 'Use this credential' }),
+		).not.toBeInTheDocument();
 
 		// Changing your mind here must not cost a trip back to the tray.
 		await user.click(within(options).getByRole('radio', { name: /Stripe key/ }));
@@ -248,7 +252,7 @@ describe('ApiSetupQueue — finishing a batch one API at a time', () => {
 		});
 		renderWithProviders(
 			<QueueHarness
-				items={[makeItem('stripe.com', 'oauth', { candidates: [unconnected] })]}
+				items={[makeItem('stripe.com', 'choose', { covering: [unconnected] })]}
 			/>,
 		);
 
@@ -279,19 +283,23 @@ describe('ApiSetupQueue — finishing a batch one API at a time', () => {
 		).toBeVisible();
 	});
 
-	it('clears the free reuses before stopping on the item that needs attention', async () => {
+	it('walks the batch in pick order, stopping on every API', async () => {
+		const { calls } = watchBinds();
 		renderWithProviders(
 			<QueueHarness
-				items={[makeItem('slack.com', 'form'), reuseItem('stripe.com', 'cred_stripe')]}
+				items={[makeItem('slack.com', 'form'), coveredItem('stripe.com', 'cred_stripe')]}
 			/>,
 		);
 
-		// Pick order put the form first; the queue still banks the reuse first so
-		// it is not stuck behind a form the operator is typing.
-		await waitFor(() => expect(rowFor('stripe')).toHaveAttribute('data-status', 'added'));
-		expect(progressRows()[0].textContent).toMatch(/^stripe/);
-		expect(within(screen.getByTestId('queue-active-pane')).getByText('slack')).toBeVisible();
-		expect(screen.getByText('1 of 2 done')).toBeInTheDocument();
+		// No covered API is banked ahead of the rest: the first pick is on screen
+		// and nothing has been bound behind the operator's back.
+		expect(
+			await within(await screen.findByTestId('queue-active-pane')).findByText('slack'),
+		).toBeVisible();
+		expect(progressRows()[0].textContent).toMatch(/^slack/);
+		expect(rowFor('stripe')).toHaveAttribute('data-status', 'waiting');
+		expect(screen.getByText('0 of 2 done')).toBeInTheDocument();
+		expect(calls).toHaveLength(0);
 	});
 
 	it('dropping an item says the API is not added, with no promise of later', async () => {
@@ -343,19 +351,27 @@ describe('ApiSetupQueue — finishing a batch one API at a time', () => {
 		renderWithProviders(
 			<QueueHarness
 				items={[
-					reuseItem('stripe.com', 'cred_stripe'),
-					reuseItem('slack.com', 'cred_slack'),
+					coveredItem('stripe.com', 'cred_stripe'),
+					coveredItem('slack.com', 'cred_slack'),
 				]}
 			/>,
 		);
 
-		// Sequential POSTs: the failure must not stall the rest of the batch.
+		// The failure must not stall the rest of the batch.
+		await user.click(await screen.findByRole('button', { name: 'Use this credential' }));
 		await waitFor(() => expect(rowFor('stripe')).toHaveAttribute('data-status', 'failed'));
+		await waitFor(() => expect(rowFor('slack')).toHaveAttribute('data-status', 'active'));
+		await user.click(screen.getByRole('button', { name: 'Use this credential' }));
 		await waitFor(() => expect(rowFor('slack')).toHaveAttribute('data-status', 'added'));
 		expect(screen.getByText('1 API added · 1 failed')).toBeInTheDocument();
 
 		failing = false;
 		await user.click(within(rowFor('stripe')).getByRole('button', { name: 'Try again' }));
+		// Back in its pane, still on the credential it was going to use — the
+		// bind is only retried once the operator confirms it again.
+		await waitFor(() => expect(rowFor('stripe')).toHaveAttribute('data-status', 'active'));
+		expect(screen.getByRole('radio', { name: /stripe\.com key/ })).toBeChecked();
+		await user.click(screen.getByRole('button', { name: 'Use this credential' }));
 		await waitFor(() => expect(rowFor('stripe')).toHaveAttribute('data-status', 'added'));
 		expect(screen.getByText('2 APIs added')).toBeInTheDocument();
 	});
@@ -366,7 +382,7 @@ describe('ApiSetupQueue — finishing a batch one API at a time', () => {
 		renderWithProviders(
 			<QueueHarness
 				items={[
-					reuseItem('stripe.com', 'cred_stripe'),
+					coveredItem('stripe.com', 'cred_stripe'),
 					makeItem('slack.com', 'form'),
 					makeItem('notion.so', 'form'),
 				]}
@@ -374,6 +390,7 @@ describe('ApiSetupQueue — finishing a batch one API at a time', () => {
 			/>,
 		);
 
+		await user.click(await screen.findByRole('button', { name: 'Use this credential' }));
 		await waitFor(() => expect(rowFor('stripe')).toHaveAttribute('data-status', 'added'));
 		// The cost of closing is stated before it is paid.
 		expect(
@@ -405,7 +422,7 @@ describe('ApiSetupQueue — finishing a batch one API at a time', () => {
 		const sandbox = makeCredential({ credential_id: 'cred_sandbox', name: 'Stripe — Sandbox' });
 		renderWithProviders(
 			<QueueHarness
-				items={[makeItem('stripe.com', 'choose', { candidates: [production, sandbox] })]}
+				items={[makeItem('stripe.com', 'choose', { covering: [production, sandbox] })]}
 			/>,
 		);
 
@@ -501,10 +518,11 @@ describe('ApiSetupQueue — finishing a batch one API at a time', () => {
 		const user = userEvent.setup();
 		renderWithProviders(
 			<QueueHarness
-				items={[reuseItem('stripe.com', 'cred_stripe'), makeItem('slack.com', 'form')]}
+				items={[coveredItem('stripe.com', 'cred_stripe'), makeItem('slack.com', 'form')]}
 			/>,
 		);
 
+		await user.click(await screen.findByRole('button', { name: 'Use this credential' }));
 		await waitFor(() => expect(rowFor('stripe')).toHaveAttribute('data-status', 'added'));
 		await user.click(screen.getByRole('button', { name: 'Not this one' }));
 		await screen.findByTestId('queue-drop-confirm');
@@ -520,7 +538,7 @@ describe('ApiSetupQueue — finishing a batch one API at a time', () => {
 		const sandbox = makeCredential({ credential_id: 'cred_sandbox', name: 'Stripe — Sandbox' });
 		renderWithProviders(
 			<QueueHarness
-				items={[makeItem('stripe.com', 'choose', { candidates: [production, sandbox] })]}
+				items={[makeItem('stripe.com', 'choose', { covering: [production, sandbox] })]}
 			/>,
 		);
 		await screen.findByRole('group', { name: /You have 2 credentials/ });
@@ -534,5 +552,91 @@ describe('ApiSetupQueue — finishing a batch one API at a time', () => {
 
 		expect(await screen.findByRole('button', { name: 'Add credential' })).toBeVisible();
 		expect(rowFor('slack')).toBeVisible();
+	});
+
+	describe('Back to APIs', () => {
+		it('hands the batch back as a tray seed: owed APIs ticked, added ones locked', async () => {
+			const onBack = vi.fn();
+			const user = userEvent.setup();
+			renderWithProviders(
+				<QueueHarness
+					items={[
+						coveredItem('stripe.com', 'cred_stripe'),
+						makeItem('slack.com', 'form'),
+					]}
+					onBack={onBack}
+				/>,
+			);
+
+			await user.click(await screen.findByRole('button', { name: 'Use this credential' }));
+			await waitFor(() => expect(rowFor('stripe')).toHaveAttribute('data-status', 'added'));
+
+			const back = screen.getByRole('button', { name: 'Back to APIs' });
+			await user.click(back);
+			expect(onBack).toHaveBeenCalledTimes(1);
+			const [seed, remaining] = onBack.mock.calls[0] as [
+				{ picks: SelectedApi[]; added: SelectedApi[] },
+				PreflightItem[],
+			];
+			expect(seed.picks.map((a) => a.vendor)).toEqual(['slack.com']);
+			expect(seed.added.map((a) => a.vendor)).toEqual(['stripe.com']);
+			expect(remaining.map((i) => i.key)).toEqual(['slack.com/main']);
+		});
+
+		it('no Back without a host that can take the operator there', async () => {
+			renderWithProviders(<QueueHarness items={[makeItem('slack.com', 'form')]} />);
+			await screen.findByRole('button', { name: 'Add credential' });
+			expect(screen.queryByRole('button', { name: 'Back to APIs' })).not.toBeInTheDocument();
+		});
+
+		it('an untouched credential form goes back without asking', async () => {
+			const onBack = vi.fn();
+			const user = userEvent.setup();
+			renderWithProviders(
+				<QueueHarness items={[makeItem('slack.com', 'form')]} onBack={onBack} />,
+			);
+
+			await user.click(await screen.findByRole('button', { name: 'Add credential' }));
+			const wizard = await screen.findByRole('dialog', { name: /Add credential/ });
+			await user.click(within(wizard).getByRole('button', { name: 'Back to APIs' }));
+
+			expect(onBack).toHaveBeenCalledTimes(1);
+			expect(
+				screen.queryByRole('dialog', { name: 'Discard this credential?' }),
+			).not.toBeInTheDocument();
+		});
+
+		it('a typed-in credential asks before it is discarded', async () => {
+			const onBack = vi.fn();
+			const user = userEvent.setup();
+			renderWithProviders(
+				<QueueHarness items={[makeItem('slack.com', 'form')]} onBack={onBack} />,
+			);
+
+			await user.click(await screen.findByRole('button', { name: 'Add credential' }));
+			const wizard = await screen.findByRole('dialog', { name: /Add credential/ });
+			await user.type(within(wizard).getByLabelText(/^Name/), ' draft');
+			await user.click(within(wizard).getByRole('button', { name: 'Back to APIs' }));
+
+			const confirm = await screen.findByRole('dialog', { name: 'Discard this credential?' });
+			expect(onBack).not.toHaveBeenCalled();
+
+			// Keeping the draft leaves the operator in the form, input intact.
+			await user.click(within(confirm).getByRole('button', { name: 'Cancel' }));
+			await waitFor(() =>
+				expect(
+					screen.queryByRole('dialog', { name: 'Discard this credential?' }),
+				).not.toBeInTheDocument(),
+			);
+			expect(within(wizard).getByLabelText(/^Name/)).toHaveValue('slack draft');
+
+			await user.click(within(wizard).getByRole('button', { name: 'Back to APIs' }));
+			await user.click(
+				within(
+					await screen.findByRole('dialog', { name: 'Discard this credential?' }),
+				).getByRole('button', { name: 'Discard and go back' }),
+			);
+			expect(onBack).toHaveBeenCalledTimes(1);
+		});
 	});
 });

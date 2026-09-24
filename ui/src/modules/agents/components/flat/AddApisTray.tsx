@@ -2,20 +2,22 @@
  * AddApisTray — step 1 of the Add-APIs flow: pick APIs (via the shared
  * `ApiPicker`), see what they will cost, hand the batch to the setup queue.
  *
- * Each pick is preflighted as reuse / one sign-in click / pick-which-credential /
- * needs-a-new-credential, so the cost is on screen before anything commits. A pick
- * that existing credentials cover says which one it will use, and "Change" opens
- * every covering credential plus "Add a new credential" — an API can hold several.
+ * Each pick is preflighted as choose-a-credential / one sign-in click /
+ * needs-a-new-credential, so what the next step asks for is on screen before
+ * anything commits. The rows are labels only: nothing is chosen here. A pick
+ * existing credentials cover says how many, and the setup queue offers them
+ * alongside "Add a new credential" — even a lone match is never reused silently.
  * The selection survives a dismissal and clears on commit or an agent change.
+ *
+ * The setup queue's Back re-opens the tray on its batch (`seed`): the APIs still
+ * owed come back ticked and editable, the ones already added come back ticked
+ * and locked — going back never undoes a saved binding.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
 	Check,
-	ChevronDown,
-	CircleCheck,
 	CircleDot,
 	CirclePlus,
-	KeyRound,
 	LogIn,
 	Plus,
 	Upload,
@@ -28,11 +30,10 @@ import { useAllCredentials, useProviders, type SelectedApi } from '@/shared/cred
 import { apiRefKey } from '@/shared/credentials/lib/apiIdentity';
 import { ApiPicker } from '@/shared/credentials/components/ApiPicker';
 import { ImportSpecDialog } from '@/shared/credentials/components/ImportSpecDialog';
-import { credentialDistinguisher } from '@/shared/credentials/lib/credentialIdentity';
 import {
 	PREFLIGHT_LABELS,
 	PREFLIGHT_TALLY_ORDER,
-	currentChoice,
+	coveringCountLabel,
 	preflightApis,
 	preflightTally,
 	preflightTallyLabel,
@@ -40,13 +41,11 @@ import {
 	type PreflightOutcome,
 } from '@/modules/agents/lib/apiPreflight';
 import type { CredentialBindingEntity } from '@/modules/agents/api/types';
-import type { CredentialChoice } from '@/shared/credentials/lib/credentialIdentity';
-import { CredentialOptions } from '@/shared/credentials/components/CredentialOptions';
+import type { QueueBackSeed } from '@/modules/agents/lib/setupQueue';
 
-/** Glyph and colour per outcome — cheapest reads as success, a pending choice
- * as amber, and a new credential as plain work still to do. */
+/** Glyph and colour per outcome — a choice still to make reads as amber, a
+ * sign-in as orange, and a new credential as plain work still to do. */
 const OUTCOME_STYLE: Record<PreflightOutcome, { icon: LucideIcon; tone: string }> = {
-	reuse: { icon: CircleCheck, tone: 'text-success' },
 	oauth: { icon: LogIn, tone: 'text-accent-orange' },
 	choose: { icon: CircleDot, tone: 'text-warning' },
 	form: { icon: CirclePlus, tone: 'text-muted-foreground' },
@@ -75,8 +74,12 @@ export interface AddApisTrayProps {
 	agentName: string;
 	/** The agent's existing bindings — they say which APIs it already reaches. */
 	bindings: CredentialBindingEntity[];
-	/** Hand the preflighted batch on — actionable items only, in pick order. */
+	/** Hand the preflighted batch on — actionable items only, in pick order. While
+	 * editing a batch (`seed`), this may be empty: every owed API was unticked. */
 	onContinue: (items: PreflightItem[]) => void;
+	/** The setup queue's batch, when the operator went Back to edit it. A new seed
+	 * replaces the draft; `null` means the tray is not editing a batch. */
+	seed?: QueueBackSeed | null;
 }
 
 export function AddApisTray({
@@ -86,17 +89,19 @@ export function AddApisTray({
 	agentName,
 	bindings,
 	onContinue,
+	seed = null,
 }: AddApisTrayProps) {
 	const headingId = 'add-apis-tray-title';
-	const [picks, setPicks] = useState<SelectedApi[]>([]);
-	/** Pick key → which credential it should use, for picks the operator changed. */
-	const [choices, setChoices] = useState<Record<string, CredentialChoice>>({});
-	/** The one pick whose credential options are open. */
-	const [expandedKey, setExpandedKey] = useState<string | null>(null);
+	const [picks, setPicks] = useState<SelectedApi[]>(() => seed?.picks ?? []);
+	/** APIs this batch already added — shown ticked and locked, never re-queued. */
+	const [locked, setLocked] = useState<SelectedApi[]>(() => seed?.added ?? []);
 	/** Spec upload. First-class here because "the API I need isn't in the catalog"
 	 * is otherwise a dead end mid-flow; a successful import lands in the selection,
 	 * so the operator never has to search for what they just uploaded. */
 	const [uploadOpen, setUploadOpen] = useState(false);
+	/** Where focus lands on every open — including a re-open from the queue's Back,
+	 * which can catch the sheet mid-exit with the picker still mounted. */
+	const searchRef = useRef<HTMLInputElement>(null);
 
 	// The draft belongs to ONE agent, so it resets when the agent changes — never
 	// on an `open` flip, which would discard picks a dismissal must preserve.
@@ -105,12 +110,24 @@ export function AddApisTray({
 		if (lastAgentIdRef.current !== agentId) {
 			lastAgentIdRef.current = agentId;
 			setPicks([]);
-			setChoices({});
+			setLocked([]);
 		}
 	}, [agentId]);
 
+	// Seed-from-props syncs only when the seed itself changes, never on `open`. The
+	// draft is a view of the queue's batch, so a seed withdrawn without a commit
+	// (the tray was closed; the batch waits in the queue) clears it too.
+	const lastSeedRef = useRef(seed);
+	useEffect(() => {
+		if (lastSeedRef.current === seed) return;
+		lastSeedRef.current = seed;
+		setPicks(seed?.picks ?? []);
+		setLocked(seed?.added ?? []);
+	}, [seed]);
+	const editingBatch = seed != null;
+
 	// Preflight reads the WHOLE credential list: a first-page-only list would call
-	// an existing credential "needs a new credential" and turn reuse into a form.
+	// an existing credential "needs a new credential" and hide it from the choice.
 	const credentialsSource = useAllCredentials();
 	const providersQuery = useProviders();
 	const managedOAuthAvailable = useMemo(
@@ -124,13 +141,17 @@ export function AddApisTray({
 				credentials: credentialsSource.items,
 				bindings,
 				managedOAuthAvailable,
-				choices,
 			}),
-		[picks, credentialsSource.items, bindings, managedOAuthAvailable, choices],
+		[picks, credentialsSource.items, bindings, managedOAuthAvailable],
 	);
 	const tally = useMemo(() => preflightTally(items), [items]);
 
-	const selectedKeys = useMemo(() => new Set(picks.map(apiRefKey)), [picks]);
+	const lockedKeys = useMemo(() => new Set(locked.map(apiRefKey)), [locked]);
+	// Locked rows read ticked (they are in the batch) as well as disabled.
+	const selectedKeys = useMemo(
+		() => new Set([...picks.map(apiRefKey), ...lockedKeys]),
+		[picks, lockedKeys],
+	);
 
 	// Rows the agent already reaches, so they render as "Already added" instead of
 	// inviting a duplicate bind. Only bindings naming a concrete API are
@@ -145,18 +166,13 @@ export function AddApisTray({
 		}
 		return keys;
 	}, [bindings]);
+	const disabledKeys = useMemo(
+		() => new Set([...attachedKeys, ...lockedKeys]),
+		[attachedKeys, lockedKeys],
+	);
 
-	const choose = (key: string, next: CredentialChoice | null): void =>
-		setChoices((current) => {
-			const { [key]: _previous, ...rest } = current;
-			return next ? { ...rest, [key]: next } : rest;
-		});
-
-	// A pick taken out forgets its choice, so re-picking starts from the default.
-	const remove = (key: string): void => {
+	const remove = (key: string): void =>
 		setPicks((current) => current.filter((p) => apiRefKey(p) !== key));
-		choose(key, null);
-	};
 
 	const toggle = (api: SelectedApi): void => {
 		const key = apiRefKey(api);
@@ -167,20 +183,21 @@ export function AddApisTray({
 	// Append, never toggle: re-uploading an API already picked must not drop it.
 	const addImported = (apis: SelectedApi[]): void =>
 		setPicks((current) => {
-			const keys = new Set(current.map(apiRefKey));
+			const keys = new Set([...current.map(apiRefKey), ...lockedKeys]);
 			return [...current, ...apis.filter((api) => !keys.has(apiRefKey(api)))];
 		});
 
 	const preflightReady = credentialsSource.complete && !credentialsSource.error;
-	const canContinue = preflightReady && tally.actionable > 0;
+	// Editing a batch may end with nothing left to set up — that is still an answer.
+	const canContinue = preflightReady && (tally.actionable > 0 || editingBatch);
 
 	const handleContinue = (): void => {
 		const actionable = items.filter((item) => item.outcome !== 'attached');
-		if (actionable.length === 0) return;
+		if (actionable.length === 0 && !editingBatch) return;
 		onContinue(actionable);
 		// Reset on commit — the queue owns these picks now.
 		setPicks([]);
-		setChoices({});
+		setLocked([]);
 	};
 
 	return (
@@ -188,6 +205,7 @@ export function AddApisTray({
 			open={open}
 			onClose={onClose}
 			ariaLabelledBy={headingId}
+			initialFocus={searchRef}
 			className="sm:w-[640px] xl:w-[760px]"
 		>
 			<div className="flex h-full flex-col">
@@ -216,10 +234,13 @@ export function AddApisTray({
 
 				<div className="flex-1 overflow-y-auto px-5 py-4">
 					<ApiPicker
+						searchInputRef={searchRef}
 						onSelect={toggle}
 						selectedKeys={selectedKeys}
-						disabledKeys={attachedKeys}
-						disabledLabel="Already added"
+						disabledKeys={disabledKeys}
+						disabledLabel={(key): string =>
+							lockedKeys.has(key) ? 'Added' : 'Already added'
+						}
 						emptyAction={
 							<Button
 								variant="secondary"
@@ -233,12 +254,33 @@ export function AddApisTray({
 					/>
 				</div>
 
-				{picks.length > 0 && (
+				{(picks.length > 0 || locked.length > 0) && (
 					<section
 						aria-label="Selected APIs"
 						className="border-border bg-muted/20 border-t px-5 py-3"
 					>
 						<ul className="divide-border/50 mb-3 max-h-72 divide-y overflow-y-auto">
+							{/* Already added by this batch: a record, not a choice — no remove. */}
+							{locked.map((api) => (
+								<li
+									key={apiRefKey(api)}
+									data-testid="tray-selection-added"
+									className="py-1.5"
+								>
+									<div className="flex items-center gap-2 text-sm">
+										<span className="text-foreground min-w-0 flex-1 truncate">
+											{api.label}
+										</span>
+										<span className="text-success inline-flex shrink-0 items-center gap-1.5 text-xs font-medium">
+											<Check
+												className="h-3.5 w-3.5 shrink-0"
+												aria-hidden="true"
+											/>
+											Added
+										</span>
+									</div>
+								</li>
+							))}
 							{items.map((item) => (
 								<li key={item.key} data-testid="tray-selection" className="py-1.5">
 									<div className="flex items-center gap-2 text-sm">
@@ -256,20 +298,13 @@ export function AddApisTray({
 											<X className="h-3.5 w-3.5" />
 										</Button>
 									</div>
-									{item.covering.length > 0 && (
-										<PickCredential
-											item={item}
-											expanded={expandedKey === item.key}
-											onToggle={(): void =>
-												setExpandedKey((current) =>
-													current === item.key ? null : item.key,
-												)
-											}
-											onChoose={(next): void => {
-												choose(item.key, next);
-												setExpandedKey(null);
-											}}
-										/>
+									{item.outcome === 'choose' && (
+										<p
+											data-testid="tray-covering-count"
+											className="text-muted-foreground mt-0.5 truncate text-xs"
+										>
+											{coveringCountLabel(item.covering.length)}
+										</p>
 									)}
 								</li>
 							))}
@@ -291,9 +326,15 @@ export function AddApisTray({
 				<footer className="border-border flex flex-wrap items-center justify-between gap-3 border-t px-5 py-3">
 					<div className="flex min-w-0 items-center gap-3">
 						<p className="text-muted-foreground text-xs">
-							{picks.length === 0
+							{picks.length === 0 && locked.length === 0
 								? 'Nothing selected yet.'
-								: `${picks.length} selected${tally.attached > 0 ? `, ${tally.attached} already added` : ''}`}
+								: [
+										`${picks.length} selected`,
+										tally.attached > 0 && `${tally.attached} already added`,
+										locked.length > 0 && `${locked.length} added so far`,
+									]
+										.filter(Boolean)
+										.join(', ')}
 						</p>
 						{/* Always reachable, not only from no-results: an operator who knows the
 						    API isn't catalogued shouldn't have to search first. */}
@@ -311,13 +352,12 @@ export function AddApisTray({
 						<Button variant="ghost" size="sm" onClick={onClose}>
 							Cancel
 						</Button>
+						{/* Every pick stops in the next step, so the button promises
+						    exactly that — nothing is bound from here. */}
 						<Button size="sm" disabled={!canContinue} onClick={handleContinue}>
 							<Plus className="h-4 w-4" />
-							{/* When nothing needs a queue stop, the next click IS the
-							    whole job — say so rather than promising more steps. */}
-							{tally.actionable > 0 && tally.queued === 0
-								? `Add ${tally.actionable} ${tally.actionable === 1 ? 'API' : 'APIs'}`
-								: 'Continue'}
+							{/* Editing a batch down to nothing left to set up just finishes. */}
+							{editingBatch && tally.actionable === 0 ? 'Done' : 'Continue'}
 						</Button>
 					</div>
 				</footer>
@@ -334,87 +374,7 @@ export function AddApisTray({
 	);
 }
 
-/**
- * Which credential a covered pick uses, said as a sentence with a "Change" link
- * that opens the {@link CredentialOptions} cards — every covering credential plus
- * "Add a new credential".
- */
-function PickCredential({
-	item,
-	expanded,
-	onToggle,
-	onChoose,
-}: {
-	item: PreflightItem;
-	expanded: boolean;
-	onToggle: () => void;
-	onChoose: (choice: CredentialChoice) => void;
-}) {
-	const optionsId = `credential-choice-${item.key}`;
-	const selected = currentChoice(item);
-	const settled = selected?.kind === 'existing' ? item.candidates[0] : null;
-	const count = item.covering.length;
-	const verb = selected ? 'Change' : 'Choose';
-
-	return (
-		<div className="mt-1">
-			<div className="flex items-center gap-2 text-xs">
-				<p className="text-muted-foreground min-w-0 flex-1 truncate">
-					{settled ? (
-						<>
-							<KeyRound
-								className="mr-1 inline h-3 w-3 align-[-2px]"
-								aria-hidden="true"
-							/>
-							Uses <span className="text-foreground font-medium">{settled.name}</span>
-							<span className="text-muted-foreground/80">
-								{' '}
-								· {credentialDistinguisher(settled)}
-							</span>
-						</>
-					) : selected?.kind === 'new' ? (
-						<>
-							<Plus className="mr-1 inline h-3 w-3 align-[-2px]" aria-hidden="true" />
-							Adds a new credential — you have {count} for this API already
-						</>
-					) : (
-						`${count} of your credentials cover this API — choose one now or in the next step`
-					)}
-				</p>
-				<Button
-					variant="ghost"
-					size="sm"
-					aria-expanded={expanded}
-					aria-controls={optionsId}
-					aria-label={`${verb} credential for ${item.api.label}`}
-					onClick={onToggle}
-					className="text-primary hover:text-primary h-6 shrink-0 px-2 text-xs"
-				>
-					{verb}
-					<ChevronDown
-						className={cn('h-3 w-3 transition-transform', expanded && 'rotate-180')}
-						aria-hidden="true"
-					/>
-				</Button>
-			</div>
-
-			{expanded && (
-				<CredentialOptions
-					id={optionsId}
-					legend={`Credential for ${item.api.label}`}
-					legendHidden
-					credentials={item.covering}
-					selected={selected}
-					onSelect={onChoose}
-					newCredentialDetail="Another key or account for this API — you fill it in the next step"
-					className="mt-2"
-				/>
-			)}
-		</div>
-	);
-}
-
-/** The cost breakdown — cheapest line first, zero-count lines omitted. */
+/** What the next step will ask for, per outcome — zero-count lines omitted. */
 function TallyLines({ tally }: { tally: ReturnType<typeof preflightTally> }) {
 	const lines = PREFLIGHT_TALLY_ORDER.filter((outcome) => tally[outcome] > 0);
 	return (
@@ -423,10 +383,7 @@ function TallyLines({ tally }: { tally: ReturnType<typeof preflightTally> }) {
 				<p
 					key={outcome}
 					data-testid="tray-tally-line"
-					className={cn(
-						'text-xs',
-						outcome === 'reuse' ? 'text-success' : 'text-muted-foreground',
-					)}
+					className="text-muted-foreground text-xs"
 				>
 					{preflightTallyLabel(outcome, tally[outcome])}
 				</p>

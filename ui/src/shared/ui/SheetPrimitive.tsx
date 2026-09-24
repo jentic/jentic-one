@@ -133,7 +133,11 @@ export function SheetPrimitive({
 	// Including it would create races between user toggles and animation timers.
 	useEffect(() => {
 		if (open) {
-			if (animationState === 'closed') setAnimationState('entering');
+			// Re-opened mid-exit (e.g. the setup queue's Back straight after the tray
+			// handed over): enter again rather than finishing the exit and staying shut.
+			if (animationState === 'closed' || animationState === 'exiting') {
+				setAnimationState('entering');
+			}
 		} else {
 			if (animationState === 'open' || animationState === 'entering') {
 				setAnimationState('exiting');
@@ -203,7 +207,18 @@ export function SheetPrimitive({
 			const elementToFocus = previousFocusRef.current;
 			previousFocusRef.current = null;
 			setTimeout(() => {
-				elementToFocus?.focus();
+				// A hand-off between overlays (the Add-APIs tray ↔ setup queue) has
+				// already put focus in the next one; restoring here would yank it
+				// back out to a trigger behind that overlay.
+				const current = document.activeElement;
+				if (
+					current &&
+					current !== document.body &&
+					current.closest('[role="dialog"], dialog[open]')
+				) {
+					return;
+				}
+				if (elementToFocus?.isConnected) elementToFocus.focus();
 			}, 10);
 		}
 	}, [animationState]);

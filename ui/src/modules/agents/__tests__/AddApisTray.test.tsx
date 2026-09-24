@@ -2,7 +2,8 @@
  * AddApisTray — the multi-select Add-APIs step and its preflight tally. The
  * classification rules have their own unit specs (`apiPreflight.test.ts`); these
  * pin what needs a rendered picker: rows that toggle instead of committing, a
- * tally that stays honest while the credential list drains, and an already-reached
+ * tally that stays honest while the credential list drains, rows that only
+ * describe the next step (no credential is chosen here), and an already-reached
  * API that cannot be queued twice.
  */
 import { useState } from 'react';
@@ -30,6 +31,8 @@ import { CredentialType } from '@/shared/credentials/api';
 import { AddApisTray } from '@/modules/agents/components/flat/AddApisTray';
 import type { PreflightItem } from '@/modules/agents/lib/apiPreflight';
 import type { CredentialBindingEntity } from '@/modules/agents/api/types';
+import type { QueueBackSeed } from '@/modules/agents/lib/setupQueue';
+import type { SelectedApi } from '@/shared/credentials/api';
 
 /** Three workspace APIs, one per preflight class the tray has to distinguish. */
 const WORKSPACE_APIS = [
@@ -43,7 +46,7 @@ const WORKSPACE_APIS = [
 	}),
 ];
 
-/** Covers `stripe.com/main`, so picking Stripe is a reuse. */
+/** Covers `stripe.com/main`, so picking Stripe asks for a choice in the queue. */
 const STRIPE_CREDENTIAL = makeMockCredential({
 	credential_id: 'cred_stripe',
 	name: 'Stripe key',
@@ -69,9 +72,11 @@ function makeBinding(over: Partial<CredentialBindingEntity> = {}): CredentialBin
 function TrayHarness({
 	bindings = [],
 	onContinue = (): void => {},
+	seed = null,
 }: {
 	bindings?: CredentialBindingEntity[];
 	onContinue?: (items: PreflightItem[]) => void;
+	seed?: QueueBackSeed | null;
 }) {
 	const [open, setOpen] = useState(true);
 	const [agentId, setAgentId] = useState('agnt_1');
@@ -90,6 +95,7 @@ function TrayHarness({
 				agentName="Support bot"
 				bindings={bindings}
 				onContinue={onContinue}
+				seed={seed}
 			/>
 		</>
 	);
@@ -161,15 +167,18 @@ describe('AddApisTray — multi-select picks and the preflight tally', () => {
 
 		await waitFor(() => expect(selectionRows()).toHaveLength(2));
 		expect(stripe).toHaveAttribute('aria-checked', 'true');
-		expect(within(selectionRows()[0]).getByText('Reuses a credential you have')).toBeVisible();
+		expect(
+			within(selectionRows()[0]).getByText('Choose a credential in the next step'),
+		).toBeVisible();
 		expect(within(selectionRows()[1]).getByText('Needs a new credential')).toBeVisible();
 
 		await waitFor(() =>
 			expect(tallyLines()).toEqual([
-				'1 API reuses a credential you already have',
+				'1 API: choose from your existing credentials in the next step',
 				'1 API needs a new credential',
 			]),
 		);
+		expect(screen.queryByText(/reuses? a credential/)).not.toBeInTheDocument();
 
 		// Clicking a picked row takes it back out.
 		await user.click(stripe);
@@ -189,22 +198,18 @@ describe('AddApisTray — multi-select picks and the preflight tally', () => {
 		expect(screen.getByText('Nothing selected yet.')).toBeInTheDocument();
 	});
 
-	it('when nothing needs a queue stop, the button says it will finish the job', async () => {
+	it('a lone covered pick still goes to the next step — the button never binds', async () => {
 		const user = userEvent.setup();
 		renderWithProviders(<TrayHarness />);
 
-		const commit = screen.getByRole('button', { name: /Continue|Add \d+ API/ });
+		const commit = screen.getByRole('button', { name: 'Continue' });
 		expect(commit).toBeDisabled();
 
-		// A lone reuse binds straight through — no setup queue to promise.
+		// One matching credential is not a decision made for the operator: the
+		// commit still leads to the queue, where it is confirmed or replaced.
 		await user.click(await row(/Stripe/));
-		await waitFor(() =>
-			expect(screen.getByRole('button', { name: 'Add 1 API' })).toBeEnabled(),
-		);
-
-		// Adding a pick that needs a credential brings the queue back.
-		await user.click(await row(/Slack/));
 		await waitFor(() => expect(screen.getByRole('button', { name: 'Continue' })).toBeEnabled());
+		expect(screen.queryByRole('button', { name: /^Add \d+ API/ })).not.toBeInTheDocument();
 	});
 
 	it('claims one sign-in click only for an oauth2-only API', async () => {
@@ -221,7 +226,7 @@ describe('AddApisTray — multi-select picks and the preflight tally', () => {
 
 	it('withholds the tally until the whole credential list is read', async () => {
 		// A first-page-only list would classify an existing credential as
-		// "needs a new credential" and turn a free reuse into a form.
+		// "needs a new credential" and hide it from the queue's choice.
 		worker.use(http.get('/credentials', () => HttpResponse.error()));
 		const user = userEvent.setup();
 		renderWithProviders(<TrayHarness />);
@@ -265,21 +270,19 @@ describe('AddApisTray — multi-select picks and the preflight tally', () => {
 		expect(screen.getByRole('button', { name: 'Continue' })).toBeDisabled();
 
 		await user.click(await row(/Stripe/));
-		await waitFor(() =>
-			expect(screen.getByRole('button', { name: 'Add 1 API' })).toBeEnabled(),
-		);
+		await waitFor(() => expect(screen.getByRole('button', { name: 'Continue' })).toBeEnabled());
 		expect(screen.getByText('2 selected, 1 already added')).toBeInTheDocument();
 
-		await user.click(screen.getByRole('button', { name: 'Add 1 API' }));
+		await user.click(screen.getByRole('button', { name: 'Continue' }));
 		expect(onContinue).toHaveBeenCalledTimes(1);
 		expect(onContinue.mock.calls[0][0]).toEqual([
-			expect.objectContaining({ key: 'stripe-com/main', outcome: 'reuse' }),
+			expect.objectContaining({ key: 'stripe-com/main', outcome: 'choose' }),
 		]);
 		// Committing hands the picks to the queue, so the draft is spent.
 		await waitFor(() => expect(selectionRows()).toHaveLength(0));
 	});
 
-	it('hands the batch on in pick order and keeps the credential candidates', async () => {
+	it('hands the batch on in pick order and keeps the covering credentials', async () => {
 		const onContinue = vi.fn();
 		const user = userEvent.setup();
 		renderWithProviders(<TrayHarness onContinue={onContinue} />);
@@ -293,10 +296,10 @@ describe('AddApisTray — multi-select picks and the preflight tally', () => {
 		const items = onContinue.mock.calls[0][0] as PreflightItem[];
 		expect(items.map((i) => [i.key, i.outcome])).toEqual([
 			['slack-com/main', 'form'],
-			['stripe-com/main', 'reuse'],
+			['stripe-com/main', 'choose'],
 		]);
-		// The queue binds the reuse without re-reading the credential list.
-		expect(items[1].candidates.map((c) => c.credential_id)).toEqual(['cred_stripe']);
+		// The queue offers them without re-reading the credential list.
+		expect(items[1].covering.map((c) => c.credential_id)).toEqual(['cred_stripe']);
 	});
 
 	it('picks survive a dismissal, and reset when the agent changes', async () => {
@@ -392,45 +395,30 @@ describe('AddApisTray — multi-select picks and the preflight tally', () => {
 		await waitFor(() => expect(screen.getByTestId('import-spec-dialog')).not.toBeVisible());
 	});
 
-	it('a covered pick names the credential it uses, and can switch to a new one', async () => {
-		const onContinue = vi.fn();
+	it('a covered pick is labelled, never chosen in the tray', async () => {
 		const user = userEvent.setup();
-		renderWithProviders(<TrayHarness onContinue={onContinue} />);
+		renderWithProviders(<TrayHarness />);
 
 		await user.click(await row(/Stripe/));
 		await waitFor(() => expect(selectionRows()).toHaveLength(1));
 		const selection = selectionRows()[0];
-		expect(within(selection).getByText('Stripe key')).toBeVisible();
-		expect(selection).toHaveTextContent(/Uses Stripe key · API key · added .* · …stripe/);
-
-		// Reuse is the default, never the only option.
-		const change = within(selection).getByRole('button', {
-			name: 'Change credential for Stripe',
-		});
-		expect(change).toHaveAttribute('aria-expanded', 'false');
-		await user.click(change);
-		expect(change).toHaveAttribute('aria-expanded', 'true');
-		const options = within(selection).getByRole('group', { name: 'Credential for Stripe' });
-		expect(within(options).getByRole('radio', { name: /Stripe key/ })).toBeChecked();
-
-		await user.click(within(options).getByRole('radio', { name: /Add a new credential/ }));
-		// Choosing closes the options and re-costs the pick.
-		await waitFor(() =>
-			expect(
-				within(selection).queryByRole('group', { name: 'Credential for Stripe' }),
-			).not.toBeInTheDocument(),
+		expect(within(selection).getByText('Choose a credential in the next step')).toBeVisible();
+		expect(within(selection).getByTestId('tray-covering-count')).toHaveTextContent(
+			'1 of your credentials covers this API — use it or add a new one',
 		);
-		expect(within(selection).getByText('Needs a new credential')).toBeVisible();
-		expect(selection).toHaveTextContent('you have 1 for this API already');
-		await waitFor(() => expect(tallyLines()).toEqual(['1 API needs a new credential']));
 
-		await user.click(screen.getByRole('button', { name: 'Continue' }));
-		const [item] = onContinue.mock.calls[0][0] as PreflightItem[];
-		expect(item.outcome).toBe('form');
-		expect(item.candidates).toEqual([]);
+		// No inline selector: no Choose/Change toggle, no radio cards, and no
+		// "Uses <credential>" line promising a binding nobody confirmed.
+		expect(within(selection).queryByRole('button', { name: /credential for/ })).toBeNull();
+		expect(within(selection).queryByRole('radio')).not.toBeInTheDocument();
+		expect(within(selection).queryByRole('group')).not.toBeInTheDocument();
+		expect(selection).not.toHaveTextContent(/Uses Stripe key/);
+		// The only button on the row removes the pick.
+		expect(within(selection).getAllByRole('button')).toHaveLength(1);
+		expect(within(selection).getByRole('button', { name: 'Remove Stripe' })).toBeVisible();
 	});
 
-	it('several covering credentials are chosen between, and choosing one settles the pick', async () => {
+	it('several covering credentials are counted, and the choice waits for the queue', async () => {
 		resetCredentialsStore([
 			STRIPE_CREDENTIAL,
 			makeMockCredential({
@@ -448,39 +436,24 @@ describe('AddApisTray — multi-select picks and the preflight tally', () => {
 		await waitFor(() => expect(selectionRows()).toHaveLength(1));
 		const selection = selectionRows()[0];
 		expect(
-			await within(selection).findByText(/2 of your credentials cover this API/),
+			await within(selection).findByText(
+				'2 of your credentials cover this API — use one or add a new one',
+			),
 		).toBeVisible();
-		// Choosing may wait for the queue, so the pick still costs a stop.
-		expect(screen.getByRole('button', { name: 'Continue' })).toBeEnabled();
-
-		await user.click(
-			within(selection).getByRole('button', { name: 'Choose credential for Stripe' }),
-		);
-		const options = within(selection).getByRole('group', { name: 'Credential for Stripe' });
-		expect(within(options).getAllByRole('radio')).toHaveLength(3);
-		await user.click(within(options).getByRole('radio', { name: /Stripe sandbox/ }));
-
-		expect(selection).toHaveTextContent(/Uses Stripe sandbox/);
+		expect(within(selection).queryByRole('radio')).not.toBeInTheDocument();
 		await waitFor(() =>
-			expect(screen.getByRole('button', { name: 'Add 1 API' })).toBeEnabled(),
+			expect(tallyLines()).toEqual([
+				'1 API: choose from your existing credentials in the next step',
+			]),
 		);
-		await user.click(screen.getByRole('button', { name: 'Add 1 API' }));
+
+		await user.click(screen.getByRole('button', { name: 'Continue' }));
 		const [item] = onContinue.mock.calls[0][0] as PreflightItem[];
-		expect(item.outcome).toBe('reuse');
-		expect(item.candidates.map((c) => c.credential_id)).toEqual(['cred_stripe_sandbox']);
-	});
-
-	it('passes an accessibility audit with credential options open', async () => {
-		const user = userEvent.setup();
-		renderWithProviders(<TrayHarness />);
-
-		await user.click(await row(/Stripe/));
-		await user.click(
-			await screen.findByRole('button', { name: 'Change credential for Stripe' }),
-		);
-		await screen.findByRole('group', { name: 'Credential for Stripe' });
-
-		await checkA11y(document.body, { modal: true });
+		expect(item.outcome).toBe('choose');
+		expect(item.covering.map((c) => c.credential_id)).toEqual([
+			'cred_stripe',
+			'cred_stripe_sandbox',
+		]);
 	});
 
 	it('passes an accessibility audit with picks and a tally on screen', async () => {
@@ -500,9 +473,75 @@ describe('AddApisTray — multi-select picks and the preflight tally', () => {
 		renderWithProviders(<TrayHarness />);
 
 		await user.click(await row(/Stripe/));
-		await waitFor(() =>
-			expect(screen.getByRole('button', { name: 'Add 1 API' })).toBeEnabled(),
-		);
-		expect(screen.getByRole('button', { name: 'Add 1 API' })).toBeVisible();
+		await waitFor(() => expect(screen.getByRole('button', { name: 'Continue' })).toBeEnabled());
+		expect(screen.getByRole('button', { name: 'Continue' })).toBeVisible();
+	});
+
+	describe('editing a batch after Back', () => {
+		const pick = (vendor: string, label: string): SelectedApi => ({
+			source: 'local',
+			vendor,
+			name: 'main',
+			version: '1.0.0',
+			label,
+		});
+
+		it('comes back with the owed APIs ticked and the added ones locked', async () => {
+			const seed: QueueBackSeed = {
+				picks: [pick('slack.com', 'Slack')],
+				added: [pick('stripe.com', 'Stripe')],
+			};
+			renderWithProviders(<TrayHarness seed={seed} />);
+
+			const slack = await row(/Slack/);
+			await waitFor(() => expect(slack).toHaveAttribute('aria-checked', 'true'));
+			expect(slack).toBeEnabled();
+
+			// Going back never undoes a saved binding: the row reads ticked but cannot
+			// be unticked.
+			const stripe = await row(/Stripe/);
+			expect(stripe).toHaveAttribute('aria-checked', 'true');
+			expect(stripe).toBeDisabled();
+			expect(within(stripe).getByText('Added')).toBeInTheDocument();
+
+			const added = screen.getByTestId('tray-selection-added');
+			expect(added).toHaveTextContent('Stripe');
+			expect(within(added).queryByRole('button')).not.toBeInTheDocument();
+			expect(screen.getByText('1 selected, 1 added so far')).toBeInTheDocument();
+		});
+
+		it('hands on only what is still owed — the locked rows are not re-sent', async () => {
+			const onContinue = vi.fn();
+			const user = userEvent.setup();
+			const seed: QueueBackSeed = {
+				picks: [pick('slack.com', 'Slack')],
+				added: [pick('stripe.com', 'Stripe')],
+			};
+			renderWithProviders(<TrayHarness seed={seed} onContinue={onContinue} />);
+
+			await user.click(await row(/Notion/));
+			await waitFor(() =>
+				expect(screen.getByRole('button', { name: 'Continue' })).toBeEnabled(),
+			);
+			await user.click(screen.getByRole('button', { name: 'Continue' }));
+			const items = onContinue.mock.calls[0][0] as PreflightItem[];
+			expect(items.map((i) => i.api.vendor)).toEqual(['slack.com', 'notion.so']);
+		});
+
+		it('unticking everything still owed finishes rather than stranding the batch', async () => {
+			const onContinue = vi.fn();
+			const user = userEvent.setup();
+			const seed: QueueBackSeed = {
+				picks: [pick('slack.com', 'Slack')],
+				added: [pick('stripe.com', 'Stripe')],
+			};
+			renderWithProviders(<TrayHarness seed={seed} onContinue={onContinue} />);
+
+			await user.click(screen.getByRole('button', { name: 'Remove Slack' }));
+			const done = await screen.findByRole('button', { name: 'Done' });
+			await waitFor(() => expect(done).toBeEnabled());
+			await user.click(done);
+			expect(onContinue).toHaveBeenCalledWith([]);
+		});
 	});
 });

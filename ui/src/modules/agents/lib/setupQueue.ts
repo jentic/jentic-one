@@ -1,11 +1,11 @@
 /**
  * Setup-queue state — the pure layer behind the Add-APIs queue, which walks the
- * tray's preflighted batch one API at a time. There is no `Skip for now`, so
- * `reuse` items are bound first (they must not queue behind a form being typed)
- * and an unsettled item is handed back on re-entry rather than lost.
+ * tray's preflighted batch one API at a time, in pick order. Every item stops in
+ * a pane — nothing is bound without the operator confirming it — and, as there
+ * is no `Skip for now`, an unsettled item is handed back on re-entry rather than
+ * lost.
  */
 import type { Credential, SelectedApi } from '@/shared/credentials/api';
-import type { CredentialChoice } from '@/shared/credentials/lib/credentialIdentity';
 import type { PreflightItem, PreflightOutcome } from '@/modules/agents/lib/apiPreflight';
 
 /** Where one API is in the queue: `active` = the pane is on it, `working` = a
@@ -18,19 +18,16 @@ export interface QueueEntry {
 	key: string;
 	api: SelectedApi;
 	outcome: PreflightOutcome;
-	/** The credentials the preflight settled on offering or binding. */
-	candidates: Credential[];
-	/** Every org credential that covers this API, from the preflight. */
+	/** Every org credential that covers this API, from the preflight — the
+	 * existing options the pane offers alongside a new credential. */
 	covering: Credential[];
-	/** The operator's tray choice, carried so a handed-back item keeps it. */
-	choice?: CredentialChoice;
 	/** Accepting this item imports the API into the workspace. */
 	importsApi: boolean;
 	status: QueueStatus;
 	/** The credential this item ended up bound through. */
 	credentialId?: string;
-	/** That credential's label, shown on the finished row. A `reuse` item binds
-	 * without a pane, so without it the operator is never told which was chosen. */
+	/** That credential's label, shown on the finished row so the record says
+	 * which credential each API went through. */
 	credentialName?: string;
 	/** A credential this queue created for the item. Kept so `Try again` after a
 	 * failed bind binds it, instead of opening the wizard to create another. */
@@ -55,28 +52,71 @@ export function isResolved(status: QueueStatus): boolean {
 	return status === 'added' || status === 'dropped';
 }
 
-/** Does this item need the operator in a pane, or can it be bound outright? */
-export function needsPane(outcome: PreflightOutcome): boolean {
-	return outcome !== 'reuse';
+/** Build the queue from the tray's batch, in pick order. */
+export function buildQueue(items: PreflightItem[]): QueueEntry[] {
+	return items.map(entryFor);
 }
 
-/** Build the queue from the tray's batch. `reuse` items come first, so a
- * mostly-reuse batch feels like one click. */
-export function buildQueue(items: PreflightItem[]): QueueEntry[] {
-	const entry = (item: PreflightItem): QueueEntry => ({
+/** A fresh `waiting` entry for one preflighted pick. */
+function entryFor(item: PreflightItem): QueueEntry {
+	return {
 		key: item.key,
 		api: item.api,
 		outcome: item.outcome,
-		candidates: item.candidates,
 		covering: item.covering,
-		choice: item.choice,
 		importsApi: item.importsApi,
 		status: 'waiting',
-	});
-	return [
-		...items.filter((i) => !needsPane(i.outcome)).map(entry),
-		...items.filter((i) => needsPane(i.outcome)).map(entry),
-	];
+	};
+}
+
+/**
+ * Fold a re-edited batch — the operator went Back to the tray and returned — into
+ * the queue without losing progress. A settled entry is never lost: `added` always
+ * stays (going back never undoes a saved binding, and the tray locks those rows),
+ * and a declined one stays declined unless it was re-ticked, which puts it back in
+ * line. An unsettled entry still in the batch keeps its place and status, with its
+ * preflight facts refreshed (a credential may have been created meanwhile); one
+ * that was unticked is removed. New picks join at the end.
+ */
+export function reconcileQueue(entries: QueueEntry[], items: PreflightItem[]): QueueEntry[] {
+	const byKey = new Map(items.map((item) => [item.key, item]));
+	const kept: QueueEntry[] = [];
+	for (const entry of entries) {
+		const item = byKey.get(entry.key);
+		if (entry.status === 'added' || (entry.status === 'dropped' && !item)) {
+			kept.push(entry);
+			continue;
+		}
+		if (!item) continue;
+		kept.push(
+			entry.status === 'dropped'
+				? { ...entryFor(item), created: entry.created }
+				: {
+						...entry,
+						api: item.api,
+						outcome: item.outcome,
+						covering: item.covering,
+						importsApi: item.importsApi,
+					},
+		);
+	}
+	const known = new Set(kept.map((e) => e.key));
+	return [...kept, ...items.filter((item) => !known.has(item.key)).map(entryFor)];
+}
+
+/** What the tray is seeded with when the operator goes Back: the APIs still owed
+ * (ticked, editable) and the ones this batch already added (ticked, locked). A
+ * declined API is left unticked — "Not added" was already the answer. */
+export interface QueueBackSeed {
+	picks: SelectedApi[];
+	added: SelectedApi[];
+}
+
+export function queueBackSeed(entries: QueueEntry[]): QueueBackSeed {
+	return {
+		picks: entries.filter((e) => !isResolved(e.status)).map((e) => e.api),
+		added: entries.filter((e) => e.status === 'added').map((e) => e.api),
+	};
 }
 
 /** The item the queue is on: the first that has not reached a terminal state. */
@@ -170,9 +210,7 @@ export function unfinishedItems(entries: QueueEntry[]): PreflightItem[] {
 			key: e.key,
 			api: e.api,
 			outcome: e.outcome,
-			candidates: e.candidates,
 			covering: e.covering,
-			choice: e.choice,
 			importsApi: e.importsApi,
 		}));
 }

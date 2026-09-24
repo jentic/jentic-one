@@ -1,13 +1,15 @@
 /**
  * Unit specs for the Add-APIs preflight — the classification rules the tray's
  * tally rests on. The negative rules carry the most weight: identity matching must
- * not collapse two accounts of one vendor into a silent reuse, must not exclude a
+ * not collapse two accounts of one vendor into one another, must never settle a
+ * credential on the operator's behalf, must not exclude a
  * credential for looking unhealthy, and must not promise "one click" unprovably.
  */
 import { describe, it, expect } from 'vitest';
 import {
 	credentialCoversApi,
-	currentChoice,
+	coveringCountLabel,
+	defaultChoice,
 	preflightApi,
 	preflightApis,
 	preflightTally,
@@ -65,7 +67,7 @@ function inputs(over: Partial<PreflightInputs> = {}): PreflightInputs {
 describe('credentialCoversApi', () => {
 	it('treats a pinned version as pinned, and an absent one as spanning revisions', () => {
 		// The broker resolves a binding with `credential_covers`, where a pinned
-		// version is pinned. Calling a cross-revision match "reuse" here would
+		// version is pinned. Offering a cross-revision match here would
 		// bind a credential the broker then refuses with an identity mismatch.
 		const pinned = makeCredential({
 			api: { vendor: 'stripe.com', name: 'main', version: '2.0.0' },
@@ -120,21 +122,22 @@ describe('credentialCoversApi', () => {
 });
 
 describe('preflightApi', () => {
-	it('one matching credential is a reuse — no queue stop', () => {
+	it('one matching credential is still a choice — never reused silently', () => {
 		const item = preflightApi(makePick(), inputs({ credentials: [makeCredential()] }));
-		expect(item.outcome).toBe('reuse');
-		expect(item.candidates).toHaveLength(1);
+		expect(item.outcome).toBe('choose');
+		expect(item.covering.map((c) => c.credential_id)).toEqual(['cred_1']);
 	});
 
-	it('does not filter reuse candidates on health', () => {
+	it('does not filter covering credentials on health', () => {
 		// `active: false` is the closest thing to "looks broken" a redacted credential
 		// exposes. It must still count: we cannot detect broken, so filtering on it
-		// blocks valid reuse while implying the survivors are fine.
+		// hides a valid option while implying the survivors are fine.
 		const item = preflightApi(
 			makePick(),
 			inputs({ credentials: [makeCredential({ active: false })] }),
 		);
-		expect(item.outcome).toBe('reuse');
+		expect(item.outcome).toBe('choose');
+		expect(item.covering).toHaveLength(1);
 	});
 
 	it('two credentials for the same API must be chosen between, never guessed', () => {
@@ -142,33 +145,24 @@ describe('preflightApi', () => {
 		const sandbox = makeCredential({ credential_id: 'cred_2', name: 'Stripe — Sandbox' });
 		const item = preflightApi(makePick(), inputs({ credentials: [production, sandbox] }));
 		expect(item.outcome).toBe('choose');
-		expect(item.candidates.map((c) => c.credential_id)).toEqual(['cred_1', 'cred_2']);
+		expect(item.covering.map((c) => c.credential_id)).toEqual(['cred_1', 'cred_2']);
 	});
 
-	it('an unconnected OAuth credential is a reuse that still costs one click', () => {
+	it('an unconnected OAuth credential is offered like any other covering one', () => {
+		// Its outstanding sign-in is the queue pane's business once it is chosen.
 		const credential = makeCredential({
 			type: CredentialType.OAUTH2,
 			details: { grant_type: 'authorization_code', connected: false },
 		});
 		const item = preflightApi(makePick(), inputs({ credentials: [credential] }));
-		expect(item.outcome).toBe('oauth');
-		expect(item.candidates).toHaveLength(1);
-	});
-
-	it('a connected OAuth credential is a plain reuse', () => {
-		const credential = makeCredential({
-			type: CredentialType.OAUTH2,
-			details: { grant_type: 'authorization_code', connected: true },
-		});
-		expect(preflightApi(makePick(), inputs({ credentials: [credential] })).outcome).toBe(
-			'reuse',
-		);
+		expect(item.outcome).toBe('choose');
+		expect(item.covering).toHaveLength(1);
 	});
 
 	it('no candidate needs a new credential', () => {
 		const item = preflightApi(makePick(), inputs());
 		expect(item.outcome).toBe('form');
-		expect(item.candidates).toEqual([]);
+		expect(item.covering).toEqual([]);
 	});
 
 	it('an oauth2-only API is one click only when a managed provider is configured', () => {
@@ -237,85 +231,13 @@ describe('preflightApi', () => {
 		expect(item.covering.map((c) => c.credential_id)).toEqual(['cred_1', 'cred_2']);
 	});
 
-	it('choosing a new credential over a covering one is a form, not a reuse', () => {
-		const item = preflightApi(
-			makePick(),
-			inputs({
-				credentials: [makeCredential()],
-				choices: { 'stripe-com/main': { kind: 'new' } },
-			}),
-		);
-		expect(item.outcome).toBe('form');
-		expect(item.candidates).toEqual([]);
-		// The covering list stays, so the choice can be changed back.
-		expect(item.covering).toHaveLength(1);
-		expect(item.choice).toEqual({ kind: 'new' });
-	});
-
-	it('a new credential for a managed-OAuth API stays one click', () => {
+	it('a managed-OAuth API that a credential already covers is a choice, not a click', () => {
 		const pick = makePick({ securitySchemeTypes: ['oauth2'] });
 		const item = preflightApi(
 			pick,
-			inputs({
-				credentials: [makeCredential()],
-				managedOAuthAvailable: true,
-				choices: { 'stripe-com/main': { kind: 'new' } },
-			}),
+			inputs({ credentials: [makeCredential()], managedOAuthAvailable: true }),
 		);
-		expect(item.outcome).toBe('oauth');
-		expect(item.candidates).toEqual([]);
-	});
-
-	it('choosing one of several credentials settles the pick as a reuse of it', () => {
-		const production = makeCredential({ credential_id: 'cred_1' });
-		const sandbox = makeCredential({ credential_id: 'cred_2' });
-		const item = preflightApi(
-			makePick(),
-			inputs({
-				credentials: [production, sandbox],
-				choices: { 'stripe-com/main': { kind: 'existing', credentialId: 'cred_2' } },
-			}),
-		);
-		expect(item.outcome).toBe('reuse');
-		expect(item.candidates.map((c) => c.credential_id)).toEqual(['cred_2']);
-		expect(item.covering).toHaveLength(2);
-	});
-
-	it('choosing an unconnected OAuth credential still costs its sign-in click', () => {
-		const connected = makeCredential({ credential_id: 'cred_1' });
-		const unconnected = makeCredential({
-			credential_id: 'cred_2',
-			type: CredentialType.OAUTH2,
-			details: { grant_type: 'authorization_code', connected: false },
-		});
-		const item = preflightApi(
-			makePick(),
-			inputs({
-				credentials: [connected, unconnected],
-				choices: { 'stripe-com/main': { kind: 'existing', credentialId: 'cred_2' } },
-			}),
-		);
-		expect(item.outcome).toBe('oauth');
-		expect(item.candidates.map((c) => c.credential_id)).toEqual(['cred_2']);
-	});
-
-	it('a choice naming a credential that no longer covers the pick falls back to the default', () => {
-		const production = makeCredential({ credential_id: 'cred_1' });
-		const sandbox = makeCredential({ credential_id: 'cred_2' });
-		const stale = {
-			'stripe-com/main': { kind: 'existing', credentialId: 'cred_gone' },
-		} as const;
-
-		const several = preflightApi(
-			makePick(),
-			inputs({ credentials: [production, sandbox], choices: stale }),
-		);
-		expect(several.outcome).toBe('choose');
-		expect(several.choice).toBeUndefined();
-
-		const one = preflightApi(makePick(), inputs({ credentials: [production], choices: stale }));
-		expect(one.outcome).toBe('reuse');
-		expect(one.candidates.map((c) => c.credential_id)).toEqual(['cred_1']);
+		expect(item.outcome).toBe('choose');
 	});
 
 	it('keys each item by its canonical vendor/name identity', () => {
@@ -326,32 +248,24 @@ describe('preflightApi', () => {
 	});
 });
 
-describe('currentChoice', () => {
-	it('is the settled credential, a requested new one, or nothing while choosing', () => {
+describe('defaultChoice', () => {
+	it('preselects a lone covering credential, and nothing among several or none', () => {
 		const production = makeCredential({ credential_id: 'cred_1' });
 		const sandbox = makeCredential({ credential_id: 'cred_2' });
 		const one = preflightApi(makePick(), inputs({ credentials: [production] }));
-		expect(currentChoice(one)).toEqual({ kind: 'existing', credentialId: 'cred_1' });
+		expect(defaultChoice(one)).toEqual({ kind: 'existing', credentialId: 'cred_1' });
 
 		const several = preflightApi(makePick(), inputs({ credentials: [production, sandbox] }));
-		expect(currentChoice(several)).toBeNull();
+		expect(defaultChoice(several)).toBeNull();
 
-		const fresh = preflightApi(
-			makePick(),
-			inputs({
-				credentials: [production],
-				choices: { 'stripe-com/main': { kind: 'new' } },
-			}),
-		);
-		expect(currentChoice(fresh)).toEqual({ kind: 'new' });
 		// No covering credential: nothing to choose between.
-		expect(currentChoice(preflightApi(makePick(), inputs()))).toBeNull();
+		expect(defaultChoice(preflightApi(makePick(), inputs()))).toBeNull();
 	});
 });
 
 describe('preflightTally', () => {
 	it('counts each class and derives what the queue has to do', () => {
-		const reuseCred = makeCredential();
+		const coveringCred = makeCredential();
 		const items = preflightApis(
 			[
 				makePick({ vendor: 'stripe.com', name: 'main' }),
@@ -364,21 +278,19 @@ describe('preflightTally', () => {
 					registered: false,
 				}),
 			],
-			inputs({ credentials: [reuseCred] }),
+			inputs({ credentials: [coveringCred] }),
 		);
 		const tally = preflightTally(items);
 
 		expect(tally).toMatchObject({
-			reuse: 1,
+			choose: 1,
 			form: 2,
 			oauth: 0,
-			choose: 0,
 			attached: 0,
 			total: 3,
 			imports: 1,
 		});
-		// `reuse` binds straight through, so only the two forms stop in the queue.
-		expect(tally.queued).toBe(2);
+		// Every actionable pick stops in the queue — the covered one included.
 		expect(tally.actionable).toBe(3);
 	});
 
@@ -390,17 +302,31 @@ describe('preflightTally', () => {
 		const tally = preflightTally(items);
 		expect(tally.attached).toBe(1);
 		expect(tally.actionable).toBe(0);
-		expect(tally.queued).toBe(0);
 	});
 });
 
 describe('preflightTallyLabel', () => {
 	it('reads correctly for one and for many', () => {
-		expect(preflightTallyLabel('reuse', 1)).toBe('1 API reuses a credential you already have');
-		expect(preflightTallyLabel('reuse', 3)).toBe('3 APIs reuse a credential you already have');
+		expect(preflightTallyLabel('choose', 1)).toBe(
+			'1 API: choose from your existing credentials in the next step',
+		);
+		expect(preflightTallyLabel('choose', 3)).toBe(
+			'3 APIs: choose from your existing credentials in the next step',
+		);
 		expect(preflightTallyLabel('form', 1)).toBe('1 API needs a new credential');
-		expect(preflightTallyLabel('form', 2)).toBe('2 APIs need new credentials');
+		expect(preflightTallyLabel('form', 2)).toBe('2 APIs need a new credential');
 		expect(preflightTallyLabel('attached', 1)).toBe('1 API is already added');
 		expect(preflightTallyLabel('attached', 2)).toBe('2 APIs are already added');
+	});
+});
+
+describe('coveringCountLabel', () => {
+	it('says how many existing credentials the next step offers', () => {
+		expect(coveringCountLabel(1)).toBe(
+			'1 of your credentials covers this API — use it or add a new one',
+		);
+		expect(coveringCountLabel(2)).toBe(
+			'2 of your credentials cover this API — use one or add a new one',
+		);
 	});
 });

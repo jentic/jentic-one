@@ -124,6 +124,13 @@ interface CreateCredentialFlowProps {
 	 * agnostic of what the extra content is.
 	 */
 	renderPostConnect?: (info: PostConnectInfo) => ReactNode;
+	/**
+	 * A pinned flow's way back to where the host came from, shown as the form's
+	 * leading footer action (e.g. "Back to APIs" in the setup queue). Called with
+	 * whether the operator has typed anything, so the host can ask before
+	 * discarding a draft — the flow itself does not decide what "back" costs.
+	 */
+	back?: { label: string; onBack: (dirty: boolean) => void };
 }
 
 type Step = 'pick' | 'form' | 'vendor';
@@ -161,6 +168,7 @@ export function CreateCredentialFlow({
 	approvalSession,
 	preselectedAgentId,
 	renderPostConnect,
+	back,
 }: CreateCredentialFlowProps) {
 	const [step, setStep] = useState<Step>(pinnedApi ? 'form' : 'pick');
 	const [selectedApi, setSelectedApi] = useState<SelectedApi | null>(pinnedApi ?? null);
@@ -195,6 +203,11 @@ export function CreateCredentialFlow({
 	 * switching the picked API refreshes the name to the new API's label.
 	 */
 	const nameDirty = useRef(false);
+	/**
+	 * Whether the operator has typed into the form. Set from the form's `input`
+	 * events only, so spec seeding and scope auto-selection never count as edits.
+	 */
+	const formTouched = useRef(false);
 
 	// Stable id prefix for wiring <Label htmlFor> to the manual-entry + name
 	// controls (the shared Input/Select auto-generate ids, but a label can't
@@ -326,6 +339,7 @@ export function CreateCredentialFlow({
 		setActiveFlowId(null);
 		hasUserInteractedWithScopes.current = false;
 		nameDirty.current = false;
+		formTouched.current = false;
 		setType(initialType ?? CredentialType.BEARER_TOKEN);
 		createMutation.reset();
 		importMutation.reset();
@@ -618,6 +632,18 @@ export function CreateCredentialFlow({
 			</Button>
 		) : step === 'form' ? (
 			<>
+				{pinnedApi && back && (
+					<Button
+						variant="secondary"
+						onClick={(): void => back.onBack(formTouched.current)}
+						disabled={createMutation.isPending || importMutation.isPending}
+						type="button"
+						className="mr-auto"
+					>
+						<ArrowLeft className="h-4 w-4" />
+						{back.label}
+					</Button>
+				)}
 				{!pinnedApi && (
 					<Button
 						variant="secondary"
@@ -695,7 +721,14 @@ export function CreateCredentialFlow({
 			/>
 
 			{step === 'form' && (
-				<form id="create-credential-form" onSubmit={handleSubmit} className="space-y-5">
+				<form
+					id="create-credential-form"
+					onSubmit={handleSubmit}
+					onInput={(): void => {
+						formTouched.current = true;
+					}}
+					className="space-y-5"
+				>
 					{apiSummary && (
 						<div
 							className="bg-muted/40 border-border flex items-center gap-3 rounded-xl border px-3 py-2.5"

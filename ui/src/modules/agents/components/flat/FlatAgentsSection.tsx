@@ -63,6 +63,7 @@ import { DcrQuickstart } from '@/modules/agents/components/DcrQuickstart';
 import { AddApisTray } from '@/modules/agents/components/flat/AddApisTray';
 import { ApiSetupQueue } from '@/modules/agents/components/flat/ApiSetupQueue';
 import type { PreflightItem } from '@/modules/agents/lib/apiPreflight';
+import type { QueueBackSeed } from '@/modules/agents/lib/setupQueue';
 import { AgentDock, type AgentDockSurface } from '@/modules/agents/components/flat/AgentDock';
 import {
 	AgentActivitySheet,
@@ -524,6 +525,13 @@ function SelectedAgentPanel({
 	const reducedMotion = useReducedMotion();
 	/** Which step of the Add-APIs flow is on screen. */
 	const [addStep, setAddStep] = useState<'closed' | 'tray' | 'queue'>('closed');
+	/** Set while the tray is editing the queue's batch (the queue's Back). The queue
+	 * stays mounted meanwhile so its progress survives; `remaining` is what the
+	 * queue would have handed back, kept for a tray that is closed, not continued. */
+	const [batchEdit, setBatchEdit] = useState<{
+		seed: QueueBackSeed;
+		remaining: PreflightItem[];
+	} | null>(null);
 
 	const bindingsQuery = useAgentCredentialBindings(agent.id);
 	const bindings = bindingsQuery.data;
@@ -759,27 +767,40 @@ function SelectedAgentPanel({
 				<>
 					<AddApisTray
 						open={addStep === 'tray' && bindings !== undefined}
-						onClose={() => setAddStep('closed')}
+						onClose={() => {
+							// Closing mid-edit is closing the flow: the batch waits, unedited.
+							if (batchEdit) onQueueBatchChange(agent.id, batchEdit.remaining);
+							setBatchEdit(null);
+							setAddStep('closed');
+						}}
 						agentId={agent.id}
 						agentName={agent.name}
 						bindings={bindings ?? []}
+						seed={batchEdit?.seed ?? null}
 						onContinue={(items) => {
 							onQueueBatchChange(agent.id, items);
-							setAddStep('queue');
+							setBatchEdit(null);
+							// An edit that unticked everything still owed leaves nothing to set up.
+							setAddStep(items.length > 0 ? 'queue' : 'closed');
 						}}
 					/>
-					{addStep === 'queue' && queueBatch.length > 0 && (
-						<ApiSetupQueue
-							open
-							agentId={agent.id}
-							agentName={agent.name}
-							items={queueBatch}
-							onClose={(remaining) => {
-								onQueueBatchChange(agent.id, remaining);
-								setAddStep('closed');
-							}}
-						/>
-					)}
+					{queueBatch.length > 0 &&
+						(addStep === 'queue' || (addStep === 'tray' && batchEdit != null)) && (
+							<ApiSetupQueue
+								open={addStep === 'queue'}
+								agentId={agent.id}
+								agentName={agent.name}
+								items={queueBatch}
+								onClose={(remaining) => {
+									onQueueBatchChange(agent.id, remaining);
+									setAddStep('closed');
+								}}
+								onBack={(seed, remaining) => {
+									setBatchEdit({ seed, remaining });
+									setAddStep('tray');
+								}}
+							/>
+						)}
 				</>
 			)}
 
