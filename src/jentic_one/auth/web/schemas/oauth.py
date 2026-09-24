@@ -76,7 +76,7 @@ class RevokeRequest(BaseModel):
 
 
 class IntrospectRequest(BaseModel):
-    """Introspection endpoint request (form body)."""
+    """Introspection endpoint request (RFC 7662) — JSON or form-encoded."""
 
     token: str = Field(json_schema_extra=SENSITIVE)
     token_type_hint: str | None = None

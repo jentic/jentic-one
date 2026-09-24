@@ -6,7 +6,6 @@ import type { Body_consentAgentCreate } from '../models/Body_consentAgentCreate'
 import type { Body_consentSubmit } from '../models/Body_consentSubmit';
 import type { Body_loginSubmit } from '../models/Body_loginSubmit';
 import type { ConsentAgentStatusResponse } from '../models/ConsentAgentStatusResponse';
-import type { IntrospectRequest } from '../models/IntrospectRequest';
 import type { IntrospectResponse } from '../models/IntrospectResponse';
 import type { MintRequest } from '../models/MintRequest';
 import type { MintResponse } from '../models/MintResponse';
@@ -527,13 +526,24 @@ export class OAuthService {
     /**
      * Introspect Endpoint
      * Introspect a token (RFC 7662).
+     *
+     * Accepts both ``application/x-www-form-urlencoded`` (the §2.1 request
+     * encoding) and JSON (the platform's own contract) bodies. Both arms
+     * require a platform bearer identity, and both answer an unknown, invalid,
+     * or expired *token value* with 200 ``{"active": false}`` (§2.2) — only a
+     * malformed request body (missing ``token``) is a 400 ``invalid_request``:
+     * Problem Details on the JSON arm, the RFC 6749 §5.2 error dialect on the
+     * form arm.
      * @returns IntrospectResponse Successful Response
      * @throws ApiError
      */
     public static introspectEndpoint({
         requestBody,
     }: {
-        requestBody: IntrospectRequest,
+        requestBody: {
+            token: string;
+            token_type_hint?: (string | null);
+        },
     }): CancelablePromise<IntrospectResponse> {
         return __request(OpenAPI, {
             method: 'POST',
@@ -541,7 +551,7 @@ export class OAuthService {
             body: requestBody,
             mediaType: 'application/json',
             errors: {
-                400: `Bad Request`,
+                400: `Malformed request body (missing \`token\`). JSON requests get platform Problem Details (\`type: invalid_request\`); form-encoded (RFC 7662 §2.1) requests get the RFC 6749 §5.2 dialect: \`{"error": "invalid_request", "error_description": "..."}\`. An unknown, invalid, or expired token value is never an error — it is 200 \`{"active": false}\` (RFC 7662 §2.2).`,
                 401: `Unauthorized`,
                 403: `Forbidden`,
                 422: `Unprocessable Entity`,
