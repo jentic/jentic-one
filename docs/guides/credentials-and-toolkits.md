@@ -63,7 +63,7 @@ credential-centric view.
   `name` and `version` axes may be unset — an unset axis is a wildcard, so a
   vendor-wide credential covers every API under that vendor.
 - An **agent-credential binding** (admin DB, `agent_credential_bindings`)
-  grants one agent (or service account) the use of one credential. A binding
+  grants one agent the use of one credential. A binding
   optionally points at a shared **rule set** (`rule_set_id` → control DB
   `permission_rule_sets`); with no rule set, the binding's policy is its own
   inline permission rules. Either way access is **default-deny**: a binding
@@ -109,12 +109,14 @@ in this order ([`broker/services/credentials/resolver.py`](../../src/jentic_one/
 The outcomes:
 
 - **0 bound credentials for the API → `403 no_credential_binding`.** The
-  problem body carries an agent directive: file
-  `jentic access request --api <vendor/name>` when a credential already serves
-  the API, or `--provision` when nothing serves it yet. When a *bound*
-  credential is a near-miss (its identity does not cover this operation), the
-  refusal is `403 credential_identity_mismatch` instead — fix the credential,
-  don't file a request.
+  problem body carries an agent directive naming the recovery: start a vendor
+  connect flow (`jentic connect <vendor>`, over `POST /integrations:connect`)
+  when the deployment's vendor registry can mint the credential, or hand off
+  to a human when it cannot — the operator binds the agent to the credential
+  that already serves the API, or stores one first if none does. When a
+  *bound* credential is a near-miss (its identity does not cover this
+  operation), the refusal is `403 credential_identity_mismatch` instead — the
+  operator fixes the credential; a new binding or connect would not help.
 - **1 winner → use it.** The response carries `Jentic-Credential-Id` and
   `Jentic-Credential-Name` (absent when no stored credential was used), and
   the execution record carries the same attribution — every execution names

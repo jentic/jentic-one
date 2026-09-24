@@ -19,10 +19,10 @@ const sampleReference = `{
     },
     {
       "method": "POST",
-      "path": "/oauth/mint",
-      "summary": "Mint",
+      "path": "/capabilities:execute",
+      "summary": "Execute Capability",
       "public": false,
-      "actor_types": ["service_account"],
+      "actor_types": ["agent"],
       "required_scopes": [],
       "typical_caller": "agent"
     },
@@ -31,7 +31,7 @@ const sampleReference = `{
       "path": "/credentials",
       "summary": "Create Credential",
       "public": false,
-      "actor_types": ["user", "agent", "service_account"],
+      "actor_types": ["user", "agent"],
       "required_scopes": [],
       "typical_caller": "any"
     },

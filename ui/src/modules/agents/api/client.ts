@@ -22,7 +22,6 @@ import {
 	MonitoringService,
 	OAuthService,
 	PermissionsService,
-	ServiceAccountsService,
 	SystemService,
 	type AgentResponse,
 	type AuditResponse,
@@ -36,7 +35,6 @@ import {
 } from '@/shared/api';
 import {
 	agentToEntity,
-	serviceAccountToEntity,
 	type AgentBindableCredential,
 	type AgentEntity,
 	type ApiKeyHistoryEntry,
@@ -48,9 +46,7 @@ import {
 	type McpSessionEntity,
 	type OAuthGrantEntity,
 	type PermissionCatalogEntry,
-	type ServiceAccountEntity,
 } from '@/modules/agents/api/types';
-import { listAccessRequests, type AccessRequest } from '@/shared/lib';
 
 /**
  * Sentinel error for Agents repository calls. Hooks/components branch on
@@ -307,6 +303,7 @@ export async function listBindableCredentialsForAgent(): Promise<AgentBindableCr
 			apiName: c.api?.name ?? null,
 			catalogApiId: c.catalog_api_id ?? null,
 			provider: c.provider ?? null,
+			createdBy: c.created_by ?? null,
 		}));
 	} catch (error) {
 		throw toAgentsError(error, 'Failed to load credentials.');
@@ -467,100 +464,11 @@ export async function getAgentApiKeyHistory(agentId: string): Promise<ApiKeyHist
 	}
 }
 
-export async function generateServiceAccountApiKey(
-	serviceAccountId: string,
-): Promise<ApiKeyResult> {
-	try {
-		const res = await ServiceAccountsService.generateServiceAccountApiKey({
-			serviceAccountId,
-		});
-		return { key: res.key };
-	} catch (error) {
-		throw toAgentsError(error, 'Failed to generate API key.');
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Service accounts
-// ---------------------------------------------------------------------------
-
-export async function getServiceAccount(serviceAccountId: string): Promise<ServiceAccountEntity> {
-	try {
-		return serviceAccountToEntity(
-			await ServiceAccountsService.getServiceAccount({
-				serviceAccountId,
-			}),
-		);
-	} catch (error) {
-		throw toAgentsError(error, 'Failed to load the service account.');
-	}
-}
-
-export async function approveServiceAccount(
-	serviceAccountId: string,
-): Promise<ServiceAccountEntity> {
-	try {
-		return serviceAccountToEntity(
-			await ServiceAccountsService.approveServiceAccount({
-				serviceAccountId,
-			}),
-		);
-	} catch (error) {
-		throw toAgentsError(error, 'Failed to approve the service account.');
-	}
-}
-
-export async function denyServiceAccount(
-	serviceAccountId: string,
-	reason: string,
-): Promise<ServiceAccountEntity> {
-	try {
-		return serviceAccountToEntity(
-			await ServiceAccountsService.denyServiceAccount({
-				serviceAccountId,
-				requestBody: { reason },
-			}),
-		);
-	} catch (error) {
-		throw toAgentsError(error, 'Failed to deny the service account.');
-	}
-}
-
-export async function disableServiceAccount(serviceAccountId: string): Promise<void> {
-	try {
-		await ServiceAccountsService.disableServiceAccount({
-			serviceAccountId,
-		});
-	} catch (error) {
-		throw toAgentsError(error, 'Failed to disable the service account.');
-	}
-}
-
-export async function enableServiceAccount(serviceAccountId: string): Promise<void> {
-	try {
-		await ServiceAccountsService.enableServiceAccount({
-			serviceAccountId,
-		});
-	} catch (error) {
-		throw toAgentsError(error, 'Failed to enable the service account.');
-	}
-}
-
-export async function archiveServiceAccount(serviceAccountId: string): Promise<void> {
-	try {
-		await ServiceAccountsService.archiveServiceAccount({
-			serviceAccountId,
-		});
-	} catch (error) {
-		throw toAgentsError(error, 'Failed to archive the service account.');
-	}
-}
-
 // ---------------------------------------------------------------------------
 // Scopes (#615) — platform permission catalogue + per-actor scope grants.
 //
 // Two scope vocabularies exist in this codebase; these are the PLATFORM
-// permission scopes (`org:admin`, `service-accounts:write`, …) drawn from
+// permission scopes (`org:admin`, `agents:write`, …) drawn from
 // `GET /permissions` — NOT the OAuth2 provider scopes the credentials picker
 // uses. `PUT .../scopes` replaces the entire set (no partial grant/revoke), so
 // callers read the full list, edit it, and write it back.
@@ -601,32 +509,6 @@ export async function replaceAgentScopes(agentId: string, scopes: string[]): Pro
 	}
 }
 
-export async function getServiceAccountScopes(serviceAccountId: string): Promise<string[]> {
-	try {
-		const res = await ServiceAccountsService.getServiceAccountScopes({
-			serviceAccountId,
-		});
-		return res.scopes;
-	} catch (error) {
-		throw toAgentsError(error, "Failed to load the service account's scopes.");
-	}
-}
-
-export async function replaceServiceAccountScopes(
-	serviceAccountId: string,
-	scopes: string[],
-): Promise<string[]> {
-	try {
-		const res = await ServiceAccountsService.replaceServiceAccountScopes({
-			serviceAccountId,
-			requestBody: { scopes },
-		});
-		return res.scopes;
-	} catch (error) {
-		throw toAgentsError(error, "Failed to update the service account's scopes.");
-	}
-}
-
 // ---------------------------------------------------------------------------
 // Actor usage (GET /monitoring/usage)
 //
@@ -655,9 +537,10 @@ export interface ActorUsageDetail {
 }
 
 /**
- * One actor's usage over the trailing `sinceDays` window. `agent_id` is the
- * endpoint's (misnamed) actor filter, so it works for service accounts too.
- * Returns `null` on 403 — the viewer isn't an admin — never an error.
+ * One actor's usage over the trailing `sinceDays` window — the detail page's
+ * KPI strip and Activity chart. `agent_id` is the endpoint's (misnamed) actor
+ * filter: the backend maps it onto `actor_id`. `null` on 403 means the
+ * viewer isn't an admin and the caller renders no stats — never an error.
  */
 export async function fetchActorUsageDetail(
 	actorId: string,
@@ -787,46 +670,6 @@ export async function fetchActorExecutions(
 }
 
 // ---------------------------------------------------------------------------
-// Access requests filed BY an actor (#619).
-//
-// An access request carries `actor_id` set to the filer's identity; for an
-// agent/service account that's the actor's own id. `GET /access-requests`
-// already filters by it, so the per-actor view is a thin read over the shared
-// access-request repository (`@/shared/lib`) — the same cross-cutting tier the
-// dashboard card and Agent Rail use. No new backend surface. The decide flow is
-// the shared `AccessRequestDialog`; this just lists what's still pending.
-// ---------------------------------------------------------------------------
-
-/** The access requests an actor has filed that are still in `status` (default pending). */
-export async function fetchActorAccessRequests(
-	actorId: string,
-	status: string | null = 'pending',
-): Promise<AccessRequest[]> {
-	try {
-		const page = await listAccessRequests({ actorId, status, limit: 50 });
-		return page.data;
-	} catch (error) {
-		throw toAgentsError(error, "Failed to load the actor's access requests.");
-	}
-}
-
-/**
- * The org-wide pending access-request queue, so the Agents window can surface
- * requests awaiting a decision inline (the same durable queue the Dashboard's
- * "Pending requests" card reads). Unscoped by actor: these are requests the
- * VIEWER may need to approve, not requests filed by one agent. The banner
- * further narrows to rows the caller can decide via `evaluation.can_fulfill`.
- */
-export async function fetchPendingApproverAccessRequests(): Promise<AccessRequest[]> {
-	try {
-		const page = await listAccessRequests({ status: 'pending', limit: 50 });
-		return page.data;
-	} catch (error) {
-		throw toAgentsError(error, 'Failed to load pending access requests.');
-	}
-}
-
-// ---------------------------------------------------------------------------
 // Audit (read-only actor-scoped lens on the shared /audit endpoint).
 // ---------------------------------------------------------------------------
 
@@ -835,20 +678,15 @@ export async function fetchPendingApproverAccessRequests(): Promise<AccessReques
 export type ActorAuditEntry = AuditResponse;
 
 /**
- * Actor-scoped audit entries — the lifecycle trail recorded against this
- * agent / service account as the TARGET (register, approve/deny, disable/
+ * Agent-scoped audit entries — the lifecycle trail recorded against this
+ * agent as the TARGET (register, approve/deny, disable/
  * enable, key rotation, binding grant/revoke). Requires `org:admin`; 401/403 map to an empty list so
  * the "Recent changes" panel degrades gracefully for non-admins.
  */
-export async function listActorAudit(
-	actorKind: 'agent' | 'service-account',
-	actorId: string,
-	limit = 25,
-): Promise<AuditResponse[]> {
+export async function listActorAudit(actorId: string, limit = 25): Promise<AuditResponse[]> {
 	try {
 		const res = await AuditService.listAuditEntries({
-			targetType:
-				actorKind === 'agent' ? AuditTargetType.AGENT : AuditTargetType.SERVICE_ACCOUNT,
+			targetType: AuditTargetType.AGENT,
 			targetId: actorId,
 			limit,
 		});

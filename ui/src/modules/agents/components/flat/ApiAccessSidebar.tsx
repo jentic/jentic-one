@@ -6,7 +6,7 @@
  * Unbind (this agent only) and Delete credential (org-wide) are never conflated.
  * Suspend/resume is the reversible cut-off, so it sits in the header.
  */
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AlertTriangle, ExternalLink, PauseCircle, Pencil, PlayCircle, X } from 'lucide-react';
 import {
 	Badge,
@@ -19,11 +19,12 @@ import {
 	toast,
 } from '@/shared/ui';
 import { formatTimestamp, timeAgo } from '@/shared/lib/utils';
+import { useCredentialAgents, useDeleteCredential } from '@/shared/credentials/api';
+import { useDeviceAwareConnect } from '@/shared/credentials/components/useDeviceAwareConnect';
 import {
-	useCredentialAgents,
-	useDeleteCredential,
-	useRunConnectFlow,
-} from '@/shared/credentials/api';
+	OperationImpactPreview,
+	type OpsApiReference,
+} from '@/shared/credentials/components/OperationImpactPreview';
 import { CredentialDeleteDialog } from '@/shared/credentials/components/CredentialDeleteDialog';
 import { EditCredentialSheet } from '@/shared/credentials/components/EditCredentialSheet';
 import {
@@ -130,11 +131,22 @@ export function ApiAccessSidebar({
 	const credentialId = shown?.credentialId ?? null;
 	const permissions = useAgentBindingPermissions(open ? agent.id : null, credentialId);
 
+	// The API this tile resolves to, for the rule editor's operation suggestions
+	// and the effective-access preview. Only a concrete (imported) API has a
+	// version to read operations from; a wildcard tile has none to preview.
+	const apiReference = useMemo<OpsApiReference | null>(
+		() =>
+			shown?.version
+				? { vendor: shown.vendor, name: shown.apiName, version: shown.version }
+				: null,
+		[shown?.vendor, shown?.apiName, shown?.version],
+	);
+
 	const unbind = useUnbindAgentCredential(agent.id);
 	const resume = useResumeAgentCredentialBinding(agent.id);
 	const deleteCredential = useDeleteCredential();
 	const invalidateBindingSurfaces = useInvalidateCredentialBindingSurfaces(agent.id);
-	const runConnect = useRunConnectFlow();
+	const { connect: runConnect, deviceDialog } = useDeviceAwareConnect();
 	const [connecting, setConnecting] = useState(false);
 
 	// Every agent bound to this credential — the "Used by" line and the delete
@@ -149,7 +161,7 @@ export function ApiAccessSidebar({
 		setConnecting(true);
 		toast({ title: `Opening sign-in for ${shown.credentialName}…` });
 		try {
-			const outcome = await runConnect(credentialId);
+			const outcome = await runConnect(credentialId, shown.credentialName);
 			switch (outcome.status) {
 				case 'connected':
 					toast({ title: 'Connected', variant: 'success' });
@@ -163,6 +175,16 @@ export function ApiAccessSidebar({
 					toast({
 						title: 'Connection timed out',
 						description: 'Finish the sign-in and refresh to see the result.',
+						variant: 'error',
+					});
+					break;
+				case 'unsupported_challenge':
+					toast({ title: 'Unsupported sign-in challenge', variant: 'error' });
+					break;
+				case 'unsafe_challenge_url':
+					toast({
+						title: 'Sign-in link refused',
+						description: 'The provider returned an unsafe sign-in URL.',
 						variant: 'error',
 					});
 					break;
@@ -408,6 +430,30 @@ export function ApiAccessSidebar({
 										credentialLabel={shown.credentialName}
 										initialRules={permissions.data ?? []}
 										onDirtyChange={setRulesDirty}
+										apiReference={apiReference}
+									/>
+								)}
+								{/* What the SAVED rules let this agent reach, against the
+								    API's real operations — always visible, not gated on
+								    editing, so the binding's surface reads at a glance. */}
+								{apiReference && !permissions.isPending && !permissions.isError && (
+									<OperationImpactPreview
+										api={apiReference}
+										rules={(permissions.data ?? [])
+											.filter((r) => !r._system)
+											.map((r) => ({
+												effect: r.effect === 'deny' ? 'deny' : 'allow',
+												methods: r.methods ?? null,
+												path: r.path ?? null,
+												match_mode:
+													r.match_mode === 'prefix' ||
+													r.match_mode === 'exact' ||
+													r.match_mode === 'regex'
+														? r.match_mode
+														: undefined,
+												operations: r.operations ?? null,
+											}))}
+										label="Effective access for this binding"
 									/>
 								)}
 							</section>
@@ -508,6 +554,7 @@ export function ApiAccessSidebar({
 					error={deleteCredential.error}
 				/>
 			)}
+			{deviceDialog}
 		</>
 	);
 }

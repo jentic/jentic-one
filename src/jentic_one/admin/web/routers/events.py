@@ -30,7 +30,7 @@ from jentic_one.admin.web.schemas.events import (
     EventResponse,
 )
 from jentic_one.shared.auth.identity import Identity
-from jentic_one.shared.models.events import EventSeverity, EventType
+from jentic_one.shared.models.events import EventSeverity
 from jentic_one.shared.web import get_current_identity
 from jentic_one.shared.web.links import build_link
 
@@ -39,22 +39,21 @@ _LAST_EVENT_ID_RE = re.compile(r"^evt_[0-9a-f]{24}$")
 router = APIRouter()
 
 
-def _resolve_action_link(view: EventView, request: Request) -> str | None:
-    """Return the canonical action URL for actionable event types, or None."""
-    if view.type == EventType.ACCESS_REQUEST_FILED and view.data.get("request_id"):
-        return build_link(request, f"/access-requests/{view.data['request_id']}:decide")
-    return None
-
-
 def _event_response(view: EventView, request: Request) -> EventResponse:
-    """Project an EventView to an EventResponse."""
+    """Project an EventView to an EventResponse.
+
+    ``view.type`` is a plain string, not an ``EventType`` member: the events
+    table is append-only history, so rows may carry retired kinds (e.g. the
+    theme-7 ``access_request.*`` family) that no longer exist as constants.
+    Projection must never parse the stored kind through a closed enum.
+    """
     links = EventLinks(
         self_=build_link(request, f"/events/{view.id}"),
         execution=build_link(request, f"/executions/{view.execution_id}")
         if view.execution_id
         else None,
         job=build_link(request, f"/jobs/{view.job_id}") if view.job_id else None,
-        action=_resolve_action_link(view, request),
+        action=None,
     )
     return EventResponse(
         event_id=view.id,

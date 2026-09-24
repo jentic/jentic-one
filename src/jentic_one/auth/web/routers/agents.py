@@ -146,7 +146,7 @@ async def claim_agent(
 
     Restricted to ``USER`` actors: ``Agent.owner_id`` is a FK to ``users.id``, so
     only a human can own an agent. The ``require_actor_type`` gate rejects a
-    non-user actor (agent/service-account) at the boundary with a 403;
+    non-user actor (an agent) at the boundary with a 403;
     ``AgentService.claim`` re-checks the same invariant as defense-in-depth.
 
     ``allow_expired_password=True`` is intentional (matching ``GET /agents/{id}``):
@@ -269,8 +269,8 @@ async def bind_credential(
 ) -> CredentialBindingResponse:
     """Directly bind a credential to an agent (theme 5 phase 1).
 
-    The caller must be able to see the target credential; a credential that
-    does not exist or is outside the caller's visibility returns 404.
+    The caller must own the target credential (or hold ``org:admin``); a
+    credential that does not exist or that the caller does not own returns 404.
     """
     binding = await agent_svc.bind_credential(
         agent_id, credential_id=body.credential_id, identity=identity

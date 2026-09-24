@@ -5,16 +5,19 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urlencode
 
-import httpx
-
 from jentic_one.control.repos import CredentialRepository, OAuthClientCredentialRepository
 from jentic_one.control.services.credentials.providers.base import (
     NotConnectableError,
     ProviderError,
 )
+from jentic_one.control.services.credentials.providers.oauth2 import (
+    InvalidGrantError,
+    OAuth2Provider,
+    TokenExchangeError,
+)
 from jentic_one.control.services.credentials.schemas.connect import (
+    AuthCodeChallenge,
     ConnectCallback,
-    ConnectChallenge,
     ConnectRequest,
     ConnectState,
 )
@@ -27,23 +30,17 @@ from jentic_one.control.services.credentials.schemas.provision import (
 from jentic_one.control.services.credentials.state import encode_state, generate_nonce
 from jentic_one.shared.config import DirectOAuth2ProviderConfig
 from jentic_one.shared.context import Context
-from jentic_one.shared.models.credentials import CredentialType
+
+# Re-exported for existing importers of these error types through
+# ``providers.direct_oauth2`` (they now live on the shared OAuth2 base).
+__all__ = [
+    "DirectOAuth2Provider",
+    "InvalidGrantError",
+    "TokenExchangeError",
+]
 
 
-class InvalidGrantError(ProviderError):
-    """Raised when the IdP rejects a refresh with invalid_grant."""
-
-
-class TokenExchangeError(ProviderError):
-    """Raised when the token exchange fails."""
-
-    def __init__(self, status: int, body: str) -> None:
-        self.status = status
-        self.body = body
-        super().__init__(f"Token exchange failed: HTTP {status}")
-
-
-class DirectOAuth2Provider:
+class DirectOAuth2Provider(OAuth2Provider):
     """Provider for direct OAuth2 credentials (platform is the OAuth2 client)."""
 
     name: str = "direct_oauth2"
@@ -58,20 +55,13 @@ class DirectOAuth2Provider:
     def managed(self) -> bool:
         return True
 
-    @property
-    def supported_types(self) -> list[CredentialType]:
-        return [CredentialType.OAUTH2]
-
-    def supports(self, wire_type: CredentialType) -> bool:
-        return wire_type == CredentialType.OAUTH2
-
     async def begin_connect(
         self,
         ctx: Context,
         *,
         api: APIReference,
         request: ConnectRequest,
-    ) -> ConnectChallenge:
+    ) -> AuthCodeChallenge:
         credential_id = request.extra.get("credential_id", "")
         if not credential_id:
             raise ProviderError("credential_id required in request.extra")
@@ -123,7 +113,7 @@ class DirectOAuth2Provider:
         params.update(self._authorize_extra_params)
 
         authorize_url = f"{occ.authorize_url}?{urlencode(params)}"
-        return ConnectChallenge(authorize_url=authorize_url, state=signed_state)
+        return AuthCodeChallenge(authorize_url=authorize_url, state=signed_state)
 
     async def complete_connect(
         self,
@@ -242,23 +232,3 @@ class DirectOAuth2Provider:
             "client_secret": client_secret,
         }
         return await self._post_token(token_url, payload)
-
-    async def _post_token(self, token_url: str, payload: dict[str, str]) -> dict[str, str]:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(
-                token_url,
-                data=payload,
-                headers={"Accept": "application/json"},
-            )
-
-        if response.status_code != 200:
-            body = response.text
-            if "invalid_grant" in body:
-                raise InvalidGrantError("Refresh token has been revoked or expired")
-            raise TokenExchangeError(response.status_code, body)
-
-        try:
-            data: dict[str, str] = response.json()
-        except ValueError as exc:
-            raise TokenExchangeError(response.status_code, response.text) from exc
-        return data

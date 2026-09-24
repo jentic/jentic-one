@@ -13,6 +13,7 @@ from jentic_one.admin.core.schema.agent_credential_bindings import AgentCredenti
 from jentic_one.admin.core.schema.agent_toolkit_bindings import AgentToolkitBinding
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.invite_tokens import InviteToken
+from jentic_one.admin.core.schema.service_account_credentials import ServiceAccountCredential
 from jentic_one.admin.core.schema.service_accounts import ServiceAccount
 from jentic_one.admin.core.schema.user_permission_grants import UserPermissionGrant
 from jentic_one.admin.core.schema.user_secrets import UserSecret
@@ -22,13 +23,13 @@ from jentic_one.admin.repos import (
     AgentCredentialBindingRepository,
     AgentRepository,
     AgentToolkitBindingRepository,
-    ServiceAccountRepository,
     UserPermissionGrantRepository,
     UserRepository,
     UserSecretRepository,
 )
 from jentic_one.admin.services._support.passwords import hash_password
 from jentic_one.admin.services._support.tokens import issue_jwt
+from jentic_one.auth.services.crypto import hash_secret
 from jentic_one.auth.services.token_service import TokenService
 from jentic_one.auth.web.app import create_app
 from jentic_one.shared.context import Context
@@ -145,8 +146,6 @@ async def owner_user_id(web_context: Context) -> AsyncGenerator[str, None]:
             permissions={
                 "agents:read",
                 "agents:write",
-                "service-accounts:read",
-                "service-accounts:write",
             },
             granted_by=None,
             created_by="usr_test",
@@ -251,24 +250,42 @@ async def approved_agent_id(
         await session.commit()
 
 
+# An unmigrated service account's API key (theme-8 Phase 2): the SA surface is
+# gone, but until the Phase-4 drop the resolver's SA-table fallback still
+# resolves an unmigrated ``sak_`` key as the SA, and /me must answer for it.
+UNMIGRATED_SAK_KEY = "sak_me_unmigrated_fallback_key"
+
+
 @pytest.fixture()
 async def approved_sa_id(
     web_context: Context, owner_user_id: str, admin_user_id: str
 ) -> AsyncGenerator[str, None]:
+    """An active, unmigrated SA with a ``sak_`` digest and one live grant.
+
+    Seeded through the ORM directly — the SA repositories were deleted with the
+    surface; the models survive until the Phase-4 drop.
+    """
     ctx = web_context
     async with ctx.admin_db.transaction() as session:
-        sa = await ServiceAccountRepository.create(
-            session,
+        sa = ServiceAccount(
             name="me-test-sa",
             owner_id=owner_user_id,
             registered_by=owner_user_id,
+            approved_by=admin_user_id,
             description="SA for /me tests",
+            status="active",
             created_by="usr_test",
         )
-        await ServiceAccountRepository.set_approval(session, sa.id, approved_by=admin_user_id)
-        # A live scope grant the presented token won't carry — exercises #673
-        # for service accounts: /me must reflect current grants, not just the
-        # token's baked-in scopes.
+        session.add(sa)
+        await session.flush()
+        session.add(
+            ServiceAccountCredential(
+                service_account_id=sa.id,
+                api_key_hash=hash_secret(UNMIGRATED_SAK_KEY),
+                created_by="usr_test",
+            )
+        )
+        # A live scope grant — /me must reflect current grants (#673).
         await ActorScopeGrantRepository.grant(
             session,
             actor_id=sa.id,
@@ -277,11 +294,17 @@ async def approved_sa_id(
             granted_by=admin_user_id,
             created_by="usr_test",
         )
-    yield sa.id
+        sa_id = sa.id
+    yield sa_id
 
     async with ctx.admin_db.session() as session:
-        await ActorScopeGrantRepository.revoke_all(session, sa.id)
-        await session.execute(delete(ServiceAccount).where(ServiceAccount.id == sa.id))
+        await ActorScopeGrantRepository.revoke_all(session, sa_id)
+        await session.execute(
+            delete(ServiceAccountCredential).where(
+                ServiceAccountCredential.service_account_id == sa_id
+            )
+        )
+        await session.execute(delete(ServiceAccount).where(ServiceAccount.id == sa_id))
         await session.commit()
 
 
@@ -307,7 +330,7 @@ def test_me_user_owner(web_context: Context, owner_user_id: str) -> None:
         web_context,
         owner_user_id,
         OWNER_EMAIL,
-        ["agents:read", "agents:write", "service-accounts:read", "service-accounts:write"],
+        ["agents:read", "agents:write"],
     )
     app = _build_app(web_context)
     with TestClient(app, headers={"Authorization": f"Bearer {token}"}) as client:
@@ -380,7 +403,7 @@ async def test_me_agent_opaque_token_surfaces_minted_scopes(
     The auth verifier (``_make_auth_verifier``) used to discard the token-row
     scopes for agents and recompute via ``resolve_permissions_for_actor``, whose
     AGENT branch is an unimplemented stub that returns ``[]`` — so an approved
-    ``capabilities:read`` never took effect and ``jentic access refresh`` could
+    ``capabilities:read`` never took effect and re-minting the token could
     not help. Unlike the JWT path in ``test_me_agent`` (which falls back to the
     token's ``scopes`` claim), the opaque-token path has no such claim, and it is
     the path real CLI agents use after the jwt-bearer exchange. token_scopes must
@@ -405,7 +428,33 @@ async def test_me_agent_opaque_token_surfaces_minted_scopes(
     assert body["scopes"] == ["capabilities:read"]
 
 
-def test_me_service_account(web_context: Context, approved_sa_id: str, owner_user_id: str) -> None:
+def test_me_service_account_fallback_resolved_key(
+    web_context: Context, approved_sa_id: str, owner_user_id: str
+) -> None:
+    """Theme-8 Phase 2 (M-1): an unmigrated ``sak_`` key resolves through the
+    SA-table fallback, and /me answers coherently from the shared raw-SQL read
+    (the deleted ``ServiceAccountService`` is not involved)."""
+    app = _build_app(web_context)
+    with TestClient(app, headers={"Authorization": f"Bearer {UNMIGRATED_SAK_KEY}"}) as client:
+        resp = client.get("/me")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["type"] == "service_account"
+    assert body["id"] == approved_sa_id
+    assert body["name"] == "me-test-sa"
+    assert body["status"] == "active"
+    # `scopes` = live grants; `token_scopes` = what the resolver loaded for the
+    # key (the same live grants on the API-key path).
+    assert body["scopes"] == ["capabilities:read"]
+    assert body["token_scopes"] == ["capabilities:read"]
+    assert body["registered_by"] == owner_user_id
+    assert body["approved_by"] is not None
+
+
+def test_me_service_account_jwt_subject(
+    web_context: Context, approved_sa_id: str, owner_user_id: str
+) -> None:
+    """A (historical) ``sva_`` JWT subject still gets a coherent /me answer."""
     token = _make_token(
         web_context,
         approved_sa_id,
@@ -420,15 +469,19 @@ def test_me_service_account(web_context: Context, approved_sa_id: str, owner_use
     body = resp.json()
     assert body["type"] == "service_account"
     assert body["id"] == approved_sa_id
-    assert body["name"] == "me-test-sa"
-    assert body["status"] == "active"
-    # `scopes` reflects LIVE grants from actor_scope_grants (the fixture granted
-    # capabilities:read), not the token's baked-in scopes — mirroring the agent
-    # path (#673). token_scopes echoes the presented token.
     assert body["scopes"] == ["capabilities:read"]
     assert body["token_scopes"] == ["registry:read"]
-    assert body["registered_by"] == owner_user_id
-    assert body["approved_by"] is not None
+
+
+def test_me_service_account_row_gone_is_401(web_context: Context) -> None:
+    """An ``sva_`` subject with no row fails closed (401), never a 500."""
+    token = _make_token(
+        web_context, "sva_me_missing_row", "sa@internal", [], actor_type="service_account"
+    )
+    app = _build_app(web_context)
+    with TestClient(app, headers={"Authorization": f"Bearer {token}"}) as client:
+        resp = client.get("/me")
+    assert resp.status_code == 401
 
 
 def test_me_unauthenticated(web_context: Context) -> None:

@@ -185,9 +185,12 @@ def classify_denial(status: int, headers: httpx.Headers, body: bytes) -> ToolErr
         return None
     directive: Any = None
     instruction = ""
+    problem_type = ""
     try:
         envelope = json.loads(body)
-        directive = envelope.get("agent_directive") if isinstance(envelope, dict) else None
+        if isinstance(envelope, dict):
+            directive = envelope.get("agent_directive")
+            problem_type = str(envelope.get("type") or "")
         if isinstance(directive, dict):
             instruction = str(directive.get("instruction") or "")
         else:
@@ -200,32 +203,80 @@ def classify_denial(status: int, headers: httpx.Headers, body: bytes) -> ToolErr
     return ToolError(
         CODE_BROKER_DENIED,
         "the broker denied this call before it reached the upstream API",
-        actionable=instruction or _synthesized_denial_hint(status),
+        actionable=instruction or _synthesized_denial_hint(status, problem_type),
         details={"http_status": status},
-        next_tool="whoami",
+        next_tool=_denial_next_tool(problem_type, directive),
         extra=extra,
     )
 
 
-def _synthesized_denial_hint(status: int) -> str:
-    """Status-keyed recovery when the denial carried no directive (Go twin)."""
+#: The problem+json ``type`` values whose recovery request_connection can
+#: start (theme-7 Phase 1b): a missing credential binding where nothing is
+#: provisioned yet (``no_credential_binding``; the flag-off toolkit path's
+#: ``no_toolkit_binding`` twin) and a resolved-but-unprovisioned credential
+#: (``credential_not_provisioned``, 424). Everything else — ``action_denied``
+#: (a permission rule forbids the op; connecting a fresh credential must NOT
+#: be taught as a way around it), ``credential_identity_mismatch`` (an
+#: operator fixes the credential), ``credential_undecryptable`` (operator
+#: re-adds it), and any unknown type — keeps ``whoami``.
+_PROVISIONING_PROBLEM_TYPES = frozenset(
+    {"no_credential_binding", "no_toolkit_binding", "credential_not_provisioned"}
+)
+
+
+def _denial_next_tool(problem_type: str, directive: dict[str, Any] | None) -> str:
+    """Recovery pointer keyed on the problem+json ``type`` (Go: ``denialNextTool``).
+
+    Keyed on the type, never the bare HTTP status: 403 also covers
+    ``action_denied`` and ``credential_identity_mismatch``, whose directives
+    say the opposite of "connect a credential" — a status-keyed fork would
+    teach agents to file connect sessions to route around permission rules.
+    ``whoami`` is the safe default for anything unrecognized.
+
+    Even a provisioning-shaped denial points at ``request_connection`` only
+    when the directive carries ``parameters.suggested_command`` — the broker
+    sets it exactly when the API maps onto a vendor-registry key. Off the
+    registry (or with no directive naming the vendor) the tool is guaranteed
+    to fail as an unknown vendor, so the pointer stays on ``whoami``.
+    """
+    if problem_type in _PROVISIONING_PROBLEM_TYPES and directive is not None:
+        parameters = directive.get("parameters")
+        if isinstance(parameters, dict) and parameters.get("suggested_command"):
+            return "request_connection"
+    return "whoami"
+
+
+def _synthesized_denial_hint(status: int, problem_type: str) -> str:
+    """Type/status-keyed recovery when the denial carried no directive (Go twin).
+
+    The connect-flavored wording is gated on the provisioning-shaped problem
+    types, mirroring :func:`_denial_next_tool` — an ``action_denied`` 403 must
+    never be answered with "start a connect session".
+    """
+    if problem_type in _PROVISIONING_PROBLEM_TYPES:
+        return (
+            "No credential binding covers this API for this agent. Call whoami to see "
+            "your bindings. If nothing serves the API, call request_connection with the "
+            "vendor's registry key to start connecting a credential yourself (your "
+            "operator approves the approval_url); if a credential already serves it, ask "
+            "your operator to bind you to it (dashboard) — binding is always a human "
+            "action."
+        )
     if status == 403:
         return (
-            "This agent has no credential binding serving this API. Call whoami to see "
-            "your bindings, then ask your operator to grant access "
-            "(`jentic access request --api <vendor/name> --wait`)."
+            "The broker denied this call. Call whoami to see your bindings and scopes; "
+            "if a permission rule forbids this operation, ask your operator to adjust "
+            "it — do not try to route around a rule by connecting a new credential."
         )
     if status == 424:
         return (
-            "No credential is provisioned for this call. Ask your operator to provision "
-            "one (`jentic access request --provision <vendor/name> --wait`), "
-            "then retry."
+            "A stored credential dependency is unusable for this call. Ask your operator "
+            "to re-provision the credential in the dashboard, then retry."
         )
     if status == 401:
         return (
             "The stored upstream credential needs reconnecting. Ask your operator to "
-            "re-provision it (`jentic access request --provision <vendor/name> "
-            "--wait`), then retry."
+            "re-provision it in the dashboard, then retry."
         )
     return (
         "The broker denied this call before it reached the upstream API. "

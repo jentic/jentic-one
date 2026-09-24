@@ -3,7 +3,7 @@ import { captureConsoleErrors } from './helpers';
 
 /**
  * Dashboard (real backend). By the time the alphabetical `e2e` project reaches
- * this file, earlier specs (access-requests, agents, broker-authz, …) have
+ * this file, earlier specs (agents, broker-authz, …) have
  * already registered agents against the shared DB — so the workspace is NOT
  * first-run here and the page renders its working layout. The first-run swap
  * itself is asserted in first-run.spec.ts, which runs in its own project

@@ -13,11 +13,10 @@ export const pendingAgentsCountKey = [...sharedQueryKeys.agentsRoot, 'pending', 
  * The agents still awaiting approval (`GET /agents?status=pending`), drained
  * across every cursor page. Powers the persistent nav badge on the Agents tab
  * so the "N waiting" signal is visible even when the Agent Rail is collapsed
- * or hidden (below `xl`), mirroring `usePendingAccessRequestCount` for access
- * requests. Polls on a modest interval so the badge stays roughly live
- * without a dedicated push channel; the Agents module's approve/deny/create
- * mutations invalidate the shared agents root for instant in-UI updates. See
- * issue #652.
+ * or hidden (below `xl`). Polls on a modest interval so the badge stays
+ * roughly live without a dedicated push channel; the Agents module's
+ * approve/deny/create mutations invalidate the shared agents root for instant
+ * in-UI updates. See issue #652.
  *
  * Drained via {@link useEagerCursorDrain} because the approval banner — which
  * shares this one cache slice — names the LONGEST-waiting agent, and that agent

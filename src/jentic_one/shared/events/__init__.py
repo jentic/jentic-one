@@ -190,8 +190,8 @@ async def settle_actionable_events(
     """Acknowledge outstanding actionable events once their action is taken.
 
     Actionable events (``requires_action=True``) prompt operators to review
-    something; when the review happens elsewhere (approving an agent, deciding
-    an access request), the prompt must be settled or it stays live on the
+    something; when the review happens elsewhere (e.g. approving an agent),
+    the prompt must be settled or it stays live on the
     rail/dashboard forever with a working-but-pointless action button.
 
     Matches on type + optional actor scoping via SQL, then on exact-equality

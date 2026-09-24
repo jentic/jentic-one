@@ -9,6 +9,7 @@ import {
 	credentialApiLine,
 	credentialAuthPlacement,
 	credentialIsConnected,
+	credentialIsPendingSignIn,
 } from './CredentialCard';
 
 type Usage = { usedByAgentCount?: number | null; callsLast7d?: number | null };
@@ -169,7 +170,10 @@ function CredentialRow({
 						{cred.name || formatApiReference(cred.api)}
 					</h4>
 					{credentialIsConnected(cred) && <Badge variant="success">Connected</Badge>}
-					<CredentialTypeBadge type={cred.type} />
+					{credentialIsPendingSignIn(cred) && (
+						<Badge variant="pending">Pending sign-in</Badge>
+					)}
+					<CredentialTypeBadge credential={cred} />
 				</div>
 				{placement && (
 					<p className="text-muted-foreground mt-0.5 truncate text-xs">{placement}</p>

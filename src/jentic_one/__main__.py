@@ -24,6 +24,10 @@ from jentic_one.admin.services.errors import (
 )
 from jentic_one.auth.web.app import install_on_app as _install_auth_verifier
 from jentic_one.control.services.key_retirement import KeyRetirementService
+from jentic_one.control.services.service_account_migration import (
+    ServiceAccountMigrationService,
+    VerificationResult,
+)
 from jentic_one.control.services.toolkit_export import ToolkitExportError, ToolkitExportService
 from jentic_one.control.services.toolkit_flattening import Finding, ToolkitFlatteningService
 from jentic_one.shared.config import AppConfig, load_config, oneshot_config_source_active
@@ -34,6 +38,9 @@ from jentic_one.shared.tracing import configure_tracing
 from jentic_one.shared.web.app_factory import SURFACE_MODULES, create_combined_app
 from jentic_one.wiring import build_default_container
 from jentic_one.wiring import install_broker_registry_resolver as _install_broker_registry_resolver
+from jentic_one.wiring import (
+    install_control_catalog_auto_importer as _install_control_catalog_auto_importer,
+)
 
 SURFACE_DB_DEPS: dict[str, set[str]] = {
     # Auth reaches the control DB read-only to resolve toolkit-binding names for
@@ -95,10 +102,20 @@ def _build_app(ctx: Context, apps: list[str]) -> FastAPI:
             _install_auth_verifier(app, ctx)
         if surface == "broker" and ctx.is_db_allowed("registry"):
             _install_broker_registry_resolver(app, ctx)
+        # Standalone control: enable catalog auto-import only when the process
+        # has registry-DB access (MCP-enabled configs widen the DB deps). A
+        # process without registry DB can't reach the catalog manifest anyway.
+        if surface == "control" and ctx.is_db_allowed("registry"):
+            _install_control_catalog_auto_importer(app, ctx)
         return app
     app = create_combined_app(ctx, apps, container=container)
     if "broker" in apps and ctx.is_db_allowed("registry"):
         _install_broker_registry_resolver(app, ctx)
+    # Combined shape: install the auto-importer whenever control ships in the
+    # same process as the registry, so a connect finishing in this process can
+    # kick off an import in the same process too.
+    if "control" in apps and ctx.is_db_allowed("registry"):
+        _install_control_catalog_auto_importer(app, ctx)
     return app
 
 
@@ -312,9 +329,9 @@ async def _reset_password(
 async def _retire_toolkit_keys(*, owner_email: str | None) -> int:
     """Run the theme-5 Phase 4 toolkit-key retirement job.
 
-    Converts every resolvable ``jntc_live_`` key into a service account
+    Converts every resolvable ``jntc_live_`` key into a successor agent
     carrying exactly ``capabilities:execute``; the unchanged plaintext keeps
-    authenticating as that account. One JSONL report line per key goes to
+    authenticating as that agent. One JSONL report line per key goes to
     stdout. Idempotent — safe to re-run after a partial failure.
     """
     config = load_config()
@@ -349,6 +366,114 @@ async def _retire_toolkit_keys(*, owner_email: str | None) -> int:
         )
         return 3
     return 0
+
+
+async def _migrate_service_accounts(
+    *,
+    diff_only: bool,
+    report_path: str | None,
+    sweep_migrated: bool,
+    verify: bool,
+    acknowledge: bool,
+) -> int:
+    """Run the theme-8 Phase 1 service-account → agent migration job.
+
+    Default mode migrates every SA (copy→revoke→stamp→audit; idempotent via
+    the stamp) and emits one JSONL line per SA. ``--diff-only`` evaluates
+    dispositions without writing. ``--sweep-migrated`` runs the W3 sweep
+    ignoring the stamp-age gate (operators who know the fleet is uniform) and
+    emits one JSONL line per swept SA plus a summary line.
+    ``--verify [--acknowledge]`` runs the acceptance queries and optionally
+    writes the Phase-4 gate sentinel (only on pass, same invocation).
+    """
+    config = load_config()
+    configure_logging(config)
+
+    async with Context(config, allowed_dbs={"admin", "control"}) as ctx:
+        svc = ServiceAccountMigrationService(ctx)
+
+        if verify:
+            result = await svc.verify(acknowledge=acknowledge)
+            _write_report_lines(result.findings, report_path)
+            print(
+                f"==> verify {'PASSED' if result.passed else 'FAILED'}: "
+                f"{result.unstamped_count} unstamped, "
+                f"{result.grant_twin_missing_count} grant twin(s) missing, "
+                f"{result.unrevoked_token_count} unrevoked token(s), "
+                f"{result.digest_mismatch_count} digest mismatch(es), "
+                f"{result.post_stamp_mutation_count} post-stamp mutation(s), "
+                f"{result.inline_rule_mismatch_count} inline-rule binding mismatch(es).",
+                file=sys.stderr,
+                flush=True,
+            )
+            if acknowledge:
+                print(
+                    _sa_acknowledge_message(result),
+                    file=sys.stderr,
+                    flush=True,
+                )
+            return 0 if result.passed else 1
+
+        if sweep_migrated:
+            sweep = await svc.sweep(ignore_age_gate=True)
+            _write_report_lines(sweep.report_lines(ignore_age_gate=True), report_path)
+            print(
+                f"==> swept {len(sweep.swept)} service account(s); revoked "
+                f"{sweep.access_tokens_revoked + sweep.refresh_tokens_revoked} SA "
+                f"session token(s); deleted {sweep.permission_rules_deleted} "
+                f"SA-keyed inline permission rule(s).",
+                file=sys.stderr,
+                flush=True,
+            )
+            return 0
+
+        outcomes = await svc.run(diff_only=diff_only)
+
+    _write_report_lines([asdict(o) for o in outcomes], report_path)
+    migrated = sum(1 for o in outcomes if o.outcome in ("migrated", "migrated-disabled"))
+    already = sum(1 for o in outcomes if o.outcome == "already_migrated")
+    skipped = sum(1 for o in outcomes if o.outcome == "skipped-non-active")
+    failed = sum(1 for o in outcomes if o.outcome == "failed")
+    verb = "would migrate" if diff_only else "migrated"
+    print(
+        f"==> {verb} {migrated} service account(s), {already} already migrated, "
+        f"{skipped} skipped-but-stamped, {failed} failed.",
+        file=sys.stderr,
+        flush=True,
+    )
+    return 1 if failed else 0
+
+
+def _sa_acknowledge_message(result: VerificationResult) -> str:
+    """The ``--verify --acknowledge`` outcome line, with the right next step.
+
+    A verify that fails only on what the sweep heals (live SA sessions,
+    unswept inline-rule rows) points at ``--sweep-migrated``; re-running the
+    migration would not help — stamped rows short-circuit it.
+    """
+    if result.acknowledged:
+        return "==> acknowledgement recorded — theme-8 Phase 4 drops are unblocked."
+    if result.only_sweep_healable_failures:
+        return (
+            "==> acknowledgement REFUSED: verification failed only on unrevoked SA "
+            "session(s) / unswept inline-rule row(s); run "
+            "`migrate-service-accounts --sweep-migrated`, then re-verify."
+        )
+    return (
+        "==> acknowledgement REFUSED: verification failed; run "
+        "migrate-service-accounts first, then re-verify."
+    )
+
+
+def _write_report_lines(lines: list[dict[str, object]], report_path: str | None) -> None:
+    """Emit one JSON line per dict, to ``report_path`` or stdout."""
+    if report_path is None:
+        for line in lines:
+            print(json.dumps(line), flush=True)
+        return
+    with open(report_path, "w", encoding="utf-8") as fh:
+        for line in lines:
+            fh.write(json.dumps(line) + "\n")
 
 
 def _write_report(findings: list[Finding], report_path: str | None) -> None:
@@ -500,13 +625,53 @@ def main(argv: list[str] | None = None) -> int:
 
     retire_keys = sub.add_parser(
         "retire-toolkit-keys",
-        help=("Migrate jntc_live_ toolkit keys to service accounts (theme-5 Phase 4; idempotent)."),
+        help=("Migrate jntc_live_ toolkit keys to successor agents (theme-5 Phase 4; idempotent)."),
     )
     retire_keys.add_argument(
         "--owner",
         help=(
-            "Email of the user to own service accounts whose toolkit key has "
+            "Email of the user to own successor agents whose toolkit key has "
             "no resolvable creator (such keys are skipped and reported otherwise)."
+        ),
+    )
+
+    migrate_sas = sub.add_parser(
+        "migrate-service-accounts",
+        help=(
+            "Migrate service accounts to successor agents "
+            "(theme-8 Phase 1; idempotent, also runs at boot)."
+        ),
+    )
+    migrate_sas.add_argument(
+        "--diff-only",
+        action="store_true",
+        help="Report what a run would do without writing anything.",
+    )
+    migrate_sas.add_argument(
+        "--report",
+        metavar="PATH",
+        help="Write the JSONL report here instead of stdout.",
+    )
+    migrate_sas.add_argument(
+        "--sweep-migrated",
+        action="store_true",
+        help=(
+            "Run the deferred sweep now, ignoring the stamp-age gate "
+            "(only when no old-image pods remain)."
+        ),
+    )
+    migrate_sas.add_argument(
+        "--verify",
+        action="store_true",
+        help="Run the verification queries instead of migrating.",
+    )
+    migrate_sas.add_argument(
+        "--acknowledge",
+        action="store_true",
+        help=(
+            "With --verify: record the operator acknowledgement that gates "
+            "the theme-8 Phase-4 drop migrations. Refused unless the "
+            "verification passes in this same invocation."
         ),
     )
 
@@ -583,6 +748,22 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "retire-toolkit-keys":
         return asyncio.run(_retire_toolkit_keys(owner_email=args.owner))
+
+    if args.command == "migrate-service-accounts":
+        if args.acknowledge and not args.verify:
+            migrate_sas.error("--acknowledge requires --verify (it records a passed verification)")
+        exclusive = [args.diff_only, args.verify, args.sweep_migrated]
+        if sum(1 for flag in exclusive if flag) > 1:
+            migrate_sas.error("--diff-only, --verify, and --sweep-migrated are mutually exclusive")
+        return asyncio.run(
+            _migrate_service_accounts(
+                diff_only=args.diff_only,
+                report_path=args.report,
+                sweep_migrated=args.sweep_migrated,
+                verify=args.verify,
+                acknowledge=args.acknowledge,
+            )
+        )
 
     if args.command == "flatten-toolkits":
         if args.acknowledge and not args.verify:

@@ -184,7 +184,7 @@ describe('CredentialInventorySheet — page-level org-wide inventory', () => {
 
 			// A caller whose own label promised a form ("Add a credential") gets
 			// the form, not a list with a button on it.
-			expect(await screen.findByRole('dialog', { name: /Choose an API/ })).toBeVisible();
+			expect(await screen.findByRole('dialog', { name: /^Add credential$/ })).toBeVisible();
 			// And as a drawer stacked on the inventory, not a centred modal over it.
 			await waitFor(() => expect(screen.getAllByTestId('sheet-primitive')).toHaveLength(2));
 			expect(document.querySelector('dialog[open]')).toBeNull();
@@ -192,14 +192,16 @@ describe('CredentialInventorySheet — page-level org-wide inventory', () => {
 			await browserUser.keyboard('{Escape}');
 			await waitFor(() =>
 				expect(
-					screen.queryByRole('dialog', { name: /Choose an API/ }),
+					screen.queryByRole('dialog', { name: /^Add credential$/ }),
 				).not.toBeInTheDocument(),
 			);
 			// The wizard was a step into the inventory, so backing out of it
 			// leaves the operator there rather than reopening the form.
 			expect(screen.getByRole('heading', { name: 'Credentials' })).toBeInTheDocument();
 			expect(await screen.findByText('Slack bot token')).toBeInTheDocument();
-			expect(screen.queryByRole('dialog', { name: /Choose an API/ })).not.toBeInTheDocument();
+			expect(
+				screen.queryByRole('dialog', { name: /^Add credential$/ }),
+			).not.toBeInTheDocument();
 		});
 	});
 

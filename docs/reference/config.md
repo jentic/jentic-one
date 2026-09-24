@@ -81,6 +81,7 @@ Service-level settings (immutable after boot).
 | `services.request_timeout_s` | number | `30.0` | `JENTIC__SERVICES__REQUEST_TIMEOUT_S` |  |
 | `services.retry_max` | integer | `3` | `JENTIC__SERVICES__RETRY_MAX` |  |
 | `services.retry_backoff_s` | number | `1.0` | `JENTIC__SERVICES__RETRY_BACKOFF_S` |  |
+| `services.service_account_sweep_min_stamp_age_hours` | integer | `24` | `JENTIC__SERVICES__SERVICE_ACCOUNT_SWEEP_MIN_STAMP_AGE_HOURS` |  |
 
 ## `worker`
 
@@ -261,12 +262,10 @@ Broker surface configuration.
 
 ## `control`
 
-Control surface configuration.
+Control surface configuration. Empty since theme 7 removed the access-request subsystem (its `access_requests.ttl_days`/`canonical_base_url` knobs). The section stays so a `control:` key in existing YAML keeps validating and future control-surface knobs have a home; unknown subkeys are ignored.
 
 | Key | Type | Default | Env var | Description |
 | --- | ---- | ------- | ------- | ----------- |
-| `control.access_requests.ttl_days` | integer | `7` | `JENTIC__CONTROL__ACCESS_REQUESTS__TTL_DAYS` |  |
-| `control.access_requests.canonical_base_url` | string | `""` | `JENTIC__CONTROL__ACCESS_REQUESTS__CANONICAL_BASE_URL` |  |
 
 ## `ingest`
 
@@ -319,6 +318,33 @@ Credentials subsystem configuration.
 | `credentials.providers.<name>.connect_base_url` | string | `"https://api.pipedream.com/v1"` | `JENTIC__CREDENTIALS__PROVIDERS__<NAME>__CONNECT_BASE_URL` |  |
 | `credentials.connect.state_secret` | string (secret) | `""` | `JENTIC__CREDENTIALS__CONNECT__STATE_SECRET` |  |
 | `credentials.connect.state_ttl_seconds` | integer | `600` | `JENTIC__CREDENTIALS__CONNECT__STATE_TTL_SECONDS` |  |
+
+## `vendors`
+
+Top-level vendor auth registry.
+
+| Key | Type | Default | Env var | Description |
+| --- | ---- | ------- | ------- | ----------- |
+| `vendors.entries` | map of VendorAuthConfig | — | `JENTIC__VENDORS__ENTRIES` |  |
+| `vendors.entries.<name>.vendor` | string | *required* | `JENTIC__VENDORS__ENTRIES__<NAME>__VENDOR` |  |
+| `vendors.entries.<name>.display_name` | string | *required* | `JENTIC__VENDORS__ENTRIES__<NAME>__DISPLAY_NAME` |  |
+| `vendors.entries.<name>.flows` | list of VendorDeviceAuthorizationFlowConfig \| VendorAuthorizationCodeFlowConfig | *required* | `JENTIC__VENDORS__ENTRIES__<NAME>__FLOWS` |  |
+| `vendors.entries.<name>.flows.<n>.kind` | "device_authorization" \| "authorization_code" | `"device_authorization"` | `JENTIC__VENDORS__ENTRIES__<NAME>__FLOWS__<N>__KIND` |  |
+| `vendors.entries.<name>.flows.<n>.client_id` | string | *required* | `JENTIC__VENDORS__ENTRIES__<NAME>__FLOWS__<N>__CLIENT_ID` |  |
+| `vendors.entries.<name>.flows.<n>.authorization_endpoint` | string | *required* | `JENTIC__VENDORS__ENTRIES__<NAME>__FLOWS__<N>__AUTHORIZATION_ENDPOINT` |  |
+| `vendors.entries.<name>.flows.<n>.token_endpoint` | string | *required* | `JENTIC__VENDORS__ENTRIES__<NAME>__FLOWS__<N>__TOKEN_ENDPOINT` |  |
+| `vendors.entries.<name>.flows.<n>.client_secret` | string (secret) | *required* | `JENTIC__VENDORS__ENTRIES__<NAME>__FLOWS__<N>__CLIENT_SECRET` |  |
+| `vendors.entries.<name>.flows.<n>.authorize_url` | string | *required* | `JENTIC__VENDORS__ENTRIES__<NAME>__FLOWS__<N>__AUTHORIZE_URL` |  |
+| `vendors.entries.<name>.flows.<n>.token_url` | string | *required* | `JENTIC__VENDORS__ENTRIES__<NAME>__FLOWS__<N>__TOKEN_URL` |  |
+| `vendors.entries.<name>.scopes` | list of VendorScopeConfig | — | `JENTIC__VENDORS__ENTRIES__<NAME>__SCOPES` |  |
+| `vendors.entries.<name>.scopes.<n>.name` | string | *required* | `JENTIC__VENDORS__ENTRIES__<NAME>__SCOPES__<N>__NAME` |  |
+| `vendors.entries.<name>.scopes.<n>.classification` | "read" \| "write" \| "admin" | `"read"` | `JENTIC__VENDORS__ENTRIES__<NAME>__SCOPES__<N>__CLASSIFICATION` |  |
+| `vendors.entries.<name>.scopes.<n>.default` | boolean | `false` | `JENTIC__VENDORS__ENTRIES__<NAME>__SCOPES__<N>__DEFAULT` |  |
+| `vendors.entries.<name>.scopes.<n>.description` | string | `""` | `JENTIC__VENDORS__ENTRIES__<NAME>__SCOPES__<N>__DESCRIPTION` |  |
+| `vendors.entries.<name>.identity_probe.endpoint` | string | *required* | `JENTIC__VENDORS__ENTRIES__<NAME>__IDENTITY_PROBE__ENDPOINT` |  |
+| `vendors.entries.<name>.identity_probe.method` | "GET" \| "POST" | `"GET"` | `JENTIC__VENDORS__ENTRIES__<NAME>__IDENTITY_PROBE__METHOD` |  |
+| `vendors.entries.<name>.identity_probe.identity_field` | string | *required* | `JENTIC__VENDORS__ENTRIES__<NAME>__IDENTITY_PROBE__IDENTITY_FIELD` |  |
+| `vendors.entries.<name>.identity_probe.display_template` | string | *required* | `JENTIC__VENDORS__ENTRIES__<NAME>__IDENTITY_PROBE__DISPLAY_TEMPLATE` |  |
 
 ## `search`
 

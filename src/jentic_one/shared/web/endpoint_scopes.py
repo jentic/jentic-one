@@ -49,7 +49,7 @@ from fastapi.routing import APIRoute
 
 from jentic_one.shared.auth.permission_catalog import compute_implies_transitive
 from jentic_one.shared.models.actors import ActorType
-from jentic_one.shared.scopes import AGENTS_WRITE, DEFAULT_AGENT_SCOPES
+from jentic_one.shared.scopes import DEFAULT_AGENT_SCOPES
 
 _log = structlog.get_logger(__name__)
 
@@ -81,7 +81,14 @@ except ImportError:  # pragma: no cover - guards against a future FastAPI refact
 
 # --- actor-type vocabulary --------------------------------------------------
 
-_ALL_ACTORS: tuple[str, ...] = tuple(a.value for a in ActorType)
+#: Every actor type a caller can currently *be issued* as. ``service_account``
+#: is excluded (theme-8 Phase 2): the member survives for deserialization and
+#: the Phase-1 resolver fallback still resolves an unmigrated ``sak_`` key as
+#: one until the Phase-4 drop, but no issuance path produces it, so the
+#: reference must not advertise it as a caller kind.
+_ALL_ACTORS: tuple[str, ...] = tuple(
+    a.value for a in ActorType if a is not ActorType.SERVICE_ACCOUNT
+)
 
 
 # --- typical-caller hint (NON-binding guidance, NOT enforcement) ------------
@@ -92,7 +99,7 @@ _ALL_ACTORS: tuple[str, ...] = tuple(a.value for a in ActorType)
 # that holds the scope". That is correct but low-signal for a human skimming the
 # reference. ``typical_caller`` is a separate, clearly-labelled *hint* at who
 # usually calls an endpoint, inferred from the scope family. It is advisory only:
-# a service account granted ``users:write`` really can call an operator endpoint.
+# an agent granted ``users:write`` really can call an operator endpoint.
 # Never use this to gate a request.
 
 TYPICAL_AGENT = "agent"
@@ -100,12 +107,10 @@ TYPICAL_OPERATOR = "operator"
 TYPICAL_ANY = "any"
 
 #: Actors that ride the programmatic (agent) token flow rather than a human login.
-_PROGRAMMATIC_ACTORS: frozenset[str] = frozenset(
-    {ActorType.AGENT.value, ActorType.SERVICE_ACCOUNT.value}
-)
+_PROGRAMMATIC_ACTORS: frozenset[str] = frozenset({ActorType.AGENT.value})
 
 #: Scopes an agent is granted by default — endpoints needing only these are
-#: *typically* called by agents/service accounts.
+#: *typically* called by agents.
 _AGENT_DEFAULT_SCOPES: frozenset[str] = frozenset(DEFAULT_AGENT_SCOPES)
 
 #: Scopes that are typically held by a human operator / admin console rather than
@@ -117,12 +122,10 @@ _OPERATOR_SCOPES: frozenset[str] = frozenset(
         "users:write",
         "agents:read",
         "agents:write",
-        "service-accounts:read",
-        "service-accounts:write",
         "audit:read",
         "events:write",
         # Confirming an overlay rewrites the served spec — a human operator action,
-        # never an agent default (excluded from GRANTABLE_SCOPES/DEFAULT_AGENT_SCOPES).
+        # never an agent default (excluded from DEFAULT_AGENT_SCOPES).
         "overlays:confirm",
     }
 )
@@ -131,7 +134,7 @@ _OPERATOR_SCOPES: frozenset[str] = frozenset(
 def _typical_caller(scopes: list[str], actor_types: list[str]) -> str:
     """Best-effort hint at who usually calls an endpoint (advisory, not enforced).
 
-    - An explicit single-actor restriction wins (e.g. a service-account-only route).
+    - An explicit single-actor restriction wins (e.g. an agent-only route).
     - Operator-family scope -> ``operator``.
     - Only agent-default scopes -> ``agent``.
     - Otherwise (no scope, or a mixed/ordinary scope) -> ``any``.
@@ -161,18 +164,9 @@ def _typical_caller(scopes: list[str], actor_types: list[str]) -> str:
 #: Example (uncomment / adapt)::
 #:
 #:     PATH_SCOPE_OVERRIDES = {
-#:         ("POST", "/access-requests"): ["agents:write"],
+#:         ("POST", "/widgets/{widget_id}:freeze"): ["widgets:write"],
 #:     }
-PATH_SCOPE_OVERRIDES: dict[tuple[str, str], list[str]] = {
-    # Access requests: only the *decide* (fulfil) path enforces a scope —
-    # AccessRequestService._compute_evaluation requires ``agents:write`` (or
-    # ``org:admin``, which implies it) before a request can be approved. Filing,
-    # listing, getting, amending and withdrawing are *not* scope-gated; they are
-    # authorised by ownership/binding checks in the service layer, so they stay
-    # bare-authenticated here (no scope override). See
-    # control/services/access_requests/service.py.
-    ("POST", "/access-requests/{request_id}:decide"): [AGENTS_WRITE],
-}
+PATH_SCOPE_OVERRIDES: dict[tuple[str, str], list[str]] = {}
 
 #: ``(method, path) -> [actor_type, ...]`` to override the inferred actor types.
 ACTOR_TYPE_OVERRIDES: dict[tuple[str, str], list[str]] = {

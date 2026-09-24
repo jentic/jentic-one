@@ -13,8 +13,7 @@ import type { PermissionRuleSchema } from '@/shared/api';
  * rule tester's verdict references.
  *
  * Lives in `shared/ui` (not a feature module) so every surface that authors
- * binding rules can reuse it — the agent console's rule editor and the
- * provisioning-plan fulfilment wizard both compose it.
+ * binding rules can reuse it — e.g. the agent console's rule editor.
  *
  * The editor's own verbs (`Add rule`, plus `Allow all operations` while no
  * catch-all grant exists) share ONE row with the host's commit verbs via
@@ -92,7 +91,7 @@ export function cleanPermissionRule(rule: PermissionRuleInput): PermissionRuleIn
 }
 
 /** The catch-all grant, authored in the one shape the backend accepts. */
-function allowAllRule(): PermissionRuleInput {
+export function allowAllRule(): PermissionRuleInput {
 	return {
 		effect: 'allow' as PermissionRuleInput['effect'],
 		methods: null,
@@ -107,7 +106,7 @@ function allowAllRule(): PermissionRuleInput {
  * on the catch-all path, matched as a REGEX. The mode matters: `.*` under `exact`
  * or `prefix` matches a literal two-character path and grants nothing.
  */
-function grantsEverything(rules: PermissionRuleInput[]): boolean {
+export function grantsEverything(rules: PermissionRuleInput[]): boolean {
 	return rules.some(
 		(rule) =>
 			rule.effect === 'allow' &&

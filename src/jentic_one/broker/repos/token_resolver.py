@@ -54,8 +54,9 @@ class InProcessTokenResolver:
             " CASE t.actor_type"
             "  WHEN 'agent' THEN"
             "   (SELECT a.status FROM agents a WHERE a.id = t.actor_id)"
-            "  WHEN 'service_account' THEN"
-            "   (SELECT sa.status FROM service_accounts sa WHERE sa.id = t.actor_id)"
+            # Service-account sessions are retired (theme 8): fail closed
+            # regardless of the row, matching ``TokenService._actor_is_active``.
+            "  WHEN 'service_account' THEN 'retired'"
             "  WHEN 'user' THEN"
             "   (SELECT CASE WHEN u.active THEN 'active' ELSE 'disabled' END"
             "    FROM users u WHERE u.id = t.actor_id)"

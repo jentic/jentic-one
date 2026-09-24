@@ -40,14 +40,9 @@ import {
 	useArchiveAgent,
 	useUnbindAgentCredential,
 	useResumeAgentCredentialBinding,
-	usePendingApproverAccessRequests,
-	pendingApproverAccessRequestsKey,
 	type ActorStatus,
 	type AgentEntity,
 } from '@/modules/agents/api';
-import { type AccessRequest } from '@/shared/lib';
-import { AccessRequestDecisionDialog } from '@/shared/app';
-import { useQueryClient } from '@tanstack/react-query';
 import {
 	agentApiCount,
 	agentSetupGapCount,
@@ -59,7 +54,6 @@ import { AgentStatStrip } from '@/modules/agents/components/flat/AgentStatStrip'
 import { ApiTile } from '@/modules/agents/components/flat/ApiTile';
 import { ApiAccessSidebar } from '@/modules/agents/components/flat/ApiAccessSidebar';
 import { PendingApprovalBanner } from '@/modules/agents/components/flat/PendingApprovalBanner';
-import { AccessRequestsBanner } from '@/modules/agents/components/flat/AccessRequestsBanner';
 import {
 	LifecycleDialogs,
 	type PendingConfirm,
@@ -166,13 +160,6 @@ export function FlatAgentsSection({ createOpen, setCreateOpen, filter }: FlatAge
 
 	// Same cache slice the nav badge polls; `atLeast` hedges an incomplete drain.
 	const { agents: pendingAgents, atLeast: pendingAtLeast } = usePendingAgents();
-
-	// Access requests the viewer can decide — surfaced inline beside the pending
-	// registration banner. The decision opens the shared dialog; on a decision we
-	// drop this request from the queue so the banner reflects it before the poll.
-	const queryClient = useQueryClient();
-	const { data: accessRequests } = usePendingApproverAccessRequests();
-	const [activeRequest, setActiveRequest] = useState<AccessRequest | null>(null);
 
 	const approve = useApproveAgent();
 	const deny = useDenyAgent();
@@ -300,8 +287,6 @@ export function FlatAgentsSection({ createOpen, setCreateOpen, filter }: FlatAge
 				}
 			/>
 
-			<AccessRequestsBanner requests={accessRequests ?? []} onReview={setActiveRequest} />
-
 			<AgentStrip
 				agents={agents}
 				selectedId={selected?.id ?? null}
@@ -384,21 +369,8 @@ export function FlatAgentsSection({ createOpen, setCreateOpen, filter }: FlatAge
 			<LifecycleDialogs
 				confirm={confirm}
 				onClose={() => setConfirm(null)}
-				entityType="agent"
 				disableBody="Disabling immediately revokes this agent's ability to authenticate. You can re-enable it later."
 				mutations={{ deny, disable, archive }}
-			/>
-			{/* Mounted once; `request={null}` keeps it closed. A decision drops the
-			    request from the approver queue so the banner updates before the poll. */}
-			<AccessRequestDecisionDialog
-				request={activeRequest}
-				onClose={() => setActiveRequest(null)}
-				onDecided={() => {
-					setActiveRequest(null);
-					void queryClient.invalidateQueries({
-						queryKey: pendingApproverAccessRequestsKey,
-					});
-				}}
 			/>
 			{createSheet}
 		</>

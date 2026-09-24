@@ -17,13 +17,28 @@ doesn't name one:
 | ----- | --------- | ------------------ |
 | `user` | A human operator, signed in through the SPA or `jenticctl`. | Session token (JWT), or a password login exchanged for one. |
 | `agent` | An AI agent owned by a user. Registered first, approved by a human before it can act. | Ed25519-signed assertion → opaque access token, or a `jak_` API key. |
-| `service_account` | A headless integration. | `sak_` API key. |
 
-The former `toolkit` actor is retired: a startup migration turns each
-`jntc_live_` toolkit key into a `sak_` service account, and a retired
-plaintext keeps authenticating as its migrated service account through the
-deprecation window (see the
-[release runbook](../development/releasing.md)).
+Agents are the only machine identity. Headless integrations (CI jobs, cron
+runners, scripts) register as an agent and authenticate with its `jak_` API
+key.
+
+Two former actor kinds are retired, and their existing plaintexts keep
+working through the deprecation window (see the
+[release runbook](../development/releasing.md)):
+
+- **`service_account`** — removed in theme 8. A startup migration converts
+  each service account into a successor agent, carrying over its grants,
+  bindings, and API-key digest, so an existing `sak_` plaintext keeps
+  authenticating as the successor agent. Until an account is migrated (and
+  until the service-account tables are dropped), its key still resolves
+  through a service-account fallback, as the service account itself. No new
+  `sak_` keys are issued;
+  the `/service-accounts` API, `POST /oauth/mint`, and the
+  `client_credentials` grant are gone.
+- **`toolkit`** — a startup migration turns each `jntc_live_` toolkit key
+  into a successor agent (it minted a service account before theme 8, and
+  those service accounts migrate like any other), and the retired plaintext
+  keeps authenticating as that successor.
 
 An agent's `Identity` carries its owner (`parent_actor_id`) and the owner's
 effective permissions (`parent_permissions`): an agent can never out-rank
@@ -90,8 +105,10 @@ sequenceDiagram
    more than a few seconds fast produces `iat` rejections — keep both ends
    on NTP.
 
-Operators and the SPA use session JWTs minted at login; API keys
-(`jak_`/`sak_`) are the long-lived alternative, resolved by prefix against
+Operators and the SPA use session JWTs minted at login; agent API
+keys (`jak_`, plus legacy `sak_`/`jntc_live_` plaintexts that resolve as
+their successor agents once migrated) are the long-lived alternative,
+dispatched by prefix and matched by digest against
 the admin DB ([`shared/auth/api_key_resolver.py`](../../src/jentic_one/shared/auth/api_key_resolver.py)). JWT verification for
 asymmetric tokens allows only asymmetric algorithms — `alg: none` and all
 HMAC algorithms are rejected ([`shared/auth/jwt_verification.py`](../../src/jentic_one/shared/auth/jwt_verification.py)).
@@ -105,16 +122,16 @@ Scopes shared across surfaces are canonical constants in
   requires. Every accepted credential kind must carry it.
 - **`DEFAULT_AGENT_SCOPES`** is the safe agent baseline: execute, reads
   (`apis:read`, `executions:read`, `jobs:read`, `events:read`,
-  `capabilities:read`), `catalog:import`, and the `owner:*:read` delegation
-  scopes for resources, agents, credentials, and access requests
-  (not `owner:service-accounts:read`).
-- **Self-service elevation is bounded.** An agent may file a `scope:grant`
-  access request only for `GRANTABLE_SCOPES` (the baseline plus
-  `apis:write`). The privileged scopes — `org:admin`, `agents:write`,
-  `overlays:confirm` — are deliberately excluded, so neither an agent nor a
-  merely agent-owning operator can escalate through the request path.
+  `capabilities:read`), `catalog:import`, `credentials:connect` (start a
+  vendor connect flow — narrower than `credentials:write`), and the
+  `owner:*:read` delegation scopes for resources, agents, and credentials.
+- **There is no self-service scope elevation.** Scopes are granted by an
+  operator on the agent detail surface, so the privileged scopes —
+  `org:admin`, `agents:write`, `overlays:confirm` — can never be reached
+  through an agent-facing path: neither an agent nor a merely agent-owning
+  operator can escalate.
 - **`owner:<resource>:read`** scopes power delegation: an operator holding
-  them sees their agents' rows (credentials, access requests)
+  them sees their agents' rows (e.g. credentials)
   without being org admin. The `scoping/filters.py` modules translate these
   into row-level filters (see
   [surfaces and layering](surfaces-and-layering.md#the-scoping-packages)).
@@ -142,9 +159,9 @@ different questions:
    (see [broker execution](broker-execution.md)).
 
 The chain for an agent's first real call is therefore: registration
-approval (human) → credential binding via an access request (human) → scope
-check (route) → permission rule (call). Each step is auditable, and none is
-implied by the previous one.
+approval (human) → credential binding, via a consented vendor connect flow
+or an operator-made bind (human) → scope check (route) → permission rule
+(call). Each step is auditable, and none is implied by the previous one.
 
 ## Related
 

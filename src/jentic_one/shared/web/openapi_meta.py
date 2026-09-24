@@ -86,16 +86,15 @@ High-level components for the control plane API.
 
 Today the platform ships a local username + password identity
 provider for human users, alongside agent identity (Dynamic Client
-Registration + RFC 7523 JWT-bearer assertions) and service-account
-client credentials — every authenticated operation expects
+Registration + RFC 7523 JWT-bearer assertions) — every authenticated operation expects
 `Authorization: Bearer <token>` (`BearerAuth`, an opaque `at_`
 token) except `GET /health`, `POST /auth/login`,
 `POST /users:create-admin`, and `POST /users:redeem-invite`.
 Human tokens are issued by `POST /auth/login` with a fixed 1-hour
 TTL and can be re-minted before expiry via `POST /auth/refresh`
 (sliding session, bounded by an absolute window —
-`admin.auth.session_ttl_seconds`, 12 hours by default); agents and
-service accounts obtain tokens from `POST /oauth/token` (see
+`admin.auth.session_ttl_seconds`, 12 hours by default); agents
+obtain tokens from `POST /oauth/token` (see
 `BearerAuth`). The `permissions` claim on a token is a snapshot at
 issue time; permission changes take effect at the next re-issue —
 the next refresh or re-login (≤ 1 hour with the default TTL).
@@ -193,7 +192,7 @@ JWKS, then RFC 7523 JWT-bearer assertions exchanged at
   | Prefix | Resource | Notes |
   |---|---|---|
   | `tk_` | Toolkit ID | Retired (theme-5 Phase 5b): the toolkit management surface is gone. Ids still appear in stored records (bindings, audit) until the tables retire in Phase 6b. |
-  | `ck_` | Toolkit-key record | Retired (theme-5 Phase 4): no new keys are issued and the key-management routes are gone (Phase 5b). Each surviving plaintext authenticates as the service account it was migrated to. |
+  | `ck_` | Toolkit-key record | Retired (theme-5 Phase 4): no new keys are issued and the key-management routes are gone (Phase 5b). Each surviving plaintext authenticates as the agent it was migrated to. |
   | `cred_` | Credential ID | |
   | `exec_` | Execution record | Returned in the `Jentic-Execution-Id` response header on every brokered call. |
   | `job_` | Async job | UUIDs also accepted on inputs for backward compatibility. |
@@ -202,10 +201,10 @@ JWKS, then RFC 7523 JWT-bearer assertions exchanged at
   | `rev_` | API revision | ULID-shaped. |
   | `usr_` | User | Org member. Resolves via `GET /users/{user_id}`. Used in `acknowledged_by`, `decided_by`, and similar audit references. |
   | `inv_` | Invite token | One-time token issued at user creation. Plaintext value shown **once** at issue / re-issue; `:redeem-invite` consumes it. |
-  | `areq_` | Access request | Human-approval ticket for scope grants and credential bindings; see the `Access Requests` tag. |
+  | `areq_` | Access request (retired) | Retired (theme 7): the access-request flow is gone. Ids still appear in stored audit/event records. |
   | `note_` | Note | ULID-shaped. Free-form annotation attached to a registry resource — see the `Notes` tag. |
   | `ovr_` | Overlay | ULID-shaped. OpenAPI Overlay 1.0 document attached to an `Api` aggregate — see the `Overlays` tag. |
-  | `jntc_live_` | Plaintext toolkit API key value (retired) | Never issued anymore (issuance died in Phase 4, the management routes in Phase 5b). A surviving value keeps authenticating — as its migrated service account — for the deprecation window; rotate holders to `sak_` keys. |
+  | `jntc_live_` | Plaintext toolkit API key value (retired) | Never issued anymore (issuance died in Phase 4, the management routes in Phase 5b). A surviving value keeps authenticating — as its migrated agent — for the deprecation window; rotate holders to agent (`jak_`) keys. |
 
   Surfaces still being designed (agent identity, OAuth brokers)
   will add their own prefixes when they land.
@@ -240,26 +239,33 @@ OPENAPI_TAGS: list[dict[str, str]] = [
         ),
     },
     {
-        "name": "Access Requests",
+        "name": "Vendors",
         "description": (
-            "Actor-agnostic, multi-item access-request surface (Core / Access bounded "
-            "context). When an agent's brokered call is rejected by a permission rule — or "
-            "the agent needs access it doesn't yet have — the agent files an `AccessRequest` "
-            "containing one or more line items (`AccessRequestItem`). The request enters "
-            "`pending` state and surfaces an `approve_url` that the agent presents to a human "
-            "reviewer.\n\n"
-            "Reviewers `:decide` individual items (approve or deny each); filers can `:amend` "
-            "pending items (adjust rules or target) or `:withdraw` the entire request. Each "
-            "item transitions independently; the envelope status reflects the aggregate "
-            "(`pending` while any item is pending, `partially_approved` when some items are "
-            "decided but others remain, terminal once all items resolve).\n\n"
-            "Pending requests carry a TTL (default 7 days, configurable). Envelope lifecycle: "
-            "`pending → partially_approved → approved | denied | withdrawn | expired`.\n\n"
-            "**Identity scoping.** List and get operations are identity-scoped: filers see "
-            "their own requests, reviewers see their inbox, `org:admin` sees all. Non-owners "
-            "receive `404` (not `403`) to avoid leaking existence.\n\n"
-            "**Security.** Mutating operations (`POST`, `:decide`, `:amend`, `:withdraw`) "
-            "require `agents:write`; read operations require `agents:read`."
+            "Part of the **Core / Access** bounded context — the platform-curated catalog "
+            "of verified vendors that support agent-initiated OAuth connect flows. Each "
+            "entry describes the OAuth flows available (device_authorization, "
+            "authorization_code) and the scope catalog with read/write classification. "
+            "Vendor entries are seeded from operator config, not user-managed — the API "
+            "surfaces them read-only so the SPA and agents can discover which vendors "
+            "are available and pick a flow at ``:connect`` time."
+        ),
+    },
+    {
+        "name": "Integrations",
+        "description": (
+            "Part of the **Core / Access** bounded context — agent-initiated OAuth "
+            "connect sessions. A caller (agent or UI) begins a session via "
+            "``POST /integrations:connect``, choosing a vendor and requested scope set; "
+            "the platform provisions a pending credential, initiates the vendor's OAuth "
+            "flow (device_authorization or authorization_code depending on the vendor), "
+            "and returns a session id + human-facing challenge (device user_code / "
+            "authorize_url).\n\n"
+            "The initiator polls ``GET /connect-sessions/{id}/status`` until the session "
+            "reaches ``connected`` (tokens vaulted) or a terminal failure. Sessions are "
+            "capped by a TTL; unfinished sessions can be cancelled via "
+            "``POST /connect-sessions/{id}:cancel``. The ``:confirm`` step is a UI-only "
+            "hand-off that binds any pre-declared permission rules to the resulting "
+            "credential."
         ),
     },
     {
@@ -561,17 +567,10 @@ OPENAPI_TAGS: list[dict[str, str]] = [
         ),
     },
     {
-        "name": "Service Accounts",
-        "description": (
-            "Machine principals for non-interactive integrations — lifecycle (create, list, "
-            "read, approve / deny, enable / disable, archive) mirroring the agent surface."
-        ),
-    },
-    {
         "name": "OAuth",
         "description": (
             "OAuth 2.0 / OIDC endpoints exposed by the platform authorization server — the "
-            "authorize, token, introspection, revocation, and assertion-mint endpoints plus "
+            "authorize, token, introspection, and revocation endpoints plus "
             "the redirect callback."
         ),
     },
@@ -593,7 +592,7 @@ OPENAPI_TAGS: list[dict[str, str]] = [
         "name": "Actors",
         "description": (
             "Unified actor directory — a lightweight read-only view across all actor types "
-            "(users, agents, service accounts). Returns ID-to-name mappings for UI cache "
+            "(users and agents). Returns ID-to-name mappings for UI cache "
             "hydration so dashboards can display friendly names wherever an `actor_id` appears."
         ),
     },
@@ -658,7 +657,8 @@ X_TAG_GROUPS: list[dict[str, Any]] = [
         "tags": [
             "Credentials",
             "Permission Rule Sets",
-            "Access Requests",
+            "Vendors",
+            "Integrations",
         ],
     },
     {
@@ -695,7 +695,6 @@ X_TAG_GROUPS: list[dict[str, Any]] = [
         "tags": [
             "Identity",
             "Agents",
-            "Service Accounts",
             "OAuth",
             "Agent Registration",
             "Discovery",
@@ -720,12 +719,8 @@ BEARER_SECURITY_SCHEME = {
             "- **Agents** — `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer` "
             "with a JWT assertion signed by the key registered via `POST /register` "
             "(the JWT is the *assertion*, not the resulting access token).\n"
-            "- **Service accounts** — `grant_type=client_credentials` with "
-            "`client_id` + `client_secret`.\n"
             "- **Users** — `grant_type=authorization_code` (interactive) or "
             "`grant_type=password`; refresh either with `grant_type=refresh_token`.\n\n"
-            "Service accounts can also mint short-lived, scope-narrowed task tokens "
-            "for agents via `POST /oauth/mint`.\n\n"
             "Per-endpoint scope and actor-type requirements are not modelled in this "
             "document (OpenAPI cannot faithfully express the OR-of-scopes / "
             "`org:admin` bypass / service-layer enforcement); see "
@@ -864,7 +859,9 @@ _TAG_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^/admin/config"), "Configuration"),
     (re.compile(r"^/credentials"), "Credentials"),
     (re.compile(r"^/permission-rule-sets"), "Permission Rule Sets"),
-    (re.compile(r"^/access-requests"), "Access Requests"),
+    (re.compile(r"^/integrations"), "Integrations"),
+    (re.compile(r"^/connect-sessions"), "Integrations"),
+    (re.compile(r"^/vendors"), "Vendors"),
     (re.compile(r"^/apis/.+/overlays"), "Overlays"),
     (re.compile(r"^/apis/.+/operations$"), "API Operations"),
     (re.compile(r"^/apis/.+/openapi$"), "API Spec"),
@@ -896,7 +893,6 @@ _TAG_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^/oauth-clients"), "OAuth Clients"),
     # Platform-actor surfaces (superset, not in the original reference).
     (re.compile(r"^/agents"), "Agents"),
-    (re.compile(r"^/service-accounts"), "Service Accounts"),
     (re.compile(r"^/oauth"), "OAuth"),
     (re.compile(r"^/authorize"), "OAuth"),
     (re.compile(r"^/error"), "OAuth"),

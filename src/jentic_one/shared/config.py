@@ -166,6 +166,14 @@ class ServicesConfig(BaseModel):
     request_timeout_s: float = 30.0
     retry_max: int = 3
     retry_backoff_s: float = 1.0
+    # Theme-8 Phase 1 (N3): minimum age of a service account's migration
+    # stamp before the boot job's automatic sweep archives the SA-side
+    # originals — the full-fleet-rollout proxy (old-image pods resolve
+    # migrated keys through the SA arm until every pod is upgraded).
+    # ``0`` disables the age gate (CI / fresh installs); a negative value
+    # disables the automatic sweep arm entirely (CLI-only sweeps via
+    # ``jentic_one migrate-service-accounts --sweep-migrated``).
+    service_account_sweep_min_stamp_age_hours: int = 24
 
 
 class WorkerConfig(BaseModel):
@@ -868,17 +876,131 @@ class CredentialsConfig(BaseModel):
     connect: ConnectConfig = Field(default_factory=ConnectConfig)
 
 
-class AccessRequestsConfig(BaseModel):
-    """Access requests subsystem configuration."""
+# ---------------------------------------------------------------------------
+# Vendor auth registry — verified vendors with known SSO integrations.
+#
+# This is the config-seeded catalog of vendors that support the agent-driven
+# integration flow. Each entry describes the OAuth flow(s) available,
+# the OAuth app credentials shipped by the platform, the scope catalog with
+# read/write classification, and a generic identity-echo probe.
+# ---------------------------------------------------------------------------
 
-    ttl_days: int = 7
-    canonical_base_url: str = ""
+
+class VendorDeviceAuthorizationFlowConfig(BaseModel):
+    """RFC 8628 device flow settings for a vendor.
+
+    `client_id` is the platform-shipped OAuth application id (device flow is a
+    public-client flow — no secret). Endpoints are the vendor's device
+    authorization + token endpoints.
+    """
+
+    kind: Literal["device_authorization"] = "device_authorization"
+    client_id: str
+    authorization_endpoint: str
+    token_endpoint: str
+
+
+class VendorAuthorizationCodeFlowConfig(BaseModel):
+    """OAuth 2.0 authorization-code flow settings for a vendor.
+
+    Included so the vendor registry is flow-generic from day 1 even though
+    phase 1 only wires up device flow. Requires a client secret (confidential
+    client) since the redirect-based flow exchanges the code at the token
+    endpoint.
+    """
+
+    kind: Literal["authorization_code"] = "authorization_code"
+    client_id: str
+    client_secret: SecretStr
+    authorize_url: str
+    token_url: str
+
+
+VendorFlowConfig = Annotated[
+    VendorDeviceAuthorizationFlowConfig | VendorAuthorizationCodeFlowConfig,
+    Field(discriminator="kind"),
+]
+
+
+class VendorScopeConfig(BaseModel):
+    """A single OAuth scope exposed by the vendor.
+
+    `classification` drives the review-page UX: read scopes are pre-selected by
+    default; write/admin scopes get a warning flag. `description` is
+    human-facing copy displayed on the review page.
+    """
+
+    name: str
+    classification: Literal["read", "write", "admin"] = "read"
+    default: bool = False
+    description: str = ""
+
+
+class VendorIdentityProbeConfig(BaseModel):
+    """Generic identity-echo protocol config for a vendor.
+
+    After the connect flow completes, the platform calls
+    `{method} {endpoint}` with the freshly minted access token, extracts
+    `identity_field` (dotted JSON path) from the response body, and formats it
+    into `display_template` (Python str.format). The result is stored as
+    `connected_as` and returned to the caller.
+    """
+
+    endpoint: str
+    method: Literal["GET", "POST"] = "GET"
+    identity_field: str
+    display_template: str
+
+
+class VendorAuthConfig(BaseModel):
+    """Config entry for one verified vendor.
+
+    Keyed in `VendorRegistryConfig.entries` by a short slug (e.g. "github").
+    """
+
+    # Catalog api_id for this vendor's API (e.g. ``github.com/api.github.com``).
+    # Decomposed at credential-create time via ``canonical_credential_scope``
+    # exactly like a normal catalog import — same api_vendor / api_name /
+    # catalog_api_id fields land on the credential row.
+    vendor: str
+    display_name: str
+    flows: list[VendorFlowConfig]
+    scopes: list[VendorScopeConfig] = Field(default_factory=list)
+    identity_probe: VendorIdentityProbeConfig
+
+    @field_validator("vendor")
+    @classmethod
+    def _vendor_is_domain_slash_name(cls, v: str) -> str:
+        """Require a ``{domain}/{name}`` shape (e.g. ``github.com/api.github.com``).
+
+        Without this check a bare ``vendor`` string (missing the ``/``) silently
+        collapses through ``entry.vendor.split("/", 1)[0]`` and produces a
+        credential ``api_vendor`` that mismatches the broker's per-operation
+        identity check — the mismatch only surfaces on the first connect and is
+        hard to diagnose from the field. Failing loud at config-load is cheaper.
+        """
+        if "/" not in v or v.startswith("/") or v.endswith("/"):
+            raise ValueError(
+                f"vendor {v!r} must be of the form '<domain>/<sub>' "
+                "(e.g. 'github.com/api.github.com')"
+            )
+        return v
+
+
+class VendorRegistryConfig(BaseModel):
+    """Top-level vendor auth registry."""
+
+    entries: dict[str, VendorAuthConfig] = Field(default_factory=dict)
 
 
 class ControlSurfaceConfig(BaseModel):
-    """Control surface configuration."""
+    """Control surface configuration.
 
-    access_requests: AccessRequestsConfig = Field(default_factory=AccessRequestsConfig)
+    Empty since theme 7 removed the access-request subsystem (its
+    ``access_requests.ttl_days``/``canonical_base_url`` knobs). The section
+    stays so a ``control:`` key in existing YAML keeps validating and future
+    control-surface knobs have a home; unknown subkeys are ignored.
+    """
 
 
 class UpstreamClientConfig(BaseModel):
@@ -1257,9 +1379,9 @@ class BrokerConfig(BaseModel):
     # (agent_credential_bindings + agent_permission_rules /
     # permission_rule_sets). Setting False is an emergency fallback onto the
     # legacy toolkit-derivation path, which survives until Phase 6b removes it
-    # (and this flag with it). Service accounts migrated from jntc_live_
-    # toolkit keys (Phase 4) hold both binding forms, so they work under
-    # either setting.
+    # (and this flag with it). Successor agents cut from jntc_live_ toolkit
+    # keys (theme-5 Phase 4, re-homed onto agents by theme-8) hold both
+    # binding forms, so they work under either setting.
     direct_bindings_enabled: bool = True
     # Absolute public base URL of the admin jobs API, used to build the 202
     # `_links.self` pointer for async executions (e.g. "https://api.example.com").
@@ -1580,6 +1702,7 @@ class AppConfig(BaseModel):
     ingest: IngestConfig = Field(default_factory=IngestConfig)
     catalog: CatalogConfig = Field(default_factory=CatalogConfig)
     credentials: CredentialsConfig = Field(default_factory=CredentialsConfig)
+    vendors: VendorRegistryConfig = Field(default_factory=VendorRegistryConfig)
     search: SearchConfig = Field(default_factory=SearchConfig)
     security: SecurityConfig = Field(default_factory=SecurityConfig)
     telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)

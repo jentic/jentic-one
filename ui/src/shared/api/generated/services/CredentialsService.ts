@@ -8,17 +8,16 @@ import type { BasicAuthCreateRequest } from '../models/BasicAuthCreateRequest';
 import type { BasicAuthUpdateRequest } from '../models/BasicAuthUpdateRequest';
 import type { BearerTokenCreateRequest } from '../models/BearerTokenCreateRequest';
 import type { BearerTokenUpdateRequest } from '../models/BearerTokenUpdateRequest';
-import type { ConnectChallengeResponse } from '../models/ConnectChallengeResponse';
 import type { ConnectRequestBody } from '../models/ConnectRequestBody';
 import type { CredentialAgentListResponse } from '../models/CredentialAgentListResponse';
 import type { CredentialCreateResponse } from '../models/CredentialCreateResponse';
 import type { CredentialListResponse } from '../models/CredentialListResponse';
 import type { CredentialRedactedResponse } from '../models/CredentialRedactedResponse';
-import type { jentic_one__control__web__schemas__permission_rules__PermissionRuleSchema } from '../models/jentic_one__control__web__schemas__permission_rules__PermissionRuleSchema';
 import type { NoAuthCreateRequest } from '../models/NoAuthCreateRequest';
 import type { OAuth2CreateRequest } from '../models/OAuth2CreateRequest';
 import type { OAuth2UpdateRequest } from '../models/OAuth2UpdateRequest';
 import type { PermissionRuleListResponse } from '../models/PermissionRuleListResponse';
+import type { PermissionRuleSchema } from '../models/PermissionRuleSchema';
 import type { PermissionsPatchRequest } from '../models/PermissionsPatchRequest';
 import type { PermissionTestRequest } from '../models/PermissionTestRequest';
 import type { PermissionTestResponse } from '../models/PermissionTestResponse';
@@ -366,7 +365,7 @@ export class CredentialsService {
     }: {
         credentialId: string,
         agentId: string,
-        requestBody: Array<jentic_one__control__web__schemas__permission_rules__PermissionRuleSchema>,
+        requestBody: Array<PermissionRuleSchema>,
     }): CancelablePromise<PermissionRuleListResponse> {
         return __request(OpenAPI, {
             method: 'PUT',
@@ -502,7 +501,12 @@ export class CredentialsService {
     /**
      * Begin OAuth connect flow
      * Initiate the OAuth connect flow for a credential.
-     * @returns ConnectChallengeResponse Successful Response
+     *
+     * Discriminates on the provider's returned challenge: OAuth2
+     * authorization-code providers return an ``authorize_url`` for popup
+     * redirect; device-flow providers return ``user_code`` /
+     * ``verification_uri`` for the RFC 8628 human step.
+     * @returns any Successful Response
      * @throws ApiError
      */
     public static connectCredential({
@@ -511,7 +515,7 @@ export class CredentialsService {
     }: {
         credentialId: string,
         requestBody: ConnectRequestBody,
-    }): CancelablePromise<ConnectChallengeResponse> {
+    }): CancelablePromise<any> {
         return __request(OpenAPI, {
             method: 'POST',
             url: '/credentials/{credential_id}/connect',

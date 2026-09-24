@@ -1,5 +1,5 @@
 /**
- * AgentPermissionsSheet — the dock's Permissions surface: scopes, access requests
+ * AgentPermissionsSheet — the dock's Permissions surface: scopes
  * and connected clients behind one verb. The cards' own suites cover their
  * internals; here the mutations must carry the SELECTED agent's id.
  */
@@ -69,7 +69,7 @@ describe('AgentPermissionsSheet — the dock Permissions surface', () => {
 		await waitFor(() => expect(screen.queryByRole('tooltip')).not.toBeInTheDocument());
 	});
 
-	it('opens the sheet with all three cards wired to the selected agent', async () => {
+	it('opens the sheet with both cards wired to the selected agent', async () => {
 		const user = userEvent.setup();
 		renderPage('/?agent=agnt_active_1');
 		const sheet = await openSheet(user);
@@ -85,11 +85,6 @@ describe('AgentPermissionsSheet — the dock Permissions surface', () => {
 		// ScopesCard: agnt_active_1's seeded platform grants render as chips.
 		const scopeList = await sheet.findByRole('list', { name: 'Granted scopes' });
 		expect(within(scopeList).getByText('capabilities:execute')).toBeInTheDocument();
-
-		// ActorAccessRequestsCard: the pending request THIS agent filed.
-		expect(
-			await sheet.findByText('agent requested repo:read + secret:read'),
-		).toBeInTheDocument();
 
 		// ConnectedClientsCard: the live consent→agent grant.
 		expect(await sheet.findByText('Cursor')).toBeInTheDocument();
@@ -170,8 +165,6 @@ describe('AgentPermissionsSheet — the dock Permissions surface', () => {
 		expect(
 			sheet.queryByRole('button', { name: /Edit scopes for retired-bot/ }),
 		).not.toBeInTheDocument();
-		// The history reads stay: requests filed / consents (empty here).
-		expect(await sheet.findByText('No pending access requests')).toBeInTheDocument();
 	});
 
 	it('open sheet passes axe', async () => {

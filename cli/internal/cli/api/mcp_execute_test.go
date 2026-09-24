@@ -109,7 +109,7 @@ func TestMCPExecute_DenialPassesDirectiveThrough(t *testing.T) {
 		w.Header().Set("Content-Type", "application/problem+json")
 		w.Header().Set("Jentic-Error-Origin", "broker")
 		w.WriteHeader(http.StatusForbidden)
-		_, _ = w.Write([]byte(`{"detail":"no credential binding","agent_directive":{"strategy":"prompt_human","parameters":{"suggested_command":"jentic access request --api acme/pets --wait"},"human_readable_instruction":"Ask your operator to bind this agent to a credential for acme/pets."}}`))
+		_, _ = w.Write([]byte(`{"type":"no_credential_binding","detail":"no credential binding","agent_directive":{"strategy":"prompt_human","parameters":{"api":"acme/pets","suggested_command":"jentic connect acme"},"human_readable_instruction":"Run jentic connect acme to connect a credential for acme/pets."}}`))
 	}))
 	defer broker.Close()
 
@@ -129,8 +129,8 @@ func TestMCPExecute_DenialPassesDirectiveThrough(t *testing.T) {
 	if payload["retryable"] != false {
 		t.Errorf("retryable = %v, want false (non-retryable until access changes)", payload["retryable"])
 	}
-	if payload["next_tool"] != "whoami" {
-		t.Errorf("next_tool = %v, want whoami", payload["next_tool"])
+	if payload["next_tool"] != "request_connection" {
+		t.Errorf("next_tool = %v, want request_connection (a no_credential_binding denial is provisioning-shaped)", payload["next_tool"])
 	}
 	details, _ := payload["details"].(map[string]any)
 	if details["http_status"] != float64(http.StatusForbidden) {
@@ -145,11 +145,96 @@ func TestMCPExecute_DenialPassesDirectiveThrough(t *testing.T) {
 		t.Errorf("directive.strategy = %v, want prompt_human", directive["strategy"])
 	}
 	params, _ := directive["parameters"].(map[string]any)
-	if params["suggested_command"] != "jentic access request --api acme/pets --wait" {
-		t.Errorf("directive.parameters = %v, want the suggested_command verbatim", directive["parameters"])
+	if params["api"] != "acme/pets" {
+		t.Errorf("directive.parameters = %v, want the parameters verbatim", directive["parameters"])
 	}
 	if step, _ := payload["actionable_step"].(string); !strings.Contains(step, "acme/pets") {
 		t.Errorf("actionable_step %q must relay the directive instruction", step)
+	}
+}
+
+// TestMCPExecute_DenialNextToolKeysOnProblemType pins the type→next_tool
+// mapping (theme-7 Phase 1b review M1): request_connection ONLY for the
+// provisioning-shaped problem types whose directive names a registry vendor
+// (parameters.suggested_command — off the registry the tool would fail as an
+// unknown vendor); action_denied / identity-mismatch /
+// unknown 403s keep whoami — a status-keyed fork would teach the model to
+// file connect sessions to route around permission rules.
+func TestMCPExecute_DenialNextToolKeysOnProblemType(t *testing.T) {
+	cases := []struct {
+		name     string
+		status   int
+		body     string
+		wantTool string
+	}{
+		{
+			"no_credential_binding_no_directive", http.StatusForbidden,
+			`{"type":"no_credential_binding","detail":"denied"}`, "whoami",
+		},
+		{
+			"no_toolkit_binding_no_directive", http.StatusForbidden,
+			`{"type":"no_toolkit_binding","detail":"denied"}`, "whoami",
+		},
+		{
+			"credential_not_provisioned_off_registry", http.StatusFailedDependency,
+			`{"type":"credential_not_provisioned","detail":"denied","agent_directive":{"strategy":"prompt_human","parameters":{"vendor":"acme.com"},"human_readable_instruction":"Ask your operator to connect a credential."}}`, "whoami",
+		},
+		{
+			"no_credential_binding_registry_vendor", http.StatusForbidden,
+			`{"type":"no_credential_binding","detail":"denied","agent_directive":{"strategy":"prompt_human","parameters":{"suggested_command":"jentic connect acme"},"human_readable_instruction":"Run jentic connect acme (or request_connection) and relay the approval_url."}}`, "request_connection",
+		},
+		{
+			"credential_not_provisioned_registry_vendor", http.StatusFailedDependency,
+			`{"type":"credential_not_provisioned","detail":"denied","agent_directive":{"strategy":"prompt_human","parameters":{"suggested_command":"jentic connect acme"},"human_readable_instruction":"Run jentic connect acme (or request_connection)."}}`, "request_connection",
+		},
+		{
+			"action_denied", http.StatusForbidden,
+			`{"type":"action_denied","detail":"a permission rule forbids this operation"}`, "whoami",
+		},
+		{
+			"credential_identity_mismatch", http.StatusForbidden,
+			`{"type":"credential_identity_mismatch","detail":"denied"}`, "whoami",
+		},
+		{
+			"credential_undecryptable", http.StatusFailedDependency,
+			`{"type":"credential_undecryptable","detail":"denied"}`, "whoami",
+		},
+		{"unknown_403", http.StatusForbidden, `{"detail":"denied"}`, "whoami"},
+		{"unparseable_403", http.StatusForbidden, `not json`, "whoami"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			broker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/problem+json")
+				w.Header().Set("Jentic-Error-Origin", "broker")
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer broker.Close()
+
+			s := stampedTestMCPServer(t)
+			res, err := s.handleExecute(activeCtxWithBroker("http://127.0.0.1:8000", broker.URL),
+				callToolRequest("execute", `{"operation_id":"POST:/v1/pets"}`))
+			if err != nil {
+				t.Fatalf("a broker denial must be a soft error: %v", err)
+			}
+			if !res.IsError {
+				t.Fatalf("want IsError result for a broker denial")
+			}
+			payload := decodeToolJSON(t, res)
+			if payload["next_tool"] != tc.wantTool {
+				t.Errorf("next_tool = %v, want %q for problem type %s", payload["next_tool"], tc.wantTool, tc.name)
+			}
+			// Connect wording never rides a non-provisioning denial (a rule
+			// denial must not be answered with "start a connect session").
+			step, _ := payload["actionable_step"].(string)
+			if !provisioningProblemTypes[problemTypeOf(tc.body)] && strings.Contains(step, "request_connection") {
+				t.Errorf("actionable_step %q teaches request_connection on a non-provisioning denial", step)
+			}
+			if tc.wantTool == "request_connection" && !strings.Contains(step, "request_connection") {
+				t.Errorf("actionable_step %q must teach the connect leg on a registry-vendor denial", step)
+			}
+		})
 	}
 }
 
@@ -1036,4 +1121,14 @@ func TestResolveMCPBrokerTarget(t *testing.T) {
 			t.Errorf("error %q must name the missing broker", err.Error())
 		}
 	})
+}
+
+// problemTypeOf extracts the problem+json type from a test body ("" when the
+// body is not a JSON object).
+func problemTypeOf(body string) string {
+	var env struct {
+		Type string `json:"type"`
+	}
+	_ = json.Unmarshal([]byte(body), &env)
+	return env.Type
 }

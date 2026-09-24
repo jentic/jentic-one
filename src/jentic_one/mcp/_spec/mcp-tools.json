@@ -174,7 +174,7 @@
     {
       "name": "search_catalog",
       "title": "Search the public API catalog",
-      "description": "Search the public API catalog for importable APIs by keyword. The registry that search_apis reads only sees IMPORTED APIs — when search_apis returns an empty data array, the API probably isn't imported yet: find it here, import it with import_api, then search_apis again (reading the registry and importing need no access request). Example: {\"query\": \"spreadsheets\", \"limit\": 10}. Returns one page as {data, catalog_total, registered_count, has_more, next_cursor}; each entry carries the api_id to pass to import_api and `registered` (true = already imported — skip the import). When has_more is true, pass next_cursor back as cursor.",
+      "description": "Search the public API catalog for importable APIs by keyword. The registry that search_apis reads only sees IMPORTED APIs — when search_apis returns an empty data array, the API probably isn't imported yet: find it here, import it with import_api, then search_apis again (reading the registry and importing need no extra grant). Example: {\"query\": \"spreadsheets\", \"limit\": 10}. Returns one page as {data, catalog_total, registered_count, has_more, next_cursor}; each entry carries the api_id to pass to import_api and `registered` (true = already imported — skip the import). When has_more is true, pass next_cursor back as cursor.",
       "input_schema": {
         "properties": {
           "cursor": {
@@ -199,7 +199,7 @@
     {
       "name": "import_api",
       "title": "Import a catalog API into the registry",
-      "description": "Import a catalog API into this instance's registry so its operations become searchable and executable. Example: {\"api_id\": \"googleapis.com/sheets\"} with an api_id from a search_catalog hit. The import runs as a job: this call tracks it briefly and, on completion, promotes the imported revisions live, returning {job_id, status, revisions, promoted}. If it returns a non-terminal status, call import_api again with the same api_id — re-importing converges (idempotent) and finishes the promotion. Requires the catalog:import scope (agents hold it by default); on a denial, request it via request_access — do not guess other scopes. Importing makes an API discoverable but does NOT grant access to call it: check whoami for a credential binding serving it — never execute just to probe — and use request_access if nothing serves it.",
+      "description": "Import a catalog API into this instance's registry so its operations become searchable and executable. Example: {\"api_id\": \"googleapis.com/sheets\"} with an api_id from a search_catalog hit. The import runs as a job: this call tracks it briefly and, on completion, promotes the imported revisions live, returning {job_id, status, revisions, promoted}. If it returns a non-terminal status, call import_api again with the same api_id — re-importing converges (idempotent) and finishes the promotion. Requires the catalog:import scope (agents hold it by default); on a denial, ask your operator to grant it — do not guess other scopes. Importing makes an API discoverable but does NOT grant access to call it: check whoami for a credential binding serving it — never execute just to probe — and ask your operator to connect a credential and bind you if nothing serves it.",
       "input_schema": {
         "properties": {
           "api_id": {
@@ -217,51 +217,30 @@
       }
     },
     {
-      "name": "request_access",
-      "title": "Request access from a human operator",
-      "description": "File one access request for the access you are missing, or poll a filed one by id. Decide from whoami FIRST — never execute an operation just to probe whether you have access. If a whoami binding already serves the API, you have access; if NOTHING serves it, file a provisioning plan: {\"provision\": [\"vendor/name\"], \"auth\": [\"bearer\"], \"rules_json\": [{\"effect\":\"allow\",\"methods\":[\"GET\"],\"path\":\".*\"}], \"reason\": \"…\"} — it describes the whole path to first execution (provision a credential, bind you to it with your proposed rules), which a human fulfils in the dashboard (they enter the secret; it never rides in your request). A bare bind request ({\"apis\": [\"vendor/name\"]}) is only the last mile when a credential already serves the API; for an unserved API it auto-denies — use provision. ALWAYS include reason. File once, richly: combine every target this task needs into ONE composite request instead of filing piecemeal. The result carries approve_url: relay it to your human operator — granting is always a human action and this tool NEVER approves. Poll the decision with {\"request_id\": \"\u003cid\u003e\"}; never re-file while a request is pending. Once approved, bindings are live immediately — retry the execute that was denied.",
+      "name": "request_connection",
+      "title": "Start connecting a vendor credential",
+      "description": "Start a connect session for a verified vendor when whoami shows no credential binding serving the API you need — the self-service leg of credential provisioning. Example: {\"vendor\": \"github\", \"reason\": \"read open PRs to summarise them\"}. Returns {session_id, approval_url, resolved_flow}: relay the approval_url to your human operator — they approve the connection in their browser and confirm the scopes; you cannot open the URL or approve it yourself. Once they confirm, call whoami to see the new credential binding, then retry the blocked call. This tool only STARTS the flow and never polls it. Optionally pass requested_scopes (vendor scope names; write scopes are flagged for the approver) and a reason the approver will see. Only vendors in the deployment's connect registry work; for any other API, ask your operator to connect a credential in the dashboard. Binding an EXISTING credential and scope grants stay operator actions.",
       "input_schema": {
         "properties": {
-          "apis": {
-            "description": "APIs to be bound to a credential for, as vendor/name[/version] references. The LAST MILE only: use when a credential already serves the API and you just aren't bound to it — for an unserved API this auto-denies; use provision instead.",
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          },
-          "auth": {
-            "description": "Credential auth type for a provision plan, read from the API's security schemes: bearer, api_key, basic, oauth2, or none (default bearer). With several provisions, key each value by API: \"vendor/name=bearer\".",
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          },
-          "provision": {
-            "description": "APIs to file full provisioning plans for, as vendor/name[/version] references (e.g. \"stripe.com/api\"). Use when NO credential you're bound to serves the API yet: the plan describes the whole path to first execution (provision a credential, bind you to it with your proposed rules), which a human fulfils and approves.",
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          },
           "reason": {
-            "description": "Why you need this — ALWAYS include it: the human who approves reads it, and a clear one-liner is what gets you approved faster.",
+            "description": "Why you need this connection (optional, max 1024 chars). Shown to the approver — a clear one-liner gets you approved faster.",
             "type": "string"
           },
-          "request_id": {
-            "description": "Poll an existing request instead of filing a new one: the id from an earlier request_access result. Mutually exclusive with the target parameters.",
-            "type": "string"
-          },
-          "rules_json": {
-            "description": "Proposed permission rules for a provision plan, as a JSON array of rules, e.g. [{\"effect\":\"allow\",\"methods\":[\"GET\"],\"path\":\".*\"}]. A human reviews and edits them before approving. With several provisions, pass a list of keyed strings: \"vendor/name=\u003cjson\u003e\"."
-          },
-          "scopes": {
-            "description": "Token scopes to request, e.g. \"catalog:import\".",
+          "requested_scopes": {
+            "description": "Vendor scope names to request (optional; \"scopes\" is an accepted alias). The human approver confirms the final set — write scopes are flagged for their attention.",
             "items": {
               "type": "string"
             },
             "type": "array"
+          },
+          "vendor": {
+            "description": "Vendor registry key, e.g. \"github\" (required). Only vendors in this deployment's connect registry work.",
+            "type": "string"
           }
         },
+        "required": [
+          "vendor"
+        ],
         "type": "object"
       },
       "annotations": {}

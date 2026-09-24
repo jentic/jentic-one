@@ -75,6 +75,49 @@ credentials:
         prompt: consent
         access_type: offline
 
+# Verified vendors with known SSO integrations for the agent-driven
+# integration flow. LOCAL-ONLY — do not commit any real values under
+# this block. Paste your own GitHub OAuth App client_id below.
+vendors:
+  entries:
+    github:
+      vendor: github.com/api.github.com
+      display_name: GitHub
+      flows:
+        - kind: device_authorization
+          # Paste your GitHub OAuth App Client ID here (Developer
+          # settings → OAuth Apps → Enable Device Flow). Device flow
+          # is a public-client flow — no client_secret needed.
+          client_id: "CHANGE_ME_LOCAL_ONLY"
+          authorization_endpoint: https://github.com/login/device/code
+          token_endpoint: https://github.com/login/oauth/access_token
+      scopes:
+        - name: "read:user"
+          classification: read
+          default: true
+          description: "Read the authenticated user's profile"
+        - name: "user:email"
+          classification: read
+          default: true
+          description: "Read the authenticated user's email addresses"
+        - name: "read:org"
+          classification: read
+          default: false
+          description: "Read organization membership and teams"
+        - name: "public_repo"
+          classification: write
+          default: false
+          description: "Write access to public repositories"
+        - name: "repo"
+          classification: write
+          default: false
+          description: "Full control of private repositories (read + write)"
+      identity_probe:
+        endpoint: https://api.github.com/user
+        method: GET
+        identity_field: login
+        display_template: "@{login}"
+
 # Pin the OAuth issuer / endpoint URIs and the expected JWT-Bearer assertion
 # audience for local runs. Without this, canonical_base_url defaults to "" and
 # the assertion audience collapses to "/oauth/token".

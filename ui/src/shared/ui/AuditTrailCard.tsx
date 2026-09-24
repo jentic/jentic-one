@@ -9,7 +9,7 @@ import { formatTimestamp, timeAgo } from '@/shared/lib/utils';
 
 /**
  * AuditTrailCard — the "Recent changes" card shared by the detail consoles
- * (agent, service account): a read-only, entity-scoped slice of the
+ * (agent, …): a read-only, entity-scoped slice of the
  * org-wide audit log. One component so "Recent changes" reads identically
  * everywhere; callers own the data fetch (per-module hooks) and map their
  * wire rows into {@link AuditTrailEntry}.

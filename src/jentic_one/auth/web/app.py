@@ -25,7 +25,6 @@ from jentic_one.auth.web.routers import (
     oauth_client_registration,
     oauth_grants,
     registration,
-    service_accounts,
 )
 from jentic_one.shared.auth.api_key_resolver import (
     AGENT_API_KEY_PREFIX,
@@ -65,7 +64,6 @@ def get_routers() -> list[tuple[APIRouter, str, list[str]]]:
         (local_login.router, "", []),
         (identity.router, "", []),
         (agents.router, "", []),
-        (service_accounts.router, "", []),
         (oauth.router, "", []),
         (oauth_client_registration.router, "", []),
         (oauth_grants.router, "", []),
@@ -110,7 +108,9 @@ def make_superset_verifier(ctx: Context) -> Any:
     """Build the full-taxonomy token verifier for combined/standalone apps.
 
     Resolves every platform token shape a signed-in caller can present:
-    agent/service-account API keys (``jak_``/``sak_``), opaque ``at_`` access
+    agent API keys (``jak_``, plus legacy ``sak_``/``jntc_live_`` plaintexts
+    that resolve as their successor agents once migrated, or through the
+    service-account fallback until then), opaque ``at_`` access
     tokens (DB-resolved, live permissions), and HS256 web-session JWTs. This is
     the verifier a combined-app assembler should install so admin/enterprise
     routes accept ``at_`` regardless of surface ordering — the auth surface's
@@ -156,7 +156,7 @@ def _make_auth_verifier(ctx: Context) -> Any:
                 # the AGENT branch of resolve_permissions_for_actor is an
                 # unimplemented stub that returns [], which silently drops every
                 # granted scope — an approved capabilities:read then 403s and
-                # `jentic access refresh` can never take effect. This mirrors the
+                # a token re-mint can never take effect. This mirrors the
                 # broker's InProcessTokenResolver, which already reads row.scopes.
                 # parent_permissions (owner inheritance) is still resolved above.
                 permissions = list(resolved.permissions)

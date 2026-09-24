@@ -46,7 +46,7 @@ const mockUser = {
 
 /**
  * Seed for the actor directory (`GET /actors`). Ids mirror the actor_id values
- * other module fixtures emit (the dashboard access-request fixtures + the
+ * other module fixtures emit (the dashboard fixtures + the
  * agents store) so `<ActorLabel>` resolves to a name on those surfaces in
  * mocked dev/e2e. Covers all three actor types.
  */
@@ -99,13 +99,6 @@ const actorDirectorySeed = [
 		active: true,
 		created_at: '2026-01-01T00:00:00Z',
 	},
-	{
-		id: 'sva_active_1',
-		actor_type: 'service_account',
-		name: 'metrics-exporter',
-		active: true,
-		created_at: '2026-01-01T00:00:00Z',
-	},
 ];
 
 export const handlers = [
@@ -136,8 +129,8 @@ export const handlers = [
 	http.get('/auth/idp', () => HttpResponse.json({ enabled: false, provider: null })),
 	// Actor directory (GET /actors) — cross-cutting reference data the UI hydrates
 	// once to resolve raw `actor_id` values into names. Seeded to match the ids
-	// other module stores emit (agents store + the access-request fixtures) so
-	// names resolve across the dashboard, access-request, and agent surfaces.
+	// other module stores emit (agents store + the dashboard fixtures) so
+	// names resolve across the dashboard, monitor, and agent surfaces.
 	http.get('/actors', () =>
 		HttpResponse.json({
 			data: actorDirectorySeed,

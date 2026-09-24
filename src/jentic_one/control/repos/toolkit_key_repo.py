@@ -57,7 +57,11 @@ class ToolkitKeyRepository:
 
     @staticmethod
     async def stamp_migrated_actor(session: AsyncSession, key_id: str, actor_id: str) -> None:
-        """Record the service account a key retired to (theme-5 Phase 4)."""
+        """Record the actor a key retired to (theme-5 Phase 4).
+
+        Historically a service account; theme-8 re-stamps migrated rows (and
+        the retirement job now stamps) with the successor agent's id.
+        """
         key = await session.get(ToolkitKey, key_id)
         assert key is not None, f"toolkit key {key_id} vanished mid-retirement"
         key.migrated_actor_id = actor_id

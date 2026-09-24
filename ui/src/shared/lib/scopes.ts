@@ -4,8 +4,8 @@
 // search/filter it, render it in a tri-state select-all picker" behaviour:
 //   - credentials: OAuth2 *provider* scopes pulled from a securityScheme
 //     (`read:user`, `https://www.googleapis.com/auth/calendar`, …)
-//   - agents/service-accounts: *platform permission* scopes from
-//     `GET /permissions` (`org:admin`, `service-accounts:write`, …)
+//   - agents: *platform permission* scopes from
+//     `GET /permissions` (`org:admin`, `agents:write`, …)
 //
 // The grouping/filtering rules here are purely string-shaped and carry no
 // domain knowledge, so they live in `shared/` and the picker (`shared/ui`)

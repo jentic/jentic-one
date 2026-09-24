@@ -2,8 +2,8 @@
  * KillSwitch — the console-standard suspend/restore toggle: a Power pill
  * showing the entity's live state, with a two-step inline confirm (click to
  * arm, click again to apply) so the destructive flip never fires on a single
- * mis-click. Agent and service-account headers
- * render the same control wired to their own lifecycle mutations.
+ * mis-click. Detail-console headers (agents today) render the same control
+ * wired to their own lifecycle mutations.
  *
  * Purely presentational: the caller owns the mutation and passes `pending`
  * back in, so the pill can show its spinner while the flip is in flight.

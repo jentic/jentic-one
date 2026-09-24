@@ -79,128 +79,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
-      ],
-      "auth_note": null,
-      "authenticated": true,
-      "group": "Any authenticated actor",
-      "implied_scopes": {},
-      "method": "GET",
-      "operation_id": "listAccessRequests",
-      "path": "/access-requests",
-      "public": false,
-      "required_scopes": [],
-      "summary": "List access requests",
-      "surface": "access-requests",
-      "typical_caller": "any"
-    },
-    {
-      "actor_types": [
-        "user",
-        "agent",
-        "service_account"
-      ],
-      "auth_note": null,
-      "authenticated": true,
-      "group": "Any authenticated actor",
-      "implied_scopes": {},
-      "method": "POST",
-      "operation_id": "fileAccessRequest",
-      "path": "/access-requests",
-      "public": false,
-      "required_scopes": [],
-      "summary": "File access request",
-      "surface": "access-requests",
-      "typical_caller": "any"
-    },
-    {
-      "actor_types": [
-        "user",
-        "agent",
-        "service_account"
-      ],
-      "auth_note": null,
-      "authenticated": true,
-      "group": "Any authenticated actor",
-      "implied_scopes": {},
-      "method": "GET",
-      "operation_id": "getAccessRequest",
-      "path": "/access-requests/{request_id}",
-      "public": false,
-      "required_scopes": [],
-      "summary": "Get access request",
-      "surface": "access-requests",
-      "typical_caller": "any"
-    },
-    {
-      "actor_types": [
-        "user",
-        "agent",
-        "service_account"
-      ],
-      "auth_note": null,
-      "authenticated": true,
-      "group": "Any authenticated actor",
-      "implied_scopes": {},
-      "method": "POST",
-      "operation_id": "amendAccessRequest",
-      "path": "/access-requests/{request_id}:amend",
-      "public": false,
-      "required_scopes": [],
-      "summary": "Amend access request",
-      "surface": "access-requests",
-      "typical_caller": "any"
-    },
-    {
-      "actor_types": [
-        "user",
-        "agent",
-        "service_account"
-      ],
-      "auth_note": null,
-      "authenticated": true,
-      "group": "Operator-facing (typically a human operator / admin)",
-      "implied_scopes": {
-        "agents:write": [
-          "agents:read"
-        ]
-      },
-      "method": "POST",
-      "operation_id": "decideAccessRequest",
-      "path": "/access-requests/{request_id}:decide",
-      "public": false,
-      "required_scopes": [
-        "agents:write"
-      ],
-      "summary": "Decide access request items",
-      "surface": "access-requests",
-      "typical_caller": "operator"
-    },
-    {
-      "actor_types": [
-        "user",
-        "agent",
-        "service_account"
-      ],
-      "auth_note": null,
-      "authenticated": true,
-      "group": "Any authenticated actor",
-      "implied_scopes": {},
-      "method": "POST",
-      "operation_id": "withdrawAccessRequest",
-      "path": "/access-requests/{request_id}:withdraw",
-      "public": false,
-      "required_scopes": [],
-      "summary": "Withdraw access request",
-      "surface": "access-requests",
-      "typical_caller": "any"
-    },
-    {
-      "actor_types": [
-        "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -222,8 +101,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -245,8 +123,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -268,8 +145,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -308,8 +184,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -331,8 +206,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -356,8 +230,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -381,8 +254,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -404,8 +276,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -429,8 +300,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -454,8 +324,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -479,8 +348,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -504,8 +372,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -529,8 +396,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -552,8 +418,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -575,8 +440,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -600,8 +464,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -625,8 +488,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -644,8 +506,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -669,8 +530,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -692,8 +552,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -715,8 +574,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -734,8 +592,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -759,8 +616,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -784,8 +640,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -809,8 +664,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -834,8 +688,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -853,8 +706,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -876,8 +728,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -901,8 +752,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -943,8 +793,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -968,8 +817,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -993,8 +841,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -1018,8 +865,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -1043,8 +889,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -1068,12 +913,11 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account)",
+      "group": "Agent-facing (typically an agent)",
       "implied_scopes": {
         "apis:read": []
       },
@@ -1091,8 +935,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -1117,8 +960,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -1143,12 +985,11 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account)",
+      "group": "Agent-facing (typically an agent)",
       "implied_scopes": {
         "apis:read": []
       },
@@ -1166,8 +1007,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -1192,12 +1032,11 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account)",
+      "group": "Agent-facing (typically an agent)",
       "implied_scopes": {
         "apis:read": []
       },
@@ -1215,12 +1054,11 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account)",
+      "group": "Agent-facing (typically an agent)",
       "implied_scopes": {
         "apis:read": []
       },
@@ -1238,12 +1076,11 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account)",
+      "group": "Agent-facing (typically an agent)",
       "implied_scopes": {
         "apis:read": []
       },
@@ -1261,8 +1098,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -1287,8 +1123,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -1313,12 +1148,11 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account)",
+      "group": "Agent-facing (typically an agent)",
       "implied_scopes": {
         "apis:read": []
       },
@@ -1336,8 +1170,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -1362,8 +1195,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -1387,8 +1219,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -1412,12 +1243,11 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account)",
+      "group": "Agent-facing (typically an agent)",
       "implied_scopes": {
         "apis:read": []
       },
@@ -1435,8 +1265,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -1461,12 +1290,11 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account)",
+      "group": "Agent-facing (typically an agent)",
       "implied_scopes": {
         "apis:read": []
       },
@@ -1484,12 +1312,11 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account)",
+      "group": "Agent-facing (typically an agent)",
       "implied_scopes": {
         "apis:read": []
       },
@@ -1507,12 +1334,11 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account)",
+      "group": "Agent-facing (typically an agent)",
       "implied_scopes": {
         "apis:read": []
       },
@@ -1530,8 +1356,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -1556,8 +1381,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -1582,12 +1406,11 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account)",
+      "group": "Agent-facing (typically an agent)",
       "implied_scopes": {
         "apis:read": []
       },
@@ -1605,8 +1428,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -1628,8 +1450,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -1728,12 +1549,11 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account)",
+      "group": "Agent-facing (typically an agent)",
       "implied_scopes": {
         "capabilities:read": []
       },
@@ -1751,12 +1571,11 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account)",
+      "group": "Agent-facing (typically an agent)",
       "implied_scopes": {
         "capabilities:read": []
       },
@@ -1774,12 +1593,11 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account)",
+      "group": "Agent-facing (typically an agent)",
       "implied_scopes": {
         "capabilities:read": []
       },
@@ -1797,12 +1615,11 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account)",
+      "group": "Agent-facing (typically an agent)",
       "implied_scopes": {
         "catalog:import": [
           "apis:read"
@@ -1822,8 +1639,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -1847,8 +1663,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -1872,8 +1687,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -1890,6 +1704,7 @@
           "catalog:import",
           "config:read",
           "config:write",
+          "credentials:connect",
           "credentials:read",
           "credentials:write",
           "events:read",
@@ -1900,8 +1715,6 @@
           "oauth-clients:read",
           "oauth-clients:write",
           "overlays:confirm",
-          "service-accounts:read",
-          "service-accounts:write",
           "users:read",
           "users:write"
         ]
@@ -1916,6 +1729,134 @@
       "summary": "Refresh Catalog",
       "surface": "catalog:refresh",
       "typical_caller": "operator"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "credentials:read": [],
+        "owner:credentials:read": []
+      },
+      "method": "GET",
+      "operation_id": "listConnectSessions",
+      "path": "/connect-sessions",
+      "public": false,
+      "required_scopes": [
+        "credentials:read",
+        "owner:credentials:read"
+      ],
+      "summary": "List connect sessions",
+      "surface": "connect-sessions",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "credentials:write": [
+          "credentials:connect",
+          "credentials:read"
+        ]
+      },
+      "method": "GET",
+      "operation_id": "getConnectSession",
+      "path": "/connect-sessions/{session_id}",
+      "public": false,
+      "required_scopes": [
+        "credentials:write"
+      ],
+      "summary": "Get review data for a connect session",
+      "surface": "connect-sessions",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "credentials:connect": [],
+        "credentials:write": [
+          "credentials:connect",
+          "credentials:read"
+        ]
+      },
+      "method": "GET",
+      "operation_id": "pollConnectSessionStatus",
+      "path": "/connect-sessions/{session_id}/status",
+      "public": false,
+      "required_scopes": [
+        "credentials:connect",
+        "credentials:write"
+      ],
+      "summary": "Poll a connect session's status",
+      "surface": "connect-sessions",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "credentials:connect": [],
+        "credentials:write": [
+          "credentials:connect",
+          "credentials:read"
+        ]
+      },
+      "method": "POST",
+      "operation_id": "cancelConnectSession",
+      "path": "/connect-sessions/{session_id}:cancel",
+      "public": false,
+      "required_scopes": [
+        "credentials:connect",
+        "credentials:write"
+      ],
+      "summary": "Cancel an in-flight connect session",
+      "surface": "connect-sessions",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "credentials:write": [
+          "credentials:connect",
+          "credentials:read"
+        ]
+      },
+      "method": "POST",
+      "operation_id": "confirmConnectSession",
+      "path": "/connect-sessions/{session_id}:confirm",
+      "public": false,
+      "required_scopes": [
+        "credentials:write"
+      ],
+      "summary": "Confirm scopes + permissions and kick off the vendor flow",
+      "surface": "connect-sessions",
+      "typical_caller": "any"
     },
     {
       "actor_types": [],
@@ -1935,8 +1876,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -1960,14 +1900,14 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
       "group": "Any authenticated actor",
       "implied_scopes": {
         "credentials:write": [
+          "credentials:connect",
           "credentials:read"
         ]
       },
@@ -2000,8 +1940,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -2025,14 +1964,14 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
       "group": "Any authenticated actor",
       "implied_scopes": {
         "credentials:write": [
+          "credentials:connect",
           "credentials:read"
         ]
       },
@@ -2050,8 +1989,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -2075,14 +2013,14 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
       "group": "Any authenticated actor",
       "implied_scopes": {
         "credentials:write": [
+          "credentials:connect",
           "credentials:read"
         ]
       },
@@ -2100,8 +2038,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -2125,8 +2062,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -2150,14 +2086,14 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
       "group": "Any authenticated actor",
       "implied_scopes": {
         "credentials:write": [
+          "credentials:connect",
           "credentials:read"
         ]
       },
@@ -2175,14 +2111,14 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
       "group": "Any authenticated actor",
       "implied_scopes": {
         "credentials:write": [
+          "credentials:connect",
           "credentials:read"
         ]
       },
@@ -2200,8 +2136,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -2225,14 +2160,14 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
       "group": "Any authenticated actor",
       "implied_scopes": {
         "credentials:write": [
+          "credentials:connect",
           "credentials:read"
         ]
       },
@@ -2250,14 +2185,14 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
       "group": "Any authenticated actor",
       "implied_scopes": {
         "credentials:write": [
+          "credentials:connect",
           "credentials:read"
         ]
       },
@@ -2275,14 +2210,14 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
       "group": "Any authenticated actor",
       "implied_scopes": {
         "credentials:write": [
+          "credentials:connect",
           "credentials:read"
         ]
       },
@@ -2315,12 +2250,11 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account)",
+      "group": "Agent-facing (typically an agent)",
       "implied_scopes": {
         "events:read": []
       },
@@ -2338,12 +2272,11 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account)",
+      "group": "Agent-facing (typically an agent)",
       "implied_scopes": {
         "events:read": []
       },
@@ -2361,12 +2294,11 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account)",
+      "group": "Agent-facing (typically an agent)",
       "implied_scopes": {
         "events:read": []
       },
@@ -2384,8 +2316,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -2409,12 +2340,11 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account)",
+      "group": "Agent-facing (typically an agent)",
       "implied_scopes": {
         "executions:read": []
       },
@@ -2432,12 +2362,11 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account)",
+      "group": "Agent-facing (typically an agent)",
       "implied_scopes": {
         "executions:read": []
       },
@@ -2455,8 +2384,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -2495,12 +2423,11 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account)",
+      "group": "Agent-facing (typically an agent)",
       "implied_scopes": {
         "apis:read": []
       },
@@ -2533,12 +2460,38 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account)",
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "credentials:connect": [],
+        "credentials:write": [
+          "credentials:connect",
+          "credentials:read"
+        ]
+      },
+      "method": "POST",
+      "operation_id": "integrationsConnect",
+      "path": "/integrations:connect",
+      "public": false,
+      "required_scopes": [
+        "credentials:connect",
+        "credentials:write"
+      ],
+      "summary": "Start an integration connect session",
+      "surface": "integrations:connect",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Agent-facing (typically an agent)",
       "implied_scopes": {
         "jobs:read": []
       },
@@ -2556,12 +2509,11 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account)",
+      "group": "Agent-facing (typically an agent)",
       "implied_scopes": {
         "jobs:read": []
       },
@@ -2579,12 +2531,11 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account)",
+      "group": "Agent-facing (typically an agent)",
       "implied_scopes": {
         "jobs:read": []
       },
@@ -2602,8 +2553,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -2657,8 +2607,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -2676,8 +2625,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -2695,8 +2643,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -2713,6 +2660,7 @@
           "catalog:import",
           "config:read",
           "config:write",
+          "credentials:connect",
           "credentials:read",
           "credentials:write",
           "events:read",
@@ -2723,8 +2671,6 @@
           "oauth-clients:read",
           "oauth-clients:write",
           "overlays:confirm",
-          "service-accounts:read",
-          "service-accounts:write",
           "users:read",
           "users:write"
         ]
@@ -2743,8 +2689,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -2761,6 +2706,7 @@
           "catalog:import",
           "config:read",
           "config:write",
+          "credentials:connect",
           "credentials:read",
           "credentials:write",
           "events:read",
@@ -2771,8 +2717,6 @@
           "oauth-clients:read",
           "oauth-clients:write",
           "overlays:confirm",
-          "service-accounts:read",
-          "service-accounts:write",
           "users:read",
           "users:write"
         ]
@@ -2791,8 +2735,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -2810,8 +2753,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -2829,8 +2771,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -2848,8 +2789,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -2867,8 +2807,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -2901,8 +2840,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -2920,8 +2858,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3035,8 +2972,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3053,26 +2989,8 @@
     },
     {
       "actor_types": [
-        "service_account"
-      ],
-      "auth_note": null,
-      "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account)",
-      "implied_scopes": {},
-      "method": "POST",
-      "operation_id": "mintEndpoint",
-      "path": "/oauth/mint",
-      "public": false,
-      "required_scopes": [],
-      "summary": "Mint Endpoint",
-      "surface": "oauth",
-      "typical_caller": "agent"
-    },
-    {
-      "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": "Dual-arm (RFC 7009): form-encoded requests authenticate by OAuth client_id lineage binding (public clients, auth method 'none' — the token is revoked only if it was issued to the supplied client_id); JSON requests keep the platform bearer-token contract.",
       "authenticated": true,
@@ -3122,8 +3040,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3147,14 +3064,14 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
       "group": "Any authenticated actor",
       "implied_scopes": {
         "credentials:write": [
+          "credentials:connect",
           "credentials:read"
         ]
       },
@@ -3172,14 +3089,14 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
       "group": "Any authenticated actor",
       "implied_scopes": {
         "credentials:write": [
+          "credentials:connect",
           "credentials:read"
         ]
       },
@@ -3197,8 +3114,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3222,14 +3138,14 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
       "group": "Any authenticated actor",
       "implied_scopes": {
         "credentials:write": [
+          "credentials:connect",
           "credentials:read"
         ]
       },
@@ -3247,14 +3163,14 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
       "group": "Any authenticated actor",
       "implied_scopes": {
         "credentials:write": [
+          "credentials:connect",
           "credentials:read"
         ]
       },
@@ -3272,8 +3188,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3321,8 +3236,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3340,8 +3254,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": "Authenticated with the Registration-Access-Token issued at registration (RFC 7592), not a platform bearer token.",
       "authenticated": true,
@@ -3359,8 +3272,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3393,12 +3305,11 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account)",
+      "group": "Agent-facing (typically an agent)",
       "implied_scopes": {
         "apis:read": []
       },
@@ -3416,273 +3327,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
-      ],
-      "auth_note": null,
-      "authenticated": true,
-      "group": "Operator-facing (typically a human operator / admin)",
-      "implied_scopes": {
-        "service-accounts:read": []
-      },
-      "method": "GET",
-      "operation_id": "listServiceAccounts",
-      "path": "/service-accounts",
-      "public": false,
-      "required_scopes": [
-        "service-accounts:read"
-      ],
-      "summary": "List Service Accounts",
-      "surface": "service-accounts",
-      "typical_caller": "operator"
-    },
-    {
-      "actor_types": [
-        "user",
-        "agent",
-        "service_account"
-      ],
-      "auth_note": null,
-      "authenticated": true,
-      "group": "Operator-facing (typically a human operator / admin)",
-      "implied_scopes": {
-        "service-accounts:write": [
-          "service-accounts:read"
-        ]
-      },
-      "method": "POST",
-      "operation_id": "createServiceAccount",
-      "path": "/service-accounts",
-      "public": false,
-      "required_scopes": [
-        "service-accounts:write"
-      ],
-      "summary": "Create Service Account",
-      "surface": "service-accounts",
-      "typical_caller": "operator"
-    },
-    {
-      "actor_types": [
-        "user",
-        "agent",
-        "service_account"
-      ],
-      "auth_note": null,
-      "authenticated": true,
-      "group": "Operator-facing (typically a human operator / admin)",
-      "implied_scopes": {
-        "service-accounts:write": [
-          "service-accounts:read"
-        ]
-      },
-      "method": "DELETE",
-      "operation_id": "archiveServiceAccount",
-      "path": "/service-accounts/{service_account_id}",
-      "public": false,
-      "required_scopes": [
-        "service-accounts:write"
-      ],
-      "summary": "Archive Service Account",
-      "surface": "service-accounts",
-      "typical_caller": "operator"
-    },
-    {
-      "actor_types": [
-        "user",
-        "agent",
-        "service_account"
-      ],
-      "auth_note": null,
-      "authenticated": true,
-      "group": "Any authenticated actor",
-      "implied_scopes": {},
-      "method": "GET",
-      "operation_id": "getServiceAccount",
-      "path": "/service-accounts/{service_account_id}",
-      "public": false,
-      "required_scopes": [],
-      "summary": "Get Service Account",
-      "surface": "service-accounts",
-      "typical_caller": "any"
-    },
-    {
-      "actor_types": [
-        "user",
-        "agent",
-        "service_account"
-      ],
-      "auth_note": null,
-      "authenticated": true,
-      "group": "Operator-facing (typically a human operator / admin)",
-      "implied_scopes": {
-        "service-accounts:read": []
-      },
-      "method": "GET",
-      "operation_id": "getServiceAccountScopes",
-      "path": "/service-accounts/{service_account_id}/scopes",
-      "public": false,
-      "required_scopes": [
-        "service-accounts:read"
-      ],
-      "summary": "Get Service Account Scopes",
-      "surface": "service-accounts",
-      "typical_caller": "operator"
-    },
-    {
-      "actor_types": [
-        "user",
-        "agent",
-        "service_account"
-      ],
-      "auth_note": null,
-      "authenticated": true,
-      "group": "Operator-facing (typically a human operator / admin)",
-      "implied_scopes": {
-        "service-accounts:write": [
-          "service-accounts:read"
-        ]
-      },
-      "method": "PUT",
-      "operation_id": "replaceServiceAccountScopes",
-      "path": "/service-accounts/{service_account_id}/scopes",
-      "public": false,
-      "required_scopes": [
-        "service-accounts:write"
-      ],
-      "summary": "Replace Service Account Scopes",
-      "surface": "service-accounts",
-      "typical_caller": "operator"
-    },
-    {
-      "actor_types": [
-        "user",
-        "agent",
-        "service_account"
-      ],
-      "auth_note": null,
-      "authenticated": true,
-      "group": "Operator-facing (typically a human operator / admin)",
-      "implied_scopes": {
-        "service-accounts:write": [
-          "service-accounts:read"
-        ]
-      },
-      "method": "POST",
-      "operation_id": "approveServiceAccount",
-      "path": "/service-accounts/{service_account_id}:approve",
-      "public": false,
-      "required_scopes": [
-        "service-accounts:write"
-      ],
-      "summary": "Approve Service Account",
-      "surface": "service-accounts",
-      "typical_caller": "operator"
-    },
-    {
-      "actor_types": [
-        "user",
-        "agent",
-        "service_account"
-      ],
-      "auth_note": null,
-      "authenticated": true,
-      "group": "Operator-facing (typically a human operator / admin)",
-      "implied_scopes": {
-        "service-accounts:write": [
-          "service-accounts:read"
-        ]
-      },
-      "method": "POST",
-      "operation_id": "denyServiceAccount",
-      "path": "/service-accounts/{service_account_id}:deny",
-      "public": false,
-      "required_scopes": [
-        "service-accounts:write"
-      ],
-      "summary": "Deny Service Account",
-      "surface": "service-accounts",
-      "typical_caller": "operator"
-    },
-    {
-      "actor_types": [
-        "user",
-        "agent",
-        "service_account"
-      ],
-      "auth_note": null,
-      "authenticated": true,
-      "group": "Operator-facing (typically a human operator / admin)",
-      "implied_scopes": {
-        "service-accounts:write": [
-          "service-accounts:read"
-        ]
-      },
-      "method": "POST",
-      "operation_id": "disableServiceAccount",
-      "path": "/service-accounts/{service_account_id}:disable",
-      "public": false,
-      "required_scopes": [
-        "service-accounts:write"
-      ],
-      "summary": "Disable Service Account",
-      "surface": "service-accounts",
-      "typical_caller": "operator"
-    },
-    {
-      "actor_types": [
-        "user",
-        "agent",
-        "service_account"
-      ],
-      "auth_note": null,
-      "authenticated": true,
-      "group": "Operator-facing (typically a human operator / admin)",
-      "implied_scopes": {
-        "service-accounts:write": [
-          "service-accounts:read"
-        ]
-      },
-      "method": "POST",
-      "operation_id": "enableServiceAccount",
-      "path": "/service-accounts/{service_account_id}:enable",
-      "public": false,
-      "required_scopes": [
-        "service-accounts:write"
-      ],
-      "summary": "Enable Service Account",
-      "surface": "service-accounts",
-      "typical_caller": "operator"
-    },
-    {
-      "actor_types": [
-        "user",
-        "agent",
-        "service_account"
-      ],
-      "auth_note": null,
-      "authenticated": true,
-      "group": "Operator-facing (typically a human operator / admin)",
-      "implied_scopes": {
-        "service-accounts:write": [
-          "service-accounts:read"
-        ]
-      },
-      "method": "POST",
-      "operation_id": "generateServiceAccountApiKey",
-      "path": "/service-accounts/{service_account_id}:generate-api-key",
-      "public": false,
-      "required_scopes": [
-        "service-accounts:write"
-      ],
-      "summary": "Generate Service Account Api Key",
-      "surface": "service-accounts",
-      "typical_caller": "operator"
-    },
-    {
-      "actor_types": [
-        "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3700,8 +3345,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3723,8 +3367,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3748,8 +3391,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3767,8 +3409,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3786,8 +3427,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3811,8 +3451,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3834,8 +3473,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3859,8 +3497,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3884,8 +3521,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3909,8 +3545,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3934,8 +3569,7 @@
     {
       "actor_types": [
         "user",
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
@@ -3988,12 +3622,55 @@
     },
     {
       "actor_types": [
-        "agent",
-        "service_account"
+        "user",
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account)",
+      "group": "Agent-facing (typically an agent)",
+      "implied_scopes": {
+        "capabilities:read": []
+      },
+      "method": "GET",
+      "operation_id": "listVendors",
+      "path": "/vendors",
+      "public": false,
+      "required_scopes": [
+        "capabilities:read"
+      ],
+      "summary": "List verified vendors",
+      "surface": "vendors",
+      "typical_caller": "agent"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Agent-facing (typically an agent)",
+      "implied_scopes": {
+        "capabilities:read": []
+      },
+      "method": "GET",
+      "operation_id": "getAuthCapabilities",
+      "path": "/vendors/{vendor_key}/auth-capabilities",
+      "public": false,
+      "required_scopes": [
+        "capabilities:read"
+      ],
+      "summary": "Get a vendor's SSO capabilities",
+      "surface": "vendors",
+      "typical_caller": "agent"
+    },
+    {
+      "actor_types": [
+        "agent"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Agent-facing (typically an agent)",
       "implied_scopes": {
         "capabilities:execute": [
           "apis:read",
@@ -4014,12 +3691,11 @@
     },
     {
       "actor_types": [
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account)",
+      "group": "Agent-facing (typically an agent)",
       "implied_scopes": {
         "capabilities:execute": [
           "apis:read",
@@ -4040,12 +3716,11 @@
     },
     {
       "actor_types": [
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account)",
+      "group": "Agent-facing (typically an agent)",
       "implied_scopes": {
         "capabilities:execute": [
           "apis:read",
@@ -4066,12 +3741,11 @@
     },
     {
       "actor_types": [
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account)",
+      "group": "Agent-facing (typically an agent)",
       "implied_scopes": {
         "capabilities:execute": [
           "apis:read",
@@ -4092,12 +3766,11 @@
     },
     {
       "actor_types": [
-        "agent",
-        "service_account"
+        "agent"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Agent-facing (typically agent / service-account)",
+      "group": "Agent-facing (typically an agent)",
       "implied_scopes": {
         "capabilities:execute": [
           "apis:read",
@@ -4118,7 +3791,7 @@
     }
   ],
   "groups": [
-    "Agent-facing (typically agent / service-account)",
+    "Agent-facing (typically an agent)",
     "Operator-facing (typically a human operator / admin)",
     "Any authenticated actor",
     "Public (unauthenticated)"
@@ -4146,6 +3819,7 @@
               "catalog:import",
               "config:read",
               "config:write",
+              "credentials:connect",
               "credentials:read",
               "credentials:write",
               "events:read",
@@ -4156,8 +3830,6 @@
               "oauth-clients:read",
               "oauth-clients:write",
               "overlays:confirm",
-              "service-accounts:read",
-              "service-accounts:write",
               "users:read",
               "users:write"
             ],
@@ -4172,6 +3844,7 @@
               "catalog:import",
               "config:read",
               "config:write",
+              "credentials:connect",
               "credentials:read",
               "credentials:write",
               "events:read",
@@ -4182,8 +3855,6 @@
               "oauth-clients:read",
               "oauth-clients:write",
               "overlays:confirm",
-              "service-accounts:read",
-              "service-accounts:write",
               "users:read",
               "users:write"
             ],
@@ -4302,6 +3973,15 @@
         "name": "credentials",
         "scopes": [
           {
+            "action": "connect",
+            "description": "Start and poll an integration connect session (agent-driven SSO). Cannot read tokens or manage other credentials.",
+            "family": "credentials",
+            "implies": [],
+            "implies_transitive": [],
+            "is_superuser": false,
+            "name": "credentials:connect"
+          },
+          {
             "action": "read",
             "description": "Read credential metadata",
             "family": "credentials",
@@ -4315,9 +3995,11 @@
             "description": "Create, update, and delete credentials",
             "family": "credentials",
             "implies": [
+              "credentials:connect",
               "credentials:read"
             ],
             "implies_transitive": [
+              "credentials:connect",
               "credentials:read"
             ],
             "is_superuser": false,
@@ -4351,35 +4033,6 @@
             ],
             "is_superuser": false,
             "name": "agents:write"
-          }
-        ]
-      },
-      {
-        "blurb": "Non-human service-account identities.",
-        "label": "Service accounts",
-        "name": "service-accounts",
-        "scopes": [
-          {
-            "action": "read",
-            "description": "Read service account configuration and status",
-            "family": "service-accounts",
-            "implies": [],
-            "implies_transitive": [],
-            "is_superuser": false,
-            "name": "service-accounts:read"
-          },
-          {
-            "action": "write",
-            "description": "Create, update, and delete service accounts",
-            "family": "service-accounts",
-            "implies": [
-              "service-accounts:read"
-            ],
-            "implies_transitive": [
-              "service-accounts:read"
-            ],
-            "is_superuser": false,
-            "name": "service-accounts:write"
           }
         ]
       },
@@ -4509,15 +4162,6 @@
         "scopes": [
           {
             "action": "read",
-            "description": "Read access requests filed by or for the agent's creator",
-            "family": "owner",
-            "implies": [],
-            "implies_transitive": [],
-            "is_superuser": false,
-            "name": "owner:access-requests:read"
-          },
-          {
-            "action": "read",
             "description": "Read agents owned by the agent's creator",
             "family": "owner",
             "implies": [],
@@ -4548,15 +4192,6 @@
             ],
             "is_superuser": false,
             "name": "owner:resources:read"
-          },
-          {
-            "action": "read",
-            "description": "Read service accounts owned by the agent's creator",
-            "family": "owner",
-            "implies": [],
-            "implies_transitive": [],
-            "is_superuser": false,
-            "name": "owner:service-accounts:read"
           }
         ]
       },
@@ -4738,6 +4373,15 @@
         "name": "config:write"
       },
       {
+        "action": "connect",
+        "description": "Start and poll an integration connect session (agent-driven SSO). Cannot read tokens or manage other credentials.",
+        "family": "credentials",
+        "implies": [],
+        "implies_transitive": [],
+        "is_superuser": false,
+        "name": "credentials:connect"
+      },
+      {
         "action": "read",
         "description": "Read credential metadata",
         "family": "credentials",
@@ -4751,9 +4395,11 @@
         "description": "Create, update, and delete credentials",
         "family": "credentials",
         "implies": [
+          "credentials:connect",
           "credentials:read"
         ],
         "implies_transitive": [
+          "credentials:connect",
           "credentials:read"
         ],
         "is_superuser": false,
@@ -4849,6 +4495,7 @@
           "catalog:import",
           "config:read",
           "config:write",
+          "credentials:connect",
           "credentials:read",
           "credentials:write",
           "events:read",
@@ -4859,8 +4506,6 @@
           "oauth-clients:read",
           "oauth-clients:write",
           "overlays:confirm",
-          "service-accounts:read",
-          "service-accounts:write",
           "users:read",
           "users:write"
         ],
@@ -4875,6 +4520,7 @@
           "catalog:import",
           "config:read",
           "config:write",
+          "credentials:connect",
           "credentials:read",
           "credentials:write",
           "events:read",
@@ -4885,8 +4531,6 @@
           "oauth-clients:read",
           "oauth-clients:write",
           "overlays:confirm",
-          "service-accounts:read",
-          "service-accounts:write",
           "users:read",
           "users:write"
         ],
@@ -4905,15 +4549,6 @@
         ],
         "is_superuser": false,
         "name": "overlays:confirm"
-      },
-      {
-        "action": "read",
-        "description": "Read access requests filed by or for the agent's creator",
-        "family": "owner",
-        "implies": [],
-        "implies_transitive": [],
-        "is_superuser": false,
-        "name": "owner:access-requests:read"
       },
       {
         "action": "read",
@@ -4950,37 +4585,6 @@
       },
       {
         "action": "read",
-        "description": "Read service accounts owned by the agent's creator",
-        "family": "owner",
-        "implies": [],
-        "implies_transitive": [],
-        "is_superuser": false,
-        "name": "owner:service-accounts:read"
-      },
-      {
-        "action": "read",
-        "description": "Read service account configuration and status",
-        "family": "service-accounts",
-        "implies": [],
-        "implies_transitive": [],
-        "is_superuser": false,
-        "name": "service-accounts:read"
-      },
-      {
-        "action": "write",
-        "description": "Create, update, and delete service accounts",
-        "family": "service-accounts",
-        "implies": [
-          "service-accounts:read"
-        ],
-        "implies_transitive": [
-          "service-accounts:read"
-        ],
-        "is_superuser": false,
-        "name": "service-accounts:write"
-      },
-      {
-        "action": "read",
         "description": "Read user profiles and permissions",
         "family": "users",
         "implies": [],
@@ -5002,7 +4606,7 @@
         "name": "users:write"
       }
     ],
-    "total": 30
+    "total": 27
   },
-  "total": 184
+  "total": 174
 }

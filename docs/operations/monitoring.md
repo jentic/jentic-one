@@ -75,6 +75,36 @@ database and disk for growth; export-then-trim is the operator's job today.
 Live event stream (imports, approvals, catalog updates): `jentic events`
 from the CLI, or the notifications surface in the UI.
 
+### Event severity
+
+Every event carries one of four severities. The boundary between them is a
+qualitative one, not just an ordering:
+
+| Severity   | Meaning                                                              |
+| ---------- | --------------------------------------------------------------------- |
+| `info`     | Routine: a lifecycle step happened as intended (import completed, credential connected, agent registration approved). |
+| `warning`  | Needs attention soon; nothing has failed *yet* — an advisory, a denial, a credential approaching expiry (`credential.expiring_soon`, `broker.pbac_denied`, an unserved binding). |
+| `error`    | One thing failed (an execution, an import, a permanently dead-lettered job, an expired credential). |
+| `critical` | A failure *pattern* crossed an operator-configured threshold — not one failure but many of the same kind in a short window. |
+
+`critical` is reserved to a single event type today,
+`execution.repeated_failure`: it emits `error` once an actor+toolkit+
+operation's failures cross `security.execution_repeated_failure_threshold`
+within `security.execution_repeated_failure_window_s`, and escalates to
+`critical` only past the higher
+`security.execution_repeated_failure_critical_threshold` (defaults: 5 failures
+in 300s for `error`, 20 for `critical` — see [config
+reference](../reference/config.md)). That means `critical` is rare **by
+design** — filtering the Events tab or `GET /events?severity=critical` and
+seeing few or no rows is expected, not a sign the classification is broken.
+Tune the thresholds if your deployment's failure volume should escalate to
+`critical` sooner.
+
+The full type-by-severity mapping is enforced in code:
+`EVENT_TYPE_SEVERITIES` in `shared/models/events.py` is the single source of
+truth, checked by `tests/unit/shared/test_event_type_severities.py` against
+every event type the platform defines.
+
 ## Metrics and traces
 
 OpenTelemetry wiring (OTLP metrics/traces, the optional Prometheus exporter

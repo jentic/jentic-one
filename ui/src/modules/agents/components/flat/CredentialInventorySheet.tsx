@@ -32,9 +32,9 @@ import {
 	CredentialType,
 	useAllCredentials,
 	useDeleteCredential,
-	useRunConnectFlow,
 	type Credential,
 } from '@/shared/credentials/api';
+import { useDeviceAwareConnect } from '@/shared/credentials/components/useDeviceAwareConnect';
 import { CredentialsList } from '@/shared/credentials/components/CredentialsList';
 import type { CredentialTypeFilter } from '@/shared/credentials/components/CredentialsToolbar';
 import {
@@ -98,7 +98,7 @@ export function CredentialInventorySheet({
 	const invalidateBindingSurfaces = useInvalidateCredentialBindingSurfaces(null);
 	// A successful sign-in invalidates the whole credentials slice, so the flat
 	// surface's tiles and strip hints refresh along with this sheet's list.
-	const runConnect = useRunConnectFlow();
+	const { connect: runConnect, deviceDialog } = useDeviceAwareConnect();
 
 	// Which credentials the fleet uses, by inverting every agent's binding list — the
 	// same reads the agents surface already made. Archived agents are outside the
@@ -214,7 +214,10 @@ export function CredentialInventorySheet({
 
 	// Mirrors CredentialsPage.handleConnectAfterCreate: an abandoned OAuth handshake
 	// discards the credential. `redirected` must NOT clean up — the user is mid-flow.
-	const handleConnectAfterCreate = async (credentialId: string): Promise<void> => {
+	const handleConnectAfterCreate = async (
+		credentialId: string,
+		credentialName: string,
+	): Promise<void> => {
 		toast({ title: 'Opening sign-in…' });
 		const discard = async (): Promise<void> => {
 			try {
@@ -224,7 +227,7 @@ export function CredentialInventorySheet({
 			}
 		};
 		try {
-			const outcome = await runConnect(credentialId);
+			const outcome = await runConnect(credentialId, credentialName);
 			switch (outcome.status) {
 				case 'connected':
 					// The connect hook invalidated the credentials slice, which
@@ -248,6 +251,23 @@ export function CredentialInventorySheet({
 						variant: 'error',
 					});
 					break;
+				case 'unsupported_challenge':
+					await discard();
+					toast({
+						title: 'Unsupported sign-in challenge',
+						description: 'The unconnected credential was discarded.',
+						variant: 'error',
+					});
+					break;
+				case 'unsafe_challenge_url':
+					await discard();
+					toast({
+						title: 'Sign-in link refused',
+						description:
+							'The provider returned an unsafe sign-in URL. The unconnected credential was discarded.',
+						variant: 'error',
+					});
+					break;
 			}
 		} catch {
 			await discard();
@@ -263,7 +283,7 @@ export function CredentialInventorySheet({
 	const handleConnect = async (cred: Credential): Promise<void> => {
 		toast({ title: `Opening sign-in for ${cred.name}…` });
 		try {
-			const outcome = await runConnect(cred.credential_id);
+			const outcome = await runConnect(cred.credential_id, cred.name);
 			switch (outcome.status) {
 				case 'connected':
 					toast({ title: 'Connected', variant: 'success' });
@@ -277,6 +297,16 @@ export function CredentialInventorySheet({
 					toast({
 						title: 'Connection timed out',
 						description: 'Finish the sign-in and refresh to see the result.',
+						variant: 'error',
+					});
+					break;
+				case 'unsupported_challenge':
+					toast({ title: 'Unsupported sign-in challenge', variant: 'error' });
+					break;
+				case 'unsafe_challenge_url':
+					toast({
+						title: 'Sign-in link refused',
+						description: 'The provider returned an unsafe sign-in URL.',
 						variant: 'error',
 					});
 					break;
@@ -445,7 +475,7 @@ export function CredentialInventorySheet({
 							info.provider !== 'static' &&
 							info.needsConnect
 						) {
-							void handleConnectAfterCreate(info.credentialId);
+							void handleConnectAfterCreate(info.credentialId, info.name);
 						}
 					}}
 				/>
@@ -476,6 +506,7 @@ export function CredentialInventorySheet({
 					error={deleteMutation.error}
 				/>
 			)}
+			{deviceDialog}
 		</>
 	);
 }

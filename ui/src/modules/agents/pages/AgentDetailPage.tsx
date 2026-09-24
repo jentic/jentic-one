@@ -355,11 +355,11 @@ export default function AgentDetailPage() {
 						</DetailSection>
 						{/* Actor-scoped audit slice — the "Recent changes" panel
 						    (admin only; empty for non-admins). */}
-						<ActorAuditPanel actorKind="agent" actorId={agent.id} />
+						<ActorAuditPanel actorId={agent.id} />
 					</>
 				)}
 
-				{activeTab === 'activity' && <ActivityPanel actorId={agent.id} actorType="agent" />}
+				{activeTab === 'activity' && <ActivityPanel actorId={agent.id} />}
 
 				{activeTab === 'keys' && <AgentKeysPanel agent={agent} />}
 
@@ -379,7 +379,6 @@ export default function AgentDetailPage() {
 			<LifecycleDialogs
 				confirm={confirm}
 				onClose={() => setConfirm(null)}
-				entityType="agent"
 				disableBody="Disabling immediately revokes this agent's ability to authenticate. You can re-enable it later."
 				mutations={{ deny, disable, archive }}
 			/>

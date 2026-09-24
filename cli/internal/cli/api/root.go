@@ -74,15 +74,22 @@ func newAPIRootCmd(core *cmdcore.App) *cobra.Command {
 	cmdcore.AddGrouped(root, "identity", newContextCmd(app))
 	cmdcore.AddGrouped(root, "identity", newEnvCmd(app))
 	cmdcore.AddGrouped(root, "identity", newIdentityCmd(app))
+	// Read-only identity self-check (`jentic whoami`, theme-7 Phase 1b): the
+	// nicer form of `jentic api GET /me`. Not fenced — read-only, no local
+	// config mutation.
+	cmdcore.AddGrouped(root, "identity", newWhoamiCmd(app))
 	cmdcore.AddGrouped(root, "identity", bootstrapSafe(newMigrateCmd(app))) // NOT fenced (BC-1); bootstrap-safe (runs with no XDG config)
 	cmdcore.AddGrouped(root, "apis", newCatalogCmd(app))
 	cmdcore.AddGrouped(root, "apis", newApisCmd(app))
 	cmdcore.AddGrouped(root, "apis", newEndpointsCmd(app))
 	cmdcore.AddGrouped(root, "apis", newCredentialsCmd(app))
+	// Agent-initiable credential provisioning (`jentic connect <vendor>`,
+	// theme-7 Phase 1b). NOT fenced: connecting is the agent's own recovery
+	// surface — approval still blocks on a human in the browser.
+	cmdcore.AddGrouped(root, "apis", newConnectCmd(app))
 	cmdcore.AddGrouped(root, "agent", newSearchCmd(app))
 	cmdcore.AddGrouped(root, "agent", newInspectCmd(app))
 	cmdcore.AddGrouped(root, "agent", newExecuteCmd(app))
-	cmdcore.AddGrouped(root, "agent", newAccessCmd(app))
 	// Execution history + live events over the SDK (Phase 5 items 3-4).
 	cmdcore.AddGrouped(root, "agent", newHistoryCmd(app))
 	cmdcore.AddGrouped(root, "agent", newEventsCmd(app))

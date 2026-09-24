@@ -87,7 +87,7 @@ def _parse_api_identifier(entry: str) -> tuple[str, str | None, str | None]:
     """Parse an API filter entry into a ``(vendor, name, version)`` tuple.
 
     Accepts the canonical ``vendor[/name[/version]]`` slug used everywhere else
-    (CLI ``--api`` flags, catalog references, access requests) as well as the
+    (CLI ``--api`` flags, catalog references) as well as the
     legacy colon-separated form (#1080). The first
     separator present decides the form, so a slash slug whose verbatim version
     embeds a colon still parses correctly (and vice versa).

@@ -11,11 +11,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, Check, KeyRound, Loader2, LogIn, Minus, X } from 'lucide-react';
 import { Badge, Button, SheetPrimitive } from '@/shared/ui';
 import { cn } from '@/shared/lib/utils';
-import {
-	useImportCatalogEntry,
-	useRunConnectFlow,
-	type Credential,
-} from '@/shared/credentials/api';
+import { useImportCatalogEntry, type Credential } from '@/shared/credentials/api';
+import { useDeviceAwareConnect } from '@/shared/credentials/components/useDeviceAwareConnect';
 import {
 	CreateCredentialFlow,
 	type CreatedCredentialInfo,
@@ -87,7 +84,7 @@ export function ApiSetupQueue({ open, agentId, agentName, items, onClose }: ApiS
 	// otherwise fire five toasts.
 	const bindMutation = useBindAgentCredential(agentId, { silent: true });
 	const importMutation = useImportCatalogEntry();
-	const runConnect = useRunConnectFlow();
+	const { connect: runConnect, deviceDialog } = useDeviceAwareConnect();
 
 	const active = useMemo(() => activeEntry(entries), [entries]);
 	const summary = useMemo(() => queueSummary(entries), [entries]);
@@ -134,7 +131,7 @@ export function ApiSetupQueue({ open, agentId, agentName, items, onClose }: ApiS
 
 		let note: string | undefined;
 		if (opts.connect) {
-			const outcome = await runConnect(credentialId).catch(
+			const outcome = await runConnect(credentialId, credential.name).catch(
 				() => ({ status: 'cancelled' }) as const,
 			);
 			if (outcome.status !== 'connected' && outcome.status !== 'redirected') {
@@ -328,6 +325,7 @@ export function ApiSetupQueue({ open, agentId, agentName, items, onClose }: ApiS
 					onCreated={(info): void => handleCreated(formEntry, info)}
 				/>
 			)}
+			{deviceDialog}
 		</SheetPrimitive>
 	);
 }

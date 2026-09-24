@@ -8,27 +8,23 @@ from sqlalchemy import or_
 from sqlalchemy.sql.elements import ColumnElement
 
 from jentic_one.admin.core.schema.agents import Agent
-from jentic_one.admin.core.schema.service_accounts import ServiceAccount
 from jentic_one.admin.core.schema.users import User
 from jentic_one.shared.auth.identity import Identity
-from jentic_one.shared.scopes import OWNER_AGENTS_READ, OWNER_SERVICE_ACCOUNTS_READ
+from jentic_one.shared.scopes import OWNER_AGENTS_READ
 
 ORG_ADMIN = "org:admin"
 
 _OWNER_MODELS: dict[type[Any], Any] = {
     Agent: Agent.owner_id,
-    ServiceAccount: ServiceAccount.owner_id,
     User: User.id,
 }
 
 _ID_MODELS: dict[type[Any], Any] = {
     Agent: Agent.id,
-    ServiceAccount: ServiceAccount.id,
 }
 
 _DELEGATION_SCOPES: dict[type[Any], str] = {
     Agent: OWNER_AGENTS_READ,
-    ServiceAccount: OWNER_SERVICE_ACCOUNTS_READ,
 }
 
 
@@ -38,7 +34,7 @@ def build_access_filters(identity: Identity, model: type[Any]) -> list[ColumnEle
     Rules (evaluated in order):
     1. org:admin -> no restriction (empty list).
     2. Agent with delegation scope + parent_actor_id -> OR filter (owner or delegator).
-    3. Otherwise -> owner == self OR id == self (self-access for agents/service accounts).
+    3. Otherwise -> owner == self OR id == self (self-access for agents).
 
     Raises ValueError for an unknown model or empty sub.
     """

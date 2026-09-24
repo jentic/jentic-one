@@ -7,7 +7,7 @@ import { useAuth } from '@/shared/auth/AuthContext';
 import { AppLink } from '@/shared/ui/AppLink';
 import { Button } from '@/shared/ui/Button';
 import { useDismissable } from '@/shared/ui/Menu';
-import { usePendingAccessRequestCount, usePendingAgentsCount } from '@/shared/hooks';
+import { usePendingAgentsCount } from '@/shared/hooks';
 import { cn } from '@/shared/lib/utils';
 
 const BOTTOM_NAV_SPRING = { type: 'spring' as const, stiffness: 500, damping: 35 };
@@ -16,27 +16,9 @@ const BOTTOM_NAV_SPRING = { type: 'spring' as const, stiffness: 500, damping: 35
 const TILE_LIMIT = 5;
 
 /**
- * Pending-access-request count badge for the Dashboard tile, so the persistent
- * "N waiting" signal reaches mobile too (the Agent Rail is desktop-only). Pinned
- * to the tile's top-right; renders nothing when the queue is empty.
- */
-function TilePendingBadge() {
-	const { count, atLeast } = usePendingAccessRequestCount();
-	if (count <= 0) return null;
-	const label = atLeast ? `${count}+` : `${count}`;
-	return (
-		<span
-			className="bg-warning text-background absolute top-1.5 right-1/2 z-20 inline-flex h-4 min-w-4 translate-x-4 items-center justify-center rounded-full px-1 text-[9px] font-bold tabular-nums"
-			aria-label={`${label} access requests awaiting review`}
-		>
-			{label}
-		</span>
-	);
-}
-
-/**
- * Pending-agents count badge for the Agents tile — mirrors TilePendingBadge so a
- * newly-registered agent awaiting approval is visible on mobile too (#652).
+ * Pending-agents count badge for the Agents tile — a persistent "N waiting"
+ * signal so a newly-registered agent awaiting approval is visible on mobile
+ * too (#652).
  */
 function TilePendingAgentsBadge() {
 	const { count, atLeast } = usePendingAgentsCount();
@@ -54,7 +36,6 @@ function TilePendingAgentsBadge() {
 
 /** Renders the pending-count tile badge appropriate to a nav item, if any. */
 function TileBadge({ navId }: { navId: string }) {
-	if (navId === 'dashboard') return <TilePendingBadge />;
 	if (navId === 'agents') return <TilePendingAgentsBadge />;
 	return null;
 }
@@ -87,7 +68,6 @@ function BottomTile({
 			onClick={onClick}
 			className="relative flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5 py-2"
 		>
-			{item.id === 'dashboard' && <TilePendingBadge />}
 			{item.id === 'agents' && <TilePendingAgentsBadge />}
 			<span
 				className={cn(

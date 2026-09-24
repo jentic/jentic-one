@@ -10,15 +10,13 @@
  * dropdown holds the durable, urgency-sorted triage list (unlike the rail,
  * which is transient SSE and can miss items filed outside its window).
  *
- * Sources stay independent (three queries), so one endpoint failing degrades
- * to an inline error row while the other rows keep rendering. Access requests
- * are decided in place via the shared decision dialog; agents and events
- * deep-link to the surfaces that own those flows. Every action closes the
- * panel — the queues refetch and the badge follows.
+ * Sources stay independent (two queries), so one endpoint failing degrades
+ * to an inline error row while the other rows keep rendering. Agents and
+ * events deep-link to the surfaces that own those flows. Every action closes
+ * the panel — the queues refetch and the badge follows.
  */
 import { useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router';
-import { useQueryClient } from '@tanstack/react-query';
 import { Bell, CheckCircle2 } from 'lucide-react';
 import {
 	ActorLabel,
@@ -28,26 +26,22 @@ import {
 	useDismissable,
 	useViewportClamp,
 } from '@/shared/ui';
-import { AccessRequestDecisionDialog } from '@/shared/app';
 import {
 	usePendingAgents,
-	usePendingAccessRequests,
 	useActionableEvents,
 	formatApproxCount,
-	dashboardKeys,
 	EventSeverity,
-	type AccessRequest,
 	type EventResponse,
 } from '@/modules/dashboard/api';
 import { ROUTES } from '@/shared/app/routes';
-import { eventSeverityIcon, summarizeAccessRequest } from '@/shared/lib';
+import { eventSeverityIcon } from '@/shared/lib';
 import { timeAgo, cn } from '@/shared/lib/utils';
 
 /** How many rows the dropdown shows before deferring to the owning surfaces. */
 const MAX_ROWS = 8;
 
 /** Lower rank = more urgent = higher in the list. */
-const URGENCY = { alertHigh: 0, alertWarn: 1, access: 2, agent: 3 } as const;
+const URGENCY = { alertHigh: 0, alertWarn: 1, agent: 2 } as const;
 
 interface InboxRow {
 	key: string;
@@ -113,12 +107,9 @@ function alertRow(event: EventResponse, onView: () => void): InboxRow {
 
 export function ActionInboxBell() {
 	const agents = usePendingAgents();
-	const requests = usePendingAccessRequests();
 	const alerts = useActionableEvents();
 	const navigate = useNavigate();
-	const queryClient = useQueryClient();
 	const [open, setOpen] = useState(false);
-	const [active, setActive] = useState<AccessRequest | null>(null);
 	const ref = useDismissable<HTMLDivElement>(open, () => setOpen(false));
 	// On narrow screens the header actions wrap and the bell can land on the
 	// LEFT half, so a right-anchored panel would hang off-screen — clamp it.
@@ -127,10 +118,10 @@ export function ActionInboxBell() {
 	// Read at render time to dodge the `@/shared/app` barrel's import-cycle TDZ.
 	const eventsHref = `${ROUTES.monitor}?tab=events`;
 
-	const isLoading = agents.isLoading || requests.isLoading || alerts.isLoading;
+	const isLoading = agents.isLoading || alerts.isLoading;
 
-	/** Every row action dismisses the panel — a decision either navigates away
-	 * or opens the modal dialog, and the badge refetches behind it. */
+	/** Every row action dismisses the panel — a decision navigates away, and
+	 * the badge refetches behind it. */
 	function act(fn: () => void) {
 		return () => {
 			setOpen(false);
@@ -145,26 +136,6 @@ export function ActionInboxBell() {
 				act(() => navigate(eventsHref)),
 			),
 		),
-		...(requests.data?.requests ?? []).map((request): InboxRow => ({
-			key: `access-${request.id}`,
-			urgency: URGENCY.access,
-			tsMs: request.filed_at ? Date.parse(request.filed_at) || 0 : 0,
-			stripe: 'border-l-primary',
-			tag: { label: 'Access', className: 'bg-primary/10 text-primary' },
-			leading: <AgentBadge id={request.actor_id} kind="Agent" size="sm" />,
-			title: summarizeAccessRequest(request),
-			subtitle: (
-				<>
-					requested by <ActorLabel actorId={request.actor_id} />
-				</>
-			),
-			tsIso: request.filed_at,
-			action: {
-				label: 'Decide',
-				ariaLabel: `Decide access request ${summarizeAccessRequest(request)}`,
-				onAct: act(() => setActive(request)),
-			},
-		})),
 		...(agents.data?.agents ?? []).map((agent): InboxRow => ({
 			key: `agent-${agent.id}`,
 			urgency: URGENCY.agent,
@@ -187,8 +158,8 @@ export function ActionInboxBell() {
 		.sort((a, b) => a.urgency - b.urgency || b.tsMs - a.tsMs)
 		.slice(0, MAX_ROWS);
 
-	// One total across the three queues; "+" when any source saw a partial page.
-	const counts = [agents.data?.count, requests.data?.count, alerts.data?.count];
+	// One total across the two queues; "+" when any source saw a partial page.
+	const counts = [agents.data?.count, alerts.data?.count];
 	const total = {
 		value: counts.reduce((sum, c) => sum + (c?.value ?? 0), 0),
 		atLeast: counts.some((c) => c?.atLeast),
@@ -199,7 +170,6 @@ export function ActionInboxBell() {
 
 	const sourceErrors = [
 		agents.isError && { key: 'agents', label: 'pending agents' },
-		requests.isError && { key: 'access-requests', label: 'pending access requests' },
 		alerts.isError && { key: 'alerts', label: 'alerts' },
 	].filter(Boolean) as { key: string; label: string }[];
 
@@ -356,13 +326,6 @@ export function ActionInboxBell() {
 								<span>Showing the {rows.length} most urgent.</span>
 							)}
 							<AppLink
-								href={ROUTES.accessRequests}
-								onClick={() => setOpen(false)}
-								className="text-primary font-medium hover:underline"
-							>
-								All access requests
-							</AppLink>
-							<AppLink
 								href={ROUTES.agents}
 								onClick={() => setOpen(false)}
 								className="text-primary font-medium hover:underline"
@@ -380,17 +343,6 @@ export function ActionInboxBell() {
 					)}
 				</div>
 			)}
-
-			<AccessRequestDecisionDialog
-				request={active}
-				onClose={() => setActive(null)}
-				onDecided={() => {
-					queryClient.invalidateQueries({ queryKey: dashboardKeys.all });
-					queryClient.invalidateQueries({
-						queryKey: dashboardKeys.accessRequestsRoot,
-					});
-				}}
-			/>
 		</div>
 	);
 }

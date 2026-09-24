@@ -34,7 +34,9 @@ interface CredentialCardProps {
  *
  * Anatomy mirrors the rest of jentic-one's resource cards:
  *
- *   [vendor badge] [name + api name · version] ......... [type badge]
+ *   [vendor badge] [name (own line, wraps by word)]
+ *                  [status badge · type badge (wrapping row)]
+ *                  [api name · version]
  *   [where the secret is injected, in plain language]
  *   [usage (used by · calls) ........... connect · edit · delete]
  *   [added date]
@@ -54,6 +56,7 @@ export function CredentialCard({
 	callsLast7d,
 }: CredentialCardProps) {
 	const connected = credentialIsConnected(cred);
+	const pendingSignIn = credentialIsPendingSignIn(cred);
 	const vendor = cred.api.vendor ?? cred.name;
 	// Heading = the user's own `cred.name` when they've set one, so renaming a
 	// credential updates the card's title (matching the edit sheet's intent).
@@ -81,7 +84,10 @@ export function CredentialCard({
 		<div
 			data-testid="credential-card"
 			title={tuple}
-			className="group border-border/60 bg-card hover:border-border focus-within:border-primary/50 relative flex h-full min-w-0 flex-col gap-3 overflow-hidden rounded-xl border p-4 text-left transition-all hover:shadow-sm"
+			className={cn(
+				'group border-border/60 bg-card hover:border-border focus-within:border-primary/50 relative flex h-full min-w-0 flex-col gap-3 overflow-hidden rounded-xl border p-4 text-left transition-all hover:shadow-sm',
+				pendingSignIn && 'border-dashed opacity-80',
+			)}
 		>
 			{/* Full-card click target → edit, for pointer users. Hidden from the
 			    a11y tree (aria-hidden + tabIndex=-1) so screen-reader/keyboard
@@ -99,21 +105,23 @@ export function CredentialCard({
 			<div className="pointer-events-none relative flex items-start gap-3">
 				<AgentBadge id={vendor} name={vendor} kind="API" size="lg" className="rounded-xl" />
 				<div className="min-w-0 flex-1">
-					<div className="flex items-start gap-2">
-						{/* Wraps rather than truncates: the tail of a name ("… staging" vs
-						    "… prod") is often the only thing telling two cards apart. */}
-						<h3 className="font-heading text-foreground min-w-0 flex-1 text-sm leading-snug font-semibold break-words">
-							{title}
-						</h3>
-						{connected && (
-							<Badge variant="success" className="shrink-0">
-								Connected
-							</Badge>
-						)}
-						<CredentialTypeBadge type={cred.type} />
+					{/* Wraps rather than truncates: the tail of a name ("… staging" vs
+					    "… prod") is often the only thing telling two cards apart. The
+					    title owns its full line — sharing it with the status/type chips
+					    starved it to one character per line in narrow grid columns. */}
+					<h3 className="font-heading text-foreground text-sm leading-snug font-semibold break-words">
+						{title}
+					</h3>
+					<div
+						className="mt-1 flex flex-wrap items-center gap-1.5"
+						data-testid="credential-card-badges"
+					>
+						{connected && <Badge variant="success">Connected</Badge>}
+						{pendingSignIn && <Badge variant="pending">Pending sign-in</Badge>}
+						<CredentialTypeBadge credential={cred} />
 					</div>
 					{apiLine && (
-						<p className="text-muted-foreground mt-0.5 truncate text-xs">{apiLine}</p>
+						<p className="text-muted-foreground mt-1 truncate text-xs">{apiLine}</p>
 					)}
 				</div>
 			</div>
@@ -158,7 +166,23 @@ export function credentialApiLine(cred: Credential, heading: string): string | n
 
 /** An OAuth credential with a signed-in account behind it. */
 export function credentialIsConnected(cred: Credential): boolean {
-	return cred.type === CredentialType.OAUTH2 && !!cred.provider_account_ref;
+	if (cred.type !== CredentialType.OAUTH2) return false;
+	// Managed providers record the account ref; direct OAuth (device code /
+	// authorization code) records `details.connected` instead.
+	return !!cred.provider_account_ref || credentialDetails(cred).connected === true;
+}
+
+/**
+ * An OAuth row the connect flow minted upfront whose vendor sign-in hasn't
+ * finished (or was abandoned, until the TTL sweeper reaps it) — a pending
+ * shell, not a usable credential, so it must never read as a live one.
+ */
+export function credentialIsPendingSignIn(cred: Credential): boolean {
+	return (
+		cred.type === CredentialType.OAUTH2 &&
+		!cred.provider_account_ref &&
+		credentialDetails(cred).connected === false
+	);
 }
 
 interface CredentialMetaLineProps {

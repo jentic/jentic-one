@@ -24,30 +24,21 @@ import { useCallback, useMemo } from 'react';
 import { toast } from '@/shared/ui';
 import {
 	approveAgent,
-	approveServiceAccount,
 	archiveAgent,
-	archiveServiceAccount,
 	createAgent,
 	updateAgent,
 	type AgentPatch,
 	denyAgent,
-	denyServiceAccount,
 	disableAgent,
-	disableServiceAccount,
 	enableAgent,
-	enableServiceAccount,
 	generateAgentApiKey,
-	generateServiceAccountApiKey,
 	getAgent,
 	getAgentApiKeyHistory,
 	getAgentApiKeyInfo,
 	getAgentScopes,
-	getServiceAccount,
-	getServiceAccountScopes,
 	listAgents,
 	listPermissions,
 	replaceAgentScopes,
-	replaceServiceAccountScopes,
 	revokeAgentApiKey,
 	listAgentCredentialBindings,
 	bindCredentialToAgent,
@@ -57,8 +48,6 @@ import {
 	listAgentBindingPermissions,
 	replaceAgentBindingPermissions,
 	testAgentBindingPermissions,
-	fetchActorAccessRequests,
-	fetchPendingApproverAccessRequests,
 	fetchActorUsageDetail,
 	fetchCredentialUsageTotals,
 	fetchActorExecutions,
@@ -91,9 +80,7 @@ import type {
 	OAuthGrantEntity,
 	PermissionCatalogEntry,
 	PermissionRuleInput,
-	ServiceAccountEntity,
 } from '@/modules/agents/api/types';
-import type { AccessRequest } from '@/shared/lib';
 import { sharedQueryKeys } from '@/shared/api';
 import { credentialKeys } from '@/shared/credentials/api';
 import { usePendingAgentsCount } from '@/shared/hooks';
@@ -130,13 +117,6 @@ const agentsKeys = {
  * widening the module's public surface. Not for production use. */
 export const agentsKeysForTest = agentsKeys;
 
-const serviceAccountKeys = {
-	all: ['service-accounts'] as const,
-	lists: () => [...serviceAccountKeys.all, 'list'] as const,
-	detail: (id: string) => [...serviceAccountKeys.all, 'detail', id] as const,
-	scopes: (id: string) => [...serviceAccountKeys.all, 'scopes', id] as const,
-};
-
 /**
  * Platform permission catalogue (`GET /permissions`). Module-private (the
  * agents module is the only UI consumer of the catalogue today) and read-only,
@@ -144,31 +124,6 @@ const serviceAccountKeys = {
  * registry. The `agents` root already owns the `permissions` namespace here.
  */
 const permissionsKey = [...agentsKeys.all, 'permissions'] as const;
-
-/**
- * Access requests filed BY an actor (#619), keyed by the actor's id + status.
- * `actor_id` is globally unique across agents and service accounts, so one key
- * factory serves both detail pages.
- */
-export const actorAccessRequestsKey = (actorId: string, status: string) =>
-	['access-requests', 'by-actor', actorId, status] as const;
-
-/**
- * Prefix key covering EVERY status slice for one actor. A decision moves a
- * request between the pending / approved / denied / all views, so invalidating
- * this root refreshes them all in one call — and keeps the key shape owned here
- * (the single source of truth) rather than hand-written at the call site.
- */
-export const actorAccessRequestsRootKey = (actorId: string) =>
-	['access-requests', 'by-actor', actorId] as const;
-
-/**
- * The org-wide pending access-request queue the Agents window surfaces inline
- * (distinct from the per-actor `by-actor` slices above — these are requests the
- * viewer may need to decide, keyed only by status). Shares the top-level
- * `access-requests` prefix so a decision made anywhere invalidates it.
- */
-export const pendingApproverAccessRequestsKey = ['access-requests', 'pending-approver'] as const;
 
 /**
  * OAuth consent grants binding clients to one agent, keyed by
@@ -727,7 +682,7 @@ export function useUpdateAgent() {
 			qc.invalidateQueries({ queryKey: agentsKeys.lists() });
 			qc.invalidateQueries({ queryKey: sharedQueryKeys.dashboardRoot });
 			// A rename changes what every `ActorLabel` renders — monitor rows,
-			// audit trails, access requests, and the "Registered by / Approved
+			// audit trails, and the "Registered by / Approved
 			// by" grid on this very page all resolve names through the actor
 			// directory (5-min staleTime, no focus refetch). Invalidate it so the
 			// new name shows up immediately instead of after the staleTime.
@@ -776,91 +731,6 @@ export function useRevokeAgentApiKey() {
 	});
 }
 
-export function useGenerateServiceAccountApiKey() {
-	return useMutation<ApiKeyResult, Error, string>({
-		mutationFn: (serviceAccountId: string) => generateServiceAccountApiKey(serviceAccountId),
-		onError: (e) => notifyError(e, 'Failed to generate API key.'),
-	});
-}
-
-// ---------------------------------------------------------------------------
-// Service accounts
-// ---------------------------------------------------------------------------
-
-export function useServiceAccount(id: string | null) {
-	return useQuery<ServiceAccountEntity>({
-		queryKey: serviceAccountKeys.detail(id ?? ''),
-		queryFn: () => getServiceAccount(id as string),
-		enabled: id != null,
-	});
-}
-
-export function useApproveServiceAccount() {
-	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: (id: string) => approveServiceAccount(id),
-		onSuccess: (sa) => {
-			qc.setQueryData(serviceAccountKeys.detail(sa.id), sa);
-			qc.invalidateQueries({ queryKey: serviceAccountKeys.lists() });
-			toast({ title: 'Service account approved', variant: 'success' });
-		},
-		onError: (e) => notifyError(e, 'Failed to approve the service account.'),
-	});
-}
-
-export function useDenyServiceAccount() {
-	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: ({ id, reason }: { id: string; reason: string }) =>
-			denyServiceAccount(id, reason),
-		onSuccess: (sa) => {
-			qc.setQueryData(serviceAccountKeys.detail(sa.id), sa);
-			qc.invalidateQueries({ queryKey: serviceAccountKeys.lists() });
-			toast({ title: 'Service account denied', variant: 'success' });
-		},
-		onError: (e) => notifyError(e, 'Failed to deny the service account.'),
-	});
-}
-
-export function useDisableServiceAccount() {
-	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: (id: string) => disableServiceAccount(id),
-		onSuccess: (_void, id) => {
-			qc.invalidateQueries({ queryKey: serviceAccountKeys.lists() });
-			qc.invalidateQueries({ queryKey: serviceAccountKeys.detail(id) });
-			toast({ title: 'Service account disabled', variant: 'success' });
-		},
-		onError: (e) => notifyError(e, 'Failed to disable the service account.'),
-	});
-}
-
-export function useEnableServiceAccount() {
-	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: (id: string) => enableServiceAccount(id),
-		onSuccess: (_void, id) => {
-			qc.invalidateQueries({ queryKey: serviceAccountKeys.lists() });
-			qc.invalidateQueries({ queryKey: serviceAccountKeys.detail(id) });
-			toast({ title: 'Service account enabled', variant: 'success' });
-		},
-		onError: (e) => notifyError(e, 'Failed to enable the service account.'),
-	});
-}
-
-export function useArchiveServiceAccount() {
-	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: (id: string) => archiveServiceAccount(id),
-		onSuccess: (_void, id) => {
-			qc.invalidateQueries({ queryKey: serviceAccountKeys.lists() });
-			qc.invalidateQueries({ queryKey: serviceAccountKeys.detail(id) });
-			toast({ title: 'Service account archived', variant: 'success' });
-		},
-		onError: (e) => notifyError(e, 'Failed to archive the service account.'),
-	});
-}
-
 // ---------------------------------------------------------------------------
 // Scopes (#615)
 // ---------------------------------------------------------------------------
@@ -896,26 +766,6 @@ export function useReplaceAgentScopes() {
 			toast({ title: 'Scopes updated', variant: 'success' });
 		},
 		onError: (e) => notifyError(e, "Failed to update the agent's scopes."),
-	});
-}
-
-export function useServiceAccountScopes(id: string | null) {
-	return useQuery<string[]>({
-		queryKey: serviceAccountKeys.scopes(id ?? ''),
-		queryFn: () => getServiceAccountScopes(id as string),
-		enabled: id != null,
-	});
-}
-
-export function useReplaceServiceAccountScopes() {
-	const qc = useQueryClient();
-	return useMutation<string[], Error, { id: string; scopes: string[] }>({
-		mutationFn: ({ id, scopes }) => replaceServiceAccountScopes(id, scopes),
-		onSuccess: (scopes, { id }) => {
-			qc.setQueryData(serviceAccountKeys.scopes(id), scopes);
-			toast({ title: 'Scopes updated', variant: 'success' });
-		},
-		onError: (e) => notifyError(e, "Failed to update the service account's scopes."),
 	});
 }
 
@@ -964,44 +814,6 @@ export function useActorExecutions(actorId: string | null) {
 		enabled: actorId != null,
 		staleTime: 30 * 1000,
 		retry: false,
-	});
-}
-
-/**
- * Access requests filed by a single actor (`GET /access-requests?actor_id=…`),
- * defaulting to the still-pending queue (#619). Works for both agents and
- * service accounts — the backend keys requests by `actor_id`, which is the
- * actor's own id. Pass `status: null` to fetch every status (the "All" filter).
- * `enabled` only when an id is present so the detail page's loading/not-found
- * states aren't disturbed.
- */
-export function useActorAccessRequests(actorId: string | null, status: string | null = 'pending') {
-	return useQuery<AccessRequest[]>({
-		queryKey: actorAccessRequestsKey(actorId ?? '', status ?? 'all'),
-		queryFn: () => fetchActorAccessRequests(actorId as string, status),
-		enabled: actorId != null,
-	});
-}
-
-/**
- * Pending access requests the viewer can act on, for the Agents window's inline
- * banner. Narrows the org-wide pending queue to rows the caller may decide via
- * `evaluation.can_fulfill` — a request the viewer can't fulfil belongs to
- * another approver and would only be noise here. A row with no `evaluation`
- * (the backend omits it when it wasn't computed) is treated as actionable so
- * the banner degrades toward showing rather than hiding a decision.
- *
- * Polls like the Dashboard's pending-requests card (a new request the viewer
- * must accept should appear without a reload) and refetches on focus.
- */
-export function usePendingApproverAccessRequests() {
-	return useQuery<AccessRequest[], Error, AccessRequest[]>({
-		queryKey: pendingApproverAccessRequestsKey,
-		queryFn: fetchPendingApproverAccessRequests,
-		select: (requests) => requests.filter((r) => r.evaluation?.can_fulfill !== false),
-		staleTime: 30_000,
-		refetchInterval: 45_000,
-		refetchOnWindowFocus: true,
 	});
 }
 
@@ -1070,15 +882,14 @@ export function useRevokeOauthGrant(agentId: string | null) {
 
 /**
  * Actor-scoped audit trail for the detail console's "Recent changes" panel —
- * the lifecycle events recorded against this agent / service account as the
- * TARGET. Non-admins resolve
+ * the lifecycle events recorded against this agent as the TARGET. Non-admins resolve
  * to an empty list (the client maps 401/403), so the panel renders its
  * graceful "no entries" state instead of erroring.
  */
-export function useActorAudit(actorKind: 'agent' | 'service-account', actorId: string | null) {
+export function useActorAudit(actorId: string | null) {
 	return useQuery<ActorAuditEntry[]>({
-		queryKey: ['agents', 'audit', actorKind, actorId],
-		queryFn: () => listActorAudit(actorKind, actorId as string),
+		queryKey: ['agents', 'audit', 'agent', actorId],
+		queryFn: () => listActorAudit(actorId as string),
 		enabled: actorId != null,
 		staleTime: 30 * 1000,
 	});

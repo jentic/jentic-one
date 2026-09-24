@@ -71,7 +71,7 @@ describe('CreateCredentialFlow', () => {
 		expect(sheet).toHaveAttribute('role', 'dialog');
 		// The drawer's own heading names it, so assistive tech reads the step
 		// rather than a generic "dialog".
-		expect(screen.getByRole('dialog', { name: /Choose an API/ })).toBe(sheet);
+		expect(screen.getByRole('dialog', { name: /^Add credential$/ })).toBe(sheet);
 		// Nothing in the browser's top layer: this is a sheet, not a modal.
 		expect(document.querySelector('dialog[open]')).toBeNull();
 	});
@@ -85,7 +85,7 @@ describe('CreateCredentialFlow', () => {
 		// is itself in the top layer.
 		await waitFor(() => expect(document.querySelector('dialog[open]')).not.toBeNull());
 		expect(screen.queryByTestId('sheet-primitive')).not.toBeInTheDocument();
-		expect(screen.getByRole('heading', { name: /Choose an API/ })).toBeVisible();
+		expect(screen.getByRole('heading', { name: /^Add credential$/ })).toBeVisible();
 	});
 
 	it('does not close the drawer on a backdrop click, but Escape still does', async () => {
@@ -105,7 +105,7 @@ describe('CreateCredentialFlow', () => {
 
 	it('offers an upload from the pick step', async () => {
 		renderWithProviders(<CreateCredentialFlow open onClose={vi.fn()} onCreated={vi.fn()} />);
-		await screen.findByRole('dialog', { name: /Choose an API/ });
+		await screen.findByRole('dialog', { name: /^Add credential$/ });
 
 		// Reachable before any search: an operator who knows the API isn't
 		// catalogued shouldn't have to prove it first.
@@ -116,7 +116,7 @@ describe('CreateCredentialFlow', () => {
 		stubCompletedImport();
 		const user = userEvent.setup();
 		renderWithProviders(<CreateCredentialFlow open onClose={vi.fn()} onCreated={vi.fn()} />);
-		await screen.findByRole('dialog', { name: /Choose an API/ });
+		await screen.findByRole('dialog', { name: /^Add credential$/ });
 
 		await user.click(screen.getByRole('button', { name: 'Upload an API' }));
 		await waitFor(() => expect(screen.getByTestId('import-spec-dialog')).toBeVisible());

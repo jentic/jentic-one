@@ -1,17 +1,15 @@
 import { test, expect } from '@playwright/test';
-import { captureConsoleErrors, createServiceAccount, uniqueSuffix } from './helpers';
+import { captureConsoleErrors } from './helpers';
 import { provisionAdminOwnedAgent } from './agent-flow';
 
 /**
  * Agents (real backend). One flat fleet with no roster and no tab switch, so the
- * shell contract is the page's own controls plus the agent strip. Agents are
- * created out-of-band via Dynamic Client Registration, so this asserts the list
- * contract rather than driving a create the UI doesn't own.
- *
- * Service accounts survive only as their own detail page, created through the
- * public API — so this self-seeds one and asserts that page renders.
+ * shell contract is the page's own controls plus the agent strip. Service
+ * accounts were retired in theme 8 — migrated accounts are ordinary agents now.
+ * Agents are created out-of-band via Dynamic Client Registration, so this
+ * asserts the list contract rather than driving a create the UI doesn't own.
  */
-test('the agents surface renders its shell', async ({ page }) => {
+test('the agents surface renders its shell without a service-accounts tab', async ({ page }) => {
 	const errors = captureConsoleErrors(page);
 
 	await page.goto('/app');
@@ -27,22 +25,9 @@ test('the agents surface renders its shell', async ({ page }) => {
 	await expect(page.getByLabel('Filter agents')).toBeVisible();
 	await expect(page.getByRole('button', { name: 'New agent' })).toBeVisible();
 	await expect(page.getByRole('button', { name: 'Credentials' })).toBeVisible();
+	await expect(page.getByRole('button', { name: 'Service accounts' })).toHaveCount(0);
 
 	expect(errors, `unexpected console errors:\n${errors.join('\n')}`).toEqual([]);
-});
-
-test('a service account created via the API renders its detail page', async ({ page, request }) => {
-	const name = `e2e-sa-${uniqueSuffix()}`;
-	const id = await createServiceAccount(request, name);
-
-	// There is no roster to click through: the detail page is reached by URL.
-	await page.goto(`/app/agents/service-accounts/${id}`);
-
-	// The unique name in the heading is what proves the seeded account resolved
-	// from the backend; the status control beside it pins the header contract
-	// without asserting a label that depends on which control the status picks.
-	await expect(page.getByRole('heading', { name })).toBeVisible();
-	await expect(page.getByTestId('detail-status-badge').first()).toBeVisible();
 });
 
 /**

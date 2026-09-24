@@ -54,11 +54,13 @@ cross-surface needs are met three ways:
   package so it may import several of them. It builds the `AppContainer` and
   the in-process seams (for example `InProcessRegistryResolver`, which lets
   the broker resolve operations without importing `jentic_one.registry`).
-- **Raw SQL at a named seam** — when the control plane must write an
-  admin-DB row (approving an access request binds a credential to an agent),
-  [`control/repos/effects_repo.py`](../../src/jentic_one/control/repos/effects_repo.py) uses raw SQL rather than importing admin's
+- **Raw SQL at a named seam** — when the control plane must touch admin-DB
+  rows (the toolkit-key retirement job mints successor agents; credential
+  effects bind credentials to agents),
+  [`control/repos/key_retirement_repo.py`](../../src/jentic_one/control/repos/key_retirement_repo.py) and
+  [`control/repos/effects_repo.py`](../../src/jentic_one/control/repos/effects_repo.py) use raw SQL rather than importing admin's
   ORM models. The [worked example below](#a-request-layer-by-layer) traces
-  this seam in action.
+  the cross-database boundary in action.
 
 ## The layers inside a surface
 
@@ -102,29 +104,28 @@ model these filters implement.
 
 ### A request, layer by layer
 
-`POST /access-requests/{id}:decide` — an operator approving an agent's
-access request — exercises every rule above, including the cross-database
-seam:
+`POST /credentials` — an operator storing a credential — exercises every rule
+above, including the cross-database boundary:
 
-1. **`web/`** — the router ([`control/web/routers/access_requests.py`](../../src/jentic_one/control/web/routers/access_requests.py))
+1. **`web/`** — the router ([`control/web/routers/credentials.py`](../../src/jentic_one/control/web/routers/credentials.py))
    declares its auth dependency, receives the resolved `Identity`, converts
-   the body to plain data, and calls `AccessRequestService.decide()`. No DB
+   the body to plain data, and calls `CredentialService.create()`. No DB
    import, no business logic; a failure surfaces as an RFC 9457 problem
    detail.
-2. **`services/`** — `decide()` builds the identity's access filters, opens
-   `control_db.transaction()`, and applies the decision plus the
-   control-side effects (the binding's permission rules) **atomically** in
-   that one transaction.
-3. **`repos/`** — `AccessRequestRepository.get(session, id, filters=…)`
-   applies the filters it was handed. It never sees the `Identity` that
-   produced them.
-4. **The cross-database seam** — an approved credential bind or scope grant
-   must land in the *admin* DB, which the control transaction cannot span.
-   So `decide()` commits phase 1, then drives the admin-DB writes through
-   `EffectsRepository` (raw SQL, idempotent `ON CONFLICT`), and acks them
-   back into the control DB. An un-acked item is the retry marker:
-   re-calling `decide()` reconciles instead of erroring, so a crash between
-   the two phases leaves no orphaned grants. This is the
+2. **`services/`** — `create()` opens `control_db.transaction()` and writes
+   the credential row plus its type-specific secret row **atomically** in
+   that one transaction, then records the audit entry.
+3. **`repos/`** — `CredentialRepository.create(session, …)` and its
+   type-specific siblings run the SQLAlchemy statements against the session
+   they were handed. They never see the `Identity` that authorized the
+   write; on the read path (`get()`/`list()`) the service builds
+   `build_access_filters(identity, Credential, …)` and the repo applies the
+   filters it was handed verbatim.
+4. **The cross-database boundary** — the operator-facing "credential stored"
+   event lands in the *admin* DB, which the control transaction cannot span.
+   So `create()` commits the control write first, then emits the event in a
+   separate `admin_db.transaction()`, best-effort: an event failure is
+   logged, never rolled back into the credential write. This is the
    no-cross-database-foreign-keys rule (see [data model](data-model.md))
    showing up as control flow.
 

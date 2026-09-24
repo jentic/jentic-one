@@ -21,6 +21,7 @@ from jentic_one.admin.core.schema.oauth_client_grants import OAuthClientGrant
 from jentic_one.admin.core.schema.oauth_clients import OAuthClient
 from jentic_one.admin.core.schema.provider_configs import ProviderConfigRecord
 from jentic_one.admin.core.schema.refresh_tokens import RefreshToken
+from jentic_one.admin.core.schema.service_account_migration_acks import ServiceAccountMigrationAck
 from jentic_one.admin.core.schema.service_accounts import ServiceAccount
 from jentic_one.admin.core.schema.setup_sentinel import SetupSentinel
 from jentic_one.admin.core.schema.user_permission_grants import UserPermissionGrant
@@ -50,6 +51,7 @@ __all__ = [
     "ProviderConfigRecord",
     "RefreshToken",
     "ServiceAccount",
+    "ServiceAccountMigrationAck",
     "SetupSentinel",
     "User",
     "UserPermissionGrant",

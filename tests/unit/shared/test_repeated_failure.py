@@ -30,7 +30,7 @@ from jentic_one.shared.events.repeated_failure import maybe_emit_repeated_failur
 from jentic_one.shared.jobs.execution_handler import ExecutionHandler
 from jentic_one.shared.jobs.protocols import UpstreamExecResult
 from jentic_one.shared.models import ExecutionStatus
-from jentic_one.shared.models.events import EventSeverity, EventType
+from jentic_one.shared.models.events import EVENT_TYPE_SEVERITIES, EventSeverity, EventType
 
 _ACTOR = "agt_repeat"
 _TOOLKIT = "tk_repeat0000000000000000000"
@@ -143,6 +143,9 @@ async def test_at_threshold_emits_one_error(session: AsyncSession) -> None:
     assert events[0].data["actor_id"] == _ACTOR
     assert events[0].data["toolkit_id"] == _TOOLKIT
     assert events[0].data["operation_id"] == _OPERATION
+    # Cross-check against the documented severity matrix (issue #907).
+    allowed = EVENT_TYPE_SEVERITIES[EventType.EXECUTION_REPEATED_FAILURE]
+    assert EventSeverity(events[0].severity) in allowed
 
 
 async def test_repeated_calls_within_window_dedup(session: AsyncSession) -> None:
@@ -165,6 +168,9 @@ async def test_critical_threshold_emits_critical(session: AsyncSession) -> None:
     events = await _repeated_events(session)
     assert len(events) == 1
     assert events[0].severity == EventSeverity.CRITICAL.value
+    # Cross-check against the documented severity matrix (issue #907).
+    allowed = EVENT_TYPE_SEVERITIES[EventType.EXECUTION_REPEATED_FAILURE]
+    assert EventSeverity(events[0].severity) in allowed
 
 
 async def test_incremental_failures_escalate_error_then_critical(session: AsyncSession) -> None:

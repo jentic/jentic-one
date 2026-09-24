@@ -201,8 +201,8 @@ class CredentialIdentityMismatchError(BrokerError):
     (``no_credential_binding``; ``no_toolkit_binding`` on the flag-off
     fallback): the agent *is* bound, but the bound credential's stored API
     identity does not cover the resolved operation identity (#747/#748). The
-    recovery is to fix/re-provision the **credential**, not to file an access
-    request (which would auto-deny).
+    recovery is to fix/re-provision the **credential** — this is not
+    agent-recoverable, and requesting a new binding would not help.
     """
 
 
@@ -272,29 +272,39 @@ def switch_toolkit_directive(status: int) -> AgentDirective:
 
 
 def no_toolkit_binding_directive(
-    *, vendor: str, name: str, version: str, toolkit_serves_api: bool
+    *,
+    vendor: str,
+    name: str,
+    version: str,
+    toolkit_serves_api: bool,
+    connect_vendor: str | None = None,
 ) -> AgentDirective:
     """Directive for a ``no_toolkit_binding`` 403 — recover the missing binding.
 
     Emitted only on the flag-off toolkit-derivation fallback
     (``broker.direct_bindings_enabled=false``): the caller is authenticated but
-    bound to no toolkit that serves this API. The remediation it names is the
-    surviving access-request vocabulary — a ``credential:bind`` filed by API
-    reference (``jentic access request --api``) or a ``credential:provision``
-    plan (``--provision``) — chosen by whether anything serves the API at all:
+    bound to no toolkit that serves this API. The remediation is shaped by
+    whether anything serves the API at all:
 
     - ``toolkit_serves_api=True`` — something already serves it, the caller
-      just isn't bound. Filing a bind request by API reference is the correct,
-      approvable next step.
+      just isn't bound. The operator binds the agent to the serving
+      credential (binding stays human).
     - ``toolkit_serves_api=False`` — nothing serves it yet (no credential has
-      been provisioned/bound). A bare bind request here would be a guaranteed
-      dead-end: the approval denies with "no toolkit serves API …" because an
-      API is only served once a credential for it exists (issue #683). So point
-      the caller at the provisioning plan first — the step that actually
-      creates a serving credential — before the binding. Deliberately
-      text-only — the broker never enumerates other credentials here (that
-      would leak instance inventory to an unbound agent, and this stateless
-      edge has no scoped view of what a future approver could reuse).
+      been provisioned/bound). The *provisioning* leg is agent-initiable when
+      the API maps onto a vendor-registry entry (``connect_vendor``): the
+      agent runs ``jentic connect <vendor>`` (or calls the
+      ``request_connection`` MCP tool) and relays the resulting approval_url
+      to its operator; approval and the binding grant stay human. Off the
+      registry the whole ask stays with the operator. Deliberately
+      text-only otherwise — the broker never enumerates other credentials
+      here (that would leak instance inventory to an unbound agent, and this
+      stateless edge has no scoped view of what a future approver could
+      reuse).
+
+    ``connect_vendor`` is the vendor-registry key the caller resolved for this
+    API (``shared.access_guidance.connect_vendor_key``), or ``None`` when the
+    API is not in the registry; when set, the directive carries a runnable
+    ``parameters.suggested_command`` (``jentic connect <vendor>``).
 
     Both variants name the exact next step so an autonomous agent can hand it to
     its operator verbatim instead of reading docs.
@@ -304,14 +314,22 @@ def no_toolkit_binding_directive(
         "api": {"vendor": vendor, "name": name, "version": version},
         "toolkit_serves_api": toolkit_serves_api,
     }
+    if connect_vendor:
+        parameters["suggested_command"] = f"jentic connect {connect_vendor}"
 
     if toolkit_serves_api:
-        parameters["suggested_command"] = f"jentic access request --api {api} --wait"
         instruction = (
-            f"You are not bound for '{api}'. File an access request yourself with "
-            f"`jentic access request --api {api} --wait`, then ask your operator to approve "
-            f"it — only a human can grant the binding. Once approved, retry this call."
+            f"You are not bound for '{api}'. Ask your operator to bind this agent to the "
+            f"credential serving '{api}' (in the dashboard, or via "
+            "POST /agents/{agent_id}/credentials) — only a human can grant the binding. "
+            "Once bound, retry this call."
         )
+        if connect_vendor:
+            instruction += (
+                f" Alternatively, start connecting a fresh credential yourself with "
+                f"`jentic connect {connect_vendor}` (or the request_connection tool) and "
+                "relay its approval_url to your operator — approval is still theirs."
+            )
         return AgentDirective(
             strategy="prompt_human",
             parameters=parameters,
@@ -319,21 +337,25 @@ def no_toolkit_binding_directive(
         )
 
     # Nothing serves this API yet: a credential must be provisioned and bound
-    # first, then the agent is bound to it. A bare bind request (`--api`) now
-    # can never be approved — so steer the agent to file the whole path as one
-    # provisioning plan (`--provision`), which a human fulfils and approves in
-    # the dashboard (they enter the secret and grant the plan).
-    parameters["suggested_command"] = (
-        f'jentic access request --provision {api} --reason "<why you need this>" --wait'
-    )
-    instruction = (
-        f"Nothing serves '{api}' yet, so a bare binding request (`--api`) cannot be approved. "
-        f'File a provisioning plan with `jentic access request --provision {api} --reason "<why>" '
-        "--wait` — propose the auth type (`--auth`) and permission rules (`--rules-json`) you read "
-        "from the API spec, and pass a `--reason` the approver sees; then ask your operator to "
-        "fulfil it in the dashboard (they enter the credential secret and approve). "
-        "Only a human can grant this. Once approved, retry this call."
-    )
+    # first. For a registry vendor the agent can START that step itself (the
+    # connect session — approval stays human); otherwise both steps are the
+    # operator's, in the dashboard — tell the agent to relay one complete ask
+    # (API, auth type, proposed permission rules, and why).
+    if connect_vendor:
+        instruction = (
+            f"Nothing serves '{api}' yet. Start connecting a credential yourself: run "
+            f"`jentic connect {connect_vendor}` (or call the request_connection tool) and "
+            "relay the approval_url it returns to your operator — they approve the "
+            "connection and the binding in the browser; only a human can approve. Once "
+            "they confirm, retry this call."
+        )
+    else:
+        instruction = (
+            f"Nothing serves '{api}' yet. Ask your operator to connect or provision a "
+            f"credential for '{api}' in the dashboard and bind this agent to it — include the "
+            "auth type and permission rules you read from the API spec, and why you need it. "
+            "Only a human can grant this. Once bound, retry this call."
+        )
     return AgentDirective(
         strategy="prompt_human",
         parameters=parameters,
@@ -356,8 +378,8 @@ def credential_identity_mismatch_directive(*, mismatch: IdentityMismatch) -> Age
 
     The flag-off (toolkit-derivation fallback) variant: the agent is bound and
     a credential exists behind that binding, but the credential's stored API
-    identity does not cover the resolved operation (#747/#748). Filing an
-    access request here auto-denies, so the directive points at
+    identity does not cover the resolved operation (#747/#748). This is not
+    agent-recoverable, so the directive points at
     re-provisioning/fixing the **credential** and names the concrete
     expected-vs-found identity so the operator has an actionable diagnostic. The
     strategy is the fixed ``prompt_human`` (only a human can fix the credential).
@@ -377,15 +399,15 @@ def credential_identity_mismatch_directive(*, mismatch: IdentityMismatch) -> Age
             f"A binding exists for this API, but the bound credential's stored identity "
             f"'{found}' only matches '{expected}' after normalization — it was stored in a "
             f"non-canonical form. Ask your operator to re-provision (or recreate) the "
-            f"credential for '{expected}' so its identity is canonical, then retry. Do not "
-            f"file an access request — the binding already exists."
+            f"credential for '{expected}' so its identity is canonical, then retry. This is "
+            f"not agent-recoverable — the binding already exists."
         )
     else:
         instruction = (
             f"A binding exists for this API, but its credential's identity '{found}' does "
             f"not match this API '{expected}'. Ask your operator to fix or re-provision the "
-            f"credential so it targets '{expected}', then retry. Do not file an access "
-            f"request — the binding already exists."
+            f"credential so it targets '{expected}', then retry. This is not "
+            f"agent-recoverable — the binding already exists."
         )
     return AgentDirective(
         strategy="prompt_human",
@@ -471,7 +493,12 @@ def action_denied_directive() -> AgentDirective:
 
 
 def no_credential_binding_directive(
-    *, vendor: str, name: str, version: str, api_served: bool
+    *,
+    vendor: str,
+    name: str,
+    version: str,
+    api_served: bool,
+    connect_vendor: str | None = None,
 ) -> AgentDirective:
     """Directive for a ``no_credential_binding`` 403 — recover the missing binding.
 
@@ -480,14 +507,20 @@ def no_credential_binding_directive(
     serves the API *at all*:
 
     - ``api_served=True`` — a credential exists, the caller just isn't bound to
-      it. Filing a ``credential:bind`` access request by API reference
-      (``jentic access request --api``) is the correct, approvable next step;
-      an operator can also grant the binding directly
-      (``POST /agents/{id}/credentials``).
-    - ``api_served=False`` — no credential is provisioned for this API yet, so a
-      bare bind request auto-denies: file a provisioning plan
-      (``jentic access request --provision``) that a human fulfils and approves
-      in the dashboard.
+      it. The operator grants the binding in the dashboard (or via
+      ``POST /agents/{id}/credentials``) — binding stays human.
+    - ``api_served=False`` — no credential is provisioned for this API yet.
+      The *provisioning* leg is agent-initiable when the API maps onto a
+      vendor-registry entry (``connect_vendor``): the agent runs ``jentic
+      connect <vendor>`` (or calls the ``request_connection`` MCP tool) —
+      an agent-initiated connect session binds the agent at confirm time —
+      and relays the approval_url to its operator; approval stays human.
+      Off the registry the whole ask stays with the operator.
+
+    ``connect_vendor`` is the vendor-registry key resolved for this API
+    (``shared.access_guidance.connect_vendor_key``), or ``None`` when the API
+    is not in the registry; when set, the directive carries a runnable
+    ``parameters.suggested_command`` (``jentic connect <vendor>``).
 
     Deliberately never enumerates other owners' credentials (that would leak
     instance inventory to an unbound agent).
@@ -497,26 +530,35 @@ def no_credential_binding_directive(
         "api": {"vendor": vendor, "name": name, "version": version},
         "api_served": api_served,
     }
+    if connect_vendor:
+        parameters["suggested_command"] = f"jentic connect {connect_vendor}"
     if api_served:
-        parameters["suggested_command"] = f"jentic access request --api {api} --wait"
         instruction = (
-            f"You have no credential binding for '{api}'. File an access request yourself "
-            f"with `jentic access request --api {api} --wait`, then ask your operator to "
-            "approve it — only a human can grant the binding (they can also bind directly "
-            "via POST /agents/{agent_id}/credentials). Once bound, retry this call."
+            f"You have no credential binding for '{api}', but a credential already serves "
+            f"it. Ask your operator to bind this agent to that credential (in the dashboard, "
+            "or via POST /agents/{agent_id}/credentials) — only a human can grant the "
+            "binding. Once bound, retry this call."
+        )
+        if connect_vendor:
+            instruction += (
+                f" Alternatively, start connecting a fresh credential yourself with "
+                f"`jentic connect {connect_vendor}` (or the request_connection tool) and "
+                "relay its approval_url to your operator — approval is still theirs."
+            )
+    elif connect_vendor:
+        instruction = (
+            f"No credential is provisioned for '{api}' yet. Start connecting one yourself: "
+            f"run `jentic connect {connect_vendor}` (or call the request_connection tool) "
+            "and relay the approval_url it returns to your operator — they approve the "
+            "connection in the browser; only a human can approve. Once they confirm, retry "
+            "this call."
         )
     else:
-        parameters["suggested_command"] = (
-            f'jentic access request --provision {api} --reason "<why you need this>" --wait'
-        )
         instruction = (
-            f"No credential is provisioned for '{api}' yet, so a bare binding request "
-            f"(`--api`) cannot be approved. File a provisioning plan with `jentic access "
-            f'request --provision {api} --reason "<why>" --wait` — propose the auth type '
-            "(`--auth`) and permission rules (`--rules-json`) you read from the API spec; "
-            "then ask your operator to fulfil it in the dashboard (they enter the "
-            "credential secret and approve). Only a human can do this. Once bound, retry "
-            "this call."
+            f"No credential is provisioned for '{api}' yet. Ask your operator to connect or "
+            f"provision a credential for '{api}' in the dashboard and bind this agent to it "
+            "— include the auth type and permission rules you read from the API spec, and "
+            "why you need it. Only a human can do this. Once bound, retry this call."
         )
     return AgentDirective(
         strategy="prompt_human",
@@ -542,15 +584,15 @@ def direct_credential_identity_mismatch_directive(*, mismatch: IdentityMismatch)
             f"You are bound to a credential whose stored identity '{found}' only matches "
             f"'{expected}' after normalization — it was stored in a non-canonical form. Ask "
             f"your operator to re-provision (or recreate) the credential for '{expected}' so "
-            "its identity is canonical, then retry. Do not request a new binding — one "
-            "already exists."
+            "its identity is canonical, then retry. This is not agent-recoverable — the "
+            "binding already exists."
         )
     else:
         instruction = (
             f"You are bound to a credential whose identity '{found}' does not match this API "
             f"'{expected}'. Ask your operator to fix or re-provision the credential so it "
-            f"targets '{expected}', then retry. Do not request a new binding — one already "
-            "exists."
+            f"targets '{expected}', then retry. This is not agent-recoverable — the binding "
+            "already exists."
         )
     return AgentDirective(
         strategy="prompt_human",

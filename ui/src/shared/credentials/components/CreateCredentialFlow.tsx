@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { ArrowLeft, Download, Info, Loader2, Upload, X } from 'lucide-react';
 import {
@@ -20,6 +20,7 @@ import {
 	useImportCatalogEntry,
 	useProviders,
 	type SelectedApi,
+	type VendorSummary,
 } from '@/shared/credentials/api';
 import {
 	CredentialTypeFields,
@@ -43,6 +44,10 @@ import { ImportSpecDialog } from '@/shared/credentials/components/ImportSpecDial
 import { AuthTypeCards } from '@/shared/credentials/components/AuthTypeCards';
 import { ServerVariablesSection } from '@/shared/credentials/components/ServerVariablesSection';
 import {
+	VendorConnectFlow,
+	type PostConnectInfo,
+} from '@/shared/credentials/components/VendorConnectFlow';
+import {
 	apiKeyFieldsFromScheme,
 	oauth2FlowsFromSchemes,
 	schemeTypeToCredentialType,
@@ -63,9 +68,11 @@ export interface CreatedCredentialInfo {
 	type: CredentialType;
 	provider: string;
 	/**
-	 * Whether the credential carries an authorize URL — i.e. it actually needs a
-	 * browser-based connect flow. `client_credentials` (and other non-redirect
-	 * grants) have no authorize URL and must NOT auto-connect.
+	 * Whether the credential needs a browser-based connect flow before it can
+	 * be used. True for authorization_code grants (browser redirect) and for
+	 * device_code grants (RFC 8628 human step). `client_credentials` (and
+	 * other non-interactive grants) have no user action and must NOT
+	 * auto-connect.
 	 */
 	needsConnect: boolean;
 }
@@ -98,9 +105,28 @@ interface CreateCredentialFlowProps {
 	 * downstream behaves as for a picked API.
 	 */
 	pinnedApi?: SelectedApi;
+	/**
+	 * When provided, the flow opens directly into the vendor connect in
+	 * "approve" mode — landing here from the `approval_url` an agent handed its
+	 * owner. It fetches the session, skips the picker + agent selection, and
+	 * shows the agent-requested scopes for the human to review + confirm.
+	 */
+	approvalSession?: { sessionId: string; pollToken: string };
+	/**
+	 * When set, the vendor connect opens with this agent locked in as the
+	 * binding target (``VendorConnectFlow``'s ``preselectedAgentId`` greys the
+	 * picker out). Used when the flow is opened from one agent's surface.
+	 */
+	preselectedAgentId?: string;
+	/**
+	 * Render-prop threaded through to ``VendorConnectFlow`` — callers supply the
+	 * "bind to more agents" CTA (``PostConnectBindMore``); the flow stays
+	 * agnostic of what the extra content is.
+	 */
+	renderPostConnect?: (info: PostConnectInfo) => ReactNode;
 }
 
-type Step = 'pick' | 'form';
+type Step = 'pick' | 'form' | 'vendor';
 
 /**
  * The guided flow for creating a credential.
@@ -132,9 +158,13 @@ export function CreateCredentialFlow({
 	initialType,
 	pinnedApi,
 	surface = 'sheet',
+	approvalSession,
+	preselectedAgentId,
+	renderPostConnect,
 }: CreateCredentialFlowProps) {
 	const [step, setStep] = useState<Step>(pinnedApi ? 'form' : 'pick');
 	const [selectedApi, setSelectedApi] = useState<SelectedApi | null>(pinnedApi ?? null);
+	const [selectedVendor, setSelectedVendor] = useState<VendorSummary | null>(null);
 	const [manualMode, setManualMode] = useState(false);
 	/** Spec upload from the pick step — "the API isn't listed" is otherwise a dead end. */
 	const [uploadOpen, setUploadOpen] = useState(false);
@@ -285,6 +315,7 @@ export function CreateCredentialFlow({
 		// to that API's empty form rather than to the picker.
 		setStep(pinnedApi ? 'form' : 'pick');
 		setSelectedApi(pinnedApi ?? null);
+		setSelectedVendor(null);
 		setManualMode(false);
 		setUploadOpen(false);
 		setActiveScheme(null);
@@ -311,13 +342,23 @@ export function CreateCredentialFlow({
 
 	const handlePickApi = (api: SelectedApi): void => {
 		setSelectedApi(api);
+		setSelectedVendor(null);
 		setManualMode(false);
 		setState((s) => seedFormFromSelectedApi(s, api, nameDirty.current));
 		setStep('form');
 	};
 
+	/** A verified vendor is the one-click path: hand off to the vendor connect. */
+	const handlePickVendor = (vendor: VendorSummary): void => {
+		setSelectedVendor(vendor);
+		setSelectedApi(null);
+		setManualMode(false);
+		setStep('vendor');
+	};
+
 	const handleManualEntry = (): void => {
 		setSelectedApi(null);
+		setSelectedVendor(null);
 		setManualMode(true);
 		setState(EMPTY_FORM);
 		setStep('form');
@@ -467,12 +508,13 @@ export function CreateCredentialFlow({
 					name: data.credential.name,
 					type,
 					provider: state.provider,
-					// Only authorization-code style grants (which carry an authorize
-					// URL) need a browser connect flow. client_credentials and other
-					// non-redirect grants must not auto-connect.
+					// User-interactive grants (authorization_code, device_code) need a
+					// connect flow before they're usable. client_credentials and other
+					// non-interactive grants must not auto-connect.
 					needsConnect:
 						state.authorizeUrl.trim().length > 0 ||
-						state.grantType.trim() === 'authorization_code',
+						state.grantType.trim() === 'authorization_code' ||
+						state.grantType.trim() === 'device_code',
 				});
 				// Closing the dialog triggers the open-watching effect which
 				// resets state — no need to call reset() here directly.
@@ -517,14 +559,25 @@ export function CreateCredentialFlow({
 	const specPending = !manualMode && !!selectedApi && schemesResult.loading;
 
 	const titleSuffix = selectedApi?.label ? ` — ${selectedApi.label}` : '';
-	const title = step === 'pick' ? 'Choose an API' : `Add credential${titleSuffix}`;
-	// A pinned API removes the pick step, so the step counter would be lying.
-	const subtitle = pinnedApi ? (
+	const title = approvalSession
+		? 'Approve integration'
+		: step === 'pick'
+			? 'Add credential'
+			: step === 'vendor' && selectedVendor
+				? `Connect ${selectedVendor.display_name}`
+				: `Add credential${titleSuffix}`;
+	// A pinned API removes the pick step, so the step counter would be lying. The
+	// vendor path is its own two-step flow, so it drops the counter too.
+	const subtitle = approvalSession ? (
+		<span>An agent is asking to connect on your behalf.</span>
+	) : step === 'vendor' ? (
+		<span>Pick an agent and the access it needs.</span>
+	) : pinnedApi ? (
 		<span>Fill in the credential details for {pinnedApi.label}</span>
 	) : step === 'pick' ? (
 		<span>
 			<span className="font-mono text-[10px] tracking-widest uppercase">Step 1 of 2</span> ·
-			Pick the API this credential will authenticate against
+			Choose a one-click sign-in, or pick an API to authenticate against
 		</span>
 	) : (
 		<span>
@@ -547,8 +600,10 @@ export function CreateCredentialFlow({
 		if (apis[0]) handlePickApi(apis[0]);
 	};
 
+	// Approve mode and the vendor step render VendorConnectFlow's own inline
+	// action bar, so the flow's footer stands down for both.
 	const footer =
-		step === 'pick' ? (
+		approvalSession || step === 'vendor' ? undefined : step === 'pick' ? (
 			// Always reachable, not only from no-results: an operator who knows the
 			// API isn't catalogued shouldn't have to search first.
 			<Button
@@ -595,11 +650,21 @@ export function CreateCredentialFlow({
 			</>
 		) : undefined;
 
-	const body = (
+	const body = approvalSession ? (
+		<VendorConnectFlow
+			mode="approve"
+			sessionId={approvalSession.sessionId}
+			pollToken={approvalSession.pollToken}
+			renderPostConnect={renderPostConnect}
+			onBack={onClose}
+			onDone={onClose}
+		/>
+	) : (
 		<>
 			{step === 'pick' && (
 				<ApiPicker
 					onSelect={handlePickApi}
+					onVendorSelect={handlePickVendor}
 					onManualEntry={handleManualEntry}
 					emptyAction={
 						<Button variant="secondary" size="sm" onClick={openUpload} type="button">
@@ -607,6 +672,17 @@ export function CreateCredentialFlow({
 							Upload an API
 						</Button>
 					}
+				/>
+			)}
+
+			{step === 'vendor' && selectedVendor && (
+				<VendorConnectFlow
+					mode="self"
+					vendor={selectedVendor}
+					preselectedAgentId={preselectedAgentId}
+					renderPostConnect={renderPostConnect}
+					onBack={goBackToPick}
+					onDone={onClose}
 				/>
 			)}
 
@@ -873,7 +949,7 @@ export function CreateCredentialFlow({
 				onClose={onClose}
 				title={title}
 				subtitle={subtitle}
-				size={step === 'pick' ? 'lg' : 'xl'}
+				size={approvalSession || step !== 'form' ? 'lg' : 'xl'}
 				footer={footer}
 				dismissOnBackdrop={false}
 			>

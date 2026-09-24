@@ -12,25 +12,33 @@ AGENTS_WRITE = "agents:write"
 ORG_ADMIN = "org:admin"
 
 OWNER_CREDENTIALS_READ = "owner:credentials:read"
-OWNER_ACCESS_REQUESTS_READ = "owner:access-requests:read"
 OWNER_AGENTS_READ = "owner:agents:read"
 OWNER_RESOURCES_READ = "owner:resources:read"
-OWNER_SERVICE_ACCOUNTS_READ = "owner:service-accounts:read"
 
-# Scopes retired from the catalogue (theme-5 Phase 5b — the toolkit management
-# surface is gone; authorization runs on the agent↔credential axis). Stored
-# grants — user permission rows, agent ``actor_scope_grants``, filed
-# access-request items — still carry these strings, so every validation path
-# that rejects unknown scopes must accept-and-ignore members of this set: a
-# re-submit of a stored grant must never 422 just because it predates the
+# Scopes retired from the catalogue. Stored grants — user permission rows and
+# agent ``actor_scope_grants`` — still carry these strings, so every validation
+# path that rejects unknown scopes must accept-and-ignore members of this set:
+# a re-submit of a stored grant must never 422 just because it predates the
 # retirement. Holding a retired scope grants nothing (no route requires it and
-# the implication map no longer expands it). The set — and the stored strings —
-# are swept in Phase 6b.
+# the implication map no longer expands it).
+#
+# - The toolkit scopes retired in theme-5 Phase 5b (the toolkit management
+#   surface is gone; authorization runs on the agent↔credential axis); they —
+#   and the stored strings — are swept in Phase 6b.
+# - ``owner:access-requests:read`` retired in theme 7 (the access-request flow
+#   is gone; nothing is left to delegate reads over).
+# - The service-account scopes retired in theme-8 Phase 2 (the service-account
+#   surface is gone; every SA was migrated to a successor agent in Phase 1).
+#   Stored strings are swept with the Phase-4 table drops.
 RETIRED_SCOPES: frozenset[str] = frozenset(
     {
         "toolkits:read",
         "toolkits:write",
         "owner:toolkits:read",
+        "owner:access-requests:read",
+        "service-accounts:read",
+        "service-accounts:write",
+        "owner:service-accounts:read",
     }
 )
 
@@ -45,31 +53,10 @@ DEFAULT_AGENT_SCOPES: tuple[str, ...] = (
     "owner:resources:read",
     "owner:agents:read",
     "owner:credentials:read",
-    "owner:access-requests:read",
+    # Lets an agent initiate the agent-driven SSO flow. Narrower than
+    # `credentials:write` — cannot read tokens or manage other credentials.
+    "credentials:connect",
 )
-
-# Scopes an agent may obtain through a self-service ``scope:grant`` access
-# request: the safe agent baseline (its default reads/execute) plus a small set
-# of elevations a human owner can approve without handing over administrative
-# power.
-#
-# ``apis:write`` is included so an agent can request the broader ability to
-# import, update, and delete arbitrary API definitions (URL/inline import via
-# ``POST /apis``) and have a human approve it. Importing an already-cataloged
-# API is a default agent capability via ``catalog:import`` (in
-# ``DEFAULT_AGENT_SCOPES``), so agents don't need to file a request just to
-# run ``jentic catalog import``. ``apis:write`` is deliberately NOT in
-# ``DEFAULT_AGENT_SCOPES``: the agent must file the request and an owner must
-# approve it.
-#
-# Still excludes the truly privileged scopes (``org:admin``, ``agents:write``)
-# so an owner with ``agents:write`` cannot self-escalate an agent to admin via
-# the access-request path (confused-deputy). ``overlays:confirm`` is likewise
-# excluded: confirming an overlay rewrites an API's served spec (an operator
-# action), so an agent must never obtain it through self-service — the whole
-# point of the purpose-scoped downgrade from ``org:admin`` is that a human
-# operator holds it, not an agent.
-GRANTABLE_SCOPES: frozenset[str] = frozenset(DEFAULT_AGENT_SCOPES) | {"apis:write"}
 
 OIDC_PASSTHROUGH_SCOPES: frozenset[str] = frozenset({"openid", "email", "profile"})
 

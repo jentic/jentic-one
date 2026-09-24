@@ -9,7 +9,7 @@ import { captureConsoleErrors } from './helpers';
  * They live in their own Playwright project (`first-run`, see
  * playwright.docker.config.ts) that runs right after auth and BEFORE the main
  * `e2e` project: the suite shares one real DB, so the specs that register
- * agents (access-requests, agents, broker-authz, …) would otherwise flip the
+ * agents (agents, broker-authz, …) would otherwise flip the
  * workspace out of first-run before alphabetical file order ever reached
  * dashboard.spec.ts.
  */

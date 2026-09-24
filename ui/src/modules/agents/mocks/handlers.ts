@@ -1,7 +1,7 @@
 /**
  * Agents MSW handlers + in-memory store.
  *
- * Mirrors the agent / service-account / dynamic-registration surface the module
+ * Mirrors the agent / dynamic-registration surface the module
  * consumes, with a mutable store so lifecycle transitions are observable across
  * calls (approve a pending agent → a later GET shows it active). Shapes match
  * the generated response models; the state machine + response codes mirror what
@@ -22,6 +22,7 @@
  * Registered additively in src/mocks/handlers.ts.
  */
 import { http, HttpResponse } from 'msw';
+import { SERVICE_ACCOUNT_SUCCESSOR_REGISTRAR } from '@/shared/lib';
 
 type Status = 'pending' | 'active' | 'rejected' | 'disabled' | 'archived';
 
@@ -40,20 +41,17 @@ interface AgentRow {
 	approved_at: string | null;
 	has_api_key: boolean;
 	_apiKeyRevoked?: boolean;
-}
-
-interface ServiceAccountRow {
-	id: string;
-	name: string;
-	description: string | null;
-	owner_id: string;
-	registered_by: string;
-	approved_by: string | null;
-	status: Status;
-	denial_reason: string | null;
-	denied_by: string | null;
-	created_at: string;
-	approved_at: string | null;
+	/**
+	 * The current key is the digest the theme-8 service-account migration
+	 * copied onto this successor — no rotate/revoke audit row exists for it.
+	 */
+	_migratedKey?: boolean;
+	/**
+	 * Mirrors `agent_credentials.rotated_at`: set when a generate or revoke
+	 * touches an EXISTING credential row. A first-ever generate inserts the
+	 * row, so it stays null.
+	 */
+	_keyRotatedAt?: string;
 }
 
 const ADMIN = 'usr_000000000000000000000admin';
@@ -75,26 +73,9 @@ function seedAgent(over: Partial<AgentRow> & Pick<AgentRow, 'id' | 'name' | 'sta
 	};
 }
 
-function seedSa(
-	over: Partial<ServiceAccountRow> & Pick<ServiceAccountRow, 'id' | 'name' | 'status'>,
-): ServiceAccountRow {
-	return {
-		description: null,
-		owner_id: ADMIN,
-		registered_by: ADMIN,
-		approved_by: null,
-		denial_reason: null,
-		denied_by: null,
-		created_at: now(-60),
-		approved_at: null,
-		...over,
-	};
-}
-
 /** Mutable per-session store. Reset between tests via `resetAgentsStore()`. */
 let agents: AgentRow[] = [];
-let serviceAccounts: ServiceAccountRow[] = [];
-/** Per-actor granted scopes, keyed by actor id (agents + service accounts). */
+/** Per-agent granted scopes, keyed by agent id. */
 let actorScopes: Record<string, string[]> = {};
 
 /** One consent→agent OAuth grant (`GET /agents/{id}/oauth-grants`, §4.8). */
@@ -221,8 +202,6 @@ const PERMISSION_CATALOGUE: ReadonlyArray<{
 			'executions:read',
 			'jobs:read',
 			'jobs:write',
-			'service-accounts:read',
-			'service-accounts:write',
 			'users:read',
 			'users:write',
 		],
@@ -319,18 +298,6 @@ const PERMISSION_CATALOGUE: ReadonlyArray<{
 		grantable_by_caller: true,
 	},
 	{
-		name: 'service-accounts:write',
-		description: 'Create, update, and delete service accounts',
-		implies: ['service-accounts:read'],
-		grantable_by_caller: true,
-	},
-	{
-		name: 'service-accounts:read',
-		description: 'Read service account configuration and status',
-		implies: [],
-		grantable_by_caller: true,
-	},
-	{
 		name: 'owner:resources:read',
 		description: "Read resources owned by the agent's creator (umbrella)",
 		implies: ['owner:agents:read', 'owner:credentials:read'],
@@ -345,18 +312,6 @@ const PERMISSION_CATALOGUE: ReadonlyArray<{
 	{
 		name: 'owner:agents:read',
 		description: "Read agents owned by the agent's creator",
-		implies: [],
-		grantable_by_caller: true,
-	},
-	{
-		name: 'owner:access-requests:read',
-		description: "Read access requests filed by or for the agent's creator",
-		implies: [],
-		grantable_by_caller: true,
-	},
-	{
-		name: 'owner:service-accounts:read',
-		description: "Read service accounts owned by the agent's creator",
 		implies: [],
 		grantable_by_caller: true,
 	},
@@ -413,21 +368,11 @@ export function resetAgentsStore(): void {
 			denied_by: ADMIN,
 		}),
 	];
-	serviceAccounts = [
-		seedSa({ id: 'sva_pending_1', name: 'nightly-sync', status: 'pending' }),
-		seedSa({
-			id: 'sva_active_1',
-			name: 'metrics-exporter',
-			status: 'active',
-			approved_by: ADMIN,
-			approved_at: now(-30),
-		}),
-	];
 	actorScopes = {
 		// Seed realistic grants so the Scopes card renders chips out of the box.
 		// `agnt_active_1` carries an approximation of the backend's
-		// DEFAULT_AGENT_SCOPES (including `owner:access-requests:read`, now a
-		// catalogue-backed scope that renders as a normal editable chip).
+		// DEFAULT_AGENT_SCOPES (including `owner:resources:read`, a
+		// catalogue-backed owner scope that renders as a normal editable chip).
 		// `legacy:orphaned:read` is a deliberately synthetic scope that is NOT in
 		// the catalogue, so it exercises the editor's "preserved scopes not editable
 		// here" path (a granted scope absent from /permissions survives a save
@@ -437,10 +382,8 @@ export function resetAgentsStore(): void {
 			'apis:read',
 			'executions:read',
 			'owner:resources:read',
-			'owner:access-requests:read',
 			'legacy:orphaned:read',
 		],
-		sva_active_1: ['credentials:read'],
 	};
 	// OAuth consent grants (§4.8): `agnt_active_1` has one live connected
 	// client plus revoked history; the consenting user_id deliberately differs
@@ -500,6 +443,27 @@ export function resetAgentsStore(): void {
 			serves: [{ api_vendor: 'github', api_name: null, api_version: null }],
 		}),
 	];
+}
+
+/**
+ * Add a theme-8 service-account successor: an active agent stamped with the
+ * migration's `registered_by`, still holding the migrated key digest.
+ * Opt-in (not in the default seed) so fleet counts elsewhere stay put.
+ */
+export function seedServiceAccountSuccessor(): AgentRow {
+	const row = seedAgent({
+		id: 'agnt_successor_1',
+		name: 'service-account:sva_active_1',
+		description:
+			"Successor of service account 'metrics-exporter' (sva_active_1) — theme-8 Phase 1",
+		status: 'active',
+		owner_id: ADMIN,
+		registered_by: SERVICE_ACCOUNT_SUCCESSOR_REGISTRAR,
+		has_api_key: true,
+		_migratedKey: true,
+	});
+	agents.push(row);
+	return row;
 }
 
 /**
@@ -569,8 +533,7 @@ const SCOPE_PATTERN = /^[a-zA-Z0-9_:./-]{1,64}$/;
 
 /**
  * The default baseline `AgentService.create` grants when the payload carries
- * no scopes (mirror of `shared/scopes.py` DEFAULT_AGENT_SCOPES). Service
- * accounts get NO baseline — grants only when provided.
+ * no scopes (mirror of `shared/scopes.py` DEFAULT_AGENT_SCOPES).
  */
 const DEFAULT_AGENT_SCOPES_MOCK = [
 	'capabilities:execute',
@@ -583,14 +546,12 @@ const DEFAULT_AGENT_SCOPES_MOCK = [
 	'owner:resources:read',
 	'owner:agents:read',
 	'owner:credentials:read',
-	'owner:access-requests:read',
 ] as const;
 
 /**
  * Validate a replacement scope set the way the real backend actually does.
  *
- * IMPORTANT: `PUT /agents/{id}/scopes` and `PUT /service-accounts/{id}/scopes`
- * do NOT validate scopes against the catalogue and do NOT enforce
+ * IMPORTANT: `PUT /agents/{id}/scopes` does NOT validate scopes against the catalogue and do NOT enforce
  * `grantable_by_caller`. `AgentService.replace_scopes` simply dedupes and writes
  * any string that passes the `ScopeStr` regex. (Catalogue/grantability checks
  * live only on `PUT /users/{id}/permissions`, a different endpoint.) So the only
@@ -615,9 +576,9 @@ function validateScopes(
 	return { ok: true };
 }
 
-/** An actor id known to this store (either roster) — else fall through. */
-function findActor(id: string): AgentRow | ServiceAccountRow | undefined {
-	return agents.find((a) => a.id === id) ?? serviceAccounts.find((s) => s.id === id);
+/** An agent id known to this store — else fall through. */
+function findActor(id: string): AgentRow | undefined {
+	return agents.find((a) => a.id === id);
 }
 
 /**
@@ -660,22 +621,6 @@ const ACTOR_USAGE: Record<
 			{ total: 2, success: 2, failed: 0 },
 		],
 	},
-	sva_active_1: {
-		buckets: [
-			{ total: 28, success: 28, failed: 0 },
-			{ total: 28, success: 28, failed: 0 },
-			{ total: 27, success: 27, failed: 0 },
-			{ total: 29, success: 29, failed: 0 },
-			{ total: 28, success: 27, failed: 1 },
-			{ total: 28, success: 28, failed: 0 },
-			{ total: 27, success: 27, failed: 0 },
-			{ total: 28, success: 28, failed: 0 },
-			{ total: 29, success: 29, failed: 0 },
-			{ total: 28, success: 28, failed: 0 },
-			{ total: 28, success: 27, failed: 1 },
-			{ total: 29, success: 29, failed: 0 },
-		],
-	},
 };
 
 /** One execution feed row (shape mirrors the generated `ExecutionResponse`). */
@@ -695,7 +640,7 @@ function executionRow(opts: {
 	return {
 		_links: { self: `/executions/${opts.id}` },
 		actor_id: opts.actorId,
-		actor_type: opts.actorId.startsWith('sva_') ? 'service_account' : 'agent',
+		actor_type: 'agent',
 		api: null,
 		created_at: now(-opts.minutesAgo),
 		duration_ms: opts.durationMs,
@@ -784,30 +729,6 @@ const ACTOR_EXECUTIONS: Record<string, ReturnType<typeof executionRow>[]> = {
 			minutesAgo: 34,
 		}),
 	],
-	sva_active_1: [
-		executionRow({
-			id: 'exec_sva_1',
-			actorId: 'sva_active_1',
-			status: 'completed',
-			credentialId: 'petstore',
-			credentialName: 'petstore',
-			operationId: 'sync_inventory',
-			durationMs: 1240,
-			httpStatus: 200,
-			minutesAgo: 15,
-		}),
-		executionRow({
-			id: 'exec_sva_2',
-			actorId: 'sva_active_1',
-			status: 'completed',
-			credentialId: 'petstore',
-			credentialName: 'petstore',
-			operationId: 'sync_inventory',
-			durationMs: 1180,
-			httpStatus: 200,
-			minutesAgo: 75,
-		}),
-	],
 };
 
 /** One actor-targeted audit row (shape mirrors the generated `AuditResponse`). */
@@ -834,7 +755,7 @@ function auditRow(opts: {
 		request_id: null,
 		target_id: opts.targetId,
 		target_parent_id: null,
-		target_type: opts.targetId.startsWith('sva_') ? 'service_account' : 'agent',
+		target_type: 'agent',
 		trace_id: null,
 		user_agent: null,
 	};
@@ -864,20 +785,6 @@ const ACTOR_AUDIT: Record<string, ReturnType<typeof auditRow>[]> = {
 			targetId: 'agnt_active_1',
 			action: 'register',
 			minutesAgo: 60 * 24 * 6 + 30,
-		}),
-	],
-	sva_active_1: [
-		auditRow({
-			id: 'aud_sva_2',
-			targetId: 'sva_active_1',
-			action: 'approve',
-			minutesAgo: 60 * 24 * 12,
-		}),
-		auditRow({
-			id: 'aud_sva_1',
-			targetId: 'sva_active_1',
-			action: 'create',
-			minutesAgo: 60 * 24 * 12,
 		}),
 	],
 };
@@ -1027,11 +934,7 @@ export const agentsHandlers = [
 		const url = new URL(request.url);
 		const targetType = url.searchParams.get('target_type');
 		const targetId = url.searchParams.get('target_id');
-		if (
-			(targetType !== 'agent' && targetType !== 'service_account') ||
-			!targetId ||
-			!findActor(targetId)
-		) {
+		if (targetType !== 'agent' || !targetId || !findActor(targetId)) {
 			return undefined;
 		}
 		return HttpResponse.json({
@@ -1145,8 +1048,10 @@ export const agentsHandlers = [
 		const row = agents.find((a) => a.id === params.id);
 		if (!row) return new HttpResponse(null, { status: 404 });
 		if (row.status !== 'active') return new HttpResponse(null, { status: 409 });
+		if (row.has_api_key || row._apiKeyRevoked) row._keyRotatedAt = now();
 		row.has_api_key = true;
 		row._apiKeyRevoked = false;
+		row._migratedKey = false;
 		return HttpResponse.json({ key: `jak_mock_${genId('key')}` });
 	}),
 	// Revoke API key for an agent.
@@ -1157,6 +1062,8 @@ export const agentsHandlers = [
 		if (!row.has_api_key) return new HttpResponse(null, { status: 409 });
 		row.has_api_key = false;
 		row._apiKeyRevoked = true;
+		row._migratedKey = false;
+		row._keyRotatedAt = now();
 		return new HttpResponse(null, { status: 204 });
 	}),
 	// Get API key info for an agent.
@@ -1168,8 +1075,12 @@ export const agentsHandlers = [
 			id: `agc_${params.id}`,
 			status: row.has_api_key ? 'active' : 'revoked',
 			created_at: row.created_at,
-			rotated_at: row.has_api_key ? null : now(),
-			created_by: ADMIN,
+			rotated_at: row._keyRotatedAt ?? null,
+			// The migration inserted the successor's credential row itself.
+			created_by:
+				row.registered_by === SERVICE_ACCOUNT_SUCCESSOR_REGISTRAR
+					? row.registered_by
+					: ADMIN,
 		});
 	}),
 	// Get API key history for an agent.
@@ -1177,7 +1088,8 @@ export const agentsHandlers = [
 		const row = agents.find((a) => a.id === params.id);
 		if (!row) return new HttpResponse(null, { status: 404 });
 		const data = [];
-		if (row.has_api_key || row._apiKeyRevoked) {
+		// A migrated digest was copied in raw SQL — no rotate audit row.
+		if ((row.has_api_key || row._apiKeyRevoked) && !row._migratedKey) {
 			data.push({
 				id: `aud_${params.id}_1`,
 				action: 'rotate',
@@ -1240,113 +1152,6 @@ export const agentsHandlers = [
 		);
 	}),
 
-	// ---- Service accounts ----
-	http.get('/service-accounts', ({ request }) => paginate(serviceAccounts, new URL(request.url))),
-	http.post('/service-accounts', async ({ request }) => {
-		const body = (await request.json().catch(() => ({}))) as {
-			name?: string;
-			description?: string | null;
-			scopes?: string[] | null;
-		};
-		// Validate BEFORE mutating the store — the real backend rejects via
-		// Pydantic before anything is created (no phantom row on a 422).
-		if (Array.isArray(body.scopes) && body.scopes.length > 0) {
-			const check = validateScopes(body.scopes);
-			if (!check.ok) {
-				return HttpResponse.json({ detail: check.detail }, { status: check.status });
-			}
-		}
-		const row = seedSa({
-			id: genId('sva'),
-			name: body.name ?? 'unnamed',
-			description: body.description ?? null,
-			// ServiceAccountService.create approves inside the create
-			// transaction — a fresh SA is active, never pending.
-			status: 'active',
-			created_at: now(),
-			approved_by: ADMIN,
-			approved_at: now(),
-		});
-		serviceAccounts.unshift(row);
-		// Unlike agents, SAs get no default baseline — grants only when provided
-		// (ServiceAccountService.create).
-		if (Array.isArray(body.scopes) && body.scopes.length > 0) {
-			actorScopes[row.id] = [...new Set(body.scopes)];
-		}
-		return HttpResponse.json(row, { status: 201 });
-	}),
-	http.get('/service-accounts/:id', ({ params }) => {
-		const row = serviceAccounts.find((a) => a.id === params.id);
-		return row ? HttpResponse.json(row) : new HttpResponse(null, { status: 404 });
-	}),
-	http.post('/service-accounts/:id\\:approve', ({ params }) => {
-		const row = serviceAccounts.find((a) => a.id === params.id);
-		const res = transition(row, APPROVE);
-		if (!res.ok) return new HttpResponse(null, { status: res.status });
-		res.row.approved_by = ADMIN;
-		res.row.approved_at = now();
-		return HttpResponse.json(res.row);
-	}),
-	http.post('/service-accounts/:id\\:deny', async ({ params, request }) => {
-		const body = (await request.json().catch(() => ({}))) as { reason?: string };
-		if (!body.reason || !body.reason.trim()) {
-			return HttpResponse.json(
-				{ detail: [{ loc: ['body', 'reason'], msg: 'Field required', type: 'missing' }] },
-				{ status: 422 },
-			);
-		}
-		const row = serviceAccounts.find((a) => a.id === params.id);
-		const res = transition(row, DENY);
-		if (!res.ok) return new HttpResponse(null, { status: res.status });
-		res.row.denial_reason = body.reason;
-		res.row.denied_by = ADMIN;
-		return HttpResponse.json(res.row);
-	}),
-	http.post('/service-accounts/:id\\:disable', ({ params }) => {
-		const res = transition(
-			serviceAccounts.find((a) => a.id === params.id),
-			DISABLE,
-		);
-		return new HttpResponse(null, { status: res.ok ? 204 : res.status });
-	}),
-	http.post('/service-accounts/:id\\:enable', ({ params }) => {
-		const res = transition(
-			serviceAccounts.find((a) => a.id === params.id),
-			ENABLE,
-		);
-		return new HttpResponse(null, { status: res.ok ? 204 : res.status });
-	}),
-	http.delete('/service-accounts/:id', ({ params }) => {
-		const row = serviceAccounts.find((a) => a.id === params.id);
-		if (!row) return new HttpResponse(null, { status: 404 });
-		row.status = 'archived';
-		return new HttpResponse(null, { status: 204 });
-	}),
-	// Generate API key for a service account.
-	http.post('/service-accounts/:id\\:generate-api-key', ({ params }) => {
-		const row = serviceAccounts.find((a) => a.id === params.id);
-		if (!row) return new HttpResponse(null, { status: 404 });
-		if (row.status !== 'active') return new HttpResponse(null, { status: 409 });
-		return HttpResponse.json({ key: `jak_mock_${genId('key')}` });
-	}),
-	// ---- Service-account scopes (#615) ----
-	http.get('/service-accounts/:id/scopes', ({ params }) => {
-		const row = serviceAccounts.find((a) => a.id === params.id);
-		if (!row) return new HttpResponse(null, { status: 404 });
-		return HttpResponse.json({ scopes: actorScopes[row.id] ?? [] });
-	}),
-	http.put('/service-accounts/:id/scopes', async ({ params, request }) => {
-		const row = serviceAccounts.find((a) => a.id === params.id);
-		if (!row) return new HttpResponse(null, { status: 404 });
-		const body = (await request.json().catch(() => ({}))) as { scopes?: string[] };
-		const requested = Array.isArray(body.scopes) ? body.scopes : [];
-		const check = validateScopes(requested);
-		if (!check.ok) {
-			return HttpResponse.json({ detail: check.detail }, { status: check.status });
-		}
-		actorScopes[row.id] = [...new Set(requested)];
-		return HttpResponse.json({ scopes: actorScopes[row.id] });
-	}),
 	// ---- OAuth consent grants (§4.8): the Connected-clients panel ----
 	http.get('/agents/:id/oauth-grants', ({ params, request }) => {
 		const agent = agents.find((a) => a.id === params.id);

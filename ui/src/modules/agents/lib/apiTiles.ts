@@ -20,6 +20,8 @@ export interface ApiTileModel {
 	host: string;
 	iconUrl: string | null;
 	vendor: string;
+	/** The API's name within the vendor; null for a vendor-wide (wildcard) binding. */
+	apiName: string | null;
 	/** Null when the API is not imported into the workspace. */
 	version: string | null;
 	authLabel: string | null;
@@ -122,6 +124,7 @@ export function composeApiTiles(
 				host: served.vendor,
 				iconUrl: null,
 				vendor: served.vendor,
+				apiName: served.name ?? null,
 				version: null,
 				operationCount: null,
 			});
@@ -141,6 +144,7 @@ export function composeApiTiles(
 			host: api.api.host ?? api.api.vendor,
 			iconUrl: api.icon_url ?? null,
 			vendor: api.api.vendor,
+			apiName: api.api.name,
 			version: api.api.version,
 			operationCount: api.operation_count,
 		});

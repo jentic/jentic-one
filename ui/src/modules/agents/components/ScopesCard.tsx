@@ -1,6 +1,6 @@
 /**
- * ScopesCard — view + edit the platform permission scopes granted to an actor
- * (agent or service account). Part of #615.
+ * ScopesCard — view + edit the platform permission scopes granted to an
+ * agent. Part of #615.
  *
  * Reads the actor's current scopes (`GET .../scopes`) and renders them as
  * chips. "Edit scopes" opens the shared {@link ScopePicker} fed by the platform
@@ -31,14 +31,11 @@ import {
 	usePermissionCatalogue,
 	useAgentScopes,
 	useReplaceAgentScopes,
-	useServiceAccountScopes,
-	useReplaceServiceAccountScopes,
 	type PermissionCatalogEntry,
 } from '@/modules/agents/api';
 import { ConfirmDialog } from '@/modules/agents/components/confirm/ConfirmDialog';
 
 export interface ScopesCardProps {
-	actorKind: 'agent' | 'service-account';
 	actorId: string;
 	/** Name used in accessible labels / dialog title. */
 	actorName: string;
@@ -73,17 +70,9 @@ export function catalogueToScopes(catalogue: PermissionCatalogEntry[]): Enhanced
 	}));
 }
 
-export function ScopesCard({ actorKind, actorId, actorName, canEdit = true }: ScopesCardProps) {
-	const isAgent = actorKind === 'agent';
-
-	// Only the relevant pair of hooks is enabled (the other is passed `null`).
-	const agentScopes = useAgentScopes(isAgent ? actorId : null);
-	const saScopes = useServiceAccountScopes(isAgent ? null : actorId);
-	const scopesQuery = isAgent ? agentScopes : saScopes;
-
-	const replaceAgent = useReplaceAgentScopes();
-	const replaceSa = useReplaceServiceAccountScopes();
-	const replace = isAgent ? replaceAgent : replaceSa;
+export function ScopesCard({ actorId, actorName, canEdit = true }: ScopesCardProps) {
+	const scopesQuery = useAgentScopes(actorId);
+	const replace = useReplaceAgentScopes();
 
 	const [editing, setEditing] = useState(false);
 	const catalogue = usePermissionCatalogue();

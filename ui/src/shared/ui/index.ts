@@ -52,6 +52,9 @@ export { Checkbox } from '@/shared/ui/Checkbox';
 export { SearchInput } from '@/shared/ui/SearchInput';
 export type { SearchInputProps } from '@/shared/ui/SearchInput';
 
+export { RadioCardGroup } from '@/shared/ui/RadioCardGroup';
+export type { RadioCardGroupProps, RadioCardOption } from '@/shared/ui/RadioCardGroup';
+
 export { SegmentedToggle } from '@/shared/ui/SegmentedToggle';
 export type { SegmentedToggleOption } from '@/shared/ui/SegmentedToggle';
 export { StatCard } from '@/shared/ui/StatCard';
@@ -198,6 +201,8 @@ export {
 	PermissionRuleEditor,
 	isEmptyAllowRule,
 	cleanPermissionRule,
+	allowAllRule,
+	grantsEverything,
 	PERMISSION_EFFECTS,
 	PERMISSION_MATCH_MODES,
 } from '@/shared/ui/PermissionRuleEditor';

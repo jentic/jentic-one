@@ -107,6 +107,21 @@ describe('ApiAccessSidebar — the API tile access panel', () => {
 		seedComposedStores();
 	});
 
+	/**
+	 * The rules editor lists rules read-only; a change goes through one rule's
+	 * inline form. Opens the first rule, appends `suffix` to its path and commits
+	 * the rule — which leaves the BINDING's draft dirty until `Save rules`.
+	 */
+	async function editFirstRulePath(
+		user: ReturnType<typeof userEvent.setup>,
+		inDialog: ReturnType<typeof within>,
+		suffix: string,
+	): Promise<void> {
+		await user.click(inDialog.getAllByRole('button', { name: 'Edit rule' })[0]);
+		await user.type(inDialog.getByLabelText('Path pattern'), suffix);
+		await user.click(inDialog.getByRole('button', { name: 'Save' }));
+	}
+
 	// --- Opening: content, keyboard, focus restore --------------------------
 
 	it('tile click opens the sidebar with that binding’s credential, rules and tester', async () => {
@@ -128,7 +143,7 @@ describe('ApiAccessSidebar — the API tile access panel', () => {
 		expect(
 			await inDialog.findByText('Permission rules for Slack bot token'),
 		).toBeInTheDocument();
-		expect(inDialog.getByLabelText('Path pattern')).toHaveValue('/chat.');
+		expect(inDialog.getByText('/chat. (prefix)')).toBeInTheDocument();
 
 		// 3 — the tester, live (no unsaved draft yet) with honest saved-rules copy.
 		expect(inDialog.getByText('Test a request')).toBeInTheDocument();
@@ -147,6 +162,26 @@ describe('ApiAccessSidebar — the API tile access panel', () => {
 		expect(
 			inDialog.getByRole('button', { name: 'Delete credential Slack bot token org-wide' }),
 		).toBeInTheDocument();
+	});
+
+	it('keeps "Allow all operations" in the new rules editor, as a pending catch-all', async () => {
+		const user = userEvent.setup();
+		renderPage();
+		await screen.findByText('1 access rule');
+
+		const inDialog = within(await openSidebar('Slack'));
+		await inDialog.findByText('Permission rules for Slack bot token');
+
+		// The one-click broad grant survives the editor swap: it appends the
+		// constrained catch-all (never a condition-less allow the API rejects)
+		// and shows up as a pending change until it is saved.
+		await user.click(inDialog.getByRole('button', { name: /Allow all operations/ }));
+		expect(await inDialog.findByTestId('rules-diff')).toHaveTextContent(/Added/);
+		expect(inDialog.getByText('.*')).toBeInTheDocument();
+		// Already granting everything, the shortcut stands down.
+		expect(
+			inDialog.queryByRole('button', { name: /Allow all operations/ }),
+		).not.toBeInTheDocument();
 	});
 
 	it('fades the body only while content continues below it', async () => {
@@ -283,8 +318,7 @@ describe('ApiAccessSidebar — the API tile access panel', () => {
 		await inDialog.findByText('Permission rules for Slack bot token');
 
 		// Dirty the draft: narrow the rule's path prefix.
-		const path = inDialog.getByLabelText('Path pattern');
-		await user.type(path, 'post');
+		await editFirstRulePath(user, inDialog, 'post');
 
 		// The tester pauses and says WHY (it evaluates saved rules only).
 		expect(await inDialog.findByTestId('rule-tester-disabled-note')).toHaveTextContent(
@@ -314,7 +348,7 @@ describe('ApiAccessSidebar — the API tile access panel', () => {
 		const inDialog = within(dialog);
 		await inDialog.findByText('Permission rules for Slack bot token');
 
-		await user.type(inDialog.getByLabelText('Path pattern'), 'x');
+		await editFirstRulePath(user, inDialog, 'x');
 		expect(await inDialog.findByTestId('rule-tester-disabled-note')).toBeInTheDocument();
 
 		// The sidebar host renders Discard (not Cancel — nothing to dismiss).
@@ -322,7 +356,7 @@ describe('ApiAccessSidebar — the API tile access panel', () => {
 		await waitFor(() => {
 			expect(inDialog.queryByTestId('rule-tester-disabled-note')).not.toBeInTheDocument();
 		});
-		expect(inDialog.getByLabelText('Path pattern')).toHaveValue('/chat.');
+		expect(inDialog.getByText('/chat. (prefix)')).toBeInTheDocument();
 	});
 
 	it('a pre-save verdict does not reappear after editing and saving the rules', async () => {
@@ -341,7 +375,7 @@ describe('ApiAccessSidebar — the API tile access panel', () => {
 		expect(await inDialog.findByTestId('rule-verdict')).toHaveTextContent('Allowed');
 
 		// Edit the rule so the SAME request would now be denied, then save.
-		await user.type(inDialog.getByLabelText('Path pattern'), 'x'); // → '/chat.x'
+		await editFirstRulePath(user, inDialog, 'x'); // → '/chat.x'
 		expect(await inDialog.findByTestId('rule-tester-disabled-note')).toBeInTheDocument();
 		await user.click(inDialog.getByRole('button', { name: /Save rules/ }));
 
@@ -389,7 +423,7 @@ describe('ApiAccessSidebar — the API tile access panel', () => {
 		await inDialog.findByText('Permission rules for Slack bot token');
 
 		// Dirty the draft — the tester pauses, honestly.
-		await user.type(inDialog.getByLabelText('Path pattern'), 'x');
+		await editFirstRulePath(user, inDialog, 'x');
 		expect(await inDialog.findByTestId('rule-tester-disabled-note')).toBeInTheDocument();
 
 		// The permissions read starts failing and a refetch lands: the error alert

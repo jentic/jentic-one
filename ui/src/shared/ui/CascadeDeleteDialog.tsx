@@ -8,9 +8,9 @@ import { Label } from '@/shared/ui/Label';
 
 /**
  * The entity kinds that expose a hard delete (or a terminal,
- * delete-equivalent action like agent/service-account *archive*).
+ * delete-equivalent action like agent *archive*).
  */
-export type CascadeEntityType = 'credential' | 'api' | 'agent' | 'service-account' | 'oauth-client';
+export type CascadeEntityType = 'credential' | 'api' | 'agent' | 'oauth-client';
 
 /**
  * One group in the blast-radius list. `count` is authoritative (drives the
@@ -45,8 +45,8 @@ interface CascadeDeleteDialogProps {
 	error?: Error | string | null;
 	/**
 	 * The word the user must type to arm the destructive action. Defaults per
-	 * entity type — "archive" for the archive-style kinds (agent,
-	 * service-account) and "delete" for everything else — so the typed word
+	 * entity type — "archive" for the archive-style kinds (agent) and
+	 * "delete" for everything else — so the typed word
 	 * matches the button verb. Kept short and fixed (not the entity name) so
 	 * confirming a slash/hyphen-heavy name (e.g. an API vendor/name tuple) isn't
 	 * error-prone. Matched case-insensitively.
@@ -63,7 +63,6 @@ const DEFAULT_CONFIRM_WORD: Record<CascadeEntityType, string> = {
 	credential: 'delete',
 	api: 'delete',
 	agent: 'archive',
-	'service-account': 'archive',
 	'oauth-client': 'delete',
 };
 
@@ -98,15 +97,7 @@ const TYPE_COPY: Record<
 		confirmLabel: 'Archive agent',
 		noun: 'agent',
 		warning:
-			'Archiving is permanent — the agent can no longer authenticate or be restored, and its grants and access requests are released.',
-		icon: Archive,
-	},
-	'service-account': {
-		title: 'Archive service account',
-		confirmLabel: 'Archive service account',
-		noun: 'service account',
-		warning:
-			'Archiving is permanent — the service account can no longer authenticate or be restored, and its grants are released.',
+			'Archiving is permanent — the agent can no longer authenticate or be restored, and its grants are released.',
 		icon: Archive,
 	},
 	'oauth-client': {

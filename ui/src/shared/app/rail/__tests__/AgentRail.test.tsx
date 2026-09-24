@@ -17,10 +17,12 @@ import {
 	formatStreamDayLabel,
 	inlineActionsFor,
 	isFailureSeverity,
+	isRetiredEventType,
 	kindForType,
 	matchesToastScope,
 	primaryDestinationFor,
 	severityForWire,
+	severityStripeClass,
 	streamDayKey,
 	unacknowledgedFailureCount,
 	useAgentStream,
@@ -29,8 +31,6 @@ import {
 	type StreamEvent,
 } from '@/shared/lib/agentStream';
 import type { EventResponse } from '@/shared/api';
-import { amendCalls, decideCalls } from '@/shared/app/rail/mocks/handlers';
-import { listAccessRequests, getAccessRequest } from '@/shared/lib/accessRequests';
 
 /** A location probe so navigation from the rail can be asserted. */
 function LocationProbe() {
@@ -105,10 +105,20 @@ describe('agentStream — wire adaptation + pure helpers', () => {
 	it('kindForType derives the namespace and buckets the unknown', () => {
 		expect(kindForType('execution.failed')).toBe('execution');
 		expect(kindForType('import.completed')).toBe('import');
-		expect(kindForType('access_request.filed')).toBe('access_request');
 		expect(kindForType('credential.expired')).toBe('credential');
 		expect(kindForType('agent.self_registered')).toBe('agent');
 		expect(kindForType('webhook.delivered')).toBe('other');
+	});
+
+	it('isRetiredEventType flags the retired access_request namespace (theme-7)', () => {
+		// Historical access-request events can still arrive from an old backlog
+		// page or a reconnect redelivery — they're tolerated at ingestion (dropped,
+		// never rendered) so an old event can't crash the feed.
+		expect(isRetiredEventType('access_request.filed')).toBe(true);
+		expect(isRetiredEventType('access_request.approved')).toBe(true);
+		expect(isRetiredEventType('execution.failed')).toBe(false);
+		// And should one slip past ingestion, it buckets into `other`, not a crash.
+		expect(kindForType('access_request.filed')).toBe('other');
 	});
 
 	it('severityForWire normalises the enum + bare strings', () => {
@@ -116,6 +126,26 @@ describe('agentStream — wire adaptation + pure helpers', () => {
 		expect(severityForWire('error')).toBe('error');
 		expect(severityForWire('warning')).toBe('warning');
 		expect(severityForWire('info')).toBe('info');
+	});
+
+	// Issue #907: critical and error shared an IDENTICAL rail stripe
+	// (`border-l-danger` for both, same width) — an operator had no visual way
+	// to tell a single failure from a chronic-failure escalation without
+	// opening the row. Critical now renders a wider stripe on top of the same
+	// danger colour, so the two failure tiers stay visually related but not
+	// indistinguishable.
+	it('severityStripeClass gives critical a distinct treatment from error', () => {
+		const critical = severityStripeClass('critical');
+		const error = severityStripeClass('error');
+		expect(critical).not.toBe(error);
+		// Both stay in the danger colour family — they're still both failures.
+		expect(critical).toContain('border-l-danger');
+		expect(error).toContain('border-l-danger');
+	});
+
+	it('severityStripeClass gives warning and info their own colours', () => {
+		expect(severityStripeClass('warning')).toContain('border-l-warning');
+		expect(severityStripeClass('info')).toContain('border-l-primary');
 	});
 
 	it('adaptEvent lifts tokens, links and flags off the wire shape', () => {
@@ -315,32 +345,6 @@ describe('agentStream — wire adaptation + pure helpers', () => {
 		});
 	});
 
-	it('inlineActionsFor offers View + Deny for a filed access request, gated on action + ack', () => {
-		const ev = makeEvent({
-			type: 'access_request.filed',
-			kind: 'access_request',
-			// Real filed events are INFO severity; the action logic must not depend
-			// on severity (see issue #652).
-			severity: 'info',
-			requiresAction: true,
-			tokens: { access_request_id: 'ar_1' },
-		});
-		const kinds = inlineActionsFor(ev).map((a) => a.kind);
-		expect(kinds).toContain('view_request');
-		expect(kinds).toContain('deny');
-		// Approve is not offered at the row — it lives inside the View dialog.
-		expect(kinds).not.toContain('approve');
-		// View opens the request dialog (no RPC); Deny is reason-gated.
-		expect(inlineActionsFor(ev).find((a) => a.kind === 'view_request')?.opensRequest).toBe(
-			true,
-		);
-		expect(inlineActionsFor(ev).find((a) => a.kind === 'deny')?.requiresReason).toBe(true);
-		// Acknowledged → no decision actions.
-		expect(inlineActionsFor({ ...ev, acknowledged: true }).map((a) => a.kind)).not.toContain(
-			'view_request',
-		);
-	});
-
 	it('inlineActionsFor falls back to Acknowledge for action-required non-decision events', () => {
 		const ev = makeEvent({
 			type: 'execution.failed',
@@ -350,19 +354,6 @@ describe('agentStream — wire adaptation + pure helpers', () => {
 			tokens: { execution_id: 'exec_1' },
 		});
 		expect(inlineActionsFor(ev).map((a) => a.kind)).toContain('acknowledge');
-	});
-
-	it('inlineActionsFor offers Acknowledge (not decide) for a filed event lacking a request id', () => {
-		const ev = makeEvent({
-			type: 'access_request.filed',
-			kind: 'access_request',
-			severity: 'warning',
-			requiresAction: true,
-			tokens: {},
-		});
-		const kinds = inlineActionsFor(ev).map((a) => a.kind);
-		expect(kinds).toContain('acknowledge');
-		expect(kinds).not.toContain('approve');
 	});
 
 	it('adaptEvent resolves agent_id from the top-level actor for agent.* events', () => {
@@ -408,7 +399,7 @@ describe('agentStream — wire adaptation + pure helpers', () => {
 		const unguarded = adaptEvent(
 			wireEvent({
 				event_id: 'evt_agent4',
-				type: 'access_request.approved',
+				type: 'credential.expired',
 				actor_id: 'usr_1',
 				actor_type: 'user',
 				data: { actor_id: 'usr_9' },
@@ -541,7 +532,7 @@ describe('agentStream — wire adaptation + pure helpers', () => {
 		expect(key).toBe('execution:execution.completed:op_a');
 	});
 
-	it('buildGroupKey separates distinct agents and access requests', () => {
+	it('buildGroupKey separates distinct agents', () => {
 		// Two agents registering within the grouping window must NOT collapse
 		// into one row (the second registration would hide behind a group head).
 		const a = buildGroupKeyForTest({
@@ -555,31 +546,6 @@ describe('agentStream — wire adaptation + pure helpers', () => {
 			tokens: { agent_id: 'agt_2' },
 		});
 		expect(a).not.toBe(b);
-		const req = buildGroupKeyForTest({
-			kind: 'access_request',
-			type: 'access_request.filed',
-			tokens: { access_request_id: 'arq_1' },
-		});
-		expect(req).toBe('access_request:access_request.filed:arq_1');
-	});
-
-	it('buildGroupKey separates two requests filed by the SAME agent', () => {
-		// Real `access_request.filed` events carry BOTH tokens: request_id from
-		// the data payload and agent_id from the top-level actor. The request
-		// id must win, or a CLI agent filing several requests in one burst
-		// collapses them into one row and the extras hide behind the group head.
-		const first = buildGroupKeyForTest({
-			kind: 'access_request',
-			type: 'access_request.filed',
-			tokens: { access_request_id: 'arq_1', agent_id: 'agt_same' },
-		});
-		const second = buildGroupKeyForTest({
-			kind: 'access_request',
-			type: 'access_request.filed',
-			tokens: { access_request_id: 'arq_2', agent_id: 'agt_same' },
-		});
-		expect(first).toBe('access_request:access_request.filed:arq_1');
-		expect(second).toBe('access_request:access_request.filed:arq_2');
 	});
 });
 
@@ -597,7 +563,7 @@ describe('AgentRail — shell-mounted live surface', () => {
 	it('does not hold the feed empty when the cursor rests on the rail during mount', async () => {
 		// Regression pin: `mouseenter` before the backlog fetch resolves must
 		// not snapshot ZERO visible ids — that would hold back every seeded
-		// event, leaving the feed at "Holding · 4" with no rows. This is exactly
+		// event, leaving the feed at "Holding · 3" with no rows. This is exactly
 		// what happens in browser-mode CI, where the shared pointer can be
 		// parked over the rail when the iframe mounts (and in prod when a
 		// user's cursor rests there during page load). An empty feed must
@@ -969,201 +935,6 @@ describe('AgentRail — shell-mounted live surface', () => {
 		await waitFor(() => expect(screen.getAllByText('Acked').length).toBeGreaterThanOrEqual(1));
 	});
 
-	it('approves a filed access request via the View dialog → records per-item approve decisions', async () => {
-		const user = userEvent.setup();
-		renderRail(<AgentRail />);
-		await screen.findByText(/Access request filed: github read/i);
-		// The filed access-request row offers View + Deny (not Approve/Acknowledge).
-		await user.click(screen.getByRole('button', { name: 'View' }));
-
-		// The dialog loads the request's items (ar_1 has three pending items: a
-		// GitHub bind with a long operation list, a Stripe bind, and a platform
-		// scope grant) into the "Awaiting Decision" rail, labelled by the API.
-		await screen.findByText('Awaiting Decision');
-		await screen.findByText(/is requesting access/i);
-		expect((await screen.findAllByText('github/github-api')).length).toBeGreaterThanOrEqual(1);
-		expect(screen.getAllByText('stripe/stripe-api').length).toBeGreaterThanOrEqual(1);
-		expect(screen.queryByText(/toolkit/i)).not.toBeInTheDocument();
-
-		// Each bind carries permission rules, so its card surfaces a read-only
-		// "Operations granted" summary with allow/block effects and the concrete
-		// operationIds the binding will enforce on approval.
-		expect((await screen.findAllByText(/Operations granted/i)).length).toBe(2);
-		expect(screen.getAllByText('Allow').length).toBeGreaterThanOrEqual(1);
-		expect(screen.getAllByText('Block').length).toBeGreaterThanOrEqual(1);
-		expect(screen.getByText('repos/get')).toBeInTheDocument();
-
-		// Each bind asks which credential to use; the one saved credential for each
-		// API is preselected.
-		expect(
-			await screen.findByRole('radio', { name: /GitHub PAT/, checked: true }),
-		).toBeInTheDocument();
-		expect(
-			await screen.findByRole('radio', { name: /Stripe live key/, checked: true }),
-		).toBeInTheDocument();
-
-		// The scope.grant item gets its own "Platform scope" treatment (the scope
-		// string as the headline), never mistaken for a per-resource grant.
-		expect(
-			await screen.findByRole('heading', { name: 'capabilities:execute' }),
-		).toBeInTheDocument();
-		expect(screen.getAllByText('Platform scope').length).toBeGreaterThanOrEqual(1);
-
-		// Approve all, then move to confirm — which names the credential each bind
-		// uses — and submit.
-		await user.click(screen.getByRole('button', { name: 'Approve all' }));
-		await user.click(screen.getByRole('button', { name: /Review & submit/i }));
-		expect(await screen.findByText('GitHub PAT')).toBeInTheDocument();
-		expect(screen.getByText('Stripe live key')).toBeInTheDocument();
-		await user.click(screen.getByRole('button', { name: /Confirm decision/i }));
-
-		await waitFor(() => {
-			expect(decideCalls.length).toBe(1);
-			expect(decideCalls[0]).toMatchObject({ request_id: 'ar_1' });
-			expect(decideCalls[0].items).toHaveLength(3);
-			expect(decideCalls[0].items.every((i) => i.decision === 'approved')).toBe(true);
-		});
-		// The chosen credentials are recorded on the binds before the decision.
-		expect(amendCalls).toEqual([
-			{
-				request_id: 'ar_1',
-				items: [
-					{ item_id: 'ari_1', resource_id: 'cred_github_1' },
-					{ item_id: 'ari_2', resource_id: 'cred_stripe_1' },
-				],
-			},
-		]);
-		// A success terminal screen confirms the grant.
-		await screen.findByText('Access granted');
-	});
-
-	it('decides items individually in the View dialog (approve one, deny one with a reason)', async () => {
-		const user = userEvent.setup();
-		renderRail(<AgentRail />);
-		await screen.findByText(/Access request filed: github read/i);
-		await user.click(screen.getByRole('button', { name: 'View' }));
-		await screen.findByText('Awaiting Decision');
-
-		// Approve the first item (its card's Approve button) once its credential
-		// is preselected.
-		await screen.findByRole('radio', { name: /GitHub PAT/, checked: true });
-		await user.click(screen.getAllByRole('button', { name: 'Approve' })[0]);
-
-		// Deny the second item: clicking its card's "Deny {label}" affordance
-		// expands the reason field INLINE on the card. The reason must be typed
-		// before "Confirm deny" finalises it into the Denied lane.
-		await user.click(screen.getByRole('button', { name: /^Deny stripe\/stripe-api$/i }));
-		const reason = screen.getByLabelText(/Why deny\?/i);
-		await user.click(reason);
-		await user.paste('Only GitHub is needed, not Stripe.');
-		await user.click(screen.getByRole('button', { name: /Confirm deny/i }));
-
-		// Undo the GitHub approval, then re-approve it — the chip's "Move back to
-		// pending" affordance returns the item to the rail (client-side draft only).
-		await user.click(
-			screen.getByRole('button', { name: /Move github\/github-api back to pending/i }),
-		);
-		await user.click(screen.getAllByRole('button', { name: 'Approve' })[0]);
-
-		// Reason was captured inline, so the confirm step submits straight away.
-		await user.click(screen.getByRole('button', { name: /Review & submit/i }));
-
-		// Traceability: the confirm step mirrors step 1 for DENIED items too — the
-		// denied Stripe bind still shows its "Operations granted" summary, and its
-		// reason stays in an EDITABLE field (never a read-only preview that would
-		// unmount on keystroke), so a reviewer who denied fast can see and refine
-		// exactly what they turned down before submitting.
-		expect((await screen.findAllByText(/Operations granted/i)).length).toBe(2);
-		expect(screen.getByLabelText(/Reason \(sent back to the agent\)/i)).toHaveValue(
-			'Only GitHub is needed, not Stripe.',
-		);
-
-		await user.click(screen.getByRole('button', { name: /Confirm decision/i }));
-
-		await waitFor(() => {
-			expect(decideCalls.length).toBe(1);
-			const items = decideCalls[0].items;
-			expect(items).toHaveLength(2);
-			expect(items.find((i) => i.item_id === 'ari_1')?.decision).toBe('approved');
-			const denied = items.find((i) => i.item_id === 'ari_2');
-			expect(denied?.decision).toBe('denied');
-			expect(denied?.decision_reason).toBe('Only GitHub is needed, not Stripe.');
-		});
-		// Only the approved bind gets a credential recorded.
-		expect(amendCalls).toEqual([
-			{ request_id: 'ar_1', items: [{ item_id: 'ari_1', resource_id: 'cred_github_1' }] },
-		]);
-	});
-
-	it('lets the operator caption reasonless "Deny all" items in the confirm step without the field unmounting', async () => {
-		const user = userEvent.setup();
-		renderRail(<AgentRail />);
-		await screen.findByText(/Access request filed: github read/i);
-		await user.click(screen.getByRole('button', { name: 'View' }));
-		await screen.findByText('Awaiting Decision');
-
-		// Deny all → every item is denied with NO reason, then advance to confirm.
-		await user.click(screen.getByRole('button', { name: 'Deny all' }));
-		await user.click(screen.getByRole('button', { name: /Review & submit/i }));
-
-		// Each denied item exposes its own editable reason field. Submit is blocked
-		// until they're all captioned (reasonless denials block `missingReason`).
-		const fields = await screen.findAllByLabelText(/Reason \(sent back to the agent\)/i);
-		expect(fields.length).toBe(3);
-		const confirm = screen.getByRole('button', { name: /Confirm decision/i });
-		expect(confirm).toBeDisabled();
-
-		// Regression: typing a MULTI-character reason must not unmount the field on
-		// the first keystroke. Type char-by-char (not paste) to prove it stays
-		// mounted and focused throughout.
-		for (const field of fields) {
-			await user.click(field);
-			await user.type(field, 'Not needed right now.');
-		}
-		// All three captions persisted in their fields…
-		for (const field of screen.getAllByLabelText(/Reason \(sent back to the agent\)/i)) {
-			expect(field).toHaveValue('Not needed right now.');
-		}
-		// …and the request is now submittable.
-		expect(confirm).toBeEnabled();
-		await user.click(confirm);
-
-		await waitFor(() => {
-			expect(decideCalls.length).toBe(1);
-			expect(decideCalls[0].items.every((i) => i.decision === 'denied')).toBe(true);
-			expect(
-				decideCalls[0].items.every((i) => i.decision_reason === 'Not needed right now.'),
-			).toBe(true);
-		});
-	});
-
-	it('denies a whole filed access request from the row fast path after a reason', async () => {
-		const user = userEvent.setup();
-		renderRail(<AgentRail />);
-		await screen.findByText(/Access request filed: github read/i);
-		await user.click(screen.getByRole('button', { name: 'Deny' }));
-
-		// A reason field appears; Confirm is disabled until it's filled.
-		const reason = await screen.findByLabelText(/Reason \(sent back to the agent\)/i);
-		const confirm = screen.getByRole('button', { name: /Confirm deny/i });
-		expect(confirm).toBeDisabled();
-		// No decision has been sent yet.
-		expect(decideCalls.length).toBe(0);
-
-		const reasonText = 'Scope too broad, narrow to a single repo.';
-		await user.click(reason);
-		await user.paste(reasonText);
-		expect(confirm).toBeEnabled();
-		await user.click(confirm);
-
-		await waitFor(() => {
-			expect(decideCalls.length).toBe(1);
-			// The fast path denies every pending item with the one reason.
-			expect(decideCalls[0].items.every((i) => i.decision === 'denied')).toBe(true);
-			expect(decideCalls[0].items.every((i) => i.decision_reason === reasonText)).toBe(true);
-		});
-	});
-
 	it('drops SSE heartbeat frames — no "Platform" row leaks into the feed', async () => {
 		// The mocked /events/stream emits an `event: heartbeat` frame ahead of the
 		// real backlog. The client must skip it; otherwise it adapts into an
@@ -1359,41 +1130,6 @@ describe('ToastHost — scoped transient notifications', () => {
 		// No `latest` fires when live={false}, so nothing pops.
 		await waitFor(() => {
 			expect(screen.queryByRole('button', { name: 'Dismiss toast' })).not.toBeInTheDocument();
-		});
-	});
-});
-
-describe('access-request repository — real contract against the mock', () => {
-	it('listAccessRequests returns the AccessRequestResponse shape (actor_id, approve_url, expires_at, created_by)', async () => {
-		const page = await listAccessRequests({ status: 'pending' });
-		expect(page.data.length).toBeGreaterThan(0);
-		const ar = page.data[0];
-		// Contract pin: the agent is `actor_id`, the human filer is `requested_by`
-		// — they MUST be distinct fields (the bug was conflating them).
-		expect(ar.actor_id).toBeTruthy();
-		expect(ar.requested_by).toBeTruthy();
-		expect(ar.actor_id).not.toBe(ar.requested_by);
-		// Required AccessRequestResponse fields the mock must include.
-		expect(ar.filed_at).toBeTruthy();
-		expect(ar.expires_at).toBeTruthy();
-		expect((ar as unknown as { approve_url?: string }).approve_url).toMatch(/access-requests/);
-		expect((ar as unknown as { created_by?: string }).created_by).toBeTruthy();
-	});
-
-	it('listAccessRequests filters by status (the mock falls through to the queried status, not just pending)', async () => {
-		// A status the seed has none of must come back empty — proving the handler
-		// honours the filter rather than always returning the pending seed.
-		const approved = await listAccessRequests({ status: 'approved' });
-		expect(approved.data.every((r) => r.status === 'approved')).toBe(true);
-		const pending = await listAccessRequests({ status: 'pending' });
-		expect(pending.data.length).toBeGreaterThan(0);
-		expect(pending.data.every((r) => r.status === 'pending')).toBe(true);
-	});
-
-	it('getAccessRequest surfaces a typed RailApiError for an unknown id', async () => {
-		await expect(getAccessRequest('ar_does_not_exist')).rejects.toMatchObject({
-			name: 'RailApiError',
-			status: 404,
 		});
 	});
 });

@@ -11,12 +11,10 @@
  * the overview still renders the others. That isolation is the whole point of
  * composing client-side instead of behind one aggregate call.
  */
-import { useInfiniteQuery, useQuery, keepPreviousData } from '@tanstack/react-query';
+import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import {
-	fetchAccessRequestsPage,
 	fetchActionableEvents,
 	fetchCatalogSize,
-	fetchPendingAccessRequests,
 	fetchPendingAgents,
 	fetchRecentExecutions,
 	fetchUsageOverview,
@@ -28,11 +26,9 @@ import {
 	type AlertsOverview,
 	type CatalogOverview,
 	type DashboardRange,
-	type PendingAccessRequestsOverview,
 	type PendingAgentsOverview,
 	type RecentExecutionsOverview,
 } from '@/modules/dashboard/api/types';
-import type { AccessRequestPage } from '@/shared/lib';
 import { sharedQueryKeys, GroupBy, type UsageResponse } from '@/shared/api';
 
 /** Stable query-key roots so callers/tests can target invalidation precisely.
@@ -40,14 +36,7 @@ import { sharedQueryKeys, GroupBy, type UsageResponse } from '@/shared/api';
  * Agents on approve/deny) and this factory can't drift (#511). */
 export const dashboardKeys = {
 	all: sharedQueryKeys.dashboardRoot,
-	/** The shared access-request root (durable queue + nav badge live under it).
-	 * Re-exposed here so Dashboard views invalidate it through their own api
-	 * layer instead of importing `@/shared/api` directly (view-layer boundary). */
-	accessRequestsRoot: sharedQueryKeys.accessRequestsRoot,
 	pendingAgents: () => [...dashboardKeys.all, 'pending-agents'] as const,
-	pendingAccessRequests: () => [...dashboardKeys.all, 'pending-access-requests'] as const,
-	accessRequestsQueue: (status: string) =>
-		[...dashboardKeys.all, 'access-requests-queue', status] as const,
 	alerts: () => [...dashboardKeys.all, 'alerts'] as const,
 	executions: () => [...dashboardKeys.all, 'recent-executions'] as const,
 	catalog: () => [...dashboardKeys.all, 'catalog-size'] as const,
@@ -67,16 +56,15 @@ const OVERVIEW_STALE_TIME = 30_000;
 
 /**
  * Belt-and-suspenders polling for the overview. Most updates are now push: the
- * SSE→query bridge in `agentStream` refreshes the access-request surfaces the
- * instant an event lands; the in-dashboard decision paths invalidate on every
- * decision; and the Agents module's approve/deny/create mutations now invalidate
- * the shared `dashboardRoot` (via `sharedQueryKeys`), so the pending-agents tile
- * updates instantly when a decision is made inside this UI. The one case with no
- * push channel is a pending agent that arrives entirely out-of-band (created by
- * another operator / the backend, with no `agent.*` SSE event for the dashboard
- * to listen to). A modest background refetch catches that within ≤45s. Paused
- * while the tab is hidden (TanStack default) so it costs nothing in the
- * background.
+ * SSE→query bridge in `agentStream` refreshes the dashboard surfaces the
+ * instant an event lands, and the Agents module's approve/deny/create mutations
+ * invalidate the shared `dashboardRoot` (via `sharedQueryKeys`), so the
+ * pending-agents tile updates instantly when a decision is made inside this UI.
+ * The one case with no push channel is a pending agent that arrives entirely
+ * out-of-band (created by another operator / the backend, with no `agent.*`
+ * SSE event for the dashboard to listen to). A modest background refetch
+ * catches that within ≤45s. Paused while the tab is hidden (TanStack default)
+ * so it costs nothing in the background.
  */
 const OVERVIEW_REFETCH_INTERVAL = 45_000;
 
@@ -85,34 +73,6 @@ export function usePendingAgents() {
 	return useQuery<PendingAgentsOverview, DashboardApiError>({
 		queryKey: dashboardKeys.pendingAgents(),
 		queryFn: fetchPendingAgents,
-		staleTime: OVERVIEW_STALE_TIME,
-		refetchInterval: OVERVIEW_REFETCH_INTERVAL,
-	});
-}
-
-/** Pending access requests — the durable approval queue (`GET /access-requests?status=pending`). */
-export function usePendingAccessRequests() {
-	return useQuery<PendingAccessRequestsOverview, DashboardApiError>({
-		queryKey: dashboardKeys.pendingAccessRequests(),
-		queryFn: fetchPendingAccessRequests,
-		staleTime: OVERVIEW_STALE_TIME,
-		refetchInterval: OVERVIEW_REFETCH_INTERVAL,
-	});
-}
-
-/**
- * The full access-request queue for the `/app/access-requests` subpage,
- * cursor-paginated via "Load more". Defaults to `status=pending` (the actionable
- * queue) but accepts any status filter. Separate cache slice from the card's
- * overview hook so the two don't fight over the same key.
- */
-export function useAccessRequestsQueue(status: string = 'pending') {
-	return useInfiniteQuery<AccessRequestPage, DashboardApiError>({
-		queryKey: dashboardKeys.accessRequestsQueue(status),
-		queryFn: ({ pageParam }) =>
-			fetchAccessRequestsPage({ status, cursor: (pageParam as string | null) ?? null }),
-		initialPageParam: null as string | null,
-		getNextPageParam: (lastPage) => (lastPage.has_more ? (lastPage.next_cursor ?? null) : null),
 		staleTime: OVERVIEW_STALE_TIME,
 		refetchInterval: OVERVIEW_REFETCH_INTERVAL,
 	});

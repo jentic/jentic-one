@@ -48,8 +48,13 @@ _AGENT_CREDENTIALS = text(
 # the active check to injection): a disabled credential must not surface as a
 # selection candidate — it could only turn a clean 403 into a confusing 424
 # later, or force a spurious ambiguity 409 against a live sibling.
+# ``c.state = 'connected'`` for the same reason: the connect flow mints its
+# credential row upfront in state ``pending`` (token-less until the vendor
+# flow completes), and the schema contract (core/schema/credentials.py)
+# promises broker resolution skips non-``connected`` rows.
 _COVERING_CREDENTIALS = text(
-    f"SELECT c.id FROM credentials c WHERE {credential_coverage_where()} AND c.active"
+    f"SELECT c.id FROM credentials c "
+    f"WHERE {credential_coverage_where()} AND c.active AND c.state = 'connected'"
 )
 
 # control DB — the stored identities of a set of credentials. Used only on the
@@ -123,7 +128,7 @@ class CredentialBindingResolver:
 
         # Nearest-miss diagnostic only when nothing covers the API at all: if a
         # credential covers it (``covering_ids``), the recovery is "bind to it"
-        # (file an access request), not "fix your credential", so a mismatch
+        # (an operator grant), not "fix your credential", so a mismatch
         # would send the wrong signal. Requires the agent to be bound to
         # something (else it is a plain no-binding case).
         mismatch: IdentityMismatch | None = None

@@ -42,9 +42,9 @@ test('create a credential and see it in the list', async ({ page }) => {
 
 	await page.getByRole('button', { name: 'Add credential' }).click();
 
-	// Step 1 of the wizard is the guided API picker ("Choose an API"); drop
-	// into manual entry to reach the credential form (step 2).
-	await expect(page.getByRole('heading', { name: 'Choose an API' })).toBeVisible();
+	// Step 1 of the wizard is the guided picker (dialog titled "Add
+	// credential"); drop into manual entry to reach the credential form (step 2).
+	await expect(page.getByRole('heading', { name: 'Add credential' })).toBeVisible();
 	await page.getByRole('button', { name: /Enter manually/i }).click();
 
 	await page.getByPlaceholder('Production API key').fill('CI bearer token');

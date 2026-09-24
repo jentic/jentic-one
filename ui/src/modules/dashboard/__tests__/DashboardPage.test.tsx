@@ -63,7 +63,6 @@ describe('DashboardPage', () => {
 		// One bell, one count badge — not three body cards.
 		const bell = await screen.findByRole('button', { name: /Needs your action \(\d+/ });
 		expect(screen.queryByText('Agents awaiting approval')).not.toBeInTheDocument();
-		expect(screen.queryByText('Access requests awaiting review')).not.toBeInTheDocument();
 
 		await user.click(bell);
 		const inbox = await screen.findByRole('dialog', { name: 'Needs your action' });
@@ -79,16 +78,6 @@ describe('DashboardPage', () => {
 
 		// An actionable alert row with its View action.
 		expect(await within(inbox).findByText('Credential failing')).toBeInTheDocument();
-
-		// An access-request row (summarised items) decidable in place.
-		expect(
-			await within(inbox).findByText('Access to stripe/stripe-api +1 more'),
-		).toBeInTheDocument();
-		expect(
-			within(inbox).getByRole('button', {
-				name: 'Decide access request Access to stripe/stripe-api +1 more',
-			}),
-		).toBeInTheDocument();
 
 		// Recent activity (executions) — an operation id from the sample.
 		expect(await screen.findByText('charges/create')).toBeInTheDocument();
@@ -195,7 +184,6 @@ describe('DashboardPage', () => {
 	it('swaps to the first-run checklist on a fresh install (no agents, no executions)', async () => {
 		worker.use(
 			emptyList('/agents'),
-			emptyList('/access-requests'),
 			emptyList('/events'),
 			emptyList('/executions'),
 			emptyList('/apis'),
@@ -263,16 +251,13 @@ describe('DashboardPage', () => {
 
 		// …while the other queue rows in the same panel still render.
 		expect(await within(inbox).findByText('invoice-bot')).toBeInTheDocument();
-		expect(
-			await within(inbox).findByText('Access to stripe/stripe-api +1 more'),
-		).toBeInTheDocument();
 		expect(await screen.findByText('charges/create')).toBeInTheDocument();
 		expect(await screen.findByText('Gateway health')).toBeInTheDocument();
 	});
 
 	it('shows an all-clear panel and no badge when nothing is waiting', async () => {
 		seedDashboard();
-		worker.use(emptyList('/agents'), emptyList('/access-requests'), emptyList('/events'));
+		worker.use(emptyList('/agents'), emptyList('/events'));
 
 		renderDashboard();
 		const user = userEvent.setup();

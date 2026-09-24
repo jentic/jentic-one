@@ -33,20 +33,9 @@ export {
 	useGenerateAgentApiKey,
 	useIsGeneratingAgentApiKey,
 	useRevokeAgentApiKey,
-	useGenerateServiceAccountApiKey,
-	useServiceAccount,
-	useApproveServiceAccount,
-	useDenyServiceAccount,
-	useDisableServiceAccount,
-	useEnableServiceAccount,
-	useArchiveServiceAccount,
 	usePermissionCatalogue,
 	useAgentScopes,
 	useReplaceAgentScopes,
-	useServiceAccountScopes,
-	useReplaceServiceAccountScopes,
-	useActorAccessRequests,
-	usePendingApproverAccessRequests,
 	useAgentOauthGrants,
 	useRevokeOauthGrant,
 	useActorUsageDetail,
@@ -58,9 +47,6 @@ export {
 	useMcpLastSeen,
 	useLatestMcpActivity,
 	useInstanceIdentity,
-	actorAccessRequestsKey,
-	actorAccessRequestsRootKey,
-	pendingApproverAccessRequestsKey,
 	agentOauthGrantsKey,
 	agentOauthGrantsRootKey,
 	ServingRefreshError,
@@ -110,10 +96,7 @@ export type {
 	PermissionCatalogEntry,
 	PermissionRuleInput,
 	ServedApiEntity,
-	ServiceAccountEntity,
 	Attribution,
 } from '@/modules/agents/api/types';
 
-export { mcpClientLabel } from '@/modules/agents/api/types';
-
-export type { AccessRequest } from '@/shared/lib';
+export { mcpClientLabel, isServiceAccountSuccessor } from '@/modules/agents/api/types';

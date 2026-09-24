@@ -28,7 +28,6 @@ from tools.endpoint_tree import (
 )
 
 from jentic_one.shared.models.actors import ActorType
-from jentic_one.shared.scopes import GRANTABLE_SCOPES
 from jentic_one.shared.web.deps import get_current_identity
 from jentic_one.shared.web.endpoint_reference import (
     GROUP_AGENT,
@@ -98,7 +97,7 @@ def fixture_endpoints() -> list[Endpoint]:
         _ep(
             "POST",
             "/capabilities:execute",
-            actor_types=["agent", "service_account", "toolkit"],
+            actor_types=["agent", "toolkit"],
             required_scopes=["capabilities:execute"],
             typical_caller="agent",
             summary="Execute",
@@ -107,7 +106,7 @@ def fixture_endpoints() -> list[Endpoint]:
         _ep(
             "POST",
             "/credentials",
-            actor_types=["user", "agent", "service_account", "toolkit"],
+            actor_types=["user", "agent", "toolkit"],
             required_scopes=[],
             typical_caller="any",
             summary="Create Credential",
@@ -124,7 +123,7 @@ def fixture_endpoints() -> list[Endpoint]:
         _ep(
             "GET",
             "/register/{agent_id}",
-            actor_types=["agent", "service_account"],
+            actor_types=["agent"],
             required_scopes=[],
             auth_note="Authenticated with the Registration-Access-Token.",
             summary="Poll registration status",
@@ -420,20 +419,36 @@ def test_overlays_confirm_classified_operator() -> None:
 
 @pytest.mark.arch
 def test_operator_only_scopes_are_classified_operator() -> None:
-    """Any scope withheld from self-service AND agent defaults must classify as operator.
+    """Any scope withheld from agent defaults must classify as operator.
 
     The _typical_caller operator list is hand-maintained, which is exactly how
     overlays:confirm silently drifted to "any". This ties the classifier to the
-    authorization model: a scope that is neither self-service-grantable nor an agent
-    default (and isn't the org:admin superuser or an owner-scoped read) is, by
-    definition, operator-held — so it must be in _OPERATOR_SCOPES or the reference
-    will mislabel its endpoints.
+    authorization model: a scope that is not an agent default (and isn't the
+    org:admin superuser or an owner-scoped read) is, by definition,
+    operator-held — so it must be in _OPERATOR_SCOPES or the reference will
+    mislabel its endpoints. (Theme 7 removed the scope self-service tier, so
+    "self-service-grantable" no longer subtracts anything here.)
     """
-    operator_only = {
-        s for s in _OPERATOR_SCOPES if s not in GRANTABLE_SCOPES and s not in _AGENT_DEFAULT_SCOPES
-    }
+    operator_only = {s for s in _OPERATOR_SCOPES if s not in _AGENT_DEFAULT_SCOPES}
     # Sanity: the set is non-trivial (guards against a vacuous pass).
     assert "overlays:confirm" in operator_only
     # Every such scope classifies as operator on its own.
     for scope in operator_only:
         assert _typical_caller([scope], []) == TYPICAL_OPERATOR, scope
+
+
+@pytest.mark.arch
+def test_no_service_account_surface_survives() -> None:
+    """Theme-8 Phase 2: no route creates, lists, mutates, or mints for an SA.
+
+    Walks the live combined control app's route table (the same one the
+    reference is built from): no ``/service-accounts`` path, no
+    ``/oauth/mint``, and no endpoint advertises ``service_account`` as a
+    caller actor type.
+    """
+    app = _build_control_app()
+    paths = {getattr(r, "path", "") for r in app.routes}
+    assert not [p for p in paths if p.startswith("/service-accounts")]
+    assert "/oauth/mint" not in paths
+    for ep in collect_endpoints(app):
+        assert "service_account" not in ep.actor_types, (ep.method, ep.path)

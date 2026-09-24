@@ -1,7 +1,13 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { ArrowUpDown, Minus, Plus, RotateCcw, Save } from 'lucide-react';
-import { Button, PermissionRuleEditor, cleanPermissionRule, isEmptyAllowRule } from '@/shared/ui';
+import { ArrowUpDown, Minus, Plus, RotateCcw, Save, ShieldCheck } from 'lucide-react';
+import {
+	Button,
+	allowAllRule,
+	cleanPermissionRule,
+	grantsEverything,
+	isEmptyAllowRule,
+} from '@/shared/ui';
 import { ruleSummary, type PermissionRule as DisplayRule } from '@/shared/lib';
 import {
 	useReplaceAgentBindingPermissions,
@@ -9,6 +15,10 @@ import {
 	type PermissionRuleInput,
 } from '@/modules/agents/api';
 import { panelMotion } from '@/modules/agents/components/detail/shared';
+import { RuleListEditor } from '@/shared/credentials/components/RuleListEditor';
+import { useVendorOperations } from '@/shared/credentials/api/vendors-hooks';
+import type { OpsApiReference } from '@/shared/credentials/components/OperationImpactPreview';
+import type { PermissionRule as PreviewPermissionRule } from '@/shared/credentials/api/vendors-types';
 
 /**
  * Inline editor for the permission rules on one direct agent↔credential
@@ -38,6 +48,41 @@ export interface AgentBindingPermissionsEditorProps {
 	onClose?: () => void;
 	/** Reports the live draft-vs-saved dirtiness (order-sensitive). */
 	onDirtyChange?: (dirty: boolean) => void;
+	/**
+	 * The API the credential is bound against. Feeds the rule editor's path
+	 * autocomplete and "no operations affected" warning from the API's real
+	 * operations. Omitted (no concrete version known) → the editor works
+	 * without suggestions.
+	 */
+	apiReference?: OpsApiReference | null;
+}
+
+/**
+ * Adapt a mutable ``PermissionRuleInput`` (agent-module type generated
+ * from ``PermissionRuleSchema``) to the credentials-module ``PermissionRule``
+ * shape the shared ``RuleListEditor`` expects. Structurally identical for our
+ * fields; the explicit narrow avoids a bare cast so a future divergence in
+ * either type is caught at build.
+ */
+function toPreviewRule(rule: PermissionRuleInput): PreviewPermissionRule {
+	return {
+		effect: rule.effect === 'deny' ? 'deny' : 'allow',
+		methods: rule.methods ?? null,
+		path: rule.path ?? null,
+		match_mode: (rule.match_mode as PreviewPermissionRule['match_mode']) ?? undefined,
+		operations: rule.operations ?? null,
+	};
+}
+
+/** Reverse of ``toPreviewRule`` — for saving edits back through the agent-module API. */
+function fromPreviewRule(rule: PreviewPermissionRule): PermissionRuleInput {
+	return {
+		effect: rule.effect as PermissionRuleInput['effect'],
+		methods: rule.methods ?? undefined,
+		path: rule.path ?? undefined,
+		match_mode: (rule.match_mode as PermissionRuleInput['match_mode']) ?? undefined,
+		operations: rule.operations ?? undefined,
+	};
 }
 
 function toInput(rule: BindingPermissionRule): PermissionRuleInput {
@@ -109,11 +154,25 @@ export function AgentBindingPermissionsEditor({
 	initialRules,
 	onClose,
 	onDirtyChange,
+	apiReference,
 }: AgentBindingPermissionsEditorProps) {
 	const [rules, setRules] = useState<PermissionRuleInput[]>(() =>
 		initialRules.filter((r) => !r._system).map(toInput),
 	);
 	const replace = useReplaceAgentBindingPermissions(agentId, credentialId);
+
+	// Feed op paths + templates into the shared editor so autocomplete
+	// and the "no ops affected" warning work identically to the
+	// connect-flow rules page. Reuses the same query key as the row's
+	// ops preview via ``useVendorOperations``.
+	const opsQuery = useVendorOperations(apiReference ?? undefined, {
+		enabled: !!apiReference,
+	});
+	const pathSuggestions = useMemo<readonly string[]>(() => {
+		const rows = opsQuery.data?.data;
+		if (!rows) return [];
+		return Array.from(new Set(rows.map((op) => op.path))).sort();
+	}, [opsQuery.data]);
 
 	const clean = rules.map(cleanRule);
 	// A condition-less `allow` is rejected by the backend (422). Block save and
@@ -179,101 +238,117 @@ export function AgentBindingPermissionsEditor({
 				</p>
 			</div>
 
-			{/* The editor owns the verb row, so the commit pair rides in it, with the
-			    pending-changes preview directly above the row it explains. */}
-			<PermissionRuleEditor
-				rules={rules}
-				onChange={setRules}
-				beforeActions={
-					<AnimatePresence initial={false}>
-						{dirty && (
-							<motion.div {...panelMotion} className="overflow-hidden">
-								<div
-									className="border-border/60 bg-card rounded-lg border p-3"
-									data-testid="rules-diff"
-								>
-									<p className="text-muted-foreground mb-2 font-mono text-[10px] tracking-wide uppercase">
-										Pending changes
-										<span className="text-muted-foreground/60 normal-case">
-											{' '}
-											· applied when you save
-										</span>
-									</p>
-									<ul className="space-y-1 text-xs">
-										{reordered && (
-											<li className="text-foreground flex items-start gap-1.5">
-												<ArrowUpDown
-													className="mt-0.5 h-3 w-3 shrink-0"
-													aria-hidden="true"
-												/>
-												<span>
-													Rules reordered — evaluation is
-													first-match-wins, so the new order changes which
-													rule decides a request.
-												</span>
-											</li>
-										)}
-										{removed.map((rule, i) => (
-											<li
-												key={`removed-${i}`}
-												className="text-danger flex items-start gap-1.5"
-											>
-												<Minus
-													className="mt-0.5 h-3 w-3 shrink-0"
-													aria-hidden="true"
-												/>
-												<span>
-													<span className="sr-only">Removed: </span>
-													{oneLiner(rule)}
-												</span>
-											</li>
-										))}
-										{added.map((rule, i) => (
-											<li
-												key={`added-${i}`}
-												className="text-success flex items-start gap-1.5"
-											>
-												<Plus
-													className="mt-0.5 h-3 w-3 shrink-0"
-													aria-hidden="true"
-												/>
-												<span>
-													<span className="sr-only">Added: </span>
-													{oneLiner(rule)}
-												</span>
-											</li>
-										))}
-									</ul>
-								</div>
-							</motion.div>
-						)}
-					</AnimatePresence>
-				}
-				actionsSlot={
-					<>
-						{onClose ? (
-							<Button variant="secondary" size="sm" onClick={onClose}>
-								Cancel
-							</Button>
-						) : (
-							dirty && (
-								<Button variant="secondary" size="sm" onClick={discard}>
-									<RotateCcw className="h-4 w-4" /> Discard changes
-								</Button>
-							)
-						)}
-						<Button
-							size="sm"
-							onClick={save}
-							loading={replace.isPending}
-							disabled={hasInvalidRule || !dirty}
-						>
-							<Save className="h-4 w-4" />{' '}
-							{replace.isPending ? 'Saving…' : 'Save rules'}
-						</Button>
-					</>
-				}
+			<RuleListEditor
+				rules={rules.map(toPreviewRule)}
+				onChange={(next): void => setRules(next.map(fromPreviewRule))}
+				pathSuggestions={pathSuggestions}
+				opTemplates={pathSuggestions}
+				opsLoaded={pathSuggestions.length > 0}
 			/>
+
+			{/* What this save changes — removals first (the security-critical
+			    signal), then additions, each in the platform's rule voice. */}
+			<AnimatePresence initial={false}>
+				{dirty && (
+					<motion.div {...panelMotion} className="overflow-hidden">
+						<div
+							className="border-border/60 bg-card rounded-lg border p-3"
+							data-testid="rules-diff"
+						>
+							<p className="text-muted-foreground mb-2 font-mono text-[10px] tracking-wide uppercase">
+								Pending changes
+								<span className="text-muted-foreground/60 normal-case">
+									{' '}
+									· applied when you save
+								</span>
+							</p>
+							<ul className="space-y-1 text-xs">
+								{reordered && (
+									<li className="text-foreground flex items-start gap-1.5">
+										<ArrowUpDown
+											className="mt-0.5 h-3 w-3 shrink-0"
+											aria-hidden="true"
+										/>
+										<span>
+											Rules reordered — evaluation is first-match-wins, so the
+											new order changes which rule decides a request.
+										</span>
+									</li>
+								)}
+								{removed.map((rule, i) => (
+									<li
+										key={`removed-${i}`}
+										className="text-danger flex items-start gap-1.5"
+									>
+										<Minus
+											className="mt-0.5 h-3 w-3 shrink-0"
+											aria-hidden="true"
+										/>
+										<span>
+											<span className="sr-only">Removed: </span>
+											{oneLiner(rule)}
+										</span>
+									</li>
+								))}
+								{added.map((rule, i) => (
+									<li
+										key={`added-${i}`}
+										className="text-success flex items-start gap-1.5"
+									>
+										<Plus
+											className="mt-0.5 h-3 w-3 shrink-0"
+											aria-hidden="true"
+										/>
+										<span>
+											<span className="sr-only">Added: </span>
+											{oneLiner(rule)}
+										</span>
+									</li>
+								))}
+							</ul>
+						</div>
+					</motion.div>
+				)}
+			</AnimatePresence>
+
+			{/* One verb row: the catch-all shortcut on the left (reachable with
+			    rules already present — broadening a narrow grant is a normal
+			    edit), the commit pair on the right. */}
+			<div className="flex flex-wrap items-center justify-between gap-2">
+				<div className="flex flex-wrap items-center gap-2">
+					{!grantsEverything(rules) && (
+						<Button
+							variant="ghost"
+							size="sm"
+							onClick={() => setRules([...rules, allowAllRule()])}
+							className="text-muted-foreground hover:text-foreground"
+						>
+							<ShieldCheck className="h-4 w-4" /> Allow all operations
+						</Button>
+					)}
+				</div>
+				<div className="flex flex-wrap items-center gap-2">
+					{onClose ? (
+						<Button variant="secondary" size="sm" onClick={onClose}>
+							Cancel
+						</Button>
+					) : (
+						dirty && (
+							<Button variant="secondary" size="sm" onClick={discard}>
+								<RotateCcw className="h-4 w-4" /> Discard changes
+							</Button>
+						)
+					)}
+					<Button
+						size="sm"
+						onClick={save}
+						loading={replace.isPending}
+						disabled={hasInvalidRule || !dirty}
+					>
+						<Save className="h-4 w-4" /> {replace.isPending ? 'Saving…' : 'Save rules'}
+					</Button>
+				</div>
+			</div>
 		</div>
 	);
 }

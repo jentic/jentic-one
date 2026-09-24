@@ -15,7 +15,6 @@ import { AgentSettingsPanel } from '@/modules/agents/components/detail/AgentSett
 import { AgentProvenance } from '@/modules/agents/components/detail/AgentProvenance';
 import { McpPanel, McpSessionsCard } from '@/modules/agents/components/detail/McpPanel';
 import { ScopesCard } from '@/modules/agents/components/ScopesCard';
-import { ActorAccessRequestsCard } from '@/modules/agents/components/ActorAccessRequestsCard';
 import { ConnectedClientsCard } from '@/modules/agents/components/detail/ConnectedClientsCard';
 
 /** Shared chrome: header with title/subtitle + close, scrollable body. */
@@ -110,10 +109,10 @@ export function AgentActivitySheet({
 				onClose={onClose}
 			>
 				<div className="space-y-4">
-					<ActivityPanel actorId={agent.id} actorType="agent" />
+					<ActivityPanel actorId={agent.id} />
 					{/* Lifecycle changes are activity too — admin-gated; the card renders a
 					    quiet empty state for non-admins. */}
-					<ActorAuditPanel actorKind="agent" actorId={agent.id} />
+					<ActorAuditPanel actorId={agent.id} />
 				</div>
 			</DockSheetFrame>
 		</SheetPrimitive>
@@ -161,13 +160,7 @@ export function AgentPermissionsSheet({
 							what remains below is history.
 						</p>
 					)}
-					<ScopesCard
-						actorKind="agent"
-						actorId={agent.id}
-						actorName={agent.name}
-						canEdit={!isArchived}
-					/>
-					<ActorAccessRequestsCard actorId={agent.id} actorName={agent.name} />
+					<ScopesCard actorId={agent.id} actorName={agent.name} canEdit={!isArchived} />
 					<ConnectedClientsCard agentId={agent.id} agentName={agent.name} />
 				</div>
 			</DockSheetFrame>

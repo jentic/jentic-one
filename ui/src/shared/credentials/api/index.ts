@@ -23,6 +23,7 @@ import {
 } from './client';
 import type { ProviderDiscoveryResponse } from '@/shared/api';
 import type {
+	AuthCodeChallengeResponse,
 	ConnectChallengeResponse,
 	ConnectRequestBody,
 	CredentialAgentListResponse,
@@ -32,8 +33,14 @@ import type {
 	CredentialListResponse,
 	CredentialRedactedResponse,
 	CredentialUpdateRequest,
+	DeviceAuthorizationChallengeResponse,
 } from './types';
 import { updateCredential } from './client';
+import {
+	isHttpsVendorUrl,
+	openVendorUrl,
+	assignVendorUrl,
+} from '@/shared/credentials/lib/safe-navigation';
 
 /** Namespaced query keys for the credentials cache slice. */
 export const credentialKeys = {
@@ -247,17 +254,44 @@ export interface RunConnectOptions {
 	body?: ConnectRequestBody;
 	/** Open the authorize URL in a popup (default) or the same tab. */
 	mode?: 'popup' | 'redirect';
-	/** Poll interval while waiting for the callback to land (ms). */
+	/**
+	 * Poll interval while waiting for the callback to land (ms). When
+	 * omitted, the device-code branch honours the vendor's requested
+	 * cadence (``poll_interval_seconds``, RFC 8628 ``interval``; default
+	 * 3s) and the popup branch polls at 1.5s.
+	 */
 	pollMs?: number;
 	/** Give up waiting after this long (ms). */
 	timeoutMs?: number;
+	/**
+	 * Abort the wait loops from the outside (e.g. the device-code
+	 * dialog's Cancel button). Aborting resolves the flow with a
+	 * ``cancelled`` outcome — no error is thrown.
+	 */
+	signal?: AbortSignal;
+	/**
+	 * Render hook invoked when the begin-connect call returns a device_code
+	 * challenge (RFC 8628). The caller is responsible for showing the
+	 * `user_code` and `verification_uri` to the human; the returned cleanup
+	 * (if any) is invoked once the outcome is known so the caller can tear
+	 * down the modal. Omit for callers that only support authorization_code
+	 * flows — a device_code challenge will surface as `unsupported_challenge`.
+	 */
+	onDeviceAuthorizationChallenge?: (
+		challenge: DeviceAuthorizationChallengeResponse,
+	) => (() => void) | void;
 }
 
 export type ConnectOutcome =
 	| { status: 'connected'; credential: CredentialRedactedResponse }
 	| { status: 'redirected' }
 	| { status: 'cancelled' }
-	| { status: 'timeout' };
+	| { status: 'timeout' }
+	| { status: 'unsupported_challenge' }
+	// The vendor's OAuth response carried a non-https URL (e.g. ``javascript:``
+	// or ``data:``) — refused before we opened / redirected. See
+	// ``lib/safe-navigation.ts`` for the guard rules.
+	| { status: 'unsafe_challenge_url' };
 
 /**
  * Run the full OAuth connect round-trip for a credential.
@@ -285,7 +319,7 @@ export async function runConnectFlow(
 	id: string,
 	options: RunConnectOptions = {},
 ): Promise<ConnectOutcome> {
-	const { body, mode = 'popup', pollMs = 1500, timeoutMs = 120_000 } = options;
+	const { body, mode = 'popup', pollMs, timeoutMs = 120_000, signal } = options;
 
 	// Advisory wake-up plumbing (#598). We attach the listener *before* the
 	// connect round-trip so a popup that completes very fast (cached IdP consent)
@@ -321,23 +355,6 @@ export async function runConnectFlow(
 		// require a real baseline before trusting the `updated_at`/ref deltas.
 		const haveBaseline = before !== null;
 
-		if (mode === 'redirect') {
-			window.location.assign(challenge.authorize_url);
-			return { status: 'redirected' };
-		}
-
-		popup = window.open(
-			challenge.authorize_url,
-			'jentic-oauth-connect',
-			'popup,width=520,height=720',
-		);
-		if (!popup) {
-			window.location.assign(challenge.authorize_url);
-			return { status: 'redirected' };
-		}
-		const activePopup = popup;
-
-		const deadline = Date.now() + timeoutMs;
 		const isConnected = (next: CredentialRedactedResponse | null): boolean => {
 			if (!next) return false;
 			if (!haveBaseline) return false;
@@ -352,29 +369,106 @@ export async function runConnectFlow(
 			return !!next.updated_at && next.updated_at !== before?.updated_at;
 		};
 
-		// Sleep up to `pollMs`, but resolve early if an advisory message arrived
-		// (consuming the signal so the next tick sleeps normally again).
-		const waitTick = (): Promise<void> =>
+		// Sleep up to `tickMs`, but resolve early if an advisory message
+		// arrived (consuming the signal so the next tick sleeps normally
+		// again) or the caller aborted (Cancel button).
+		const waitTick = (tickMs: number): Promise<void> =>
 			new Promise<void>((resolve) => {
-				if (signalled) {
+				if (signalled || signal?.aborted) {
 					signalled = false;
 					resolve();
 					return;
 				}
-				const t = setTimeout(() => {
-					wake = null;
-					resolve();
-				}, pollMs);
-				wake = () => {
+				let onAbort: (() => void) | null = null;
+				const settle = (): void => {
 					clearTimeout(t);
 					wake = null;
-					signalled = false;
+					if (onAbort) signal?.removeEventListener('abort', onAbort);
 					resolve();
 				};
+				const t = setTimeout(settle, tickMs);
+				wake = () => {
+					signalled = false;
+					settle();
+				};
+				if (signal) {
+					onAbort = settle;
+					signal.addEventListener('abort', onAbort, { once: true });
+				}
 			});
 
+		if (challenge.kind === 'device_authorization') {
+			// RFC 8628: no browser redirect. The caller renders `user_code` +
+			// `verification_uri`; the ConnectPollScanner drives completion
+			// server-side. Callers that don't opt-in to rendering the human
+			// step get `unsupported_challenge` back — polling in silence would
+			// look like a hang from the user's perspective.
+			if (!options.onDeviceAuthorizationChallenge) {
+				return { status: 'unsupported_challenge' };
+			}
+			// Honour the vendor's requested poll cadence (RFC 8628
+			// ``interval``) unless the caller pinned one explicitly.
+			// RFC 8628 §3.5: when the vendor omits ``interval``, the client
+			// MUST use 5 seconds — not our own hunch.
+			const deviceTickMs = pollMs ?? (challenge.poll_interval_seconds ?? 5) * 1000;
+			const cleanup = options.onDeviceAuthorizationChallenge(challenge);
+			try {
+				const deadline = Date.now() + timeoutMs;
+				while (Date.now() < deadline) {
+					await waitTick(deviceTickMs);
+					// User cancelled (the device dialog's Cancel button aborts
+					// the signal) — stop polling, no error.
+					if (signal?.aborted) return { status: 'cancelled' };
+					const next = await getCredential(id).catch(() => null);
+					if (isConnected(next)) {
+						return {
+							status: 'connected',
+							credential: next as CredentialRedactedResponse,
+						};
+					}
+				}
+				return { status: 'timeout' };
+			} finally {
+				cleanup?.();
+			}
+		}
+
+		const authCode: AuthCodeChallengeResponse = challenge;
+
+		// The vendor supplied ``authorize_url`` in the challenge JSON; refuse
+		// to open or redirect anywhere that isn't https. Any of the three
+		// navigation paths below (redirect mode, popup, popup-blocked
+		// fallback to full redirect) reaches into the vendor URL, so gate
+		// once up front.
+		if (!isHttpsVendorUrl(authCode.authorize_url)) {
+			return { status: 'unsafe_challenge_url' };
+		}
+
+		if (mode === 'redirect') {
+			assignVendorUrl(authCode.authorize_url);
+			return { status: 'redirected' };
+		}
+
+		popup = openVendorUrl(
+			authCode.authorize_url,
+			'jentic-oauth-connect',
+			'popup,width=520,height=720',
+		);
+		if (!popup) {
+			assignVendorUrl(authCode.authorize_url);
+			return { status: 'redirected' };
+		}
+		const activePopup = popup;
+
+		const deadline = Date.now() + timeoutMs;
+		const popupTickMs = pollMs ?? 1500;
+
 		while (Date.now() < deadline) {
-			await waitTick();
+			await waitTick(popupTickMs);
+			if (signal?.aborted) {
+				activePopup.close();
+				return { status: 'cancelled' };
+			}
 			const next = await getCredential(id).catch(() => null);
 			if (isConnected(next)) {
 				activePopup.close();
@@ -446,6 +540,36 @@ export {
 	type UseImportSpec,
 } from './apis-hooks';
 
+export {
+	useAgentsForPicker,
+	useConfirmConnectSession,
+	useConnectSession,
+	usePollConnectSessionStatus,
+	useStartAndConfirmVendorConnect,
+	useStartIntegrationConnect,
+	useVendorAuthCapabilities,
+	useVendors,
+	type StartAndConfirmResult,
+	type StartAndConfirmVars,
+} from './vendors-hooks';
+
+export type {
+	ConfirmRequest,
+	ConfirmResponse,
+	ConnectRequest,
+	ConnectResponse,
+	PermissionRule,
+	ReviewScope,
+	ReviewSession,
+	ScopeClassification,
+	SessionStatus,
+	StatusResponse,
+	VendorAuthCapabilities,
+	VendorFlow,
+	VendorListResponse,
+	VendorScopeCatalog,
+	VendorSummary,
+} from './vendors-types';
 // Spec-import wire shapes — the import dialog builds one and reads the other.
 export type { ImportJob, ImportSource, JobStatus } from './apis';
 

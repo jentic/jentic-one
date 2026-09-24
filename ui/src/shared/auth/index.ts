@@ -1,4 +1,4 @@
-export { AuthProvider, useAuth } from '@/shared/auth/AuthContext';
+export { AuthProvider, useAuth, useOptionalCurrentUser } from '@/shared/auth/AuthContext';
 export type { AuthContextValue, AuthStatus } from '@/shared/auth/AuthContext';
 export { AuthGuard } from '@/shared/auth/AuthGuard';
 export { RequirePermission } from '@/shared/auth/RequirePermission';

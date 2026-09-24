@@ -22,11 +22,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from jentic_one.shared.scopes import (
-    OWNER_ACCESS_REQUESTS_READ,
     OWNER_AGENTS_READ,
     OWNER_CREDENTIALS_READ,
     OWNER_RESOURCES_READ,
-    OWNER_SERVICE_ACCOUNTS_READ,
 )
 
 CAPABILITIES_EXECUTE = "capabilities:execute"
@@ -39,6 +37,10 @@ EVENTS_WRITE = "events:write"
 EVENTS_READ = "events:read"
 CREDENTIALS_READ = "credentials:read"
 CREDENTIALS_WRITE = "credentials:write"
+# Narrower than CREDENTIALS_WRITE: agents that hold CREDENTIALS_CONNECT can
+# start and poll an integration connect session (the agent-driven SSO
+# flow) but cannot read tokens or manage other credentials.
+CREDENTIALS_CONNECT = "credentials:connect"
 APIS_READ = "apis:read"
 APIS_WRITE = "apis:write"
 CATALOG_IMPORT = "catalog:import"
@@ -47,8 +49,6 @@ EXECUTIONS_READ = "executions:read"
 AUDIT_READ = "audit:read"
 AGENTS_READ = "agents:read"
 AGENTS_WRITE = "agents:write"
-SERVICE_ACCOUNTS_READ = "service-accounts:read"
-SERVICE_ACCOUNTS_WRITE = "service-accounts:write"
 CONFIG_READ = "config:read"
 CONFIG_WRITE = "config:write"
 OAUTH_CLIENTS_READ = "oauth-clients:read"
@@ -81,6 +81,7 @@ ALL_PERMISSIONS: dict[str, Permission] = {
                 EVENTS_READ,
                 CREDENTIALS_READ,
                 CREDENTIALS_WRITE,
+                CREDENTIALS_CONNECT,
                 APIS_READ,
                 APIS_WRITE,
                 CATALOG_IMPORT,
@@ -89,8 +90,6 @@ ALL_PERMISSIONS: dict[str, Permission] = {
                 AUDIT_READ,
                 AGENTS_WRITE,
                 AGENTS_READ,
-                SERVICE_ACCOUNTS_WRITE,
-                SERVICE_ACCOUNTS_READ,
                 CONFIG_WRITE,
                 CONFIG_READ,
                 OAUTH_CLIENTS_WRITE,
@@ -137,7 +136,14 @@ ALL_PERMISSIONS: dict[str, Permission] = {
     CREDENTIALS_WRITE: Permission(
         name=CREDENTIALS_WRITE,
         description="Create, update, and delete credentials",
-        implies=frozenset({CREDENTIALS_READ}),
+        implies=frozenset({CREDENTIALS_READ, CREDENTIALS_CONNECT}),
+    ),
+    CREDENTIALS_CONNECT: Permission(
+        name=CREDENTIALS_CONNECT,
+        description=(
+            "Start and poll an integration connect session (agent-driven SSO). "
+            "Cannot read tokens or manage other credentials."
+        ),
     ),
     CREDENTIALS_READ: Permission(
         name=CREDENTIALS_READ,
@@ -182,15 +188,6 @@ ALL_PERMISSIONS: dict[str, Permission] = {
         name=AGENTS_READ,
         description="Read agent configuration and status",
     ),
-    SERVICE_ACCOUNTS_WRITE: Permission(
-        name=SERVICE_ACCOUNTS_WRITE,
-        description="Create, update, and delete service accounts",
-        implies=frozenset({SERVICE_ACCOUNTS_READ}),
-    ),
-    SERVICE_ACCOUNTS_READ: Permission(
-        name=SERVICE_ACCOUNTS_READ,
-        description="Read service account configuration and status",
-    ),
     CONFIG_WRITE: Permission(
         name=CONFIG_WRITE,
         description="Create and update runtime platform configuration",
@@ -221,14 +218,6 @@ ALL_PERMISSIONS: dict[str, Permission] = {
     OWNER_AGENTS_READ: Permission(
         name=OWNER_AGENTS_READ,
         description="Read agents owned by the agent's creator",
-    ),
-    OWNER_ACCESS_REQUESTS_READ: Permission(
-        name=OWNER_ACCESS_REQUESTS_READ,
-        description="Read access requests filed by or for the agent's creator",
-    ),
-    OWNER_SERVICE_ACCOUNTS_READ: Permission(
-        name=OWNER_SERVICE_ACCOUNTS_READ,
-        description="Read service accounts owned by the agent's creator",
     ),
 }
 
@@ -281,6 +270,7 @@ __all__ = [
     "CATALOG_IMPORT",
     "CONFIG_READ",
     "CONFIG_WRITE",
+    "CREDENTIALS_CONNECT",
     "CREDENTIALS_READ",
     "CREDENTIALS_WRITE",
     "EVENTS_READ",
@@ -293,8 +283,6 @@ __all__ = [
     "OAUTH_CLIENTS_WRITE",
     "ORG_ADMIN",
     "OVERLAYS_CONFIRM",
-    "SERVICE_ACCOUNTS_READ",
-    "SERVICE_ACCOUNTS_WRITE",
     "USERS_READ",
     "USERS_WRITE",
     "Permission",

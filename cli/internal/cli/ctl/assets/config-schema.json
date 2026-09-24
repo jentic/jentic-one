@@ -1,22 +1,5 @@
 {
   "$defs": {
-    "AccessRequestsConfig": {
-      "description": "Access requests subsystem configuration.",
-      "properties": {
-        "canonical_base_url": {
-          "default": "",
-          "title": "Canonical Base Url",
-          "type": "string"
-        },
-        "ttl_days": {
-          "default": 7,
-          "title": "Ttl Days",
-          "type": "integer"
-        }
-      },
-      "title": "AccessRequestsConfig",
-      "type": "object"
-    },
     "AdminAuthConfig": {
       "description": "Admin authentication settings.",
       "properties": {
@@ -406,12 +389,8 @@
       "type": "object"
     },
     "ControlSurfaceConfig": {
-      "description": "Control surface configuration.",
-      "properties": {
-        "access_requests": {
-          "$ref": "#/$defs/AccessRequestsConfig"
-        }
-      },
+      "description": "Control surface configuration.\n\nEmpty since theme 7 removed the access-request subsystem (its\n``access_requests.ttl_days``/``canonical_base_url`` knobs). The section\nstays so a ``control:`` key in existing YAML keeps validating and future\ncontrol-surface knobs have a home; unknown subkeys are ignored.",
+      "properties": {},
       "title": "ControlSurfaceConfig",
       "type": "object"
     },
@@ -1452,6 +1431,11 @@
           "default": 3,
           "title": "Retry Max",
           "type": "integer"
+        },
+        "service_account_sweep_min_stamp_age_hours": {
+          "default": 24,
+          "title": "Service Account Sweep Min Stamp Age Hours",
+          "type": "integer"
         }
       },
       "title": "ServicesConfig",
@@ -1686,6 +1670,206 @@
       "title": "UpstreamClientConfig",
       "type": "object"
     },
+    "VendorAuthConfig": {
+      "description": "Config entry for one verified vendor.\n\nKeyed in `VendorRegistryConfig.entries` by a short slug (e.g. \"github\").",
+      "properties": {
+        "display_name": {
+          "title": "Display Name",
+          "type": "string"
+        },
+        "flows": {
+          "items": {
+            "discriminator": {
+              "mapping": {
+                "authorization_code": "#/$defs/VendorAuthorizationCodeFlowConfig",
+                "device_authorization": "#/$defs/VendorDeviceAuthorizationFlowConfig"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/VendorDeviceAuthorizationFlowConfig"
+              },
+              {
+                "$ref": "#/$defs/VendorAuthorizationCodeFlowConfig"
+              }
+            ]
+          },
+          "title": "Flows",
+          "type": "array"
+        },
+        "identity_probe": {
+          "$ref": "#/$defs/VendorIdentityProbeConfig"
+        },
+        "scopes": {
+          "items": {
+            "$ref": "#/$defs/VendorScopeConfig"
+          },
+          "title": "Scopes",
+          "type": "array"
+        },
+        "vendor": {
+          "title": "Vendor",
+          "type": "string"
+        }
+      },
+      "required": [
+        "vendor",
+        "display_name",
+        "flows",
+        "identity_probe"
+      ],
+      "title": "VendorAuthConfig",
+      "type": "object"
+    },
+    "VendorAuthorizationCodeFlowConfig": {
+      "description": "OAuth 2.0 authorization-code flow settings for a vendor.\n\nIncluded so the vendor registry is flow-generic from day 1 even though\nphase 1 only wires up device flow. Requires a client secret (confidential\nclient) since the redirect-based flow exchanges the code at the token\nendpoint.",
+      "properties": {
+        "authorize_url": {
+          "title": "Authorize Url",
+          "type": "string"
+        },
+        "client_id": {
+          "title": "Client Id",
+          "type": "string"
+        },
+        "client_secret": {
+          "format": "password",
+          "title": "Client Secret",
+          "type": "string",
+          "writeOnly": true
+        },
+        "kind": {
+          "const": "authorization_code",
+          "default": "authorization_code",
+          "title": "Kind",
+          "type": "string"
+        },
+        "token_url": {
+          "title": "Token Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "client_id",
+        "client_secret",
+        "authorize_url",
+        "token_url"
+      ],
+      "title": "VendorAuthorizationCodeFlowConfig",
+      "type": "object"
+    },
+    "VendorDeviceAuthorizationFlowConfig": {
+      "description": "RFC 8628 device flow settings for a vendor.\n\n`client_id` is the platform-shipped OAuth application id (device flow is a\npublic-client flow — no secret). Endpoints are the vendor's device\nauthorization + token endpoints.",
+      "properties": {
+        "authorization_endpoint": {
+          "title": "Authorization Endpoint",
+          "type": "string"
+        },
+        "client_id": {
+          "title": "Client Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "device_authorization",
+          "default": "device_authorization",
+          "title": "Kind",
+          "type": "string"
+        },
+        "token_endpoint": {
+          "title": "Token Endpoint",
+          "type": "string"
+        }
+      },
+      "required": [
+        "client_id",
+        "authorization_endpoint",
+        "token_endpoint"
+      ],
+      "title": "VendorDeviceAuthorizationFlowConfig",
+      "type": "object"
+    },
+    "VendorIdentityProbeConfig": {
+      "description": "Generic identity-echo protocol config for a vendor.\n\nAfter the connect flow completes, the platform calls\n`{method} {endpoint}` with the freshly minted access token, extracts\n`identity_field` (dotted JSON path) from the response body, and formats it\ninto `display_template` (Python str.format). The result is stored as\n`connected_as` and returned to the caller.",
+      "properties": {
+        "display_template": {
+          "title": "Display Template",
+          "type": "string"
+        },
+        "endpoint": {
+          "title": "Endpoint",
+          "type": "string"
+        },
+        "identity_field": {
+          "title": "Identity Field",
+          "type": "string"
+        },
+        "method": {
+          "default": "GET",
+          "enum": [
+            "GET",
+            "POST"
+          ],
+          "title": "Method",
+          "type": "string"
+        }
+      },
+      "required": [
+        "endpoint",
+        "identity_field",
+        "display_template"
+      ],
+      "title": "VendorIdentityProbeConfig",
+      "type": "object"
+    },
+    "VendorRegistryConfig": {
+      "description": "Top-level vendor auth registry.",
+      "properties": {
+        "entries": {
+          "additionalProperties": {
+            "$ref": "#/$defs/VendorAuthConfig"
+          },
+          "title": "Entries",
+          "type": "object"
+        }
+      },
+      "title": "VendorRegistryConfig",
+      "type": "object"
+    },
+    "VendorScopeConfig": {
+      "description": "A single OAuth scope exposed by the vendor.\n\n`classification` drives the review-page UX: read scopes are pre-selected by\ndefault; write/admin scopes get a warning flag. `description` is\nhuman-facing copy displayed on the review page.",
+      "properties": {
+        "classification": {
+          "default": "read",
+          "enum": [
+            "read",
+            "write",
+            "admin"
+          ],
+          "title": "Classification",
+          "type": "string"
+        },
+        "default": {
+          "default": false,
+          "title": "Default",
+          "type": "boolean"
+        },
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "VendorScopeConfig",
+      "type": "object"
+    },
     "WorkerConfig": {
       "description": "Background job-worker durability knobs.\n\nThe worker claims a job, sets a **visibility deadline** (``visibility_timeout_s``\nfrom claim), and processes it. A job left ``RUNNING`` past that deadline by a\ncrashed worker/pod is reclaimed on a later poll. A handler failure requeues the\njob with capped exponential backoff up to ``max_attempts`` claims; beyond that\nit is dead-lettered (poison-message handling) rather than looped forever.",
       "properties": {
@@ -1782,6 +1966,9 @@
     },
     "telemetry": {
       "$ref": "#/$defs/TelemetryConfig"
+    },
+    "vendors": {
+      "$ref": "#/$defs/VendorRegistryConfig"
     },
     "worker": {
       "$ref": "#/$defs/WorkerConfig"

@@ -3,7 +3,11 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Identity response for a service-account actor.
+ * Identity response for a (retired) service-account actor.
+ *
+ * Served only to callers whose unmigrated ``sak_``/``jntc_live_`` key
+ * resolved through the Phase-1 SA-table fallback (theme 8). Deleted with the
+ * fallback in Phase 4.
  */
 export type MeServiceAccount = {
     approved_by?: (string | null);

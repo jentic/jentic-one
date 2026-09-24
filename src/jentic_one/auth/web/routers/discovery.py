@@ -84,7 +84,6 @@ async def oauth_authorization_server(
             "authorization_code",
             "urn:ietf:params:oauth:grant-type:jwt-bearer",
             "refresh_token",
-            "client_credentials",
         ],
         "token_endpoint_auth_methods_supported": [
             "private_key_jwt",

@@ -311,7 +311,7 @@ const USAGE_TOP: Record<string, Array<Record<string, unknown>>> = {
 			avg_ms: 520,
 			trend: [2, 3, 2, 4, 2, 3, 2, 3, 2, 3, 2, 2],
 		},
-		// Keys mirroring the agents-module store seeds (agnt_*/sva_*) so the
+		// Keys mirroring the agents-module store seeds (agnt_*) so the
 		// fleet table's activity columns (which read this same aggregate with
 		// group_by=agent) light up in mocked dev and tests. Extra rows here are
 		// harmless to the Monitor Breakdown — it just lists more actors.
@@ -333,6 +333,8 @@ const USAGE_TOP: Record<string, Array<Record<string, unknown>>> = {
 			avg_ms: 980,
 			trend: [22, 18, 15, 12, 10, 8, 6, 3, 2, 0, 0, 0],
 		},
+		// A historical pre-theme-8 service-account bucket: executions keep
+		// their original actor_type, so the Breakdown must still list it.
 		{
 			key: 'service_account/sva_active_1',
 			label: 'service_account/sva_active_1',

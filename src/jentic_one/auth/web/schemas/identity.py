@@ -85,7 +85,12 @@ class MeAgent(BaseModel):
 
 
 class MeServiceAccount(BaseModel):
-    """Identity response for a service-account actor."""
+    """Identity response for a (retired) service-account actor.
+
+    Served only to callers whose unmigrated ``sak_``/``jntc_live_`` key
+    resolved through the Phase-1 SA-table fallback (theme 8). Deleted with the
+    fallback in Phase 4.
+    """
 
     type: Literal["service_account"] = "service_account"
     id: str
@@ -97,7 +102,7 @@ class MeServiceAccount(BaseModel):
     scopes: list[str]
     # Scopes baked into the presented bearer token at mint time. A strict subset
     # of `scopes` means a grant has landed that the current token can't yet
-    # exercise; the service account should re-mint to pick it up.
+    # exercise; the caller should re-mint to pick it up.
     token_scopes: list[str]
     registered_by: str
     approved_by: str | None = None
