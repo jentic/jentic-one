@@ -110,9 +110,11 @@ describe('VendorConnectFlow — self mode', () => {
 		);
 		// Vendor header comes from the ``vendor`` prop, so it's up
 		// immediately; scope data hydrates from the capabilities query.
-		// Use ``findAllByText`` because the credential-name helper text
-		// also references the display name.
-		expect((await screen.findAllByText('GitHub')).length).toBeGreaterThan(0);
+		// The vendor name renders as an editable input pre-filled with the
+		// display name.
+		expect((await screen.findByLabelText(/credential name/i)) as HTMLInputElement).toHaveValue(
+			'GitHub',
+		);
 		expect(await screen.findByText('repo')).toBeInTheDocument();
 		expect(await screen.findByText('read:user')).toBeInTheDocument();
 		// Agent picker IS rendered — theme-5 landed on main and
@@ -246,6 +248,7 @@ describe('VendorConnectFlow — self mode', () => {
 		);
 		const user = userEvent.setup();
 		const nameInput = await screen.findByLabelText(/credential name/i);
+		await user.clear(nameInput);
 		await user.type(nameInput, 'GitHub (personal)');
 		await waitFor(() =>
 			expect(screen.getByRole('button', { name: /^continue$/i })).not.toBeDisabled(),
@@ -255,7 +258,7 @@ describe('VendorConnectFlow — self mode', () => {
 		expect(capturedBody).toMatchObject({ vendor: 'github', name: 'GitHub (personal)' });
 	});
 
-	it('omits `name` from the :connect payload when the field is left blank', async () => {
+	it('sends the vendor display name as `name` when the field is left untouched', async () => {
 		stubCapabilities();
 		let capturedBody: Record<string, unknown> | null = null;
 		worker.use(
@@ -278,9 +281,10 @@ describe('VendorConnectFlow — self mode', () => {
 		);
 		await user.click(screen.getByRole('button', { name: /^continue$/i }));
 		await waitFor(() => expect(capturedBody).not.toBeNull());
-		// Server-side default (vendor display name) kicks in when omitted.
-		expect(capturedBody).not.toHaveProperty('name');
-		expect(capturedBody).toMatchObject({ vendor: 'github' });
+		// The input is pre-filled with the vendor display name so the
+		// payload always carries a ``name``. Sending the same string
+		// server-side is functionally equivalent to omitting it.
+		expect(capturedBody).toMatchObject({ vendor: 'github', name: 'GitHub' });
 	});
 });
 

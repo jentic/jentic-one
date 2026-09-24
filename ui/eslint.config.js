@@ -84,7 +84,6 @@ const MODULE_QUERY_KEY_ROOTS = {
 	monitor: ['monitor'],
 	docs: ['docs'],
 	settings: ['settings', 'oauth-clients'],
-	'oauth-app-registrations': ['oauth-app-registrations'],
 };
 
 // Guard: every module dir under src/modules MUST appear in the map above, so a

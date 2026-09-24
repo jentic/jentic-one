@@ -21,7 +21,7 @@ import {
 	type CreateRegistrationInput,
 	type ListRegistrationsParams,
 	type OAuthAppRegistration,
-} from '@/modules/oauth-app-registrations/api/client';
+} from '@/shared/credentials/oauth-app-registrations/api/client';
 
 export type { OAuthAppRegistration, CreateRegistrationInput };
 export {

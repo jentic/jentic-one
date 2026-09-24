@@ -9,11 +9,11 @@
 import { useEffect, useState } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import { Button, Dialog, ErrorAlert, toast } from '@/shared/ui';
-import { isInUseConflict } from '@/modules/oauth-app-registrations/api/client';
+import { isInUseConflict } from '@/shared/credentials/oauth-app-registrations/api/client';
 import {
 	useDeleteOAuthAppRegistration,
 	type OAuthAppRegistration,
-} from '@/modules/oauth-app-registrations/api/hooks';
+} from '@/shared/credentials/oauth-app-registrations/api/hooks';
 
 interface DeleteDialogProps {
 	open: boolean;

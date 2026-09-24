@@ -18,7 +18,6 @@ import {
 	Checkbox,
 	CopyButton,
 	ErrorAlert,
-	Input,
 	Label,
 	Skeleton,
 	VendorIcon,
@@ -184,10 +183,12 @@ function VendorSelfConnectFlow({
 	const [rules, setRules] = useState<PermissionRule[] | null>(null);
 	const [session, setSession] = useState<{ id: string; pollToken: string } | null>(null);
 	const [challenge, setChallenge] = useState<ConfirmResponse | null>(null);
-	// User-editable credential label. Blank means "let the server default to
-	// the vendor display name" — sent as an omitted ``name`` field on the
-	// ``:connect`` payload so the backend's fallback branch kicks in.
-	const [credentialName, setCredentialName] = useState<string>('');
+	// User-editable credential label. Pre-filled with the vendor display
+	// name so the input shows a sensible default the user can edit. Sent
+	// on the ``:connect`` payload; the backend accepts it as the credential
+	// name (falling back to the same vendor display name when omitted, so
+	// pre-filling here is functionally equivalent to omitting it).
+	const [credentialName, setCredentialName] = useState<string>(vendor.display_name);
 	// When ``preselectedAgentId`` is supplied by the caller (entry from
 	// an agent's detail page), the picker starts locked to that id.
 	// Otherwise it starts empty and the user must pick before Continue.
@@ -481,31 +482,18 @@ function VendorSelfConnectFlow({
 
 	return (
 		<div className="space-y-5">
-			<VendorHeader
+			<EditableVendorHeader
 				display={display}
 				subtitle={`You'll approve this connection on ${display.displayName} in a moment.`}
+				name={credentialName}
+				onNameChange={setCredentialName}
+				// Disabled once the ``:connect`` session exists — the
+				// credential's name landed at ``:connect`` time and the
+				// backend doesn't accept name updates on a pending
+				// session. If the user needs to rename after connecting,
+				// they can do it from the credentials list.
+				disabled={session != null || startMutation.isPending}
 			/>
-
-			<div className="space-y-1.5">
-				<Label htmlFor="vendor-connect-credential-name">Credential name</Label>
-				<Input
-					id="vendor-connect-credential-name"
-					value={credentialName}
-					onChange={(e): void => setCredentialName(e.target.value)}
-					placeholder={`${display.displayName} (personal)`}
-					// Disabled once the ``:connect`` session exists — the
-					// credential's name landed at ``:connect`` time and the
-					// backend doesn't accept name updates on a pending
-					// session. If the user needs to rename after connecting,
-					// they can do it from the credentials list.
-					disabled={session != null || startMutation.isPending}
-				/>
-				<p className="text-muted-foreground text-xs">
-					Your name for this credential. You can create multiple credentials from the same
-					vendor with different names. Leave blank to default to{' '}
-					<b>{display.displayName}</b>.
-				</p>
-			</div>
 
 			<AgentPickerField
 				agents={agents.data?.data ?? []}
@@ -1060,6 +1048,42 @@ function VendorHeader({ display, subtitle }: { display: VendorDisplay; subtitle:
 			<div>
 				<p className="text-foreground text-base font-semibold">{display.displayName}</p>
 				<p className="text-muted-foreground text-xs">{subtitle}</p>
+			</div>
+		</div>
+	);
+}
+
+// Variant of :func:`VendorHeader` where the vendor name is inline-editable.
+// Renders an unadorned ``<input>`` styled to match the read-only display so
+// the user can type over the label directly. Pre-filled with the vendor's
+// display name; the caller drives state.
+function EditableVendorHeader({
+	display,
+	subtitle,
+	name,
+	onNameChange,
+	disabled,
+}: {
+	display: VendorDisplay;
+	subtitle: string;
+	name: string;
+	onNameChange: (next: string) => void;
+	disabled: boolean;
+}) {
+	return (
+		<div className="flex items-center gap-3">
+			<VendorIcon name={display.displayName} vendor={display.iconKey} size="lg" />
+			<div className="min-w-0 flex-1">
+				<input
+					type="text"
+					className="text-foreground border-border/60 focus:border-primary focus:ring-primary/20 w-full max-w-xs rounded border bg-transparent px-2 py-1 text-base font-semibold outline-none focus:ring-2 disabled:opacity-60"
+					value={name}
+					placeholder={display.displayName}
+					aria-label="Credential name"
+					disabled={disabled}
+					onChange={(e): void => onNameChange(e.target.value)}
+				/>
+				<p className="text-muted-foreground mt-0.5 text-xs">{subtitle}</p>
 			</div>
 		</div>
 	);

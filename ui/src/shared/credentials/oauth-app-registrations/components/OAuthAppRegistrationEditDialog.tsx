@@ -14,7 +14,7 @@ import {
 	usePlatformRedirectUri,
 	type OAuthAppRegistration,
 	type OAuthAppRegistrationFlowKind,
-} from '@/modules/oauth-app-registrations/api/hooks';
+} from '@/shared/credentials/oauth-app-registrations/api/hooks';
 
 interface EditDialogProps {
 	open: boolean;

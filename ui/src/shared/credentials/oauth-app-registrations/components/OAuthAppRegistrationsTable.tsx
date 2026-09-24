@@ -26,7 +26,7 @@ import { timeAgo } from '@/shared/lib/utils';
 import type {
 	OAuthAppRegistration,
 	OAuthAppRegistrationFlowKind,
-} from '@/modules/oauth-app-registrations/api/hooks';
+} from '@/shared/credentials/oauth-app-registrations/api/hooks';
 
 export type RegistrationRowAction = 'edit' | 'rotate-secret' | 'delete' | 'toggle-active';
 

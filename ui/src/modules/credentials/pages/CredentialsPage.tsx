@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useSearchParams } from 'react-router';
+import { useLocation, useSearchParams } from 'react-router';
 import { Plus } from 'lucide-react';
 import { Button, CascadeDeleteDialog, PageHeader, PageHelp, PageShell, toast } from '@/shared/ui';
+import { ORG_ADMIN, usePermission } from '@/shared/auth/usePermission';
+import { SharedOAuthAppsSection } from '@/shared/credentials/oauth-app-registrations/components/SharedOAuthAppsSection';
 import {
 	CredentialType,
 	runConnectFlow,
@@ -34,6 +36,9 @@ import type { DeviceAuthorizationChallengeResponse } from '@/shared/credentials/
  * created credential.
  */
 export function CredentialsPage() {
+	const isAdmin = usePermission(ORG_ADMIN);
+	const location = useLocation();
+	const credentialsHref = `${location.pathname}${location.search}`;
 	const [search, setSearch] = useState('');
 	const [typeFilter, setTypeFilter] = useState<CredentialTypeFilter>('all');
 	const [createOpen, setCreateOpen] = useState(false);
@@ -262,6 +267,12 @@ export function CredentialsPage() {
 					</>
 				}
 			/>
+
+			{isAdmin && (
+				<div className="mt-2 mb-6">
+					<SharedOAuthAppsSection credentialsHref={credentialsHref} />
+				</div>
+			)}
 
 			<CredentialsToolbar
 				query={search}
