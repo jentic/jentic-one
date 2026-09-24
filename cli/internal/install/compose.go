@@ -173,7 +173,7 @@ services:
     environment:
       JENTIC_CONFIG_FILE: {{.ContainerConfigPath}}
       JENTIC__APPS: {{.Apps}}
-      # The image runs as uid 999 (jentic) whose $HOME (/home/jentic) is not
+      # The image runs as uid 10001 (jentic) whose $HOME (/home/jentic) is not
       # writable, so point the HuggingFace / sentence-transformers model cache at
       # the writable /tmp. Without this the registry ingest pipeline's embedding
       # stage dies with "[Errno 13] Permission denied: '/home/jentic'".
@@ -200,7 +200,7 @@ services:
       # service with apps=broker on a dedicated port.
       JENTIC__APPS: broker
       JENTIC__SERVER__PORT: "{{.BrokerPort}}"
-      # Same writable model-cache redirect as the app service (uid 999's $HOME
+      # Same writable model-cache redirect as the app service (uid 10001's $HOME
       # is not writable); harmless for the broker, required if it touches the
       # embedding code paths.
       HF_HOME: /tmp/hf-cache
@@ -322,8 +322,8 @@ func RenderCompose(d *Draft, cfg ComposeConfig) ([]byte, error) {
 // bind-mount directories exist.
 //
 // Modes are chosen for the container uids that must read/write them (#992):
-// the app/broker images run as the unprivileged `jentic` user (uid 999, see
-// deploy/docker/*.Dockerfile) and postgres runs as uid 999 too — neither
+// the app/broker images run as the unprivileged `jentic` user (uid 10001, see
+// deploy/docker/*.Dockerfile) and postgres runs as uid 999 — neither
 // matches the installing host user, so anything bind-mounted into a container
 // must be world-readable. Host-side protection comes from ~/.jentic itself
 // being 0700. The compose file stays 0600: only the docker CLI (running as
@@ -340,9 +340,9 @@ func WriteComposeArtifacts(d *Draft, cfg ComposeConfig) error {
 	// stale init SQL an older install left beside the compose file so nothing
 	// suggests it is still consulted. Best-effort: a missing file is the norm.
 	_ = os.Remove(cfg.legacyInitSchemasPath())
-	// The log sink inside the containers writes here as uid 999. Mode bits are
-	// the only tool available without root (chown to a foreign uid fails, and
-	// uid 999 belongs to no host group), so the dir is world-writable and the
+	// The log sink inside the containers writes here as uid 10001. Mode bits
+	// are the only tool available without root (chown to a foreign uid fails,
+	// and uid 10001 belongs to no host group), so the dir is world-writable and the
 	// 0700 ~/.jentic parent is what keeps other host users out. That parent
 	// invariant is ASSERTED here (SEC-6), not assumed: if a future change
 	// relocates the logs dir outside a private parent, the install fails loud
@@ -546,8 +546,11 @@ func composeArgs(composePath string, sub ...string) []string {
 	return append([]string{"compose", "-p", composeProjectName, "-f", composePath}, sub...)
 }
 
-// ComposeUp brings the stack up in detached mode.
+// ComposeUp brings the stack up in detached mode, after re-owning the SQLite
+// data volume (see ensureDataVolumeOwnership) — `jenticctl start` reaches here
+// without a migration run.
 func ComposeUp(w io.Writer, composePath string) error {
+	ensureDataVolumeOwnership(w, composePath)
 	return run(w, "docker", composeArgs(composePath, "up", "-d")...)
 }
 
@@ -616,7 +619,55 @@ func ComposePs(composePath string) (string, error) {
 // (`docker compose run --rm app python -m jentic_one.migrations.run`). For
 // Postgres, compose waits on the db healthcheck via the app's depends_on.
 func RunComposeMigrations(w io.Writer, composePath string) error {
+	ensureDataVolumeOwnership(w, composePath)
 	return run(w, "docker", migrateArgs(composePath)...)
+}
+
+// containerRuntimeUser is the numeric uid:gid the app and broker images run as
+// (`USER 10001` in deploy/docker/*.Dockerfile). Kept numeric: it is compared
+// against file ownership inside the volume, not resolved by name.
+const containerRuntimeUser = "10001:10001"
+
+// ensureDataVolumeOwnership re-owns the SQLite data volume to the images'
+// runtime uid, in a one-shot root container, before anything writes to it.
+//
+// Docker copies the image's /data ownership into a named volume only when the
+// volume is first created. A volume created by an image that ran under a
+// different uid keeps that owner forever, so every write from the current image
+// fails with "attempt to write a readonly database" — an upgrade outage with no
+// hint at the cause. Re-owning on every migrate/start is idempotent and cheap
+// (a handful of *.db files).
+//
+// Best-effort: a failure is reported and the caller carries on, so the
+// migration (or start) surfaces its own, more specific error if the volume
+// really is unwritable. Postgres stacks have no data volume and are skipped.
+func ensureDataVolumeOwnership(w io.Writer, composePath string) {
+	if !composeUsesSQLiteVolume(composePath) {
+		return
+	}
+	if err := run(w, "docker", dataVolumeOwnershipArgs(composePath)...); err != nil {
+		fmt.Fprintf(w, "warning: could not re-own the %s volume to uid %s: %v\n",
+			composeDataVolume, containerRuntimeUser, err)
+	}
+}
+
+// composeUsesSQLiteVolume reports whether the generated compose file mounts the
+// SQLite named volume. The file is CLI-generated (RenderCompose), so the mount
+// line is a stable marker; an unreadable file reads as "no".
+func composeUsesSQLiteVolume(composePath string) bool {
+	data, err := os.ReadFile(composePath) //nolint:gosec // composePath is CLI-managed under JENTIC_HOME.
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(data), composeDataVolume+":"+containerDataDir)
+}
+
+// dataVolumeOwnershipArgs builds the one-shot root `chown` over the data
+// volume. --no-deps: the volume is all it needs, so no dependency starts.
+func dataVolumeOwnershipArgs(composePath string) []string {
+	return composeArgs(composePath, "run", "--rm", "-T", "--no-deps",
+		"--user", "0:0", "--entrypoint", "chown", composeServiceApp,
+		"-R", containerRuntimeUser, containerDataDir)
 }
 
 // SchemaState is the migration state of the stack's databases.

@@ -85,12 +85,66 @@ Operator-facing changes shipped by the theme-5 (toolkit removal) release —
 read this before rolling it out. Each active window below is also tracked in
 the Deprecations table.
 
+- **The migration run performs the toolkit → direct-binding cutover.** On
+  this release the broker authorizes on direct agent↔credential bindings by
+  default (`broker.direct_bindings_enabled: true`), so every toolkit-bound
+  agent needs its direct bindings **before** the new version serves traffic.
+  `python -m jentic_one.migrations.run` does that itself: once every database
+  is at head it runs two one-shot upgrade steps and prints one
+  `==> upgrade step <name>: <action>` line (plus a JSON summary) for each —
+  1. `theme5_retire_toolkit_keys` migrates every resolvable `jntc_live_`
+     key to a service account (see the next bullet);
+  2. `theme5_flatten_toolkits` derives a direct binding, carrying the pair's
+     rules, for every `(agent, credential)` pair reachable through a toolkit
+     (the `flatten-toolkits` job below). It runs **once per install** and is
+     recorded in the control DB's `upgrade_steps` table, so a later upgrade
+     never re-creates a binding you have since removed. It is skipped when a
+     verified flatten is already acknowledged.
+
+  Nothing extra to run on Helm (the pre-upgrade migrate hook), `jenticctl
+  update`, or a hand-run migration. **Only a failed flatten blocks the
+  upgrade**: the runner exits `4` so the new version never starts without
+  its bindings; fix the logged cause and re-run (it is idempotent and not
+  recorded until it completes). A key-retirement problem never blocks — it
+  prints a `==> WARNING` line naming the recovery command, and the control
+  plane retries the job at every boot. To get past a step deliberately,
+  `--skip-upgrade-step <name>` defers that one step to the next full
+  migration run (`--skip-upgrade-steps` defers both); on Helm set
+  `migrate.extraArgs`, e.g. `["--skip-upgrade-step",
+  "theme5_flatten_toolkits"]` — and then run `flatten-toolkits` yourself
+  before serving traffic. Read the summary: `created_default_deny` counts
+  pairs bound with **no** allow rule (conflicting toolkit rules, or a
+  rule-less pair) and is also printed as a warning — the rest of the
+  `flatten-toolkits` report categories are counted under `findings`; run
+  `jentic_one flatten-toolkits --diff-only --report report.jsonl` to get the
+  full lines for review.
+- **Toolkit changes during a rolling upgrade are not flattened.** Helm (and
+  any rolling deploy) migrates while the previous version still serves: a
+  toolkit, toolkit binding, or agent–toolkit binding created on the old
+  version *after* the migration's flatten has no direct binding on the new
+  one, and the migration never flattens a second time. Freeze toolkit edits
+  for the rollout, or re-run `jentic_one flatten-toolkits` once the new
+  version is live (idempotent: it only adds the missing pairs).
 - **`jntc_live_` toolkit keys are retired; migration to `sak_` is automatic.**
-  No new keys are issued. Run `jentic_one retire-toolkit-keys` once: every
-  existing key digest is migrated to a service account, and the **unchanged
-  plaintext keeps authenticating** — as that service account — for the
-  deprecation window. Watch `deprecated_toolkit_key_used` WARNING logs to find
-  holders still presenting the old key form, and rotate them to `sak_` keys.
+  No new keys are issued. The migration run (and every control-plane boot)
+  migrates every existing key digest to a service account, and the
+  **unchanged plaintext keeps authenticating** — as that service account —
+  for the deprecation window. Keys with no resolvable owner are skipped and
+  reported (a `==> WARNING` line on the migration run): **their holders stop
+  authenticating** until you run `jentic_one retire-toolkit-keys --owner
+  <admin-email>`. The job writes a `migrated_actor_id` stamp on each
+  `toolkit_keys` row and creates the service accounts and their bindings; a
+  0.39.x rollback ignores all three. Watch `deprecated_toolkit_key_used`
+  WARNING logs to find holders still presenting the old key form, and rotate
+  them to `sak_` keys.
+- **Docker images run as uid `10001`** (was `999`), so kubelet can verify
+  `runAsNonRoot`. Anything the container writes must be writable by that uid:
+  `jenticctl` re-owns its SQLite data volume automatically on `update` and
+  `start`; for a hand-run `docker run` with a SQLite volume, run
+  `docker run --rm --user 0:0 --entrypoint chown -v <volume>:/data <image>
+  -R 10001:10001 /data` once before starting the new version (the symptom
+  otherwise is `attempt to write a readonly database`). Postgres installs are
+  unaffected.
 - **The toolkit management surface is gone.** All `/toolkits/*` and
   `/agents/{id}/toolkits*` routes now return `404`. The `toolkits:read`,
   `toolkits:write`, and `owner:toolkits:read` scopes are retired: no route
@@ -110,14 +164,16 @@ the Deprecations table.
   adopt the credential headers now.
 - **Toolkit tables are still present.** The stored toolkit rows (bindings,
   keys) survive this release; they are dropped in Phase 6b. Before that
-  release you must run the Phase 6a export/flatten/acknowledge runbook below
+  release you must complete the Phase 6a verify/acknowledge runbook below
   — the Phase-6b drop migrations refuse to run until the acknowledgement is
-  on record.
+  on record. The acknowledgement is never automatic.
 
 ### Phase 6a runbook: export, flatten, verify, acknowledge
 
 Run these against **production data** (all commands read/write the live
-control + admin databases configured for the process). Order matters.
+control + admin databases configured for the process). Order matters. The
+migration run already performed the flatten (step 3) once; the remaining
+steps are what stands between you and Phase 6b.
 
 1. **Export first**: `jentic_one export-toolkits --out toolkit-export.json`.
    The file captures all five legacy tables (`toolkits`, `toolkit_keys`,
@@ -126,7 +182,9 @@ control + admin databases configured for the process). Order matters.
    embeds key hash digests — store it like a secrets backup.
 2. *(Optional)* preview: `jentic_one flatten-toolkits --diff-only --report
    preview.jsonl` writes the report without touching either database.
-3. **Flatten**: `jentic_one flatten-toolkits --report flatten.jsonl`. Every
+3. **Flatten** (already done once by the migration run — re-run it if
+   toolkits changed on the old version during the rollout):
+   `jentic_one flatten-toolkits --report flatten.jsonl`. Every
    `(agent, credential)` pair reachable through a toolkit gains a direct
    binding carrying the pair's rules. Read the report: `rule_conflict` lines
    are pairs whose toolkit paths disagreed — they were bound **default-deny**
@@ -166,7 +224,7 @@ runtime signal an operator can watch, and the earliest removal point.
 
 | Deprecated | Since | Runtime signal | Removal |
 | ---------- | ----- | -------------- | ------- |
-| `jntc_live_` toolkit API keys (theme-5 Phase 4). No new keys are issued (`POST /toolkits/{id}/keys` → `410 toolkit_keys_retired`); run `jentic_one retire-toolkit-keys` so existing plaintexts keep authenticating as their migrated service accounts, then rotate holders to `sak_` keys. | The first release carrying theme-5 Phase 4 (opened 2026-09-11). | `deprecated_toolkit_key_used` WARNING log lines — one per resolve, naming the service account still presenting the retired key form. | The theme-5 toolkit-surface deletion release (Phase 5b), no earlier than **2026-12-01**. |
+| `jntc_live_` toolkit API keys (theme-5 Phase 4). No new keys are issued (`POST /toolkits/{id}/keys` → `410 toolkit_keys_retired`); the migration run migrates existing keys (`jentic_one retire-toolkit-keys --owner <admin-email>` for any it skipped as ownerless) so existing plaintexts keep authenticating as their migrated service accounts, then rotate holders to `sak_` keys. | The first release carrying theme-5 Phase 4 (opened 2026-09-11). | `deprecated_toolkit_key_used` WARNING log lines — one per resolve, naming the service account still presenting the retired key form. | The theme-5 toolkit-surface deletion release (Phase 5b), no earlier than **2026-12-01**. |
 
 
 ## One-time setup (repo/org admin)

@@ -333,13 +333,22 @@ async def _retire_toolkit_keys(*, owner_email: str | None) -> int:
 
     migrated = sum(1 for o in outcomes if o.action == "migrated")
     skipped = [o for o in outcomes if o.action == "skipped"]
+    failed = sum(1 for o in outcomes if o.action == "failed")
     print(
         f"==> {migrated} key(s) migrated, "
         f"{sum(1 for o in outcomes if o.action == 'already_migrated')} already migrated, "
-        f"{len(skipped)} skipped.",
+        f"{len(skipped)} skipped, {failed} failed.",
         file=sys.stderr,
         flush=True,
     )
+    if failed:
+        print(
+            "==> Some keys failed to migrate (see the log for the error); fix the "
+            "cause and re-run — completed keys are not redone.",
+            file=sys.stderr,
+            flush=True,
+        )
+        return 1
     if any(o.reason == "owner_unresolved" for o in skipped):
         print(
             "==> Some keys have no resolvable owner; re-run with "

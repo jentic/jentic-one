@@ -263,12 +263,15 @@ def _start_key_retirement(ctx: Context, enabled_apps: set[str]) -> asyncio.Task[
 
     An upgrade must not silently break headless ``jntc_live_`` callers: the
     resolver that served them is gone, so every resolvable key needs its
-    successor service account before the first request. The job is
-    idempotent (stamped keys short-circuit), so running it on every boot is
-    a cheap no-op after the first. Gate on the control surface owning the
-    toolkit tables plus both DBs being reachable. Best-effort: a failure is
-    loud in the logs but never blocks boot — the ``retire-toolkit-keys``
-    CLI (with ``--owner`` for unresolvable creators) is the recovery path.
+    successor service account before the first request. The migration runner
+    already performs the job as an upgrade step; this boot run is the safety
+    net for a process that starts without a fresh migration. The job is
+    idempotent (stamped keys short-circuit) and holds a cross-process run
+    lock, so every replica running it at once is safe and a cheap no-op after
+    the first. Gate on the control surface owning the toolkit tables plus both
+    DBs being reachable. Best-effort: a failure is loud in the logs but never
+    blocks boot — the ``retire-toolkit-keys`` CLI (with ``--owner`` for
+    unresolvable creators) is the recovery path.
     """
     if "control" not in enabled_apps:
         return None
@@ -281,6 +284,15 @@ def _start_key_retirement(ctx: Context, enabled_apps: set[str]) -> asyncio.Task[
         except Exception:
             _logger.exception("toolkit_key_retirement_startup_failed")
             return
+        failed = sum(1 for o in outcomes if o.action == "failed")
+        if failed:
+            _logger.error(
+                "toolkit_key_retirement_keys_failed",
+                count=failed,
+                actionable_step=(
+                    "Fix the logged error, then run `jentic_one retire-toolkit-keys`."
+                ),
+            )
         unresolved = sum(1 for o in outcomes if o.reason == "owner_unresolved")
         if unresolved:
             _logger.warning(

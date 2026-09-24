@@ -31,18 +31,6 @@ from jentic_one.migrations.run import (
 _DB = "admin"
 
 
-@pytest.fixture
-def sqlite_stack(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Point config at fresh, empty per-database SQLite files."""
-    cfg = tmp_path / "jentic-one.yaml"
-    lines = ["databases:"]
-    for name in ("admin", "control", "registry"):
-        lines += [f"  {name}:", "    backend: sqlite", f"    path: {tmp_path / f'{name}.db'}"]
-    cfg.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    monkeypatch.setenv("JENTIC_CONFIG_FILE", str(cfg))
-    return tmp_path
-
-
 def _tables(db_path: Path) -> set[str]:
     if not db_path.exists():
         return set()

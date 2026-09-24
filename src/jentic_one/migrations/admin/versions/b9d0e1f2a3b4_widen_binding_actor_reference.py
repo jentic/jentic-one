@@ -41,7 +41,9 @@ def _credential_bindings_table(*, with_fk: bool) -> sa.Table:
 
     SQLite cannot drop an unnamed FK in place; alembic batch mode rebuilds the
     table from this explicit definition. ``with_fk`` selects the pre-upgrade
-    (FK present) or post-upgrade (FK absent) shape.
+    (FK present) or post-upgrade (FK absent) shape. The rebuild recreates only
+    the indexes listed on the template, so every named index the table carries
+    must be listed here too — omitting one silently drops it on SQLite.
     """
     columns: list[sa.schema.SchemaItem] = [
         sa.Column("id", sa.String(30), primary_key=True),
@@ -62,6 +64,11 @@ def _credential_bindings_table(*, with_fk: bool) -> sa.Table:
         sa.UniqueConstraint(
             "agent_id", "credential_id", name="uq_agent_credential_bindings_agent_credential"
         ),
+        sa.Index("ix_agent_credential_bindings_agent_id", "agent_id"),
+        sa.Index("ix_agent_credential_bindings_credential_id", "credential_id"),
+        sa.Index("ix_agent_credential_bindings_rule_set_id", "rule_set_id"),
+        sa.Index("ix_agent_credential_bindings_created_at", "created_at"),
+        sa.Index("ix_agent_credential_bindings_created_by", "created_by"),
     ]
     if with_fk:
         columns.append(
@@ -94,6 +101,10 @@ def _toolkit_bindings_table(*, with_fk: bool) -> sa.Table:
         sa.UniqueConstraint(
             "agent_id", "toolkit_id", name="uq_agent_toolkit_bindings_agent_toolkit"
         ),
+        sa.Index("ix_agent_toolkit_bindings_agent_id", "agent_id"),
+        sa.Index("ix_agent_toolkit_bindings_toolkit_id", "toolkit_id"),
+        sa.Index("ix_agent_toolkit_bindings_created_at", "created_at"),
+        sa.Index("ix_agent_toolkit_bindings_created_by", "created_by"),
     ]
     if with_fk:
         columns.append(
