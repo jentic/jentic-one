@@ -1,43 +1,35 @@
 """One-shot post-migration data steps, run by the migration runner.
 
 ``python -m jentic_one.migrations.run`` calls :meth:`UpgradeStepService.run`
-once every database is at head. The steps here span the control and admin
-databases, so they cannot live inside a single Alembic tree; running them from
-the migration runner means every install path that already migrates (the Helm
-pre-upgrade hook, ``jenticctl``, ``make migrate``, a hand-run upgrade) performs
-them before the new version serves traffic.
+once every database is at head. A step spans the control and admin databases,
+so it cannot live inside a single Alembic tree; running it from the migration
+runner means every install path that already migrates (the Helm pre-upgrade
+hook, ``jenticctl``, ``make migrate``, a hand-run upgrade) performs it before
+the new version serves traffic.
 
-The theme-5 steps, in order:
+**No steps are registered in this release.** The theme-5 steps
+(``theme5_retire_toolkit_keys``, ``theme5_flatten_toolkits``) were deleted
+with the toolkit tables they read (Phase 6b); the ledger (``upgrade_steps``)
+and this runner stay for the next release's data steps. Rows the theme-5 steps
+recorded remain in the ledger as history.
 
-1. **Toolkit-key retirement** — every resolvable ``jntc_live_`` key gains its
-   successor service account (:class:`KeyRetirementService`). Idempotent per
-   key and also run at every control-plane boot, so it is not ledgered and
-   never blocks the upgrade: a key that fails (or has no resolvable owner) is
-   reported as a warning with its recovery command, and the boot run and the
-   ``retire-toolkit-keys`` CLI pick it up later.
-2. **Toolkit flattening** — every ``(agent, credential)`` pair reachable
-   through a toolkit gains a direct binding (:class:`ToolkitFlatteningService`).
-   Without it, the default direct-binding broker path authorizes no existing
-   toolkit-bound agent, so a failure here **is** fatal to the upgrade (the
-   runner exits non-zero). Ledgered and run **at most once**: a later re-run
-   would re-derive bindings from the retained toolkit rows and restore access
-   an operator has since purged. Skipped (and ledgered) when an operator
-   already recorded a verified flatten (``flatten-toolkits --verify
-   --acknowledge``).
+A step is a coroutine taking the :class:`Context` and returning an
+:class:`UpgradeStepOutcome`. The service:
 
-Both steps read the legacy toolkit tables; once the Phase-6b drop migrations
-have removed them there is nothing to do and each step reports ``skipped``
-(reason ``toolkit_tables_absent``).
+- skips a step the operator named in ``--skip-upgrade-step`` (not ledgered —
+  it runs on the next full upgrade);
+- reports ``already_done`` for a step the ledger already records (each
+  registered step runs **at most once** per install);
+- runs the step; a ``performed`` or ``skipped`` outcome is ledgered, a
+  ``failed`` one (or a raised exception) is not, so the next run retries it.
 
 The whole run holds the upgrade-steps run lock so concurrent runners never
-interleave. The Phase-6b acknowledgement is never written here — the table
-drops stay gated on an explicit operator verification.
+interleave.
 """
 
 from __future__ import annotations
 
-from collections import Counter
-from collections.abc import Collection
+from collections.abc import Awaitable, Callable, Collection, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -45,29 +37,17 @@ import structlog
 
 from jentic_one import __version__
 from jentic_one.control.repos.upgrade_step_repo import UpgradeStepRepository
-from jentic_one.control.services.key_retirement import KeyRetirementService
 from jentic_one.control.services.run_lock import UPGRADE_STEPS_LOCK_KEY, hold_run_lock
-from jentic_one.control.services.toolkit_flattening import ToolkitFlatteningService
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.errors import DatabaseIntegrityError
 
 logger = structlog.get_logger(__name__)
 
-STEP_RETIRE_TOOLKIT_KEYS = "theme5_retire_toolkit_keys"
-STEP_FLATTEN_TOOLKITS = "theme5_flatten_toolkits"
-#: Every step, in run order (the runner's ``--skip-upgrade-step`` choices).
-STEP_NAMES: tuple[str, ...] = (STEP_RETIRE_TOOLKIT_KEYS, STEP_FLATTEN_TOOLKITS)
-
 #: ``created_by`` for ledger rows — attributable to the runner, not a user.
 _LEDGER_ACTOR = "system:upgrade-steps"
 
-#: Report categories that are per-binding bookkeeping rather than something an
-#: operator needs to review; summarised as counts only.
-_BOOKKEEPING_CATEGORIES = frozenset({"binding_created", "binding_would_create"})
-
-#: Legacy tables the steps read, per database. Absent once Phase 6b drops them.
-_CONTROL_LEGACY_TABLE = "toolkits"
-_ADMIN_LEGACY_TABLE = "agent_toolkit_bindings"
+#: Outcome actions that complete a step (ledgered, never run again).
+_COMPLETING_ACTIONS = frozenset({"performed", "skipped"})
 
 
 @dataclass(frozen=True)
@@ -85,136 +65,68 @@ class UpgradeStepOutcome:
     warnings: tuple[str, ...] = ()
 
 
-class UpgradeStepService:
-    """Runs the post-migration steps under the upgrade-steps run lock."""
+StepFn = Callable[[Context], Awaitable[UpgradeStepOutcome]]
 
-    def __init__(self, ctx: Context) -> None:
+
+@dataclass(frozen=True)
+class UpgradeStepSpec:
+    """A registered step: its stable ledger name and its body."""
+
+    name: str
+    run: StepFn
+
+
+#: Every step, in run order. Empty since theme-5 Phase 6b (see module docstring).
+STEPS: tuple[UpgradeStepSpec, ...] = ()
+
+
+def step_names() -> tuple[str, ...]:
+    """Registered step names, in run order (the runner's ``--skip-upgrade-step`` choices)."""
+    return tuple(step.name for step in STEPS)
+
+
+class UpgradeStepService:
+    """Runs the registered post-migration steps under the upgrade-steps run lock."""
+
+    def __init__(self, ctx: Context, *, steps: Sequence[UpgradeStepSpec] | None = None) -> None:
         self._ctx = ctx
+        self._steps = tuple(STEPS if steps is None else steps)
 
     async def run(self, *, skip: Collection[str] = ()) -> list[UpgradeStepOutcome]:
         """Run every step not named in ``skip`` (a skipped step is not ledgered)."""
+        if not self._steps:
+            return []
         async with hold_run_lock(self._ctx, UPGRADE_STEPS_LOCK_KEY):
-            tables_present = await self._legacy_tables_present()
             outcomes: list[UpgradeStepOutcome] = []
-            for name, step in (
-                (STEP_RETIRE_TOOLKIT_KEYS, self._retire_toolkit_keys),
-                (STEP_FLATTEN_TOOLKITS, self._flatten_toolkits),
-            ):
-                if name in skip:
-                    outcomes.append(_skipped(name, "operator_skipped"))
-                elif not tables_present:
-                    outcomes.append(_skipped(name, "toolkit_tables_absent"))
-                else:
-                    outcomes.append(await step())
+            for step in self._steps:
+                if step.name in skip:
+                    outcomes.append(_skipped(step.name, "operator_skipped"))
+                    continue
+                outcomes.append(await self._run_one(step))
             return outcomes
 
-    async def _legacy_tables_present(self) -> bool:
+    async def _run_one(self, step: UpgradeStepSpec) -> UpgradeStepOutcome:
         async with self._ctx.control_db.session() as session:
-            control = await UpgradeStepRepository.has_table(session, _CONTROL_LEGACY_TABLE)
-        async with self._ctx.admin_db.session() as session:
-            admin = await UpgradeStepRepository.has_table(session, _ADMIN_LEGACY_TABLE)
-        return control and admin
-
-    async def _retire_toolkit_keys(self) -> UpgradeStepOutcome:
-        try:
-            outcomes = await KeyRetirementService(self._ctx).run()
-        except Exception as exc:
-            # Never fatal: the control-plane boot re-runs the job, and the CLI
-            # is the manual path. Blocking the upgrade here would also block the
-            # flatten, which is the step agent access actually depends on.
-            logger.exception("upgrade_step_failed", step=STEP_RETIRE_TOOLKIT_KEYS)
-            return UpgradeStepOutcome(
-                name=STEP_RETIRE_TOOLKIT_KEYS,
-                action="failed",
-                summary={"error": f"{type(exc).__name__}: {exc}"},
-                warnings=(
-                    "toolkit-key retirement did not run; the control plane retries it at "
-                    "boot, or run `jentic_one retire-toolkit-keys` after the upgrade",
-                ),
-            )
-        by_action = Counter(o.action for o in outcomes)
-        skipped = Counter(o.reason for o in outcomes if o.action == "skipped")
-        summary: dict[str, Any] = {
-            "migrated": by_action["migrated"],
-            "already_migrated": by_action["already_migrated"],
-            "skipped": dict(sorted(skipped.items())),
-            "failed": by_action["failed"],
-        }
-        warnings: list[str] = []
-        if by_action["failed"]:
-            warnings.append(
-                f"{by_action['failed']} toolkit key(s) failed to migrate (see the "
-                "toolkit_key_retirement_key_failed log lines); their holders cannot "
-                "authenticate until you fix the cause and run `jentic_one retire-toolkit-keys`"
-            )
-        if skipped["owner_unresolved"]:
-            warnings.append(
-                f"{skipped['owner_unresolved']} toolkit key(s) have no resolvable owner and "
-                "were NOT migrated; their holders cannot authenticate until you run "
-                "`jentic_one retire-toolkit-keys --owner <admin-email>`"
-            )
-        logger.info("upgrade_step", step=STEP_RETIRE_TOOLKIT_KEYS, **summary)
-        return UpgradeStepOutcome(
-            name=STEP_RETIRE_TOOLKIT_KEYS,
-            action="performed",
-            summary=summary,
-            warnings=tuple(warnings),
-        )
-
-    async def _flatten_toolkits(self) -> UpgradeStepOutcome:
-        async with self._ctx.control_db.session() as session:
-            done = await UpgradeStepRepository.get(session, STEP_FLATTEN_TOOLKITS)
-            acks = await UpgradeStepRepository.count_flattening_acknowledgements(session)
+            done = await UpgradeStepRepository.get(session, step.name)
         if done is not None:
             return UpgradeStepOutcome(
-                name=STEP_FLATTEN_TOOLKITS, action="already_done", summary=done.summary or {}
+                name=step.name, action="already_done", summary=done.summary or {}
             )
-        if acks:
-            summary: dict[str, Any] = {"reason": "verified_flatten_acknowledged", "acks": acks}
-            await self._record(STEP_FLATTEN_TOOLKITS, summary)
-            return UpgradeStepOutcome(name=STEP_FLATTEN_TOOLKITS, action="skipped", summary=summary)
-
         try:
-            result = await ToolkitFlatteningService(self._ctx).run()
+            outcome = await step.run(self._ctx)
         except Exception as exc:
-            # Not ledgered: the flatten is idempotent per pair, so the re-run
-            # after the fix completes whatever this attempt left undone.
-            logger.exception("upgrade_step_failed", step=STEP_FLATTEN_TOOLKITS)
+            # Not ledgered: the next run retries the step after the fix.
+            logger.exception("upgrade_step_failed", step=step.name)
             return UpgradeStepOutcome(
-                name=STEP_FLATTEN_TOOLKITS,
+                name=step.name,
                 action="failed",
                 summary={"error": f"{type(exc).__name__}: {exc}"},
                 failed=True,
             )
-        review = Counter(
-            f.category for f in result.findings if f.category not in _BOOKKEEPING_CATEGORIES
-        )
-        default_deny = sum(
-            1
-            for f in result.findings
-            if f.category == "binding_created" and f.detail.get("default_deny")
-        )
-        summary = {
-            "pairs_total": result.pairs_total,
-            "created": result.created,
-            "created_default_deny": default_deny,
-            "already_present": result.already_present,
-            "findings": dict(sorted(review.items())),
-        }
-        await self._record(STEP_FLATTEN_TOOLKITS, summary)
-        logger.info("upgrade_step", step=STEP_FLATTEN_TOOLKITS, **summary)
-        warnings = (
-            (
-                f"{default_deny} agent-credential pair(s) were bound default-deny (conflicting "
-                "or missing toolkit rules); review them with "
-                "`jentic_one flatten-toolkits --diff-only --report report.jsonl`",
-            )
-            if default_deny
-            else ()
-        )
-        return UpgradeStepOutcome(
-            name=STEP_FLATTEN_TOOLKITS, action="performed", summary=summary, warnings=warnings
-        )
+        if outcome.action in _COMPLETING_ACTIONS and not outcome.failed:
+            await self._record(step.name, outcome.summary)
+        logger.info("upgrade_step", step=step.name, action=outcome.action)
+        return outcome
 
     async def _record(self, name: str, summary: dict[str, Any]) -> None:
         try:
@@ -228,7 +140,7 @@ class UpgradeStepService:
                 )
         except DatabaseIntegrityError:
             # A concurrent runner recorded the step first (SQLite has no run
-            # lock); the step is idempotent, so its record stands.
+            # lock); a registered step must be idempotent, so its record stands.
             logger.info("upgrade_step_already_recorded", step=name)
 
 

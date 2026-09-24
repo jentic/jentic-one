@@ -23,6 +23,7 @@ the missing side without duplicating the other.
 from __future__ import annotations
 
 import datetime as dt
+import json
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -30,10 +31,10 @@ import structlog
 
 from jentic_one import __version__
 from jentic_one.control.repos.toolkit_export_repo import (
-    ExportAdminRepository,
-    ExportControlRepository,
+    BOOLEAN_COLUMNS,
+    JSON_COLUMNS,
+    ExportRepository,
 )
-from jentic_one.control.repos.toolkit_flattening_repo import FlatteningControlRepository
 from jentic_one.shared.context import Context
 
 logger = structlog.get_logger(__name__)
@@ -108,6 +109,13 @@ _CONTROL_TABLE_ORDER = (
 
 
 def _serialize(table: str, row: Any) -> dict[str, Any]:
+    """One raw row → the dialect-neutral document shape.
+
+    Raw-SQL reads are dialect-coloured: SQLite returns naive timestamp
+    strings, 0/1 booleans, and JSON arrays as TEXT; Postgres returns aware
+    datetimes, bools, and decoded lists. Everything is normalized here so the
+    file is byte-identical regardless of the source dialect.
+    """
     out: dict[str, Any] = {}
     for column in _COLUMNS[table]:
         value = getattr(row, column)
@@ -120,6 +128,10 @@ def _serialize(table: str, row: Any) -> dict[str, Any]:
             if parsed.tzinfo is None:
                 parsed = parsed.replace(tzinfo=dt.UTC)
             value = parsed.astimezone(dt.UTC).isoformat()
+        elif column in JSON_COLUMNS and isinstance(value, str):
+            value = json.loads(value)
+        elif column in BOOLEAN_COLUMNS and value is not None:
+            value = bool(value)
         out[column] = value
     return out
 
@@ -162,17 +174,13 @@ class ToolkitExportService:
         """Read both databases and return the schema-versioned document."""
         async with self._ctx.control_db.session() as session:
             control_rows: dict[str, list[Any]] = {
-                "toolkits": await FlatteningControlRepository.list_toolkits(session),
-                "toolkit_keys": await FlatteningControlRepository.list_toolkit_keys(session),
-                "toolkit_credential_bindings": (
-                    await FlatteningControlRepository.list_credential_bindings(session)
-                ),
-                "toolkit_permission_rules": (
-                    await FlatteningControlRepository.list_permission_rules(session)
-                ),
+                table: await ExportRepository.list_rows(session, table, _COLUMNS[table])
+                for table in _CONTROL_TABLE_ORDER
             }
         async with self._ctx.admin_db.session() as session:
-            admin_rows = await ExportAdminRepository.list_rows(session)
+            admin_rows = await ExportRepository.list_rows(
+                session, "agent_toolkit_bindings", _COLUMNS["agent_toolkit_bindings"]
+            )
 
         tables: dict[str, dict[str, Any]] = {}
         for table, rows in {**control_rows, "agent_toolkit_bindings": admin_rows}.items():
@@ -200,24 +208,20 @@ class ToolkitExportService:
         async with self._ctx.control_db.transaction() as session:
             for table in _CONTROL_TABLE_ORDER:
                 rows = [_deserialize(table, row) for row in tables[table]["rows"]]
-                existing = await ExportControlRepository.existing_ids(session, table)
+                existing = await ExportRepository.existing_ids(session, table)
                 missing = [row for row in rows if row["id"] not in existing]
-                await ExportControlRepository.insert_rows(session, table, missing)
+                await ExportRepository.insert_rows(session, table, _COLUMNS[table], missing)
                 outcome.inserted[table] = len(missing)
                 outcome.skipped_existing[table] = len(rows) - len(missing)
 
         async with self._ctx.admin_db.transaction() as session:
             table = "agent_toolkit_bindings"
             rows = [_deserialize(table, row) for row in tables[table]["rows"]]
-            existing = await ExportAdminRepository.existing_ids(session)
-            inserted = 0
-            for row in rows:
-                if row["id"] in existing:
-                    continue
-                await ExportAdminRepository.insert_row(session, **row)
-                inserted += 1
-            outcome.inserted[table] = inserted
-            outcome.skipped_existing[table] = len(rows) - inserted
+            existing = await ExportRepository.existing_ids(session, table)
+            missing = [row for row in rows if row["id"] not in existing]
+            await ExportRepository.insert_rows(session, table, _COLUMNS[table], missing)
+            outcome.inserted[table] = len(missing)
+            outcome.skipped_existing[table] = len(rows) - len(missing)
 
         logger.info("toolkit_import", inserted=outcome.inserted, skipped=outcome.skipped_existing)
         return outcome

@@ -219,7 +219,7 @@ def _check_router_has_auth(filepath: Path) -> list[str]:
         "RequireActiveIdentity",
         "RequireIdentity",
         "RequireBrokerIdentity",
-        "RequireToolkitAccess",
+        "RequireExecuteAccess",
         "RequireUsersRead",
         "RequireUsersWrite",
         "RequireAgentsRead",

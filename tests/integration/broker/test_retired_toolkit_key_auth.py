@@ -1,30 +1,43 @@
 """Integration tests for retired ``jntc_live_`` toolkit-key authentication.
 
-Theme-5 Phase 4: the retirement job copies each key's SHA-256 lookup digest
+Theme-5 Phase 4: the retirement job copied each key's SHA-256 lookup digest
 into ``service_account_credentials.api_key_hash``, so the unchanged plaintext
 resolves — through ``ApiKeyResolver`` — as the successor service account.
 Seeds the admin DB (a user, a service account, its credential digest, and its
 scope grant), then asserts the resolver maps a ``jntc_live_`` plaintext to a
 service-account ``Identity`` (with a deprecation warning) and rejects
-disabled accounts / unknown keys.
+disabled accounts / unknown keys. The job and ``toolkit_keys`` are gone
+since Phase 6b, but acceptance of already-migrated plaintexts stays until the
+published deprecation date (no earlier than 2026-12-01).
 """
 
 from __future__ import annotations
 
 import hashlib
+import secrets
 from collections.abc import AsyncGenerator
 
 import pytest
 import structlog
 from sqlalchemy import text
 
-from jentic_one.control.repos.toolkit_key_gen import generate_toolkit_key
 from jentic_one.shared.auth.api_key_resolver import ApiKeyResolver
 from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.scopes import BROKER_EXECUTE_SCOPE
 
 pytestmark = pytest.mark.integration
+
+
+def _retired_toolkit_key() -> str:
+    """A ``jntc_live_`` plaintext in the retired toolkit-key shape.
+
+    The toolkit key generator died with the ``toolkit_keys`` table (Phase 6b);
+    acceptance of already-migrated plaintexts survives until the published
+    deprecation date, so the shape is fabricated here.
+    """
+    return f"jntc_live_{secrets.token_hex(16)}"
+
 
 _OWNER = "usr_rtka_owner"
 _ACTIVE_SA = "sva_rtka_active"
@@ -75,7 +88,7 @@ async def _seed_service_account(
     SHA-256 digest lands in ``service_account_credentials.api_key_hash`` and
     the account holds exactly ``capabilities:execute``.
     """
-    plaintext, _hashed, _preview, _lookup = generate_toolkit_key()
+    plaintext = _retired_toolkit_key()
     api_key_hash = hashlib.sha256(plaintext.encode()).hexdigest()
     async with admin_db.session() as session:
         await session.execute(

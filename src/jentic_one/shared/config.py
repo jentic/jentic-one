@@ -1233,34 +1233,26 @@ class BrokerConfig(BaseModel):
         ),
     )
     resolve_cache_ttl_seconds: float = 3.0
-    # Short TTL (seconds) for the per-instance toolkit-derivation cache.
-    # Wraps the cross-DB `derive_toolkits` lookup so the per-request Admin+Control
-    # double hit is served from cache for header-less requests. Agent/credential
-    # bindings change infrequently, so a short TTL bounds revocation staleness
-    # (the cache is per instance, so a grant/revoke is consistent cluster-wide
-    # only after the TTL lapses on each node) while removing the hot-path lookup.
+    # Short TTL (seconds) for the per-instance credential-binding derivation
+    # cache. Wraps the cross-DB `derive_credentials` lookup so the per-request
+    # Admin+Control double hit is served from cache. Agent/credential bindings
+    # change infrequently, so a short TTL bounds revocation staleness (the
+    # cache is per instance, so a grant/revoke is consistent cluster-wide only
+    # after the TTL lapses on each node) while removing the hot-path lookup.
     # Authorization correctness never depends on the cache — it is a latency
     # optimization over the authoritative DB lookup. 0 disables it.
+    # Key name is legacy (it originally bounded the toolkit-derivation cache,
+    # deleted in theme-5 Phase 6b); kept for operator config compatibility.
     toolkit_cache_ttl_s: float = 3.0
     # Short TTL (seconds) for the per-instance permission-rule cache.
-    # Caches the ordered toolkit_permission_rules per toolkit_id. Same staleness
+    # Caches the ordered rules per (agent, credential) binding. Same staleness
     # trade-off as toolkit_cache_ttl_s — a rule change propagates after the TTL.
     rule_cache_ttl_s: float = 3.0
-    # Upper bound on entries in each per-worker permission-rule LRU (toolkit and
-    # direct-binding evaluators alike). Size against agents x credentials for the
-    # direct path — each active (agent, credential) binding is one entry — and
-    # against toolkits x vendors for the toolkit path. Eviction is LRU by entry
-    # count (the TTL only bounds staleness, never memory).
+    # Upper bound on entries in the per-worker permission-rule LRU. Size
+    # against agents x credentials — each active (agent, credential) binding
+    # is one entry. Eviction is LRU by entry count (the TTL only bounds
+    # staleness, never memory).
     rule_cache_max_entries: int = 5_000
-    # Theme-5 Phase 2 cutover flag, default-on since Phase 5b: callers are
-    # authorized through **direct agent→credential bindings**
-    # (agent_credential_bindings + agent_permission_rules /
-    # permission_rule_sets). Setting False is an emergency fallback onto the
-    # legacy toolkit-derivation path, which survives until Phase 6b removes it
-    # (and this flag with it). Service accounts migrated from jntc_live_
-    # toolkit keys (Phase 4) hold both binding forms, so they work under
-    # either setting.
-    direct_bindings_enabled: bool = True
     # Absolute public base URL of the admin jobs API, used to build the 202
     # `_links.self` pointer for async executions (e.g. "https://api.example.com").
     # None keeps the legacy broker-relative `/jobs/{id}` link.
@@ -1283,6 +1275,31 @@ class BrokerConfig(BaseModel):
     resilience: BrokerResilienceConfig = Field(default_factory=BrokerResilienceConfig)
     idempotency: IdempotencyConfig = Field(default_factory=IdempotencyConfig)
     egress: EgressConfig = Field(default_factory=EgressConfig)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_retired_direct_bindings_flag(cls, data: Any) -> Any:
+        """Fail loudly on ``broker.direct_bindings_enabled: false``.
+
+        The flag was deleted in theme-5 Phase 6b along with the toolkit
+        path it selected — direct bindings are the only path. Unknown keys
+        are otherwise ignored here, so without this check an operator who
+        pinned ``false`` to stay on toolkits would boot on direct bindings
+        without noticing. ``true`` (the old default) is harmless and ignored.
+        """
+        if isinstance(data, dict) and "direct_bindings_enabled" in data:
+            value = data["direct_bindings_enabled"]
+            if value is False or str(value).strip().lower() in {"false", "0", "no", "off"}:
+                raise ValueError(
+                    "broker.direct_bindings_enabled was removed in theme-5 Phase 6b: "
+                    "the toolkit path it selected no longer exists and direct "
+                    "agent-credential bindings are the only access path. Remove "
+                    "the setting (config file or JENTIC__BROKER__DIRECT_BINDINGS_ENABLED); "
+                    "if toolkit-bound agents lose access, run the Phase-6a flattening "
+                    "(docs/development/releasing.md)."
+                )
+            data = {k: v for k, v in data.items() if k != "direct_bindings_enabled"}
+        return data
 
 
 class SearchConfig(BaseModel):

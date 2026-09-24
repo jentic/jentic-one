@@ -138,23 +138,18 @@ describe('MonitorPage', () => {
 		).not.toBeInTheDocument();
 	});
 
-	// --- theme-5 5d: retired ?toolkit_id= deep links (scrub is deletable in 6b)
-
-	it('ignores a retired ?toolkit_id= deep link and scrubs it from the URL', async () => {
-		// Pre-5b deep links could carry `?toolkit_id=…`; the filter vocabulary
-		// dropped it when toolkits were retired. The lens must render unfiltered
-		// (no crash, no filter-state corruption) and the dead param must leave
-		// the URL on arrival while the live params survive.
+	it('ignores an unknown query param without crashing or corrupting filters', async () => {
+		// Retired pre-5b deep links could carry `?toolkit_id=…`. The 5d
+		// deprecation-window scrub is gone (6b); unknown params are simply
+		// ignored by every filter reader — the lens renders unfiltered and the
+		// live params keep working.
 		renderMonitor('/app/monitor?tab=executions&toolkit_id=tk_0123456789abcdef&days=7');
 
 		// The full unfiltered trace log renders — the param filtered nothing.
 		expect(await screen.findByText('POST /v1/charges')).toBeInTheDocument();
 		expect(screen.getByText('GET /repos/{owner}/{repo}')).toBeInTheDocument();
 
-		await waitFor(() => {
-			expect(screen.getByTestId('location-search').textContent).not.toContain('toolkit_id');
-		});
-		// The surviving filter vocabulary is untouched by the scrub.
+		// The surviving filter vocabulary is untouched.
 		const search = screen.getByTestId('location-search').textContent;
 		expect(search).toContain('tab=executions');
 		expect(search).toContain('days=7');

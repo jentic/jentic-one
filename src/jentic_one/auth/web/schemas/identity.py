@@ -10,20 +10,6 @@ from pydantic import BaseModel, Discriminator
 from jentic_one.shared.schemas import ServedApiRef
 
 
-class ToolkitBindingEntry(BaseModel):
-    """Toolkit binding summary for the /me response."""
-
-    toolkit_id: str
-    # Human-readable toolkit name, so an agent can map the opaque `tk_…` id to a
-    # name it can present to its operator (issue #686). Null when the toolkit no
-    # longer exists or its name could not be resolved.
-    name: str | None = None
-    bound_at: datetime
-    # The APIs this toolkit serves (derived from its bound credentials). Empty
-    # when the toolkit has no credential bound yet.
-    serves: list[ServedApiRef] = []
-
-
 class CredentialBindingEntry(BaseModel):
     """Direct agent↔credential binding summary for the /me response (theme 5 phase 1)."""
 
@@ -78,9 +64,8 @@ class MeAgent(BaseModel):
     token_scopes: list[str]
     parent_agent_id: str | None = None
     approved_by: str | None = None
-    toolkit_bindings: list[ToolkitBindingEntry]
-    # Direct agent↔credential bindings (theme 5 phase 1). Coexists with
-    # toolkit_bindings until the toolkit path is removed.
+    # Direct agent↔credential bindings (theme 5). The toolkit_bindings block
+    # was removed with the toolkit surface (Phase 6b).
     credential_bindings: list[CredentialBindingEntry] = []
 
 

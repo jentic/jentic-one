@@ -242,7 +242,7 @@ postgresql:
 migrate:
   # Extra arguments for `python -m jentic_one.migrations.run`. The escape hatch
   # for a post-migration upgrade step that blocks an upgrade, e.g.
-  #   ["--skip-upgrade-step", "theme5_flatten_toolkits"]
+  #   ["--skip-upgrade-step", "<step-name>"]
   # defers that step to the next upgrade (docs/operations/upgrades.md). Leave
   # empty in normal operation.
   extraArgs: []

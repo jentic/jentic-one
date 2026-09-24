@@ -1,7 +1,7 @@
 """Cross-database cleanup of control credentials when a registry API is deleted.
 
 Registry and Control are **separate databases** with no referential integrity
-between ``apis`` and ``credentials`` / ``toolkit_credential_bindings``. When an
+between ``apis`` and ``credentials``. When an
 API is deleted from the registry, the control-plane credentials that reference it
 by ``(api_vendor, api_name, api_version)`` are left active — a later re-import
 plus a new credential then collides with ``409 ambiguous_credential`` (issue
@@ -40,9 +40,9 @@ class ControlCredentialBoundaryRepository:
 
         Marking inactive (rather than deleting) preserves the row — the operator
         can still see and rotate it — while removing it from the broker
-        resolver's active-match set so a re-import can't collide with it. The
-        ``toolkit_credential_bindings`` rows survive (they cascade only on
-        credential *deletion*); the deactivated credential simply stops resolving.
+        resolver's active-match set so a re-import can't collide with it. Any
+        agent↔credential bindings survive (they cascade only on credential
+        *deletion*); the deactivated credential simply stops resolving.
         """
         # CAST the nullable parameters to VARCHAR so Postgres (asyncpg) can
         # determine their type: a bare bind parameter used only in an

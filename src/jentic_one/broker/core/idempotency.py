@@ -17,15 +17,17 @@ import hashlib
 _SEP = b"\0"
 
 
-def fingerprint(method: str, url: str, toolkit_id: str, body: bytes | None) -> str:
+def fingerprint(method: str, url: str, consumer_id: str, body: bytes | None) -> str:
     """Stable hash of the parts that define request identity.
 
-    Includes the method, the reconstructed upstream URL, the resolved toolkit,
-    and a hash of the (already body-capped) request body. Volatile headers are
-    deliberately excluded — they don't change *what* the request does.
+    Includes the method, the reconstructed upstream URL, the consumer scope
+    (the selected credential id — historically the toolkit id on the pre-6b
+    legacy path, same slot so replay identity stayed stable), and a hash of
+    the (already body-capped) request body. Volatile headers are deliberately
+    excluded — they don't change *what* the request does.
     """
     h = hashlib.sha256()
-    for part in (method.upper(), url, toolkit_id):
+    for part in (method.upper(), url, consumer_id):
         h.update(part.encode())
         h.update(_SEP)
     h.update(hashlib.sha256(body or b"").digest())

@@ -207,13 +207,113 @@ steps are what stands between you and Phase 6b.
    Phase-6b drop migrations require. It is refused unless the verification
    passes in that same invocation.
 
-**Rollback after Phase 6b** is two steps, not one: downgrade the drop
-migrations **and then** `jentic_one export-toolkits --import
-toolkit-export.json`. A migration `downgrade()` recreates empty tables — it
-cannot restore rows — and restoring the toolkit path with empty
-`toolkit_permission_rules` is a **total default-deny authorization outage**
-for every agent on the legacy path. Do not flip
-`broker.direct_bindings_enabled` back off without re-importing.
+**Rollback after Phase 6b** is two steps, not one — see the Phase 6b
+section below.
+
+## Upgrading to the theme-5 Phase 6b release (the drops)
+
+This is the release that deletes the toolkit data model. It refuses to
+migrate until the Phase 6a runbook above has been completed and
+acknowledged. Read this **before** running migrations.
+
+- **Prerequisite: an acknowledgement written by *this* release.** The
+  control-DB migration drops `toolkit_permission_rules`,
+  `toolkit_credential_bindings`, `toolkit_keys`, and `toolkits` (children
+  first). It is gated guard-and-raise: it proceeds only when either every
+  one of those tables is empty (fresh installs, CI), or a qualifying
+  `toolkit_flattening_acks` row exists. Qualifying means both:
+  - **Written by this release's `flatten-toolkits --verify --acknowledge`.**
+    An acknowledgement from 0.40 does **not** qualify: 0.40's verification
+    never checked that historical execution records carry their toolkit
+    name (see *Historical executions* below), and the drop would erase the
+    names it missed. Existing rows are marked non-qualifying by control
+    migration `x5f6a7b8c9d0`.
+  - **Not stale.** The acknowledgement records a digest of the legacy toolkit
+    rows it covered. Toolkit rows added or removed afterwards (e.g. edits
+    served by a 0.40 replica during a rolling upgrade) refuse the drop.
+
+  On any other state it raises naming the reason (no ack / earlier-release
+  ack / stale ack), with the runbook steps, and leaves the toolkit tables
+  untouched. `migrations.run` has already applied `x5f6a7b8c9d0` by then, so
+  on the new release's image: run `jentic_one flatten-toolkits` (it backfills
+  the execution names), re-run until it creates nothing, run
+  `jentic_one flatten-toolkits --verify --acknowledge`, and re-run
+  `migrations.run`.
+- **Enterprise deployments: apply the overlay migration first.** On
+  PostgreSQL the drop also refuses to run while any table outside the
+  toolkit set still holds a foreign key into `toolkits` (the enterprise
+  `toolkit_user_grants` FK). Apply the jentic-one-enterprise migration that
+  drops that table (`d47c3a91be02`) before this release's migrations; the
+  error message names it.
+- **Admin DB**: `agent_toolkit_bindings` is dropped behind an analogous gate.
+  When the migration's connection can read the control schema's
+  `toolkit_flattening_acks` (PostgreSQL, one database, a role with access to
+  both schemas), it applies the same rule as the control drop: a qualifying
+  acknowledgement whose digest covers the current bindings. Otherwise (the
+  default per-surface roles, separate databases, or SQLite) it falls back to
+  in-DB evidence that the flattening ran — at least one direct binding in
+  `agent_credential_bindings` — and relies on the control drop, which
+  `migrations.run` applies first, for the strict check. The retired `toolkits:read` /
+  `toolkits:write` / `owner:toolkits:read` scope strings are also swept from
+  every stored grant and token surface — they have granted nothing since
+  Phase 5b, and after the sweep they no longer appear in `/me` or token
+  introspection output.
+- **Key retirement ends; migrated `jntc_live_` keys keep working until the
+  published date.** The `jentic_one retire-toolkit-keys` command, the
+  control-plane boot retirement task and the `theme5_retire_toolkit_keys` /
+  `theme5_flatten_toolkits` post-migration steps are gone with the
+  `toolkit_keys` table (`--skip-upgrade-step` currently accepts no step
+  names). A key that was **migrated** to a service account before this
+  upgrade keeps authenticating as that account — the plaintext is resolved
+  by its digest, which needs no toolkit table — until the deprecation window
+  in the table below closes (no earlier than **2026-12-01**). A key **not**
+  migrated by then (e.g. an ownerless key never handed
+  `retire-toolkit-keys --owner`) stops authenticating (`401`). Before
+  upgrading, resolve every ownerless-key warning from the 0.40 migration
+  run; afterwards, rotate holders flagged by the `deprecated_toolkit_key_used`
+  WARNING log to a key minted for their service account
+  (`POST /service-accounts/{id}:generate-api-key`).
+- **The `Jentic-Toolkit-Id` header is gone**, on both sides: it is no longer
+  consumed on requests (it was already ignored on the default path) and no
+  longer emitted on responses. Attribution rides `Jentic-Credential-Id` /
+  `Jentic-Credential-Name`. The `tracestate` vendor value keeps its
+  five-field shape; the second (toolkit) segment is now always `_`.
+- **The `broker.direct_bindings_enabled` config key is deleted.** Direct
+  agent↔credential bindings are the only authorization path. A leftover
+  `true` (the 0.40 default) is ignored; a leftover `false` — in the config
+  file or as `JENTIC__BROKER__DIRECT_BINDINGS_ENABLED` — **fails config
+  validation at boot** with a message naming the key, because the toolkit
+  path it selected no longer exists to fall back to. Remove it; deployments
+  that had it `false` must complete Phase 6a first.
+- **Historical executions keep their toolkit names.** Execution list/detail
+  responses still show `toolkit_name` for pre-flattening records: the name
+  is denormalized onto `execution_records` (backfilled by this release's
+  `flatten-toolkits`, which is why an acknowledgement from 0.40 does not
+  unblock the drop) instead of resolved from the dropped `toolkits` table.
+  Records whose toolkit was deleted before the backfill show `null`, exactly
+  as before. Monitoring `group_by=toolkit` keeps working off the surviving
+  `toolkit_id` attribution column.
+
+### Rollback (Phase 6b → 6a)
+
+Rollback is two steps, not one: downgrade the drop migrations **and then**
+re-import the Phase 6a export:
+
+1. Roll back to the previous release's code (the toolkit code paths no
+   longer exist in this release).
+2. Downgrade the drop migrations (control `v3d4e5f6a7b8`, admin
+   `d1e2f3a4b5c6`). A `downgrade()` recreates the five tables **empty** —
+   it cannot restore rows.
+3. `jentic_one export-toolkits --import toolkit-export.json` with the file
+   from Phase 6a step 1. Restoring the toolkit path with an empty
+   `toolkit_permission_rules` is a **total default-deny authorization
+   outage** for every agent on the legacy path — never skip the import. The
+   import is additive and idempotent by primary key, so re-running it (or
+   importing over rows created after the downgrade) is safe.
+
+The scope sweep and the `execution_records.toolkit_name` backfill are not
+reversed on rollback: the swept scopes granted nothing, and the denormalized
+name column is additive (the older release simply ignores it).
 
 ## Deprecations
 
@@ -224,7 +324,7 @@ runtime signal an operator can watch, and the earliest removal point.
 
 | Deprecated | Since | Runtime signal | Removal |
 | ---------- | ----- | -------------- | ------- |
-| `jntc_live_` toolkit API keys (theme-5 Phase 4). No new keys are issued (`POST /toolkits/{id}/keys` → `410 toolkit_keys_retired`); the migration run migrates existing keys (`jentic_one retire-toolkit-keys --owner <admin-email>` for any it skipped as ownerless) so existing plaintexts keep authenticating as their migrated service accounts, then rotate holders to `sak_` keys. | The first release carrying theme-5 Phase 4 (opened 2026-09-11). | `deprecated_toolkit_key_used` WARNING log lines — one per resolve, naming the service account still presenting the retired key form. | The theme-5 toolkit-surface deletion release (Phase 5b), no earlier than **2026-12-01**. |
+| `jntc_live_` toolkit API keys (theme-5 Phase 4). No new keys are issued. Keys migrated to a service account before the Phase 6b drops keep authenticating as that account; the `retire-toolkit-keys` command and the boot/migration retirement steps are gone with the `toolkit_keys` table (Phase 6b), so a key not migrated by then stops authenticating. Rotate holders to their successor's key. | The first release carrying theme-5 Phase 4 (opened 2026-09-11). | `deprecated_toolkit_key_used` WARNING log lines — one per resolve, naming the service account still presenting the retired key form. | Plaintext acceptance ends no earlier than **2026-12-01** (a follow-up to Phase 6b). |
 
 
 ## One-time setup (repo/org admin)

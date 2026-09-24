@@ -8,10 +8,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import func, inspect, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from jentic_one.control.core.schema.toolkit_flattening_acks import ToolkitFlatteningAck
 from jentic_one.control.core.schema.upgrade_steps import UpgradeStep
 
 
@@ -39,14 +38,3 @@ class UpgradeStepRepository:
         session.add(step)
         await session.flush()
         return step
-
-    @staticmethod
-    async def count_flattening_acknowledgements(session: AsyncSession) -> int:
-        result = await session.execute(select(func.count()).select_from(ToolkitFlatteningAck))
-        return int(result.scalar_one())
-
-    @staticmethod
-    async def has_table(session: AsyncSession, table: str) -> bool:
-        """Whether ``table`` exists in the session's (schema-scoped) database."""
-        conn = await session.connection()
-        return bool(await conn.run_sync(lambda sync: inspect(sync).has_table(table)))

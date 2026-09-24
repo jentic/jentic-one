@@ -17,11 +17,7 @@ from jentic_one.control.core.schema.permission_rule_sets import (
 )
 from jentic_one.control.core.schema.sigv4_credentials import Sigv4Credential
 from jentic_one.control.core.schema.token_value_credentials import TokenValueCredential
-from jentic_one.control.core.schema.toolkit_credential_bindings import ToolkitCredentialBinding
 from jentic_one.control.core.schema.toolkit_flattening_acks import ToolkitFlatteningAck
-from jentic_one.control.core.schema.toolkit_keys import ToolkitKey
-from jentic_one.control.core.schema.toolkit_permission_rules import ToolkitPermissionRule
-from jentic_one.control.core.schema.toolkits import Toolkit
 from jentic_one.control.core.schema.upgrade_steps import UpgradeStep
 from jentic_one.shared.db.base import ControlBase
 
@@ -40,10 +36,6 @@ __all__ = [
     "PermissionRuleSetRule",
     "Sigv4Credential",
     "TokenValueCredential",
-    "Toolkit",
-    "ToolkitCredentialBinding",
     "ToolkitFlatteningAck",
-    "ToolkitKey",
-    "ToolkitPermissionRule",
     "UpgradeStep",
 ]

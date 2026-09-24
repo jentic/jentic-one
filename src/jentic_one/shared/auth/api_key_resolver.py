@@ -17,11 +17,12 @@ AGENT_API_KEY_PREFIX = "jak_"
 SERVICE_ACCOUNT_API_KEY_PREFIX = "sak_"
 # Theme-5 Phase 4 (key retirement): a retired toolkit key's plaintext keeps
 # authenticating — as the service account the retirement job created for it —
-# because the job copies the key's SHA-256 lookup digest into
+# because the job copied the key's SHA-256 lookup digest into
 # ``service_account_credentials.api_key_hash`` and this resolver matches by
-# digest, not by prefix. The prefix is DEPRECATED (see the deprecation notice
-# in ``docs/releasing.md``): each successful resolve logs a warning naming
-# the account, and the acceptance is deleted with the toolkit surface.
+# digest, not by prefix. Acceptance needs no toolkit table, so it outlives the
+# Phase-6b drops (which removed the job itself). The prefix is DEPRECATED (see
+# ``docs/development/releasing.md``): each successful resolve logs a warning
+# naming the account; acceptance ends no earlier than 2026-12-01.
 RETIRED_TOOLKIT_KEY_PREFIX = "jntc_live_"
 
 
@@ -59,8 +60,9 @@ class ApiKeyResolver:
                     "deprecated_toolkit_key_used",
                     service_account_id=identity.sub,
                     actionable_step=(
-                        "Rotate this caller to its service account's sak_ key; "
-                        "jntc_live_ acceptance is removed with the toolkit surface."
+                        "Rotate this caller to a key minted for its service account "
+                        "(POST /service-accounts/{id}:generate-api-key); jntc_live_ "
+                        "acceptance ends no earlier than 2026-12-01."
                     ),
                 )
             return identity

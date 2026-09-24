@@ -8,7 +8,7 @@ import type { RuntimeConfig } from './RuntimeConfig';
  * Create request for no_auth credentials.
  *
  * A no-auth credential carries no secret — it represents "this API is called
- * without authentication". It still exists as a credential row so a toolkit
+ * without authentication". It still exists as a credential row so an agent
  * binding (and its permission rules) can hang off it, and the broker resolves
  * it as a no-op auth (see broker credential resolver / injection).
  */

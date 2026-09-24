@@ -226,9 +226,10 @@ def _is_api_key(value: str) -> bool:
     """Check whether a credential string is a prefixed API key.
 
     ``jntc_live_`` is the retired toolkit-key form (theme-5 Phase 4): the
-    retirement job migrates each key's digest to a service account, and
+    retirement job migrated each key's digest to a service account, and
     ``ApiKeyResolver`` resolves the unchanged plaintext as that account
-    (logging a deprecation warning). Unmigrated keys resolve to nothing → 401.
+    (logging a deprecation warning). Keys not migrated before the Phase-6b
+    drops resolve to nothing → 401.
     """
     return value.startswith("jak_") or value.startswith("sak_") or value.startswith("jntc_live_")
 

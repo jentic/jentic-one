@@ -12,7 +12,7 @@
  * the per-tab todos; this page owns the shell + tab switching.
  */
 import { useSearchParams } from 'react-router';
-import { useEffect, type ReactNode } from 'react';
+import { type ReactNode } from 'react';
 import {
 	Activity as ActivityIcon,
 	BellRing,
@@ -62,24 +62,6 @@ export default function MonitorPage() {
 	// usage/health view — when no `?tab=` is present. The other lenses are one
 	// click (and deep-linkable) away.
 	const activeTab: MonitorTab = isMonitorTab(tabParam) ? tabParam : 'overview';
-
-	// Deprecation-window scrub (theme-5 5d) — DELETE IN 6b. Pre-5b deep links
-	// could carry `?toolkit_id=…`; the filter vocabulary dropped it when
-	// toolkits were retired (5b). Unknown params are already ignored by every
-	// filter reader, but `setSearchParams((prev) => …)` copies them forward on
-	// each tab/filter change, so a dead `toolkit_id` would ride along forever.
-	// Drop it once on arrival (replace: no history entry for the scrub).
-	useEffect(() => {
-		if (!searchParams.has('toolkit_id')) return;
-		setSearchParams(
-			(prev) => {
-				const next = new URLSearchParams(prev);
-				next.delete('toolkit_id');
-				return next;
-			},
-			{ replace: true },
-		);
-	}, [searchParams, setSearchParams]);
 
 	const setTab = (tab: string) => {
 		setSearchParams(

@@ -17,9 +17,10 @@ class DenialReason(StrEnum):
     """Why the broker denied an execute request at the authorization layer."""
 
     # --- binding derivation (who may use what) ---------------------------
-    NO_TOOLKIT_BINDING = "no_toolkit_binding"
-    """Legacy path: no toolkit binding covers the API (403)."""
-
+    # Historical note: stored PBAC_DENIED events may carry the retired
+    # ``no_toolkit_binding`` reason from the pre-6b legacy toolkit path; no
+    # live path emits it and nothing parses stored reasons back through this
+    # enum, so it has no member here.
     NO_CREDENTIAL_BINDING = "no_credential_binding"
     """Direct path: no active credential binding covers the API (403)."""
 
