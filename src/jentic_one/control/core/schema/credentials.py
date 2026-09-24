@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, Index, String, Text, text
+from sqlalchemy import Boolean, ForeignKey, Index, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from jentic_one.control.core.schema.device_authorization_credentials import (
         DeviceAuthorizationCredential,
     )
+    from jentic_one.control.core.schema.oauth_app_registrations import OAuthAppRegistration
     from jentic_one.control.core.schema.oauth_client_credentials import OAuthClientCredential
     from jentic_one.control.core.schema.oauth_tokens import OAuthToken
     from jentic_one.control.core.schema.sigv4_credentials import Sigv4Credential
@@ -31,6 +32,8 @@ class Credential(AuditableMixin, ControlBase):
     __table_args__ = (
         Index("ix_credentials_api_vendor", "api_vendor"),
         Index("ix_credentials_provider", "provider"),
+        Index("ix_credentials_owner_user_id", "owner_user_id"),
+        Index("ix_credentials_oauth_app_registration_id", "oauth_app_registration_id"),
     )
 
     id: Mapped[str] = mapped_column(
@@ -69,6 +72,19 @@ class Credential(AuditableMixin, ControlBase):
     )
     server_variables: Mapped[dict[str, str] | None] = mapped_column(
         json_variant(), nullable=True, default=None
+    )
+    # NULL = org-shared (anyone on the instance may resolve this credential);
+    # non-NULL = only that user (and their on-behalf-of agents whose
+    # ``parent_actor_id`` matches) may resolve. Enforced inside the broker's
+    # binding boundary — the FK-less user id references the auth surface.
+    owner_user_id: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    # Set on OAuth grants minted through a shared registration. NULL when the
+    # legacy embedded ``oauth_client_credentials`` path is used, and on
+    # non-OAuth credential types.
+    oauth_app_registration_id: Mapped[str | None] = mapped_column(
+        String(30),
+        ForeignKey("oauth_app_registrations.id", ondelete="RESTRICT"),
+        nullable=True,
     )
 
     customer_api_key: Mapped[CustomerAPIKey | None] = relationship(
@@ -111,5 +127,9 @@ class Credential(AuditableMixin, ControlBase):
         back_populates="credential",
         cascade="all, delete-orphan",
         uselist=False,
+        lazy="selectin",
+    )
+    oauth_app_registration: Mapped[OAuthAppRegistration | None] = relationship(
+        back_populates="credentials",
         lazy="selectin",
     )

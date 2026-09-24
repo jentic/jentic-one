@@ -74,3 +74,4 @@ class AuditTargetType(StrEnum):
     PROVIDER_CONFIG = "provider_config"
     OAUTH_CLIENT = "oauth_client"
     OAUTH_GRANT = "oauth_grant"
+    OAUTH_APP_REGISTRATION = "oauth_app_registration"
