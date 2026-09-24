@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from jentic_one.auth.web.routers import discovery
-from jentic_one.shared.config import AuthConfig
+from jentic_one.shared.config import AppConfig, AuthConfig, resolved_auth_base_url
 
 
 @pytest.fixture()
@@ -24,6 +24,7 @@ def _make_client() -> collections.abc.Callable[[str], TestClient]:
         # effective_auth_base_url also reads server.public_base_url; keep it
         # empty so the canonical/request-fallback behaviour under test holds.
         mock_ctx.config.server.public_base_url = ""
+        mock_ctx.config.server.port = 8000
         app.state.ctx = mock_ctx
         return TestClient(app)
 
@@ -119,3 +120,34 @@ def test_jwks_content_type_is_json(client: TestClient) -> None:
 def test_jwks_no_auth_required(client: TestClient) -> None:
     resp = client.get("/.well-known/jwks.json")
     assert resp.status_code == 200
+
+
+@pytest.mark.parametrize("host", ["localhost:8020", "127.0.0.1:8020"])
+def test_discovery_token_endpoint_matches_assertion_audience_zero_config(host: str) -> None:
+    """With nothing configured on a loopback bind, the advertised token_endpoint
+    must equal the request-less JWT-Bearer audience — whichever alias the agent
+    discovered it through — or every assertion exchange fails invalid_grant."""
+    config = AppConfig.model_validate(
+        {
+            "databases": {
+                "registry": {"name": "reg"},
+                "admin": {"name": "admin"},
+                "control": {"name": "ctrl"},
+            },
+            "server": {"host": "127.0.0.1", "port": 8020},
+        }
+    )
+    app = FastAPI()
+    app.include_router(discovery.router)
+    mock_ctx = MagicMock()
+    mock_ctx.config = config
+    app.state.ctx = mock_ctx
+
+    data = (
+        TestClient(app, base_url=f"http://{host}")
+        .get("/.well-known/oauth-authorization-server")
+        .json()
+    )
+
+    expected_audience = f"{resolved_auth_base_url(config)}/oauth/token"
+    assert data["token_endpoint"] == expected_audience == "http://127.0.0.1:8020/oauth/token"

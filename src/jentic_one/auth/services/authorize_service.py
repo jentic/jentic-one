@@ -498,8 +498,14 @@ class AuthorizeService:
         redirect_uri: str,
         client_id: str,
         oauth_client_id: str | None = None,
+        issuer: str | None = None,
     ) -> tuple[str, str, str | None, list[str]]:
         """Exchange auth code + PKCE verifier for tokens.
+
+        ``issuer`` is the ``iss`` stamped on the ``id_token``; the web layer
+        passes the same request-scoped base URL the discovery document
+        advertises, so OIDC clients' issuer check matches. When omitted it
+        falls back to the request-less ``resolved_auth_base_url``.
 
         Returns (access_token, refresh_token, id_token, scopes). ``scopes`` is
         the effective set the minted access token will actually enforce,
@@ -640,7 +646,7 @@ class AuthorizeService:
 
         id_token = issue_id_token(
             self._auth_config,
-            issuer=resolved_auth_base_url(self._ctx.config),
+            issuer=issuer or resolved_auth_base_url(self._ctx.config),
             sub=user.id,
             email=user.email,
             aud=client_id,
