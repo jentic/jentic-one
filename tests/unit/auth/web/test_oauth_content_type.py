@@ -71,13 +71,14 @@ def test_token_accepts_form_encoded(
     assert data["refresh_token"] == "rt_form"
 
 
-def test_token_form_encoded_missing_grant_type_is_400_invalid_grant(
+def test_token_form_encoded_missing_grant_type_is_400_invalid_request(
     client: TestClient,
 ) -> None:
-    """A malformed form body answers the RFC 6749 §5.2 400, not a framework 422."""
+    """A malformed form body answers the RFC 6749 §5.2 400 ``invalid_request``
+    (fix and retry — not ``invalid_grant``), never a framework 422."""
     resp = client.post("/oauth/token", data={"refresh_token": "some_token"})
     assert resp.status_code == 400
-    assert resp.json()["type"] == "invalid_grant"
+    assert resp.json()["error"] == "invalid_request"
 
 
 # ---------- /oauth/introspect: RFC 7662 §2.1 form encoding ----------
@@ -141,3 +142,22 @@ def test_introspect_malformed_body_is_400_invalid_request(
     assert resp.status_code == 400
     assert resp.json()["type"] == "invalid_request"
     mock_token_cls.return_value.introspect.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"data": {"token_type_hint": "access_token"}},
+        {"json": {"token_type_hint": "access_token"}},
+        {"content": b""},
+    ],
+)
+def test_introspect_unauthenticated_is_401_before_body_parse(kwargs: dict[str, object]) -> None:
+    """Authentication is resolved before the body parser: an anonymous caller
+    gets 401 whatever the body, never a 400 that reflects its shape."""
+    app = FastAPI()
+    app.include_router(oauth.router)
+    app.add_exception_handler(AuthServiceError, service_error_handler)
+    app.state.ctx = MagicMock()
+    resp = TestClient(app).post("/oauth/introspect", **kwargs)  # type: ignore[arg-type]
+    assert resp.status_code == 401

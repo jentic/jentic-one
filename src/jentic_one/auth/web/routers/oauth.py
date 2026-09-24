@@ -774,8 +774,11 @@ _INTROSPECT_REQUEST_BODY: dict[str, object] = {
     response_model_exclude_none=True,
 )
 async def introspect_endpoint(
-    body: IntrospectRequest = Depends(_parse_introspect_request),
+    # Identity is declared (and so resolved) before the body parser: an
+    # unauthenticated caller gets the 401 before any body is read or
+    # validated, never a 400 that reflects the body's shape.
     identity: Identity = get_current_identity(allow_expired_password=True),
+    body: IntrospectRequest = Depends(_parse_introspect_request),
     token_svc: TokenService = Depends(get_token_service),
 ) -> IntrospectResponse:
     """Introspect a token (RFC 7662).
