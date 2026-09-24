@@ -1,0 +1,77 @@
+# Local SQLite config for the demo-flywheel skill / flywheel_verify.py.
+#
+# A full copy of config/local-sqlite.yaml PLUS the two settings Flow 3 needs so
+# the loopback fixture (scripts/flow3_upstream_fixture.py) is probeable:
+#   - catalog.update_check_interval_seconds: 1  (small POSITIVE value; 0 would
+#       DISABLE the sweep entirely — it's the kill switch, not "check always")
+#   - ingest.egress.allowed_private_subnets: [127.0.0.0/8]  (admit loopback past
+#       the SSRF guard so the 127.0.0.1:8099 fixture can be fetched)
+#
+# JENTIC_CONFIG_FILE is a full-replacement config, not an overlay, so this file
+# duplicates the base rather than editing it in place (keeps the committed
+# local-sqlite.yaml untouched).
+#
+# Usage: JENTIC_CONFIG_FILE=config/local-sqlite-demo.yaml make start-app
+
+databases:
+  registry:
+    backend: sqlite
+    path: .data/registry.db
+    schema_name: registry
+  control:
+    backend: sqlite
+    path: .data/control.db
+    schema_name: control
+  admin:
+    backend: sqlite
+    path: .data/admin.db
+    schema_name: admin
+
+runtime:
+  debug: true
+  log_level: DEBUG
+
+server:
+  host: 127.0.0.1
+  port: 8000
+  reload: true
+
+search:
+  enabled: true
+  search_enabled: true
+  search_mode: lexical
+
+# --- Flow-3 additions (absent from the base local-sqlite.yaml) --------------
+catalog:
+  # Point the catalog at the loopback fixture so `POST /catalog:refresh` loads
+  # `flow3-e2e.test` as an importable entry (the base config points at the real
+  # jentic-public-apis manifest). LOCAL-DEMO-ONLY.
+  manifest_url: "http://127.0.0.1:8099/apis.json"
+  # Small positive interval so back-to-back /catalog:refresh calls actually
+  # re-probe the fixture. 0 disables the sweep entirely, so do NOT use 0.
+  update_check_interval_seconds: 1
+
+ingest:
+  egress:
+    # Admit loopback so the SSRF guard lets the app fetch the fixture upstream
+    # at 127.0.0.1:8099. LOCAL-DEMO-ONLY — never widen egress like this in prod.
+    allowed_private_subnets:
+      - 127.0.0.0/8
+# ----------------------------------------------------------------------------
+
+credentials:
+  encryption:
+    active_id: v1
+    entries:
+      - id: v1
+        material: "Z9BctysLqeHhzbFLfSU4djsvAX7N5EVVos5G0QN7C5Q="  # pragma: allowlist secret
+  providers:
+    direct_oauth2:
+      kind: direct_oauth2
+      redirect_uri: "http://127.0.0.1:8000/credentials/oauth/callback"
+
+observability:
+  metrics:
+    exporter: none
+  tracing:
+    exporter: none
