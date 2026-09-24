@@ -39,6 +39,32 @@ from jentic_one.shared.context import Context
 _KEY_MATERIAL = base64.b64encode(os.urandom(32)).decode()
 
 
+def _legacy_credential() -> MagicMock:
+    """Credential mock for the legacy embedded path (no shared registration)."""
+    credential = MagicMock()
+    credential.oauth_app_registration_id = None
+    return credential
+
+
+@pytest.fixture(autouse=True)
+def _patch_credential_lookup():
+    """Return a legacy credential when ``_resolve_poll_endpoints`` reads it.
+
+    ``advance`` now dereferences ``credentials.oauth_app_registration_id`` at
+    poll time to prefer the shared registration's endpoints when set. Every
+    existing test in this file exercises the legacy path — pin a credential
+    with the FK NULL so ``_resolve_poll_endpoints`` falls straight back to
+    the aux row.
+    """
+    with patch(
+        "jentic_one.control.services.integrations.flow_handlers.device_authorization."
+        "CredentialRepository.get_by_id",
+        new_callable=AsyncMock,
+        return_value=_legacy_credential(),
+    ) as mock:
+        yield mock
+
+
 def _make_context() -> Context:
     cfg = AppConfig(
         databases=DatabasesConfig(

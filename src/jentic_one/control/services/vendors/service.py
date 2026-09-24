@@ -1,104 +1,230 @@
 """Vendor auth registry service.
 
-Read-only view over `AppConfig.vendors` — the config-seeded set of verified
-vendors that support the agent-driven integration flow.
-Phase 1 makes no runtime writes; the whole registry is a config snapshot.
+Single unified read seam over the vendor registry: every method is async and
+resolves DB-first, falling back to the platform-shipped
+``AppConfig.vendors`` snapshot. When a vendor slug exists in both tiers, the
+DB row's OAuth-app material wins; the config's scope catalog + identity probe
++ canonical ``<domain>/<sub>`` vendor string are merged in.
+
+Callers no longer have to reason about which method reads which tier — every
+read hits both.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Literal
+from typing import Protocol
 
+from pydantic import SecretStr
+
+from jentic_one.control.core.schema.oauth_app_registrations import OAuthAppRegistration
+from jentic_one.control.repos.oauth_app_registration_repo import (
+    OAuthAppRegistrationRepository,
+)
+from jentic_one.control.services.vendors.errors import (
+    UnknownVendorError,
+    UnsupportedFlowError,
+    VendorNotConfiguredError,
+)
+from jentic_one.control.services.vendors.schemas import (
+    ResolvedScope,
+    VendorEntry,
+    VendorEntrySource,
+    VendorFlowKind,
+)
 from jentic_one.shared.config import (
     VendorAuthConfig,
+    VendorAuthorizationCodeFlowConfig,
+    VendorDeviceAuthorizationFlowConfig,
     VendorFlowConfig,
     VendorRegistryConfig,
     VendorScopeConfig,
 )
 from jentic_one.shared.context import Context
 
-
-class UnknownVendorError(Exception):
-    """Raised when the requested vendor is not in the registry."""
-
-    def __init__(self, vendor: str) -> None:
-        super().__init__(f"unknown vendor: {vendor!r}")
-        self.vendor = vendor
-
-
-class UnsupportedFlowError(Exception):
-    """Raised when the requested flow kind is not offered by the vendor."""
-
-    def __init__(self, vendor: str, flow: str) -> None:
-        super().__init__(f"vendor {vendor!r} does not support flow {flow!r}")
-        self.vendor = vendor
-        self.flow = flow
+# Re-exported for backwards compatibility — earlier revisions of this module
+# defined the exceptions and ``ResolvedScope`` inline, and downstream code
+# still imports them from here.
+__all__ = [
+    "ResolvedScope",
+    "UnknownVendorError",
+    "UnsupportedFlowError",
+    "VendorAppRegistrationSource",
+    "VendorEntry",
+    "VendorNotConfiguredError",
+    "VendorRegistryService",
+]
 
 
-class VendorNotConfiguredError(Exception):
-    """Raised when the vendor is in the registry but its flow lacks credentials."""
+class VendorAppRegistrationSource(Protocol):
+    """Abstraction over the admin-DB registration read path.
 
-    def __init__(self, vendor: str, flow: str, reason: str) -> None:
-        super().__init__(f"vendor {vendor!r} flow {flow!r} not configured: {reason}")
-        self.vendor = vendor
-        self.flow = flow
-        self.reason = reason
-
-
-@dataclass(slots=True, frozen=True)
-class ResolvedScope:
-    """A scope resolved for a specific connect request.
-
-    `default` = pre-selected on the review page (typically the read-only baseline).
-    `requested` = the initiator asked for this scope (agents flag write scopes for
-    human attention).
+    Injectable so unit tests can exercise DB-first / fallback / union
+    semantics without opening a real database session — a fake implementation
+    returns preconfigured registrations. The default implementation
+    (``_DefaultRegistrationSource`` below) uses the control DB and the
+    repository layer.
     """
 
-    name: str
-    classification: Literal["read", "write", "admin"]
-    default: bool
-    requested: bool
-    description: str
+    async def get_preferred_active(
+        self, *, api_vendor: str, flow_kind: str | None = None
+    ) -> OAuthAppRegistration | None:
+        """Return the most-recently-updated active registration for a vendor, if any."""
+
+    async def list_active(self) -> list[OAuthAppRegistration]:
+        """Return every active registration across all vendors."""
 
 
-class VendorRegistryService:
-    """Read-only vendor auth registry backed by `AppConfig.vendors`."""
+class _DefaultRegistrationSource:
+    """DB-backed implementation of :class:`VendorAppRegistrationSource`.
+
+    Opens a read-only session for each call and delegates to the repository —
+    the service layer does not import SQLAlchemy directly.
+    """
 
     def __init__(self, ctx: Context) -> None:
         self._ctx = ctx
 
-    # ---- config accessors ----------------------------------------------------
+    async def get_preferred_active(
+        self, *, api_vendor: str, flow_kind: str | None = None
+    ) -> OAuthAppRegistration | None:
+        async with self._ctx.control_db.session() as session:
+            return await OAuthAppRegistrationRepository.get_preferred_for_vendor(
+                session, api_vendor=api_vendor, flow_kind=flow_kind
+            )
+
+    async def list_active(self) -> list[OAuthAppRegistration]:
+        async with self._ctx.control_db.session() as session:
+            return await OAuthAppRegistrationRepository.list_all(session, include_inactive=False)
+
+
+class VendorRegistryService:
+    """Vendor auth registry with a DB-first / config-fallback resolution seam."""
+
+    def __init__(
+        self,
+        ctx: Context,
+        *,
+        registration_source: VendorAppRegistrationSource | None = None,
+    ) -> None:
+        self._ctx = ctx
+        self._registrations: VendorAppRegistrationSource = (
+            registration_source
+            if registration_source is not None
+            else _DefaultRegistrationSource(ctx)
+        )
+
+    # ---- config accessor ----------------------------------------------------
 
     @property
     def _config(self) -> VendorRegistryConfig:
         return self._ctx.config.vendors
 
-    def list_all(self) -> list[VendorAuthConfig]:
-        """List every configured vendor (stable order for UI rendering)."""
-        return sorted(self._config.entries.values(), key=lambda v: v.display_name)
+    # ---- core resolution ----------------------------------------------------
 
-    def get(self, vendor_key: str) -> VendorAuthConfig:
-        """Look up a vendor entry by registry key (e.g. "github")."""
-        entry = self._config.entries.get(vendor_key)
-        if entry is None:
-            raise UnknownVendorError(vendor_key)
+    async def _resolve_entry(
+        self,
+        vendor_key: str,
+        *,
+        flow_kind: str | None = None,
+    ) -> tuple[VendorAuthConfig, VendorEntrySource]:
+        """Resolve one vendor with source metadata attached.
+
+        Precedence: DB row wins over a like-keyed config entry. When the
+        vendor exists in both tiers, the DB row's flow-config (client_id +
+        secret + endpoints) is materialised against the config's scope
+        catalog + identity-probe + canonical vendor string. DB-only vendors
+        synthesize a minimal ``VendorAuthConfig`` with placeholder metadata;
+        identity-echo will fail cleanly on those until an operator adds the
+        matching config entry.
+        """
+        registration = await self._registrations.get_preferred_active(
+            api_vendor=vendor_key, flow_kind=flow_kind
+        )
+        cfg = self._config.entries.get(vendor_key)
+
+        if registration is not None:
+            return _synthesize_from_registration(vendor_key, registration, cfg, self._ctx), "db"
+        if cfg is not None:
+            return cfg, "config"
+        raise UnknownVendorError(vendor_key)
+
+    async def get(self, vendor_key: str) -> VendorAuthConfig:
+        """Look up a vendor entry by registry key (e.g. ``"github"``).
+
+        DB-first, config-fallback. Raises :class:`UnknownVendorError` when
+        neither tier has the vendor.
+        """
+        entry, _source = await self._resolve_entry(vendor_key)
         return entry
+
+    async def list_all(self) -> list[VendorAuthConfig]:
+        """List every vendor known to the platform, DB rows winning on collisions.
+
+        Sorted by display_name so the UI's "Add integration" picker does not
+        shuffle between polls.
+        """
+        registrations = await self._registrations.list_active()
+        merged: dict[str, VendorAuthConfig] = dict(self._config.entries)
+        for row in registrations:
+            merged[row.api_vendor] = _synthesize_from_registration(
+                row.api_vendor, row, self._config.entries.get(row.api_vendor), self._ctx
+            )
+        return sorted(merged.values(), key=lambda v: v.display_name)
+
+    async def list_entries(self) -> list[VendorEntry]:
+        """List every vendor as a compact ``VendorEntry`` view.
+
+        Thin projection over :meth:`list_all` that carries the extra
+        ``source`` + ``flow_kind`` discriminators the UI's picker uses to
+        show admin-managed vs platform-shipped badges.
+        """
+        registrations = await self._registrations.list_active()
+        entries: dict[str, VendorEntry] = {}
+        for key, cfg in self._config.entries.items():
+            entries[key] = _project_config_entry(key, cfg)
+        for row in registrations:
+            entries[row.api_vendor] = _project_db_registration(row.api_vendor, row)
+        return sorted(entries.values(), key=lambda e: e.display_name)
+
+    async def get_entry(
+        self,
+        vendor_key: str,
+        *,
+        flow_kind: str | None = None,
+    ) -> VendorEntry:
+        """Compact ``VendorEntry`` view for one vendor.
+
+        Kept as a thin wrapper over :meth:`_resolve_entry` for callers that
+        specifically want the source-tagged projection (e.g. the admin UI).
+        """
+        registration = await self._registrations.get_preferred_active(
+            api_vendor=vendor_key, flow_kind=flow_kind
+        )
+        if registration is not None:
+            return _project_db_registration(vendor_key, registration)
+        cfg = self._config.entries.get(vendor_key)
+        if cfg is None:
+            raise UnknownVendorError(vendor_key)
+        return _project_config_entry(vendor_key, cfg)
 
     # ---- flow resolution -----------------------------------------------------
 
-    def resolve_flow(
+    async def resolve_flow(
         self,
         vendor_key: str,
         preferred: str | None = None,
     ) -> VendorFlowConfig:
-        """Pick a flow for a connect request.
+        """Pick a flow for a connect request, DB-first.
 
         Precedence: preferred (if supplied and offered by the vendor) > first
         entry in `vendor.flows`. Raises `UnsupportedFlowError` if a preferred
         flow is not offered by the vendor.
+
+        The returned ``VendorFlowConfig`` carries the resolved client
+        material — ``client_secret`` is materialised for auth-code flows so
+        the connect handler can POST the token exchange directly.
         """
-        entry = self.get(vendor_key)
+        entry, _source = await self._resolve_entry(vendor_key, flow_kind=preferred)
         if not entry.flows:
             raise VendorNotConfiguredError(vendor_key, "any", "no flows configured")
         if preferred is None:
@@ -127,7 +253,7 @@ class VendorRegistryService:
 
     # ---- scope resolution ----------------------------------------------------
 
-    def merge_scopes(
+    async def merge_scopes(
         self,
         vendor_key: str,
         requested: list[str] | None,
@@ -139,9 +265,10 @@ class VendorRegistryService:
         - `requested` = the initiator asked for this scope explicitly
 
         The review page renders a checkbox per scope; write scopes that were
-        agent-requested get visually flagged.
+        agent-requested get visually flagged. DB-only vendors carry an empty
+        scope catalog until an operator adds a matching config entry.
         """
-        entry = self.get(vendor_key)
+        entry = await self.get(vendor_key)
         requested_set = set(requested or [])
         return [
             ResolvedScope(
@@ -154,9 +281,9 @@ class VendorRegistryService:
             for s in entry.scopes
         ]
 
-    def validate_scopes(self, vendor_key: str, scopes: list[str]) -> list[str]:
+    async def validate_scopes(self, vendor_key: str, scopes: list[str]) -> list[str]:
         """Return scopes not offered by the vendor (empty list = all valid)."""
-        entry = self.get(vendor_key)
+        entry = await self.get(vendor_key)
         offered = {s.name for s in entry.scopes}
         return [s for s in scopes if s not in offered]
 
@@ -169,3 +296,151 @@ class VendorRegistryService:
             if s.name == name:
                 return s
         return None
+
+
+# ---------------------------------------------------------------------------
+# View projection helpers (module-level so the service reads compactly).
+# ---------------------------------------------------------------------------
+
+
+def _synthesize_from_registration(
+    vendor_key: str,
+    registration: OAuthAppRegistration,
+    cfg: VendorAuthConfig | None,
+    ctx: Context,
+) -> VendorAuthConfig:
+    """Build a ``VendorAuthConfig`` from a DB registration, merging config metadata.
+
+    When a matching config entry exists, its scope catalog + identity probe +
+    canonical vendor string come along for free; the DB row supplies the
+    OAuth-app material (client_id / secret / endpoints / display_name).
+
+    When the DB row has no matching config, a minimal ``VendorAuthConfig`` is
+    synthesized — the vendor string is derived as ``<slug>/<slug>`` to
+    satisfy the pydantic validator, scopes default to empty, and
+    ``identity_probe`` is left ``None`` so the connect finalise step skips
+    identity-echo (the credential still stores; just no ``connected_as`` UX
+    label). Operators wanting the identity echo for a fully-custom vendor
+    should still add a matching entry in ``AppConfig.vendors.entries`` with
+    the vendor's userinfo endpoint.
+    """
+    flow = _synthesize_flow(registration, ctx)
+
+    if cfg is not None:
+        return VendorAuthConfig(
+            vendor=cfg.vendor,
+            display_name=registration.name,
+            flows=[flow],
+            scopes=list(cfg.scopes),
+            identity_probe=cfg.identity_probe,
+        )
+
+    default_scopes = _extension_default_scopes(registration)
+    synthesized_scopes = [
+        VendorScopeConfig(name=s, classification="read", default=True, description="")
+        for s in (default_scopes or [])
+    ]
+    canonical_vendor = vendor_key if "/" in vendor_key else f"{vendor_key}/{vendor_key}"
+    return VendorAuthConfig(
+        vendor=canonical_vendor,
+        display_name=registration.name,
+        flows=[flow],
+        scopes=synthesized_scopes,
+        identity_probe=None,
+    )
+
+
+def _synthesize_flow(
+    registration: OAuthAppRegistration,
+    ctx: Context,
+) -> VendorFlowConfig:
+    """Project the flow-kind-specific extension row into a ``VendorFlowConfig``.
+
+    For auth-code the encrypted client secret is decrypted via
+    ``ctx.encryption.decrypt`` — this is the one materialisation site for the
+    secret. Device flow has no secret (public client).
+    """
+    if registration.flow_kind == "authorization_code":
+        ac = registration.authorization_code_details
+        if ac is None:
+            raise VendorNotConfiguredError(
+                registration.api_vendor,
+                registration.flow_kind,
+                "authorization_code registration is missing its details row",
+            )
+        client_secret = ctx.encryption.decrypt(ac.encrypted_client_secret)
+        return VendorAuthorizationCodeFlowConfig(
+            client_id=registration.client_id,
+            client_secret=SecretStr(client_secret),
+            authorize_url=ac.authorize_url,
+            token_url=ac.token_url,
+        )
+    if registration.flow_kind == "device_authorization":
+        dev = registration.device_authorization_details
+        if dev is None:
+            raise VendorNotConfiguredError(
+                registration.api_vendor,
+                registration.flow_kind,
+                "device_authorization registration is missing its details row",
+            )
+        return VendorDeviceAuthorizationFlowConfig(
+            client_id=registration.client_id,
+            authorization_endpoint=dev.authorization_endpoint,
+            token_endpoint=dev.token_endpoint,
+        )
+    raise UnsupportedFlowError(registration.api_vendor, registration.flow_kind)
+
+
+def _extension_default_scopes(registration: OAuthAppRegistration) -> list[str] | None:
+    """Read ``default_scopes`` off whichever extension is populated."""
+    ac = registration.authorization_code_details
+    if ac is not None and ac.default_scopes is not None:
+        return list(ac.default_scopes)
+    dev = registration.device_authorization_details
+    if dev is not None and dev.default_scopes is not None:
+        return list(dev.default_scopes)
+    return None
+
+
+def _project_db_registration(key: str, registration: OAuthAppRegistration) -> VendorEntry:
+    """Project a DB registration into the compact ``VendorEntry`` view."""
+    default_scopes = _extension_default_scopes(registration)
+    flow_kind: VendorFlowKind = _cast_flow_kind(registration.flow_kind)
+    return VendorEntry(
+        key=key,
+        display_name=registration.name,
+        flow_kind=flow_kind,
+        client_id=registration.client_id,
+        has_client_secret=registration.authorization_code_details is not None,
+        default_scopes=default_scopes,
+        source="db",
+    )
+
+
+def _project_config_entry(key: str, cfg: VendorAuthConfig) -> VendorEntry:
+    """Project a config entry into the compact ``VendorEntry`` view.
+
+    Config vendors may offer multiple flows — this collapses to the first
+    entry, mirroring ``resolve_flow``'s precedence for callers that ask for
+    the vendor's default flow.
+    """
+    flow = cfg.flows[0]
+    flow_kind: VendorFlowKind = _cast_flow_kind(flow.kind)
+    has_secret = flow.kind == "authorization_code"
+    default_scopes = [s.name for s in cfg.scopes if s.default] or None
+    return VendorEntry(
+        key=key,
+        display_name=cfg.display_name,
+        flow_kind=flow_kind,
+        client_id=flow.client_id,
+        has_client_secret=has_secret,
+        default_scopes=default_scopes,
+        source="config",
+    )
+
+
+def _cast_flow_kind(raw: str) -> VendorFlowKind:
+    """Narrow a stringly-typed DB / config flow discriminator."""
+    if raw not in ("authorization_code", "device_authorization"):
+        raise UnsupportedFlowError("<registration>", raw)
+    return raw  # type: ignore[return-value]

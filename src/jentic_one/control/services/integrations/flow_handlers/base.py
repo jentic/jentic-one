@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from typing import Any, ClassVar, Literal, Protocol
 
 from jentic_one.control.core.schema.connect_sessions import ConnectSession
-from jentic_one.shared.config import VendorFlowConfig
+from jentic_one.control.services.integrations.flow_handlers.session_app import SessionApp
 from jentic_one.shared.context import Context
 from jentic_one.shared.models.credentials import StoredCredentialType
 
@@ -152,17 +152,24 @@ class AuthFlowHandler(Protocol):
         db_session: Any,
         *,
         credential_id: str,
-        flow: VendorFlowConfig,
+        app: SessionApp,
         requested_scopes: list[str],
         created_by: str,
+        owner_user_id: str | None = None,
     ) -> None:
-        """Set up flow-specific storage for the session. In-txn caller-side."""
+        """Set up flow-specific storage for the session. In-txn caller-side.
+
+        ``app`` carries the normalised OAuth-app config (DB registration or
+        config-source); when ``app.registration_id`` is non-None the handler
+        sets the credential's FK + owner columns and skips the legacy
+        embedded aux-row writes for its app-config columns.
+        """
 
     async def begin(
         self,
         row: ConnectSession,
         *,
-        flow: VendorFlowConfig,
+        app: SessionApp,
         confirmed_scopes: list[str],
     ) -> BeginResult:
         """Start the vendor conversation. Returns the challenge for the user."""
