@@ -1999,7 +1999,7 @@ type InstanceIdentityResponse struct {
 	// BrokerUrl The broker (data plane) base URL a client should send `execute` traffic to, as configured by the operator (server.mcp.broker_url), with any userinfo stripped. Null when the platform cannot honestly advertise one: on a 'remote' backend a loopback-host value (the config default) describes the control plane's own machine, not an address any client can dial, so it is withheld rather than published as misleading guidance. Deployment metadata, not a secret — the broker URL is handed to every client expected to call it (issue #1249).
 	BrokerUrl *string `json:"broker_url,omitempty"`
 
-	// CanonicalBaseUrl The instance's own canonical base URL (auth.canonical_base_url), with any userinfo stripped; '' if unset.
+	// CanonicalBaseUrl The instance's own canonical base URL (auth.canonical_base_url, else server.public_base_url, else the serving bind origin), with any userinfo stripped.
 	CanonicalBaseUrl string `json:"canonical_base_url"`
 
 	// Host Host (and port, when the canonical base URL declares one) parsed from canonical_base_url; '' if unset or unparseable.
@@ -2978,7 +2978,7 @@ type ProviderConfigSetRequest struct {
 
 // ProviderDiscoveryEntryResponse Discovery metadata for a single credential provider.
 type ProviderDiscoveryEntryResponse struct {
-	// CallbackUrl OAuth2 redirect URI for providers that require it.
+	// CallbackUrl OAuth2 redirect URI for providers that require it. When no explicit redirect_uri is configured, this is derived from the deployment's public origin (server.public_base_url or the request origin), so it reflects the exact callback the connect flow will register with the IdP. Add this URL to your OAuth app's allowed redirect URIs.
 	CallbackUrl *string `json:"callback_url,omitempty"`
 
 	// Configured Whether the provider is fully configured and operational.
