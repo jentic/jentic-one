@@ -36606,6 +36606,25 @@
               "title": "Vendor Key",
               "type": "string"
             }
+          },
+          {
+            "description": "Pin to a specific admin-registered OAuth app when the vendor has more than one. Returns that registration's scopes + client_id, so the picker's tile and the connect payload stay aligned.",
+            "in": "query",
+            "name": "oauth_app_registration_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 30,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Pin to a specific admin-registered OAuth app when the vendor has more than one. Returns that registration's scopes + client_id, so the picker's tile and the connect payload stay aligned.",
+              "title": "Oauth App Registration Id"
+            }
           }
         ],
         "responses": {

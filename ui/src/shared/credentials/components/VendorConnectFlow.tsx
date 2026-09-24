@@ -173,7 +173,11 @@ function VendorSelfConnectFlow({
 	onBack: () => void;
 	onDone: () => void;
 }) {
-	const capabilities = useVendorAuthCapabilities(vendor.key);
+	// Pin the auth-capabilities read to the picker tile's registration id
+	// (when set) so scope catalog / default_scopes come from *this* admin-
+	// registered OAuth app, not the vendor's preferred-active one. Without
+	// the pin, two Gmail registrations would silently show the same scopes.
+	const capabilities = useVendorAuthCapabilities(vendor.key, vendor.registration_id);
 	const agents = useAgentsForPicker();
 
 	const queryClient = useQueryClient();

@@ -434,8 +434,17 @@ class ConnectSessionService:
         connecting a credential without granting any agent access to it,
         and can bind an agent later through the credentials API.
         """
-        entry = await self._vendors.get(vendor_key)
-        flow = await self._vendors.resolve_flow(vendor_key, preferred_flow)
+        # Route every vendor read through the ``resolve_by_pin`` seam so the
+        # scope catalog + client material used at ``:connect`` matches
+        # whatever the user picked. When ``oauth_app_registration_id`` is
+        # None (no pin) both calls fall back to the DB-first / config-
+        # fallback behaviour.
+        entry = await self._vendors.get(vendor_key, registration_id=oauth_app_registration_id)
+        flow = await self._vendors.resolve_flow(
+            vendor_key,
+            preferred_flow,
+            registration_id=oauth_app_registration_id,
+        )
 
         try:
             handler_cls = handler_for(flow.kind)
@@ -443,12 +452,6 @@ class ConnectSessionService:
             raise NoOpForFlowError(flow.kind) from exc
         handler = handler_cls(self._ctx)
 
-        # DB-first / config-fallback: prefer an admin-registered OAuth app
-        # for this vendor+flow when one exists (any user can SSO through it),
-        # else fall back to the config-shipped ``VendorFlowConfig``. When the
-        # caller pinned a specific registration id, load that one and refuse
-        # the request loudly on any mismatch (missing / inactive / different
-        # vendor) — silent fall-through would mint against the wrong app.
         session_app = await self._resolve_session_app(
             vendor_key,
             flow,
@@ -650,8 +653,18 @@ class ConnectSessionService:
             # catalog import populates it asynchronously.
             credential = await CredentialRepository.get_by_id(session, row.credential_id)
 
-        entry = await self._vendors.get(row.vendor)
-        resolved = await self._vendors.merge_scopes(row.vendor, row.requested_scopes or [])
+        # Honour the pinned registration if this session went through one —
+        # the credential row records which admin-registered app minted it,
+        # so the review page's scope catalog matches what the picker showed.
+        pinned_registration_id = (
+            credential.oauth_app_registration_id if credential is not None else None
+        )
+        entry = await self._vendors.get(row.vendor, registration_id=pinned_registration_id)
+        resolved = await self._vendors.merge_scopes(
+            row.vendor,
+            row.requested_scopes or [],
+            registration_id=pinned_registration_id,
+        )
         # The credential row's ``api_version`` is set at create-time to
         # ``None`` — the imported OpenAPI decides its own version once the
         # catalog import completes. Look it up live from the registry via
@@ -781,16 +794,33 @@ class ConnectSessionService:
         """
         async with self._ctx.control_db.session() as read_session:
             row = await ConnectSessionRepository.get_by_id(read_session, session_id)
+            # ``credentials.oauth_app_registration_id`` records the pinned
+            # registration from ``:connect``; every vendor read at confirm
+            # time must key off it so scopes / client material stay aligned
+            # with what the picker showed and ``:connect`` used.
+            credential = (
+                await CredentialRepository.get_by_id(read_session, row.credential_id)
+                if row is not None
+                else None
+            )
         if row is None:
             raise InvalidPollTokenError("invalid poll_token")
         _verify_poll_token(row, poll_token)
+
+        pinned_registration_id = (
+            credential.oauth_app_registration_id if credential is not None else None
+        )
 
         _forbid_self_confirm(row, identity.actor_type)
         # Friendly pre-check for the common stale-page case; the CAS below
         # is the authoritative guard against a concurrent confirm.
         _require_state(row, expected="created", action="confirm")
 
-        flow = await self._vendors.resolve_flow(row.vendor, row.resolved_flow)
+        flow = await self._vendors.resolve_flow(
+            row.vendor,
+            row.resolved_flow,
+            registration_id=pinned_registration_id,
+        )
         try:
             handler_cls = handler_for(flow.kind)
         except KeyError as exc:
@@ -798,11 +828,16 @@ class ConnectSessionService:
         handler = handler_cls(self._ctx)
 
         # Re-resolve the SessionApp at confirm time so the vendor conversation
-        # picks up whatever registration is authoritative *now*: an admin may
-        # have registered a shared app between :connect and :confirm.
-        session_app = await self._resolve_session_app(row.vendor, flow)
+        # picks up whatever registration is authoritative *now*. When the
+        # session pinned a specific registration at ``:connect``, honour the
+        # pin so a mismatched preferred-active registration doesn't take over.
+        session_app = await self._resolve_session_app(
+            row.vendor, flow, pinned_registration_id=pinned_registration_id
+        )
 
-        unknown = await self._vendors.validate_scopes(row.vendor, confirmed_scopes)
+        unknown = await self._vendors.validate_scopes(
+            row.vendor, confirmed_scopes, registration_id=pinned_registration_id
+        )
         if unknown:
             raise ScopeValidationError(unknown)
 
@@ -1168,7 +1203,12 @@ class ConnectSessionService:
         failed echo marks the session ``failed`` (no vaulting) so we don't
         strand a credential we can't tie back to a human.
         """
-        entry = await self._vendors.get(row.vendor)
+        async with self._ctx.control_db.session() as session:
+            credential = await CredentialRepository.get_by_id(session, row.credential_id)
+        pinned_registration_id = (
+            credential.oauth_app_registration_id if credential is not None else None
+        )
+        entry = await self._vendors.get(row.vendor, registration_id=pinned_registration_id)
 
         connected_as: str | None
         if entry.identity_probe is None:
