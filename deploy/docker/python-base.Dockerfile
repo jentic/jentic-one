@@ -53,6 +53,12 @@ RUN apt-get update \
         python3.12 python3.12-venv ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-RUN groupadd -r jentic && useradd --no-log-init -r -g jentic jentic
+# Fixed uid/gid, not the dynamic one `useradd -r` picks. The Helm chart sets
+# runAsNonRoot on every pod, and kubelet can only honour that when it can prove
+# the image's user is non-root — a name it cannot resolve makes the container
+# fail to start, so the numeric id below and USER in the service stages are a
+# pair. 10001 is outside the range system packages allocate from.
+RUN groupadd -g 10001 jentic \
+    && useradd --no-log-init --uid 10001 --gid 10001 jentic
 
 EXPOSE 8000

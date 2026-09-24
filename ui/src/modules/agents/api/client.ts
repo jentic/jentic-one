@@ -15,6 +15,7 @@ import {
 	AgentsService,
 	AuditService,
 	AuditTargetType,
+	CredentialsService,
 	EventsService,
 	ExecutionsService,
 	GroupBy,
@@ -23,28 +24,32 @@ import {
 	PermissionsService,
 	ServiceAccountsService,
 	SystemService,
-	ToolkitsService,
 	type AgentResponse,
 	type AuditResponse,
+	type CredentialBindingResponse,
 	type EventResponse,
 	type OAuthGrantResponse,
+	type PermissionRuleReadSchema,
+	type PermissionRuleSchema,
+	type PermissionTestRequest,
+	type PermissionTestResponse,
 	type ServiceAccountResponse,
 } from '@/shared/api';
 import {
 	agentToEntity,
 	serviceAccountToEntity,
+	type AgentBindableCredential,
 	type AgentEntity,
 	type ApiKeyHistoryEntry,
 	type ApiKeyInfoEntity,
 	type ApiKeyResult,
+	type CredentialBindingEntity,
 	type InstanceIdentityEntity,
-	type LinkableToolkit,
 	type McpLastSeen,
 	type McpSessionEntity,
 	type OAuthGrantEntity,
 	type PermissionCatalogEntry,
 	type ServiceAccountEntity,
-	type ToolkitBindingEntity,
 } from '@/modules/agents/api/types';
 import { listAccessRequests, type AccessRequest } from '@/shared/lib';
 
@@ -169,107 +174,200 @@ export async function archiveAgent(agentId: string): Promise<void> {
 	}
 }
 
-export async function listAgentToolkits(agentId: string): Promise<ToolkitBindingEntity[]> {
+// ---------------------------------------------------------------------------
+// Direct agent↔credential bindings (theme 5 phase 5a).
+//
+// The direct binding path: `GET/POST /agents/{id}/credentials` +
+// suspend/purge/resume, with per-binding permission rules living on the
+// credential-side `/credentials/{cid}/agents/{aid}/permissions` surface.
+// ---------------------------------------------------------------------------
+
+function bindingToEntity(r: CredentialBindingResponse): CredentialBindingEntity {
+	return {
+		id: r.id,
+		credentialId: r.credential_id,
+		name: r.name ?? null,
+		suspended: r.suspended,
+		ruleSetId: r.rule_set_id ?? null,
+		boundAt: r.bound_at,
+		serves: (r.serves ?? []).map((s) => ({
+			vendor: s.api_vendor,
+			name: s.api_name ?? null,
+			version: s.api_version ?? null,
+		})),
+	};
+}
+
+/** The agent's direct credential bindings (`GET /agents/{id}/credentials`),
+ * suspended rows included with their flag set. */
+export async function listAgentCredentialBindings(
+	agentId: string,
+): Promise<CredentialBindingEntity[]> {
 	try {
-		const res = await AgentsService.listAgentToolkits({ agentId });
-		return res.data.map((b) => ({
-			id: b.id,
-			toolkitId: b.toolkit_id,
-			boundAt: b.bound_at,
+		const res = await AgentsService.listAgentCredentials({ agentId });
+		return res.data.map(bindingToEntity);
+	} catch (error) {
+		throw toAgentsError(error, 'Failed to load bound credentials.');
+	}
+}
+
+/**
+ * Bind a credential directly to an agent, with the operator's chosen initial
+ * grant.
+ *
+ * The phase-1 bind body carries ONLY `credential_id` — there is no inline
+ * `allow_all`/`permissions` field — so the "decide
+ * the grant at bind time" wizard composes two calls: the bind, then a rules
+ * PUT on the fresh binding. The seam between them is fail-CLOSED: a binding
+ * with zero rules default-denies everything, so if the PUT fails the agent
+ * has gained no access — we surface an honest "bound but blocked" error and
+ * the Access card's zero-rules warning points at the repair (edit rules).
+ * `rules === null` is the deliberate "start blocked" mode (bind only).
+ */
+export async function bindCredentialToAgent(
+	agentId: string,
+	credentialId: string,
+	rules: PermissionRuleSchema[] | null,
+): Promise<CredentialBindingEntity> {
+	let binding: CredentialBindingEntity;
+	try {
+		binding = bindingToEntity(
+			await AgentsService.bindAgentCredential({
+				agentId,
+				requestBody: { credential_id: credentialId },
+			}),
+		);
+	} catch (error) {
+		throw toAgentsError(error, 'Failed to bind the credential.');
+	}
+	if (rules != null && rules.length > 0) {
+		try {
+			await CredentialsService.replaceAgentCredentialPermissions({
+				credentialId,
+				agentId,
+				requestBody: rules,
+			});
+		} catch (error) {
+			throw toAgentsError(
+				error,
+				'The credential was bound, but saving its rules failed — the binding starts blocked (default deny). Edit its rules to grant access.',
+			);
+		}
+	}
+	return binding;
+}
+
+/**
+ * Unbind a credential from an agent. Default (`purge: false`) is a reversible
+ * SUSPEND — the binding row and its permission rules survive and `:resume`
+ * restores access. `purge: true` deletes the binding (and its rules) outright.
+ */
+export async function unbindCredentialFromAgent(
+	agentId: string,
+	credentialId: string,
+	purge: boolean,
+): Promise<void> {
+	try {
+		await AgentsService.unbindAgentCredential({ agentId, credentialId, purge });
+	} catch (error) {
+		throw toAgentsError(
+			error,
+			purge ? 'Failed to unbind the credential.' : 'Failed to suspend the binding.',
+		);
+	}
+}
+
+/** Lift a suspended binding (`POST …/credentials/{id}:resume`). */
+export async function resumeAgentCredentialBinding(
+	agentId: string,
+	credentialId: string,
+): Promise<CredentialBindingEntity> {
+	try {
+		return bindingToEntity(
+			await AgentsService.resumeAgentCredentialBinding({ agentId, credentialId }),
+		);
+	} catch (error) {
+		throw toAgentsError(error, 'Failed to resume the binding.');
+	}
+}
+
+/**
+ * Candidate credentials for the agent-side "Bind credential" picker. Reads the
+ * org-wide `GET /credentials` surface through the shared API (the agents
+ * module must not import the credentials page module) and projects to the
+ * minimal picker shape.
+ */
+export async function listBindableCredentialsForAgent(): Promise<AgentBindableCredential[]> {
+	try {
+		const res = await CredentialsService.listCredentials({ limit: 100 });
+		return res.data.map((c) => ({
+			credential_id: c.credential_id,
+			name: c.name,
+			type: c.type,
+			vendor: c.api?.vendor ?? null,
+			apiName: c.api?.name ?? null,
+			catalogApiId: c.catalog_api_id ?? null,
+			provider: c.provider ?? null,
+			createdBy: c.created_by ?? null,
 		}));
 	} catch (error) {
-		throw toAgentsError(error, 'Failed to load bound toolkits.');
+		throw toAgentsError(error, 'Failed to load credentials.');
+	}
+}
+
+/** The ordered PBAC rules on one direct binding
+ * (`GET /credentials/{cid}/agents/{aid}/permissions`). */
+export async function listAgentBindingPermissions(
+	agentId: string,
+	credentialId: string,
+): Promise<PermissionRuleReadSchema[]> {
+	try {
+		const res = await CredentialsService.listAgentCredentialPermissions({
+			credentialId,
+			agentId,
+		});
+		return res.data;
+	} catch (error) {
+		throw toAgentsError(error, 'Failed to load permission rules.');
+	}
+}
+
+/** Replace the full rule set on one direct binding (idempotent PUT). */
+export async function replaceAgentBindingPermissions(
+	agentId: string,
+	credentialId: string,
+	rules: PermissionRuleSchema[],
+): Promise<PermissionRuleReadSchema[]> {
+	try {
+		const res = await CredentialsService.replaceAgentCredentialPermissions({
+			credentialId,
+			agentId,
+			requestBody: rules,
+		});
+		return res.data;
+	} catch (error) {
+		throw toAgentsError(error, 'Failed to save permission rules.');
 	}
 }
 
 /**
- * Candidate toolkits for the agent-side "Bind toolkit" picker (#607). Reads the
- * org-wide ``GET /toolkits`` surface through the shared API — the agents module
- * must not import the toolkits module (module-boundary rule), so it maps the
- * shared ``ToolkitResponse`` into a small picker shape here.
- *
- * Paginates via ``cursor``/``has_more`` so a workspace with more than one page
- * of toolkits (default page size 50) still lists everything — a hardcoded
- * ``limit`` would silently drop the tail. A hard page cap
- * keeps a runaway/misconfigured backend from looping forever. Kill-switched
- * toolkits are *included* here (``active`` is carried through); the picker
- * itself refuses to select them so a broken binding can't be created — but
- * keeping them in the list lets callers show them as a
- * disabled row with a "suspended" affordance, which is easier to reason about
- * than a silently-missing toolkit.
- *
- * Defensive against a misbehaving backend: we break if a cursor repeats (a
- * pagination loop) and dedupe the accumulated rows by ``toolkitId`` so a page
- * that re-emits an earlier row can't produce duplicate picker entries.
+ * Broker dry-run against one direct binding's SAVED rules
+ * (`POST …/permissions:test`). There is no vendor
+ * pooling — the verdict is exactly this binding's first-match-wins policy.
  */
-export async function listLinkableToolkits(): Promise<LinkableToolkit[]> {
+export async function testAgentBindingPermissions(
+	agentId: string,
+	credentialId: string,
+	body: PermissionTestRequest,
+): Promise<PermissionTestResponse> {
 	try {
-		const out: LinkableToolkit[] = [];
-		const seenToolkitIds = new Set<string>();
-		const seenCursors = new Set<string>();
-		let cursor: string | null = null;
-		const MAX_PAGES = 20;
-		for (let page = 0; page < MAX_PAGES; page += 1) {
-			const res = await ToolkitsService.listToolkits({ cursor, limit: 100 });
-			for (const t of res.data) {
-				if (seenToolkitIds.has(t.toolkit_id)) continue;
-				seenToolkitIds.add(t.toolkit_id);
-				out.push({ toolkitId: t.toolkit_id, name: t.name, active: t.active });
-			}
-			if (!res.has_more || !res.next_cursor) break;
-			// A repeated cursor means the backend is looping — stop rather than
-			// re-fetch the same page until MAX_PAGES.
-			if (seenCursors.has(res.next_cursor)) break;
-			seenCursors.add(res.next_cursor);
-			cursor = res.next_cursor;
-		}
-		return out;
+		return await CredentialsService.testAgentCredentialPermissions({
+			credentialId,
+			agentId,
+			requestBody: body,
+		});
 	} catch (error) {
-		throw toAgentsError(error, 'Failed to load toolkits.');
-	}
-}
-
-/**
- * Resolve a single toolkit's human name (`GET /toolkits/{id}`). Powers the
- * per-row name lookup on the agent detail page's "Bound toolkits" card: the
- * binding response (`GET /agents/{id}/toolkits`) carries only the toolkit id,
- * so each bound row reads its own name here instead of the whole workspace
- * catalogue paying a paginated sweep on every page load.
- *
- * The name is BEST-EFFORT and purely cosmetic — the row always falls back to
- * the id, and no caller surfaces an error. So any real failure (a since-deleted
- * 404, a transient 5xx, or a network blip) simply returns ``null`` rather than
- * pushing the query into an error state over a display nicety. The ONE
- * exception is an ``AbortError``: React Query throws it to cancel an in-flight
- * request on unmount or key change, so it's re-thrown (not swallowed into a
- * spurious ``null`` result) to let cancellation propagate as intended.
- */
-export async function getToolkitName(toolkitId: string): Promise<string | null> {
-	try {
-		const res = await ToolkitsService.getToolkit({ toolkitId });
-		return res?.name ?? null;
-	} catch (e) {
-		if (e instanceof Error && e.name === 'AbortError') throw e;
-		return null;
-	}
-}
-
-/** Bind a toolkit to an agent (`POST /agents/{id}/toolkits`) — the agent-side
- * mirror of the toolkit page's "Link agent" (#607). */
-export async function bindToolkitToAgent(agentId: string, toolkitId: string): Promise<void> {
-	try {
-		await AgentsService.bindToolkit({ agentId, requestBody: { toolkit_id: toolkitId } });
-	} catch (error) {
-		throw toAgentsError(error, 'Failed to bind the toolkit.');
-	}
-}
-
-/** Unbind a toolkit from an agent (`DELETE /agents/{id}/toolkits/{toolkit_id}`). */
-export async function unbindToolkitFromAgent(agentId: string, toolkitId: string): Promise<void> {
-	try {
-		await AgentsService.unbindToolkit({ agentId, toolkitId });
-	} catch (error) {
-		throw toAgentsError(error, 'Failed to unbind the toolkit.');
+		throw toAgentsError(error, 'Failed to run the permission test.');
 	}
 }
 
@@ -701,7 +799,13 @@ export async function fetchActorUsageDetail(
 export interface ActorExecutionEntity {
 	id: string;
 	status: string;
-	toolkitId: string;
+	/** The credential the broker injected (direct-binding path); null for
+	 * rows that predate direct bindings. */
+	credentialId: string | null;
+	credentialName: string | null;
+	/** Legacy toolkit attribution — read-only historical data (rows recorded
+	 * before toolkits were retired); direct-binding executions carry null. */
+	toolkitId: string | null;
 	toolkitName: string | null;
 	operationId: string | null;
 	durationMs: number | null;
@@ -726,7 +830,9 @@ export async function fetchActorExecutions(
 			items: res.data.map((r) => ({
 				id: r.execution_id,
 				status: r.status,
-				toolkitId: r.toolkit_id,
+				credentialId: r.credential_id ?? null,
+				credentialName: r.credential_name ?? null,
+				toolkitId: r.toolkit_id ?? null,
 				toolkitName: r.toolkit_name ?? null,
 				operationId: r.operation_id ?? null,
 				durationMs: r.duration_ms ?? null,
@@ -777,8 +883,7 @@ export type ActorAuditEntry = AuditResponse;
 /**
  * Actor-scoped audit entries — the lifecycle trail recorded against this
  * agent / service account as the TARGET (register, approve/deny, disable/
- * enable, key rotation, toolkit grant/revoke). Mirrors the toolkit console's
- * `listToolkitAudit`. Requires `org:admin`; 401/403 map to an empty list so
+ * enable, key rotation, binding grant/revoke). Requires `org:admin`; 401/403 map to an empty list so
  * the "Recent changes" panel degrades gracefully for non-admins.
  */
 export async function listActorAudit(
@@ -928,6 +1033,10 @@ export async function fetchInstanceIdentity(): Promise<InstanceIdentityEntity> {
 			// Older backends predate the field; absent means the endpoint
 			// doesn't exist there either, so hiding the HTTP variant is right.
 			mcpEnabled: res.mcp_enabled ?? false,
+			// Absent (older backend) and null (backend withholds a loopback
+			// broker on a remote install) both mean "unknown" — the snippet
+			// keeps its placeholder either way.
+			brokerUrl: res.broker_url ?? null,
 		};
 	} catch (error) {
 		throw toAgentsError(error, 'Failed to load the instance identity.');
@@ -946,6 +1055,7 @@ function grantToEntity(r: OAuthGrantResponse): OAuthGrantEntity {
 		clientOrigin: r.client_origin ?? null,
 		userId: r.user_id,
 		agentId: r.agent_id,
+		agentStatus: r.agent_status ?? null,
 		scopes: r.scopes,
 		status: r.status,
 		createdAt: r.created_at,

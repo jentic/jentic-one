@@ -130,6 +130,9 @@ export function resetRailEventsStore(): void {
 					id: 'ari_2',
 					resource_type: 'credential',
 					action: 'bind',
+					// HISTORICAL shape: `to_*` only exists on rows filed before
+					// toolkits were retired from this flow — kept here so the
+					// read-only "→ toolkit …" rendering stays exercised in dev.
 					to_type: 'toolkit',
 					to_id: 'tk_github',
 					status: 'pending',

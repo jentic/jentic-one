@@ -74,6 +74,7 @@ export type StreamKind =
 /** Tokens lifted from `EventResponse` (`trace_id` + the free-form `data` map). */
 export type StreamTokens = {
 	trace_id?: string;
+	/** Historical events only — new events carry `credential_id` instead. */
 	toolkit_id?: string;
 	operation_id?: string;
 	credential_id?: string;
@@ -235,8 +236,9 @@ export function idFromLink(link: string | null | undefined): string | undefined 
 function buildGroupKey(t: Pick<StreamEvent, 'kind' | 'type' | 'tokens'>): string {
 	const token =
 		t.tokens.operation_id ??
-		t.tokens.toolkit_id ??
 		t.tokens.credential_id ??
+		// Historical events may only carry the retired toolkit attribution.
+		t.tokens.toolkit_id ??
 		// The request id must outrank the agent id: real `access_request.*`
 		// events carry BOTH (the requesting agent is the top-level actor), and
 		// keying on the agent would collapse two requests filed by the same
@@ -472,7 +474,7 @@ export function AgentStreamProvider({
 		// aggressively (5-min staleTime) as reference data, and a CLI agent
 		// files its provisioning request seconds after registering. Without
 		// this, every `actor_id` resolution for the new agent (rail rows, the
-		// setup wizard's badge and agent-named toolkit suggestion) misses and
+		// setup wizard's header badge) misses and
 		// falls back to the raw `agnt_…` id until the cache expires.
 		void queryClient.invalidateQueries({ queryKey: sharedQueryKeys.actorDirectoryRoot });
 	}, [queryClient]);
@@ -914,8 +916,22 @@ export function formatFailurePillCount(count: number): string {
 	return n > 99 ? '99+' : String(n);
 }
 
+/**
+ * Left-edge stripe class for a rail row, keyed by severity.
+ *
+ * CRITICAL and ERROR share the danger colour (both are failures — see
+ * `RailEventRow`'s `isCritical` background tint) but CRITICAL renders a
+ * doubled-width stripe. Before this, the two tiers were pixel-identical on
+ * the rail (`border-l-danger` for both, `border-l-2` from the row's base
+ * class) — an operator had no way to tell "one failure" from "this failure
+ * pattern crossed the critical threshold" without opening the row (issue
+ * #907). Relies on `cn`'s `tailwind-merge` to let `border-l-4` win over the
+ * row's base `border-l-2` (later class in the merge wins on the same
+ * property group) — do not reorder the row's `cn(...)` call without
+ * preserving that.
+ */
 export function severityStripeClass(s: StreamSeverity): string {
-	if (s === 'critical') return 'border-l-danger';
+	if (s === 'critical') return 'border-l-4 border-l-danger';
 	if (s === 'error') return 'border-l-danger';
 	if (s === 'warning') return 'border-l-warning';
 	return 'border-l-primary';

@@ -21,26 +21,31 @@ spec:
       {{- with (include "common.service-account-name" . | trim) }}
       {{ . }}
       {{- end }}
+      {{- include "common.pod-security-context" . | nindent 6 }}
       containers:
         - name: app
           image: {{ include "common.image" . | quote }}
+          {{- include "common.container-security-context" . | nindent 10 }}
           ports:
             - containerPort: 8000
           env:
-{{- range $k, $v := .Values.extraEnv }}
-            - name: {{ $k }}
-              value: {{ $v | quote }}
-{{- end }}
 {{ include "common.config-file.env" . | indent 12 }}
 {{ include "common.app-secrets.env" . | indent 12 }}
+{{ include "common.runtime-env" . | indent 12 }}
 {{ include "common.logging-env" . | indent 12 }}
 {{ include "common.metrics-env" . | indent 12 }}
 {{ include "common.db-env" . | indent 12 }}
+{{- /* extraEnv goes LAST so the operator wins on duplicate keys — see common.extra-env. */}}
+{{ include "common.extra-env" . | indent 12 }}
 {{- $cfgMount := (include "common.config-file.mount" . | trim) }}
 {{- $encMount := (include "common.app-secrets.mount" . | trim) }}
 {{- $licMount := (include "common.awsmp-license.mount" . | trim) }}
-{{- if or $cfgMount $encMount $licMount }}
+{{- $tmpMount := (include "common.tmp-volume-mount" . | trim) }}
+{{- if or $cfgMount $encMount $licMount $tmpMount }}
           volumeMounts:
+{{- with $tmpMount }}
+{{ . | indent 12 }}
+{{- end }}
 {{- with $cfgMount }}
 {{ . | indent 12 }}
 {{- end }}
@@ -72,8 +77,12 @@ spec:
       {{- $cfg := (include "common.config-file.volume" . | trim) }}
       {{- $enc := (include "common.app-secrets.volume" . | trim) }}
       {{- $lic := (include "common.awsmp-license.volume" . | trim) }}
-      {{- if or $otel $cfg $enc $lic }}
+      {{- $tmp := (include "common.tmp-volume" . | trim) }}
+      {{- if or $otel $cfg $enc $lic $tmp }}
       volumes:
+      {{- with $tmp }}
+{{ . | indent 8 }}
+      {{- end }}
       {{- if $otel }}
 {{ include "common.otel-config-volume" . | indent 8 }}
       {{- end }}

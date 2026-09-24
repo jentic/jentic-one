@@ -18,6 +18,7 @@ export {
 	itemTargetLabel,
 	isSpecificResource,
 	isScopeGrant,
+	itemActionSummary,
 	scopeLabel,
 	summarizeAccessRequest,
 	ACCESS_REQUEST_STATUS_VARIANT,
@@ -91,12 +92,11 @@ export { idFromLink, useAgentStreamOptional } from '@/shared/lib/agentStream';
 // API-identity display helpers — one humanising rule applied everywhere a
 // machine identity (`api_id` / `api_vendor` / `api_name`) needs to render as a
 // friendly primary line — shared so Discover, the credential picker, and the
-// toolkit surfaces all apply the same rule (implementation: `api-display.ts`).
+// binding surfaces all apply the same rule (implementation: `api-display.ts`).
 export {
 	humanizeDomainSlug,
 	humanizeName,
 	titleFromApiId,
-	toolkitCredDisplayName,
 	apiRefDisplayName,
 	apiIdentityTuple,
 } from '@/shared/lib/api-display';

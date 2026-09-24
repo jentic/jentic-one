@@ -3,6 +3,7 @@ package install
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -174,6 +175,54 @@ func TestReuseSecretsPreservesMultiKeyKeysetVerbatim(t *testing.T) {
 	}
 	if dst.EncryptionKeyset.Entries[1].Material != "active-key-material" {
 		t.Errorf("active v2 material dropped")
+	}
+}
+
+func TestReuseSecretsPreservesMaterialFileAndEnvKeyset(t *testing.T) {
+	// A keyset whose entries carry material_file/material_env (no inline
+	// material) must survive reinstall verbatim. Treating those entries as
+	// empty would mint a fresh inline key while reporting reused=true —
+	// every stored credential becomes undecryptable with a success message.
+	src := NewDraft()
+	if err := src.FillSecrets(); err != nil {
+		t.Fatalf("FillSecrets: %v", err)
+	}
+	src.EncryptionKeyset = &encryptionOut{
+		ActiveID: "v2",
+		Entries: []encryptionEntryOut{
+			{ID: "v1", MaterialEnv: "JENTIC_ENC_KEY_V1"},
+			{ID: "v2", MaterialFile: "/run/credentials/jentic-one/enc-key"},
+		},
+	}
+	path := writeRenderedConfig(t, src)
+
+	dst := NewDraft()
+	if _, err := ReuseSecrets(dst, path); err != nil {
+		t.Fatalf("ReuseSecrets: %v", err)
+	}
+	if dst.EncryptionKeyset == nil {
+		t.Fatalf("material_file/material_env keyset should be preserved")
+	}
+	if len(dst.EncryptionKeyset.Entries) != 2 {
+		t.Fatalf("Entries len = %d, want 2", len(dst.EncryptionKeyset.Entries))
+	}
+	if dst.EncryptionKeyset.Entries[0].MaterialEnv != "JENTIC_ENC_KEY_V1" {
+		t.Errorf("material_env entry dropped")
+	}
+	if dst.EncryptionKeyset.Entries[1].MaterialFile != "/run/credentials/jentic-one/enc-key" {
+		t.Errorf("material_file entry dropped")
+	}
+	// Round-trip through render: no source entry may grow a spurious
+	// `material: ""` (the backend rejects entries with two sources set).
+	if err := dst.FillSecrets(); err != nil {
+		t.Fatalf("FillSecrets (dst): %v", err)
+	}
+	rendered, err := dst.Render()
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if strings.Contains(string(rendered), `material: ""`) {
+		t.Errorf("rendered config carries an empty inline material alongside a source:\n%s", rendered)
 	}
 }
 

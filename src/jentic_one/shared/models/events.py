@@ -71,6 +71,11 @@ class EventType:
     CREDENTIAL_UNDECRYPTABLE = "credential.undecryptable"
     CREDENTIAL_BOUND_TO_TOOLKIT = "credential.bound_to_toolkit"
     CREDENTIAL_UNBOUND_FROM_TOOLKIT = "credential.unbound_from_toolkit"
+    # Direct agent↔credential bindings (theme 5 phase 1). Coexists with the
+    # toolkit-binding events until the toolkit path is removed.
+    CREDENTIAL_BOUND_TO_AGENT = "credential.bound_to_agent"
+    CREDENTIAL_UNBOUND_FROM_AGENT = "credential.unbound_from_agent"
+    CREDENTIAL_PERMISSION_RULE_SET = "credential.permission_rule_set"
     TOOLKIT_CREATED = "toolkit.created"
     TOOLKIT_KEY_CREATED = "toolkit.key_created"
     TOOLKIT_PERMISSION_RULE_SET = "toolkit.permission_rule_set"
@@ -92,6 +97,12 @@ class EventType:
     # advisory for the same condition (see
     # ``AccessRequestService._advise_unserved_bind_references``).
     TOOLKIT_BINDING_UNSERVED = "broker.toolkit_binding_unserved"
+    # Direct-binding twin of ``TOOLKIT_BINDING_UNSERVED`` (theme-5 Phase 2):
+    # emitted when the broker denies an execute with 403
+    # ``no_credential_binding`` AND no credential yet serves the requested API —
+    # the operator must provision a credential before any binding can be
+    # granted. The *pre-binding* signal for the direct-binding path.
+    CREDENTIAL_BINDING_UNSERVED = "broker.credential_binding_unserved"
 
     # --- Local-MCP transport events (issue #1177) -------------------------
     # Emitted once per MCP session UUID on the first authenticated request
@@ -158,6 +169,9 @@ class EventType:
             CREDENTIAL_UNDECRYPTABLE,
             CREDENTIAL_BOUND_TO_TOOLKIT,
             CREDENTIAL_UNBOUND_FROM_TOOLKIT,
+            CREDENTIAL_BOUND_TO_AGENT,
+            CREDENTIAL_UNBOUND_FROM_AGENT,
+            CREDENTIAL_PERMISSION_RULE_SET,
             TOOLKIT_CREATED,
             TOOLKIT_KEY_CREATED,
             TOOLKIT_PERMISSION_RULE_SET,
@@ -169,6 +183,7 @@ class EventType:
             AGENT_REGISTRATION_DENIED,
             PBAC_DENIED,
             TOOLKIT_BINDING_UNSERVED,
+            CREDENTIAL_BINDING_UNSERVED,
             MCP_SESSION_STARTED,
             MCP_CONFIG_REGISTERED,
             OAUTH_CLIENT_REGISTERED,
@@ -354,4 +369,94 @@ EVENT_TAGS: dict[str, tuple[type[StrEnum], ...]] = {
     EventType.INSTANCE_BOOTED: (HostOs,),
     EventType.MCP_SESSION_STARTED: (McpClient,),
     EventType.MCP_CONFIG_REGISTERED: (McpConfigRuntime,),
+}
+
+
+#: Which :class:`EventSeverity` values are legitimate for each event type — the
+#: single source of truth for "is this classification principled?" (issue #907).
+#: Audited against every ``emit_event``/``emit_event_best_effort`` call site as of
+#: this map's authoring; a rough qualitative read of the four tiers:
+#:
+#: - ``INFO``     — routine/expected: a lifecycle step happened as intended.
+#: - ``WARNING``  — needs attention soon; nothing has failed *yet* (an advisory,
+#:   a denial, a token approaching expiry).
+#: - ``ERROR``    — one thing failed.
+#: - ``CRITICAL`` — a failure *pattern* crossed an operator-configured threshold,
+#:   not a single instance. Deliberately reserved to ``EXECUTION_REPEATED_FAILURE``
+#:   past ``execution_repeated_failure_critical_threshold`` (see
+#:   ``SecurityConfig`` and ``shared/events/repeated_failure.py``) — CRITICAL is
+#:   rare *by design*; an operator filtering on it seeing few/no rows is not a
+#:   sign the classification is broken. See ``docs/operations/monitoring.md``
+#:   for the operator-facing version of this table.
+#:
+#: Most types map to exactly one fixed severity; ``EXECUTION_REPEATED_FAILURE`` is
+#: the only escalating type. A type absent from this map is a bug —
+#: ``test_every_event_type_has_a_severity_entry`` in
+#: ``tests/unit/shared/test_event_type_severities.py`` enforces 1:1 coverage with
+#: ``EventType.ALL``, and ``test_critical_is_reserved_to_repeated_failure`` guards
+#: the CRITICAL boundary specifically, so a future emitter can't silently widen it.
+#:
+#: Seven types below are declared but not currently emitted anywhere — dead since
+#: the toolkit-removal cut (theme 5, #1370): ``CREDENTIAL_BOUND_TO_TOOLKIT``,
+#: ``CREDENTIAL_UNBOUND_FROM_TOOLKIT``, ``TOOLKIT_CREATED``, ``TOOLKIT_KEY_CREATED``,
+#: ``TOOLKIT_PERMISSION_RULE_SET``, ``TOOLKIT_BOUND_TO_AGENT``,
+#: ``TOOLKIT_UNBOUND_FROM_AGENT``. They keep their originally-declared INFO
+#: severity here rather than being removed — that cleanup is tracked separately
+#: and is out of scope for this map.
+EVENT_TYPE_SEVERITIES: dict[str, frozenset[EventSeverity]] = {
+    # --- INFO: routine / expected lifecycle notifications -----------------
+    EventType.IMPORT_COMPLETED: frozenset({EventSeverity.INFO}),
+    EventType.EXECUTION_COMPLETED: frozenset({EventSeverity.INFO}),
+    EventType.CREDENTIAL_ACCESSED: frozenset({EventSeverity.INFO}),
+    EventType.ACCESS_REQUEST_FILED: frozenset({EventSeverity.INFO}),
+    EventType.ACCESS_REQUEST_APPROVED: frozenset({EventSeverity.INFO}),
+    EventType.ACCESS_REQUEST_DENIED: frozenset({EventSeverity.INFO}),
+    EventType.ACCESS_REQUEST_WITHDRAWN: frozenset({EventSeverity.INFO}),
+    EventType.CATALOG_UPDATE_AVAILABLE: frozenset({EventSeverity.INFO}),
+    EventType.CATALOG_UPDATE_CONFLICTS_OVERLAY: frozenset({EventSeverity.INFO}),
+    EventType.OVERLAY_DEPRECATED: frozenset({EventSeverity.INFO}),
+    EventType.INSTANCE_INITIALIZED: frozenset({EventSeverity.INFO}),
+    EventType.INSTANCE_BOOTED: frozenset({EventSeverity.INFO}),
+    EventType.CREDENTIAL_STORED: frozenset({EventSeverity.INFO}),
+    EventType.CREDENTIAL_CONNECTED: frozenset({EventSeverity.INFO}),
+    # A product-telemetry funnel event, not an operator alert — INFO tracks a
+    # funnel step here, not incident severity (see connect_service.py).
+    EventType.CREDENTIAL_CONNECTION_FAILED: frozenset({EventSeverity.INFO}),
+    EventType.CREDENTIAL_BOUND_TO_TOOLKIT: frozenset({EventSeverity.INFO}),  # dead, see module note
+    EventType.CREDENTIAL_UNBOUND_FROM_TOOLKIT: frozenset({EventSeverity.INFO}),  # dead
+    EventType.CREDENTIAL_BOUND_TO_AGENT: frozenset({EventSeverity.INFO}),
+    EventType.CREDENTIAL_UNBOUND_FROM_AGENT: frozenset({EventSeverity.INFO}),
+    EventType.CREDENTIAL_PERMISSION_RULE_SET: frozenset({EventSeverity.INFO}),
+    EventType.TOOLKIT_CREATED: frozenset({EventSeverity.INFO}),  # dead
+    EventType.TOOLKIT_KEY_CREATED: frozenset({EventSeverity.INFO}),  # dead
+    EventType.TOOLKIT_PERMISSION_RULE_SET: frozenset({EventSeverity.INFO}),  # dead
+    EventType.TOOLKIT_BOUND_TO_AGENT: frozenset({EventSeverity.INFO}),  # dead
+    EventType.TOOLKIT_UNBOUND_FROM_AGENT: frozenset({EventSeverity.INFO}),  # dead
+    EventType.AGENT_CREATED: frozenset({EventSeverity.INFO}),
+    EventType.AGENT_SELF_REGISTERED: frozenset({EventSeverity.INFO}),
+    EventType.AGENT_REGISTRATION_APPROVED: frozenset({EventSeverity.INFO}),
+    EventType.AGENT_REGISTRATION_DENIED: frozenset({EventSeverity.INFO}),
+    EventType.MCP_SESSION_STARTED: frozenset({EventSeverity.INFO}),
+    EventType.MCP_CONFIG_REGISTERED: frozenset({EventSeverity.INFO}),
+    EventType.OAUTH_CLIENT_REGISTERED: frozenset({EventSeverity.INFO}),
+    EventType.OAUTH_CLIENT_APPROVED: frozenset({EventSeverity.INFO}),
+    EventType.OAUTH_GRANT_CREATED: frozenset({EventSeverity.INFO}),
+    EventType.OAUTH_GRANT_REVOKED: frozenset({EventSeverity.INFO}),
+    # --- WARNING: needs attention soon; nothing has failed yet ------------
+    EventType.UPSTREAM_CIRCUIT_OPEN: frozenset({EventSeverity.WARNING}),
+    EventType.UNAUTHORIZED_ACCESS_ATTEMPT: frozenset({EventSeverity.WARNING}),
+    EventType.TOOLKIT_BINDING_UNSERVED: frozenset({EventSeverity.WARNING}),
+    EventType.CREDENTIAL_BINDING_UNSERVED: frozenset({EventSeverity.WARNING}),
+    EventType.PBAC_DENIED: frozenset({EventSeverity.WARNING}),
+    EventType.CREDENTIAL_UNDECRYPTABLE: frozenset({EventSeverity.WARNING}),
+    EventType.CREDENTIAL_NOT_PROVISIONED: frozenset({EventSeverity.WARNING}),
+    EventType.CREDENTIAL_REFRESH_FAILED: frozenset({EventSeverity.WARNING}),
+    EventType.CREDENTIAL_EXPIRING_SOON: frozenset({EventSeverity.WARNING}),
+    # --- ERROR: one thing failed -------------------------------------------
+    EventType.EXECUTION_FAILED: frozenset({EventSeverity.ERROR}),
+    EventType.IMPORT_FAILED: frozenset({EventSeverity.ERROR}),
+    EventType.JOB_FAILED_PERMANENTLY: frozenset({EventSeverity.ERROR}),
+    EventType.CREDENTIAL_EXPIRED: frozenset({EventSeverity.ERROR}),
+    # --- ERROR escalating to CRITICAL: a failure PATTERN, not one instance -
+    EventType.EXECUTION_REPEATED_FAILURE: frozenset({EventSeverity.ERROR, EventSeverity.CRITICAL}),
 }

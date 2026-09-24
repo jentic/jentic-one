@@ -108,11 +108,12 @@ func newMCPServer(a *app, version string, opts *mcpOptions, logger *slog.Logger)
 			Instructions: "Jentic One tool server. On a new machine, or after any tool returns an " +
 				"auth or connectivity error, call get_started first — it diagnoses this " +
 				"machine's setup state and returns the exact operator instruction to fix it. " +
-				"Call whoami to see the agent identity, status, scopes, and toolkit bindings. " +
+				"Call whoami to see the agent identity, status, scopes, and credential bindings. " +
 				"Every tool result carries a top-level `instance` key identifying the Jentic " +
 				"One instance it came from; instance.backend is \"unreachable\" when the " +
 				"control plane could not be reached. The skill://jentic resource is the " +
-				"canonical guide to the whole flow (skill://index lists every skill document); " +
+				"canonical guide to the whole flow (skill://index lists every skill document, " +
+				"and skill://jentic/references/mcp.md carries the MCP-lane detail); " +
 				"read it when unsure how the pieces fit together.",
 			Logger: logger,
 			// Legacy clients (< 2026-07-28) still send initialize; capture
@@ -138,9 +139,25 @@ func (s *mcpServer) run(ctx context.Context) error {
 // filters. There is deliberately NO separate read-only flag: --read-only
 // filters on the tool's own ReadOnlyHint annotation, so the advertised
 // annotation and the serving filter can never drift apart.
+// mcpToolLaneOverride carries a per-lane re-rendering of a tool declaration.
+// The stdio server always serves the base rendering; other lanes substitute
+// the override at tools/list time (today the only other lane is "http" — the
+// daemon-native Streamable HTTP /mcp mount, src/jentic_one/mcp). Only prose
+// that would LIE on the other lane may differ (e.g. instructions naming a
+// tool that lane does not serve); wire shape — name, input schema,
+// annotations — is lane-invariant by design.
+type mcpToolLaneOverride struct {
+	description string
+}
+
 type mcpToolSpec struct {
 	tool    *mcp.Tool
 	handler mcp.ToolHandler
+	// laneOverrides maps a lane name to its re-rendered prose. Pinned into
+	// docs/reference/mcp-tools.json as "lane_overrides" so BOTH renderings
+	// ride the one contract document and drift on either side fails a gate
+	// (Go: TestMCPToolSurfaceSpec; Python: tests/unit/mcp/test_tool_surface.py).
+	laneOverrides map[string]mcpToolLaneOverride
 }
 
 // noArgsSchema is the input schema for the parameterless tools. Kept
@@ -236,7 +253,7 @@ func (s *mcpServer) toolSpecs() []mcpToolSpec {
 				Name:  "whoami",
 				Title: "Show agent identity",
 				Description: "Show the calling agent's identity as the Jentic control plane sees it: " +
-					"id, status, scopes, and toolkit bindings with the APIs each one serves. " +
+					"id, status, scopes, and credential bindings with the APIs each one serves. " +
 					"Call after get_started reports ready, and before requesting access or " +
 					"executing operations — never execute an operation just to probe whether " +
 					"you have access. On an auth error, call get_started for the fix.",
@@ -244,6 +261,21 @@ func (s *mcpServer) toolSpecs() []mcpToolSpec {
 				Annotations: readOnly,
 			},
 			handler: s.handleWhoami,
+			// The base prose routes auth recovery through get_started, which
+			// diagnoses the LOCAL machine's CLI setup — meaningless on the
+			// daemon-native HTTP lane, which serves no get_started (#1327
+			// deferred work). The http rendering keeps every lane-true
+			// sentence and re-roots recovery at the operator.
+			laneOverrides: map[string]mcpToolLaneOverride{
+				"http": {
+					description: "Show the calling agent's identity as the Jentic control plane sees it: " +
+						"id, status, scopes, and credential bindings with the APIs each one serves. " +
+						"Call before requesting access or executing operations — never execute " +
+						"an operation just to probe whether you have access. On an auth error, " +
+						"relay it to your human operator: this connection's credentials and the " +
+						"agent's status are managed in the Jentic One dashboard.",
+				},
+			},
 		},
 		{
 			tool: &mcp.Tool{

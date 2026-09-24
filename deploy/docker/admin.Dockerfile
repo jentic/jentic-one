@@ -10,7 +10,8 @@ RUN python3.12 -m venv /opt/venv && \
     rm /tmp/*.whl
 ENV PATH="/opt/venv/bin:${PATH}"
 
-USER jentic
+# Numeric so kubelet can verify runAsNonRoot (see python-base.Dockerfile).
+USER 10001
 # The identity plane (auth: /register, /oauth, /agents, /me, ...) rides with
 # admin: both are owner-facing control surfaces rooted in the admin DB, and
 # no other parts-mode image serves them. Without this, parts mode has no

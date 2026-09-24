@@ -27,30 +27,55 @@ class ActorNotFoundError(AuthServiceError):
         self.actor_id = actor_id
 
 
-class ToolkitBindingConflictError(AuthServiceError):
-    """Raised when a toolkit binding already exists."""
+class CredentialBindingConflictError(AuthServiceError):
+    """Raised when a direct agent↔credential binding already exists."""
 
-    def __init__(self, agent_id: str, toolkit_id: str) -> None:
-        super().__init__(f"Agent '{agent_id}' is already bound to toolkit '{toolkit_id}'")
+    def __init__(self, agent_id: str, credential_id: str) -> None:
+        super().__init__(f"Agent '{agent_id}' is already bound to credential '{credential_id}'")
         self.agent_id = agent_id
-        self.toolkit_id = toolkit_id
+        self.credential_id = credential_id
 
 
-class ToolkitBindingNotFoundError(AuthServiceError):
-    """Raised when a toolkit binding does not exist."""
+class CredentialBindingNotFoundError(AuthServiceError):
+    """Raised when a direct agent↔credential binding does not exist."""
 
-    def __init__(self, agent_id: str, toolkit_id: str) -> None:
-        super().__init__(f"Agent '{agent_id}' has no binding to toolkit '{toolkit_id}'")
+    def __init__(self, agent_id: str, credential_id: str) -> None:
+        super().__init__(f"Agent '{agent_id}' has no binding to credential '{credential_id}'")
         self.agent_id = agent_id
-        self.toolkit_id = toolkit_id
+        self.credential_id = credential_id
+
+
+class CredentialNotVisibleError(AuthServiceError):
+    """Raised when the bind target credential does not exist or is not visible.
+
+    One error for both cases so the response does not leak whether a
+    credential id exists outside the caller's visibility.
+    """
+
+    def __init__(self, credential_id: str) -> None:
+        super().__init__(f"Credential '{credential_id}' not found")
+        self.credential_id = credential_id
 
 
 class InvalidGrantError(AuthServiceError):
-    """Raised when a token grant is invalid (expired, consumed, or not found)."""
+    """Raised when a token grant is invalid (expired, consumed, or not found).
 
-    def __init__(self, reason: str = "invalid_grant") -> None:
+    ``oauth_error_code`` is the RFC 6749 §5.2 error code the token endpoint's
+    dialect reshaping (``_TokenRoute`` in ``auth/web/routers/oauth.py``) emits
+    as the top-level ``error`` member. It defaults to ``invalid_grant``; raise
+    sites whose condition §5.2 names differently (``invalid_request`` for
+    malformed/missing parameters, ``invalid_client``,
+    ``unsupported_grant_type``) override it. The platform Problem Details
+    handler ignores it (every subclass instance still maps to
+    ``type=invalid_grant`` there).
+    """
+
+    def __init__(
+        self, reason: str = "invalid_grant", *, oauth_error_code: str = "invalid_grant"
+    ) -> None:
         super().__init__(reason)
         self.reason = reason
+        self.oauth_error_code = oauth_error_code
 
 
 class UserNotAdmittedError(AuthServiceError):
@@ -127,7 +152,7 @@ class ClaimActorNotAllowedError(AuthServiceError):
     """Raised when a non-user actor tries to claim agent ownership.
 
     ``Agent.owner_id`` is a FK to ``users.id``, so only a human user can own an
-    agent. An authenticated agent/service-account/toolkit presenting the claim
+    agent. An authenticated agent/service-account presenting the claim
     token is rejected here rather than being allowed to write a non-user id into
     the users-FK column (which would fail as an unhandled integrity error).
     """

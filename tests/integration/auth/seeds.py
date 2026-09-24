@@ -15,6 +15,7 @@ from jentic_one.admin.repos import (
     ActorScopeGrantRepository,
     AgentRepository,
     OAuthClientRepository,
+    UserPermissionGrantRepository,
     UserRepository,
     UserSecretRepository,
 )
@@ -97,6 +98,25 @@ async def seed_agent(
             )
         await session.commit()
         return agent.id
+
+
+async def seed_permissions(ctx: Context, user_id: str, permissions: list[str]) -> None:
+    """Grant assigned permissions to a seeded user (P4 hybrid arm control).
+
+    The inline consent creation splits on the user's effective permissions
+    (``agents:write`` → ACTIVE, else PENDING), so web tests that expect the
+    original ACTIVE arm must hold the grant the SPA door would demand.
+    Stamped ``created_by=SEED_MARKER`` for the shared cleanup.
+    """
+    async with ctx.admin_db.session() as session:
+        await UserPermissionGrantRepository.set_permissions(
+            session,
+            user_id,
+            permissions=set(permissions),
+            granted_by=None,
+            created_by=SEED_MARKER,
+        )
+        await session.commit()
 
 
 async def seed_client(

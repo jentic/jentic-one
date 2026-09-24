@@ -8,7 +8,8 @@ The pieces of the ``/authorize`` flow that more than one router needs —
   (plus the approval-status poll's own per-IP bucket),
 - the platform/registered client gate (D7) helpers,
 - the HMAC-signed, purpose-discriminated, TTL'd internal-state tokens
-  (purposes: ``state``, ``approval``, ``login``, ``session``),
+  (purposes: ``state``, ``approval``, ``login``, ``session``, ``agent-create``,
+  ``agent-status``),
 - the shared-state backend accessor and the **single** consent-handle writer
   (one place owns the handle's shape — the IdP callback and the local-login
   submit both write through it),
@@ -370,6 +371,35 @@ def session_signing_key(ctx: Context) -> str:
     IdP callback, or the approval endpoints.
     """
     return derive_key(ctx.config.admin.auth.jwt_secret.get_secret_value(), "session")
+
+
+def agent_create_signing_key(ctx: Context) -> str:
+    """Signing key for the consent-page inline agent-create blob (P4).
+
+    Fifth purpose in the matrix, same mutual-rejection discipline: only the
+    zero-agents consent page mints it (bound to the consent handle AND the
+    authenticated subject) and only ``POST /oauth/consent/agent`` redeems it
+    (single-use). A ``state``/``approval``/``login``/``session`` blob can
+    never drive the create form, and an agent-create blob can never open the
+    login form, the IdP callback, or the approval endpoints.
+    """
+    return derive_key(ctx.config.admin.auth.jwt_secret.get_secret_value(), "agent-create")
+
+
+def agent_status_signing_key(ctx: Context) -> str:
+    """Signing key for the consent-page pending-agent status blob (P4 hybrid).
+
+    Sixth purpose in the matrix, same mutual-rejection discipline: minted only
+    when the consent flow parks a user on the awaiting-approval page for a
+    PENDING agent (bound to the consent handle AND the agent id) and redeemed
+    only by ``GET /oauth/consent/agent/status`` (repeatable poll — unlike the
+    single-use ``agent-create`` form blob, which is why it is a separate
+    purpose rather than a second life of that one). A ``state``/``approval``/
+    ``login``/``session``/``agent-create`` blob can never poll an agent's
+    status, and a status blob can never drive the create form, open the login
+    form, the IdP callback, or the approval endpoints.
+    """
+    return derive_key(ctx.config.admin.auth.jwt_secret.get_secret_value(), "agent-status")
 
 
 def sign_payload(payload: dict[str, str | None], secret: str, *, purpose: str) -> str:

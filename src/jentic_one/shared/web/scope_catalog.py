@@ -39,7 +39,6 @@ SCOPE_CATALOG_SCHEMA = "jentic.scope-catalog/v1"
 _FAMILY_LABELS: dict[str, str] = {
     "org": "Organisation",
     "capabilities": "Capabilities",
-    "toolkits": "Toolkits",
     "apis": "APIs",
     "catalog": "Catalog",
     "overlays": "Overlays",
@@ -58,7 +57,6 @@ _FAMILY_LABELS: dict[str, str] = {
 _FAMILY_BLURBS: dict[str, str] = {
     "org": "Organisation-wide administration.",
     "capabilities": "Discovering and executing capabilities through the broker.",
-    "toolkits": "Toolkit configuration and lifecycle.",
     "apis": "Imported API definitions and metadata.",
     "catalog": "Importing public catalog APIs into the local registry.",
     "overlays": "Confirming spec overlays — rewrites the API's served revision.",
@@ -80,7 +78,6 @@ _FAMILY_BLURBS: dict[str, str] = {
 _FAMILY_ORDER: tuple[str, ...] = (
     "org",
     "capabilities",
-    "toolkits",
     "apis",
     "catalog",
     "overlays",

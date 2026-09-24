@@ -8,8 +8,8 @@
  * the two actor kinds read identically, minus what jentic-one doesn't serve
  * for SAs:
  *   - Overview  → attribution meta (GET /service-accounts/{id}) + audit
- *                 slice; no toolkit bindings exist for SAs, so no
- *                 Bound-toolkits card
+ *                 slice; no credential bindings exist for SAs, so no
+ *                 bound-credentials card
  *   - Activity  → execution volume + recent executions (same per-actor
  *                 monitoring reads; SA ids are actor ids)
  *   - Access    → platform scopes (#615) + filed access requests (#619)
@@ -19,7 +19,7 @@
  *                 /service-accounts (backend gap, documented inline)
  *
  * The PageHeader carries the kill switch for the reversible active/disabled
- * flip (same control as the toolkit console) plus the constructive Approve /
+ * flip (same control as the agent console) plus the constructive Approve /
  * Deny actions; the terminal Archive lives in Settings' danger zone.
  */
 import { useState } from 'react';
@@ -88,7 +88,7 @@ import { ROUTES, ROUTE_PATHS } from '@/shared/app/routes';
 const DETAIL_TABS = ['overview', 'activity', 'access', 'keys', 'settings'] as const;
 type DetailTab = (typeof DETAIL_TABS)[number];
 
-/** Tab options for the console shell — same icon grammar as the toolkit console. */
+/** Tab options for the console shell — same icon grammar as the agent console. */
 const TAB_OPTIONS: TabNavOption<DetailTab>[] = [
 	{ value: 'overview', label: 'Overview', icon: <LayoutDashboard className="h-4 w-4" /> },
 	{ value: 'activity', label: 'Activity', icon: <ActivityIcon className="h-4 w-4" /> },
@@ -173,7 +173,7 @@ function SaKeysPanel({
 /**
  * The Settings tab body — the shared console cards in read-only mode: the
  * immutable, copyable account id (same {@link IdentitySettingsCard} the agent
- * and toolkit consoles render — there is no PATCH /service-accounts in
+ * console renders — there is no PATCH /service-accounts in
  * jentic-one, a backend gap, so no metadata form) plus the shared danger zone.
  */
 function SaSettingsPanel({
@@ -187,7 +187,7 @@ function SaSettingsPanel({
 }) {
 	const actions = ACTIONS_FOR_STATUS[account.status];
 	// Terminal Archive only — the reversible Disable/Enable flip lives in the
-	// page header's kill switch, exactly like the toolkit console.
+	// page header's kill switch, exactly like the agent console.
 	const dangerActions: DangerZoneAction[] = actions.includes('archive')
 		? [
 				{
@@ -243,7 +243,7 @@ export default function ServiceAccountDetailPage() {
 
 	function setTab(tab: string) {
 		// Pushed (not replaced) so the browser back button walks tabs — same
-		// contract as the agent and toolkit consoles; the back link below is
+		// contract as the agent console; the back link below is
 		// static for exactly that reason.
 		setSearchParams(
 			(prev) => {
@@ -300,7 +300,7 @@ export default function ServiceAccountDetailPage() {
 
 	const account = accountQuery.data;
 	// The header offers the kill switch for the reversible active/disabled
-	// flip (same control as the toolkit console) plus constructive actions
+	// flip (same control as the agent console) plus constructive actions
 	// (Approve / Deny); Archive lives in Settings. `enable`/`disable` never
 	// render as header buttons — the kill switch owns that verb pair.
 	const killSwitchStatus = account.status === 'active' || account.status === 'disabled';
@@ -336,7 +336,7 @@ export default function ServiceAccountDetailPage() {
 
 	return (
 		<PageShell>
-			{/* Same header grammar as the agent + toolkit consoles: badge as the
+			{/* Same header grammar as the agent console: badge as the
 			    icon, description as subtitle, status beside the constructive
 			    lifecycle actions. No second identity card. */}
 			<PageHeader
@@ -362,7 +362,7 @@ export default function ServiceAccountDetailPage() {
 				actions={
 					<>
 						{killSwitchStatus ? (
-							// Same reversible suspend/restore control as the toolkit
+							// Same reversible suspend/restore control as the agent
 							// header — disable/enable is the account's kill switch.
 							<KillSwitch
 								active={account.status === 'active'}
@@ -415,7 +415,7 @@ export default function ServiceAccountDetailPage() {
 			</div>
 
 			{/* Denial banner — full-width alert grammar shared with the agent
-			    console's denial banner and the toolkit suspension banner. */}
+			    console's denial banner. */}
 			{account.status === 'rejected' && (
 				<div
 					className="border-danger/40 bg-danger/5 flex items-start gap-3 rounded-xl border p-4"
@@ -440,7 +440,7 @@ export default function ServiceAccountDetailPage() {
 				</div>
 			)}
 
-			{/* 7-day vitals — StatCard grid like the toolkit console (hidden on 403). */}
+			{/* 7-day vitals — StatCard grid like the agent console (hidden on 403). */}
 			<KpiStrip usage={usage.data} lastActivityAt={lastActivityAt} />
 
 			<TabNav<DetailTab>
@@ -503,7 +503,7 @@ export default function ServiceAccountDetailPage() {
 							</dl>
 						</DetailSection>
 						{/* Actor-scoped audit slice — same "Recent changes" grammar as
-						    the agent + toolkit consoles (admin only). */}
+						    the agent console (admin only). */}
 						<ActorAuditPanel actorKind="service-account" actorId={account.id} />
 					</>
 				)}

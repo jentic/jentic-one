@@ -1,8 +1,10 @@
 package skillgen
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -550,6 +552,260 @@ func TestOwnedFilePruneRespectsCursorBoundary(t *testing.T) {
 	}
 	if _, err := os.Stat(cursorDir); err != nil {
 		t.Error(".cursor must never be removed even when skills is empty")
+	}
+}
+
+// TestOwnedFileWritesShippedReferences pins the D12 sibling-file delivery: a
+// dir-adapter install of a skill that ships references writes the FULL
+// shipped set (cli.md + mcp.md + recovery.md) verbatim under references/ —
+// the lane filter lives at MCP resource-listing time, not on disk; re-apply
+// is idempotent; remove cleans the siblings and prunes the skill dir.
+func TestOwnedFileWritesShippedReferences(t *testing.T) {
+	dir := t.TempDir()
+	env := DetectEnv{Home: dir, Cwd: dir}
+	ad, _ := DefaultRegistry().Resolve("claude")
+	c := jenticContent(t)
+
+	out, err := Apply(ad, c, env, ApplyOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	refDir := filepath.Join(filepath.Dir(out.Path), "references")
+	for _, ref := range []string{"cli.md", "mcp.md", "recovery.md"} {
+		data, err := os.ReadFile(filepath.Join(refDir, ref))
+		if err != nil {
+			t.Fatalf("sibling reference %s not written: %v", ref, err)
+		}
+		want, _ := RawBundledReference("jentic", ref)
+		if string(data) != string(want) {
+			t.Errorf("%s must be the verbatim embed bytes", ref)
+		}
+	}
+
+	// Idempotent re-apply: nothing changes, references included.
+	out2, err := Apply(ad, c, env, ApplyOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out2.Changed || !out2.Skipped {
+		t.Errorf("re-apply with current references should be skipped: %+v", out2)
+	}
+
+	// A drifted sibling is refreshed even when the SKILL.md is unchanged.
+	if err := os.WriteFile(filepath.Join(refDir, "cli.md"), []byte("stale\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out3, err := Apply(ad, c, env, ApplyOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !out3.Changed {
+		t.Error("a drifted sibling reference must be refreshed on apply")
+	}
+	cur, _ := os.ReadFile(filepath.Join(refDir, "cli.md"))
+	want, _ := RawBundledReference("jentic", "cli.md")
+	if string(cur) != string(want) {
+		t.Error("drifted sibling not restored to the embed bytes")
+	}
+
+	// Remove owns the whole lifecycle: siblings deleted, dirs pruned.
+	rout, err := Remove(ad, c, env, RemoveOptions{})
+	if err != nil || !rout.Removed {
+		t.Fatalf("remove failed: %+v err=%v", rout, err)
+	}
+	if _, err := os.Stat(refDir); !os.IsNotExist(err) {
+		t.Error("references/ should be pruned after remove")
+	}
+	if _, err := os.Stat(filepath.Dir(rout.Path)); !os.IsNotExist(err) {
+		t.Error("skills/<name> should be pruned after remove")
+	}
+}
+
+// TestOwnedFileDryRunWritesNoReferences pins that --dry-run stays write-free
+// for the sibling files too.
+func TestOwnedFileDryRunWritesNoReferences(t *testing.T) {
+	dir := t.TempDir()
+	env := DetectEnv{Home: dir, Cwd: dir}
+	ad, _ := DefaultRegistry().Resolve("cursor")
+	c := jenticContent(t)
+
+	out, err := Apply(ad, c, env, ApplyOptions{DryRun: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(out.Path), "references")); !os.IsNotExist(err) {
+		t.Error("dry run must not write sibling references")
+	}
+}
+
+// TestOwnedFileDryRunReportsReferenceDrift pins that a dry run folds pending
+// reference drift into Changed (a stale sibling means the apply would write),
+// while a fully current install stays reported as unchanged — in both cases
+// without writing anything.
+func TestOwnedFileDryRunReportsReferenceDrift(t *testing.T) {
+	dir := t.TempDir()
+	env := DetectEnv{Home: dir, Cwd: dir}
+	ad, _ := DefaultRegistry().Resolve("claude")
+	c := jenticContent(t)
+
+	if _, err := Apply(ad, c, env, ApplyOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	target := ad.Target(ScopeUser, c.Name, env)
+
+	// All current: the dry run reports no pending change.
+	dry, err := Apply(ad, c, env, ApplyOptions{DryRun: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dry.Changed || !dry.Skipped {
+		t.Errorf("dry run over a current install must be unchanged: %+v", dry)
+	}
+
+	// Drift one sibling: the dry run reports Changed without repairing it.
+	refPath := filepath.Join(filepath.Dir(target), "references", "cli.md")
+	if err := os.WriteFile(refPath, []byte("stale\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dry2, err := Apply(ad, c, env, ApplyOptions{DryRun: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !dry2.Changed || dry2.Skipped {
+		t.Errorf("dry run must report a stale sibling as Changed: %+v", dry2)
+	}
+	if cur, _ := os.ReadFile(refPath); string(cur) != "stale\n" {
+		t.Error("dry run must not repair the drifted sibling")
+	}
+}
+
+// forgeRecordedReference simulates an install written by a binary whose
+// shipped set has since renamed a reference: the on-disk sidecar records an
+// extra filename (and the file exists) that the current rendered set no
+// longer contains.
+func forgeRecordedReference(t *testing.T, target, stale string) string {
+	t.Helper()
+	refPath := filepath.Join(filepath.Dir(target), "references", stale)
+	if err := os.WriteFile(refPath, []byte("old lane content\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sc, ok := readSidecar(target)
+	if !ok {
+		t.Fatal("apply must have written a sidecar")
+	}
+	sc.References = append(sc.References, stale)
+	data, err := json.Marshal(sc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sidecarPath(target), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return refPath
+}
+
+// TestOwnedFileApplyPrunesRecordedRename pins the sidecar-recorded prune: a
+// reference the sidecar says an earlier apply wrote, but which the current
+// rendered set no longer contains, is deleted on apply — surfacing first as
+// Changed under dry run — while user files under references/ survive, and the
+// refreshed sidecar records the current set again.
+func TestOwnedFileApplyPrunesRecordedRename(t *testing.T) {
+	dir := t.TempDir()
+	env := DetectEnv{Home: dir, Cwd: dir}
+	ad, _ := DefaultRegistry().Resolve("claude")
+	c := jenticContent(t)
+
+	out, err := Apply(ad, c, env, ApplyOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale := forgeRecordedReference(t, out.Path, "old-lane.md")
+	userFile := filepath.Join(filepath.Dir(out.Path), "references", "notes.md")
+	if err := os.WriteFile(userFile, []byte("mine\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// The pending prune surfaces as Changed under dry run, without pruning.
+	dry, err := Apply(ad, c, env, ApplyOptions{DryRun: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !dry.Changed {
+		t.Errorf("dry run must report the pending prune as Changed: %+v", dry)
+	}
+	if _, err := os.Stat(stale); err != nil {
+		t.Error("dry run must not prune the stale reference")
+	}
+
+	out2, err := Apply(ad, c, env, ApplyOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !out2.Changed {
+		t.Errorf("pruning apply must report Changed: %+v", out2)
+	}
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Error("stale recorded reference must be pruned on apply")
+	}
+	if _, err := os.Stat(userFile); err != nil {
+		t.Error("a user file outside the recorded set must survive the prune")
+	}
+	sc, ok := readSidecar(out.Path)
+	if !ok || !reflect.DeepEqual(sc.References, renderedReferences("jentic")) {
+		t.Errorf("refreshed sidecar must record the current set, got %v", sc.References)
+	}
+}
+
+// TestOwnedFileRemoveDeletesRecordedReferences pins that remove works off the
+// sidecar's recorded set, so a reference renamed in the shipped set since the
+// last apply is still deleted rather than stranded.
+func TestOwnedFileRemoveDeletesRecordedReferences(t *testing.T) {
+	dir := t.TempDir()
+	env := DetectEnv{Home: dir, Cwd: dir}
+	ad, _ := DefaultRegistry().Resolve("claude")
+	c := jenticContent(t)
+
+	out, err := Apply(ad, c, env, ApplyOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale := forgeRecordedReference(t, out.Path, "old-lane.md")
+
+	rout, err := Remove(ad, c, env, RemoveOptions{})
+	if err != nil || !rout.Removed {
+		t.Fatalf("remove failed: %+v err=%v", rout, err)
+	}
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Error("recorded-but-renamed reference must be removed with the skill")
+	}
+	if _, err := os.Stat(filepath.Dir(rout.Path)); !os.IsNotExist(err) {
+		t.Error("skills/<name> should be pruned after remove")
+	}
+}
+
+// TestAgentsPointerCarriesHostedReferenceLinks pins the managed-block half of
+// D12: AGENTS.md cannot carry sibling files, so the pointer block names every
+// rendered reference (the full shipped set — the backend's HTTP routes serve
+// them all) as hosted URLs, BaseURL-interpolated at render time.
+func TestAgentsPointerCarriesHostedReferenceLinks(t *testing.T) {
+	body := agentsPointerBody(jenticContent(t))
+	for _, want := range []string{
+		"GET http://example.test/skills/jentic.md",
+		"GET http://example.test/skills/jentic/references/cli.md",
+		"GET http://example.test/skills/jentic/references/mcp.md",
+		"GET http://example.test/skills/jentic/references/recovery.md",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("pointer block missing %q:\n%s", want, body)
+		}
+	}
+
+	// Without a BaseURL the links degrade to root-relative, like the skill link.
+	c := jenticContent(t)
+	c.BaseURL = ""
+	rel := agentsPointerBody(c)
+	if !strings.Contains(rel, "GET /skills/jentic/references/cli.md") {
+		t.Errorf("empty-BaseURL pointer must be root-relative:\n%s", rel)
 	}
 }
 

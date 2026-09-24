@@ -42,7 +42,7 @@ _AGENT_TOOLKITS = text("SELECT toolkit_id FROM agent_toolkit_bindings WHERE agen
 # binds the most specific toolkit. The two serve different purposes (credential
 # coverage vs ownership-scoped binding selection), so the asymmetry is deliberate.
 _TOOLKITS_FOR_API = text(
-    "SELECT DISTINCT tcb.toolkit_id "
+    "SELECT DISTINCT tcb.toolkit_id, tcb.credential_id "
     "FROM toolkit_credential_bindings tcb "
     "JOIN credentials c ON c.id = tcb.credential_id "
     f"WHERE {credential_coverage_where()}"
@@ -111,6 +111,12 @@ class ToolkitBindingResolver:
         api_toolkits = {row[0] for row in api_rows}
 
         intersection = tuple(sorted(agent_toolkits & api_toolkits))
+        # The injection boundary per derived toolkit: only the agent's own
+        # toolkits are keyed, so another owner's credential ids never leave here.
+        credentials_by_toolkit: dict[str, list[str]] = {tk: [] for tk in intersection}
+        for toolkit_id, credential_id in api_rows:
+            if toolkit_id in credentials_by_toolkit:
+                credentials_by_toolkit[toolkit_id].append(credential_id)
         # api_served_toolkits carries the actual toolkit ids (not just a bool):
         # callers currently only need its emptiness (#683 recovery branch), but
         # the ids let a future directive name *which* toolkit to bind without a
@@ -133,6 +139,9 @@ class ToolkitBindingResolver:
             agent_bound_any=bool(agent_toolkits),
             api_served_toolkits=served,
             identity_mismatch=mismatch,
+            credentials_by_toolkit={
+                tk: tuple(sorted(ids)) for tk, ids in credentials_by_toolkit.items()
+            },
         )
 
     async def _nearest_miss(

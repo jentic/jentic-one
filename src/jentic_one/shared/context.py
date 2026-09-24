@@ -77,7 +77,12 @@ class Context:
 
     @property
     def encryption(self) -> EncryptionService:
-        """Lazily-constructed encryption service (fails fast if keyset is invalid)."""
+        """Lazily-constructed encryption service.
+
+        When a keyset is configured, :meth:`startup` touches this property so
+        an invalid keyset fails at boot; without one, the ConfigError surfaces
+        here at first credential use.
+        """
         if self._encryption is None:
             self._encryption = EncryptionService(self._config.credentials.encryption)
         return self._encryption
@@ -224,7 +229,14 @@ class Context:
         return self._release_checker
 
     async def startup(self) -> None:
-        """Connect allowed databases."""
+        """Connect allowed databases (validating the encryption keyset first)."""
+        # A configured-but-invalid keyset (wrong-length key, duplicate id,
+        # dangling active_id) must fail boot loudly, not surface as scattered
+        # per-credential errors at first use. Checked before the DB connects so
+        # a failure leaves nothing to unwind. A config without a keyset still
+        # boots — credential writes then fail with the lazy ConfigError below.
+        if self._config.credentials.encryption.entries:
+            _ = self.encryption
         connected: list[DatabaseSession] = []
         try:
             for name in ("registry", "admin", "control"):

@@ -50,3 +50,21 @@ def test_config_schema_not_drifted() -> None:
         "config/config-schema.json is out of date with AppConfig; "
         "run `make config-schema` and commit the result."
     )
+
+
+@pytest.mark.arch
+def test_cli_vendored_config_schema_not_drifted() -> None:
+    """The CLI's vendored schema copy must be byte-identical to the canonical one.
+
+    The vendored copy (and the Go struct generated from it) is otherwise gated
+    only by ``make check-ctl-gen`` in the Go CI job — a pure-Python contributor
+    running ``make test-arch`` would never see it go stale. This check needs no
+    Go toolchain.
+    """
+    vendored = CONFIG_SCHEMA_PATH.parents[1] / "cli/internal/cli/ctl/assets/config-schema.json"
+    assert vendored.exists(), f"vendored CLI config schema not found: {vendored}"
+    assert vendored.read_text(encoding="utf-8") == CONFIG_SCHEMA_PATH.read_text(encoding="utf-8"), (
+        "cli/internal/cli/ctl/assets/config-schema.json is out of date with "
+        "config/config-schema.json; run `cd cli && make generate-config` and "
+        "commit the result."
+    )

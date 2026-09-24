@@ -101,7 +101,7 @@ TYPICAL_ANY = "any"
 
 #: Actors that ride the programmatic (agent) token flow rather than a human login.
 _PROGRAMMATIC_ACTORS: frozenset[str] = frozenset(
-    {ActorType.AGENT.value, ActorType.SERVICE_ACCOUNT.value, ActorType.TOOLKIT.value}
+    {ActorType.AGENT.value, ActorType.SERVICE_ACCOUNT.value}
 )
 
 #: Scopes an agent is granted by default — endpoints needing only these are
@@ -323,8 +323,8 @@ def build_operation_auth_map(
     """Map ``(METHOD, path)`` to its recovered/curated ``{scopes, actor_types, authenticated}``.
 
     Keyed by ``(method, path)`` rather than ``operationId`` because FastAPI's
-    generated ``operationId`` (e.g. ``createToolkit``) does not match the route's
-    ``unique_id`` (e.g. ``create_toolkit_toolkits_post``); the path+method pair is
+    generated ``operationId`` (e.g. ``createCredential``) does not match the route's
+    ``unique_id`` (e.g. ``create_credential_credentials_post``); the path+method pair is
     stable across both the route table and the generated document.
     """
     result: dict[tuple[str, str], dict[str, Any]] = {}

@@ -18,7 +18,7 @@ function exec(partial: Partial<ExecutionResponse>): ExecutionResponse {
 		execution_id: 'x',
 		started_at: '2026-01-01T00:00:00Z',
 		status: 'completed',
-		toolkit_id: 'tk',
+		credential_id: 'cred',
 		trace_id: 't',
 		...partial,
 	} as ExecutionResponse;
@@ -251,7 +251,7 @@ describe('dashboard derivations', () => {
 			it('surfaces null keys as an explicit Unattributed bucket', () => {
 				const rows = usageToTopRows(
 					usage({
-						group_by: 'toolkit',
+						group_by: 'credential',
 						top: [
 							{
 								key: null as unknown as string,
@@ -271,11 +271,11 @@ describe('dashboard derivations', () => {
 			it('nulls the rate for an empty row instead of dividing by zero', () => {
 				const rows = usageToTopRows(
 					usage({
-						group_by: 'toolkit',
+						group_by: 'credential',
 						top: [
 							{
-								key: 'tk_idle',
-								label: 'tk_idle',
+								key: 'cred_idle',
+								label: 'cred_idle',
 								total: 0,
 								success: 0,
 								failed: 0,

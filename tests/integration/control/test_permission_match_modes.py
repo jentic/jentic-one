@@ -4,9 +4,11 @@ Covers the #751 write path end-to-end against a real database:
 
 * the new ``match_mode`` column persists via ``replace_user_rules`` / ``patch_rules``
 * the broker evaluator (raw ``text()`` SQL) reads it and enforces the mode
-* the vendor-pooled dry-run service reflects the enforcer's decision
 * invalid stored patterns fail closed (never match) instead of the pre-#751
   silent wildcard.
+
+The repo write path and the broker evaluator both survive the theme-5
+Phase 5b toolkit-surface deletion (flag-off fallback until Phase 6b).
 """
 
 from __future__ import annotations
@@ -22,9 +24,7 @@ from jentic_one.control.core.schema.toolkit_credential_bindings import ToolkitCr
 from jentic_one.control.core.schema.toolkit_permission_rules import ToolkitPermissionRule
 from jentic_one.control.core.schema.toolkits import Toolkit
 from jentic_one.control.repos.toolkit_permission_repo import ToolkitPermissionRepository
-from jentic_one.control.services.toolkits.service import ToolkitService
 from jentic_one.shared.auth.identity import Identity
-from jentic_one.shared.context import Context
 from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.models import ActorType
 
@@ -241,108 +241,6 @@ async def test_broker_fail_closed_on_stored_invalid_pattern(
         api_vendor=_VENDOR,
     )
     assert result.allowed is False
-
-
-# ---------------------------------------------------------------------------
-# Dry-run parity with the broker (vendor pooling)
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_dry_run_pools_rules_across_same_vendor_bindings(
-    control_db: DatabaseSession, integration_context: Context, clean_tables: None
-) -> None:
-    # Two bindings for the same vendor: a rule attached to binding B allows
-    # the request when queried under binding A. The broker sees the pooled
-    # set, and so must the dry-run.
-    toolkit = Toolkit(name="tk751-pool")
-    cred_a = Credential(
-        id="cred_751_pool_a",
-        type="token_value",
-        name="cred-a",
-        api_vendor=_VENDOR,
-        api_name="one",
-        api_version="1",
-        active=True,
-    )
-    cred_b = Credential(
-        id="cred_751_pool_b",
-        type="token_value",
-        name="cred-b",
-        api_vendor=_VENDOR,
-        api_name="two",
-        api_version="1",
-        active=True,
-    )
-    async with control_db.session() as session:
-        session.add(toolkit)
-        session.add(cred_a)
-        session.add(cred_b)
-        await session.flush()
-        tk_id = toolkit.id
-        session.add(
-            ToolkitCredentialBinding(toolkit_id=tk_id, credential_id=cred_a.id, created_by="test")
-        )
-        session.add(
-            ToolkitCredentialBinding(toolkit_id=tk_id, credential_id=cred_b.id, created_by="test")
-        )
-        await session.commit()
-
-    async with control_db.session() as session:
-        await ToolkitPermissionRepository.replace_user_rules(
-            session,
-            tk_id,
-            cred_b.id,
-            [{"effect": "allow", "path": "/v1/thing", "match_mode": "exact"}],
-            created_by="test",
-        )
-        await session.commit()
-
-    svc = ToolkitService(integration_context)
-    # Query the dry-run under binding A (which has zero rules of its own).
-    result = await svc.test_permissions(
-        tk_id,
-        cred_a.id,
-        method="GET",
-        path="/v1/thing",
-        operation_id=None,
-        identity=_IDENTITY,
-    )
-    assert result.matched is True
-    assert result.allowed is True
-    # Vendor pooling means the winning rule lives on binding B — the
-    # response names it explicitly so an operator understands what happened.
-    assert result.credential_id == cred_b.id
-
-
-@pytest.mark.asyncio
-async def test_dry_run_reports_default_deny_when_no_rule_matches(
-    control_db: DatabaseSession, integration_context: Context, clean_tables: None
-) -> None:
-    tk_id, cred_id = await _seed(control_db, name="tk751-noop", cred_id="cred_751_noop")
-
-    async with control_db.session() as session:
-        await ToolkitPermissionRepository.replace_user_rules(
-            session,
-            tk_id,
-            cred_id,
-            [{"effect": "allow", "path": "/only/this", "match_mode": "exact"}],
-            created_by="test",
-        )
-        await session.commit()
-
-    svc = ToolkitService(integration_context)
-    result = await svc.test_permissions(
-        tk_id,
-        cred_id,
-        method="GET",
-        path="/something/else",
-        operation_id=None,
-        identity=_IDENTITY,
-    )
-    assert result.matched is False
-    assert result.allowed is False
-    assert result.credential_id is None
 
 
 # ---------------------------------------------------------------------------

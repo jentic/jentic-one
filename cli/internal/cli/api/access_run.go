@@ -114,6 +114,11 @@ func (a *app) getMe(ctx context.Context) (*control.MeAgent, error) {
 }
 
 func (a *app) accessRequestE(cmd *cobra.Command, opts *accessRequestOptions) error {
+	if len(cleanValues(opts.deprecatedToolkits)) > 0 {
+		// One warning regardless of how many times the alias repeats; the
+		// values already fold into the --api list via allAPIs().
+		fmt.Fprintln(a.Err, theme.StylesFromContext(cmd.Context()).Warnf("--toolkit is deprecated; use --api"))
+	}
 	items, err := opts.compose()
 	if err != nil {
 		return err
@@ -214,7 +219,7 @@ func (a *app) accessRequestE(cmd *cobra.Command, opts *accessRequestOptions) err
 	// Fully approved. A newly-granted scope bakes into the token at mint time, so
 	// re-mint now if the request granted one — the agent can then execute
 	// immediately without a separate `access refresh`. A binding-only plan
-	// (toolkit/credential binds, no scope) needs no re-mint: bindings are live
+	// (credential binds, no scope) needs no re-mint: bindings are live
 	// server-side, so this is a no-op in that case.
 	a.refreshIfScopeGranted(cmd, req)
 	return nil
@@ -259,8 +264,8 @@ func terminalAccessError(req *control.AccessRequestResponse) error {
 
 // refreshIfScopeGranted re-mints the agent's token when (and only when) the
 // decided request granted a new scope — the one thing that is baked into the
-// token at mint time and so needs a refresh to become usable. Toolkit/credential
-// bindings are resolved live by the broker, so a `--provision`/`--toolkit` plan
+// token at mint time and so needs a refresh to become usable. Credential
+// bindings are resolved live by the broker, so a `--provision`/`--api` plan
 // needs no re-mint; re-minting anyway would be a wasted round-trip. Best-effort:
 // a mint failure is non-fatal (the agent can still run `jentic access refresh`),
 // and static credentials (injected token, API key) are skipped.
@@ -293,7 +298,7 @@ func (a *app) refreshIfScopeGranted(cmd *cobra.Command, req *control.AccessReque
 
 // requestGrantedScope reports whether a decided request approved a scope:grant
 // item — the only grant that bakes into the token and so needs a re-mint.
-// Toolkit/credential binds are resolved live by the broker, so a binding-only
+// Credential binds are resolved live by the broker, so a binding-only
 // plan returns false (no re-mint needed).
 func requestGrantedScope(req *control.AccessRequestResponse) bool {
 	for _, it := range req.Items {

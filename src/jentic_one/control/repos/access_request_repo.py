@@ -21,13 +21,6 @@ from jentic_one.control.core.schema.access_requests import AccessRequest
 from jentic_one.shared.models.access_requests import AccessRequestItemStatus, AccessRequestStatus
 from jentic_one.shared.models.api_identity import slugify_api_field
 
-# A credential:bind's assignment target is always a toolkit — the wizard stamps
-# a toolkit id onto the bind item, so `to_type` is fixed to this. Named rather
-# than a bare literal at the write site (there is no shared `to_type` enum;
-# `resource_type` uses a Literal in the web schema, but `to_type` is a plain
-# column).
-_BIND_TO_TYPE_TOOLKIT = "toolkit"
-
 
 def compute_aggregate_status(item_statuses: list[str]) -> AccessRequestStatus:
     """Derive the aggregate request status from its items' statuses."""
@@ -88,12 +81,16 @@ class AccessRequestRepository:
         )
         for item_data in items:
             rules = item_data.get("rules")
+            rule_set_id = item_data.get("rule_set_id")
             # Only substitute the read-only default for item types whose rules are
-            # actually enforced (credential:bind). Stamping default rules onto a
-            # non-rule-bearing item (e.g. toolkit:bind) would persist a
-            # non-enforceable allowlist that the approval guard then has to reject.
-            if not rules and (item_data["resource_type"], item_data["action"]) in (
-                RULE_BEARING_COMBINATIONS
+            # actually enforced (credential:bind) — and only when the filer
+            # provided no policy at all (neither inline rules nor a shared rule
+            # set). A rules-less credential:bind would otherwise be a live
+            # default-deny on approval (theme-5 hard problem 6).
+            if (
+                not rules
+                and not rule_set_id
+                and (item_data["resource_type"], item_data["action"]) in RULE_BEARING_COMBINATIONS
             ):
                 rules = [{"effect": "allow", "methods": ["GET"]}]
             request.items.append(
@@ -106,6 +103,7 @@ class AccessRequestRepository:
                     to_type=item_data.get("to_type"),
                     to_id=item_data.get("to_id"),
                     rules=rules,
+                    rule_set_id=rule_set_id,
                     status=AccessRequestItemStatus.PENDING,
                     created_by=created_by,
                 )
@@ -252,7 +250,7 @@ class AccessRequestRepository:
         *,
         rules: list[dict[str, Any]] | None = None,
         resource_id: str | None = None,
-        to_id: str | None = None,
+        rule_set_id: str | None = None,
         filters: Sequence[ColumnElement[bool]] | None = None,
     ) -> AccessRequestItem | None:
         stmt = select(AccessRequestItem).where(AccessRequestItem.id == item_id)
@@ -264,14 +262,15 @@ class AccessRequestRepository:
             return None
         if rules is not None:
             item.rules = rules
+            # Inline rules and a shared-set pointer are mutually exclusive
+            # policy carriers; amending rules on detaches a previously amended
+            # set so the stored item never carries both.
+            item.rule_set_id = None
+        if rule_set_id is not None:
+            item.rule_set_id = rule_set_id
+            item.rules = None
         if resource_id is not None:
             item.resource_id = resource_id
-        if to_id is not None:
-            # The provisioning-plan wizard writes the freshly-created toolkit id
-            # onto a credential:bind item's bind target after Step 1. to_type is
-            # always "toolkit" for a credential:bind, so set it in lock-step.
-            item.to_id = to_id
-            item.to_type = _BIND_TO_TYPE_TOOLKIT
         await session.flush()
         return item
 

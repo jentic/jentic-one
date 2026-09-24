@@ -5,51 +5,24 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from sqlalchemy import exists, or_, select
-from sqlalchemy.orm import aliased
+from sqlalchemy import or_
 from sqlalchemy.sql.elements import ColumnElement
 
 from jentic_one.control.core.schema.access_requests import AccessRequest
 from jentic_one.control.core.schema.credentials import Credential
-from jentic_one.control.core.schema.toolkit_credential_bindings import ToolkitCredentialBinding
-from jentic_one.control.core.schema.toolkit_keys import ToolkitKey
-from jentic_one.control.core.schema.toolkit_permission_rules import ToolkitPermissionRule
-from jentic_one.control.core.schema.toolkits import Toolkit
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.scopes import (
     ORG_ADMIN,
     OWNER_ACCESS_REQUESTS_READ,
     OWNER_CREDENTIALS_READ,
-    OWNER_TOOLKITS_READ,
 )
 
 _OWNER_MODELS: dict[type[Any], Any] = {
     Credential: Credential.created_by,
-    Toolkit: Toolkit.created_by,
-}
-
-_CHILD_MODELS: dict[type[Any], tuple[Any, type[Any], Any, Any]] = {
-    ToolkitKey: (ToolkitKey.toolkit_id, Toolkit, Toolkit.id, Toolkit.created_by),
-    ToolkitCredentialBinding: (
-        ToolkitCredentialBinding.toolkit_id,
-        Toolkit,
-        Toolkit.id,
-        Toolkit.created_by,
-    ),
-    ToolkitPermissionRule: (
-        ToolkitPermissionRule.toolkit_id,
-        Toolkit,
-        Toolkit.id,
-        Toolkit.created_by,
-    ),
 }
 
 _DELEGATION_SCOPES: dict[type[Any], str] = {
     Credential: OWNER_CREDENTIALS_READ,
-    Toolkit: OWNER_TOOLKITS_READ,
-    ToolkitKey: OWNER_TOOLKITS_READ,
-    ToolkitCredentialBinding: OWNER_TOOLKITS_READ,
-    ToolkitPermissionRule: OWNER_TOOLKITS_READ,
     AccessRequest: OWNER_ACCESS_REQUESTS_READ,
 }
 
@@ -92,30 +65,21 @@ def _provider_clauses(identity: Identity, model: type[Any]) -> list[ColumnElemen
 
 
 def _binding_visibility_clause(
-    model: type[Any], bound_toolkit_ids: list[str] | None
+    model: type[Any],
+    bound_credential_ids: list[str] | None = None,
 ) -> ColumnElement[bool] | None:
-    """Extra visibility a bound-toolkit set grants for ``Toolkit``/``Credential``.
+    """Extra visibility grant for ``Credential`` from direct bindings.
 
     Returns ``None`` when there is nothing to add (no ids, or a model whose
-    visibility is not widened by bindings). A toolkit is visible directly by id;
-    a credential is visible when it is bound (via ``ToolkitCredentialBinding``) to
-    one of those toolkits. Both stay within the control DB — the ids are supplied
-    by the caller, so no admin table is referenced here.
+    visibility is not widened by bindings). A credential is visible directly
+    by id when it appears in ``bound_credential_ids`` (theme 5 phase 1 — the
+    agent's own direct ``agent_credential_bindings``, resolved by the service
+    from the admin DB, suspended bindings already excluded). This stays within
+    the control DB — the ids are supplied by the caller, so no admin table is
+    referenced here.
     """
-    if not bound_toolkit_ids:
-        return None
-    if model is Toolkit:
-        return Toolkit.id.in_(bound_toolkit_ids)
-    if model is Credential:
-        # Alias so the subquery keeps its own FROM even when the outer query
-        # also selects from ToolkitCredentialBinding (e.g. the served-APIs
-        # aggregation join) — otherwise auto-correlation strips it away.
-        tcb = aliased(ToolkitCredentialBinding)
-        subq = select(tcb.credential_id).where(
-            tcb.toolkit_id.in_(bound_toolkit_ids),
-            tcb.credential_id == Credential.id,
-        )
-        return exists(subq)
+    if model is Credential and bound_credential_ids:
+        return Credential.id.in_(bound_credential_ids)
     return None
 
 
@@ -123,7 +87,7 @@ def build_access_filters(
     identity: Identity,
     model: type[Any],
     *,
-    bound_toolkit_ids: list[str] | None = None,
+    bound_credential_ids: list[str] | None = None,
     include_shared: bool = False,
 ) -> list[ColumnElement[bool]]:
     """Build SQLAlchemy filter expressions scoping queries to the caller's visibility.
@@ -133,15 +97,17 @@ def build_access_filters(
     2. Agent with delegation scope + parent_actor_id -> OR filter.
     3. Otherwise -> owner == self.
 
-    ``bound_toolkit_ids`` widens visibility for the ``Toolkit`` and ``Credential``
-    models: a caller may always read a toolkit it is actively bound to — and the
-    credentials attached to that toolkit — regardless of owner scoping (issues
-    #665/#682). This matters for an orphaned agent (``created_by``/owner ``None``)
-    that owns nothing yet is legitimately bound to a toolkit. Binding lives in the
-    admin DB, so the service resolves the ids there (via
-    :meth:`PrerequisiteRepository.list_toolkit_ids_for_agent`) and passes them in;
-    this module stays single-DB and free of admin imports. ``None``/empty leaves
-    the owner-only behaviour unchanged.
+    ``bound_credential_ids`` widens visibility for the ``Credential`` model:
+    an agent may always read a credential it holds an active (non-suspended)
+    ``agent_credential_bindings`` row for — regardless of owner scoping
+    (issues #665/#682). This matters for an orphaned agent
+    (``created_by``/owner ``None``) that owns nothing yet is legitimately
+    bound to a credential. Bindings live in the admin DB, so the service
+    resolves the ids there (via
+    :meth:`PrerequisiteRepository.list_credential_ids_for_agent`) and passes
+    them in; this module stays single-DB and free of admin imports.
+    ``None``/empty leaves the owner-only behaviour unchanged. Read call sites
+    only; writes stay owner-scoped.
 
     ``include_shared`` (READ call sites only) invokes any registered
     access-filter providers (see :func:`register_access_filter_provider`) and
@@ -171,28 +137,12 @@ def build_access_filters(
         else:
             owner_clause = col == identity.sub
         clauses: list[ColumnElement[bool]] = [owner_clause]
-        binding_clause = _binding_visibility_clause(model, bound_toolkit_ids)
+        binding_clause = _binding_visibility_clause(model, bound_credential_ids)
         if binding_clause is not None:
             clauses.append(binding_clause)
         if include_shared:
             clauses.extend(_provider_clauses(identity, model))
         return [or_(*clauses)] if len(clauses) > 1 else clauses
-
-    if model in _CHILD_MODELS:
-        child_fk, _parent_model, parent_pk, parent_owner = _CHILD_MODELS[model]
-        delegation_scope = _DELEGATION_SCOPES.get(model)
-        if (
-            delegation_scope is not None
-            and delegation_scope in identity.permissions
-            and identity.parent_actor_id is not None
-        ):
-            owner_clause = or_(
-                parent_owner == identity.sub, parent_owner == identity.parent_actor_id
-            )
-        else:
-            owner_clause = parent_owner == identity.sub
-        subq = select(parent_pk).where(owner_clause, parent_pk == child_fk)
-        return [exists(subq)]
 
     if model is AccessRequest:
         sub = identity.sub
@@ -216,21 +166,22 @@ def build_access_filters(
     raise ValueError(f"Unknown model for access scoping: {model.__name__}")
 
 
-def toolkit_owner_scope(identity: Identity) -> list[str] | None:
-    """Return the toolkit owner ids visible to ``identity``, or ``None`` for all.
+def credential_owner_scope(identity: Identity) -> list[str] | None:
+    """Return the credential owner ids visible to ``identity``, or ``None`` for all.
 
     ``None`` means an ``org:admin`` decider who may act across every owner. For
     everyone else the scope is their own ``sub`` plus, when they hold the
-    toolkit-read delegation scope and have a parent, the parent owner id —
-    mirroring :func:`build_access_filters` for the ``Toolkit`` model. Used to
-    confine reference-based and explicit ``toolkit:bind`` effects to toolkits
-    the decider can actually see.
+    credential-read delegation scope and have a parent, the parent owner id —
+    mirroring :func:`build_access_filters` for the ``Credential`` model. Used to
+    confine reference-based ``credential:bind`` effect resolution to credentials
+    the decider can actually see (theme-5 Phase 3, hard problem 8 — the
+    binding-widened half of that axis is pushed down separately as an id list).
     """
     if ORG_ADMIN in identity.permissions:
         return None
     if not identity.sub:
-        raise ValueError("empty sub reached toolkit owner scope")
+        raise ValueError("empty sub reached credential owner scope")
     owners = [identity.sub]
-    if OWNER_TOOLKITS_READ in identity.permissions and identity.parent_actor_id is not None:
+    if OWNER_CREDENTIALS_READ in identity.permissions and identity.parent_actor_id is not None:
         owners.append(identity.parent_actor_id)
     return owners

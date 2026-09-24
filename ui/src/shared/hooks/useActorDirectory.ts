@@ -8,7 +8,7 @@
  *
  * The directory is small relative to executions and rarely changes, so this is
  * deliberately a long-`staleTime` query under a single stable key — every
- * consumer (monitor, dashboard, agents, toolkits, access-requests) shares one
+ * consumer (monitor, dashboard, agents, access-requests) shares one
  * cache slice and one network fetch.
  *
  * Unauthenticated-safe: the query is gated on holding a Bearer token, so it

@@ -20,6 +20,7 @@ from jentic_one.broker.web.deps import (
 )
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.models import ActorType
+from jentic_one.shared.models.events import EVENT_TYPE_SEVERITIES, EventSeverity, EventType
 
 
 def _make_identity(
@@ -134,3 +135,6 @@ def test_at_threshold_emits_event() -> None:
     assert emitted[0]["type"] == "security.unauthorized_access_attempt"
     assert "agnt_bad_actor" in str(emitted[0]["summary"])
     assert emitted[0]["requires_action"] is True
+    # Cross-check against the documented severity matrix (issue #907).
+    assert emitted[0]["severity"] == EventSeverity.WARNING
+    assert emitted[0]["severity"] in EVENT_TYPE_SEVERITIES[EventType.UNAUTHORIZED_ACCESS_ATTEMPT]

@@ -70,7 +70,7 @@ func TestMCPSearchAPIs_EnvelopePassthroughWithStamp(t *testing.T) {
 		t.Fatalf("handleSearchAPIs: %v", err)
 	}
 	if res.IsError {
-		t.Fatalf("unexpected soft error: %v", res.Content)
+		t.Fatalf("unexpected soft error: %s", toolResultText(res))
 	}
 	if gotBody.Query != "pets" || gotBody.Limit == nil || *gotBody.Limit != 5 || gotBody.Cursor == nil || *gotBody.Cursor != "c0" {
 		t.Errorf("wire body = %+v, want query/limit/cursor mirrored", gotBody)
@@ -140,7 +140,7 @@ func TestMCPSearchAPIs_AliasAndStringCoercionReachTheWire(t *testing.T) {
 		t.Fatalf("handleSearchAPIs: %v", err)
 	}
 	if res.IsError {
-		t.Fatalf("unexpected soft error: %v", res.Content)
+		t.Fatalf("unexpected soft error: %s", toolResultText(res))
 	}
 	if gotBody.Apis == nil || len(*gotBody.Apis) != 1 || (*gotBody.Apis)[0] != "acme/pets/v1" {
 		t.Errorf("apis on the wire = %v, want the coerced one-element list", gotBody.Apis)
@@ -188,7 +188,7 @@ func TestMCPSearchAPIs_InconsistentPaginationForcedConsistent(t *testing.T) {
 		t.Fatalf("handleSearchAPIs: %v", err)
 	}
 	if res.IsError {
-		t.Fatalf("unexpected soft error: %v", res.Content)
+		t.Fatalf("unexpected soft error: %s", toolResultText(res))
 	}
 	payload := decodeToolJSON(t, res)
 	if payload["has_more"] != false {
@@ -327,7 +327,7 @@ func TestMCPInspectOperation_PassesBodyThroughWithStamp(t *testing.T) {
 		t.Fatalf("handleInspectOperation: %v", err)
 	}
 	if res.IsError {
-		t.Fatalf("unexpected soft error: %v", res.Content)
+		t.Fatalf("unexpected soft error: %s", toolResultText(res))
 	}
 	payload := decodeToolJSON(t, res)
 	if payload["method"] != "GET" || payload["url"] != "https://api.acme.com/v1/pets" {

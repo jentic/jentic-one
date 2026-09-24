@@ -27,13 +27,16 @@ app:
   service:
     type: ClusterIP
     port: 8000
+  # The app boots at ~150Mi RSS and each concurrent password / client-secret
+  # verification adds 64Mi (argon2id memory_cost=65536), so its floor is
+  # higher than the other surfaces'.
   resources:
     requests:
       cpu: 100m
-      memory: 128Mi
+      memory: 256Mi
     limits:
       cpu: 500m
-      memory: 256Mi
+      memory: 1Gi
 
 registry:
   enabled: false
@@ -61,13 +64,15 @@ admin:
   service:
     type: ClusterIP
     port: 8000
+  # Admin serves the password/login endpoints in parts mode; same argon2
+  # arithmetic as the app (64Mi per concurrent verification).
   resources:
     requests:
       cpu: 100m
-      memory: 128Mi
+      memory: 256Mi
     limits:
       cpu: 500m
-      memory: 256Mi
+      memory: 1Gi
 
 control:
   enabled: false
@@ -87,6 +92,17 @@ control:
       memory: 256Mi
 
 global:
+  # Runtime mode for every Python surface (JENTIC_ENV). `production` arms the
+  # config loader's placeholder-secret guard: an empty or change-me admin JWT
+  # secret / invite pepper / connect state secret is a hard boot error instead of
+  # a random per-process value that breaks sessions across replicas and on every
+  # restart. Default fail-closed, so an install missing its secrets stops with an
+  # error naming the field rather than coming up subtly broken.
+  #
+  # Set `development` only where running without those secrets is intended — the
+  # dev overlays in deploy/helm/values/local-*.yaml do exactly that. See
+  # charts/common/templates/_runtime-env.tpl.
+  jenticEnv: production
   image:
     # Tag injected by `make deploy-local` from scripts/version.sh (which reads
     # pyproject.toml). Empty here means "fall back to per-service image.tag,
@@ -105,9 +121,17 @@ global:
       tls:
         insecure: true
     logging:
-      format: json
-      level: info
+      # Maps to the application's `runtime.log_level`
+      # (JENTIC__RUNTIME__LOG_LEVEL). Empty = the application's own default
+      # (INFO) and no env var rendered, which leaves `runtime.log_level` in a
+      # mounted config file effective — env would otherwise outrank it.
+      # There is no `format` key: the application has no log-format config
+      # field, so the chart offers no knob for one.
+      level: ""
     metrics:
+      # NOTE: `otlp` needs a reachable collector — with `otel.enabled: false`
+      # (the default above) the SDK logs an export failure every interval.
+      # Set `none` if you don't run a collector, or enable the otel sidecar.
       exporter: otlp
   postgresql:
     enabled: false
@@ -149,7 +173,8 @@ global:
   # and reuses it verbatim on upgrades (rotating would orphan everything
   # already encrypted and revoke live sessions; the Secret is kept on
   # uninstall for the same reason). `existingSecret` mounts your own Secret
-  # instead (must hold the same keys — see deploy/README.md). Both are
+  # instead (must hold the same keys — see docs/installation/helm.md
+  # "Secrets"). Both are
   # mutually exclusive with per-service `configFile.contents`, which the dev
   # overlays use to inline dev secrets.
   appSecrets:
@@ -163,7 +188,7 @@ global:
   # deploy/helm/values/local-*.yaml. In production, do NOT put real passwords
   # in a values file: replace `common.db-env` in your subchart deployments
   # with a Secret-backed `valueFrom: secretKeyRef:` block, or pass an
-  # `existingSecret` reference. See deploy/README.md "Production secrets".
+  # `existingSecret` reference. See docs/installation/helm.md "Secrets".
   databases:
     registry:
       host: ""
@@ -190,7 +215,7 @@ postgresql:
   # image — the former Bitnami dependency pinned the frozen `bitnamilegacy`
   # image (no CVE fixes since Aug 2025), which the Trivy publish gate and the
   # AWS Marketplace scan both reject. Dev/eval-grade single instance;
-  # production should use a managed database (deploy/README.md).
+  # production should use a managed database (docs/installation/helm.md).
   image:
     registry: docker.io
     repository: postgres
@@ -206,3 +231,74 @@ postgresql:
       # (templates/pg-init-configmap.yaml) — per-surface schemas, roles and
       # grants derived from global.databases.
       scriptsConfigMap: ""
+  # Above the image's default of 100, which every mode of this chart exceeds:
+  # each surface holds a pool per database (databases.*.pool_max defaults to 10,
+  # three databases). Parts mode reaches ~120 before replicas. The subchart's
+  # values.yaml carries the full arithmetic, and pairs this with a 2Gi memory
+  # limit — raise both together.
+  maxConnections: 200
+
+# The migration hook Job (templates/migrate-job.yaml).
+migrate:
+  # Extra arguments for `python -m jentic_one.migrations.run`. The escape hatch
+  # for a post-migration upgrade step that blocks an upgrade, e.g.
+  #   ["--skip-upgrade-step", "theme5_flatten_toolkits"]
+  # defers that step to the next upgrade (docs/operations/upgrades.md). Leave
+  # empty in normal operation.
+  extraArgs: []
+
+# Cluster-shaping resources. All three are off by default: turning any of them
+# on changes what an existing release creates, and each needs cluster facts the
+# chart has no way to discover (ingress class, controller namespace, replica
+# counts). See templates/{ingress,poddisruptionbudget,networkpolicy}.yaml for the
+# reasoning behind each default and docs/installation/helm.md for worked
+# examples.
+ingress:
+  enabled: false
+  # Leave empty for the cluster's default IngressClass.
+  className: ""
+  # Controller-specific settings go here (cert-manager issuer, body size,
+  # request timeouts for the broker's long-running proxied calls, …).
+  annotations: {}
+  # Required when enabled. Each path routes to the release's HTTP entry point —
+  # the gateway service in parts mode, the app service in combined mode — unless
+  # it names its own `service` (a subchart name: app, admin, registry, control,
+  # broker, gateway) and `port`. A host with no `paths` routes everything to that
+  # entry point.
+  #   hosts:
+  #     - host: jentic.example.com
+  #     - host: broker.example.com
+  #       paths:
+  #         - path: /
+  #           pathType: Prefix
+  #           service: broker
+  hosts: []
+  # Standard Ingress TLS list: [{secretName: …, hosts: [...]}].
+  tls: []
+  # An Ingress puts a proxy in front of the OAuth rate limiters, so the chart
+  # refuses to install until the enabled auth-serving surfaces know which proxy
+  # IPs to trust. Set this only if rate limiting is enforced upstream of the
+  # cluster.
+  skipTrustedProxiesCheck: false
+
+podDisruptionBudget:
+  # Only useful above `replicas: 1` — at one replica a budget blocks node drains
+  # instead of protecting availability.
+  enabled: false
+  minAvailable: 1
+
+networkPolicy:
+  enabled: false
+  # Namespaces allowed to reach the surfaces on port 8000, matched on the
+  # built-in `kubernetes.io/metadata.name` label — typically the ingress
+  # controller's namespace, plus a monitoring namespace if it scrapes directly.
+  allowFromNamespaces: []
+  # Raw NetworkPolicy ingress/egress rules appended to the generated ones, for
+  # sources the two lists above cannot express.
+  extraIngress: []
+  # Egress restriction is deliberately separate from `enabled`: the broker
+  # proxies to arbitrary third-party APIs, so it is always exempt, and the other
+  # surfaces need `extraEgress` entries for anything off-cluster (an external
+  # database, an OIDC issuer, an OTLP endpoint).
+  restrictEgress: false
+  extraEgress: []

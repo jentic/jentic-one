@@ -10,7 +10,6 @@ import (
 	"os"
 	"strings"
 
-	"github.com/charmbracelet/x/term"
 	"github.com/spf13/cobra"
 
 	"github.com/jentic/jentic-one/cli/client"
@@ -51,7 +50,7 @@ func newAPICmd(app *app) *cobra.Command {
 			"By default any transport-successful response (2xx or 4xx/5xx) exits 0 and\n" +
 			"the body is emitted as-is; --fail-on-error maps non-2xx to exit 1.",
 		Example: "  jentic api GET /credentials\n" +
-			"  jentic api POST /toolkits -d '{\"name\":\"clarity\"}'\n" +
+			"  jentic api POST /service-accounts -d '{\"name\":\"clarity\"}'\n" +
 			"  jentic api POST /apis < api.json\n" +
 			"  jentic api GET \"/apis?limit=10\"",
 		Args: cobra.ExactArgs(2),
@@ -171,15 +170,17 @@ func emitAPIResponse(out io.Writer, resp *http.Response, failOnError bool) error
 // --data-file. Returns nil when there is no body.
 func resolveAPIBody(opts *apiOptions) (io.Reader, error) {
 	switch {
-	case opts.data == "-" || (opts.data == "" && opts.dataFile == "" && !term.IsTerminal(os.Stdin.Fd())):
-		data, err := io.ReadAll(os.Stdin)
-		if err != nil {
-			return nil, fmt.Errorf("reading stdin: %w", err)
-		}
-		if len(data) == 0 {
-			return nil, nil
-		}
-		return bytes.NewReader(data), nil
+	case opts.data == "-":
+		// Explicit stdin body (`-d -`): the caller opted in, so block until EOF.
+		return readStdinBody()
+	case opts.data == "" && opts.dataFile == "" && stdinHasPipedBody(os.Stdin):
+		// Implicit stdin fallback (no body flag), same contract as execute: read
+		// only a pipe or a non-empty regular file (a real `echo … | jentic api`).
+		// An idle, inherited non-TTY fd (a backgrounded process, or an
+		// agent/harness whose stdin is a socket/pty that never sends EOF) must
+		// not be read — draining it would block forever and hang every body-less
+		// `jentic api` (#1354).
+		return readStdinBody()
 	case opts.dataFile != "":
 		data, err := os.ReadFile(opts.dataFile)
 		if err != nil {
