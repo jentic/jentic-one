@@ -17,3 +17,17 @@ Additional, job-only context for the repo-standards maintenance job. Layered
 
 None yet. (No new lint configs or check scripts created — the existing arch-test
 suite is the detection mechanism for convention drift.)
+
+## Recurring check: docs/config → Makefile-target drift
+
+The `Commands` table in `CLAUDE.md`, prose in `README.md`/`CONTRIBUTING.md`, and
+the permission allowlist in `.claude/settings.json` all name `make <target>`s.
+These drift as the Makefile evolves. To re-verify on future runs:
+
+- Ground truth: `grep -nE '^[a-zA-Z0-9_-]+:.*?## ' Makefile` (targets + help text).
+- Cross-check every `make <target>` reference in `CLAUDE.md`, `README.md`,
+  `CONTRIBUTING.md`, and every `"Bash(make …)"` entry in `.claude/settings.json`
+  against that list. Any target not in the list is a phantom.
+- Known past phantoms (fixed 2026-07-27): `fmt` (real target is `fix`) and
+  `pre-commit` (real target is `hooks`). `check` runs `lint score detect-secrets
+  test-arch` — it does NOT run unit tests, so descriptions saying otherwise are wrong.
