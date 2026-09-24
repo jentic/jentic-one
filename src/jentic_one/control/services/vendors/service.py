@@ -1,19 +1,28 @@
 """Vendor auth registry service.
 
-Single unified read seam over the vendor registry: every method is async and
-resolves DB-first, falling back to the platform-shipped
-``AppConfig.vendors`` snapshot. When a vendor slug exists in both tiers, the
-DB row's OAuth-app material wins; the config's scope catalog + identity probe
-+ canonical ``<domain>/<sub>`` vendor string are merged in.
+Two fully-independent parallel entrypoints to user SSO:
 
-Callers no longer have to reason about which method reads which tier — every
-read hits both.
+* **Admin-registered OAuth apps** — rows in ``oauth_app_registrations``,
+  created by an admin via the credentials Add dialog with the "Available to
+  everyone in the organization" toggle. Each row is self-describing: admin
+  picks the target catalog API at registration time, so the resulting
+  credential's ``catalog_api_id`` matches a real registered API and the
+  operations preview on the rules page works out of the box.
+* **Platform-shipped vendor config** — entries under
+  ``AppConfig.vendors.entries``. Baked into the deployment.
+
+The two tiers never merge. An admin registration and a config entry for the
+same underlying vendor family surface as **separate picker cards**; users
+pick one, and every subsequent read (auth-capabilities, scope catalog,
+flow selection, confirm-time scope validation) resolves against that
+specific source alone.
 """
 
 from __future__ import annotations
 
 from typing import Protocol
 
+import structlog
 from pydantic import SecretStr
 
 from jentic_one.control.core.schema.oauth_app_registrations import OAuthAppRegistration
@@ -43,6 +52,8 @@ from jentic_one.shared.config import (
     VendorScopeConfig,
 )
 from jentic_one.shared.context import Context
+
+_logger = structlog.get_logger(__name__)
 
 # Re-exported for backwards compatibility — earlier revisions of this module
 # defined the exceptions and ``ResolvedScope`` inline, and downstream code
@@ -131,20 +142,6 @@ class VendorRegistryService:
 
     # ---- core resolution ----------------------------------------------------
 
-    async def _resolve_entry(
-        self,
-        vendor_key: str,
-        *,
-        flow_kind: str | None = None,
-    ) -> tuple[VendorAuthConfig, VendorEntrySource]:
-        """Resolve one vendor with source metadata attached.
-
-        Thin wrapper over :meth:`_resolve_pinned_entry` for the un-pinned
-        (preferred-active) lookup. Kept as its own name for readability at
-        the older call sites.
-        """
-        return await self._resolve_pinned_entry(vendor_key, flow_kind=flow_kind)
-
     async def _resolve_pinned_entry(
         self,
         vendor_key: str,
@@ -154,14 +151,19 @@ class VendorRegistryService:
     ) -> tuple[VendorAuthConfig, VendorEntrySource]:
         """Resolve one vendor with source metadata, honouring an optional pin.
 
-        When ``registration_id`` is set: fetch that specific registration; fail
-        with :class:`InvalidOAuthAppRegistrationError` when it is missing,
-        inactive, or its ``api_vendor`` does not match ``vendor_key``. Silent
-        fall-through would surface the wrong OAuth-app's scopes / client_id.
+        Admin registrations and platform config entries are peers, never
+        overlays: neither path crosses over.
 
-        When ``registration_id`` is None: today's DB-first-with-config-fallback
-        — the "preferred active" registration for the vendor wins, else the
-        matching config entry wins, else :class:`UnknownVendorError`.
+        * ``registration_id`` set → the registration wins outright. Fetch that
+          specific row; fail with :class:`InvalidOAuthAppRegistrationError`
+          when it is missing, inactive, or its ``api_vendor`` does not match
+          ``vendor_key``. The projection reads registration fields only —
+          the config-shipped scope catalog / identity probe is **never**
+          merged in.
+        * ``registration_id`` unset → prefer the "most-recently-updated
+          active" registration for the vendor slug; else fall back to the
+          matching config entry; else :class:`UnknownVendorError`. Same
+          no-merge posture on the DB branch.
         """
         if registration_id is not None:
             registration = await self._registrations.get_by_id(registration_id)
@@ -175,19 +177,15 @@ class VendorRegistryService:
                     f"api_vendor mismatch (expected {vendor_key!r}, "
                     f"registration is {registration.api_vendor!r})",
                 )
-            cfg = self._config.entries.get(vendor_key)
-            return (
-                _synthesize_from_registration(vendor_key, registration, cfg, self._ctx),
-                "db",
-            )
+            return (_project_registration_to_auth_config(registration, self._ctx), "db")
 
         registration = await self._registrations.get_preferred_active(
             api_vendor=vendor_key, flow_kind=flow_kind
         )
-        cfg = self._config.entries.get(vendor_key)
-
         if registration is not None:
-            return _synthesize_from_registration(vendor_key, registration, cfg, self._ctx), "db"
+            return _project_registration_to_auth_config(registration, self._ctx), "db"
+
+        cfg = self._config.entries.get(vendor_key)
         if cfg is not None:
             return cfg, "config"
         raise UnknownVendorError(vendor_key)
@@ -229,48 +227,32 @@ class VendorRegistryService:
     async def list_all(self) -> list[VendorAuthConfig]:
         """List every vendor known to the platform.
 
-        Every active DB registration becomes its own :class:`VendorAuthConfig`;
-        a vendor that has ≥1 DB registration hides its config-shipped entry
-        (DB replaces config, matching the single-vendor ``get`` /
-        ``resolve_flow`` semantics). Sorted by display_name so the UI's
-        picker does not shuffle between polls.
+        Admin registrations and config entries are peers: each active
+        registration becomes its own :class:`VendorAuthConfig`, and every
+        config entry always surfaces alongside — a vendor with both surfaces
+        as multiple entries. Sorted by display_name so the UI's picker does
+        not shuffle between polls.
         """
         registrations = await self._registrations.list_active()
-        vendors_with_db = {row.api_vendor for row in registrations}
         result: list[VendorAuthConfig] = [
-            _synthesize_from_registration(
-                row.api_vendor,
-                row,
-                self._config.entries.get(row.api_vendor),
-                self._ctx,
-            )
-            for row in registrations
+            _project_registration_to_auth_config(row, self._ctx) for row in registrations
         ]
-        for key, cfg in self._config.entries.items():
-            if key not in vendors_with_db:
-                result.append(cfg)
+        result.extend(self._config.entries.values())
         return sorted(result, key=lambda v: v.display_name)
 
     async def list_entries(self) -> list[VendorEntry]:
         """List every vendor as a compact ``VendorEntry`` view.
 
         One entry per active DB registration — two admin-registered OAuth
-        apps for the same vendor slug surface as two picker cards. Vendors
-        with ≥1 DB registration hide their config-shipped entry.
+        apps for the same vendor slug surface as two picker cards. Config
+        entries also surface, side-by-side; the two tiers never dedupe.
         """
         registrations = await self._registrations.list_active()
-        vendors_with_db = {row.api_vendor for row in registrations}
         entries: list[VendorEntry] = [
-            _project_db_registration(
-                row.api_vendor,
-                row,
-                cfg=self._config.entries.get(row.api_vendor),
-            )
-            for row in registrations
+            _project_db_registration(row.api_vendor, row) for row in registrations
         ]
         for key, cfg in self._config.entries.items():
-            if key not in vendors_with_db:
-                entries.append(_project_config_entry(key, cfg))
+            entries.append(_project_config_entry(key, cfg))
         return sorted(entries, key=lambda e: (e.display_name, e.name))
 
     async def get_entry(
@@ -281,18 +263,15 @@ class VendorRegistryService:
     ) -> VendorEntry:
         """Compact ``VendorEntry`` view for one vendor.
 
-        Kept as a thin wrapper over :meth:`_resolve_entry` for callers that
-        specifically want the source-tagged projection (e.g. the admin UI).
+        Kept for callers that specifically want the source-tagged projection
+        (e.g. the admin UI). Prefers the "preferred active" DB registration;
+        otherwise falls back to the config entry. Neither tier merges.
         """
         registration = await self._registrations.get_preferred_active(
             api_vendor=vendor_key, flow_kind=flow_kind
         )
         if registration is not None:
-            return _project_db_registration(
-                vendor_key,
-                registration,
-                cfg=self._config.entries.get(vendor_key),
-            )
+            return _project_db_registration(vendor_key, registration)
         cfg = self._config.entries.get(vendor_key)
         if cfg is None:
             raise UnknownVendorError(vendor_key)
@@ -410,49 +389,58 @@ class VendorRegistryService:
 # ---------------------------------------------------------------------------
 
 
-def _synthesize_from_registration(
-    vendor_key: str,
+def _project_registration_to_auth_config(
     registration: OAuthAppRegistration,
-    cfg: VendorAuthConfig | None,
     ctx: Context,
 ) -> VendorAuthConfig:
-    """Build a ``VendorAuthConfig`` from a DB registration, merging config metadata.
+    """Build a ``VendorAuthConfig`` from a DB registration — standalone.
 
-    When a matching config entry exists, its scope catalog + identity probe +
-    canonical vendor string come along for free; the DB row supplies the
-    OAuth-app material (client_id / secret / endpoints / display_name).
+    Registration fields *only* — the platform config is never consulted here.
+    The ``vendor`` string on the returned config is the admin-picked
+    ``catalog_api_id``, which feeds ``credential.catalog_api_id`` at connect
+    time and makes the operations preview resolve against a real registered
+    API.
 
-    When the DB row has no matching config, a minimal ``VendorAuthConfig`` is
-    synthesized — the vendor string is derived as ``<slug>/<slug>`` to
-    satisfy the pydantic validator, scopes default to empty, and
-    ``identity_probe`` is left ``None`` so the connect finalise step skips
-    identity-echo (the credential still stores; just no ``connected_as`` UX
-    label). Operators wanting the identity echo for a fully-custom vendor
-    should still add a matching entry in ``AppConfig.vendors.entries`` with
-    the vendor's userinfo endpoint.
+    Registrations created before the decouple refactor may not carry
+    ``catalog_api_id`` — those degrade to a synthesized ``<slug>/<slug>``
+    placeholder and log a warning. Users can still connect through them; the
+    operations preview just won't resolve until an admin re-creates or edits
+    the registration to pick a real API.
+
+    Scopes come off the registration's ``default_scopes`` extension column,
+    with every entry defaulted-on and classified ``read`` (no separate
+    classification catalog on the DB side). ``identity_probe`` is always
+    ``None`` on admin registrations — identity echo is a platform-config
+    concern; DB-only vendors skip that step at connect finalise and land
+    the credential with ``connected_as=None``.
     """
     flow = _synthesize_flow(registration, ctx)
 
-    if cfg is not None:
-        return VendorAuthConfig(
-            vendor=cfg.vendor,
-            display_name=registration.name,
-            flows=[flow],
-            scopes=list(cfg.scopes),
-            identity_probe=cfg.identity_probe,
-        )
-
     default_scopes = _extension_default_scopes(registration)
-    synthesized_scopes = [
+    scopes = [
         VendorScopeConfig(name=s, classification="read", default=True, description="")
         for s in (default_scopes or [])
     ]
-    canonical_vendor = vendor_key if "/" in vendor_key else f"{vendor_key}/{vendor_key}"
+
+    if registration.catalog_api_id is not None:
+        canonical_vendor = registration.catalog_api_id
+    else:
+        raw = registration.api_vendor
+        canonical_vendor = raw if "/" in raw else f"{raw}/{raw}"
+        _logger.warning(
+            "oauth_app_registration.missing_catalog_api_id",
+            registration_id=registration.id,
+            api_vendor=raw,
+            fallback_vendor=canonical_vendor,
+            hint="operations preview will not resolve until an admin picks a "
+            "catalog API for this registration",
+        )
+
     return VendorAuthConfig(
         vendor=canonical_vendor,
-        display_name=registration.name,
+        display_name=registration.display_name or registration.name,
         flows=[flow],
-        scopes=synthesized_scopes,
+        scopes=scopes,
         identity_probe=None,
     )
 
@@ -512,18 +500,16 @@ def _extension_default_scopes(registration: OAuthAppRegistration) -> list[str] |
 def _project_db_registration(
     key: str,
     registration: OAuthAppRegistration,
-    *,
-    cfg: VendorAuthConfig | None = None,
 ) -> VendorEntry:
     """Project a DB registration into the compact ``VendorEntry`` view.
 
-    ``cfg`` supplies the vendor's family display name when a matching
-    config entry exists — the picker uses that as the subtitle when it
-    differs from the admin's registration name.
+    Registration-only shape: ``display_name`` reads off the admin-supplied
+    vendor family label (falling back to the registration's ``api_vendor``
+    for pre-refactor rows that don't have one). No config merge.
     """
     default_scopes = _extension_default_scopes(registration)
     flow_kind: VendorFlowKind = _cast_flow_kind(registration.flow_kind)
-    family_display = cfg.display_name if cfg is not None else registration.name
+    family_display = registration.display_name or registration.api_vendor
     return VendorEntry(
         entry_id=registration.id,
         registration_id=registration.id,

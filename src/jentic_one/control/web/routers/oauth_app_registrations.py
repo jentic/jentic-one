@@ -34,6 +34,8 @@ def _to_response(view: OAuthAppRegistrationView) -> OAuthAppRegistrationResponse
         id=view.id,
         name=view.name,
         api_vendor=view.api_vendor,
+        catalog_api_id=view.catalog_api_id,
+        display_name=view.display_name,
         flow_kind=view.flow_kind,
         client_id=view.client_id,
         is_active=view.is_active,
@@ -70,6 +72,8 @@ async def create_oauth_app_registration(
         view = await svc.create_authorization_code(
             name=body.name,
             api_vendor=body.api_vendor,
+            catalog_api_id=body.catalog_api_id,
+            display_name=body.display_name,
             client_id=body.client_id,
             client_secret=body.client_secret,
             authorize_url=body.authorize_url,
@@ -82,6 +86,8 @@ async def create_oauth_app_registration(
         view = await svc.create_device_authorization(
             name=body.name,
             api_vendor=body.api_vendor,
+            catalog_api_id=body.catalog_api_id,
+            display_name=body.display_name,
             client_id=body.client_id,
             authorization_endpoint=body.authorization_endpoint,
             token_endpoint=body.token_endpoint,
@@ -150,6 +156,7 @@ async def update_oauth_app_registration(
     view = await svc.update(
         id,
         name=body.name,
+        display_name=body.display_name,
         is_active=body.is_active,
         default_scopes=body.default_scopes,
         authorize_url=body.authorize_url,

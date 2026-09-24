@@ -40,6 +40,8 @@ class OAuthAppRegistrationRepository:
         encrypted_client_secret: str,
         authorize_url: str,
         token_url: str,
+        catalog_api_id: str | None = None,
+        display_name: str | None = None,
         default_scopes: list[str] | None = None,
         created_by: str,
     ) -> OAuthAppRegistration:
@@ -48,6 +50,8 @@ class OAuthAppRegistrationRepository:
             api_vendor=api_vendor,
             flow_kind=FLOW_KIND_AUTH_CODE,
             client_id=client_id,
+            catalog_api_id=catalog_api_id,
+            display_name=display_name,
             is_active=True,
             created_by=created_by,
         )
@@ -81,6 +85,8 @@ class OAuthAppRegistrationRepository:
         client_id: str,
         authorization_endpoint: str,
         token_endpoint: str,
+        catalog_api_id: str | None = None,
+        display_name: str | None = None,
         default_scopes: list[str] | None = None,
         created_by: str,
     ) -> OAuthAppRegistration:
@@ -89,6 +95,8 @@ class OAuthAppRegistrationRepository:
             api_vendor=api_vendor,
             flow_kind=FLOW_KIND_DEVICE_AUTHORIZATION,
             client_id=client_id,
+            catalog_api_id=catalog_api_id,
+            display_name=display_name,
             is_active=True,
             created_by=created_by,
         )
@@ -164,6 +172,7 @@ class OAuthAppRegistrationRepository:
         registration_id: str,
         *,
         name: str | None = None,
+        display_name: str | None = None,
         is_active: bool | None = None,
     ) -> OAuthAppRegistration | None:
         row = await OAuthAppRegistrationRepository.get_by_id(session, registration_id)
@@ -171,6 +180,8 @@ class OAuthAppRegistrationRepository:
             return None
         if name is not None:
             row.name = name
+        if display_name is not None:
+            row.display_name = display_name
         if is_active is not None:
             row.is_active = is_active
         await session.flush()

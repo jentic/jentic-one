@@ -82,6 +82,12 @@ class _FakeRegistration:
     flow_kind: str
     client_id: str
     id: str = "oar_test"
+    # Post-refactor: registrations are self-describing. Tests default to
+    # populated values so the projection uses the real catalog id / family
+    # label; a specific test sets ``catalog_api_id=None`` to exercise the
+    # pre-refactor degraded state warning.
+    catalog_api_id: str | None = "example.com/api.example.com"
+    display_name: str | None = "Example (DB)"
     authorization_code_details: _FakeDetails | None = None
     device_authorization_details: _FakeDetails | None = None
     is_active: bool = True
@@ -200,12 +206,19 @@ def _service(
 
 @pytest.mark.asyncio()
 async def test_get_entry_prefers_db_over_like_keyed_config() -> None:
-    """When both tiers know the slug, the DB row wins."""
+    """When both tiers know the slug, the DB row wins — but no config merge.
+
+    The DB row's ``display_name`` is the admin-supplied one, not the config
+    entry's. The two tiers are peers on ``list_entries`` (both surface as
+    separate cards) but ``get_entry`` still prefers the DB row when the
+    caller asks for a single vendor slug.
+    """
     reg = _FakeRegistration(
         api_vendor="github",
         name="MyOrg GitHub App",
         flow_kind="device_authorization",
         client_id="db-cid",
+        display_name="MyOrg GitHub (family)",
         device_authorization_details=_FakeDetails(default_scopes=["repo"]),
     )
     svc = _service(
@@ -216,10 +229,10 @@ async def test_get_entry_prefers_db_over_like_keyed_config() -> None:
     entry = await svc.get_entry("github")
 
     assert entry.source == "db"
-    # ``display_name`` is the vendor's family label (from the matching
-    # config entry when one exists); ``name`` is the admin's registration
-    # name — used as the picker card's primary label.
-    assert entry.display_name == "GitHub (config)"
+    # ``display_name`` is the admin-supplied family label from the
+    # registration itself — the config entry's ``display_name`` never
+    # bleeds in.
+    assert entry.display_name == "MyOrg GitHub (family)"
     assert entry.name == "MyOrg GitHub App"
     assert entry.client_id == "db-cid"
     assert entry.flow_kind == "device_authorization"
@@ -285,11 +298,18 @@ async def test_get_entry_pins_flow_kind_when_supplied() -> None:
 
 
 @pytest.mark.asyncio()
-async def test_list_entries_unions_db_and_config_with_db_winning() -> None:
-    """A vendor present in both tiers surfaces once, DB row wins."""
+async def test_list_entries_unions_db_and_config_as_peers() -> None:
+    """A vendor present in both tiers surfaces as **two** entries, no merge.
+
+    Post-decouple: admin registrations and platform config entries are
+    fully-independent parallel entrypoints. A GitHub DB registration does
+    NOT hide the shipped GitHub config entry — users see both cards and
+    pick whichever one they want to SSO through.
+    """
     github_db = _FakeRegistration(
         api_vendor="github",
         name="GitHub (DB)",
+        display_name="GitHub (DB family)",
         flow_kind="device_authorization",
         client_id="db-cid",
         device_authorization_details=_FakeDetails(),
@@ -304,15 +324,15 @@ async def test_list_entries_unions_db_and_config_with_db_winning() -> None:
 
     entries = await svc.list_entries()
 
-    # DB row's family display_name is the config vendor's, its ``name`` is
-    # the admin registration name.
-    github = next(e for e in entries if e.key == "github" and e.source == "db")
-    assert github.name == "GitHub (DB)"
-    assert github.display_name == "GitHub (config)"
-    # Slack has no DB row — the config entry surfaces.
+    # DB and config BOTH surface for github.
+    github_db_entry = next(e for e in entries if e.key == "github" and e.source == "db")
+    github_config_entry = next(e for e in entries if e.key == "github" and e.source == "config")
+    assert github_db_entry.name == "GitHub (DB)"
+    # DB row's family label is its own — no merge with the config entry.
+    assert github_db_entry.display_name == "GitHub (DB family)"
+    assert github_config_entry.display_name == "GitHub (config)"
+    # Slack has no DB row — the config entry surfaces alone.
     assert any(e.key == "slack" and e.source == "config" for e in entries)
-    # DB replaces config: no config-sourced github entry.
-    assert not any(e.key == "github" and e.source == "config" for e in entries)
 
 
 @pytest.mark.asyncio()
@@ -321,6 +341,7 @@ async def test_list_entries_surfaces_db_only_vendor() -> None:
     only_db = _FakeRegistration(
         api_vendor="notion",
         name="Notion (admin)",
+        display_name="Notion",
         flow_kind="authorization_code",
         client_id="notion-cid",
         authorization_code_details=_FakeDetails(default_scopes=["read"]),
@@ -340,6 +361,7 @@ async def test_list_entries_stable_display_name_ordering() -> None:
     a_db = _FakeRegistration(
         api_vendor="zeta",
         name="Alpha (DB)",
+        display_name="Alpha (DB)",
         flow_kind="device_authorization",
         client_id="a",
         device_authorization_details=_FakeDetails(),
@@ -347,6 +369,7 @@ async def test_list_entries_stable_display_name_ordering() -> None:
     z_db = _FakeRegistration(
         api_vendor="alpha",
         name="Zeta (DB)",
+        display_name="Zeta (DB)",
         flow_kind="device_authorization",
         client_id="z",
         device_authorization_details=_FakeDetails(),
@@ -417,10 +440,14 @@ async def test_get_returns_config_when_no_db_row() -> None:
 
 
 @pytest.mark.asyncio()
-async def test_list_all_unions_config_and_db_with_db_winning() -> None:
+async def test_list_all_yields_registrations_and_config_side_by_side() -> None:
+    """Registrations and config entries are peers — a vendor present in both
+    tiers surfaces as two separate entries. No dedupe by vendor slug.
+    """
     github_db = _FakeRegistration(
         api_vendor="github",
         name="GitHub (DB)",
+        display_name="GitHub (DB)",
         flow_kind="device_authorization",
         client_id="db-cid",
         device_authorization_details=_FakeDetails(),
@@ -434,7 +461,8 @@ async def test_list_all_unions_config_and_db_with_db_winning() -> None:
     )
     entries = await svc.list_all()
     display_names = {e.display_name for e in entries}
-    assert display_names == {"GitHub (DB)", "Slack (config)"}
+    # Both GitHub entries (DB + config) surface alongside Slack (config only).
+    assert display_names == {"GitHub (DB)", "GitHub (config)", "Slack (config)"}
 
 
 @pytest.mark.asyncio()
@@ -445,15 +473,20 @@ async def test_get_raises_unknown_vendor_when_missing() -> None:
 
 
 @pytest.mark.asyncio()
-async def test_get_merges_db_flow_with_config_metadata() -> None:
-    """When both tiers know the vendor, DB supplies the flow, config the metadata.
+async def test_get_reads_db_only_no_config_merge() -> None:
+    """Admin registrations project standalone — the config entry is never
+    consulted, even when a matching-slug one exists.
 
-    ``identity_probe`` + ``scopes`` + canonical ``vendor`` come off the
-    config side; ``display_name`` and ``client_id`` come off the DB row.
+    ``vendor`` on the returned ``VendorAuthConfig`` is the admin-picked
+    ``catalog_api_id``. ``display_name`` is the admin-supplied family
+    label. ``identity_probe`` is always ``None`` for DB rows — that's a
+    platform-config concern.
     """
     github_db = _FakeRegistration(
         api_vendor="github",
         name="MyOrg GitHub App",
+        display_name="MyOrg GitHub",
+        catalog_api_id="github.com/api.github.com",
         flow_kind="device_authorization",
         client_id="db-cid",
         device_authorization_details=_FakeDetails(default_scopes=["repo"]),
@@ -463,41 +496,68 @@ async def test_get_merges_db_flow_with_config_metadata() -> None:
         registrations=[github_db],
     )
     entry = await svc.get("github")
-    assert entry.display_name == "MyOrg GitHub App"
+    # DB registration is standalone; nothing bleeds in from the config.
+    assert entry.display_name == "MyOrg GitHub"
     assert entry.flows[0].client_id == "db-cid"
     assert entry.vendor == "github.com/api.github.com"
-    assert entry.identity_probe is not None
-    assert entry.identity_probe.endpoint == "https://api.github.com/user"
-    assert [s.name for s in entry.scopes] == ["repo:read", "repo:write"]
+    # No config merge → no identity probe, no config scope catalog.
+    assert entry.identity_probe is None
+    assert [s.name for s in entry.scopes] == ["repo"]
 
 
 @pytest.mark.asyncio()
-async def test_get_synthesizes_when_no_matching_config() -> None:
-    """DB-only vendor synthesizes a minimal ``VendorAuthConfig``.
+async def test_get_projects_db_only_with_catalog_api_id() -> None:
+    """A DB-only vendor projects using its ``catalog_api_id`` as the ``vendor``
+    string on the returned ``VendorAuthConfig`` — this feeds
+    ``credential.catalog_api_id`` at connect time so the operations preview
+    resolves against a real registered API.
 
-    Identity-probe is a placeholder — the connect flow will fail cleanly at
-    identity-echo until an operator adds a matching config entry.
-
-    Uses device flow because it's a public client (no secret to decrypt) —
-    the auth-code equivalent needs a real ``ctx.encryption`` fixture to
-    round-trip the encrypted secret, which is exercised by the integration
-    tests instead.
+    Uses device flow (public client, no secret to decrypt).
     """
     only_db = _FakeRegistration(
         api_vendor="notion",
         name="Notion (admin)",
+        display_name="Notion",
+        catalog_api_id="notion.com/api.notion.com",
         flow_kind="device_authorization",
         client_id="notion-cid",
         device_authorization_details=_FakeDetails(default_scopes=["read"]),
     )
     svc = _service(registrations=[only_db])
     entry = await svc.get("notion")
-    assert entry.display_name == "Notion (admin)"
-    assert entry.vendor == "notion/notion"
+    assert entry.display_name == "Notion"
+    # ``vendor`` on the projected config is the admin-picked catalog API id.
+    # This is the value stamped onto ``credential.catalog_api_id`` at connect
+    # time, so the operations preview resolves against a real registered API.
+    assert entry.vendor == "notion.com/api.notion.com"
     assert entry.flows[0].client_id == "notion-cid"
-    # No matching config → identity_probe is None. Callers must skip the
-    # identity-echo step; the credential still stores with connected_as=None.
+    # Admin registrations never carry an identity probe — that's a
+    # platform-config concern. Credentials land with connected_as=None.
     assert entry.identity_probe is None
+
+
+@pytest.mark.asyncio()
+async def test_get_falls_back_to_placeholder_vendor_for_pre_refactor_row() -> None:
+    """Pre-refactor registrations without ``catalog_api_id`` still project —
+    the ``vendor`` string falls back to a ``<slug>/<slug>`` placeholder and
+    the service logs a warning. The connect flow still runs; only the
+    operations preview degrades until an admin picks a real catalog API.
+    """
+    legacy = _FakeRegistration(
+        api_vendor="notion",
+        name="Notion (pre-refactor)",
+        display_name=None,
+        catalog_api_id=None,
+        flow_kind="device_authorization",
+        client_id="notion-cid",
+        device_authorization_details=_FakeDetails(),
+    )
+    svc = _service(registrations=[legacy])
+    entry = await svc.get("notion")
+    assert entry.vendor == "notion/notion"
+    # ``display_name`` falls back to the registration's ``name`` when the
+    # admin never supplied a family label.
+    assert entry.display_name == "Notion (pre-refactor)"
 
 
 # ---------------------------------------------------------------------------
