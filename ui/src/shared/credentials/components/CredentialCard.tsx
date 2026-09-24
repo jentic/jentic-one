@@ -125,7 +125,7 @@ export function CredentialCard({
 								className="max-w-[16rem] truncate"
 								title={cred.oauth_app_registration_name}
 							>
-								Shared: {cred.oauth_app_registration_name}
+								Source: {cred.oauth_app_registration_name}
 							</Badge>
 						)}
 					</div>
