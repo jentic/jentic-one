@@ -4320,32 +4320,6 @@
         "title": "InstanceIdentityResponse",
         "type": "object"
       },
-      "IntrospectRequest": {
-        "description": "Introspection endpoint request (form body).",
-        "properties": {
-          "token": {
-            "title": "Token",
-            "type": "string",
-            "x-sensitive": true
-          },
-          "token_type_hint": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Token Type Hint"
-          }
-        },
-        "required": [
-          "token"
-        ],
-        "title": "IntrospectRequest",
-        "type": "object"
-      },
       "IntrospectResponse": {
         "description": "RFC 7662 introspection response.",
         "properties": {
@@ -31450,13 +31424,64 @@
     },
     "/oauth/introspect": {
       "post": {
-        "description": "Introspect a token (RFC 7662).",
+        "description": "Introspect a token (RFC 7662).\n\nAccepts both ``application/x-www-form-urlencoded`` (the §2.1 request\nencoding) and JSON (the platform's own contract) bodies. Both arms\nrequire a platform bearer identity, and both answer an unknown, invalid,\nor expired *token value* with 200 ``{\"active\": false}`` (§2.2) — only a\nmalformed request body (missing ``token``) is a 400 ``invalid_request``:\nProblem Details on the JSON arm, the RFC 6749 §5.2 error dialect on the\nform arm.",
         "operationId": "introspectEndpoint",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/IntrospectRequest"
+                "description": "Introspection endpoint request (RFC 7662) — JSON or form-encoded.",
+                "properties": {
+                  "token": {
+                    "title": "Token",
+                    "type": "string",
+                    "x-sensitive": true
+                  },
+                  "token_type_hint": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "title": "Token Type Hint"
+                  }
+                },
+                "required": [
+                  "token"
+                ],
+                "title": "IntrospectRequest",
+                "type": "object"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "description": "Introspection endpoint request (RFC 7662) — JSON or form-encoded.",
+                "properties": {
+                  "token": {
+                    "title": "Token",
+                    "type": "string",
+                    "x-sensitive": true
+                  },
+                  "token_type_hint": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "title": "Token Type Hint"
+                  }
+                },
+                "required": [
+                  "token"
+                ],
+                "title": "IntrospectRequest",
+                "type": "object"
               }
             }
           },
@@ -31488,7 +31513,7 @@
                 }
               }
             },
-            "description": "Bad Request"
+            "description": "Malformed request body (missing `token`). JSON requests get platform Problem Details (`type: invalid_request`); form-encoded (RFC 7662 §2.1) requests get the RFC 6749 §5.2 dialect: `{\"error\": \"invalid_request\", \"error_description\": \"...\"}`. An unknown, invalid, or expired token value is never an error — it is 200 `{\"active\": false}` (RFC 7662 §2.2)."
           },
           "401": {
             "content": {
