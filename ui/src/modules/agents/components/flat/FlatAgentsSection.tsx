@@ -49,9 +49,10 @@ import {
 	agentSetupGapCount,
 	composeApiTiles,
 	partitionBindings,
-	provenOrphanCredentialIds,
 	tileStats,
 } from '@/modules/agents/lib/apiTiles';
+import { viewerIsOrgAdmin } from '@/modules/agents/lib/bindAuthority';
+import { useOptionalCurrentUser } from '@/shared/auth';
 import { AgentStrip } from '@/modules/agents/components/flat/AgentStrip';
 import { AgentStatStrip } from '@/modules/agents/components/flat/AgentStatStrip';
 import { ApiTile } from '@/modules/agents/components/flat/ApiTile';
@@ -549,29 +550,31 @@ function SelectedAgentPanel({
 			: resumeBinding.isPending
 				? resumeBinding.variables
 				: null;
-	// Bindings whose credential was deleted are hidden: no tile, no count, and
-	// never asked for their rules (that read 404s without a credential). The ones
-	// a complete credentials list proves orphaned are purged quietly.
+	// Bindings whose credential was deleted are hidden (no tile, no count) and
+	// purged quietly — but only once proven: an `org:admin` viewer, a complete
+	// credentials list, and the credential missing from it. For anyone else every
+	// binding stays live (see `isOrphanBinding` for why the weaker signals fail).
+	const viewerIsAdmin = viewerIsOrgAdmin(useOptionalCurrentUser());
+	const credentialsProven = credentialsSource.complete && !credentialsSource.error;
 	const { live: liveBindings, orphans: orphanBindings } = useMemo(
 		() =>
-			partitionBindings(bindings ?? [], credentialsSource.items, credentialsSource.complete),
-		[bindings, credentialsSource.items, credentialsSource.complete],
+			partitionBindings(bindings ?? [], credentialsSource.items, {
+				viewerIsAdmin,
+				credentialsComplete: credentialsProven,
+			}),
+		[bindings, credentialsSource.items, viewerIsAdmin, credentialsProven],
 	);
-	const credentialIds = useMemo(() => liveBindings.map((b) => b.credentialId), [liveBindings]);
+	// Rules are only read for bindings that draw a tile (the one place they show),
+	// so a binding serving nothing — possibly a deleted credential a non-admin
+	// can't prove gone — never fires a read that 404s.
+	const credentialIds = useMemo(
+		() => liveBindings.filter((b) => b.serves.length > 0).map((b) => b.credentialId),
+		[liveBindings],
+	);
 	const ruleSummaries = useAgentBindingRuleSummaries(agent.id, credentialIds);
 	const purgeableOrphanIds = useMemo(
-		() =>
-			provenOrphanCredentialIds(
-				orphanBindings,
-				credentialsSource.items,
-				credentialsSource.complete && !credentialsSource.error,
-			),
-		[
-			orphanBindings,
-			credentialsSource.items,
-			credentialsSource.complete,
-			credentialsSource.error,
-		],
+		() => orphanBindings.map((b) => b.credentialId),
+		[orphanBindings],
 	);
 	usePurgeOrphanBindings(agent.id, purgeableOrphanIds);
 

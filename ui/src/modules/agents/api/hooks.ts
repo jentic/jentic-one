@@ -22,6 +22,8 @@ import {
 } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo } from 'react';
 import { toast } from '@/shared/ui';
+import { useOptionalCurrentUser } from '@/shared/auth';
+import { viewerIsOrgAdmin } from '@/modules/agents/lib/bindAuthority';
 import {
 	approveAgent,
 	archiveAgent,
@@ -444,8 +446,11 @@ export function resetOrphanPurgeAttemptsForTest(): void {
 /**
  * Quietly purge an agent's orphaned bindings — ones whose credential was deleted
  * (a credential delete leaves its bindings behind, #1426). The caller decides
- * which bindings are orphans and must only pass ones proven against a COMPLETE,
- * successfully drained credential list; this hook only fires the purges.
+ * which bindings are orphans and must only pass ones PROVEN gone: missing from a
+ * complete, successfully drained credentials list read by an `org:admin` (see
+ * `isOrphanBinding`). As a second guard this hook fires nothing unless the
+ * signed-in user is known to be an `org:admin`: a non-admin's list is
+ * owner-scoped, so a credential missing from it may just be someone else's.
  *
  * Silent by design: the grid already hides orphans, so a success needs no toast,
  * and a failure (403 for a read-only viewer, 404 for an already-gone row) just
@@ -453,8 +458,9 @@ export function resetOrphanPurgeAttemptsForTest(): void {
  */
 export function usePurgeOrphanBindings(agentId: string | null, orphanCredentialIds: string[]) {
 	const qc = useQueryClient();
+	const viewerIsAdmin = viewerIsOrgAdmin(useOptionalCurrentUser());
 	useEffect(() => {
-		if (!agentId) return;
+		if (!agentId || !viewerIsAdmin) return;
 		for (const credentialId of orphanCredentialIds) {
 			const key = `${agentId}:${credentialId}`;
 			if (attemptedOrphanPurges.has(key)) continue;
@@ -466,7 +472,7 @@ export function usePurgeOrphanBindings(agentId: string | null, orphanCredentialI
 					qc.invalidateQueries({ queryKey: agentsKeys.credentialBindings(agentId) });
 				});
 		}
-	}, [agentId, orphanCredentialIds, qc]);
+	}, [agentId, viewerIsAdmin, orphanCredentialIds, qc]);
 }
 
 /** Lift a suspended binding (`POST …/credentials/{id}:resume`). */

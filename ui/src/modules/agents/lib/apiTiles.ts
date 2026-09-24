@@ -90,63 +90,62 @@ function* tileIdentities(
 }
 
 /**
+ * What an orphan verdict may rest on. A credential missing from a list proves it
+ * was deleted only when the list is AUTHORITATIVE: read by an `org:admin` (the
+ * only viewer whose `GET /credentials` is the whole org — anyone else's holds just
+ * their own credentials) and drained completely, without error.
+ */
+export interface OrphanProof {
+	viewerIsAdmin: boolean;
+	/** Every page of the credentials list loaded, and none failed. */
+	credentialsComplete: boolean;
+}
+
+/**
  * A binding whose credential is gone: deleting a credential leaves its bindings
- * behind (#1426), enriched with no name and serving nothing. It unlocks nothing,
- * so the grid hides it entirely: it draws no tile, counts toward no figure, and
- * no per-binding read is made for it (those 404 on a missing credential). Once
- * {@link provenOrphanCredentialIds} confirms it, the grid purges it quietly.
+ * behind (#1426), and they unlock nothing. The grid hides such a binding entirely
+ * (no tile, no figure, no per-binding read — those 404 on a missing credential)
+ * and purges it quietly — so the verdict must be proven, never guessed:
  *
- * `serves: []` is required either way: a binding that still serves an API has a
- * live credential behind it, even when a stale credentials list doesn't know it
- * yet (a credential created a moment ago). Beyond that, a null name is the
- * backend's own signal; a credential missing from a COMPLETE org list confirms it.
+ * - Only absence from an authoritative list counts (see {@link OrphanProof}).
+ *   A non-admin, or a viewer not known yet, never gets a verdict: their bindings
+ *   stay live and render like any other.
+ * - `name == null && serves == []` is NOT proof on its own. The bindings read
+ *   returns exactly that shape for EVERY binding when its surface can't reach the
+ *   control DB and skips enrichment (a split deploy), so trusting it would hide
+ *   every binding there.
+ * - A binding that serves an API is always live: enrichment found its
+ *   credential, even when a list fetched a moment earlier doesn't have it yet.
  */
 export function isOrphanBinding(
 	binding: CredentialBindingEntity,
-	credentialsById?: ReadonlyMap<string, Credential>,
-	credentialsComplete = false,
+	credentialsById: ReadonlyMap<string, Credential>,
+	proof: OrphanProof,
 ): boolean {
+	if (!proof.viewerIsAdmin || !proof.credentialsComplete) return false;
 	if (binding.serves.length > 0) return false;
-	if (binding.name == null) return true;
-	return (
-		credentialsComplete && credentialsById != null && !credentialsById.has(binding.credentialId)
-	);
+	return !credentialsById.has(binding.credentialId);
 }
 
-/** Split an agent's bindings into the live ones and the orphans. */
+/** Split an agent's bindings into the live ones and the proven orphans — the
+ * ones safe to hide and purge. */
 export function partitionBindings(
 	bindings: CredentialBindingEntity[],
 	credentials: Credential[],
-	credentialsComplete: boolean,
+	proof: OrphanProof,
 ): { live: CredentialBindingEntity[]; orphans: CredentialBindingEntity[] } {
 	const credentialsById = new Map(credentials.map((c) => [c.credential_id, c]));
 	const live: CredentialBindingEntity[] = [];
 	const orphans: CredentialBindingEntity[] = [];
 	for (const binding of bindings) {
-		(isOrphanBinding(binding, credentialsById, credentialsComplete) ? orphans : live).push(
-			binding,
-		);
+		(isOrphanBinding(binding, credentialsById, proof) ? orphans : live).push(binding);
 	}
 	return { live, orphans };
 }
 
-/**
- * The orphans safe to purge: only those whose credential is absent from a
- * COMPLETE, successfully drained org list. A null name alone hides a binding but
- * never deletes it — a partial or failed list can't prove the credential is gone.
- */
-export function provenOrphanCredentialIds(
-	orphans: CredentialBindingEntity[],
-	credentials: Credential[],
-	credentialsComplete: boolean,
-): string[] {
-	if (!credentialsComplete || orphans.length === 0) return [];
-	const known = new Set(credentials.map((c) => c.credential_id));
-	return orphans.filter((b) => !known.has(b.credentialId)).map((b) => b.credentialId);
-}
-
-/** Compose the tile list for one agent. An orphaned binding (see
- * {@link isOrphanBinding}) serves nothing, so it yields no tile. */
+/** Compose the tile list for one agent. A binding that serves nothing — an
+ * orphan (see {@link isOrphanBinding}), or any binding the backend could not
+ * enrich — yields no tile. */
 export function composeApiTiles(
 	bindings: CredentialBindingEntity[],
 	credentials: Credential[],

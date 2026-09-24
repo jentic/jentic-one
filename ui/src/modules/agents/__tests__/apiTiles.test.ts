@@ -10,7 +10,6 @@ import {
 	composeApiTiles,
 	isOrphanBinding,
 	partitionBindings,
-	provenOrphanCredentialIds,
 	tileStats,
 } from '@/modules/agents/lib/apiTiles';
 import { credentialAwaitsConsent } from '@/shared/credentials/lib/credentialIdentity';
@@ -398,46 +397,80 @@ describe('agentApiCount', () => {
 });
 
 describe('orphan bindings (credential deleted, #1426)', () => {
-	const orphan = makeBinding({
+	/** The shape the bindings read returns for a deleted credential — and, in a
+	 * split deploy that skips enrichment, for EVERY binding. */
+	const unenriched = makeBinding({
 		id: 'acb_dead',
 		credentialId: 'cred_gone',
 		name: null,
 		serves: [],
 	});
+	const ADMIN_PROOF = { viewerIsAdmin: true, credentialsComplete: true };
+	const none = new Map<string, Credential>();
 
-	it('flags the backend shape — no name, serving nothing — even before the credentials drain', () => {
-		expect(isOrphanBinding(orphan)).toBe(true);
+	it('proves an orphan only for an admin with a complete list that lacks the credential', () => {
+		expect(isOrphanBinding(unenriched, none, ADMIN_PROOF)).toBe(true);
+		const named = makeBinding({ credentialId: 'cred_gone', name: 'Old key', serves: [] });
+		expect(isOrphanBinding(named, none, ADMIN_PROOF)).toBe(true);
+		// A list still draining (or failed) proves nothing.
+		expect(
+			isOrphanBinding(unenriched, none, { viewerIsAdmin: true, credentialsComplete: false }),
+		).toBe(false);
 	});
 
-	it('flags a named binding serving nothing once a complete list lacks its credential', () => {
-		const named = makeBinding({ credentialId: 'cred_gone', name: 'Old key', serves: [] });
-		expect(isOrphanBinding(named, new Map(), false)).toBe(false);
-		expect(isOrphanBinding(named, new Map(), true)).toBe(true);
+	it('never flags a non-admin’s (or unknown viewer’s) binding — their list is owner-scoped', () => {
+		// Missing from a non-admin's complete list: it may just be someone else's.
+		const nonAdmin = { viewerIsAdmin: false, credentialsComplete: true };
+		expect(isOrphanBinding(unenriched, none, nonAdmin)).toBe(false);
+		const named = makeBinding({ credentialId: 'cred_other', name: 'Their key', serves: [] });
+		expect(isOrphanBinding(named, none, nonAdmin)).toBe(false);
+	});
+
+	it('does not read the split-deploy shape as deleted when the admin list has the credential', () => {
+		// No name and nothing served is also what an unenriched bindings read returns.
+		const listed = new Map([['cred_gone', makeCredential({ credential_id: 'cred_gone' })]]);
+		expect(isOrphanBinding(unenriched, listed, ADMIN_PROOF)).toBe(false);
 	});
 
 	it('never flags a binding that still serves an API, even against a stale list', () => {
 		const fresh = makeBinding({ credentialId: 'cred_new' });
-		expect(isOrphanBinding(fresh, new Map(), true)).toBe(false);
+		expect(isOrphanBinding(fresh, none, ADMIN_PROOF)).toBe(false);
 	});
 
 	it('partitions live bindings from orphans and draws no tile for an orphan', () => {
 		const live = makeBinding();
-		const { live: kept, orphans } = partitionBindings([live, orphan], [makeCredential()], true);
+		const { live: kept, orphans } = partitionBindings(
+			[live, unenriched],
+			[makeCredential()],
+			ADMIN_PROOF,
+		);
 		expect(kept).toEqual([live]);
-		expect(orphans).toEqual([orphan]);
-		expect(composeApiTiles([orphan], [], [])).toEqual([]);
+		expect(orphans).toEqual([unenriched]);
+		expect(composeApiTiles([unenriched], [], [])).toEqual([]);
 	});
 
-	it('proves an orphan for purging only against a complete credentials list', () => {
-		const named = makeBinding({ credentialId: 'cred_gone', name: 'Old key', serves: [] });
-		// A null name hides a binding, but only a complete list may delete it.
-		expect(provenOrphanCredentialIds([orphan], [], false)).toEqual([]);
-		expect(provenOrphanCredentialIds([orphan, named], [], true)).toEqual([
-			'cred_gone',
-			'cred_gone',
-		]);
-		// A credential the complete list still has is not gone, whatever the name says.
-		const listed = makeCredential({ credential_id: 'cred_gone' });
-		expect(provenOrphanCredentialIds([orphan], [listed], true)).toEqual([]);
+	it('keeps every binding live for a non-admin, split-deploy shape included', () => {
+		const live = makeBinding();
+		const { live: kept, orphans } = partitionBindings([live, unenriched], [makeCredential()], {
+			viewerIsAdmin: false,
+			credentialsComplete: true,
+		});
+		expect(kept).toEqual([live, unenriched]);
+		expect(orphans).toEqual([]);
+	});
+
+	it('keeps every split-deploy binding live for an admin whose list has them all', () => {
+		const a = makeBinding({ id: 'acb_a', credentialId: 'cred_a', name: null, serves: [] });
+		const b = makeBinding({ id: 'acb_b', credentialId: 'cred_b', name: null, serves: [] });
+		const { live, orphans } = partitionBindings(
+			[a, b],
+			[
+				makeCredential({ credential_id: 'cred_a' }),
+				makeCredential({ credential_id: 'cred_b' }),
+			],
+			ADMIN_PROOF,
+		);
+		expect(live).toEqual([a, b]);
+		expect(orphans).toEqual([]);
 	});
 });

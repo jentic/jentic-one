@@ -14,6 +14,7 @@ import {
 import { worker } from '@/mocks/browser';
 import { setToken } from '@/shared/api';
 import { Toaster } from '@/shared/ui';
+import { AuthProvider } from '@/shared/auth';
 import { resetAgentsStore, seedCredentialBindings } from '@/modules/agents/mocks/handlers';
 import {
 	makeMockCredential,
@@ -35,15 +36,40 @@ function LocationProbe() {
 	return <div data-testid="location-search">{location.search}</div>;
 }
 
-function renderPage(route = '/') {
-	return renderWithProviders(
+/** Serve `GET /users/me` for the test token, so an `AuthProvider` resolves a
+ * viewer instead of dropping the token on a 401. */
+function seedViewer(permissions: string[], id = 'usr_viewer_1') {
+	worker.use(
+		http.get('/users/me', () =>
+			HttpResponse.json({
+				id,
+				email: 'viewer@local',
+				first_name: 'View',
+				last_name: 'Er',
+				active: true,
+				permissions,
+				must_change_password: false,
+				created_at: '2026-01-01T00:00:00Z',
+				updated_at: null,
+			}),
+		),
+	);
+}
+
+/**
+ * Render the page. Without `withAuth` there is no `AuthProvider`, so the viewer
+ * is unknown — the default for specs that don't care who is looking. With it,
+ * seed the viewer first ({@link seedViewer}).
+ */
+function renderPage(route = '/', { withAuth = false }: { withAuth?: boolean } = {}) {
+	const ui = (
 		<>
 			<AgentsPage />
 			<LocationProbe />
 			<Toaster />
-		</>,
-		{ route },
+		</>
 	);
+	return renderWithProviders(withAuth ? <AuthProvider>{ui}</AuthProvider> : ui, { route });
 }
 
 /** The strip pill (a real tab) for the given agent name. */
@@ -535,6 +561,21 @@ describe('AgentsPage — flat agents surface', () => {
 			return purges;
 		}
 
+		/** Every pathname the page requests while `run` is in flight. */
+		async function recordRequests(run: () => Promise<void>): Promise<string[]> {
+			const requested: string[] = [];
+			const onRequest = ({ request }: { request: Request }) => {
+				requested.push(new URL(request.url).pathname);
+			};
+			worker.events.on('request:start', onRequest);
+			try {
+				await run();
+			} finally {
+				worker.events.removeListener('request:start', onRequest);
+			}
+			return requested;
+		}
+
 		function seedOrphan(agentId: string) {
 			// The backend keeps the binding after the credential delete (#1426),
 			// enriched with no name and serving nothing.
@@ -543,74 +584,145 @@ describe('AgentsPage — flat agents surface', () => {
 			]);
 		}
 
-		it('is hidden: no tile, no remove verb, outside the credentials count', async () => {
-			recordPurges();
+		describe('seen by an org:admin (whose credentials list is the whole org)', () => {
+			beforeEach(() => seedViewer(['org:admin']));
+
+			it('is hidden: no tile, no remove verb, outside the credentials count', async () => {
+				recordPurges();
+				seedOrphan('agnt_active_1');
+				renderPage('/?agent=agnt_active_1', { withAuth: true });
+				await screen.findByText('Slack');
+
+				// Two live credentials; the dead link unlocks nothing and isn't one.
+				await waitFor(() =>
+					expect(stripFigure('credentials')).toHaveTextContent('2 credentials'),
+				);
+				expect(screen.getAllByTestId('api-tile')).toHaveLength(2);
+				expect(screen.queryByTestId('orphan-binding-tile')).not.toBeInTheDocument();
+				expect(screen.queryByText('Credential deleted')).not.toBeInTheDocument();
+				expect(screen.queryByRole('button', { name: /^Remove/ })).not.toBeInTheDocument();
+			});
+
+			it('never asks for the dead link’s rules (that read 404s)', async () => {
+				recordPurges();
+				seedOrphan('agnt_active_1');
+				const requested = await recordRequests(async () => {
+					renderPage('/?agent=agnt_active_1', { withAuth: true });
+					await screen.findByText('1 access rule');
+				});
+				expect(requested.some((p) => p.includes('/credentials/cred_slack_1/agents/'))).toBe(
+					true,
+				);
+				expect(requested.some((p) => p.includes('/credentials/cred_deleted_9/'))).toBe(
+					false,
+				);
+			});
+
+			it('leaves an agent whose only binding is an orphan on the empty state', async () => {
+				recordPurges();
+				seedOrphan('agnt_disabled_1');
+				renderPage('/?agent=agnt_disabled_1', { withAuth: true });
+
+				expect(
+					await screen.findByText('legacy-scraper can reach nothing yet'),
+				).toBeInTheDocument();
+				await waitFor(() =>
+					expect(stripFigure('credentials')).toHaveTextContent('0 credentials'),
+				);
+				expect(screen.queryByTestId('api-tile')).not.toBeInTheDocument();
+			});
+
+			it('purges it quietly, once per session — a failure is not retried on remount', async () => {
+				// A 403 (read-only viewer) leaves the row in place, so a remount still sees it.
+				const purges = recordPurges(403);
+				seedOrphan('agnt_active_1');
+				const first = renderPage('/?agent=agnt_active_1', { withAuth: true });
+				await waitFor(() => expect(purges).toEqual(['cred_deleted_9?purge=true']));
+				await screen.findByText('Slack');
+				first.unmount();
+
+				renderPage('/?agent=agnt_active_1', { withAuth: true });
+				await screen.findByText('Slack');
+				await waitFor(() =>
+					expect(stripFigure('credentials')).toHaveTextContent('2 credentials'),
+				);
+				expect(purges).toEqual(['cred_deleted_9?purge=true']);
+				// Silent either way: no toast, no error on the grid.
+				expect(document.querySelector('[data-sonner-toast]')).toBeNull();
+				expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+			});
+
+			it('does not read a split deploy’s unenriched bindings as deleted', async () => {
+				// A surface that can't reach the control DB returns EVERY binding with no
+				// name and nothing served. The credentials are still in the admin's list,
+				// so nothing is hidden and nothing is purged.
+				const purges = recordPurges();
+				seedCredentialBindings([
+					{ agent_id: 'agnt_disabled_1', credential_id: 'cred_slack_1' },
+					{ agent_id: 'agnt_disabled_1', credential_id: 'cred_github_1' },
+				]);
+				renderPage('/?agent=agnt_disabled_1', { withAuth: true });
+
+				// The empty state only shows once the credentials list has drained.
+				// Nothing is served, so there are no tiles, but both bindings are counted.
+				expect(
+					await screen.findByText('legacy-scraper can reach nothing yet'),
+				).toBeInTheDocument();
+				expect(stripFigure('credentials')).toHaveTextContent('2 credentials');
+				expect(purges).toEqual([]);
+			});
+		});
+
+		describe('seen by a non-admin (whose credentials list is only their own)', () => {
+			beforeEach(() => seedViewer(['agents:read', 'agents:write', 'credentials:read']));
+
+			it('is neither hidden nor purged — missing from their list is not proof', async () => {
+				const purges = recordPurges();
+				seedOrphan('agnt_active_1');
+				const requested = await recordRequests(async () => {
+					renderPage('/?agent=agnt_active_1', { withAuth: true });
+					await screen.findByText('Slack');
+					// Counted like any binding; it serves nothing, so it draws no tile.
+					await waitFor(() =>
+						expect(stripFigure('credentials')).toHaveTextContent('3 credentials'),
+					);
+				});
+				expect(screen.getAllByTestId('api-tile')).toHaveLength(2);
+				expect(purges).toEqual([]);
+				// A binding serving nothing has no tile to show rules on, so none are read.
+				expect(requested.some((p) => p.includes('/credentials/cred_deleted_9/'))).toBe(
+					false,
+				);
+			});
+
+			it('keeps a split deploy’s unenriched bindings, un-purged', async () => {
+				const purges = recordPurges();
+				seedCredentialBindings([
+					{ agent_id: 'agnt_disabled_1', credential_id: 'cred_slack_1' },
+					{ agent_id: 'agnt_disabled_1', credential_id: 'cred_github_1' },
+				]);
+				renderPage('/?agent=agnt_disabled_1', { withAuth: true });
+
+				// The empty state only shows once the credentials list has drained.
+				// Nothing is served, so there are no tiles, but both bindings are counted.
+				expect(
+					await screen.findByText('legacy-scraper can reach nothing yet'),
+				).toBeInTheDocument();
+				expect(stripFigure('credentials')).toHaveTextContent('2 credentials');
+				expect(purges).toEqual([]);
+			});
+		});
+
+		it('is neither hidden nor purged while the viewer is unknown', async () => {
+			// No AuthProvider: who is looking is unknown, so nothing proves an orphan.
+			const purges = recordPurges();
 			seedOrphan('agnt_active_1');
 			renderPage('/?agent=agnt_active_1');
 			await screen.findByText('Slack');
-
-			// Two live credentials; the dead link unlocks nothing and isn't one.
 			await waitFor(() =>
-				expect(stripFigure('credentials')).toHaveTextContent('2 credentials'),
+				expect(stripFigure('credentials')).toHaveTextContent('3 credentials'),
 			);
-			expect(screen.getAllByTestId('api-tile')).toHaveLength(2);
-			expect(screen.queryByTestId('orphan-binding-tile')).not.toBeInTheDocument();
-			expect(screen.queryByText('Credential deleted')).not.toBeInTheDocument();
-			expect(screen.queryByRole('button', { name: /^Remove/ })).not.toBeInTheDocument();
-		});
-
-		it('never asks for the dead link’s rules (that read 404s)', async () => {
-			recordPurges();
-			seedOrphan('agnt_active_1');
-			const requested: string[] = [];
-			const onRequest = ({ request }: { request: Request }) => {
-				requested.push(new URL(request.url).pathname);
-			};
-			worker.events.on('request:start', onRequest);
-			try {
-				renderPage('/?agent=agnt_active_1');
-				await screen.findByText('1 access rule');
-			} finally {
-				worker.events.removeListener('request:start', onRequest);
-			}
-			expect(requested.some((p) => p.includes('/credentials/cred_slack_1/agents/'))).toBe(
-				true,
-			);
-			expect(requested.some((p) => p.includes('/credentials/cred_deleted_9/'))).toBe(false);
-		});
-
-		it('leaves an agent whose only binding is an orphan on the empty state', async () => {
-			recordPurges();
-			seedOrphan('agnt_disabled_1');
-			renderPage('/?agent=agnt_disabled_1');
-
-			expect(
-				await screen.findByText('legacy-scraper can reach nothing yet'),
-			).toBeInTheDocument();
-			await waitFor(() =>
-				expect(stripFigure('credentials')).toHaveTextContent('0 credentials'),
-			);
-			expect(screen.queryByTestId('api-tile')).not.toBeInTheDocument();
-		});
-
-		it('purges it quietly, once per session — a failure is not retried on remount', async () => {
-			// A 403 (read-only viewer) leaves the row in place, so a remount still sees it.
-			const purges = recordPurges(403);
-			seedOrphan('agnt_active_1');
-			const first = renderPage('/?agent=agnt_active_1');
-			await waitFor(() => expect(purges).toEqual(['cred_deleted_9?purge=true']));
-			await screen.findByText('Slack');
-			first.unmount();
-
-			renderPage('/?agent=agnt_active_1');
-			await screen.findByText('Slack');
-			await waitFor(() =>
-				expect(stripFigure('credentials')).toHaveTextContent('2 credentials'),
-			);
-			expect(purges).toEqual(['cred_deleted_9?purge=true']);
-			// Silent either way: no toast, no error on the grid.
-			expect(document.querySelector('[data-sonner-toast]')).toBeNull();
-			expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+			expect(purges).toEqual([]);
 		});
 	});
 
