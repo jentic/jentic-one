@@ -414,6 +414,10 @@ class ConnectSessionService:
         # acting on behalf of a user" case. ``None`` for user-initiated
         # sessions — the initiator itself is the owner.
         initiator_parent_actor_id: str | None = None,
+        # Optional user-facing label for the resulting credential — lets a
+        # user distinguish multiple credentials minted from the same vendor
+        # (or shared registration). Falls back to the vendor's display name.
+        credential_name: str | None = None,
     ) -> CreatedSession:
         """Create a pending session + upfront credential row.
 
@@ -461,12 +465,10 @@ class ConnectSessionService:
             credential = await CredentialRepository.create(
                 session,
                 type=handler.stored_type.value,
-                # Credential name is display-only + user-editable; scoping
-                # by ``agent_id`` here would collapse to ``(None)`` in the
-                # UI when ``agent_id`` is omitted and be redundant even
-                # when present (the agent-credential binding row is the
-                # source of truth for "which agent uses this").
-                name=entry.display_name,
+                # Credential name is display-only + user-editable. Prefer
+                # the caller-supplied label; fall back to the vendor's
+                # display name when the caller didn't pick one.
+                name=(credential_name.strip() if credential_name else None) or entry.display_name,
                 api_vendor=api_scope.vendor,
                 api_name=api_scope.name,
                 catalog_api_id=entry.vendor,

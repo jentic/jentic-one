@@ -110,7 +110,9 @@ describe('VendorConnectFlow — self mode', () => {
 		);
 		// Vendor header comes from the ``vendor`` prop, so it's up
 		// immediately; scope data hydrates from the capabilities query.
-		expect(await screen.findByText('GitHub')).toBeInTheDocument();
+		// Use ``findAllByText`` because the credential-name helper text
+		// also references the display name.
+		expect((await screen.findAllByText('GitHub')).length).toBeGreaterThan(0);
 		expect(await screen.findByText('repo')).toBeInTheDocument();
 		expect(await screen.findByText('read:user')).toBeInTheDocument();
 		// Agent picker IS rendered — theme-5 landed on main and
@@ -223,6 +225,62 @@ describe('VendorConnectFlow — self mode', () => {
 		// this is the string the human types into the vendor page, so a
 		// regression here breaks the whole device-code UX.
 		expect(await screen.findByText('ABCD-1234')).toBeInTheDocument();
+	});
+
+	it('threads a user-typed credential name through the :connect payload', async () => {
+		stubCapabilities();
+		let capturedBody: unknown = null;
+		worker.use(
+			http.post('/integrations:connect', async ({ request }) => {
+				capturedBody = await request.json();
+				return HttpResponse.json({
+					session_id: 'sess_named',
+					approval_url: '/x',
+					poll_token: 'tok_named',
+					resolved_flow: 'device_authorization',
+				});
+			}),
+		);
+		renderWithProviders(
+			<VendorConnectFlow mode="self" vendor={vendor} onBack={vi.fn()} onDone={vi.fn()} />,
+		);
+		const user = userEvent.setup();
+		const nameInput = await screen.findByLabelText(/credential name/i);
+		await user.type(nameInput, 'GitHub (personal)');
+		await waitFor(() =>
+			expect(screen.getByRole('button', { name: /^continue$/i })).not.toBeDisabled(),
+		);
+		await user.click(screen.getByRole('button', { name: /^continue$/i }));
+		await waitFor(() => expect(capturedBody).not.toBeNull());
+		expect(capturedBody).toMatchObject({ vendor: 'github', name: 'GitHub (personal)' });
+	});
+
+	it('omits `name` from the :connect payload when the field is left blank', async () => {
+		stubCapabilities();
+		let capturedBody: Record<string, unknown> | null = null;
+		worker.use(
+			http.post('/integrations:connect', async ({ request }) => {
+				capturedBody = (await request.json()) as Record<string, unknown>;
+				return HttpResponse.json({
+					session_id: 'sess_blank',
+					approval_url: '/x',
+					poll_token: 'tok_blank',
+					resolved_flow: 'device_authorization',
+				});
+			}),
+		);
+		renderWithProviders(
+			<VendorConnectFlow mode="self" vendor={vendor} onBack={vi.fn()} onDone={vi.fn()} />,
+		);
+		const user = userEvent.setup();
+		await waitFor(() =>
+			expect(screen.getByRole('button', { name: /^continue$/i })).not.toBeDisabled(),
+		);
+		await user.click(screen.getByRole('button', { name: /^continue$/i }));
+		await waitFor(() => expect(capturedBody).not.toBeNull());
+		// Server-side default (vendor display name) kicks in when omitted.
+		expect(capturedBody).not.toHaveProperty('name');
+		expect(capturedBody).toMatchObject({ vendor: 'github' });
 	});
 });
 
@@ -892,14 +950,16 @@ describe('VendorConnectFlow — connect-wizard regressions', () => {
 		expect(connectCalls).toBe(1);
 		await user.click(screen.getByRole('button', { name: /try again/i }));
 
-		// Back on the configure step, and a SECOND :connect fired — the old
-		// behaviour left Continue permanently disabled because the mount
-		// effect never re-ran and session stayed null.
+		// Back on the configure step, Continue re-enabled. Under the current
+		// design ``:connect`` fires from Continue-click (not on mount), so
+		// a fresh click on Continue after Try Again produces a SECOND
+		// ``:connect`` call — asserted below.
 		expect(await screen.findByText('read:user')).toBeInTheDocument();
-		await waitFor(() => expect(connectCalls).toBe(2));
 		await waitFor(() =>
 			expect(screen.getByRole('button', { name: /^continue$/i })).not.toBeDisabled(),
 		);
+		await user.click(screen.getByRole('button', { name: /^continue$/i }));
+		await waitFor(() => expect(connectCalls).toBe(2));
 	});
 
 	it('the no-agents empty state links to the Agents page and does not block Continue (M2)', async () => {

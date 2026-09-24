@@ -18,6 +18,7 @@ import {
 	Checkbox,
 	CopyButton,
 	ErrorAlert,
+	Input,
 	Label,
 	Skeleton,
 	VendorIcon,
@@ -183,6 +184,10 @@ function VendorSelfConnectFlow({
 	const [rules, setRules] = useState<PermissionRule[] | null>(null);
 	const [session, setSession] = useState<{ id: string; pollToken: string } | null>(null);
 	const [challenge, setChallenge] = useState<ConfirmResponse | null>(null);
+	// User-editable credential label. Blank means "let the server default to
+	// the vendor display name" — sent as an omitted ``name`` field on the
+	// ``:connect`` payload so the backend's fallback branch kicks in.
+	const [credentialName, setCredentialName] = useState<string>('');
 	// When ``preselectedAgentId`` is supplied by the caller (entry from
 	// an agent's detail page), the picker starts locked to that id.
 	// Otherwise it starts empty and the user must pick before Continue.
@@ -208,38 +213,34 @@ function VendorSelfConnectFlow({
 	// hit the raw client without depending on the mutation lifecycle.
 	const sessionRef = useRef<{ id: string; pollToken: string } | null>(null);
 	const phaseRef = useRef<Phase>('configure');
-	// StrictMode dev-time mounts effects twice. Without this guard the
-	// ``:connect`` fires twice and we get two orphaned sessions per open.
-	const connectFiredRef = useRef(false);
 
-	// Fire ``:connect`` — called on mount (below) so the session/
-	// credential/import all exist by the time the user reaches the rules
-	// page, and again from the terminal step's "Try again" so a retry
-	// opens a FRESH session (the failed one was cascade-deleted server-
-	// side and can't be reused).
-	const startConnect = async (): Promise<void> => {
+	// Fire ``:connect`` — invoked from Continue-click on the configure
+	// step (the user's credential-name pick is captured first) and from
+	// the terminal step's "Try again" so a retry opens a FRESH session
+	// (the failed one was cascade-deleted server-side and can't be
+	// reused). Idempotent: returns the existing session id/token when
+	// one is already in ``sessionRef``.
+	const startConnect = async (): Promise<{ id: string; pollToken: string } | null> => {
+		if (sessionRef.current) return sessionRef.current;
 		try {
 			startMutation.reset();
-			const result = await startMutation.mutateAsync({ vendor: vendor.key });
-			sessionRef.current = { id: result.session_id, pollToken: result.poll_token };
-			setSession({ id: result.session_id, pollToken: result.poll_token });
+			const trimmedName = credentialName.trim();
+			const result = await startMutation.mutateAsync({
+				vendor: vendor.key,
+				// Omit ``name`` entirely when blank so the server's default
+				// (vendor display name) kicks in instead of storing an
+				// empty label.
+				...(trimmedName ? { name: trimmedName } : {}),
+			});
+			const next = { id: result.session_id, pollToken: result.poll_token };
+			sessionRef.current = next;
+			setSession(next);
+			return next;
 		} catch {
 			// surfaced via ErrorAlert on the configure page.
+			return null;
 		}
 	};
-
-	// Fire ``:connect`` on mount so the session/credential/import all
-	// exist by the time the user reaches the rules page — the same
-	// shape the approve flow lands in when the human hits the URL.
-	useEffect(() => {
-		if (connectFiredRef.current) return;
-		connectFiredRef.current = true;
-		void startConnect();
-		// startMutation is stable across renders (react-query hook); vendor.key
-		// only changes when the parent remounts the flow, at which point the
-		// ref resets naturally.
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [vendor.key]);
 
 	const scopes = useMemo<VendorScopeCatalog[]>(
 		() => capabilities.data?.scopes ?? [],
@@ -369,13 +370,21 @@ function VendorSelfConnectFlow({
 	// leaving it empty falls back to allow-all-GETs at ``:confirm`` time.
 	// We do not pre-populate rules from scope classifications — the user
 	// sees exactly what they authored, nothing more.
-	const goToRules = (): void => {
+	const goToRules = async (): Promise<void> => {
+		// Fire ``:connect`` now (deferred from mount so the user's
+		// credential-name pick can be captured first). Idempotent — a
+		// re-click while the mutation is in flight resolves to the same
+		// session. Bails out on failure; the error surfaces via
+		// ``ErrorAlert`` on the configure page.
+		const s = await startConnect();
+		if (!s) return;
 		setRules((prev) => prev ?? []);
 		setPhase('rules');
 	};
 
-	// Continue on the rules page — session already exists (``:connect``
-	// fired at mount). Just POST ``:confirm`` with the human-approved
+	// Continue on the rules page — session exists by the time we reach
+	// this handler (``goToRules`` fires ``:connect`` first). Just POST
+	// ``:confirm`` with the human-approved
 	// scopes + rules + selected agent, and transition to ``awaiting``.
 	// ``agent_id`` lands at ``:confirm`` (not ``:connect``) so the
 	// session-on-vendor-click semantics are preserved for the self flow
@@ -425,16 +434,15 @@ function VendorSelfConnectFlow({
 				onRetry={(): void => {
 					// A retry needs a FRESH session — the failed one was
 					// cascade-deleted server-side. Reset the phase refs so
-					// the unmount cleanup applies to the new session, then
-					// re-fire ``:connect`` directly (the mount effect is
-					// one-shot by design and won't run again).
+					// the unmount cleanup applies to the new session; the
+					// user then hits Continue on the configure page which
+					// fires a fresh ``:connect``.
 					phaseRef.current = 'configure';
 					sessionRef.current = null;
 					setPhase('configure');
 					setSession(null);
 					setChallenge(null);
 					confirmMutation.reset();
-					void startConnect();
 				}}
 			/>
 		);
@@ -478,6 +486,27 @@ function VendorSelfConnectFlow({
 				subtitle={`You'll approve this connection on ${display.displayName} in a moment.`}
 			/>
 
+			<div className="space-y-1.5">
+				<Label htmlFor="vendor-connect-credential-name">Credential name</Label>
+				<Input
+					id="vendor-connect-credential-name"
+					value={credentialName}
+					onChange={(e): void => setCredentialName(e.target.value)}
+					placeholder={`${display.displayName} (personal)`}
+					// Disabled once the ``:connect`` session exists — the
+					// credential's name landed at ``:connect`` time and the
+					// backend doesn't accept name updates on a pending
+					// session. If the user needs to rename after connecting,
+					// they can do it from the credentials list.
+					disabled={session != null || startMutation.isPending}
+				/>
+				<p className="text-muted-foreground text-xs">
+					Your name for this credential. You can create multiple credentials from the same
+					vendor with different names. Leave blank to default to{' '}
+					<b>{display.displayName}</b>.
+				</p>
+			</div>
+
 			<AgentPickerField
 				agents={agents.data?.data ?? []}
 				loading={agents.isLoading}
@@ -505,17 +534,19 @@ function VendorSelfConnectFlow({
 				<Button
 					type="button"
 					variant="primary"
-					onClick={goToRules}
-					// ``:connect`` fires at mount — wait for the session id
-					// before letting the user advance so the rules page has
-					// something to attach to when it renders. Scope-less
-					// vendors (empty catalog) proceed with the vendor's
-					// defaults, so the empty-selection gate only applies
-					// when there are scopes to choose from. An agent is NOT
-					// required — ``agent_id`` is optional at ``:confirm``
-					// (connect unbound, bind later via the credentials API).
-					disabled={(scopes.length > 0 && selectedScopes.size === 0) || !session}
-					loading={startMutation.isPending && !session}
+					onClick={(): void => void goToRules()}
+					// ``:connect`` fires from this button (not on mount) so
+					// the user's credential-name pick is captured first.
+					// Scope-less vendors (empty catalog) proceed with the
+					// vendor's defaults, so the empty-selection gate only
+					// applies when there are scopes to choose from. An
+					// agent is NOT required — ``agent_id`` is optional at
+					// ``:confirm`` (connect unbound, bind later via the
+					// credentials API).
+					disabled={
+						(scopes.length > 0 && selectedScopes.size === 0) || startMutation.isPending
+					}
+					loading={startMutation.isPending}
 				>
 					Continue
 				</Button>

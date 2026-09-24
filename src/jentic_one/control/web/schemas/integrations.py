@@ -50,6 +50,11 @@ class VendorListResponse(BaseModel):
 
 class IntegrationsConnectRequest(BaseModel):
     vendor: str = Field(description="Vendor registry key (e.g. 'github')")
+    # Optional user-facing label for the resulting credential. Defaults to
+    # the vendor's display name when omitted. Lets a user distinguish
+    # multiple credentials minted from the same vendor / shared registration
+    # (e.g. ``"Google (personal)"`` vs ``"Google (work)"``).
+    name: str | None = Field(default=None, max_length=255)
     # Required for USER/SA callers, ignored for AGENT callers.
     agent_id: str | None = Field(default=None)
     # Cap mirrors the sister ``/credentials`` endpoints — a scope list
