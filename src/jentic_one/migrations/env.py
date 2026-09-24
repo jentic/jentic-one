@@ -8,11 +8,12 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 from typing import Any
 
 from alembic import context
 from alembic.runtime.environment import NameFilterParentNames, NameFilterType
-from sqlalchemy import MetaData, pool
+from sqlalchemy import MetaData, pool, text
 from sqlalchemy.engine import URL, Connection
 from sqlalchemy.ext.asyncio import create_async_engine
 
@@ -79,14 +80,27 @@ def get_schema() -> str:
 
     Honours an explicit ``schema_name`` in the active Alembic section
     (used by tests) before falling back to the application config.
+
+    The returned name is interpolated into a quoted ``CREATE SCHEMA``
+    identifier below, so it is validated against a conservative identifier
+    pattern at this sink (SEC-2, defense-in-depth): ``DatabaseConfig`` already
+    enforces the same pattern, but the Alembic-ini override path bypasses
+    pydantic entirely.
     """
     explicit = config.get_section_option(config.config_ini_section, "schema_name")
     if explicit:
-        return explicit
-    app_config = load_config()
-    db_name = _resolve_db_name()
-    db_config: DatabaseConfig = getattr(app_config.databases, db_name)
-    return db_config.schema_name
+        schema = explicit
+    else:
+        app_config = load_config()
+        db_name = _resolve_db_name()
+        db_config: DatabaseConfig = getattr(app_config.databases, db_name)
+        schema = db_config.schema_name
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", schema):
+        raise ValueError(
+            f"invalid schema_name {schema!r}: must match [A-Za-z_][A-Za-z0-9_]* "
+            "(it is embedded in a CREATE SCHEMA identifier)"
+        )
+    return schema
 
 
 def get_dialect_name() -> str:
@@ -195,6 +209,18 @@ def do_run_migrations(connection: Connection) -> None:
         # etc.) only commit their own work, never a sibling's.
         transaction_per_migration=True,
     )
+    # Read-only status probe (``migrations.run --check``): the caller stashed a
+    # dict to be filled with the revisions this database is actually stamped at.
+    #
+    # Safety here comes from the *caller* invoking ``alembic current`` rather
+    # than ``upgrade``: that runs this env under ``dont_mutate=True`` with a
+    # no-op migration function, so nothing can be applied. Returning early is a
+    # belt-and-braces guard that also skips opening a pointless transaction — it
+    # is not the thing that makes the probe safe.
+    probe = config.attributes.get("status_probe")
+    if probe is not None:
+        probe["current"] = sorted(context.get_context().get_current_heads())
+        return
     with context.begin_transaction():
         context.run_migrations()
 
@@ -202,7 +228,8 @@ def do_run_migrations(connection: Connection) -> None:
 async def run_migrations_online() -> None:
     """Run migrations in 'online' mode."""
     url = get_url()
-    if is_postgres():
+    postgres = is_postgres()
+    if postgres:
         schema = get_schema()
         connectable = create_async_engine(
             url,
@@ -213,6 +240,35 @@ async def run_migrations_online() -> None:
         connectable = create_async_engine(url, poolclass=pool.NullPool)
 
     async with connectable.connect() as connection:
+        # Alembic does not create schemas, and relying on out-of-band bootstrap
+        # (a docker-entrypoint-initdb.d script) proved fragile: postgres runs
+        # init scripts once, on an empty data dir, so a mid-init failure leaves
+        # a volume that silently never gets its schemas (#992). Creating the
+        # active target's schema idempotently here makes every migrate
+        # self-sufficient and lets a half-initialized volume heal on the next
+        # run.
+        #
+        # Gated on an existence probe rather than relying on IF NOT EXISTS:
+        # postgres checks the CREATE privilege before the IF NOT EXISTS
+        # short-circuit, so an unconditional statement breaks deployments whose
+        # migration user owns the (pre-provisioned) schema but not the
+        # database. Skipped for the read-only status probe (``migrations.run
+        # --check``), which must not mutate — an uninitialized database
+        # reports ``uninitialized`` without the schema existing.
+        if postgres and config.attributes.get("status_probe") is None:
+            schema = get_schema()
+            exists = await connection.scalar(
+                text("SELECT 1 FROM pg_namespace WHERE nspname = :schema"),
+                {"schema": schema},
+            )
+            if not exists:
+                await connection.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{schema}"'))
+            # The probe SELECT autobegins a transaction on this connection;
+            # always end it (both branches). Left open, Alembic treats the
+            # connection as externally-transacted and migrations that use
+            # ``op.get_context().autocommit_block()`` die on
+            # ``assert self._transaction is not None``.
+            await connection.commit()
         await connection.run_sync(do_run_migrations)
 
     await connectable.dispose()

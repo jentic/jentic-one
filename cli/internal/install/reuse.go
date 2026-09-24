@@ -35,6 +35,18 @@ type reuseConfigView struct {
 	Admin       reuseAdminView       `yaml:"admin"`
 	Credentials reuseCredentialsView `yaml:"credentials"`
 	Telemetry   reuseTelemetryView   `yaml:"telemetry"`
+	Databases   reuseDatabasesView   `yaml:"databases"`
+}
+
+// reuseDatabasesView reads just the registry entry's password: render.go
+// writes the same credential to all three surface entries, and POSTGRES_PASSWORD
+// only applies at initdb — an existing db volume keeps its original password
+// forever, so a reinstall must carry it over or the freshly generated one
+// (secrets.go) locks the stack out of its own database (#992).
+type reuseDatabasesView struct {
+	Registry struct {
+		Password string `yaml:"password"`
+	} `yaml:"registry"`
 }
 
 type reuseAuthView struct {
@@ -93,12 +105,17 @@ func ReuseSecrets(d *Draft, path string) (bool, error) {
 
 	// Encryption keyset: preserve the whole block verbatim. A hand-rotated
 	// multi-key keyset (active_id: v2 + v1/v2 entries) must survive; only
-	// carry it over when it looks real (has at least one non-empty entry) so
-	// an empty/malformed prior config doesn't wipe the fresh default.
+	// carry it over when it looks real (has at least one entry with a
+	// material source) so an empty/malformed prior config doesn't wipe the
+	// fresh default. An entry is real when ANY of the three sources is set —
+	// a material_file/material_env keyset carries no inline material, and
+	// dropping it here would silently re-key the install (every stored
+	// credential becomes undecryptable while the operator is told secrets
+	// were reused).
 	if len(view.Credentials.Encryption.Entries) > 0 {
 		nonEmpty := false
 		for _, e := range view.Credentials.Encryption.Entries {
-			if e.ID != "" && e.Material != "" {
+			if e.ID != "" && (e.Material != "" || e.MaterialEnv != "" || e.MaterialFile != "") {
 				nonEmpty = true
 				break
 			}
@@ -120,6 +137,16 @@ func ReuseSecrets(d *Draft, path string) (bool, error) {
 	}
 	if s := view.Credentials.Connect.StateSecret; s != "" {
 		d.ConnectStateSecret = s
+		reused = true
+	}
+
+	// Managed-Postgres password: the db volume was initialized with the prior
+	// config's password and POSTGRES_PASSWORD is initdb-only, so a reinstall
+	// over live data must keep it (see reuseDatabasesView). FillSecrets only
+	// fills blank fields, so a value here wins over fresh generation; the
+	// wizard can still overwrite it deliberately.
+	if s := view.Databases.Registry.Password; s != "" {
+		d.PGPassword = s
 		reused = true
 	}
 

@@ -7,8 +7,11 @@ import { SetupPage } from '@/shared/auth/SetupPage';
 import { ChangePasswordPage } from '@/shared/auth/ChangePasswordPage';
 import { RedeemInvitePage } from '@/shared/auth/RedeemInvitePage';
 import { OAuthPopupReturn } from '@/shared/auth/OAuthPopupReturn';
+import { SsoCallbackPage } from '@/shared/auth/SsoCallbackPage';
 import { Layout } from '@/shared/app/Layout';
 import { moduleRoutes, ROUTES } from '@/shared/app/routes';
+// Deprecation-window alias (theme-5 5d): /app/toolkits* → Agents. DELETE IN 6b.
+import { toolkitsDeprecationRoutes } from '@/shared/app/toolkitsDeprecation';
 import { PlaceholderPage } from '@/shared/app/placeholders';
 import { sortedNavItems, registerExtraNavItems, type NavItem } from '@/shared/app/nav';
 // [ui-dashboard] Dashboard owns the /app index — replaces DashboardPlaceholder.
@@ -106,6 +109,11 @@ function buildRoutes(extraRoutes: RouteObject[] = []): RouteObject[] {
 		// self-closes. Outside the AuthGuard (the popup has no guaranteed
 		// session). Registered before the '*' catch-all below.
 		{ path: '/oauth/connected', element: <OAuthPopupReturn /> },
+		// Public SSO callback landing. The backend redirects the browser here
+		// (→ /app/auth/callback?code=…) after the external-IdP round-trip; the
+		// page exchanges the code for a session and enters the app. Outside the
+		// AuthGuard (no session yet). Registered before the '*' catch-all.
+		{ path: ROUTES.authCallback, element: <SsoCallbackPage /> },
 		// Public API reference — API docs are public-by-norm; lives outside the
 		// AuthGuard/Layout. Matched before the authenticated shell so it wins for
 		// `/app/docs` whether or not a session exists.
@@ -127,6 +135,10 @@ function buildRoutes(extraRoutes: RouteObject[] = []): RouteObject[] {
 						...moduleRoutes,
 						...extraRoutes,
 						...placeholderRoutes,
+						// Deprecation-window alias for retired /toolkits deep
+						// links (theme-5 5d) — last so any real route wins.
+						// DELETE IN 6b together with toolkitsDeprecation.tsx.
+						...toolkitsDeprecationRoutes,
 					],
 				},
 			],

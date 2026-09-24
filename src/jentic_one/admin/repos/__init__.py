@@ -3,6 +3,7 @@
 from jentic_one.admin.repos.access_token_repo import AccessTokenRepository
 from jentic_one.admin.repos.actor_directory_repo import ActorDirectoryRepository
 from jentic_one.admin.repos.actor_scope_grant_repo import ActorScopeGrantRepository
+from jentic_one.admin.repos.agent_credential_binding_repo import AgentCredentialBindingRepository
 from jentic_one.admin.repos.agent_credential_repo import AgentCredentialRepository
 from jentic_one.admin.repos.agent_repo import AgentRepository
 from jentic_one.admin.repos.agent_toolkit_binding_repo import AgentToolkitBindingRepository
@@ -15,6 +16,8 @@ from jentic_one.admin.repos.invite_token_repo import InviteTokenRepository
 from jentic_one.admin.repos.job_repo import JobRepository
 from jentic_one.admin.repos.job_result_repo import JobResultRepository
 from jentic_one.admin.repos.monitoring_repo import MonitoringRepository
+from jentic_one.admin.repos.oauth_client_grant_repo import OAuthClientGrantRepository
+from jentic_one.admin.repos.oauth_client_repo import OAuthClientRepository
 from jentic_one.admin.repos.provider_config_repo import ProviderConfigRepository
 from jentic_one.admin.repos.refresh_token_repo import RefreshTokenRepository
 from jentic_one.admin.repos.service_account_credential_repo import (
@@ -29,6 +32,7 @@ __all__ = [
     "AccessTokenRepository",
     "ActorDirectoryRepository",
     "ActorScopeGrantRepository",
+    "AgentCredentialBindingRepository",
     "AgentCredentialRepository",
     "AgentRepository",
     "AgentToolkitBindingRepository",
@@ -41,6 +45,8 @@ __all__ = [
     "JobRepository",
     "JobResultRepository",
     "MonitoringRepository",
+    "OAuthClientGrantRepository",
+    "OAuthClientRepository",
     "ProviderConfigRepository",
     "RefreshTokenRepository",
     "ServiceAccountCredentialRepository",

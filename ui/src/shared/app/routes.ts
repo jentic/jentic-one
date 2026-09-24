@@ -20,6 +20,10 @@ import type { RouteObject } from 'react-router';
 export const ROUTES = {
 	root: '/',
 	login: '/login',
+	// SSO authorization-code callback landing (outside the Layout/AuthGuard):
+	// the browser returns here from the platform authorize flow with a one-time
+	// code, which the page exchanges for a session (→ /app/auth/callback).
+	authCallback: '/auth/callback',
 	// First-run, no-credential setup. Lives at the root (outside /app and the
 	// authenticated Layout): reachable before any account exists, and self-closes
 	// once the first admin is created (see SetupPage / setup_required health gate).
@@ -36,7 +40,6 @@ export const ROUTES = {
 	// append here.
 	discover: '/discover',
 	workspace: '/workspace',
-	toolkits: '/toolkits',
 	credentials: '/credentials',
 	agents: '/agents',
 	monitor: '/monitor',
@@ -52,27 +55,24 @@ export const ROUTES = {
  */
 export const ROUTE_PATHS = {
 	workspaceApi: (apiPath: string) => `${ROUTES.workspace}/${apiPath}`,
-	toolkit: (toolkitId: string) => `${ROUTES.toolkits}/${encodeURIComponent(toolkitId)}`,
 	agent: (agentId: string) => `${ROUTES.agents}/${encodeURIComponent(agentId)}`,
 	serviceAccount: (serviceAccountId: string) =>
 		`${ROUTES.agents}/service-accounts/${encodeURIComponent(serviceAccountId)}`,
 	/**
 	 * Monitor's Executions lens, optionally pre-filtered. The `tab` /
-	 * `actor_id` / `actor_type` / `toolkit_id` names are Monitor's URL
-	 * vocabulary (read by `modules/monitor/lib/useMonitorFilters`); the
-	 * builder lives here because cross-module deep-links (agents / toolkits
-	 * consoles → Monitor) must agree on it, and modules can't import from
-	 * each other. Monitor's own richer builder is `modules/monitor/lib/links`.
+	 * `actor_id` / `actor_type` names are Monitor's URL vocabulary (read by
+	 * `modules/monitor/lib/useMonitorFilters`); the builder lives here because
+	 * cross-module deep-links (agents console → Monitor) must agree on it, and
+	 * modules can't import from each other. Monitor's own richer builder is
+	 * `modules/monitor/lib/links`.
 	 */
 	monitorExecutions: (filter?: {
 		actorId?: string;
 		actorType?: 'agent' | 'service_account' | 'user';
-		toolkitId?: string;
 	}) => {
 		const q = new URLSearchParams({ tab: 'executions' });
 		if (filter?.actorId) q.set('actor_id', filter.actorId);
 		if (filter?.actorType) q.set('actor_type', filter.actorType);
-		if (filter?.toolkitId) q.set('toolkit_id', filter.toolkitId);
 		return `${ROUTES.monitor}?${q.toString()}`;
 	},
 } as const;
@@ -91,20 +91,20 @@ export const ROUTE_PATHS = {
  */
 // <-- feature route imports go here (one import line per module) -->
 import { dashboardRoutes } from '@/modules/dashboard/routes';
-import { toolkitRoutes } from '@/modules/toolkits/routes';
 import { agentsRoutes } from '@/modules/agents/routes';
 import { discoverRoutes } from '@/modules/discover/routes';
 import { workspaceRoutes } from '@/modules/workspace/routes';
 import { credentialsRoutes } from '@/modules/credentials/routes';
 import { monitorRoutes } from '@/modules/monitor/routes';
+import { settingsRoutes } from '@/modules/settings/routes';
 
 export const moduleRoutes: RouteObject[] = [
 	// <-- feature route spreads go here (one `...xRoutes,` line per module) -->
 	...dashboardRoutes,
-	...toolkitRoutes,
 	...agentsRoutes,
 	...discoverRoutes,
 	...workspaceRoutes,
 	...credentialsRoutes,
 	...monitorRoutes,
+	...settingsRoutes,
 ];

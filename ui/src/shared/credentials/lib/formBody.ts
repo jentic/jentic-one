@@ -24,6 +24,7 @@ function apiRef(state: CredentialFormState): APIReferenceRequest {
 		vendor: state.apiVendor.trim(),
 		name: state.apiName.trim() || undefined,
 		version: state.apiVersion.trim() || undefined,
+		catalog_api_id: state.catalogApiId.trim() || undefined,
 	};
 }
 
@@ -61,8 +62,8 @@ export function isValidHttpUrl(raw: string): boolean {
 /**
  * Build the optional `runtime_config` from collected server-variable values.
  *
- * Server variables now have a dedicated `server_variables` field on the
- * credential contract and are no longer transmitted here. This function is
+ * Server variables travel on the credential contract's dedicated
+ * `server_variables` field, never in `runtime_config`. This function is
  * retained for any future header/query-param overrides that may use
  * `RuntimeConfig`.
  */
@@ -123,6 +124,16 @@ export function buildCreateBody(
 		case CredentialType.NO_AUTH:
 			// No secret to carry — the API is called without authentication.
 			return { ...base, type };
+		case CredentialType.SIGV4:
+			return {
+				...base,
+				type,
+				access_key_id: state.accessKeyId.trim(),
+				secret_access_key: state.secretAccessKey,
+				session_token: state.sessionToken.trim() || undefined,
+				aws_region: state.awsRegion.trim(),
+				aws_service: state.awsService.trim(),
+			};
 	}
 }
 
@@ -175,6 +186,30 @@ export function buildUpdateBody(
 		case CredentialType.NO_AUTH:
 			// Nothing to rotate — only name/server-variable edits apply.
 			return { type, ...namePatch, ...svPatch };
+		case CredentialType.SIGV4: {
+			// Key rotation must send both halves together; the access key id
+			// alone is meaningless without its secret (backend rejects it, and
+			// `validateUpdate` surfaces that rule before we get here).
+			const newAccessKey = state.accessKeyId.trim();
+			const newSecret = secret(state.secretAccessKey);
+			const rotatingKeypair = Boolean(newAccessKey) && Boolean(newSecret);
+			// A fresh session-token value takes precedence over the clear flag.
+			const newSession = secret(state.sessionToken);
+			return {
+				type,
+				...namePatch,
+				...svPatch,
+				...(rotatingKeypair
+					? { access_key_id: newAccessKey, secret_access_key: newSecret }
+					: {}),
+				session_token: newSession,
+				// Drop an expired STS token without rotating the keypair. Only sent
+				// when set (and never alongside a replacement token value).
+				...(state.clearSessionToken && !newSession ? { clear_session_token: true } : {}),
+				aws_region: state.awsRegion.trim() || undefined,
+				aws_service: state.awsService.trim() || undefined,
+			};
+		}
 	}
 }
 
@@ -226,6 +261,37 @@ export function validateCreate(
 				}
 			}
 			break;
+		case CredentialType.SIGV4:
+			if (!state.accessKeyId.trim()) errors.accessKeyId = 'Access key ID is required.';
+			if (!state.secretAccessKey) errors.secretAccessKey = 'Secret access key is required.';
+			if (!state.awsRegion.trim()) errors.awsRegion = 'Region is required.';
+			if (!state.awsService.trim()) errors.awsService = 'Service is required.';
+			break;
+	}
+	return errors;
+}
+
+/**
+ * Validate an edit before submit. Unlike create, every field is optional (a
+ * blank secret means "keep current"), so this only enforces cross-field rules
+ * that would otherwise fail opaquely at the backend. Today that is the sigv4
+ * keypair-atomicity rule: an access key id and its secret rotate together, so a
+ * half-filled pair is surfaced as an inline error rather than silently dropped
+ * (the backend rejects it with a 400 either way).
+ */
+export function validateUpdate(
+	type: CredentialType,
+	state: CredentialFormState,
+): Partial<Record<keyof CredentialFormState, string>> {
+	const errors: Partial<Record<keyof CredentialFormState, string>> = {};
+	if (type === CredentialType.SIGV4) {
+		const hasAccessKey = Boolean(state.accessKeyId.trim());
+		const hasSecret = Boolean(state.secretAccessKey.trim());
+		if (hasAccessKey !== hasSecret) {
+			const message = 'Rotate the access key ID and secret together, or leave both blank.';
+			if (hasAccessKey) errors.secretAccessKey = message;
+			else errors.accessKeyId = message;
+		}
 	}
 	return errors;
 }
@@ -249,6 +315,7 @@ export function seedFormFromSelectedApi(
 		apiVendor: api.vendor,
 		apiName: api.name,
 		apiVersion: api.version,
+		catalogApiId: api.apiId ?? '',
 		name: nameDirty ? state.name : api.label,
 	};
 }

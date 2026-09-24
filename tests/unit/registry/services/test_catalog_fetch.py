@@ -20,6 +20,7 @@ from jentic_one.registry.services.catalog.fetch import (
     fetch_json,
 )
 from jentic_one.shared.config import IngestConfig
+from jentic_one.shared.egress import DnsPinningTransport
 
 _SPEC: dict[str, Any] = {"openapi": "3.1.0", "info": {"title": "Big API", "version": "1.0.0"}}
 _SPEC_BYTES = json.dumps(_SPEC).encode()
@@ -283,3 +284,48 @@ async def test_conditional_304_propagates_refreshed_etag() -> None:
         )
     assert result.not_modified is True
     assert result.etag == '"v1-refreshed"'
+
+
+@pytest.mark.asyncio
+async def test_fetch_wires_dns_pinning_transport_by_default() -> None:
+    """L5: the catalog fetchers pin DNS at connect time, closing the rebind window.
+
+    ``validate_upstream_url`` resolves+checks before the request, but httpx re-resolves
+    at connect time — a rebind window. The fetchers must build the client with a
+    :class:`DnsPinningTransport` so the connection is pinned to a validated IP. Assert
+    on the ``transport`` kwarg passed to ``httpx.AsyncClient`` (the constructor is
+    mocked in these tests, so the transport isn't otherwise exercised here).
+    """
+    captured: dict[str, Any] = {}
+    stub = _mock_conditional_client()  # built before patching to avoid recursion
+
+    def _capturing_client(*_args: Any, **kwargs: Any) -> httpx.AsyncClient:
+        captured["transport"] = kwargs.get("transport")
+        return stub
+
+    with patch(
+        "jentic_one.registry.services.catalog.fetch.httpx.AsyncClient",
+        side_effect=_capturing_client,
+    ):
+        await fetch_bytes_conditional("https://example.com/openapi.json", config=IngestConfig())
+    assert isinstance(captured["transport"], DnsPinningTransport)
+
+
+@pytest.mark.asyncio
+async def test_fetch_no_pinning_transport_when_disabled() -> None:
+    """With pinning disabled the client uses httpx's default transport (None)."""
+    captured: dict[str, Any] = {}
+    stub = _mock_conditional_client()  # built before patching to avoid recursion
+
+    def _capturing_client(*_args: Any, **kwargs: Any) -> httpx.AsyncClient:
+        captured["transport"] = kwargs.get("transport")
+        return stub
+
+    cfg = IngestConfig()
+    cfg.egress.dns_pinning_enabled = False
+    with patch(
+        "jentic_one.registry.services.catalog.fetch.httpx.AsyncClient",
+        side_effect=_capturing_client,
+    ):
+        await fetch_bytes_conditional("https://example.com/openapi.json", config=cfg)
+    assert captured["transport"] is None

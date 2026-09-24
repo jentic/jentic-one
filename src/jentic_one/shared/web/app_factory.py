@@ -9,7 +9,6 @@ from collections.abc import AsyncGenerator, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import Any
 
-import opentelemetry.instrumentation.fastapi as otel_fastapi
 import structlog
 from fastapi import APIRouter, FastAPI, Request, Response
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -18,16 +17,18 @@ from opentelemetry.instrumentation.asyncpg import AsyncPGInstrumentor
 from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
 
 from jentic_one import __version__
+from jentic_one.control.services.key_retirement import KeyRetirementService
 from jentic_one.registry.services.import_service import ImportHandler
 from jentic_one.shared.context import Context
 from jentic_one.shared.events import emit_event_best_effort
+from jentic_one.shared.jobs.catalog_update_scanner import CatalogUpdateScanner
 from jentic_one.shared.jobs.credential_expiry_scanner import CredentialExpiryScanner
 from jentic_one.shared.jobs.execution_handler import ExecutionHandler
 from jentic_one.shared.jobs.handlers import JobHandlerRegistry
 from jentic_one.shared.jobs.worker import WorkerLoop
 from jentic_one.shared.logging import RequestIDMiddleware
 from jentic_one.shared.metrics import make_metrics_asgi_app
-from jentic_one.shared.models.events import EventSeverity, EventType
+from jentic_one.shared.models.events import EventSeverity, EventType, HostOs
 from jentic_one.shared.models.jobs import JobKind
 from jentic_one.shared.telemetry.client import TelemetryClient
 from jentic_one.shared.telemetry.instance_id import resolve_instance_id
@@ -45,6 +46,7 @@ from jentic_one.shared.web.openapi_meta import (
 from jentic_one.shared.web.openapi_responses import COMMON_ERROR_RESPONSES
 from jentic_one.shared.web.reference_router import get_reference_router
 from jentic_one.shared.web.static import SPA_MOUNT_PATH
+from jentic_one.shared.web.system import get_system_router
 
 _logger = structlog.get_logger(__name__)
 
@@ -85,37 +87,6 @@ SURFACE_MODULES = {
 }
 
 _db_instrumented = False
-_otel_route_guard_installed = False
-
-
-def _install_otel_route_detail_guard() -> None:
-    """Stop OTel FastAPI instrumentation 500ing on partial route matches.
-
-    ``opentelemetry.instrumentation.fastapi._get_route_details`` walks
-    ``app.routes`` and reads ``route.path``. FastAPI now wraps ``include_router``
-    results in an opaque ``_IncludedRouter`` that has no ``path`` (the same quirk
-    handled in ``shared/web/static.py``). Upstream guards the ``Match.FULL``
-    branch with ``try/except AttributeError`` but not the ``Match.PARTIAL`` one,
-    so any request that path-matches an included router without matching a method
-    — a CORS ``OPTIONS`` preflight, a ``405`` — raises ``AttributeError`` and the
-    span-name extraction turns it into a ``500`` (verified on
-    ``opentelemetry-instrumentation-fastapi==0.63b1``). We wrap the function to
-    fall back to the request path. Idempotent; the global guard is process-wide.
-    """
-    global _otel_route_guard_installed
-    if _otel_route_guard_installed:
-        return
-
-    original: Any = otel_fastapi._get_route_details
-
-    def _safe_get_route_details(scope: dict[str, Any]) -> Any:
-        try:
-            return original(scope)
-        except AttributeError:
-            return scope.get("path")
-
-    otel_fastapi._get_route_details = _safe_get_route_details
-    _otel_route_guard_installed = True
 
 
 def attach_http_observability(app: FastAPI) -> None:
@@ -130,7 +101,6 @@ def attach_http_observability(app: FastAPI) -> None:
     `local-prom-app.yaml` overlay therefore sets `prometheus.io/path` to
     "/metrics/" with the trailing slash — keep them in sync.
     """
-    _install_otel_route_detail_guard()
     instrument_inbound_app(app)
 
     metrics_app = make_metrics_asgi_app()
@@ -162,14 +132,25 @@ def instrument_databases(ctx: Context) -> None:
 
 def _start_worker(
     ctx: Context,
+    enabled_apps: set[str],
     *,
     upstream_executor: Any | None = None,
     credential_injector: Any | None = None,
 ) -> tuple[WorkerLoop, asyncio.Task[None]] | None:
     """Start the background worker if the admin DB is available.
 
+    ``enabled_apps`` is the set of surfaces this process actually serves (from
+    ``config.apps``). Handler registration keys off *that*, not merely which DBs
+    are reachable: a broker-only process is granted the registry DB so its
+    **synchronous** proxy can resolve specs (``SURFACE_DB_DEPS["broker"]``), but
+    it is not the registry surface and must not claim ``IMPORT`` jobs — which are
+    drawn from the shared jobs table, so a broker worker would otherwise race
+    (and win) import jobs against the control plane and run the full ingest
+    pipeline (including any registered import-time stages) with the wrong
+    service's config.
+
     ``upstream_executor`` is the broker-side ``UpstreamExecutor`` (the
-    ``PipelineExecutor`` over the shared composed runner, §11 RN-0.3) and
+    ``PipelineExecutor`` over the shared composed runner) and
     ``credential_injector`` is the broker ``CredentialService``; both are built
     by the broker's surface lifespan and stashed on ``app.state`` (so this
     ``shared/`` factory never imports ``broker/``). When the executor is
@@ -181,14 +162,14 @@ def _start_worker(
 
     Returns the ``(worker, task)`` pair so the lifespan can **drain** the worker
     (let the in-flight job finish or be reclaimed) before tearing the shared
-    client/runners down — see ``_stop_worker`` (§09 E4.3).
+    client/runners down — see ``_stop_worker``.
     """
     if not ctx.has_db("admin"):
         return None
 
     handler_registry = JobHandlerRegistry()
 
-    if ctx.has_db("registry"):
+    if "registry" in enabled_apps and ctx.has_db("registry"):
         handler_registry.register(JobKind.IMPORT, ImportHandler(ctx))
 
     if ctx.has_db("control") and upstream_executor is not None:
@@ -214,14 +195,19 @@ def _start_worker(
 
 def _start_expiry_scanner(
     ctx: Context,
+    enabled_apps: set[str],
 ) -> tuple[CredentialExpiryScanner, asyncio.Task[None]] | None:
-    """Start the credential-expiry scanner when both control + admin DBs exist.
+    """Start the credential-expiry scanner when the control surface runs it.
 
     The sweep reads OAuth token expiries from the **control** DB and writes
     ``credential.expiring_soon`` / ``credential.expired`` events into the
-    **admin** DB, so both must be present. Without either DB there is nothing to
-    scan (or nowhere to record events), so the scanner is not started.
+    **admin** DB, so both must be present. It is a control-plane background job:
+    gate it on the ``control`` surface being enabled (``config.apps``), not on
+    mere DB reachability — a broker-only process is granted the control DB to
+    resolve credentials, but must not run the control plane's expiry sweep.
     """
+    if "control" not in enabled_apps:
+        return None
     if not (ctx.has_db("control") and ctx.has_db("admin")):
         return None
     scanner = CredentialExpiryScanner(
@@ -248,8 +234,111 @@ async def _stop_expiry_scanner(
         await asyncio.wait_for(task, timeout=5.0)
 
 
+def _start_catalog_update_scanner(
+    ctx: Context,
+    enabled_apps: set[str],
+) -> tuple[CatalogUpdateScanner, asyncio.Task[None]] | None:
+    """Start the Flow-3 catalog update-notify scanner when the registry runs it.
+
+    The sweep reads sweep candidates + check rows from the **registry** DB and emits
+    ``catalog.update_available`` events into the **admin** DB, so both must be present.
+    Like the import worker it is a registry-surface background job: gate it on the
+    ``registry`` surface being enabled (``config.apps``), not on DB reachability, so a
+    broker-only process (granted the registry DB for its sync-proxy spec lookups) does
+    not run it. A standalone-registry deployment (no admin DB) still gets no scanner —
+    there is nowhere to record the notifications.
+    """
+    if "registry" not in enabled_apps:
+        return None
+    if not (ctx.has_db("registry") and ctx.has_db("admin")):
+        return None
+    scanner = CatalogUpdateScanner(ctx)
+    task = asyncio.create_task(scanner.run())
+    _logger.info("catalog_update_scanner_task_started")
+    return scanner, task
+
+
+def _start_key_retirement(ctx: Context, enabled_apps: set[str]) -> asyncio.Task[None] | None:
+    """One-shot toolkit-key auto-migration at boot (theme-5 Phase 4).
+
+    An upgrade must not silently break headless ``jntc_live_`` callers: the
+    resolver that served them is gone, so every resolvable key needs its
+    successor service account before the first request. The migration runner
+    already performs the job as an upgrade step; this boot run is the safety
+    net for a process that starts without a fresh migration. The job is
+    idempotent (stamped keys short-circuit) and holds a cross-process run
+    lock, so every replica running it at once is safe and a cheap no-op after
+    the first. Gate on the control surface owning the toolkit tables plus both
+    DBs being reachable. Best-effort: a failure is loud in the logs but never
+    blocks boot — the ``retire-toolkit-keys`` CLI (with ``--owner`` for
+    unresolvable creators) is the recovery path.
+    """
+    if "control" not in enabled_apps:
+        return None
+    if not (ctx.has_db("control") and ctx.has_db("admin")):
+        return None
+
+    async def _run() -> None:
+        try:
+            outcomes = await KeyRetirementService(ctx).run()
+        except Exception:
+            _logger.exception("toolkit_key_retirement_startup_failed")
+            return
+        failed = sum(1 for o in outcomes if o.action == "failed")
+        if failed:
+            _logger.error(
+                "toolkit_key_retirement_keys_failed",
+                count=failed,
+                actionable_step=(
+                    "Fix the logged error, then run `jentic_one retire-toolkit-keys`."
+                ),
+            )
+        unresolved = sum(1 for o in outcomes if o.reason == "owner_unresolved")
+        if unresolved:
+            _logger.warning(
+                "toolkit_key_retirement_owner_unresolved",
+                count=unresolved,
+                actionable_step=(
+                    "Run `jentic_one retire-toolkit-keys --owner <admin-email>` "
+                    "to migrate the remaining keys."
+                ),
+            )
+
+    task = asyncio.create_task(_run())
+    _logger.info("toolkit_key_retirement_task_started")
+    return task
+
+
+async def _stop_one_shot(task: asyncio.Task[None] | None) -> None:
+    """Cancel-and-await a one-shot startup task at shutdown.
+
+    Normally the task finished long ago and this is a no-op; on a very fast
+    boot→shutdown (tests, crashed sibling) the cancel keeps teardown from
+    leaking a pending task warning.
+    """
+    if task is None:
+        return
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+
+
+async def _stop_catalog_update_scanner(
+    handle: tuple[CatalogUpdateScanner, asyncio.Task[None]] | None,
+) -> None:
+    """Signal and cancel the catalog update-notify scanner (best-effort)."""
+    if handle is None:
+        return
+    scanner, task = handle
+    scanner.stop()
+    if not task.done():
+        task.cancel()
+    with contextlib.suppress(asyncio.CancelledError, TimeoutError):
+        await asyncio.wait_for(task, timeout=5.0)
+
+
 async def _stop_worker(handle: tuple[WorkerLoop, asyncio.Task[None]] | None) -> None:
-    """Gracefully drain then stop the worker (§09 E4.3 teardown step 2).
+    """Gracefully drain then stop the worker (teardown step 2).
 
     Drains first (so the in-flight job finishes or is safely reclaimable) **before**
     the surface lifespan closes the shared ``httpx`` client/runners — otherwise a
@@ -317,12 +406,19 @@ async def _start_telemetry(
                 summary="Instance initialized",
                 created_by=None,
             )
+        # The OS family rides on every boot event (see HostOs) so the
+        # dimension self-heals: a lost POST or a config moved to another
+        # machine is corrected on the next startup, matching how comparable
+        # products (n8n, GitLab, Grafana) report environment facts. Prefer
+        # the install-time value the CLI stamped on the host; in Docker,
+        # runtime detection would report the container's Linux.
         await emit_event_best_effort(
             session,
             type=EventType.INSTANCE_BOOTED,
             severity=EventSeverity.INFO,
             summary="Instance booted",
             created_by=None,
+            tags={HostOs.resolve(cfg.host_os)},
         )
 
     return loop, task, client
@@ -357,6 +453,7 @@ def create_surface_app(
     *,
     title: str,
     routers: Sequence[tuple[APIRouter, str, list[str]]],
+    enabled_apps: set[str],
     extra_lifespan: Callable[[FastAPI], AbstractAsyncContextManager[None]] | None = None,
     container: AppContainer | None = None,
     include_instance_router: bool = True,
@@ -367,9 +464,16 @@ def create_surface_app(
     e.g. /health rather than /broker/health — the combined-mode root app
     keeps the prefix so /broker/health, /admin/health, etc. don't collide).
 
+    ``enabled_apps`` is the set of surfaces this process serves — for a
+    standalone surface it is that one surface's name. It gates the shared
+    background jobs (import worker, catalog + expiry scanners) so they run only
+    for the surface that owns them, independent of which DBs happen to be
+    reachable (the broker is granted the registry/control DBs for its proxy +
+    credential paths, but must not run registry/control background work).
+
     ``extra_lifespan`` is an optional surface-owned async context manager entered
     after ``ctx.startup()`` and exited before ``ctx.shutdown()`` — the broker
-    uses it to open/close its shared outbound ``httpx.AsyncClient`` (§04).
+    uses it to open/close its shared outbound ``httpx.AsyncClient``.
 
     ``container`` is the DI seam: when omitted the default is used and behavior is
     unchanged. A caller passes its own container to inject a ``Broker`` (stashed on
@@ -388,21 +492,32 @@ def create_surface_app(
         await ctx.startup()
         instrument_databases(ctx)
         telemetry_handle = await _start_telemetry(ctx)
-        async with extra_lifespan(app) if extra_lifespan else _null_lifespan():
+        # Container-injected lifespans enter after the surface's own
+        # extra_lifespan (so they may read surface state stashed on app.state)
+        # and exit in reverse order before it.
+        async with (
+            extra_lifespan(app) if extra_lifespan else _null_lifespan(),
+            contextlib.AsyncExitStack() as lifespan_stack,
+        ):
+            for lifespan_factory in container.extra_lifespans:
+                await lifespan_stack.enter_async_context(lifespan_factory(app, ctx))
             # Worker starts *inside* the surface lifespan so it can share any
             # surface-owned resource (e.g. the broker's shared upstream
             # executor + credential injector stashed on app.state by
-            # extra_lifespan) — §04 / §11 RN-0.3.
+            # extra_lifespan).
             worker_task = _start_worker(
                 ctx,
+                enabled_apps,
                 upstream_executor=getattr(app.state, "broker_upstream_executor", None),
                 credential_injector=getattr(app.state, "broker_credential_injector", None),
             )
-            scanner_task = _start_expiry_scanner(ctx)
+            scanner_task = _start_expiry_scanner(ctx, enabled_apps)
+            catalog_scanner_task = _start_catalog_update_scanner(ctx, enabled_apps)
+            key_retirement_task = _start_key_retirement(ctx, enabled_apps)
             try:
                 yield
             finally:
-                # §09 E4.3 drain step 1: signal the admission gate (if any) to
+                # Drain step 1: signal the admission gate (if any) to
                 # report unready + stamp Connection: close, so the LB deregisters
                 # this instance *before* we drain in-flight work and tear down the
                 # worker (step 2) and — in extra_lifespan's exit — the shared
@@ -410,6 +525,8 @@ def create_surface_app(
                 gate = getattr(app.state, "broker_admission_gate", None)
                 if gate is not None and hasattr(gate, "start_draining"):
                     gate.start_draining()
+                await _stop_one_shot(key_retirement_task)
+                await _stop_catalog_update_scanner(catalog_scanner_task)
                 await _stop_expiry_scanner(scanner_task)
                 await _stop_worker(worker_task)
                 await _stop_telemetry(telemetry_handle)
@@ -426,12 +543,30 @@ def create_surface_app(
         # silently falls back to the default broker.
         app.state.broker = container.broker
         app.state.broker_factory = lambda _runner: container.broker
-    # Public, schema-hidden agent-discovery documents (onboarding skill +
+    if container.unregistered_url_handler is not None:
+        # Unregistered-URL hook (sync web edge only) — the router reads it via
+        # getattr, so leaving it unset preserves today's 404 exactly. Only the
+        # broker catch-all reads it, so on any other surface the handler can
+        # never fire — say so instead of failing silent.
+        app.state.unregistered_url_handler = container.unregistered_url_handler
+        handler_name = (
+            f"{type(container.unregistered_url_handler).__module__}."
+            f"{type(container.unregistered_url_handler).__qualname__}"
+        )
+        if "broker" in enabled_apps:
+            _logger.info("unregistered_url_handler_installed", handler=handler_name)
+        else:
+            _logger.warning(
+                "unregistered_url_handler_unreachable",
+                handler=handler_name,
+                reason="only the broker catch-all reads this hook and this app has no broker",
+            )
+    # Public, schema-hidden agent-discovery documents (the skill set +
     # llms.txt). Mounted on every standalone surface so split deployments
     # (gateway proxying to per-surface backends) serve them too. Registered
     # *before* the surface routers and the container extension seam so neither
     # the broker's /{upstream_url:path} catch-all nor an injected extra router
-    # can shadow these four literal paths.
+    # can shadow the discovery paths (the /skills/* routes and llms.txt).
     app.include_router(get_agent_discovery_router())
     for router, _prefix, tags in routers:
         app.include_router(router, tags=list(tags), responses=COMMON_ERROR_RESPONSES)
@@ -442,6 +577,11 @@ def create_surface_app(
         # No COMMON_ERROR_RESPONSES: a parameterless public GET can't produce
         # 400/422 (same posture as /health).
         app.include_router(get_instance_router())
+        # Running/latest version so the signed-in SPA can show the current
+        # version and an update banner. Authenticated (any valid session; not
+        # published unauthenticated). The latest release is resolved server-side
+        # from GitHub (cached, best-effort), degrading to latest=null on failure.
+        app.include_router(get_system_router())
     for extra_router, extra_prefix, extra_tags in container.extra_routers:
         app.include_router(
             extra_router,
@@ -478,15 +618,24 @@ def create_combined_app(
         await ctx.startup()
         instrument_databases(ctx)
         telemetry_handle = await _start_telemetry(ctx)
-        worker_task = _start_worker(ctx)
-        scanner_task = _start_expiry_scanner(ctx)
-        try:
-            yield
-        finally:
-            await _stop_expiry_scanner(scanner_task)
-            await _stop_worker(worker_task)
-            await _stop_telemetry(telemetry_handle)
-            await ctx.shutdown()
+        # Container-injected lifespans (default empty) — entered after
+        # ctx.startup(), exited in reverse order before ctx.shutdown().
+        async with contextlib.AsyncExitStack() as lifespan_stack:
+            for lifespan_factory in container.extra_lifespans:
+                await lifespan_stack.enter_async_context(lifespan_factory(app, ctx))
+            worker_task = _start_worker(ctx, set(apps))
+            scanner_task = _start_expiry_scanner(ctx, set(apps))
+            catalog_scanner_task = _start_catalog_update_scanner(ctx, set(apps))
+            key_retirement_task = _start_key_retirement(ctx, set(apps))
+            try:
+                yield
+            finally:
+                await _stop_one_shot(key_retirement_task)
+                await _stop_catalog_update_scanner(catalog_scanner_task)
+                await _stop_expiry_scanner(scanner_task)
+                await _stop_worker(worker_task)
+                await _stop_telemetry(telemetry_handle)
+                await ctx.shutdown()
 
     root = FastAPI(lifespan=lifespan, **fastapi_metadata_kwargs())
     root.state.ctx = ctx
@@ -498,6 +647,18 @@ def create_combined_app(
     if container.broker is not None:
         root.state.broker = container.broker
         root.state.broker_factory = lambda _runner: container.broker
+    if container.unregistered_url_handler is not None:
+        # Unregistered-URL hook (sync web edge only) — read via getattr in the
+        # broker router, so leaving it unset preserves today's 404 exactly. The
+        # broker never rides the combined app (``__main__`` guards it), so a
+        # handler set here can never fire — warn instead of failing silent.
+        root.state.unregistered_url_handler = container.unregistered_url_handler
+        _logger.warning(
+            "unregistered_url_handler_unreachable",
+            handler=f"{type(container.unregistered_url_handler).__module__}."
+            f"{type(container.unregistered_url_handler).__qualname__}",
+            reason="only the broker catch-all reads this hook and the combined app has no broker",
+        )
     root.add_exception_handler(ProblemDetailException, spa_aware_problem_detail_handler)  # type: ignore[arg-type]
 
     @root.get(
@@ -514,13 +675,14 @@ def create_combined_app(
         """
         return JSONResponse({"status": "ok", "version": __version__})
 
-    # Public, schema-hidden agent-discovery documents: the onboarding skill
-    # (GET /skills/jentic.md, GET /SKILL.md) and llms.txt (GET /llms.txt,
-    # GET /.well-known/llms.txt) — see #651 / #809. Registered before the
-    # surfaces so no surface route can shadow them (same order as
-    # create_surface_app).
+    # Public, schema-hidden agent-discovery documents: the skill set
+    # (GET /skills/{name}.md, the GET /SKILL.md alias, GET /skills/index.json)
+    # and llms.txt (GET /llms.txt, GET /.well-known/llms.txt) — see #651 / #809.
+    # Registered before the surfaces so no surface route can shadow them (same
+    # order as create_surface_app).
     root.include_router(get_agent_discovery_router())
 
+    auth_superset_verifier = None
     for surface in apps:
         module_path = SURFACE_MODULES[surface]
         mod = importlib.import_module(module_path)
@@ -531,6 +693,19 @@ def create_combined_app(
                 root.add_exception_handler(exc_class, handler)
         if hasattr(mod, "install_on_app"):
             mod.install_on_app(root, ctx)
+        # Capture the auth surface's full-taxonomy verifier factory (dynamic, to
+        # avoid a static shared->auth import — same posture as the surface loop).
+        if surface == "auth":
+            auth_superset_verifier = mod.make_superset_verifier
+
+    # Deterministic identity verifier: when the auth surface is enabled, install
+    # its full-taxonomy verifier (API keys + opaque `at_` + HS256) explicitly so
+    # admin/enterprise routes resolve `at_` tokens regardless of the order
+    # surfaces ran `install_on_app`. Without this the active verifier depends on
+    # surface ordering (the admin surface installs an HS256-only, `at_`-blind
+    # verifier). No-op for app sets without the auth surface.
+    if auth_superset_verifier is not None:
+        root.state.verify_token = auth_superset_verifier(ctx)
 
     # Public, schema-hidden endpoint reference (the CLI + docs SPA read this
     # instead of parsing the OpenAPI document). Registered after all surfaces so
@@ -542,6 +717,12 @@ def create_combined_app(
     # No COMMON_ERROR_RESPONSES: a parameterless public GET can't produce
     # 400/422 (same posture as /health).
     root.include_router(get_instance_router())
+
+    # Running/latest version so the signed-in SPA can show the current version
+    # and an update banner. Authenticated (any valid session). The latest release
+    # is resolved server-side from GitHub (cached, best-effort), degrading to
+    # latest=null on failure.
+    root.include_router(get_system_router())
 
     # Extension point: injected routers/installers mount after all built-in
     # surfaces (append-only; never shadows a built-in route). No-op by default.

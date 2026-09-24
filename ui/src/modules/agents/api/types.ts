@@ -10,7 +10,12 @@
  * `actor_id`/`actor_type`, only these adapters change — hooks/views are
  * unaffected.
  */
-import type { AgentResponse, ServiceAccountResponse } from '@/shared/api';
+import type {
+	AgentResponse,
+	PermissionRuleReadSchema,
+	PermissionTestResponse,
+	ServiceAccountResponse,
+} from '@/shared/api';
 import {
 	ACTOR_STATUSES,
 	STATUS_BADGE_VARIANT,
@@ -142,24 +147,72 @@ export function serviceAccountToEntity(r: ServiceAccountResponse): ServiceAccoun
 	};
 }
 
-/** A bound toolkit (read-only list in the detail sheet). */
-export interface ToolkitBindingEntity {
+// ---------------------------------------------------------------------------
+// Direct agent↔credential bindings (theme 5 phase 5a — the direct path).
+//
+// These shapes mirror the phase-1 web contract (`CredentialBindingResponse`,
+// `CredentialBindRequest`, the `/credentials/{cid}/agents/{aid}/permissions`
+// rule surface) adapted into the module's camelCase entity envelopes.
+// ---------------------------------------------------------------------------
+
+/** One API a bound credential serves (`ServedApiRef`): name/version may be
+ * null — the "covers all names/versions" wildcard (#775). */
+export interface ServedApiEntity {
+	vendor: string;
+	name: string | null;
+	version: string | null;
+}
+
+/** One direct agent↔credential binding (`GET /agents/{id}/credentials`). */
+export interface CredentialBindingEntity {
 	id: string;
-	toolkitId: string;
+	credentialId: string;
+	/** The credential's human name (control-DB enrichment; null when the
+	 * credential row is unreachable — the UI falls back to the id). */
+	name: string | null;
+	/** True when the binding is soft-suspended (reversible cut-off): the row
+	 * and its rules survive, but the broker excludes it until resumed. */
+	suspended: boolean;
+	/** Shared rule set this binding points at; null = inline rules apply.
+	 * Read-only here — rule-set management is out of scope for this phase. */
+	ruleSetId: string | null;
 	boundAt: string;
+	serves: ServedApiEntity[];
 }
 
 /**
- * A candidate toolkit for the agent-side "Bind toolkit" picker (#607). A small
- * projection of the shared `ToolkitResponse` — the agents module keeps its own
- * picker (module-boundary rule forbids importing the toolkits module), so it
- * only needs id/name/active to render and filter the list.
+ * A candidate credential for the agent-side "Bind credential" picker. Sourced
+ * from the org-wide `GET /credentials` surface via the repository tier (the
+ * agents module cannot import the credentials page module; the shared
+ * credential tier's generated service is reached through `api/client.ts`
+ * only).
  */
-export interface LinkableToolkit {
-	toolkitId: string;
+export interface AgentBindableCredential {
+	credential_id: string;
 	name: string;
-	active: boolean;
+	type: string;
+	vendor: string | null;
+	/** The API's `name` segment (sub-API path), for deriving a friendly title. */
+	apiName: string | null;
+	/** Catalog identity slug (`domain[/sub-api]`), when recorded — the
+	 * preferred friendly-title source. */
+	catalogApiId: string | null;
+	provider: string | null;
+	/** The credential's owner (creator). Only the owner — or an `org:admin` —
+	 * may bind it, so the picker hides the rest (e.g. enterprise shares). */
+	createdBy: string | null;
 }
+
+/** A stored permission rule on a direct binding (includes system fields). */
+export type BindingPermissionRule = PermissionRuleReadSchema;
+
+/** Broker dry-run verdict from the direct-binding `:test` — NO vendor
+ * pooling, so `rule_index` always points into this binding's own rule list. */
+export type BindingPermissionTestResult = PermissionTestResponse;
+
+/** Write shape for a permission rule (allow/deny + methods/path/operations) —
+ * the same shared editor input type every rule-authoring surface uses. */
+export type { PermissionRuleInput } from '@/shared/ui';
 
 /** Result of generating an API key — the plaintext shown once. */
 export interface ApiKeyResult {
@@ -195,4 +248,111 @@ export interface PermissionCatalogEntry {
 	description: string;
 	implies: string[];
 	grantableByCaller: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// MCP transport visibility (local-MCP 2-E2, #1188).
+//
+// MCP is a TRANSPORT of an existing agent, not a new entity — nothing new in
+// the data model. These shapes are read straight off existing surfaces: the
+// `mcp.session_started` internal event's `data` (`GET /events`) and the
+// MCP-origin execution records (`GET /executions?origin=mcp`).
+// ---------------------------------------------------------------------------
+
+/**
+ * One MCP session recorded for an agent — a projection of the
+ * `mcp.session_started` internal event. `transport` is what the emitter knew
+ * (`stdio` today; `http` when the mounted `/mcp` app lands) and renders
+ * verbatim so a future value degrades gracefully. `clientName`/`clientVersion`
+ * come from the relayed MCP clientInfo and are null when the client didn't
+ * send it (a SHOULD in the MCP spec) — "client unknown", not an error.
+ */
+export interface McpSessionEntity {
+	eventId: string;
+	sessionId: string | null;
+	transport: string | null;
+	clientName: string | null;
+	clientVersion: string | null;
+	startedAt: string;
+}
+
+/** The latest MCP session per agent — the roster's "last seen via MCP" cell. */
+export interface McpLastSeen {
+	clientName: string | null;
+	clientVersion: string | null;
+	startedAt: string;
+}
+
+/** "claude-desktop 1.5.2" (or "unknown client") — one label rule everywhere. */
+export function mcpClientLabel(s: {
+	clientName: string | null;
+	clientVersion: string | null;
+}): string {
+	if (!s.clientName) return 'unknown client';
+	return s.clientVersion ? `${s.clientName} ${s.clientVersion}` : s.clientName;
+}
+
+/**
+ * The backend's self-described identity (`GET /instance`) — which install a
+ * pasted MCP snippet will talk to. `baseUrl`/`host` are '' when the operator
+ * never configured a canonical base URL; callers fall back to the browser's
+ * origin (the URL the operator is looking at IS an address of this instance).
+ */
+export interface InstanceIdentityEntity {
+	/** 'local' | 'remote' — operator-declared locality hint. */
+	backend: string;
+	baseUrl: string;
+	host: string;
+	/**
+	 * Whether the instance serves the daemon-native Streamable HTTP `/mcp`
+	 * endpoint (`server.mcp.enabled`) — gates the config card's HTTP
+	 * variant so the UI never advertises a transport that 404s.
+	 */
+	mcpEnabled: boolean;
+	/**
+	 * The broker (data plane) base URL the backend advertises
+	 * (`server.mcp.broker_url` via `GET /instance`, #1249). Null when the
+	 * backend cannot honestly report one — older backends predate the field,
+	 * and a remote install whose configured broker is loopback withholds it —
+	 * in which case the register snippet keeps its `<broker-url>` placeholder
+	 * and the "ask your operator" help text.
+	 */
+	brokerUrl: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// OAuth consent grants — the detail console's "Connected
+// clients" panel: which OAuth clients hold a live consent→agent grant.
+// ---------------------------------------------------------------------------
+
+/**
+ * One consent→agent grant (`GET /agents/{id}/oauth-grants`). `userId` is the
+ * CONSENTING user, surfaced deliberately: after an agent ownership transfer
+ * the grant stays with the original consenter (gap G10), so the panel must
+ * show who holds it, not assume the current owner does. `canRevoke` is the
+ * server-computed revoke capability for the CALLER — the revoke predicate
+ * (consenting user or write-set admin) deliberately diverges from the list
+ * predicate (agent's current owner or read-set admin), so a viewer may see a
+ * grant they cannot revoke; the card disables the button instead of offering
+ * an action that would 403.
+ */
+export interface OAuthGrantEntity {
+	id: string;
+	oauthClientId: string;
+	clientName: string | null;
+	clientOrigin: string | null;
+	userId: string;
+	agentId: string;
+	/**
+	 * Lifecycle state of the bound agent (#1345): a grant on a non-active
+	 * agent stays `active` but is DORMANT — no token resolves until the agent
+	 * is enabled again. Null when the API omitted the annotation.
+	 */
+	agentStatus: string | null;
+	scopes: string[];
+	status: string;
+	createdAt: string;
+	revokedAt: string | null;
+	lastUsedAt: string | null;
+	canRevoke: boolean;
 }

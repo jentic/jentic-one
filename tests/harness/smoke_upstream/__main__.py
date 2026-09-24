@@ -1,7 +1,7 @@
 """Run the smoke-upstream harness as a standalone server.
 
 Used for local iteration (``uv run python -m tests.harness.smoke_upstream``) and as
-the container entrypoint for the deployed ``smoke-upstream`` image (Phase 2). The
+the container entrypoint for the deployed ``smoke-upstream`` image. The
 listen port defaults to 8084; ``SMOKE_UPSTREAM_PUBLIC_URL`` controls the address the
 served live spec advertises (see ``routers.live_spec``).
 """

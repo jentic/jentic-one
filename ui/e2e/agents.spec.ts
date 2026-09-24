@@ -35,7 +35,7 @@ test('approve a pending agent flips its status to active', async ({ page }) => {
 
 /**
  * Detail-page flow: open an agent's full detail page from the list, verify its
- * identity + bound toolkits render, and approve a pending agent from there.
+ * identity + bound-credentials KPI render, and approve a pending agent from there.
  */
 test('open the agent detail page and approve from it', async ({ page }) => {
 	await page.goto('/app/');
@@ -61,7 +61,7 @@ test('open the agent detail page and approve from it', async ({ page }) => {
 
 	await expect(page).toHaveURL(/\/app\/agents\/agnt_pending_2$/);
 	await expect(page.getByRole('heading', { name: 'release-notes-bot' })).toBeVisible();
-	await expect(page.getByRole('heading', { name: 'Bound toolkits' })).toBeVisible();
+	await expect(page.getByText('Bound credentials')).toBeVisible();
 
 	// Approve from the detail page → the identity header's badge flips to Active.
 	await page.getByRole('button', { name: 'Approve release-notes-bot' }).click();
@@ -73,7 +73,7 @@ test('open the agent detail page and approve from it', async ({ page }) => {
 });
 
 /**
- * Phase-3 identity console: the detail page's Activity tab shows THIS agent's
+ * Identity console: the detail page's Activity tab shows THIS agent's
  * execution feed and deep-links into Monitor pre-filtered by actor.
  */
 test('the Activity tab feeds per-agent executions and deep-links to Monitor', async ({ page }) => {
@@ -108,7 +108,7 @@ test('the Activity tab feeds per-agent executions and deep-links to Monitor', as
 });
 
 /**
- * Phase-4 editability: rename an agent from the Settings tab (PATCH
+ * Editability: rename an agent from the Settings tab (PATCH
  * /agents/:id) and verify the round trip — header, toast, and the fleet
  * table row all pick up the new name from the same session store.
  */

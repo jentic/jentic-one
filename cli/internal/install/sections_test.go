@@ -43,9 +43,25 @@ func TestDatabaseSummarySwitchesBackend(t *testing.T) {
 	d.DBBackend = BackendPostgres
 	d.PGHost = "db"
 	d.PGPort = "5432"
+
+	// Local path: the user's own Postgres — the summary shows where it is.
+	d.RuntimePath = RuntimeSource
 	pg := strings.Join(databaseSection.Summary(d), "\n")
 	if !strings.Contains(pg, "postgres") || !strings.Contains(pg, "db:5432") {
-		t.Errorf("postgres summary = %q", pg)
+		t.Errorf("postgres (local) summary = %q", pg)
+	}
+
+	// Docker path: the managed container has no user-facing host; the summary
+	// shows the exposure decision instead (#992).
+	d.RuntimePath = RuntimeDocker
+	pg = strings.Join(databaseSection.Summary(d), "\n")
+	if !strings.Contains(pg, "managed container") || !strings.Contains(pg, "no (compose network only)") {
+		t.Errorf("postgres (docker, unexposed) summary = %q", pg)
+	}
+	d.PGExposeHostPort = true
+	pg = strings.Join(databaseSection.Summary(d), "\n")
+	if !strings.Contains(pg, "yes (host port 5432)") {
+		t.Errorf("postgres (docker, exposed) summary = %q", pg)
 	}
 }
 

@@ -8,12 +8,16 @@ from pathlib import Path
 import pytest
 from sqlalchemy import MetaData
 
+from jentic_one.migrations.registry.versions import (
+    e6f7a8b9c0d1_normalize_url_index_path_templates as url_index_repair_migration,
+)
 from jentic_one.migrations.targets import (
     DB_METADATA,
     DB_TARGETS,
     MigrationTarget,
     register_target,
 )
+from jentic_one.registry.core import url_index as live_url_index
 from jentic_one.shared.db.base import AdminBase, ControlBase, RegistryBase
 
 
@@ -166,3 +170,42 @@ def test_admin_migration_seeds_no_credentials() -> None:
         # than the broad "values(" substring, which false-positives on benign
         # server_default / comment text.
         assert "insert into" not in lowered, f"{name} inserts seed rows; first run must stay empty"
+
+
+# Canary corpus for the URL-index repair migration: representative templates
+# covering trailing slashes, parameters, RFC 6570 operators, percent-encoding,
+# dot segments, and the root path.
+_URL_INDEX_CANARY_TEMPLATES = [
+    "/api/bootstrap-static/",
+    "/api/v1/",
+    "/v1/pets",
+    "/pets/{petId}",
+    "/users/{id}/",
+    "/users/{id}/posts/{postId}/",
+    "/files/{+path}",
+    "/files/{+path}/",
+    "/v1beta/{+property}:runReport",
+    "/foo%20bar/{id}",
+    "/a/b/../c/{id}/",
+    "/",
+]
+
+
+@pytest.mark.parametrize("template", _URL_INDEX_CANARY_TEMPLATES)
+def test_url_index_repair_migration_matches_live_normalization(template: str) -> None:
+    """The e6f7a8b9c0d1 data migration's frozen helpers must agree with the
+    live ``registry.core.url_index`` functions.
+
+    The migration deliberately inlines frozen copies instead of importing the
+    live module, so a later refactor can't silently rewrite what the
+    historical migration did. If this test fails, normalization semantics
+    changed: do NOT edit the frozen copies — write a NEW data migration that
+    re-canonicalizes existing ``operation_url_indexes`` rows.
+    """
+    mig = url_index_repair_migration
+    live = live_url_index
+
+    canonical = live.normalize_path_template(template)
+    assert mig._normalize_path_template(template) == canonical
+    assert mig._build_path_regex_pattern(canonical) == live.build_path_regex(canonical).pattern
+    assert mig._count_segments(canonical) == live.count_segments(canonical)

@@ -1,7 +1,12 @@
 apiVersion: v2
 name: registry
 type: application
-version: 0.24.0 # x-release-please-version
+version: 0.39.0 # x-release-please-version
+# common.image falls back to .Chart.AppVersion when no tag is set anywhere, and
+# that resolves against THIS file rather than the umbrella's — so the value has
+# to be repeated per subchart for a tag-less install to get a real version.
+# release-please keeps it in step via the marker.
+appVersion: "0.39.0" # x-release-please-version
 dependencies:
   - name: common
     version: ">=0.0.0"

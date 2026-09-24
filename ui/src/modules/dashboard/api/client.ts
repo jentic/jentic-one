@@ -199,6 +199,11 @@ export async function fetchHasAgents(): Promise<boolean> {
 export interface UsageOverviewParams {
 	/** Unix-second window lower bound (the endpoint defaults `until` to now). */
 	since: number;
+	/** Unix-second window upper bound (exclusive). Sent explicitly so the
+	 * window width — which drives the backend's bucket-tier choice — is
+	 * deterministic, and ceiled so the current partial minute is included
+	 * (#913). */
+	until?: number;
 	/** Top-rows grouping dimension (defaults to `api` server-side). */
 	groupBy?: GroupBy;
 	/** How many top rows to return (1–50). */
@@ -209,7 +214,7 @@ export interface UsageOverviewParams {
  * Real gateway aggregates via `GET /monitoring/usage` — the ONE endpoint the
  * old composed-only dashboard never called. It returns window stats (incl.
  * latency percentiles + `active_now`), sparse time buckets for the volume
- * chart, and top api/toolkit/agent rows with sparkline trends. org:admin
+ * chart, and top api/credential/agent rows with sparkline trends. org:admin
  * gated server-side; the hook layer gates the query client-side so
  * non-admins never fire a doomed request. Wraps the shared generated
  * `MonitoringService` (already consumed by Monitor) — no new wire types.
@@ -218,6 +223,7 @@ export async function fetchUsageOverview(params: UsageOverviewParams): Promise<U
 	try {
 		return await MonitoringService.getUsageStats({
 			since: params.since,
+			until: params.until ?? null,
 			groupBy: params.groupBy ?? GroupBy.API,
 			topLimit: params.topLimit ?? 5,
 		});

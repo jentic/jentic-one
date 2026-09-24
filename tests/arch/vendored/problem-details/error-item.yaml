@@ -1,0 +1,40 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://raw.githubusercontent.com/jentic/api-problem-details/refs/heads/main/schemas/error-item.yaml"
+description: A granular error detail entry within the errors[] array of a ProblemDetails response.
+type: object
+required:
+  - detail
+properties:
+  detail:
+    type: string
+    description: >-
+      A human-readable explanation of this specific error. Be precise —
+      name the field, parameter, or header involved.
+    maxLength: 4096
+    example: Field 'name' must not be blank.
+  pointer:
+    type: string
+    description: >-
+      A JSON Pointer (RFC 6901) to the specific request body property
+      that is the source of this error.
+    maxLength: 1024
+    example: '#/name'
+  parameter:
+    type: string
+    description: >-
+      The name of the query or path parameter that is the source of this error.
+    maxLength: 1024
+    example: limit
+  header:
+    type: string
+    description: >-
+      The name of the request header that is the source of this error.
+    maxLength: 1024
+    example: Authorization
+  code:
+    type: string
+    description: >-
+      An optional provider-specific code identifying this error in internal
+      taxonomy or documentation.
+    maxLength: 50
+    example: JENTIC-V-001

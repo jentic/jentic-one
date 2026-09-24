@@ -1,19 +1,18 @@
 /**
- * ExecutionTable — the columned execution log, ported from jentic-mini's
- * `execution-log/ExecutionTable.tsx`.
+ * ExecutionTable — the columned execution log.
  *
- * Renders `GET /executions` rows in the same table vocabulary mini used:
- * Status | API (vendor chip) | Operation | Toolkit | Agent | Duration | When,
+ * Renders `GET /executions` rows as:
+ * Status | API (vendor chip) | Operation | Credential | Agent | Duration | When,
  * with a trailing open-affordance glyph. Built on the shared `<DataTable>`
- * (keyboard-activatable rows, scroll-region a11y) instead of mini's simpler
- * grid, and on jentic-one's `<VendorIcon>` (deterministic gradient+initials —
- * mini's brand-logo vendor registry is mini-specific infra).
+ * (keyboard-activatable rows, scroll-region a11y) and on jentic-one's
+ * `<VendorIcon>` (deterministic gradient+initials — there is no brand-logo
+ * vendor registry).
  *
- * Deliberate adaptations from mini:
+ * Deliberate design points:
  * - No `JobBadge` column chip: jentic-one execution records carry no `job_id`
  *   (the Jobs lens links the other way, job → execution).
- * - Cursor paging lives in the parent (`CursorPager`); mini's page-numbered
- *   `<Pagination>` doesn't fit the backend's cursor contract.
+ * - Cursor paging lives in the parent (`CursorPager`); a page-numbered
+ *   `<Pagination>` wouldn't fit the backend's cursor contract.
  * - On phones the table renders as stacked cards (shared DataTable feature)
  *   rather than horizontally scrolling.
  */
@@ -80,13 +79,19 @@ export function ExecutionTable({ executions, isLoading, onRowClick }: ExecutionT
 			),
 		},
 		{
-			key: 'toolkit_id',
-			header: 'Toolkit',
+			key: 'credential_id',
+			header: 'Credential',
 			className: 'w-[160px]',
 			render: (row) => (
 				<div className="flex flex-col leading-tight">
 					<span className="text-foreground text-xs">
-						{row.toolkit_name ?? row.toolkit_id}
+						{/* Historical rows predate direct bindings and carry only
+						    the legacy toolkit attribution — render it read-only. */}
+						{row.credential_name ??
+							row.credential_id ??
+							row.toolkit_name ??
+							row.toolkit_id ??
+							'—'}
 					</span>
 					{row.origin && (
 						<span className="text-muted-foreground text-[10px] capitalize">
@@ -183,7 +188,13 @@ export function ExecutionTable({ executions, isLoading, onRowClick }: ExecutionT
 							)}
 						</div>
 						<div className="text-muted-foreground flex items-center justify-between gap-2 text-xs">
-							<span className="truncate">{row.toolkit_name ?? row.toolkit_id}</span>
+							<span className="truncate">
+								{row.credential_name ??
+									row.credential_id ??
+									row.toolkit_name ??
+									row.toolkit_id ??
+									'—'}
+							</span>
 							<span className="font-mono">{formatDuration(row.duration_ms)}</span>
 						</div>
 					</div>

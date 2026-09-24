@@ -1,6 +1,6 @@
 """Dual-token validation for the broker edge — opaque tokens **and** signed JWTs.
 
-Auth **service** layer (§00 layering): the web ``deps.py`` dependency calls a
+Auth **service** layer: the web ``deps.py`` dependency calls a
 single ``DualTokenValidator`` stored on ``app.state.broker_token_validator``; the
 dispatcher routes self-contained JWTs (verified by signature, no DB lookup) to
 ``JwtTokenValidator`` and opaque tokens to the existing
@@ -9,7 +9,7 @@ dispatcher routes self-contained JWTs (verified by signature, no DB lookup) to
 The JWT path routes self-contained JWTs to the configured ``TokenVerifier``: the
 dev HS256 :class:`JwtVerifier` (shared-secret) or the hardened asymmetric
 ``TrustedIssuerVerifier`` (JWKS rotation, ``iss``/``aud``/``nbf``, strict alg
-allowlist, RS↔HS confusion defence — ``shared/auth/jwt_verification``, §08 E1),
+allowlist, RS↔HS confusion defence — ``shared/auth/jwt_verification``),
 selected by ``install_broker_auth`` from config. Opaque tokens go to the
 existing ``CachedTokenValidator`` (DB-backed, short-TTL cached).
 
@@ -17,8 +17,8 @@ existing ``CachedTokenValidator`` (DB-backed, short-TTL cached).
 claims it signs: the broker requires ``sub``, ``exp`` and ``actor_type`` and
 refuses (uniform 401) any token missing them — it never *infers* a missing
 claim (jentic-one#864). ``actor_type`` must be one of ``agent`` /
-``service_account`` (``_ALLOWED_ACTOR_TYPES``); ``toolkit`` and ``user``
-identities have DB-backed credential forms and cannot be asserted by a bare
+``service_account`` (``_ALLOWED_ACTOR_TYPES``); ``user`` identities have a
+DB-backed credential form (opaque tokens) and cannot be asserted by a bare
 signed claim (jentic-one#868). Every **JWT-path** refusal is logged
 server-side at WARNING under one event name (``jwt_refused``) with a ``reason``
 field, while the wire response stays uniform (jentic-one#874). The opaque
@@ -45,13 +45,13 @@ from jentic_one.shared.models import ActorType
 logger = structlog.get_logger(__name__)
 
 # Algorithms we accept for the self-contained-JWT path. HS256 only for the
-# minimal PR-A2 verifier; §08 widens/locks this down (and adds asymmetric/JWKS).
+# minimal dev verifier; the hardened path widens/locks this down (asymmetric/JWKS).
 _ALLOWED_ALGS: frozenset[str] = frozenset({"HS256"})
 
 # The self-contained-JWT path may only assert these actor types (jentic-one#868).
-# TOOLKIT and USER identities have DB-backed credential forms (toolkit keys,
-# opaque tokens) and must never enter the broker via a bare signed claim: a
-# trusted issuer vouches for AGENT/SERVICE_ACCOUNT, nothing else.
+# USER identities have a DB-backed credential form (opaque tokens) and must
+# never enter the broker via a bare signed claim: a trusted issuer vouches
+# for AGENT/SERVICE_ACCOUNT, nothing else.
 _ALLOWED_ACTOR_TYPES: frozenset[ActorType] = frozenset({ActorType.AGENT, ActorType.SERVICE_ACCOUNT})
 
 # Cap on attacker-influenced string fields written to the log stream, so a
@@ -65,7 +65,7 @@ class TokenVerifier(Protocol):
 
     Both the dev HS256 :class:`JwtVerifier` and the hardened asymmetric
     ``TrustedIssuerVerifier`` (``shared/auth/jwt_verification``) satisfy this, so
-    the dispatcher is agnostic to which is wired (§08 E1).
+    the dispatcher is agnostic to which is wired.
     """
 
     def verify(self, token: str) -> dict[str, object]: ...
@@ -93,7 +93,7 @@ def looks_like_jwt(token: str) -> bool:
 
 @dataclass(frozen=True, slots=True)
 class JwtVerifier:
-    """Minimal HS256 verifier (signature + ``exp``). TODO(§08): harden."""
+    """Minimal HS256 verifier (signature + ``exp``) — the dev path; prefer the hardened verifier."""
 
     secret: str
 
@@ -180,8 +180,8 @@ class JwtTokenValidator:
                 actor_type=str(actor_type_raw),
             )
         if actor_type not in _ALLOWED_ACTOR_TYPES:
-            # A signed claim can't mint a toolkit/user identity — those have
-            # DB-backed credential forms (jentic-one#868).
+            # A signed claim can't mint a user identity — that has a
+            # DB-backed credential form (jentic-one#868).
             self._refuse(
                 "jwt_actor_type_not_allowed",
                 iss=iss,
@@ -223,34 +223,32 @@ class DualTokenValidator:
 
 
 def _is_api_key(value: str) -> bool:
-    """Check whether a credential string is a prefixed API key (jak_ or sak_)."""
-    return value.startswith("jak_") or value.startswith("sak_")
+    """Check whether a credential string is a prefixed API key.
 
-
-def _is_toolkit_key(value: str) -> bool:
-    """Check whether a credential string is a toolkit key (jntc_live_)."""
-    return value.startswith("jntc_live_")
+    ``jntc_live_`` is the retired toolkit-key form (theme-5 Phase 4): the
+    retirement job migrates each key's digest to a service account, and
+    ``ApiKeyResolver`` resolves the unchanged plaintext as that account
+    (logging a deprecation warning). Unmigrated keys resolve to nothing → 401.
+    """
+    return value.startswith("jak_") or value.startswith("sak_") or value.startswith("jntc_live_")
 
 
 @dataclass(frozen=True, slots=True)
 class CompositeTokenValidator:
-    """Routes toolkit keys, API keys, JWTs, and opaque tokens to the right validator.
+    """Routes API keys, JWTs, and opaque tokens to the right validator.
 
     Dispatch order (most-specific prefix first):
-    1. ``jntc_live_`` prefix → ToolkitKeyResolver (toolkit-scoped identity)
-    2. ``jak_`` / ``sak_`` prefix → ApiKeyResolver (via CachedTokenValidator)
-    3. Three-segment dot-separated → JWT verifier
-    4. Everything else → opaque token CachedTokenValidator
+    1. ``jak_`` / ``sak_`` / retired ``jntc_live_`` prefix → ApiKeyResolver
+       (via CachedTokenValidator)
+    2. Three-segment dot-separated → JWT verifier
+    3. Everything else → opaque token CachedTokenValidator
     """
 
     opaque: CachedTokenValidator
     api_key: CachedTokenValidator
-    toolkit_key: CachedTokenValidator
     jwt: JwtTokenValidator | None = None
 
     async def validate(self, token: str) -> Identity:
-        if _is_toolkit_key(token):
-            return await self.toolkit_key.validate(token)
         if _is_api_key(token):
             return await self.api_key.validate(token)
         if self.jwt is not None and looks_like_jwt(token):

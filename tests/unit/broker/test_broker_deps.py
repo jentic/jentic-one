@@ -45,7 +45,7 @@ def _make_identity(
 _SENTINEL = object()
 
 
-def _create_test_app(resolver_return: Identity | None | object = _SENTINEL) -> TestClient:
+def _create_test_app(resolver_return: Identity | object | None = _SENTINEL) -> TestClient:
     """Build a test client with a mocked opaque-token resolver behind the dual validator."""
     router = APIRouter()
 

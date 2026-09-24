@@ -116,20 +116,20 @@ describe('AccessRequestItemCard — already-satisfied hint', () => {
 		).toBeInTheDocument();
 	});
 
-	it('credits an existing toolkit (never a raw id) when the hint names one', () => {
+	it('credits an existing credential (never a raw id) when the hint names one', () => {
 		renderCard({
-			resource_type: 'toolkit',
+			resource_type: 'credential',
 			action: 'bind',
-			resource_id: 'tk_target',
+			resource_id: 'cred_target',
 			already_satisfied: true,
-			already_satisfied_by: 'tk_target',
+			already_satisfied_by: 'cred_target',
 		});
 		expect(
-			screen.getByText(/an existing toolkit already covers this item/i),
+			screen.getByText(/an existing credential already covers this item/i),
 		).toBeInTheDocument();
-		// The card has no name resolution, so an opaque tk_… id would be noise —
+		// The card has no name resolution, so an opaque cred_… id would be noise —
 		// the notice must not leak it (the headline already shows resource_id).
-		expect(screen.queryByText(/satisfied by toolkit tk_target/i)).not.toBeInTheDocument();
+		expect(screen.queryByText(/satisfied by credential cred_target/i)).not.toBeInTheDocument();
 	});
 
 	it('warns that approving a satisfied credential.bind replaces the binding rules', () => {
@@ -158,9 +158,10 @@ describe('AccessRequestItemCard — already-satisfied hint', () => {
 });
 
 describe('AccessRequestItemCard — non-enforceable rules', () => {
-	it('hides the allowlist and shows a notice for a toolkit.bind carrying rules', () => {
-		// Broker rules key per credential, so a toolkit.bind (agent↔toolkit) can't
-		// enforce them — we must NOT render an allowlist that won't apply.
+	it('hides the allowlist and shows a notice for a historical toolkit.bind carrying rules', () => {
+		// Broker rules key per (agent, credential), so a legacy toolkit.bind (a
+		// retired verb — historical rows only) can't enforce them — we must NOT
+		// render an allowlist that won't apply.
 		renderCard({
 			resource_type: 'toolkit',
 			action: 'bind',

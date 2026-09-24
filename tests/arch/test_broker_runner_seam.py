@@ -21,14 +21,14 @@ _TRANSPORT_MODULES = ("httpx",)
 # The single sanctioned place the broker performs upstream HTTP.
 _ALLOWED_TRANSPORT_FILES = {
     SRC_ROOT / "broker" / "adapters" / "runners" / "http.py",
-    # The shared bounded outbound client provider (§04, PR-B) — owns the
+    # The shared bounded outbound client provider — owns the
     # ``httpx.AsyncClient`` the runner wraps; infra adapter, not core/.
     SRC_ROOT / "broker" / "adapters" / "http_client.py",
-    # The DNS-rebinding guard transport (§08 E2) — an httpx transport wrapper
+    # The DNS-rebinding guard transport — an httpx transport wrapper
     # that resolves+validates+pins the host IP; infra adapter, no upstream call
     # of its own (it delegates to the inner transport).
     SRC_ROOT / "broker" / "adapters" / "egress.py",
-    # Pre-existing OAuth token refresh transport (out of PR-A1 scope).
+    # Pre-existing OAuth token refresh transport (deliberately sanctioned).
     SRC_ROOT / "broker" / "services" / "credentials" / "refresh.py",
 }
 

@@ -1,0 +1,95 @@
+"""add oauth_clients
+
+OAuth client registry for third-party (confidential) applications. Stores
+client_id, argon2id-hashed client_secret, allowed redirect_uris, and
+optional scope allowlists per client. Also adds oauth_client_id to the
+access_tokens and refresh_tokens tables for token provenance tracking.
+
+Revision ID: aa6b7c8d9e0f
+Revises: e1f2a3b4c5d6
+Create Date: 2026-08-18
+
+"""
+
+from collections.abc import Sequence
+
+import sqlalchemy as sa
+from alembic import op
+from sqlalchemy.dialects import postgresql
+
+revision: str = "aa6b7c8d9e0f"
+down_revision: str | None = "e1f2a3b4c5d6"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
+
+
+def upgrade() -> None:
+    pg = op.get_bind().dialect.name == "postgresql"
+    op.create_table(
+        "oauth_clients",
+        sa.Column(
+            "id",
+            sa.String(30),
+            server_default=sa.func.generate_ksuid("oac") if pg else None,
+            nullable=False,
+        ),
+        sa.Column("client_id", sa.String(64), nullable=False),
+        sa.Column("client_secret_hash", sa.String(128), nullable=False),
+        sa.Column("name", sa.String(255), nullable=False),
+        sa.Column("description", sa.Text(), nullable=True),
+        sa.Column(
+            "redirect_uris",
+            postgresql.ARRAY(sa.String(2048)) if pg else sa.JSON(),
+            nullable=False,
+        ),
+        sa.Column("active", sa.Boolean(), nullable=False, server_default="true"),
+        sa.Column("require_consent", sa.Boolean(), nullable=False, server_default="true"),
+        sa.Column(
+            "allowed_scopes",
+            postgresql.ARRAY(sa.String(128)) if pg else sa.JSON(),
+            nullable=True,
+        ),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+        ),
+        sa.Column("created_by", sa.String(255), nullable=True),
+        sa.PrimaryKeyConstraint("id"),
+    )
+    op.create_index("ix_oauth_clients_client_id", "oauth_clients", ["client_id"], unique=True)
+    op.create_index("ix_oauth_clients_created_at", "oauth_clients", ["created_at"])
+    op.create_index("ix_oauth_clients_created_by", "oauth_clients", ["created_by"])
+    op.create_index("ix_oauth_clients_active", "oauth_clients", ["active"])
+
+    # Add oauth_client_id to token tables — tracks which third-party OAuth client
+    # issued the token, so tokens can be invalidated on client deactivation.
+    op.add_column(
+        "access_tokens",
+        sa.Column("oauth_client_id", sa.String(64), nullable=True),
+    )
+    op.create_index("ix_access_tokens_oauth_client_id", "access_tokens", ["oauth_client_id"])
+    op.add_column(
+        "refresh_tokens",
+        sa.Column("oauth_client_id", sa.String(64), nullable=True),
+    )
+    op.create_index("ix_refresh_tokens_oauth_client_id", "refresh_tokens", ["oauth_client_id"])
+
+
+def downgrade() -> None:
+    op.drop_index("ix_refresh_tokens_oauth_client_id", table_name="refresh_tokens")
+    op.drop_column("refresh_tokens", "oauth_client_id")
+    op.drop_index("ix_access_tokens_oauth_client_id", table_name="access_tokens")
+    op.drop_column("access_tokens", "oauth_client_id")
+    op.drop_index("ix_oauth_clients_active", table_name="oauth_clients")
+    op.drop_index("ix_oauth_clients_created_by", table_name="oauth_clients")
+    op.drop_index("ix_oauth_clients_created_at", table_name="oauth_clients")
+    op.drop_index("ix_oauth_clients_client_id", table_name="oauth_clients")
+    op.drop_table("oauth_clients")

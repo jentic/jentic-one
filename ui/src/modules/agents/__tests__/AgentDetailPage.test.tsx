@@ -14,6 +14,7 @@ import {
 import { setToken } from '@/shared/api';
 import { Toaster } from '@/shared/ui';
 import { resetAgentsStore } from '@/modules/agents/mocks/handlers';
+import { showHttpVariant } from '@/modules/agents/components/detail/McpPanel';
 import AgentDetailPage from '@/modules/agents/pages/AgentDetailPage';
 
 function renderDetail(agentId: string) {
@@ -29,99 +30,6 @@ function renderDetail(agentId: string) {
 	);
 }
 
-type SeedToolkit = { toolkit_id: string; name: string; active?: boolean };
-
-/**
- * Per-test, isolated toolkit-binding fixtures for the agent-side bind/unbind
- * flow (#607). The default module handlers return a hardcoded bound list for
- * `agnt_active_1` that ignores mutations, so we override them here with a fresh
- * in-closure store that POST/DELETE mutate — keeping each test independent of
- * execution order (mirrors ToolkitDetailPage.test.tsx's `seedAgents`).
- *
- * `bound` seeds `GET /agents/:id/toolkits`; `workspace` seeds the picker
- * candidates (`GET /toolkits`). Returns the mutable `bound` array so tests can
- * assert the store changed after a mutation fires.
- */
-function seedToolkitBindings(opts: {
-	agentId: string;
-	bound: SeedToolkit[];
-	workspace: SeedToolkit[];
-}) {
-	const bound = opts.bound.map((t, i) => ({
-		id: `tkb_${i}`,
-		agent_id: opts.agentId,
-		toolkit_id: t.toolkit_id,
-		bound_at: '2026-05-02T09:00:00Z',
-	}));
-	worker.use(
-		http.get('/agents/:id/toolkits', ({ params }) => {
-			if (params.id !== opts.agentId) {
-				return HttpResponse.json({ data: [], has_more: false, next_cursor: null });
-			}
-			return HttpResponse.json({ data: bound, has_more: false, next_cursor: null });
-		}),
-		// Per-id name resolution for each bound row (#607): the "Bound toolkits"
-		// card reads `GET /toolkits/{id}` for just its own name rather than the
-		// whole `GET /toolkits` catalogue. Backed by the same `workspace` seed so
-		// a bound toolkit resolves to its human name; unknown ids 404 → the row
-		// falls back to the id.
-		http.get('/toolkits/:toolkitId', ({ params }) => {
-			const t = opts.workspace.find((w) => w.toolkit_id === params.toolkitId);
-			if (!t) return new HttpResponse(null, { status: 404 });
-			return HttpResponse.json({
-				toolkit_id: t.toolkit_id,
-				name: t.name,
-				description: null,
-				active: t.active ?? true,
-				key_count: 0,
-				credential_count: 0,
-				permissions: [],
-				created_at: '2026-04-01T09:00:00Z',
-				updated_at: null,
-			});
-		}),
-		http.get('/toolkits', () =>
-			HttpResponse.json({
-				data: opts.workspace.map((t) => ({
-					toolkit_id: t.toolkit_id,
-					name: t.name,
-					description: null,
-					active: t.active ?? true,
-					key_count: 0,
-					credential_count: 0,
-					created_at: '2026-04-01T09:00:00Z',
-					updated_at: null,
-				})),
-				has_more: false,
-				next_cursor: null,
-			}),
-		),
-		http.post('/agents/:agentId/toolkits', async ({ params, request }) => {
-			const agentId = params.agentId as string;
-			const body = (await request.json()) as { toolkit_id: string };
-			if (agentId === opts.agentId && !bound.some((b) => b.toolkit_id === body.toolkit_id)) {
-				bound.push({
-					id: `tkb_${bound.length}`,
-					agent_id: agentId,
-					toolkit_id: body.toolkit_id,
-					bound_at: new Date().toISOString(),
-				});
-			}
-			return HttpResponse.json({
-				agent_id: agentId,
-				toolkit_id: body.toolkit_id,
-				bound_at: new Date().toISOString(),
-			});
-		}),
-		http.delete('/agents/:agentId/toolkits/:toolkitId', ({ params }) => {
-			const idx = bound.findIndex((b) => b.toolkit_id === params.toolkitId);
-			if (idx >= 0) bound.splice(idx, 1);
-			return new HttpResponse(null, { status: 204 });
-		}),
-	);
-	return bound;
-}
-
 describe('AgentDetailPage', () => {
 	beforeEach(() => {
 		setToken('test-token');
@@ -131,15 +39,15 @@ describe('AgentDetailPage', () => {
 	it('renders identity and status once — no duplicated title card', async () => {
 		const user = userEvent.setup();
 		renderDetail('agnt_active_1');
-		// The PageHeader IS the identity surface (toolkit-console grammar): the
+		// The PageHeader IS the identity surface (detail-console grammar): the
 		// name renders exactly once, as the page heading.
 		expect(await screen.findByRole('heading', { name: 'support-agent' })).toBeInTheDocument();
 		expect(screen.getAllByText('support-agent')).toHaveLength(1);
 		// Pin the status to the header's badge — a bare text query would also
-		// match e.g. a toolkit "Active" pill and mask a wrong-status bug.
+		// match e.g. another "Active" pill and mask a wrong-status bug.
 		expect(screen.getByTestId('detail-status-badge')).toHaveTextContent('Active');
 		expect(screen.getByText('Registered')).toBeInTheDocument();
-		// The raw id lives on the Settings tab (like the toolkit id), not in the
+		// The raw id lives on the Settings tab, not in the
 		// page chrome.
 		expect(screen.queryByText('agnt_active_1')).not.toBeInTheDocument();
 		await user.click(screen.getByRole('tab', { name: 'Settings' }));
@@ -147,22 +55,10 @@ describe('AgentDetailPage', () => {
 		expect(screen.getByText('agnt_active_1')).toBeInTheDocument();
 	});
 
-	it('lists bound toolkits for the agent', async () => {
-		renderDetail('agnt_active_1');
-		await screen.findByRole('heading', { name: 'support-agent' });
-		// The bound toolkit id is `github`; the per-id name read 404s (no such
-		// toolkit in the workspace fixtures), so the row falls back to the id as
-		// the primary label and hides the redundant secondary id line (#4) —
-		// leaving the id rendered EXACTLY once in the row. Asserting `>= 1` would
-		// pass even on the regression where the id renders twice, so we pin it.
-		const row = await screen.findByTestId('bound-toolkit-row');
-		await waitFor(() => expect(within(row).getAllByText('github')).toHaveLength(1));
-	});
-
 	it('shows the actor-scoped "Recent changes" audit slice on Overview', async () => {
 		renderDetail('agnt_active_1');
 		await screen.findByRole('heading', { name: 'support-agent' });
-		// Same audit grammar as the toolkit console: lifecycle events recorded
+		// Same audit grammar as the other consoles: lifecycle events recorded
 		// against this agent as the target, newest first.
 		expect(await screen.findByText('Recent changes')).toBeInTheDocument();
 		expect(await screen.findByText('rotate')).toBeInTheDocument();
@@ -184,29 +80,12 @@ describe('AgentDetailPage', () => {
 		expect(await screen.findByText(/toolkit · use \+2 more/)).toBeInTheDocument();
 	});
 
-	it('shows an honest empty state when no toolkits are bound', async () => {
-		renderDetail('agnt_pending_1');
-		await screen.findByRole('heading', { name: 'inbox-triage-bot' });
-		// A pending agent additionally explains the approval gate (no bind CTA).
-		expect(
-			await screen.findByText(/No toolkits bound\. Approve this agent first/),
-		).toBeInTheDocument();
-	});
-
-	it('gates toolkit binding to active agents (no Bind button while pending)', async () => {
-		renderDetail('agnt_pending_1');
-		await screen.findByRole('heading', { name: 'inbox-triage-bot' });
-		// The approval queue is where a human vouches for an agent — a pending
-		// one must not accumulate capabilities beforehand.
-		expect(screen.queryByRole('button', { name: 'Bind toolkit' })).not.toBeInTheDocument();
-	});
-
 	it('renders a not-found surface for an unknown id', async () => {
 		renderDetail('agnt_does_not_exist');
 		expect(await screen.findByText('Agent not found')).toBeInTheDocument();
 	});
 
-	// --- Phase 3: identity console (KPI strip + tabs) ----------------------
+	// --- Identity console (KPI strip + tabs) --------------------------------
 
 	it('renders the KPI strip from the per-actor usage aggregate', async () => {
 		renderDetail('agnt_active_1');
@@ -216,7 +95,37 @@ describe('AgentDetailPage', () => {
 		const strip = await screen.findByRole('group', { name: 'Key metrics' });
 		await waitFor(() => expect(within(strip).getByText('1,204')).toBeInTheDocument());
 		expect(within(strip).getByText('99%')).toBeInTheDocument();
-		expect(within(strip).getByText('Bound toolkits')).toBeInTheDocument();
+		expect(within(strip).getByText('Bound credentials')).toBeInTheDocument();
+	});
+
+	it('requests the usage window with a next-minute-ceiled until bound (#913)', async () => {
+		// The aggregate filters `started_at < until` strictly, so the request
+		// must carry an explicit `until` PAST "now" — a floored (or absent →
+		// server-floored) bound excludes the current partial minute, making
+		// fresh executions visible in the Activity feed but missing from the
+		// volume chart / 7-day KPI until the minute rolls over.
+		let captured: URLSearchParams | null = null;
+		worker.use(
+			http.get('/monitoring/usage', ({ request }) => {
+				const url = new URL(request.url);
+				if (url.searchParams.get('agent_id') !== 'agnt_active_1') return undefined;
+				captured = url.searchParams;
+				return undefined; // fall through to the module's fixture handler
+			}),
+		);
+		const beforeSec = Math.floor(Date.now() / 1000);
+		renderDetail('agnt_active_1');
+		await screen.findByRole('group', { name: 'Key metrics' });
+
+		await waitFor(() => expect(captured).not.toBeNull());
+		const params: URLSearchParams = captured!;
+		const since = Number(params.get('since'));
+		const until = Number(params.get('until'));
+		expect(until % 60).toBe(0);
+		expect(until).toBeGreaterThan(beforeSec);
+		// Exact 7-day width: the backend derives its bucket tier from
+		// `until - since`, so the window must not stretch past the tier edge.
+		expect(until - since).toBe(7 * 86_400);
 	});
 
 	it('hides the KPI strip when monitoring is admin-gated (403)', async () => {
@@ -228,7 +137,7 @@ describe('AgentDetailPage', () => {
 		await screen.findByRole('heading', { name: 'support-agent' });
 
 		// The usage query resolves to the 403 sentinel and the strip unmounts
-		// entirely (same contract as the toolkit console's UsageStrip) — a
+		// entirely (same contract as the other consoles' usage strips) — a
 		// permission gate is not an error, so no alert either.
 		await waitFor(() =>
 			expect(screen.queryByTestId('kpi-strip-loading')).not.toBeInTheDocument(),
@@ -387,7 +296,7 @@ describe('AgentDetailPage', () => {
 		expect(await within(dialog).findByText('A reason is required.')).toBeInTheDocument();
 	});
 
-	// --- Phase 4: Settings tab (PATCH /agents/:id + danger zone) -----------
+	// --- Settings tab (PATCH /agents/:id + danger zone) ---------------------
 
 	it('renames an agent from the Settings tab, sending only the dirty field', async () => {
 		const user = userEvent.setup();
@@ -533,199 +442,290 @@ describe('AgentDetailPage', () => {
 		await checkA11y(container);
 	});
 
-	// --- #607: agent-side bind / unbind toolkit ---------------------------
+	// --- local-MCP 2-E2 (#1188): MCP tab — config card + sessions ----------
 
-	it('binds a toolkit picked from the picker and updates the bound list', async () => {
-		const bound = seedToolkitBindings({
-			agentId: 'agnt_active_1',
-			bound: [],
-			workspace: [
-				{ toolkit_id: 'tk_github', name: 'GitHub Tools' },
-				{ toolkit_id: 'tk_stripe', name: 'Stripe Tools' },
-			],
-		});
+	it('shows the per-agent MCP config card with the pinned --context snippet', async () => {
 		const user = userEvent.setup();
 		renderDetail('agnt_active_1');
 		await screen.findByRole('heading', { name: 'support-agent' });
 
-		await user.click(screen.getByRole('button', { name: 'Bind toolkit' }));
+		await user.click(screen.getByRole('tab', { name: 'MCP' }));
+		expect(await screen.findByText('Connect via MCP')).toBeInTheDocument();
 
-		// Picker lists the workspace toolkits inside the dialog.
-		const dialog = await screen.findByRole('dialog', { name: /bind toolkit/i });
-		const stripeRow = await within(dialog).findByText('Stripe Tools');
-		await user.click(stripeRow);
+		// The snippet is the CONTEXT variant, pinned per §3.10's
+		// one-agent-per-runtime model — never a bare `jentic mcp`.
+		expect(screen.getByText('jentic mcp --context support-agent')).toBeInTheDocument();
+		// JSON client-config variant carries the same pinned args.
+		expect(screen.getByText(/"mcp", "--context", "support-agent"/)).toBeInTheDocument();
 
-		// POST fired → the mock store carries the new binding, dialog closes, and
-		// the bound list refreshes with the newly bound toolkit, showing its human
-		// NAME as the primary label (resolved via the per-id read) and the id below.
-		await waitFor(() => expect(bound.some((b) => b.toolkit_id === 'tk_stripe')).toBe(true));
-		await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
-		const row = await screen.findByTestId('bound-toolkit-row');
-		expect(await within(row).findByText('Stripe Tools')).toBeInTheDocument();
-		expect(within(row).getByText('tk_stripe')).toBeInTheDocument();
+		// Prerequisites: CLI + register against THIS instance on the AGENT
+		// machine (the stdio config encodes no base URL), or `jentic setup`.
+		// The instance URL resolves async from GET /instance, so wait for it.
+		expect(
+			await screen.findByText('jentic register --url "https://jentic.example.test"'),
+		).toBeInTheDocument();
+		expect(screen.getByText('agent machine')).toBeInTheDocument();
+		expect(screen.getByText('jentic setup')).toBeInTheDocument();
+
+		// Instance identity from GET /instance (which instance the snippet
+		// registers against).
+		expect(screen.getByText('jentic.example.test')).toBeInTheDocument();
+		expect(screen.getByText('local')).toBeInTheDocument();
 	});
 
-	it('shows the toolkit name and truncates a long name with a title tooltip', async () => {
-		const longName =
-			'Extremely Long Toolkit Display Name That Should Be Truncated In The Bound Toolkits Card';
-		seedToolkitBindings({
-			agentId: 'agnt_active_1',
-			bound: [{ toolkit_id: 'tk_long', name: longName }],
-			workspace: [{ toolkit_id: 'tk_long', name: longName }],
-		});
+	it('falls back to the browser origin when no canonical base URL is configured', async () => {
+		const user = userEvent.setup();
+		worker.use(
+			http.get('/instance', () =>
+				HttpResponse.json({
+					backend: 'local',
+					canonical_base_url: '',
+					host: '',
+					instance_id: null,
+				}),
+			),
+		);
 		renderDetail('agnt_active_1');
 		await screen.findByRole('heading', { name: 'support-agent' });
 
-		const row = await screen.findByTestId('bound-toolkit-row');
-		// The NAME is the prominent label and carries a `title` so the full name is
-		// revealed on hover even when visually truncated. The id stays as a
-		// secondary line, and the unbind control is labelled by the name.
-		const nameEl = await within(row).findByText(longName);
-		expect(nameEl).toHaveAttribute('title', longName);
-		expect(within(row).getByText('tk_long')).toBeInTheDocument();
+		await user.click(screen.getByRole('tab', { name: 'MCP' }));
+		await screen.findByText('Connect via MCP');
+
+		// The operator is looking at a working address of this instance, so the
+		// register command targets the browser's origin.
 		expect(
-			within(row).getByRole('button', { name: `Unbind toolkit ${longName}` }),
+			await screen.findByText(`jentic register --url "${window.location.origin}"`),
 		).toBeInTheDocument();
 	});
 
-	it('hides the secondary id line when the name is unresolved (falls back to id) (#4)', async () => {
-		// `tk_ghost` is bound but not present in the workspace, so the per-id name
-		// read 404s → the row shows the id as the primary label. The redundant
-		// secondary `<code>` id line must be hidden so the id isn't rendered twice.
-		seedToolkitBindings({
-			agentId: 'agnt_active_1',
-			bound: [{ toolkit_id: 'tk_ghost', name: 'ignored' }],
-			workspace: [],
-		});
-		renderDetail('agnt_active_1');
-		await screen.findByRole('heading', { name: 'support-agent' });
-
-		const row = await screen.findByTestId('bound-toolkit-row');
-		// The id shows exactly once (as the primary fallback label), never twice.
-		await waitFor(() => expect(within(row).getAllByText('tk_ghost')).toHaveLength(1));
-	});
-
-	it('unbinds a bound toolkit through the inline row confirm', async () => {
-		const bound = seedToolkitBindings({
-			agentId: 'agnt_active_1',
-			bound: [{ toolkit_id: 'tk_github', name: 'GitHub Tools' }],
-			workspace: [{ toolkit_id: 'tk_github', name: 'GitHub Tools' }],
-		});
+	it('hides the HTTP variant when the instance does not serve /mcp', async () => {
 		const user = userEvent.setup();
 		renderDetail('agnt_active_1');
 		await screen.findByRole('heading', { name: 'support-agent' });
 
-		// The bound row renders the human NAME (resolved via the per-id read) and
-		// still shows the id as a secondary line + an Unbind control.
-		const row = await screen.findByTestId('bound-toolkit-row');
-		expect(await within(row).findByText('GitHub Tools')).toBeInTheDocument();
-		expect(within(row).getByText('tk_github')).toBeInTheDocument();
-		await user.click(within(row).getByRole('button', { name: 'Unbind toolkit GitHub Tools' }));
+		await user.click(screen.getByRole('tab', { name: 'MCP' }));
+		await screen.findByText('Connect via MCP');
 
-		// Inline confirm appears on the row (no modal) with a GENERIC prompt — the
-		// row already names the toolkit, so the confirm doesn't repeat it. The
-		// group's aria-label still identifies the target for screen readers.
-		const group = await within(row).findByRole('group', {
-			name: /unbind GitHub Tools for the agent\?/i,
-		});
-		expect(within(group).getByText('Unbind this toolkit?')).toBeInTheDocument();
-		expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-		await user.click(
-			within(group).getByRole('button', { name: 'Unbind toolkit GitHub Tools' }),
-		);
-
-		// DELETE fired → the mock store dropped the binding and the row disappears.
-		await waitFor(() => expect(bound.some((b) => b.toolkit_id === 'tk_github')).toBe(false));
-		await waitFor(() =>
-			expect(screen.queryByTestId('bound-toolkit-row')).not.toBeInTheDocument(),
-		);
+		// The default /instance fixture predates `mcp_enabled` (an older
+		// backend); the mapper must treat the absent field as disabled — an
+		// advertised transport that 404s would be a lie. The predicate is the
+		// single gate the card renders through.
+		expect(showHttpVariant(undefined)).toBe(false);
+		expect(showHttpVariant(false)).toBe(false);
+		expect(screen.queryByText(/Streamable HTTP/i)).not.toBeInTheDocument();
+		// No URL-based server entry is offered anywhere on the card.
+		expect(screen.queryByText(/"url"/)).not.toBeInTheDocument();
 	});
 
-	it('dismisses the inline unbind confirm on Cancel without firing DELETE', async () => {
-		const bound = seedToolkitBindings({
-			agentId: 'agnt_active_1',
-			bound: [{ toolkit_id: 'tk_github', name: 'GitHub Tools' }],
-			workspace: [{ toolkit_id: 'tk_github', name: 'GitHub Tools' }],
-		});
+	it('renders the Streamable HTTP variant when the instance serves /mcp', async () => {
+		worker.use(
+			http.get('/instance', () =>
+				HttpResponse.json({
+					backend: 'local',
+					canonical_base_url: 'https://jentic.example.test',
+					host: 'jentic.example.test',
+					instance_id: 'inst_digest_1',
+					mcp_enabled: true,
+				}),
+			),
+		);
 		const user = userEvent.setup();
 		renderDetail('agnt_active_1');
 		await screen.findByRole('heading', { name: 'support-agent' });
 
-		const row = await screen.findByTestId('bound-toolkit-row');
-		await screen.findByText('GitHub Tools');
-		await user.click(within(row).getByRole('button', { name: 'Unbind toolkit GitHub Tools' }));
+		await user.click(screen.getByRole('tab', { name: 'MCP' }));
+		await screen.findByText('Connect via MCP');
 
-		const group = await within(row).findByRole('group', {
-			name: /unbind GitHub Tools for the agent\?/i,
-		});
-		await user.click(within(group).getByRole('button', { name: 'Cancel' }));
-
-		// Confirm collapses back to the default Unbind control and nothing was deleted.
-		await waitFor(() =>
-			expect(
-				within(row).queryByRole('group', { name: /unbind GitHub Tools for the agent\?/i }),
-			).not.toBeInTheDocument(),
-		);
+		// The url-variant snippet points at this instance's /mcp with a bearer
+		// placeholder — per-request auth, no CLI needed on the agent machine.
+		const snippet = await screen.findByText(/Streamable HTTP/i);
+		expect(snippet).toBeInTheDocument();
 		expect(
-			within(row).getByRole('button', { name: 'Unbind toolkit GitHub Tools' }),
+			screen.getByText(/"url": "https:\/\/jentic\.example\.test\/mcp"/),
 		).toBeInTheDocument();
-		expect(bound.some((b) => b.toolkit_id === 'tk_github')).toBe(true);
+		expect(screen.getByText(/Bearer <agent-api-key>/)).toBeInTheDocument();
 	});
 
-	it('renders a suspended toolkit as a non-selectable, focusable row', async () => {
-		seedToolkitBindings({
-			agentId: 'agnt_active_1',
-			bound: [],
-			workspace: [
-				{ toolkit_id: 'tk_active', name: 'Active Tools', active: true },
-				{ toolkit_id: 'tk_suspended', name: 'Suspended Tools', active: false },
-			],
-		});
+	it('lists MCP sessions with client / transport / started — never "connected"', async () => {
 		const user = userEvent.setup();
-		renderDetail('agnt_active_1');
+		const { container } = renderDetail('agnt_active_1');
 		await screen.findByRole('heading', { name: 'support-agent' });
 
-		await user.click(screen.getByRole('button', { name: 'Bind toolkit' }));
-		const dialog = await screen.findByRole('dialog', { name: /bind toolkit/i });
+		await user.click(screen.getByRole('tab', { name: 'MCP' }));
 
-		await within(dialog).findByText('Suspended Tools');
-		const rows = within(dialog).getAllByTestId('toolkit-picker-row');
-		const suspendedRow = rows.find((r) => within(r).queryByText('Suspended Tools'));
-		expect(suspendedRow).toBeDefined();
-		// aria-disabled (not native disabled) so it stays keyboard-focusable, and
-		// the "suspended" badge + an accessible rationale are surfaced.
-		expect(suspendedRow).toHaveAttribute('aria-disabled', 'true');
-		expect(suspendedRow).not.toBeDisabled();
-		expect(suspendedRow).toHaveAttribute('data-suspended', 'true');
-		expect(within(suspendedRow as HTMLElement).getByText('suspended')).toBeInTheDocument();
+		// Client name + version from the event's data; a version-less client
+		// and a clientInfo-less one degrade honestly (SHOULD in the MCP spec).
+		expect(await screen.findByText('claude-desktop 1.5.2')).toBeInTheDocument();
+		expect(screen.getByText('cursor')).toBeInTheDocument();
+		expect(screen.getByText('unknown client')).toBeInTheDocument();
+		// Transport renders verbatim from the emitter.
+		expect(screen.getAllByText('stdio')).toHaveLength(3);
+
+		// "started / last active" is the vocabulary — last active reads off the
+		// newest MCP-origin execution (5 min ago in the fixture).
+		expect(screen.getByText('started / last active')).toBeInTheDocument();
+		expect(await screen.findByText(/Last active/)).toBeInTheDocument();
+		// NEVER "connected": stdio liveness is unknowable server-side.
+		expect(screen.queryByText(/connected/i)).not.toBeInTheDocument();
+
+		await checkA11y(container);
+	});
+
+	it('shows an honest empty state for an agent with no MCP sessions', async () => {
+		const user = userEvent.setup();
+		renderDetail('agnt_pending_1');
+		await screen.findByRole('heading', { name: 'inbox-triage-bot' });
+
+		await user.click(screen.getByRole('tab', { name: 'MCP' }));
 		expect(
-			within(suspendedRow as HTMLElement).getByText(/cannot be bound/i),
+			await screen.findByText(/No MCP sessions recorded for this agent yet/),
 		).toBeInTheDocument();
-
-		// Clicking it is a no-op — the dialog stays open (no bind fires).
-		await user.click(suspendedRow as HTMLElement);
-		expect(screen.getByRole('dialog', { name: /bind toolkit/i })).toBeInTheDocument();
 	});
 
-	it('hides already-bound toolkits from the picker', async () => {
-		seedToolkitBindings({
-			agentId: 'agnt_active_1',
-			bound: [{ toolkit_id: 'tk_github', name: 'GitHub Tools' }],
-			workspace: [
-				{ toolkit_id: 'tk_github', name: 'GitHub Tools' },
-				{ toolkit_id: 'tk_stripe', name: 'Stripe Tools' },
-			],
-		});
+	it('shows a quiet permission note when the events read is gated (403)', async () => {
 		const user = userEvent.setup();
+		worker.use(createErrorHandler('get', '/events', { status: 403 }));
 		renderDetail('agnt_active_1');
 		await screen.findByRole('heading', { name: 'support-agent' });
 
-		await user.click(screen.getByRole('button', { name: 'Bind toolkit' }));
-		const dialog = await screen.findByRole('dialog', { name: /bind toolkit/i });
+		await user.click(screen.getByRole('tab', { name: 'MCP' }));
+		expect(
+			await screen.findByText('MCP session history requires event-read permissions.'),
+		).toBeInTheDocument();
+		// A permission gate is not an error — the config card still renders.
+		expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+		expect(screen.getByText('Connect via MCP')).toBeInTheDocument();
+	});
 
-		// The unbound toolkit shows up…
-		expect(await within(dialog).findByText('Stripe Tools')).toBeInTheDocument();
-		// …and the already-bound one is hidden from the picker candidates.
-		expect(within(dialog).queryByText('GitHub Tools')).not.toBeInTheDocument();
+	it('survives a set-but-unparseable canonical_base_url (scheme-less) without crashing', async () => {
+		const user = userEvent.setup();
+		// The backend allows an unparseable canonical_base_url with host: ""
+		// (instance_identity.py) — a scheme-less value must degrade to the raw
+		// string, not throw in render and take out the page via the boundary.
+		worker.use(
+			http.get('/instance', () =>
+				HttpResponse.json({
+					backend: 'local',
+					canonical_base_url: 'jentic.example.com',
+					host: '',
+					instance_id: null,
+				}),
+			),
+		);
+		renderDetail('agnt_active_1');
+		await screen.findByRole('heading', { name: 'support-agent' });
+
+		await user.click(screen.getByRole('tab', { name: 'MCP' }));
+		expect(await screen.findByText('Connect via MCP')).toBeInTheDocument();
+
+		// The register snippet carries the configured (raw) address…
+		expect(
+			await screen.findByText('jentic register --url jentic.example.com'),
+		).toBeInTheDocument();
+		// …and the Instance meta item falls back to the raw string as the host.
+		expect(screen.getAllByText('jentic.example.com').length).toBeGreaterThan(0);
+		// The page survived — no error boundary.
+		expect(screen.getByRole('heading', { name: 'support-agent' })).toBeInTheDocument();
+	});
+
+	it('shows an error state — not a false empty state — when the sessions read fails (500)', async () => {
+		const user = userEvent.setup();
+		worker.use(createErrorHandler('get', '/events', { status: 500 }));
+		renderDetail('agnt_active_1');
+		await screen.findByRole('heading', { name: 'support-agent' });
+
+		await user.click(screen.getByRole('tab', { name: 'MCP' }));
+
+		// A real failure surfaces as an error, never as "No MCP sessions
+		// recorded" (which would tell the operator the transport is unused).
+		expect(await screen.findByText('Failed to load MCP sessions.')).toBeInTheDocument();
+		expect(screen.getByRole('alert')).toBeInTheDocument();
+		expect(screen.queryByText(/No MCP sessions recorded/)).not.toBeInTheDocument();
+		expect(
+			screen.queryByText('MCP session history requires event-read permissions.'),
+		).not.toBeInTheDocument();
+		// The config card is independent and still renders.
+		expect(screen.getByText('Connect via MCP')).toBeInTheDocument();
+	});
+
+	it('falls back to the browser origin when GET /instance fails (500)', async () => {
+		const user = userEvent.setup();
+		worker.use(createErrorHandler('get', '/instance', { status: 500 }));
+		renderDetail('agnt_active_1');
+		await screen.findByRole('heading', { name: 'support-agent' });
+
+		await user.click(screen.getByRole('tab', { name: 'MCP' }));
+		expect(await screen.findByText('Connect via MCP')).toBeInTheDocument();
+
+		// The identity read failing is not fatal: the operator is looking at a
+		// working address of this instance, so the browser origin stands in.
+		expect(
+			await screen.findByText(`jentic register --url "${window.location.origin}"`),
+		).toBeInTheDocument();
+	});
+
+	it('includes the --broker-url hint in the register snippet on a remote install', async () => {
+		const user = userEvent.setup();
+		worker.use(
+			http.get('/instance', () =>
+				HttpResponse.json({
+					backend: 'remote',
+					canonical_base_url: 'https://jentic.example.test',
+					host: 'jentic.example.test',
+					instance_id: 'inst_digest_1',
+				}),
+			),
+		);
+		renderDetail('agnt_active_1');
+		await screen.findByRole('heading', { name: 'support-agent' });
+
+		await user.click(screen.getByRole('tab', { name: 'MCP' }));
+		await screen.findByText('Connect via MCP');
+
+		// On a remote install the broker is never derived from the control-plane
+		// URL; without --broker-url `jentic execute` fail-closes (register.go),
+		// so the snippet must carry the flag.
+		expect(
+			await screen.findByText(
+				'jentic register --url "https://jentic.example.test" --broker-url <broker-url>',
+			),
+		).toBeInTheDocument();
+		expect(screen.getByText(/fail-closes/)).toBeInTheDocument();
+		// The placeholder arm keeps sending the operator to a human — the
+		// backend reported no broker URL, so the UI must not guess one.
+		expect(screen.getByText(/Ask your operator/)).toBeInTheDocument();
+	});
+
+	it('renders the real broker URL in the register snippet when the instance reports one (#1249)', async () => {
+		const user = userEvent.setup();
+		worker.use(
+			http.get('/instance', () =>
+				HttpResponse.json({
+					backend: 'remote',
+					canonical_base_url: 'https://jentic.example.test',
+					host: 'jentic.example.test',
+					instance_id: 'inst_digest_1',
+					broker_url: 'https://broker.jentic.example.test',
+				}),
+			),
+		);
+		renderDetail('agnt_active_1');
+		await screen.findByRole('heading', { name: 'support-agent' });
+
+		await user.click(screen.getByRole('tab', { name: 'MCP' }));
+		await screen.findByText('Connect via MCP');
+
+		// The backend advertises server.mcp.broker_url via GET /instance, so
+		// the snippet is copy-paste complete — no placeholder, no "ask your
+		// operator" dead end.
+		expect(
+			await screen.findByText(
+				'jentic register --url "https://jentic.example.test" --broker-url "https://broker.jentic.example.test"',
+			),
+		).toBeInTheDocument();
+		expect(screen.queryByText(/Ask your operator/)).not.toBeInTheDocument();
+		// The operator-facing meta row shows the data plane address too.
+		expect(screen.getByText('Broker URL')).toBeInTheDocument();
+		expect(screen.getByText('https://broker.jentic.example.test')).toBeInTheDocument();
 	});
 });

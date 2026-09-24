@@ -61,3 +61,15 @@ def config_file(tmp_path: Path, sample_config_dict: dict[str, Any]) -> Path:
     config_path = tmp_path / "jentic-one.yaml"
     config_path.write_text(yaml.dump(sample_config_dict))
     return config_path
+
+
+@pytest.fixture()
+def sqlite_stack(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Point config at fresh, empty per-database SQLite files (migration-runner tests)."""
+    cfg = tmp_path / "jentic-one.yaml"
+    lines = ["databases:"]
+    for name in ("admin", "control", "registry"):
+        lines += [f"  {name}:", "    backend: sqlite", f"    path: {tmp_path / f'{name}.db'}"]
+    cfg.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    monkeypatch.setenv("JENTIC_CONFIG_FILE", str(cfg))
+    return tmp_path

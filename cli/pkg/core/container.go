@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"os/signal"
+	"runtime/debug"
 	"syscall"
 
 	"github.com/spf13/cobra"
@@ -25,9 +26,9 @@ import (
 type CommandFactory func(deps *AppContainer) *cobra.Command
 
 // TreeBuilder builds the fully-configured root command for a binary from the
-// injected container. internal/cmd supplies this so `core` never imports
+// injected container. internal/cli/* supplies this so `core` never imports
 // `internal/*` — which keeps the dependency edge one-directional
-// (internal/cmd → pkg/core) and avoids an import cycle.
+// (internal/cli/* → pkg/core) and avoids an import cycle.
 type TreeBuilder func(deps *AppContainer) *cobra.Command
 
 // AppContainer is the injected dependency set for the CLI command tree. The
@@ -49,7 +50,7 @@ type AppContainer struct {
 }
 
 // NewRootCmd builds a root command tree using the injected container. `build`
-// assembles the built-in command set (supplied by internal/cmd); any
+// assembles the built-in command set (supplied by internal/cli/*); any
 // ExtraCommands are appended last so they never shadow built-in commands. The
 // container's streams are wired onto the root so both cobra's own output and
 // core.Run's error output honor the injected Out/Err/In.
@@ -72,7 +73,7 @@ func NewRootCmd(deps *AppContainer, build TreeBuilder) *cobra.Command {
 
 // ExitCoder is an error that carries a process exit code. A wrapped child
 // command's non-zero exit is surfaced as one of these so Run can mirror it
-// verbatim (rather than reporting it as a generic CLI error). internal/cmd's
+// verbatim (rather than reporting it as a generic CLI error). internal/cli/cmdcore's
 // exit-code error implements this; downstream errors may too.
 type ExitCoder interface {
 	error
@@ -83,15 +84,43 @@ type ExitCoder interface {
 // process exit code. It is the shared entry point for the built-in binaries and
 // any downstream binary composed via NewRootCmd, so exit-code / signal semantics
 // stay identical. Callers typically do: os.Exit(core.Run(root)).
-func Run(root *cobra.Command) int {
+func Run(root *cobra.Command) (code int) {
+	return RunTree(root, nil)
+}
+
+// RunTree is Run with an optional error mapper applied to the error returned by
+// Execute before exit-code/render handling. The mapper lets the internal layer
+// convert cobra-native parse errors (unknown command/flag, bad arg count,
+// missing required flag) — which cobra returns from Execute rather than through
+// a command's RunE, so decorateCodedErrors can't see them — into a typed
+// *ux.CodedError so an agent gets a closed error_code + envelope instead of raw
+// "error: …" text (AGT-20). pkg/core stays free of internal/ux: the mapper both
+// classifies AND renders (returning an already-reported ExitCoder), so Run only
+// needs the ExitCoder it already understands. A nil mapper preserves the legacy
+// behavior exactly.
+func RunTree(root *cobra.Command, mapErr func(*cobra.Command, error) error) (code int) {
 	// Cancel the command context on the first SIGINT/SIGTERM so long-running
 	// commands can unwind gracefully.
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	// Panic backstop: an escaped panic would exit with the Go runtime's code 2,
+	// which collides with the CLI's ExitDenied taxonomy ("change the ask, don't
+	// retry") and would mislead an agent branching on exit codes. Convert it to a
+	// diagnosable internal error on stderr with the generic exit 1 instead.
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintf(root.ErrOrStderr(), "error: internal error: %v\n%s", r, debug.Stack())
+			code = 1
+		}
+	}()
+
 	err := root.ExecuteContext(ctx)
 	if err == nil {
 		return 0
+	}
+	if mapErr != nil {
+		err = mapErr(root, err)
 	}
 	// A wrapped child's non-zero exit is mirrored verbatim.
 	var ec ExitCoder

@@ -8,7 +8,7 @@
  * per-entry `registered` boolean is the source of truth for the Imported/Available
  * badge, so the grid is fed entirely from `/catalog`.
  *
- * Scope note: unlike jentic-mini's Discover, this slice has no `workflow` /
+ * Scope note: this slice has no `workflow` /
  * `endpoint` entity types — the catalog backend exposes only API-level discovery.
  */
 
@@ -39,6 +39,12 @@ export interface DiscoveryEntity {
 	subtitle?: string;
 	/** Whether the API is already imported locally. Drives the Imported/Available pill. */
 	registered: boolean;
+	/**
+	 * Whether this (registered) entry has an upstream spec update the local
+	 * revision hasn't adopted yet. Always false for unregistered entries — drives
+	 * the "Update available" badge, mirroring the Workspace ApiCard signal.
+	 */
+	updateAvailable: boolean;
 	/** Vendor / domain key (e.g. `stripe.com`) used for the vendor icon. */
 	vendor?: string;
 	/** GitHub source URL for the catalog spec, when the manifest has one. */
@@ -49,6 +55,7 @@ export interface DiscoveryEntity {
 /**
  * The registration filter the toolbar exposes. Maps onto the catalog query
  * params: `all` sends neither flag, `registered` → `registered_only`,
- * `unregistered` → `unregistered_only`.
+ * `unregistered` → `unregistered_only`, `outdated` → `outdated_only` (registered
+ * entries with an upstream update available).
  */
-export type CatalogFilter = 'all' | 'registered' | 'unregistered';
+export type CatalogFilter = 'all' | 'registered' | 'unregistered' | 'outdated';

@@ -42,8 +42,15 @@ describe('WorkspacePage', () => {
 	it('lists the workspace APIs', async () => {
 		renderWithProviders(<WorkspacePage />);
 		expect(await screen.findByText('Stripe')).toBeInTheDocument();
-		// The draft-only API falls back to vendor/name and shows a Draft pill.
-		expect(await screen.findByText('adyen/pos-terminal-management-api')).toBeInTheDocument();
+		// The draft-only Adyen API has no `display_name`. `apiRefDisplayName`
+		// now prefers a humanised sub-API `name` over the vendor when the two
+		// don't share a prefix — so the tile heading reads as the specific
+		// sub-API (`pos-terminal-management-api` → `Pos Terminal Management
+		// Api`) rather than the generic vendor. The mono
+		// `{vendor}/{name}/{version}` subtitle still shows the copyable
+		// technical identifier.
+		expect(await screen.findByText('Pos Terminal Management Api')).toBeInTheDocument();
+		expect(screen.getByText('adyen/pos-terminal-management-api/1')).toBeInTheDocument();
 		expect(screen.getByText('Draft')).toBeInTheDocument();
 	});
 

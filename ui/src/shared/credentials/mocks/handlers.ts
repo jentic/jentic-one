@@ -138,6 +138,7 @@ export function makeMockApi(
 		name: string;
 		version: string;
 		displayName: string;
+		catalogApiId: string;
 		securitySchemes: string[];
 		spec: Record<string, unknown>;
 	}> = {},
@@ -162,6 +163,7 @@ export function makeMockApi(
 		row: {
 			_links: { current_revision: null, revisions: '', self: '' },
 			api: { vendor, name, version, host: 'api.example.com' },
+			catalog_api_id: overrides.catalogApiId ?? null,
 			created_at: '2026-01-01T00:00:00Z',
 			updated_at: '2026-01-01T00:00:00Z',
 			current_revision_id: 'rev_1',

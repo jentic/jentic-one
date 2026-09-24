@@ -6,6 +6,7 @@
  * POST /register 201 response.
  */
 export type RegisterResponse = {
+    claim_token?: (string | null);
     client_id: string;
     grant_types?: Array<string>;
     registration_access_token: string;

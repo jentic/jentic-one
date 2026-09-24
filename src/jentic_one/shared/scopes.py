@@ -14,9 +14,25 @@ ORG_ADMIN = "org:admin"
 OWNER_CREDENTIALS_READ = "owner:credentials:read"
 OWNER_ACCESS_REQUESTS_READ = "owner:access-requests:read"
 OWNER_AGENTS_READ = "owner:agents:read"
-OWNER_TOOLKITS_READ = "owner:toolkits:read"
 OWNER_RESOURCES_READ = "owner:resources:read"
 OWNER_SERVICE_ACCOUNTS_READ = "owner:service-accounts:read"
+
+# Scopes retired from the catalogue (theme-5 Phase 5b — the toolkit management
+# surface is gone; authorization runs on the agent↔credential axis). Stored
+# grants — user permission rows, agent ``actor_scope_grants``, filed
+# access-request items — still carry these strings, so every validation path
+# that rejects unknown scopes must accept-and-ignore members of this set: a
+# re-submit of a stored grant must never 422 just because it predates the
+# retirement. Holding a retired scope grants nothing (no route requires it and
+# the implication map no longer expands it). The set — and the stored strings —
+# are swept in Phase 6b.
+RETIRED_SCOPES: frozenset[str] = frozenset(
+    {
+        "toolkits:read",
+        "toolkits:write",
+        "owner:toolkits:read",
+    }
+)
 
 DEFAULT_AGENT_SCOPES: tuple[str, ...] = (
     "capabilities:execute",
@@ -27,7 +43,6 @@ DEFAULT_AGENT_SCOPES: tuple[str, ...] = (
     "jobs:read",
     "events:read",
     "owner:resources:read",
-    "owner:toolkits:read",
     "owner:agents:read",
     "owner:credentials:read",
     "owner:access-requests:read",
@@ -41,13 +56,29 @@ DEFAULT_AGENT_SCOPES: tuple[str, ...] = (
 # ``apis:write`` is included so an agent can request the broader ability to
 # import, update, and delete arbitrary API definitions (URL/inline import via
 # ``POST /apis``) and have a human approve it. Importing an already-cataloged
-# API is now a default agent capability via ``catalog:import`` (in
-# ``DEFAULT_AGENT_SCOPES``), so agents no longer need to file a request just to
+# API is a default agent capability via ``catalog:import`` (in
+# ``DEFAULT_AGENT_SCOPES``), so agents don't need to file a request just to
 # run ``jentic catalog import``. ``apis:write`` is deliberately NOT in
 # ``DEFAULT_AGENT_SCOPES``: the agent must file the request and an owner must
 # approve it.
 #
 # Still excludes the truly privileged scopes (``org:admin``, ``agents:write``)
 # so an owner with ``agents:write`` cannot self-escalate an agent to admin via
-# the access-request path (confused-deputy).
+# the access-request path (confused-deputy). ``overlays:confirm`` is likewise
+# excluded: confirming an overlay rewrites an API's served spec (an operator
+# action), so an agent must never obtain it through self-service — the whole
+# point of the purpose-scoped downgrade from ``org:admin`` is that a human
+# operator holds it, not an agent.
 GRANTABLE_SCOPES: frozenset[str] = frozenset(DEFAULT_AGENT_SCOPES) | {"apis:write"}
+
+OIDC_PASSTHROUGH_SCOPES: frozenset[str] = frozenset({"openid", "email", "profile"})
+
+# Server-side cap for the `scope` a client claims at the anonymous DCR front
+# door (POST /oauth-clients): a DCR-registered client's
+# `allowed_scopes` ceiling is always ⊆ this set — never unrestricted. It is the
+# MCP tool surface expressed as scopes, which is exactly the
+# default agent baseline: DCR clients are `consent_model='agent'` (D6), so a
+# grant's effective scopes are further intersected with the bound agent's live
+# scopes at consent. The OAuth discovery documents (`scopes_supported`)
+# must advertise this same set.
+MCP_TOOL_SCOPES: frozenset[str] = frozenset(DEFAULT_AGENT_SCOPES)

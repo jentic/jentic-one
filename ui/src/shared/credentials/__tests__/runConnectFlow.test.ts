@@ -175,7 +175,7 @@ describe('runConnectFlow — advisory postMessage (#598)', () => {
 		// pollMs 50, timeout 600 → a correctly-paced loop reads ~12 times
 		// (600/50) + the initial `before` read. A latched busy-loop would fire
 		// hundreds of back-to-back requests. We post an error message early to
-		// trip the (previously permanent) latch.
+		// trip the latch, which must not be permanent.
 		const flow = runConnectFlow(id, { pollMs: 50, timeoutMs: 600 });
 
 		await new Promise((r) => setTimeout(r, 20));

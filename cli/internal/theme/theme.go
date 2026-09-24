@@ -6,7 +6,6 @@
 package theme
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -33,40 +32,43 @@ const (
 	SelectOff = "○"
 )
 
-// Shared styles. Use these instead of constructing one-off lipgloss styles so
-// colour usage stays consistent across commands.
+// Shared styles. These are the RETIRED fixed-brand roles: they now DELEGATE to
+// the dark palette's Styles() so dark output stays byte-identical while the
+// migrated surfaces read palette-bound roles via StylesFromContext instead.
+// Un-migrated call sites keep compiling against these package-level vars, which
+// are pinned to dark. New code should prefer theme.StylesFromContext(ctx).
 var (
-	Heading = lipgloss.NewStyle().Bold(true).Foreground(Brand)
-	Step    = lipgloss.NewStyle().Bold(true).Foreground(Yellow)
-	Command = lipgloss.NewStyle().Foreground(Green)
-	Dim     = lipgloss.NewStyle().Foreground(Muted)
-	Success = lipgloss.NewStyle().Bold(true).Foreground(Green)
-	Warn    = lipgloss.NewStyle().Foreground(Orange)
-	Error   = lipgloss.NewStyle().Bold(true).Foreground(Red)
-	Info    = lipgloss.NewStyle().Foreground(Blue)
-	Accent  = lipgloss.NewStyle().Foreground(Yellow)
+	Heading = Themes["dark"].Styles().Heading
+	Step    = Themes["dark"].Styles().Step
+	Command = Themes["dark"].Styles().Command
+	Dim     = Themes["dark"].Styles().Dim
+	Success = Themes["dark"].Styles().Success
+	Warn    = Themes["dark"].Styles().Warn
+	Error   = Themes["dark"].Styles().Error
+	Info    = Themes["dark"].Styles().Info
+	Accent  = Themes["dark"].Styles().Accent
 )
 
-// Successf renders a printf-formatted string in the success style.
-func Successf(format string, a ...any) string { return Success.Render(fmt.Sprintf(format, a...)) }
+// Successf renders a printf-formatted string in the success style (dark alias).
+func Successf(format string, a ...any) string {
+	return Themes["dark"].Styles().Successf(format, a...)
+}
 
-// Warnf renders a printf-formatted string in the warning style.
-func Warnf(format string, a ...any) string { return Warn.Render(fmt.Sprintf(format, a...)) }
+// Warnf renders a printf-formatted string in the warning style (dark alias).
+func Warnf(format string, a ...any) string { return Themes["dark"].Styles().Warnf(format, a...) }
 
-// Infof renders a printf-formatted string in the info style.
-func Infof(format string, a ...any) string { return Info.Render(fmt.Sprintf(format, a...)) }
+// Infof renders a printf-formatted string in the info style (dark alias).
+func Infof(format string, a ...any) string { return Themes["dark"].Styles().Infof(format, a...) }
 
-// Dimf renders a printf-formatted string in the dim style.
-func Dimf(format string, a ...any) string { return Dim.Render(fmt.Sprintf(format, a...)) }
+// Dimf renders a printf-formatted string in the dim style (dark alias).
+func Dimf(format string, a ...any) string { return Themes["dark"].Styles().Dimf(format, a...) }
 
-// Headingf renders a printf-formatted string in the heading style.
-func Headingf(format string, a ...any) string { return Heading.Render(fmt.Sprintf(format, a...)) }
+// Headingf renders a printf-formatted string in the heading style (dark alias).
+func Headingf(format string, a ...any) string { return Themes["dark"].Styles().Headingf(format, a...) }
 
 // Field renders an aligned "label: value" pair with a muted label and a
-// brand-coloured value, for the key/value listings commands print.
-func Field(label, value string) string {
-	return Dim.Render(fmt.Sprintf("%-9s ", label+":")) + lipgloss.NewStyle().Foreground(White).Render(value)
-}
+// brand-coloured value, for the key/value listings commands print (dark alias).
+func Field(label, value string) string { return Themes["dark"].Styles().Field(label, value) }
 
 // logoLines is the "jentic" figlet (standard font). Kept as plain strings so
 // each row can be tinted independently for a vertical gradient.
@@ -79,39 +81,17 @@ var logoLines = []string{
 	"|__/                       ",
 }
 
-// logoColors is the top-to-bottom gradient applied across the logo rows.
-var logoColors = []lipgloss.Color{Blue, Green, Brand, Yellow, Orange, Pink}
-
 // Logo renders the gradient "jentic" wordmark. Used by the help screen and the
-// install wizard so the brand mark is consistent everywhere.
-func Logo() string {
-	var b strings.Builder
-	for i, ln := range logoLines {
-		c := logoColors[i%len(logoColors)]
-		b.WriteString(lipgloss.NewStyle().Foreground(c).Bold(true).Render(ln))
-		b.WriteByte('\n')
-	}
-	return b.String()
-}
+// install wizard so the brand mark is consistent everywhere (dark alias).
+func Logo() string { return LogoFor("dark") }
 
 // LogoHeader renders the gradient wordmark with an optional block of status
 // lines (e.g. version info) pinned to the top-right within totalWidth. When the
 // terminal is too narrow to fit both (or rightLines is empty / width unknown),
-// it falls back to just the logo. The returned string ends in a single newline.
+// it falls back to just the logo. The returned string ends in a single newline
+// (dark alias).
 func LogoHeader(totalWidth int, rightLines []string) string {
-	logo := strings.TrimRight(Logo(), "\n")
-	if len(rightLines) == 0 {
-		return logo + "\n"
-	}
-
-	right := lipgloss.JoinVertical(lipgloss.Left, rightLines...)
-	gap := totalWidth - lipgloss.Width(logo) - lipgloss.Width(right)
-	if totalWidth <= 0 || gap < 2 {
-		return logo + "\n"
-	}
-
-	spacer := strings.Repeat(" ", gap)
-	return lipgloss.JoinHorizontal(lipgloss.Top, logo, spacer, right) + "\n"
+	return LogoHeaderFor("dark", totalWidth, rightLines)
 }
 
 // VersionPanel formats the CLI and server versions as a single left-to-right
@@ -119,18 +99,19 @@ func LogoHeader(totalWidth int, rightLines []string) string {
 // segment shows the reported version when running, "running" if it is up but
 // reports no version, or a dim "offline" when it is not reachable.
 func VersionPanel(cliVersion, serverVersion string, serverRunning bool) []string {
-	label := func(s string) string { return Dim.Render(s + " ") }
+	st := Themes["dark"].Styles()
+	label := func(s string) string { return st.Dim.Render(s + " ") }
 
-	cli := label("cli") + Accent.Render(orValue(cliVersion, "dev"))
+	cli := label("cli") + st.Accent.Render(orValue(cliVersion, "dev"))
 
 	var server string
 	if serverRunning {
-		server = label("server") + Command.Render(orValue(serverVersion, "running"))
+		server = label("server") + st.Command.Render(orValue(serverVersion, "running"))
 	} else {
-		server = label("server") + Dim.Render("offline")
+		server = label("server") + st.Dim.Render("offline")
 	}
 
-	return []string{cli + Dim.Render("   ") + server}
+	return []string{cli + st.Dim.Render("   ") + server}
 }
 
 // orValue returns v, or fallback when v is empty.

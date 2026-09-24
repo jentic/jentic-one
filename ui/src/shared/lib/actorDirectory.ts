@@ -12,9 +12,9 @@
  * `next_cursor` once and let the query layer cache the result aggressively.
  *
  * Scope is the directory's own actor types — `user` / `agent` /
- * `service_account`. The backend `GET /actors` UNION deliberately excludes
- * toolkits ("Toolkits are not platform actors"), even though a `tk_…` id can
- * appear as the `actor_id` of a broker-path execution; rendering that case is
+ * `service_account`. A legacy `tk_…` id can still
+ * appear as the `actor_id` of a historical broker-path execution; rendering
+ * that case is
  * `<ActorLabel>`'s job. Other non-actor ids (`cred_`, `exec_`, `areq_`, `job_`)
  * are resolved separately and are out of scope here.
  */

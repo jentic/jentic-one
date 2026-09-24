@@ -1,22 +1,32 @@
 {{- /*
 common.db-env: render JENTIC__DATABASES__* env vars for service pods.
 
-DEVELOPMENT-ONLY pattern: passwords are injected as plain env-var values
-read directly from values.yaml. This is fine for local kind clusters and
-short-lived dev/test envs, but MUST NOT carry forward to production.
+Password source, in order of precedence:
+  1. global.databases.<surface>.password set  -> plain env value. Dev-only
+     for real data (values files are not secret storage) — external-DB
+     production deployments should prefer a Secret they manage; this arm is
+     also what lets an external-DB install override the generated defaults.
+  2. global.appSecrets active                 -> secretKeyRef into the
+     release's generated app-secrets Secret (db-password-<surface> key,
+     created by templates/app-secrets.yaml). The bundled Postgres init
+     script creates the roles from the same keys, so the pair always agrees.
+  3. neither                                  -> install-time failure
+     (common.require-install; offline lint/template render an inert
+     REQUIRED-AT-INSTALL placeholder).
 
-Production guidance:
-  - Store DB credentials in a Kubernetes Secret (or external secret store
-    like AWS Secrets Manager / Vault, fronted by external-secrets).
-  - Replace the `value:` lines for *_PASSWORD (and likely *_USER) with
-    `valueFrom: { secretKeyRef: { name: ..., key: ... } }`.
-  - Keep host/port/name/schema as plain values; only credentials need
-    secret handling.
+Host/port/name/schema are not secrets and stay plain values.
+See docs/installation/helm.md "Secrets".
 
-See deploy/README.md "Production secrets" for the migration recipe.
+Passwords must be YAML strings. An unquoted digit-only password is parsed as a
+number and renders as its Go float form (`0123456789` -> `1.23456789e+08`), so
+the pod would authenticate with a password nobody typed; the kindIs guard
+below turns that into an install-time error instead. It only fires on a
+password the operator actually supplied, so bare `helm lint`/`helm template`
+(which set none) never reach it.
 */ -}}
 {{- define "common.db-env" -}}
 {{- $pgHost := printf "%s-postgresql" .Release.Name -}}
+{{- $ctx := . -}}
 {{- range $surface, $db := .Values.global.databases }}
 - name: JENTIC__DATABASES__{{ upper $surface }}__HOST
   value: {{ (ternary $pgHost $db.host $.Values.global.postgresql.enabled) | quote }}
@@ -27,7 +37,17 @@ See deploy/README.md "Production secrets" for the migration recipe.
 - name: JENTIC__DATABASES__{{ upper $surface }}__USER
   value: {{ $db.user | quote }}
 - name: JENTIC__DATABASES__{{ upper $surface }}__PASSWORD
+{{- if $db.password }}
+{{- include "common.assert-string-password" (dict "value" $db.password "path" (printf "global.databases.%s.password" $surface)) }}
   value: {{ $db.password | quote }}
+{{- else if (include "common.app-secrets.enabled" $ctx) }}
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "common.app-secrets.secret-name" $ctx }}
+      key: db-password-{{ $surface }}
+{{- else }}
+  value: {{ include "common.require-install" (dict "root" $ "value" $db.password "message" (printf "global.databases.%s.password is required — set it in your values file (dev files: deploy/helm/values/local-*.yaml)" $surface)) | quote }}
+{{- end }}
 - name: JENTIC__DATABASES__{{ upper $surface }}__SCHEMA_NAME
   value: {{ $db.schema_name | default $db.schema | quote }}
 {{- end }}

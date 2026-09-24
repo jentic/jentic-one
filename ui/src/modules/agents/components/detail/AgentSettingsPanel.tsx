@@ -1,6 +1,6 @@
 /**
  * AgentSettingsPanel — the "Settings" tab of the agent detail console, built
- * from the shared console cards so it reads identically to the toolkit and
+ * from the shared console cards so it reads identically to the
  * service-account Settings tabs:
  *   - {@link IdentitySettingsCard} → the immutable, copyable agent id plus
  *     editable name / description via PATCH /agents/{id}. Only dirty fields
@@ -9,7 +9,7 @@
  *     administrative act, not routine metadata upkeep.
  *   - {@link DangerZone} → the terminal Archive action. Suspension is NOT
  *     here: the reversible Disable/Enable flip lives in the page header's
- *     kill switch, exactly like the toolkit console. The button defers to
+ *     kill switch. The button defers to
  *     the page-level {@link LifecycleDialogs} via `onLifecycle` — this panel
  *     never mutates lifecycle state itself.
  */

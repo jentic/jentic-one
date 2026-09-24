@@ -1,6 +1,17 @@
 {{- define "common.otel-sidecar" -}}
 - name: otel-collector
   image: {{ .Values.global.observability.otel.image | default "otel/opentelemetry-collector-contrib:latest" }}
+  {{- /*
+  Hardened inline rather than from values: this is the chart's own sidecar, not
+  the operator's workload, so there is nothing to tune. The upstream collector
+  image already runs as uid 10001 and writes only to its config mount, so it
+  needs no exception to the pod-level context it inherits.
+  */}}
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop: ["ALL"]
   args:
     - "--config=/etc/otel/config.yaml"
   ports:

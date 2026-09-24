@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
+from datetime import UTC, datetime
+
 import structlog
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,22 +13,33 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.repos import (
     ActorScopeGrantRepository,
+    AgentCredentialBindingRepository,
     AgentCredentialRepository,
     AgentRepository,
     AgentToolkitBindingRepository,
 )
 from jentic_one.admin.scoping.filters import build_access_filters
-from jentic_one.auth.repos import ToolkitNameRepository
+from jentic_one.auth.repos import CredentialRefRepository, ToolkitNameRepository
 from jentic_one.auth.services.errors import (
     ActorNotFoundError,
+    AgentAlreadyOwnedError,
+    ClaimActorNotAllowedError,
+    ClaimTokenInvalidError,
+    CredentialBindingConflictError,
+    CredentialBindingNotFoundError,
+    CredentialNotVisibleError,
     InvalidOwnerError,
     InvalidTransitionError,
-    ToolkitBindingConflictError,
-    ToolkitBindingNotFoundError,
 )
+from jentic_one.auth.services.oauth_grant_service import (
+    AGENT_ARCHIVE_REVOCATION_REASON,
+    revoke_active_grants_for_agent,
+)
+from jentic_one.auth.services.registration_service import validate_jwks
 from jentic_one.auth.services.schemas.agents import (
     AgentCreatePayload,
     AgentView,
+    CredentialBindingView,
     ToolkitBindingView,
 )
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
@@ -36,7 +51,7 @@ from jentic_one.shared.models import ActorStatus, ActorType, ActorVerb
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.pagination import Page, decode_cursor_str, encode_cursor
 from jentic_one.shared.schemas import ServedApiRef
-from jentic_one.shared.scopes import DEFAULT_AGENT_SCOPES
+from jentic_one.shared.scopes import DEFAULT_AGENT_SCOPES, ORG_ADMIN, OWNER_CREDENTIALS_READ
 
 logger = structlog.get_logger(__name__)
 
@@ -55,8 +70,28 @@ class AgentService:
         self._ctx = ctx
 
     async def create(
-        self, payload: AgentCreatePayload, *, owner_id: str, identity: Identity
+        self,
+        payload: AgentCreatePayload,
+        *,
+        owner_id: str,
+        identity: Identity,
+        status: ActorStatus = ActorStatus.ACTIVE,
     ) -> AgentView:
+        """Create an agent for ``owner_id``; default posture is immediately ACTIVE.
+
+        ``status=ActorStatus.PENDING`` is the consent-page hybrid arm (P4
+        security review): a consenting user WITHOUT ``agents:write`` may still
+        mint their first agent mid-flow, but it lands in the same
+        awaiting-approval posture as the anonymous ``POST /register`` door —
+        status ``pending``, NO scope grants (``approve()`` grants
+        ``DEFAULT_AGENT_SCOPES`` on the PENDING→ACTIVE transition, exactly as
+        it does for self-registrations), plus the ``agent.self_registered``
+        requires-action event so the registration lands in the admins' approval
+        queue and ``approve()``/``deny()`` settle the alert. Any status other
+        than ACTIVE/PENDING is a programming error.
+        """
+        if status not in (ActorStatus.ACTIVE, ActorStatus.PENDING):
+            raise ValueError(f"agents are created active or pending, not {status}")
         async with self._ctx.admin_db.transaction() as session:
             agent = await AgentRepository.create(
                 session,
@@ -65,22 +100,23 @@ class AgentService:
                 registered_by=identity.sub,
                 description=payload.description,
                 created_by=identity.sub,
-                status=ActorStatus.ACTIVE,
+                status=status,
             )
-            scopes_to_grant = (
-                list(dict.fromkeys(payload.scopes))
-                if payload.scopes
-                else list(DEFAULT_AGENT_SCOPES)
-            )
-            for scope in scopes_to_grant:
-                await ActorScopeGrantRepository.grant(
-                    session,
-                    actor_id=agent.id,
-                    actor_type=ActorType.AGENT,
-                    scope=scope,
-                    granted_by=identity.sub,
-                    created_by=identity.sub,
+            if status is ActorStatus.ACTIVE:
+                scopes_to_grant = (
+                    list(dict.fromkeys(payload.scopes))
+                    if payload.scopes
+                    else list(DEFAULT_AGENT_SCOPES)
                 )
+                for scope in scopes_to_grant:
+                    await ActorScopeGrantRepository.grant(
+                        session,
+                        actor_id=agent.id,
+                        actor_type=ActorType.AGENT,
+                        scope=scope,
+                        granted_by=identity.sub,
+                        created_by=identity.sub,
+                    )
             await record_audit(
                 session,
                 action=AuditAction.REGISTER,
@@ -88,7 +124,7 @@ class AgentService:
                 target_id=agent.id,
                 actor_type=identity.actor_type,
                 actor_id=identity.sub,
-                after={"name": payload.name, "owner_id": owner_id},
+                after={"name": payload.name, "owner_id": owner_id, "status": status.value},
                 origin=identity.origin.value,
             )
             await emit_event_best_effort(
@@ -100,6 +136,24 @@ class AgentService:
                 actor_id=identity.sub,
                 actor_type=identity.actor_type.value,
             )
+            if status is ActorStatus.PENDING:
+                # Same actionable event as the /register door (actor = the
+                # AGENT, so approve()/deny()'s _settle_registration_alerts
+                # finds and acknowledges it) — without this the registration
+                # would never surface in the admins' queue and the awaiting
+                # page would poll forever.
+                await emit_event_best_effort(
+                    session,
+                    type=EventType.AGENT_SELF_REGISTERED,
+                    severity=EventSeverity.INFO,
+                    summary=f"Agent '{payload.name}' created on the consent page and "
+                    "awaits approval",
+                    requires_action=True,
+                    data={"agent_id": agent.id, "agent_name": payload.name},
+                    created_by=identity.sub,
+                    actor_id=agent.id,
+                    actor_type=ActorType.AGENT.value,
+                )
         return AgentView.model_validate(agent)
 
     async def list_agents(
@@ -237,6 +291,77 @@ class AgentService:
             await self._settle_registration_alerts(session, agent_id, acknowledged_by=identity.sub)
         return AgentView.model_validate(agent)
 
+    async def claim(self, agent_id: str, *, token: str, identity: Identity) -> AgentView:
+        """Assign ownership of a self-registered agent to the claiming caller.
+
+        The registering human presents the single-use claim token that was minted
+        at ``/register`` (see ``auth/core/claim.py``). Any *authenticated human
+        user* may claim — the token is the proof, not a role — so a plain member
+        can take ownership of the agent they registered. Once owned, the agent
+        shows under the caller via the normal scoping filter and the existing
+        approve path applies (an admin approving later no longer steals ownership,
+        because ``owner_id`` is already set).
+
+        Only ``USER`` actors may claim: ``Agent.owner_id`` is a FK to ``users.id``,
+        so a non-user actor (agent/service-account) is rejected up front
+        with ``ClaimActorNotAllowedError`` rather than being allowed to write a
+        non-user id into the users-FK column.
+
+        Ordering note: existence (404) and ownership (409) are checked *before*
+        the token, so an authenticated caller who already knows an agent id can
+        learn whether it is unclaimed without holding a token. This is a
+        deliberate trade-off — it keeps the single-use replay semantics clean, and
+        agent ids are unguessable KSUIDs — not the stronger "never reveal which
+        agents are claimable" property (which holds only for the no-token-issued
+        case, treated as a plain mismatch below).
+
+        Raises ``ClaimActorNotAllowedError`` (non-user actor),
+        ``ActorNotFoundError`` (unknown/archived agent),
+        ``AgentAlreadyOwnedError`` (already claimed/owned), or
+        ``ClaimTokenInvalidError`` (no token issued, mismatch, or expired).
+        """
+        if identity.actor_type != ActorType.USER:
+            raise ClaimActorNotAllowedError(identity.actor_type.value)
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+        try:
+            async with self._ctx.admin_db.transaction() as session:
+                agent = await AgentRepository.get_by_id_for_update(session, agent_id)
+                if agent is None or agent.status == ActorStatus.ARCHIVED:
+                    raise ActorNotFoundError(agent_id)
+                if agent.owner_id is not None:
+                    raise AgentAlreadyOwnedError(agent_id)
+                # Constant-time compare, and treat "no token was ever issued" the
+                # same as a mismatch so we never leak which agents are claimable.
+                if not agent.claim_token_hash or not hmac.compare_digest(
+                    agent.claim_token_hash, token_hash
+                ):
+                    raise ClaimTokenInvalidError()
+                if agent.claim_expires_at is not None and agent.claim_expires_at < datetime.now(
+                    UTC
+                ):
+                    raise ClaimTokenInvalidError("claim_token_expired")
+                agent = await AgentRepository.set_owner_from_claim(
+                    session, agent, owner_id=identity.sub
+                )
+                await record_audit(
+                    session,
+                    action=AuditAction.CLAIM,
+                    target_type=AuditTargetType.AGENT,
+                    target_id=agent_id,
+                    actor_type=identity.actor_type,
+                    actor_id=identity.sub,
+                    before={"owner_id": None},
+                    after={"owner_id": identity.sub},
+                    reason="agent_ownership_claim",
+                    origin=identity.origin.value,
+                )
+        except DatabaseIntegrityError:
+            # owner_id is a FK to users.id. The actor-type guard above should make
+            # this unreachable, but if the caller's sub is ever a non-user id that
+            # slips the guard, surface a clean 403 rather than a raw 500.
+            raise ClaimActorNotAllowedError(identity.actor_type.value) from None
+        return AgentView.model_validate(agent)
+
     async def deny(self, agent_id: str, *, reason: str, identity: Identity) -> AgentView:
         async with self._ctx.admin_db.transaction() as session:
             await self._check_transition(session, agent_id, ActorVerb.DENY)
@@ -267,6 +392,14 @@ class AgentService:
         return AgentView.model_validate(agent)
 
     async def disable(self, agent_id: str, *, identity: Identity) -> None:
+        # #1233 (disable arm, DECIDED): disable does NOT sweep oauth_client_grants.
+        # Disable is a reversible kill-switch — the enforcement layer already
+        # fail-closes everything while disabled (resolvers gate on status,
+        # refresh re-checks per rotation), so the grants stay DORMANT and
+        # re-enable restores the standing consent without a new consent round
+        # (the GitHub app-suspension model). The honesty half of #1233 is
+        # fixed at the listing layer instead: counts exclude and listings
+        # annotate grants whose agent is non-active.
         async with self._ctx.admin_db.transaction() as session:
             await self._check_transition(session, agent_id, ActorVerb.DISABLE)
             await AgentRepository.update_status(session, agent_id, ActorStatus.DISABLED)
@@ -304,6 +437,24 @@ class AgentService:
             await AgentRepository.archive(session, agent_id)
             await ActorScopeGrantRepository.revoke_all(session, agent_id)
             await AgentToolkitBindingRepository.delete_for_agent(session, agent_id)
+            await AgentCredentialBindingRepository.delete_for_agent(session, agent_id)
+            # #1233 (archive arm): archive is terminal — the status enum has
+            # no exit — so any consent grant left `active` would misreport
+            # every "active grants" listing/count on a dead agent forever.
+            # Sweep them in the archive's own transaction, reusing the G10
+            # per-agent revocation body (row flip + token sweep + audit +
+            # event) with an archive stamp. `disable` deliberately does NOT
+            # sweep (#1233, decided): it is reversible, grants stay dormant
+            # and re-enable restores the standing consent — see disable().
+            await revoke_active_grants_for_agent(
+                session,
+                agent_id,
+                identity=identity,
+                audit_reason="oauth grant revoked: agent archived",
+                event_reason=AGENT_ARCHIVE_REVOCATION_REASON,
+                summary_cause="was archived",
+                log_event="oauth_grants_revoked_on_agent_archive",
+            )
             await record_audit(
                 session,
                 action=AuditAction.ARCHIVE,
@@ -315,6 +466,13 @@ class AgentService:
             )
 
     async def list_toolkits(self, agent_id: str, *, identity: Identity) -> list[ToolkitBindingView]:
+        """Toolkit bindings for an agent, name/serves-enriched (read-only).
+
+        The toolkit bind/unbind management routes are gone (theme-5 Phase 5b);
+        this read survives solely for ``GET /me``'s ``toolkit_bindings`` block,
+        which reports the rows the flag-off broker fallback still derives from
+        until Phase 6b retires the toolkit path.
+        """
         await self.get_agent(agent_id, identity=identity)
         async with self._ctx.admin_db.session() as session:
             bindings = await AgentToolkitBindingRepository.list_for_agent(session, agent_id)
@@ -340,67 +498,195 @@ class AgentService:
                 ]
         return views
 
-    async def bind_toolkit(
-        self, agent_id: str, *, toolkit_id: str, identity: Identity
-    ) -> ToolkitBindingView:
+    def _can_bind_credential(self, identity: Identity, created_by: str | None) -> bool:
+        """Bind authorization for the direct bind path.
+
+        A binding hands the agent the credential's secret at the broker, so
+        this is an ownership check, not a read-visibility check: ``org:admin``
+        may bind any credential; everyone else only one they created, or — a
+        delegated agent holding ``owner:credentials:read`` — one its owner
+        created. This is the owner axis of ``credential_owner_scope`` (the
+        access-request ``credential:bind`` effect), so both bind paths agree.
+
+        ``credentials:read`` / ``credentials:write`` deliberately do **not**
+        widen this: they gate the credential routes, whose rows are still
+        owner-scoped, so honouring them here would let any holder bind another
+        user's credential to their own agent and have it injected.
+        """
+        if ORG_ADMIN in identity.permissions:
+            return True
+        if created_by is None:
+            return False
+        if created_by == identity.sub:
+            return True
+        return (
+            OWNER_CREDENTIALS_READ in identity.permissions
+            and identity.parent_actor_id is not None
+            and created_by == identity.parent_actor_id
+        )
+
+    async def list_credentials(
+        self, agent_id: str, *, identity: Identity
+    ) -> list[CredentialBindingView]:
+        """List direct credential bindings for an agent, name-enriched."""
         await self.get_agent(agent_id, identity=identity)
+        async with self._ctx.admin_db.session() as session:
+            bindings = await AgentCredentialBindingRepository.list_for_agent(session, agent_id)
+        views = [CredentialBindingView.model_validate(b) for b in bindings]
+        # Enrich from the control DB with the credential's human-readable name
+        # and the API it serves (the credential-side analogue of the toolkit
+        # `serves` enrichment, issue #686). The bindings above are already
+        # scoped to this agent. Failure to reach the control DB is non-fatal.
+        credential_ids = [v.credential_id for v in views]
+        if credential_ids and self._ctx.is_db_allowed("control"):
+            async with self._ctx.control_db.session() as session:
+                refs = await CredentialRefRepository.get_refs_for_ids(session, credential_ids)
+            for view in views:
+                ref = refs.get(view.credential_id)
+                if ref is None:
+                    continue
+                view.name = ref.name
+                view.serves = [
+                    ServedApiRef(
+                        api_vendor=ref.api_vendor,
+                        api_name=ref.api_name,
+                        api_version=ref.api_version,
+                    )
+                ]
+        return views
+
+    async def bind_credential(
+        self, agent_id: str, *, credential_id: str, identity: Identity
+    ) -> CredentialBindingView:
+        """Create a direct agent↔credential binding.
+
+        Unlike the toolkit bind route, this path verifies the caller can see
+        the target credential before writing the binding (control-DB lookup;
+        the toolkit route's missing check is a known asymmetry the direct
+        path deliberately does not inherit).
+        """
+        await self.get_agent(agent_id, identity=identity)
+        ref = None
+        if self._ctx.is_db_allowed("control"):
+            async with self._ctx.control_db.session() as session:
+                ref = await CredentialRefRepository.get_by_id(session, credential_id)
+        if ref is None or not self._can_bind_credential(identity, ref.created_by):
+            raise CredentialNotVisibleError(credential_id)
         async with self._ctx.admin_db.transaction() as session:
             try:
-                binding = await AgentToolkitBindingRepository.bind(
-                    session, agent_id=agent_id, toolkit_id=toolkit_id, created_by=identity.sub
+                binding = await AgentCredentialBindingRepository.bind(
+                    session, agent_id=agent_id, credential_id=credential_id, created_by=identity.sub
                 )
             except IntegrityError:
-                raise ToolkitBindingConflictError(agent_id, toolkit_id) from None
+                raise CredentialBindingConflictError(agent_id, credential_id) from None
             await record_audit(
                 session,
                 action=AuditAction.GRANT,
-                target_type=AuditTargetType.AGENT,
-                target_id=agent_id,
+                target_type=AuditTargetType.CREDENTIAL_BINDING,
+                target_id=binding.id,
                 actor_type=identity.actor_type,
                 actor_id=identity.sub,
-                target_parent_id=toolkit_id,
-                reason="bind_toolkit",
+                target_parent_id=agent_id,
+                reason="bind_credential",
                 origin=identity.origin.value,
             )
             await emit_event_best_effort(
                 session,
-                type=EventType.TOOLKIT_BOUND_TO_AGENT,
+                type=EventType.CREDENTIAL_BOUND_TO_AGENT,
                 severity=EventSeverity.INFO,
-                summary=f"Toolkit {toolkit_id} bound to agent {agent_id}",
+                summary=f"Credential {credential_id} bound to agent {agent_id}",
                 created_by=identity.sub,
                 actor_id=identity.sub,
                 actor_type=identity.actor_type.value,
             )
-        return ToolkitBindingView.model_validate(binding)
+        view = CredentialBindingView.model_validate(binding)
+        view.name = ref.name
+        view.serves = [
+            ServedApiRef(
+                api_vendor=ref.api_vendor, api_name=ref.api_name, api_version=ref.api_version
+            )
+        ]
+        return view
 
-    async def unbind_toolkit(self, agent_id: str, *, toolkit_id: str, identity: Identity) -> None:
+    async def unbind_credential(
+        self, agent_id: str, *, credential_id: str, purge: bool, identity: Identity
+    ) -> None:
+        """Unbind a credential from an agent.
+
+        Default is a reversible suspend (the binding row and its authored
+        permission rules survive; the broker derivation will exclude it).
+        ``purge=True`` deletes the row outright — the explicit destructive
+        path.
+        """
         await self.get_agent(agent_id, identity=identity)
         async with self._ctx.admin_db.transaction() as session:
-            removed = await AgentToolkitBindingRepository.unbind(
-                session, agent_id=agent_id, toolkit_id=toolkit_id
-            )
+            if purge:
+                removed = await AgentCredentialBindingRepository.purge(
+                    session, agent_id=agent_id, credential_id=credential_id
+                )
+            else:
+                removed = await AgentCredentialBindingRepository.set_suspended(
+                    session, agent_id=agent_id, credential_id=credential_id, suspended=True
+                )
             if not removed:
-                raise ToolkitBindingNotFoundError(agent_id, toolkit_id)
+                raise CredentialBindingNotFoundError(agent_id, credential_id)
             await record_audit(
                 session,
-                action=AuditAction.REVOKE,
-                target_type=AuditTargetType.AGENT,
-                target_id=agent_id,
+                action=AuditAction.REVOKE if purge else AuditAction.DISABLE,
+                target_type=AuditTargetType.CREDENTIAL_BINDING,
+                target_id=credential_id,
                 actor_type=identity.actor_type,
                 actor_id=identity.sub,
-                target_parent_id=toolkit_id,
-                reason="unbind_toolkit",
+                target_parent_id=agent_id,
+                reason="purge_credential_binding" if purge else "suspend_credential_binding",
                 origin=identity.origin.value,
             )
+            verb = "unbound (purged) from" if purge else "suspended for"
             await emit_event_best_effort(
                 session,
-                type=EventType.TOOLKIT_UNBOUND_FROM_AGENT,
+                type=EventType.CREDENTIAL_UNBOUND_FROM_AGENT,
                 severity=EventSeverity.INFO,
-                summary=f"Toolkit {toolkit_id} unbound from agent {agent_id}",
+                summary=f"Credential {credential_id} {verb} agent {agent_id}",
                 created_by=identity.sub,
                 actor_id=identity.sub,
                 actor_type=identity.actor_type.value,
             )
+
+    async def resume_credential(
+        self, agent_id: str, *, credential_id: str, identity: Identity
+    ) -> CredentialBindingView:
+        """Lift a suspended binding — the reverse of the default unbind."""
+        await self.get_agent(agent_id, identity=identity)
+        async with self._ctx.admin_db.transaction() as session:
+            updated = await AgentCredentialBindingRepository.set_suspended(
+                session, agent_id=agent_id, credential_id=credential_id, suspended=False
+            )
+            if not updated:
+                raise CredentialBindingNotFoundError(agent_id, credential_id)
+            binding = await AgentCredentialBindingRepository.get(
+                session, agent_id=agent_id, credential_id=credential_id
+            )
+            await record_audit(
+                session,
+                action=AuditAction.ENABLE,
+                target_type=AuditTargetType.CREDENTIAL_BINDING,
+                target_id=credential_id,
+                actor_type=identity.actor_type,
+                actor_id=identity.sub,
+                target_parent_id=agent_id,
+                reason="resume_credential_binding",
+                origin=identity.origin.value,
+            )
+            await emit_event_best_effort(
+                session,
+                type=EventType.CREDENTIAL_BOUND_TO_AGENT,
+                severity=EventSeverity.INFO,
+                summary=f"Credential {credential_id} binding resumed for agent {agent_id}",
+                created_by=identity.sub,
+                actor_id=identity.sub,
+                actor_type=identity.actor_type.value,
+            )
+        return CredentialBindingView.model_validate(binding)
 
     async def get_scopes(self, agent_id: str, *, identity: Identity) -> list[str]:
         await self.get_agent(agent_id, identity=identity)
@@ -450,6 +736,17 @@ class AgentService:
         update_data: dict[str, str | None],
         identity: Identity,
     ) -> AgentView:
+        """Partially update an agent; an ``owner_id`` change is a transfer.
+
+        Ownership transfer revokes every active OAuth client grant bound to
+        the agent in the SAME transaction (G10, #1222): a grant keys its
+        ``:revoke`` predicate on the consenting user, so leaving the old
+        owner's consent live would strand a grant the new owner cannot revoke
+        self-serve. Fail-safe posture — if the sweep fails, the transfer rolls
+        back; the new owner re-consents through the normal flow if the
+        connection is still wanted. The agent's key channel (API key, scopes,
+        toolkit bindings) is deliberately untouched.
+        """
         try:
             async with self._ctx.admin_db.transaction() as session:
                 agent = await AgentRepository.get_by_id_for_update(session, agent_id)
@@ -458,8 +755,13 @@ class AgentService:
                 if agent.status == ActorStatus.ARCHIVED:
                     raise InvalidTransitionError(agent_id, ActorStatus.ARCHIVED, "update")
                 before = {k: getattr(agent, k) for k in update_data}
+                owner_transferred = (
+                    "owner_id" in update_data and update_data["owner_id"] != agent.owner_id
+                )
                 agent = await AgentRepository.update_agent(session, agent_id, **update_data)
                 after = {k: getattr(agent, k) for k in update_data}
+                if owner_transferred:
+                    await revoke_active_grants_for_agent(session, agent_id, identity=identity)
                 await record_audit(
                     session,
                     action=AuditAction.UPDATE,
@@ -473,6 +775,44 @@ class AgentService:
                 )
         except DatabaseIntegrityError:
             raise InvalidOwnerError(update_data.get("owner_id") or "") from None
+        return AgentView.model_validate(agent)
+
+    async def update_jwks(
+        self,
+        agent_id: str,
+        *,
+        jwks: dict[str, object],
+        identity: Identity,
+    ) -> AgentView:
+        """Update an agent's JWKS (public keys for JWT-bearer authentication).
+
+        The agent must be active (not pending, disabled, or archived). The JWKS
+        is validated to ensure it contains at least one Ed25519 public key and
+        no private key material.
+        """
+        validate_jwks(jwks)
+        async with self._ctx.admin_db.transaction() as session:
+            agent = await AgentRepository.get_by_id_for_update(session, agent_id)
+            if agent is None:
+                raise ActorNotFoundError(agent_id)
+            if "org:admin" not in identity.permissions and agent.owner_id != identity.sub:
+                raise ActorNotFoundError(agent_id)
+            if agent.status != ActorStatus.ACTIVE:
+                raise InvalidTransitionError(agent_id, agent.status, "update_jwks")
+            before_jwks = agent.jwks
+            agent.jwks = jwks
+            await session.flush()
+            await record_audit(
+                session,
+                action=AuditAction.UPDATE,
+                target_type=AuditTargetType.AGENT,
+                target_id=agent_id,
+                actor_type=identity.actor_type,
+                actor_id=identity.sub,
+                before={"jwks": "[redacted]" if before_jwks else None},
+                after={"jwks": "[redacted]"},
+                origin=identity.origin.value,
+            )
         return AgentView.model_validate(agent)
 
     async def _check_transition(

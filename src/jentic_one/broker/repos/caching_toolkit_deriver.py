@@ -1,11 +1,11 @@
-"""Short-TTL, single-flighted cache around toolkit derivation (§05 R3).
+"""Short-TTL, single-flighted cache around toolkit derivation.
 
 The cross-DB ``derive_toolkits`` lookup (admin agent→toolkit bindings ∩ control
 toolkit→credential bindings) runs on **every** request that lacks a
 ``Jentic-Toolkit-Id`` header — two DB hits per request. Agent/credential
 bindings change infrequently, so this wraps the authoritative resolver in a
 short-TTL LRU keyed on ``(agent_id, vendor, name, version) → ToolkitDerivation``,
-invalidated on TTL only, and single-flighted (§05 R3.1) so concurrent misses for
+invalidated on TTL only, and single-flighted so concurrent misses for
 one key collapse to a single Admin+Control lookup.
 
 This is a pure latency optimization layered *over* the authoritative DB lookup —
@@ -65,6 +65,9 @@ class CachingToolkitDeriver:
     ``identity_mismatch`` are cached under the same TTL as the toolkit list;
     those drive recovery guidance, never authorization, so bounded staleness is
     acceptable — the same argument that justifies caching the toolkit list.
+    ``credentials_by_toolkit`` IS the toolkit path's injection boundary, so a
+    toolkit→credential unbind reaches injection only once the TTL lapses — the
+    same bounded staleness the toolkit list itself already has.
     """
 
     def __init__(

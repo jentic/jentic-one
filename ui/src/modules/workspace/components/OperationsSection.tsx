@@ -1,7 +1,7 @@
 /**
  * OperationsSection — operations of an API's current (live) revision.
  *
- * Ported from jentic-mini's API-detail operations list, adapted to jentic-one:
+ * Design points:
  *  - the backend has no operations search param, so to filter across *every*
  *    operation we load all cursor pages in the background and run the filter
  *    client-side over the full set; the list itself only ever paints one page

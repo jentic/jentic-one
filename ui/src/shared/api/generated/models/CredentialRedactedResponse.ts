@@ -17,6 +17,10 @@ export type CredentialRedactedResponse = {
      */
     api: APIReference;
     /**
+     * Catalog identity slug of the target API (`domain[/sub-api]`), when recorded at create time. Display-only; null for older credentials.
+     */
+    catalog_api_id?: (string | null);
+    /**
      * Creation timestamp (UTC).
      */
     created_at: string;

@@ -65,7 +65,10 @@ class BuildURLIndexStage(BasePipelineStage):
                 full_path = merge_paths(parsed.path, op.path)
                 entry = build_index_entry(parsed.host, full_path, parsed.scheme)
 
-                struct_form = structural_regex(full_path)
+                # Dedup on the entry's canonical template, not the raw merged
+                # path, so `/a/` and `/a` collapse to one structural key —
+                # matching the canonical form the entry itself was built from.
+                struct_form = structural_regex(entry.path_pattern)
                 dedup_key = (op.method.upper(), entry.host_pattern, struct_form)
                 if dedup_key in seen:
                     continue

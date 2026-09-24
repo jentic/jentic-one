@@ -89,6 +89,16 @@ class ToolkitBindingRepository:
         return list(result.scalars().all())
 
     @staticmethod
+    async def list_credential_ids(session: AsyncSession, toolkit_id: str) -> list[str]:
+        """The toolkit's bound credential ids, id-ordered (retirement-job seam)."""
+        result = await session.execute(
+            select(ToolkitCredentialBinding.credential_id)
+            .where(ToolkitCredentialBinding.toolkit_id == toolkit_id)
+            .order_by(ToolkitCredentialBinding.credential_id)
+        )
+        return list(result.scalars().all())
+
+    @staticmethod
     async def list_active_bound_credentials_for_api(
         session: AsyncSession,
         *,

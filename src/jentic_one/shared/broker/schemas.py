@@ -21,7 +21,7 @@ from pydantic import BaseModel
 class ExecuteRequestContext(BaseModel):
     """Contextual metadata for a broker proxy request — discovery-driven.
 
-    ``toolkit_id`` is no longer a required inbound header: it is derived (§03) or
+    ``toolkit_id`` is optional: derived from the discovered API identity or
     supplied as an inbound disambiguator. ``operation_id`` / ``api_*`` come from
     in-process discovery, not inbound ``Jentic-Api-*`` headers.
     """

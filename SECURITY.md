@@ -38,21 +38,25 @@ Jentic One is designed so that **credentials never leave the data plane**:
   Broker at execution time. They are never returned to callers, never logged in
   cleartext, and never exposed to the agent.
 - The credential-at-rest encryption keyset is **required** and must be supplied
-  by the operator (environment variable or secret manager). Never commit a real
-  key to source control.
+  by the operator — point an entry at a secret file (docker/k8s secret mount,
+  systemd `LoadCredential`) with `material_file`, or at a secret-manager-injected
+  environment variable with `material_env`. Never commit a real key to source
+  control.
 - Access is governed by fine-grained, per-binding permissions, and every
   execution is written to an append-only audit log.
 - Jentic One does **not** send telemetry by default. Anonymous product telemetry
   is **opt-in** (`telemetry.enabled: true`); when enabled it sends a small, fixed,
   closed-schema event set — `{id, version, event, actor_type?, tags?, ts}`, where
-  `event`/`actor_type` are fixed enums and `tags` are fixed labels — with no
-  credentials, request data, or PII. Observability exporters are self-hosted.
+  `event`/`actor_type` are fixed enums and `tags` are fixed labels (e.g. the OS
+  family `linux`/`darwin`/`windows`/`other`, sent once per boot on the
+  `instance_booted` event) — with no credentials, request data, or PII.
+  Observability exporters are self-hosted.
 
 > **Most important operator guidance:** the "credentials never leave the data
 > plane" guarantee holds on the network, but **not** when the agent runs as the
 > same OS user as the broker — a same-user process can read the key and database
 > directly. Do not run the broker in the same trust boundary as your agent for
-> real credentials. See **[docs/security/hardening.md](docs/security/hardening.md)**
+> real credentials. See **[docs/security/README.md](docs/security/README.md)**
 > for the deployment-tier ladder, agent-sandboxing options, and a production
 > checklist.
 

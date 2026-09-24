@@ -18,7 +18,7 @@ from jentic_one.shared.scopes import (
     OWNER_CREDENTIALS_READ,
     OWNER_RESOURCES_READ,
     OWNER_SERVICE_ACCOUNTS_READ,
-    OWNER_TOOLKITS_READ,
+    RETIRED_SCOPES,
 )
 from jentic_one.shared.web.scope_catalog import (
     SCOPE_CATALOG_SCHEMA,
@@ -113,15 +113,46 @@ def test_catalog_import_family_and_implications() -> None:
 
 
 @pytest.mark.arch
+def test_overlays_confirm_family_and_implications() -> None:
+    """overlays:confirm forms its own family and implies apis:read."""
+    catalog = build_scope_catalog()
+    by_name = {s["name"]: s for s in catalog["scopes"]}
+    confirm = by_name["overlays:confirm"]
+    assert confirm["family"] == "overlays"
+    assert confirm["action"] == "confirm"
+    assert confirm["implies"] == ["apis:read"]
+    assert confirm["is_superuser"] is False
+
+    fam = next(f for f in catalog["families"] if f["name"] == "overlays")
+    assert fam["label"] == "Overlays"
+    # org:admin ⇒ overlays:confirm (so existing admins keep confirm), which ⇒ apis:read.
+    assert "overlays:confirm" in by_name["org:admin"]["implies_transitive"]
+    assert "apis:read" in confirm["implies_transitive"]
+
+
+@pytest.mark.arch
 def test_owner_shared_constants_are_catalogued() -> None:
     """Every OWNER_* shared scope constant must be a key in ALL_PERMISSIONS."""
     owner_constants = {
         OWNER_CREDENTIALS_READ,
         OWNER_ACCESS_REQUESTS_READ,
         OWNER_AGENTS_READ,
-        OWNER_TOOLKITS_READ,
         OWNER_RESOURCES_READ,
         OWNER_SERVICE_ACCOUNTS_READ,
     }
     missing = owner_constants - set(ALL_PERMISSIONS)
     assert not missing, f"OWNER_* constants missing from the catalogue: {sorted(missing)}"
+
+
+@pytest.mark.arch
+def test_retired_scopes_stay_out_of_the_catalogue() -> None:
+    """Retired toolkit scopes (theme-5 Phase 5b) never reappear in the catalogue.
+
+    They are tolerated on stored-grant re-validation (``RETIRED_SCOPES``) but
+    must not be grantable, defaulted, or implied — reintroducing one here would
+    silently resurrect the deleted toolkit surface's authorization tier.
+    """
+    assert not RETIRED_SCOPES & set(ALL_PERMISSIONS)
+    assert not RETIRED_SCOPES & set(DEFAULT_AGENT_SCOPES)
+    catalog = build_scope_catalog()
+    assert not RETIRED_SCOPES & {s["name"] for s in catalog["scopes"]}

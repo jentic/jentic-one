@@ -1,7 +1,7 @@
 /**
  * ApiSummary — renders an API's `info.description` inside the detail sheet.
  *
- * Ported from jentic-mini: the description is Markdown (sanitized) truncated to
+ * The description is Markdown (sanitized) truncated to
  * a word boundary at ~280 chars with a "Show more / Show less" toggle. When the
  * spec has no description there's nothing to show.
  */

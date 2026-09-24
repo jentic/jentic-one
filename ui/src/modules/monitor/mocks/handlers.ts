@@ -70,10 +70,12 @@ const EXECUTIONS = rebaseFixture([
 		execution_id: 'exec_1',
 		http_status: 200,
 		operation_id: 'POST /v1/charges',
+		origin: 'api',
 		pinned_revisions: null,
 		started_at: '2026-06-19T10:00:00Z',
 		status: 'completed',
-		toolkit_id: 'tk_payments',
+		credential_id: 'cred_payments',
+		credential_name: 'Stripe key',
 		trace_id: TRACE_A,
 	},
 	{
@@ -87,10 +89,12 @@ const EXECUTIONS = rebaseFixture([
 		execution_id: 'exec_2',
 		http_status: 503,
 		operation_id: 'GET /repos/{owner}/{repo}',
+		origin: 'cli',
 		pinned_revisions: null,
 		started_at: '2026-06-19T10:05:00Z',
 		status: 'failed',
-		toolkit_id: 'tk_dev',
+		credential_id: 'cred_dev',
+		credential_name: 'GitHub PAT',
 		trace_id: TRACE_B,
 	},
 	{
@@ -104,10 +108,13 @@ const EXECUTIONS = rebaseFixture([
 		execution_id: 'exec_3',
 		http_status: 200,
 		operation_id: 'POST /v1/refunds',
+		// MCP-origin run (local-MCP #1178) — the origin-filter specs pivot on it.
+		origin: 'mcp',
 		pinned_revisions: null,
 		started_at: '2026-06-19T10:06:00Z',
 		status: 'completed',
-		toolkit_id: 'tk_payments',
+		credential_id: 'cred_payments',
+		credential_name: 'Stripe key',
 		trace_id: TRACE_A,
 	},
 	{
@@ -126,7 +133,8 @@ const EXECUTIONS = rebaseFixture([
 		pinned_revisions: null,
 		started_at: '2026-06-19T10:07:00Z',
 		status: 'completed',
-		toolkit_id: 'tk_comms',
+		credential_id: 'cred_comms',
+		credential_name: 'Slack bot token',
 		trace_id: 'unknown',
 	},
 ]);
@@ -181,10 +189,11 @@ function resampleTrend(trend: number[], numPoints: number): number[] {
 // trends the Breakdown and bubble charts render (authored as 12 points; the
 // handler resamples them to the backend's window-derived segment count).
 // Key/label formats mirror monitoring_repo.grouped_top:
-// api rows are "vendor/name" (label identical to key), toolkit rows use the
-// raw toolkit_id as both key and label, agent rows are "actor_type/actor_id",
-// and unattributed executions surface as a null key/label (SQL `||` with a
-// NULL operand). Each group's rows sum to the same 184/168/16 split.
+// api rows are "vendor/name" (label identical to key), credential rows use
+// the raw credential_id as both key and label ("unknown" when unattributed),
+// agent rows are "actor_type/actor_id", and unattributed executions surface
+// as a null key/label (SQL `||` with a NULL operand). Each group's rows sum
+// to the same 184/168/16 split.
 const USAGE_TOP: Record<string, Array<Record<string, unknown>>> = {
 	api: [
 		{
@@ -215,10 +224,10 @@ const USAGE_TOP: Record<string, Array<Record<string, unknown>>> = {
 			trend: [2, 3, 2, 4, 3, 2, 3, 2, 3, 4, 2, 2],
 		},
 	],
-	toolkit: [
+	credential: [
 		{
-			key: 'tk_payments',
-			label: 'tk_payments',
+			key: 'cred_payments',
+			label: 'cred_payments',
 			total: 100,
 			success: 97,
 			failed: 3,
@@ -226,8 +235,8 @@ const USAGE_TOP: Record<string, Array<Record<string, unknown>>> = {
 			trend: [6, 9, 8, 12, 7, 10, 9, 11, 8, 9, 6, 5],
 		},
 		{
-			key: 'tk_dev',
-			label: 'tk_dev',
+			key: 'cred_dev',
+			label: 'cred_dev',
 			total: 52,
 			success: 43,
 			failed: 9,
@@ -235,8 +244,8 @@ const USAGE_TOP: Record<string, Array<Record<string, unknown>>> = {
 			trend: [3, 4, 6, 5, 4, 3, 5, 6, 4, 5, 4, 3],
 		},
 		{
-			key: 'tk_comms',
-			label: 'tk_comms',
+			key: 'cred_comms',
+			label: 'cred_comms',
 			total: 32,
 			success: 28,
 			failed: 4,
@@ -461,7 +470,7 @@ export const monitorHandlers = [
 		const url = new URL(request.url);
 		const traceId = url.searchParams.get('trace_id');
 		const actorId = url.searchParams.get('actor_id');
-		const toolkitId = url.searchParams.get('toolkit_id');
+		const origin = url.searchParams.get('origin');
 		const from = url.searchParams.get('from');
 		const statuses = url.searchParams.getAll('status');
 		const cursor = url.searchParams.get('cursor');
@@ -471,7 +480,7 @@ export const monitorHandlers = [
 		let rows = EXECUTIONS;
 		if (traceId) rows = rows.filter((r) => r.trace_id === traceId);
 		if (actorId) rows = rows.filter((r) => r.actor_id === actorId);
-		if (toolkitId) rows = rows.filter((r) => r.toolkit_id === toolkitId);
+		if (origin) rows = rows.filter((r) => (r as { origin?: string }).origin === origin);
 		if (from) rows = rows.filter((r) => r.started_at >= from);
 		if (statuses.length) rows = rows.filter((r) => statuses.includes(r.status));
 		return HttpResponse.json(paginateCursor(rows, cursor, limit));

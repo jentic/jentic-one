@@ -1,7 +1,18 @@
 {{- /*
 Migration hook Job: applies Alembic migrations for all databases before the
-service pods start serving. Runs as a Helm post-install/post-upgrade hook so
-it executes after the bundled Postgres (and its init schemas/roles) is ready.
+service pods start serving.
+
+Hook phases are asymmetric on purpose:
+
+  post-install — a first install has no Postgres to migrate against until the
+    StatefulSet and its init ConfigMap exist, and Helm creates normal resources
+    before post-install hooks run. A pre-install hook would have nothing to
+    connect to.
+  pre-upgrade  — on an upgrade the server is already there, so the migration runs
+    to completion BEFORE the Deployments roll. New pods therefore never serve
+    against the previous schema, and a failed migration aborts the upgrade with
+    the old pods still running the schema they were built for, which is the
+    failure mode worth having.
 
 Uses the app image (which bundles the full jentic_one package, including the
 migrations) and the shared common.db-env so connection details have a single
@@ -28,7 +39,16 @@ the first enabled surface so the chosen image is one that is actually present.
   {{- fail "migrate job: postgresql is enabled but no service surface is enabled to source the image" -}}
 {{- end -}}
 {{- $svcValues := index .Values $svc -}}
-{{- $tag := $svcValues.image.tag | default (default "" .Values.global.image.tag) | default "latest" -}}
+{{- /*
+Same tag resolution as common.image, and the same refusal to fall back to
+`:latest` — migrating with a floating tag can apply a different revision's
+migrations than the pods that follow it. Here .Chart is the umbrella, whose
+appVersion is always set, so the final arm is a real version.
+*/ -}}
+{{- $tag := $svcValues.image.tag | default (default "" .Values.global.image.tag) | default .Chart.AppVersion -}}
+{{- if not $tag -}}
+  {{- fail "migrate job: no image tag resolved — set global.image.tag or the chosen surface's image.tag" -}}
+{{- end -}}
 {{- $repo := $svcValues.image.repository -}}
 {{- if and (not $repo) .Values.global.image.registry -}}
   {{- $repo = printf "%s/%s" .Values.global.image.registry $svc -}}
@@ -41,7 +61,7 @@ metadata:
     app.kubernetes.io/name: migrate
     app.kubernetes.io/instance: {{ .Release.Name }}
   annotations:
-    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook": post-install,pre-upgrade
     "helm.sh/hook-weight": "0"
     "helm.sh/hook-delete-policy": before-hook-creation
 spec:
@@ -53,13 +73,32 @@ spec:
         app.kubernetes.io/instance: {{ .Release.Name }}
     spec:
       restartPolicy: Never
+      {{- /*
+      Hardened inline rather than from values, unlike the service deployments:
+      this Job is chart-owned plumbing that runs the same image with a fixed
+      command, so there is no operator workload to tune. Same uid as the service
+      pods (`USER 10001` in deploy/docker/*.Dockerfile) — runAsNonRoot needs the
+      numeric id to be verifiable.
+      */}}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
       initContainers:
-        # Wait for Postgres to accept connections before migrating. The Job is
-        # a post-install hook, but the Postgres StatefulSet may still be
-        # starting; without this gate the first attempt races and fails (it
-        # then succeeds on backoff retry, but that is noisy and fragile).
+        # Wait for Postgres to accept connections before migrating. On a first
+        # install the StatefulSet exists by the time this hook runs but may
+        # still be starting; without this gate the first attempt races and fails
+        # (it then succeeds on backoff retry, but that is noisy and fragile).
         - name: wait-for-db
           image: {{ printf "%s:%s" $repo $tag | quote }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
           command:
             - python
             - -c
@@ -80,10 +119,41 @@ spec:
               sys.exit(1)
           env:
 {{ include "common.db-env" . | indent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
       containers:
         - name: migrate
           image: {{ printf "%s:%s" $repo $tag | quote }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
           command: ["python", "-m", "jentic_one.migrations.run"]
+          {{- with .Values.migrate.extraArgs }}
+          args:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- /*
+          Deliberately no common.runtime-env here. The runner resolves database
+          URLs through load_config() (migrations/env.py), so it validates the
+          whole AppConfig — but it is handed only the DB env, never the
+          appSecrets config.yaml the service pods mount. Setting
+          JENTIC_ENV=production would therefore arm the placeholder-secret guard
+          against secrets this pod has no way to see and fail every install.
+          Schema migrations do not touch those secrets, so the application's
+          development default (ephemeral, never persisted, never used to sign
+          anything here) is the correct posture for this Job.
+          */}}
           env:
 {{ include "common.db-env" . | indent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        # Paired with readOnlyRootFilesystem above — Python and tempfile need a
+        # writable /tmp, and the migration runner writes nothing else.
+        - name: tmp
+          emptyDir: {}
 {{- end }}

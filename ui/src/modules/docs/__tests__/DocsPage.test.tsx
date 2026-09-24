@@ -24,6 +24,7 @@ import {
 	renderWithProviders,
 	screen,
 	within,
+	waitFor,
 	checkA11y,
 	createErrorHandler,
 } from '@/__tests__/test-utils';
@@ -145,7 +146,15 @@ function seedDocsHandlers(overrides: { reference?: unknown } = {}) {
 		),
 		// Resolved relative to document.baseURI in the client; match by suffix.
 		http.get('*/cli-reference.json', () => HttpResponse.json(CLI)),
-		http.get('*/broker-openapi.json', () => HttpResponse.json(BROKER_SPEC)),
+		// Delayed on purpose: the Broker spec is a query independent of the main
+		// docs query, so its reference mounts strictly after the hero appears.
+		// The delay pins that ordering so the Broker test exercises the real
+		// "spec still loading when the page is already up" path every run
+		// instead of only under CI load (where it flaked before).
+		http.get('*/broker-openapi.json', async () => {
+			await new Promise((resolve) => setTimeout(resolve, 200));
+			return HttpResponse.json(BROKER_SPEC);
+		}),
 	);
 }
 
@@ -191,8 +200,15 @@ describe('DocsPage', () => {
 		expect(screen.getByRole('heading', { name: 'Broker API' })).toBeInTheDocument();
 
 		// Its operation is lazily mounted under a namespaced anchor so it never
-		// collides with the control-plane reference; scroll it into view to mount.
+		// collides with the control-plane reference. The Broker spec resolves on
+		// its own query, strictly after the hero (the handler above delays it),
+		// so wait for the anchor placeholder to exist before scrolling — a
+		// one-shot scroll against a not-yet-rendered anchor silently no-ops and
+		// the operation never mounts (the pre-fix CI flake on main).
 		const brokerOpId = `broker-${operationAnchorId('POST', '/{upstream_url}')}`;
+		await waitFor(() => {
+			expect(document.getElementById(brokerOpId)).not.toBeNull();
+		});
 		await act(async () => {
 			document.getElementById(brokerOpId)?.scrollIntoView();
 		});

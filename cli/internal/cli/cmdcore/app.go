@@ -1,0 +1,59 @@
+package cmdcore
+
+import (
+	"context"
+	"io"
+
+	"github.com/jentic/jentic-one/cli/internal/config"
+	"github.com/jentic/jentic-one/cli/internal/serverinfo"
+	"github.com/jentic/jentic-one/cli/internal/skillgen"
+)
+
+// App is the dependency container threaded into every command constructor. It
+// holds the resolved filesystem paths and the output streams, so commands carry
+// no package-global state and are constructible (and testable) in isolation.
+//
+// App is the internal wiring derived from the exported core.AppContainer
+// (see NewApp): the container carries the injectable seams a downstream package
+// can override, while App carries the resolved paths every subcommand needs.
+type App struct {
+	// Paths resolves every filesystem location the CLI owns.
+	Paths config.Paths
+	// Out and Err are the standard output streams (overridable in tests).
+	Out io.Writer
+	Err io.Writer
+	// DetectEnv overrides the skill operator-detection probe (tests only);
+	// nil means the real OS probe. Injected here rather than a package var so
+	// the command tree stays constructor-built with no global state.
+	DetectEnv func() (skillgen.DetectEnv, error)
+
+	// NudgeLatestTag and NewerVersionAvailable are the update-nudge seams. The
+	// ctl tree (which legitimately depends on internal/update) injects them so
+	// cmdcore itself never imports the installer/lifecycle packages — keeping the
+	// `jentic` (api) binary free of them. When either is nil (the api tree, and
+	// tests that don't opt in) the update nudge is a no-op. NudgeLatestTag
+	// resolves the latest release tag; NewerVersionAvailable reports whether
+	// latest is newer than installed.
+	NudgeLatestTag        func(ctx context.Context, repo, token string) (string, error)
+	NewerVersionAvailable func(installed, latest string) bool
+
+	// NudgeCommand is the recovery command the update nudge tells the user to
+	// run. The ctl tree sets `jenticctl update`; the api (`jentic`) tree sets a
+	// jentic-appropriate command (a `jentic`-only user may not have jenticctl).
+	// Empty falls back to `jenticctl update` for backward compatibility.
+	NudgeCommand string
+
+	// ProbeServer overrides the interactive help-header server-version probe
+	// (QA-4). nil means the real serverinfo.Probe. It is a seam so a test can
+	// assert the header path never blocks — and so a caller could disable the
+	// probe entirely — without reaching the network. The real probe is already
+	// bounded by serverinfo.DefaultTimeout; this makes that bound testable and
+	// overridable rather than implicit.
+	ProbeServer func(baseURL string) serverinfo.Info
+
+	// poll is the approval/refresh poll-loop cadence (AR2-5). Kept unexported and
+	// accessed via PollCadence/SetPollCadence so a zero value resolves to the
+	// production defaults; threaded here rather than package globals so timing is
+	// per-App and tests shrink it without mutating shared state.
+	poll pollCadence
+}

@@ -3,6 +3,7 @@ package install
 import (
 	"fmt"
 	"path/filepath"
+	"runtime"
 	"strconv"
 
 	"gopkg.in/yaml.v3"
@@ -82,9 +83,17 @@ type adminOut struct {
 	Invite adminInviteOut `yaml:"invite"`
 }
 
+// encryptionEntryOut mirrors EncryptionKey (config.py): key material comes
+// from exactly one of the three sources. All three must round-trip through
+// ReuseSecrets — dropping an unrecognised source field would silently re-key
+// a reinstall. Material carries omitempty so a carried-over material_env/
+// material_file entry doesn't render a spurious `material: ""` (the backend
+// rejects an entry with more than one source set).
 type encryptionEntryOut struct {
-	ID       string `yaml:"id"`
-	Material string `yaml:"material"`
+	ID           string `yaml:"id"`
+	Material     string `yaml:"material,omitempty"`
+	MaterialEnv  string `yaml:"material_env,omitempty"`
+	MaterialFile string `yaml:"material_file,omitempty"`
 }
 
 type encryptionOut struct {
@@ -132,9 +141,25 @@ type searchOut struct {
 // from this generated jentic-one.yaml, so an absent block would leave telemetry
 // OFF regardless of what the user answered. instance_id is written only when the
 // user opted in (seeding the durable admin-DB identity row on first boot).
+// host_os records the operator's machine (runtime.GOOS) at install time — the
+// recommended install runs the app in Docker, where the backend's own runtime
+// detection would always see the container's Linux instead of the host.
 type telemetryOut struct {
 	Enabled    bool   `yaml:"enabled"`
 	InstanceID string `yaml:"instance_id,omitempty"`
+	HostOS     string `yaml:"host_os,omitempty"`
+}
+
+// hostOSFor returns the operator's OS family for the telemetry block, or ""
+// (omitted) when the user opted out — an opted-out config carries no
+// environment detail at all, mirroring how instance_id is only written on
+// consent. runtime.GOOS values ("linux", "darwin", "windows") match the
+// backend's closed HostOs enum; anything else degrades to "other" backend-side.
+func hostOSFor(enabled bool) string {
+	if !enabled {
+		return ""
+	}
+	return runtime.GOOS
 }
 
 type configOut struct {
@@ -229,7 +254,9 @@ func (d *Draft) dbEntryFor(schema string) dbEntry {
 // toConfig translates the Draft into the typed output config.
 func (d *Draft) toConfig() configOut {
 	// The container must bind all interfaces so the published port is reachable
-	// from the host; the local path keeps the user-chosen bind host.
+	// from the host; the local path keeps the user-chosen bind host. The user's
+	// answer is NOT discarded on the Docker path: it becomes the host-IP prefix
+	// of the compose port publishes instead (Draft.PublishHost — see #992).
 	serverHost := d.ServerHost
 	if d.IsDocker() {
 		serverHost = "0.0.0.0"
@@ -270,6 +297,7 @@ func (d *Draft) toConfig() configOut {
 		Telemetry: telemetryOut{
 			Enabled:    d.TelemetryEnabled,
 			InstanceID: d.TelemetryInstanceID,
+			HostOS:     hostOSFor(d.TelemetryEnabled),
 		},
 	}
 

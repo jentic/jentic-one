@@ -26,6 +26,7 @@ class AuditAction(StrEnum):
     CONFIRM = "confirm"
     DEPRECATE = "deprecate"
     REGISTER = "register"
+    CLAIM = "claim"
 
 
 class AuditReason(StrEnum):
@@ -58,5 +59,8 @@ class AuditTargetType(StrEnum):
     ACCESS_REQUEST = "access_request"
     TOOLKIT_KEY = "toolkit_key"
     CREDENTIAL_BINDING = "credential_binding"
+    PERMISSION_RULE_SET = "permission_rule_set"
     SESSION = "session"
     PROVIDER_CONFIG = "provider_config"
+    OAUTH_CLIENT = "oauth_client"
+    OAUTH_GRANT = "oauth_grant"

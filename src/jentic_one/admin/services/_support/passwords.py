@@ -29,6 +29,27 @@ def verify_password(plain: str, hashed: str) -> bool:
         return False
 
 
+# Hashed once per process, with the *current* hasher parameters, so the dummy
+# verification below costs the same as a real one even if argon2's defaults
+# move. The preimage is irrelevant — dummy_verify_password never passes.
+_DUMMY_HASH: str | None = None
+
+
+def dummy_verify_password() -> None:
+    """Burn one argon2id verification against a static dummy hash.
+
+    Called on the credential-check arms that would otherwise return *before*
+    any hash verification (unknown email, inactive user, missing secret,
+    active lockout) so response timing does not separate "account exists"
+    from "account does not": every rejection pays the same argon2 cost.
+    The result is deliberately discarded.
+    """
+    global _DUMMY_HASH
+    if _DUMMY_HASH is None:
+        _DUMMY_HASH = _hasher.hash("jentic-one-timing-equalizer")
+    verify_password("timing-equalizer-mismatch", _DUMMY_HASH)
+
+
 def needs_rehash(hashed: str) -> bool:
     """Check if a hash needs to be re-hashed with updated parameters."""
     return _hasher.check_needs_rehash(hashed)

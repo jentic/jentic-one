@@ -2,27 +2,38 @@
 
 from __future__ import annotations
 
+import base64
 import os
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
 import pytest
+import structlog.testing
 import yaml
 from pydantic import SecretStr, ValidationError
 
 from jentic_one.shared.config import (
+    _ONESHOT_CONFIG_CACHE,
     AdminAuthConfig,
     AdminInviteConfig,
     AppConfig,
+    AuthConfig,
+    CatalogConfig,
     ConfigError,
+    ConnectConfig,
     CredentialsConfig,
     DirectOAuth2ProviderConfig,
     EgressConfig,
     EncryptionConfig,
+    EncryptionKey,
+    EntitlementConfig,
     RuntimeConfig,
+    SigningKeyConfig,
+    TelemetryConfig,
     _csv_to_list,
     _deep_merge,
+    _env_overrides,
     check_public_url_consistency,
     effective_auth_base_url,
     load_config,
@@ -104,6 +115,47 @@ def test_env_coerces_float(config_file: Path):
     assert config.services.request_timeout_s == 60.5
 
 
+def test_env_indexed_keys_build_list_of_models(config_file: Path):
+    # JENTIC__AUTH__ID_SIGNING__0__* addresses a list index; the env parser
+    # can only build dicts, so this exercises the digit-keyed dict -> list
+    # coercion that lets list[SigningKeyConfig] validate.
+    env = {
+        "JENTIC__AUTH__ID_SIGNING__0__KID": "k0",
+        "JENTIC__AUTH__ID_SIGNING__0__PRIVATE_KEY_PEM": "pem-zero",
+        "JENTIC__AUTH__ID_SIGNING__1__KID": "k1",
+        "JENTIC__AUTH__ID_SIGNING__1__PRIVATE_KEY_PEM": "pem-one",
+    }
+    with patch.dict(os.environ, env, clear=False):
+        config = load_config(config_file)
+    assert [k.kid for k in config.auth.id_signing] == ["k0", "k1"]
+    assert config.auth.id_signing[0].private_key_pem.get_secret_value() == "pem-zero"
+
+
+def test_env_overrides_coerces_contiguous_digit_dict_to_list():
+    env = {
+        "JENTIC__AUTH__ID_SIGNING__0__KID": "k0",
+        "JENTIC__AUTH__ID_SIGNING__1__KID": "k1",
+    }
+    with patch.dict(os.environ, env, clear=False):
+        overrides = _env_overrides()
+    signing = overrides["auth"]["id_signing"]
+    assert isinstance(signing, list)
+    assert [item["kid"] for item in signing] == ["k0", "k1"]
+
+
+def test_env_overrides_leaves_non_indexed_dicts_untouched():
+    # Real string keys (databases.registry) must stay a dict, and a sparse /
+    # 1-based numeric set must NOT be coerced (it isn't a valid list address).
+    env = {
+        "JENTIC__DATABASES__REGISTRY__HOST": "h",
+        "JENTIC__WIDGETS__1__NAME": "one",  # missing index 0 -> not a list
+    }
+    with patch.dict(os.environ, env, clear=False):
+        overrides = _env_overrides()
+    assert overrides["databases"]["registry"] == {"host": "h"}
+    assert overrides["widgets"] == {"1": {"name": "one"}}
+
+
 def test_numeric_password_preserved_as_string(config_file: Path):
     env = {"JENTIC__DATABASES__REGISTRY__PASSWORD": "123456"}
     with patch.dict(os.environ, env, clear=False):
@@ -111,11 +163,34 @@ def test_numeric_password_preserved_as_string(config_file: Path):
     assert config.databases.registry.password.get_secret_value() == "123456"
 
 
-def test_default_jwt_secret_allowed_in_development():
-    """The placeholder jwt_secret is fine for local dev (the common case)."""
+def test_default_jwt_secret_generated_in_development():
+    """With no jwt_secret configured, dev mints a random per-process secret.
+
+    The shipped default is empty — images must not contain a secret-shaped
+    literal (AWS Marketplace container policy) — so zero-config local dev
+    relies on this generation. It must be non-empty and stable across repeated
+    config loads in one process, or every re-read would invalidate sessions.
+    """
     with patch.dict(os.environ, {"JENTIC_ENV": "development"}, clear=False):
-        cfg = AdminAuthConfig()
-    assert cfg.jwt_secret.get_secret_value() == "CHANGE-ME-IN-PRODUCTION"
+        first = AdminAuthConfig()
+        second = AdminAuthConfig()
+    generated = first.jwt_secret.get_secret_value()
+    assert generated.strip()
+    assert generated == second.jwt_secret.get_secret_value()
+
+
+def test_generated_dev_secrets_differ_per_field():
+    """The dev generator must not reuse one value across different secrets.
+
+    jwt_secret / pepper / state_secret have different blast radii; a shared
+    value would let one surface forge another's artifacts (e.g. sign an admin
+    JWT with the connect state secret).
+    """
+    with patch.dict(os.environ, {"JENTIC_ENV": "development"}, clear=False):
+        jwt = AdminAuthConfig().jwt_secret.get_secret_value()
+        pepper = AdminInviteConfig().pepper.get_secret_value()
+        state = ConnectConfig().state_secret.get_secret_value()
+    assert len({jwt, pepper, state}) == 3
 
 
 def test_default_jwt_secret_rejected_in_production():
@@ -151,6 +226,34 @@ def test_empty_jwt_secret_rejected_in_production(blank: str):
         pytest.raises(ConfigError, match=r"admin\.auth\.jwt_secret"),
     ):
         AdminAuthConfig(jwt_secret=SecretStr(blank))
+
+
+@pytest.mark.parametrize("placeholder", ["change-me-in-production", "ChangeMe-2026"])
+def test_placeholder_jwt_secret_rejected_in_production(placeholder: str):
+    """A change-me placeholder in production is as unsafe as an empty value.
+
+    Placeholder values come from published examples and configs, so they are
+    publicly known — signing tokens with one means anyone can forge admin
+    JWTs. Boot must fail closed, exactly as it does for a blank.
+    """
+    with (
+        patch.dict(os.environ, {"JENTIC_ENV": "production"}, clear=False),
+        pytest.raises(ConfigError, match=r"admin\.auth\.jwt_secret"),
+    ):
+        AdminAuthConfig(jwt_secret=SecretStr(placeholder))
+
+
+def test_placeholder_jwt_secret_replaced_in_development():
+    """A change-me placeholder in dev is treated as unset, never signed with.
+
+    The generated per-process secret takes its place, so a copied example
+    config still boots locally without ever using the publicly-known value.
+    """
+    with patch.dict(os.environ, {"JENTIC_ENV": "development"}, clear=False):
+        cfg = AdminAuthConfig(jwt_secret=SecretStr("change-me-in-production"))
+    generated = cfg.jwt_secret.get_secret_value()
+    assert generated.strip()
+    assert generated != "change-me-in-production"
 
 
 def test_session_lifetime_defaults():
@@ -190,6 +293,28 @@ def test_non_positive_session_lifetimes_rejected(field: str):
         AdminAuthConfig.model_validate({field: 0})
 
 
+def test_catalog_jitter_ratio_default():
+    """The sweep jitter ratio defaults to a bounded 15%."""
+    assert CatalogConfig().update_sweep_jitter_ratio == 0.15
+
+
+@pytest.mark.parametrize("bad", [-0.01, 1.01, 10.0])
+def test_catalog_jitter_ratio_out_of_bounds_rejected(bad: float):
+    """The ratio is bounded [0, 1]: a value outside that fails fast at load.
+
+    Without the Field(ge=0, le=1) bound a value like 10.0 would silently make the
+    "cadence stays ~daily" contract false (up to 11x the interval), so reject it.
+    """
+    with pytest.raises(ValidationError, match="update_sweep_jitter_ratio"):
+        CatalogConfig.model_validate({"update_sweep_jitter_ratio": bad})
+
+
+def test_catalog_jitter_ratio_bounds_accepted():
+    """The inclusive bounds 0.0 (disable) and 1.0 (max) are both valid."""
+    assert CatalogConfig(update_sweep_jitter_ratio=0.0).update_sweep_jitter_ratio == 0.0
+    assert CatalogConfig(update_sweep_jitter_ratio=1.0).update_sweep_jitter_ratio == 1.0
+
+
 def test_default_invite_pepper_rejected_in_production():
     with (
         patch.dict(os.environ, {"JENTIC_ENV": "production"}, clear=False),
@@ -211,6 +336,80 @@ def test_explicit_invite_pepper_accepted_in_production():
     with patch.dict(os.environ, {"JENTIC_ENV": "production"}, clear=False):
         cfg = AdminInviteConfig(pepper=SecretStr("a-real-generated-pepper"))
     assert cfg.pepper.get_secret_value() == "a-real-generated-pepper"
+
+
+@pytest.mark.parametrize("blank", ["", "   "])
+def test_blank_connect_state_secret_rejected_in_production(blank: str):
+    """The connect state_secret gets the same fail-closed posture as the rest.
+
+    It signs the OAuth connect state; running production with a generated
+    per-process value would break multi-replica deployments silently, so a
+    missing value must be a boot error, not a fallback.
+    """
+    with (
+        patch.dict(os.environ, {"JENTIC_ENV": "production"}, clear=False),
+        pytest.raises(ConfigError, match=r"credentials\.connect\.state_secret"),
+    ):
+        ConnectConfig(state_secret=SecretStr(blank))
+
+
+def test_explicit_connect_state_secret_accepted_in_production():
+    with patch.dict(os.environ, {"JENTIC_ENV": "production"}, clear=False):
+        cfg = ConnectConfig(state_secret=SecretStr("a-real-generated-state-secret"))
+    assert cfg.state_secret.get_secret_value() == "a-real-generated-state-secret"
+
+
+_LOCAL_DEV_KEY_SEC1 = """\
+-----BEGIN EC PRIVATE KEY-----
+MHcCAQEEIBG7o+PPPIdPqMK4RwNWnj+UaW8fZFzxw7oZD5XFqW5CoAoGCCqGSM49
+AwEHoUQDQgAElriD/rpklmqTXbUOa9uLHAB2l+qr+DoeDmmykYLGblbxs+a1qvxB
+369JIs2Ej4zMfkjBTGES38wMDs1J+PJG6g==
+-----END EC PRIVATE KEY-----"""
+
+_LOCAL_DEV_KEY_PKCS8 = """\
+-----BEGIN PRIVATE KEY-----
+MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgEbuj4888h0+owrhH
+A1aeP5Rpbx9kXPHDuhkPlcWpbkKhRANCAASWuIP+umSWapNdtQ5r24scAHaX6qv4
+Oh4OabKRgsZuVvGz5rWq/EHfr0kizYSPjMx+SMFMYRLfzAwOzUn48kbq
+-----END PRIVATE KEY-----"""
+
+
+def test_local_dev_signing_key_rejected_in_production_sec1():
+    with (
+        patch.dict(os.environ, {"JENTIC_ENV": "production"}, clear=False),
+        pytest.raises(ConfigError, match="local-dev signing key material"),
+    ):
+        AuthConfig(
+            id_signing=[
+                SigningKeyConfig(kid="custom-kid", private_key_pem=SecretStr(_LOCAL_DEV_KEY_SEC1))
+            ]
+        )
+
+
+def test_local_dev_signing_key_rejected_in_production_pkcs8():
+    with (
+        patch.dict(os.environ, {"JENTIC_ENV": "production"}, clear=False),
+        pytest.raises(ConfigError, match="local-dev signing key material"),
+    ):
+        AuthConfig(
+            id_signing=[
+                SigningKeyConfig(kid="custom-kid", private_key_pem=SecretStr(_LOCAL_DEV_KEY_PKCS8))
+            ]
+        )
+
+
+def test_local_dev_signing_kid_rejected_in_production():
+    with (
+        patch.dict(os.environ, {"JENTIC_ENV": "production"}, clear=False),
+        pytest.raises(ConfigError, match="local-dev key id"),
+    ):
+        AuthConfig(
+            id_signing=[
+                SigningKeyConfig(
+                    kid="local-dev-key", private_key_pem=SecretStr(_LOCAL_DEV_KEY_SEC1)
+                )
+            ]
+        )
 
 
 def test_boolean_like_password_preserved_as_string(config_file: Path):
@@ -340,6 +539,59 @@ def test_apps_env_comma_separated_with_spaces(config_file: Path):
     assert config.apps == ["registry", "admin", "control"]
 
 
+def test_mcp_oauth_config_defaults(config_file: Path):
+    """MCP OAuth seam, D9 as amended: off by default, and approval-first —
+    auto-approve is an explicit opt-in, false by default."""
+    config = load_config(config_file)
+    assert config.server.mcp.oauth.enabled is False
+    assert config.server.mcp.oauth.auto_approve_clients is False
+    assert config.server.mcp.oauth.registration_gc_days == 90
+
+
+def test_mcp_oauth_env_overrides(config_file: Path):
+    env = {
+        "JENTIC__SERVER__MCP__OAUTH__ENABLED": "true",
+        "JENTIC__SERVER__MCP__OAUTH__AUTO_APPROVE_CLIENTS": "true",
+        "JENTIC__SERVER__MCP__OAUTH__REGISTRATION_GC_DAYS": "30",
+    }
+    with patch.dict(os.environ, env, clear=False):
+        config = load_config(config_file)
+    assert config.server.mcp.oauth.enabled is True
+    assert config.server.mcp.oauth.auto_approve_clients is True
+    assert config.server.mcp.oauth.registration_gc_days == 30
+
+
+def test_oauth_registration_rate_limit_knobs(config_file: Path):
+    env = {
+        "JENTIC__AUTH__OAUTH_RATE_LIMIT__REGISTRATION_RPM": "3",
+        "JENTIC__AUTH__OAUTH_RATE_LIMIT__REGISTRATION_BURST": "2",
+    }
+    with patch.dict(os.environ, env, clear=False):
+        config = load_config(config_file)
+    assert config.auth.oauth_rate_limit.registration_rpm == 3
+    assert config.auth.oauth_rate_limit.registration_burst == 2
+
+
+def test_oauth_approval_status_rate_limit_defaults(config_file: Path):
+    """The approval-status poll bucket: generous defaults (one tab polls at
+    12 rpm; 120/60 holds ~10 NAT'd tabs), independently tunable from
+    /authorize."""
+    config = load_config(config_file)
+    assert config.auth.oauth_rate_limit.approval_status_rpm == 120
+    assert config.auth.oauth_rate_limit.approval_status_burst == 60
+
+
+def test_oauth_approval_status_rate_limit_env_overrides(config_file: Path):
+    env = {
+        "JENTIC__AUTH__OAUTH_RATE_LIMIT__APPROVAL_STATUS_RPM": "6",
+        "JENTIC__AUTH__OAUTH_RATE_LIMIT__APPROVAL_STATUS_BURST": "3",
+    }
+    with patch.dict(os.environ, env, clear=False):
+        config = load_config(config_file)
+    assert config.auth.oauth_rate_limit.approval_status_rpm == 6
+    assert config.auth.oauth_rate_limit.approval_status_burst == 3
+
+
 def test_encryption_config_defaults():
     cfg = EncryptionConfig()
     assert cfg.active_id == "v1"
@@ -378,6 +630,288 @@ def test_encryption_active_id_env_override(config_file: Path):
     with patch.dict(os.environ, env, clear=False):
         config = load_config(config_file)
     assert config.credentials.encryption.active_id == "env-id"
+
+
+# A syntactically valid key for source-resolution tests: material_file content
+# is vetted as base64 of exactly 32 bytes at config load.
+_KEY_B64 = base64.b64encode(b"0123456789abcdef0123456789abcdef").decode()
+
+
+def test_encryption_key_inline_material():
+    key = EncryptionKey(id="v1", material=SecretStr(_KEY_B64))
+    assert key.resolved_material.get_secret_value() == _KEY_B64
+
+
+def test_encryption_key_material_env():
+    with patch.dict(os.environ, {"TEST_ENC_KEY": _KEY_B64}, clear=False):
+        key = EncryptionKey(id="v1", material_env="TEST_ENC_KEY")
+    assert key.resolved_material.get_secret_value() == _KEY_B64
+    # Resolved once at validation — later env mutation is irrelevant.
+    assert key.material is not None
+
+
+def test_encryption_key_material_env_strips_whitespace():
+    with patch.dict(os.environ, {"TEST_ENC_KEY": f"  {_KEY_B64}\n"}, clear=False):
+        key = EncryptionKey(id="v1", material_env="TEST_ENC_KEY")
+    assert key.resolved_material.get_secret_value() == _KEY_B64
+
+
+def test_encryption_key_material_env_unset_fails():
+    env = dict(os.environ)
+    env.pop("TEST_ENC_KEY_MISSING", None)
+    with (
+        patch.dict(os.environ, env, clear=True),
+        pytest.raises(ValidationError, match="TEST_ENC_KEY_MISSING"),
+    ):
+        EncryptionKey(id="v1", material_env="TEST_ENC_KEY_MISSING")
+
+
+def test_encryption_key_material_file(tmp_path: Path):
+    key_file = tmp_path / "enc.key"
+    key_file.write_text(_KEY_B64 + "\n")
+    key = EncryptionKey(id="v1", material_file=str(key_file))
+    assert key.resolved_material.get_secret_value() == _KEY_B64
+
+
+def test_encryption_key_material_file_missing_fails(tmp_path: Path):
+    with pytest.raises(ValidationError, match="cannot read material_file"):
+        EncryptionKey(id="v1", material_file=str(tmp_path / "nope.key"))
+
+
+def test_encryption_key_material_file_empty_fails(tmp_path: Path):
+    key_file = tmp_path / "empty.key"
+    key_file.write_text("  \n")
+    with pytest.raises(ValidationError, match="is empty"):
+        EncryptionKey(id="v1", material_file=str(key_file))
+
+
+def test_encryption_key_requires_exactly_one_source():
+    with pytest.raises(ValidationError, match="exactly one"):
+        EncryptionKey(id="v1")
+    with pytest.raises(ValidationError, match="exactly one"):
+        EncryptionKey(id="v1", material=SecretStr(_KEY_B64), material_env="TEST_ENC_KEY")
+
+
+@pytest.mark.parametrize("inline", ["", "   ", " \n\t"])
+def test_encryption_key_inline_material_empty_fails(inline: str):
+    """An empty/whitespace inline material fails at validation, not at first
+    credential use — all three sources reject empties identically."""
+    with pytest.raises(ValidationError, match="material is empty"):
+        EncryptionKey(id="v1", material=SecretStr(inline))
+
+
+def test_encryption_key_inline_material_strips_whitespace():
+    """Inline material strips like the env/file sources do, so identical bytes
+    produce identical keys regardless of which source carried them."""
+    key = EncryptionKey(id="v1", material=SecretStr(f"  {_KEY_B64}\n"))
+    assert key.resolved_material.get_secret_value() == _KEY_B64
+
+
+@pytest.mark.parametrize("value", ["", "   ", " \n"])
+def test_encryption_key_material_env_empty_fails(value: str):
+    """A set-but-empty (or whitespace-only) variable must fail like an unset
+    one — it must never resolve to a zero-length key."""
+    with (
+        patch.dict(os.environ, {"TEST_ENC_KEY": value}, clear=False),
+        pytest.raises(ValidationError, match=r"is not set \(or empty\)"),
+    ):
+        EncryptionKey(id="v1", material_env="TEST_ENC_KEY")
+
+
+def test_encryption_key_material_file_rejects_fifo(tmp_path: Path):
+    """A pipe cannot be re-read, so it must be rejected up front — a writer-less
+    FIFO would otherwise block boot forever with no timeout."""
+    fifo = tmp_path / "key.fifo"
+    os.mkfifo(fifo)
+    with pytest.raises(ValidationError, match="must be a regular file"):
+        EncryptionKey(id="v1", material_file=str(fifo))
+
+
+def test_encryption_key_material_file_not_base64_fails(tmp_path: Path):
+    key_file = tmp_path / "enc.key"
+    key_file.write_text("this is not base64!\n")
+    with pytest.raises(ValidationError, match="does not contain a base64-encoded key"):
+        EncryptionKey(id="v1", material_file=str(key_file))
+
+
+def test_encryption_key_material_file_wrong_length_fails_without_length_echo(tmp_path: Path):
+    """The failure must not echo the observed byte length: material_file is
+    reachable with env-write privilege, and echoing the length turns any
+    readable path into a content-length oracle."""
+    key_file = tmp_path / "enc.key"
+    key_file.write_text(base64.b64encode(b"short-key").decode())
+    with pytest.raises(ValidationError, match="does not contain a 32-byte key") as excinfo:
+        EncryptionKey(id="v1", material_file=str(key_file))
+    assert "got" not in str(excinfo.value)
+    assert "9 bytes" not in str(excinfo.value)
+
+
+def test_encryption_key_material_file_too_large_fails(tmp_path: Path):
+    key_file = tmp_path / "enc.key"
+    key_file.write_bytes(b"A" * 8192)
+    with pytest.raises(ValidationError, match="does not contain a base64-encoded key"):
+        EncryptionKey(id="v1", material_file=str(key_file))
+
+
+def test_encryption_key_material_file_permissive_mode_warns(tmp_path: Path):
+    """A group/other-readable key file is the feature's whole security boundary
+    silently gone; the load must say so."""
+    key_file = tmp_path / "enc.key"
+    key_file.write_text(_KEY_B64)
+    key_file.chmod(0o644)
+    with structlog.testing.capture_logs() as logs:
+        EncryptionKey(id="v1", material_file=str(key_file))
+    assert any(log["event"] == "encryption_material_file_permissive" for log in logs)
+
+
+def test_encryption_key_material_file_private_mode_does_not_warn(tmp_path: Path):
+    key_file = tmp_path / "enc.key"
+    key_file.write_text(_KEY_B64)
+    key_file.chmod(0o600)
+    with structlog.testing.capture_logs() as logs:
+        EncryptionKey(id="v1", material_file=str(key_file))
+    assert not any(log["event"] == "encryption_material_file_permissive" for log in logs)
+
+
+def test_encryption_key_resolution_logs_source_and_fingerprint_not_material(tmp_path: Path):
+    """The boot trail must record where the key came from (id, source, origin,
+    fingerprint) and must never carry the material itself."""
+    key_file = tmp_path / "enc.key"
+    key_file.write_text(_KEY_B64)
+    with structlog.testing.capture_logs() as logs:
+        EncryptionKey(id="v1", material_file=str(key_file))
+    resolved = [log for log in logs if log["event"] == "encryption_key_material_resolved"]
+    assert len(resolved) == 1
+    assert resolved[0]["key_id"] == "v1"
+    assert resolved[0]["source"] == "material_file"
+    assert resolved[0]["origin"] == str(key_file)
+    assert len(resolved[0]["fingerprint"]) == 16
+    assert all(_KEY_B64 not in str(v) for v in resolved[0].values())
+
+
+def test_encryption_key_resolved_key_revalidates(tmp_path: Path):
+    """A resolved key survives dump -> validate: the source field is cleared,
+    so re-validation neither trips the exactly-one check nor re-reads the file."""
+    key_file = tmp_path / "enc.key"
+    key_file.write_text(_KEY_B64)
+    key = EncryptionKey(id="v1", material_file=str(key_file))
+    key_file.unlink()  # re-validation must not go back to the source
+    again = EncryptionKey.model_validate(key.model_dump())
+    assert again.resolved_material.get_secret_value() == _KEY_B64
+    assert again.material_file is None
+
+
+def test_encryption_key_material_file_yaml_roundtrip(
+    tmp_path: Path, sample_config_dict: dict[str, Any]
+):
+    key_file = tmp_path / "enc.key"
+    key_file.write_text(_KEY_B64)
+    sample_config_dict["credentials"] = {
+        "encryption": {
+            "active_id": "v1",
+            "entries": [{"id": "v1", "material_file": str(key_file)}],
+        }
+    }
+    path = tmp_path / "cfg.yaml"
+    path.write_text(yaml.dump(sample_config_dict))
+    config = load_config(path)
+    entry = config.credentials.encryption.entries[0]
+    assert entry.resolved_material.get_secret_value() == _KEY_B64
+
+
+def test_load_config_from_pipe_is_cached(sample_config_dict: dict[str, Any]):
+    """A config handed on a one-shot fd (pipe / /dev/fd) survives repeat loads.
+
+    Supervisors that keep secrets off disk pass JENTIC_CONFIG_FILE=/dev/fd/N;
+    consumers like the Alembic env call load_config once per database, so the
+    first read must be cached rather than hitting EOF on the second load.
+    """
+    doc = yaml.dump(sample_config_dict).encode()
+    read_fd, write_fd = os.pipe()
+    try:
+        os.write(write_fd, doc)
+        os.close(write_fd)
+        pipe_path = Path(f"/dev/fd/{read_fd}")
+        first = load_config(pipe_path)
+        with structlog.testing.capture_logs() as logs:
+            second = load_config(pipe_path)  # would be EOF without the cache
+        assert first.databases.registry.name == second.databases.registry.name
+        # The reuse leaves a trail: "why didn't my config change take effect"
+        # must be answerable from the logs.
+        assert any(log["event"] == "oneshot_config_cache_reused" for log in logs)
+    finally:
+        os.close(read_fd)
+        _ONESHOT_CONFIG_CACHE.clear()
+
+
+def test_load_config_from_regular_file_is_not_cached(
+    tmp_path: Path, sample_config_dict: dict[str, Any]
+):
+    """Regular files re-read on every load — caching them would defeat keyset
+    rotation (edit the file, reload, still get the stale document)."""
+    path = tmp_path / "cfg.yaml"
+    sample_config_dict["databases"]["registry"]["name"] = "before-rotation"
+    path.write_text(yaml.dump(sample_config_dict))
+    first = load_config(path)
+    sample_config_dict["databases"]["registry"]["name"] = "after-rotation"
+    path.write_text(yaml.dump(sample_config_dict))
+    second = load_config(path)
+    assert first.databases.registry.name == "before-rotation"
+    assert second.databases.registry.name == "after-rotation"
+    assert _ONESHOT_CONFIG_CACHE == {}
+
+
+def test_load_config_oneshot_empty_source_fails_loudly_and_is_not_cached():
+    """A drained (or never-written) one-shot source must raise a ConfigError
+    naming the real cause — and must NOT be cached, or the process would be
+    permanently pinned to an empty config with no recovery."""
+    read_fd, write_fd = os.pipe()
+    os.close(write_fd)  # supervisor closed its end without writing
+    try:
+        with pytest.raises(ConfigError, match="yielded no content"):
+            load_config(Path(f"/dev/fd/{read_fd}"))
+        assert _ONESHOT_CONFIG_CACHE == {}
+    finally:
+        os.close(read_fd)
+        _ONESHOT_CONFIG_CACHE.clear()
+
+
+def test_oneshot_cache_is_keyed_on_source_identity_not_path(
+    sample_config_dict: dict[str, Any],
+):
+    """fd numbers are recycled, so two different pipes can both be /dev/fd/N in
+    one process. The cache must key on the source's identity, never the path
+    string — a path-keyed cache silently serves the first pipe's document for
+    the second."""
+    sample_config_dict["databases"]["registry"]["name"] = "config-a"
+    doc_a = yaml.dump(sample_config_dict).encode()
+    sample_config_dict["databases"]["registry"]["name"] = "config-b"
+    doc_b = yaml.dump(sample_config_dict).encode()
+
+    read_a, write_a = os.pipe()
+    read_b = -1
+    try:
+        os.write(write_a, doc_a)
+        os.close(write_a)
+        first = load_config(Path(f"/dev/fd/{read_a}"))
+        os.close(read_a)
+
+        read_b, write_b = os.pipe()
+        os.write(write_b, doc_b)
+        os.close(write_b)
+        # Force the second pipe onto the first pipe's recycled fd number.
+        if read_b != read_a:
+            os.dup2(read_b, read_a)
+            os.close(read_b)
+        read_b = read_a
+        second = load_config(Path(f"/dev/fd/{read_b}"))
+
+        assert first.databases.registry.name == "config-a"
+        assert second.databases.registry.name == "config-b"
+    finally:
+        if read_b >= 0:
+            os.close(read_b)
+        _ONESHOT_CONFIG_CACHE.clear()
 
 
 def test_broker_jobs_api_base_url_defaults_to_none(config_file: Path):
@@ -642,3 +1176,70 @@ def test_check_public_url_consistency_never_crashes_on_bad_port(tmp_path: Path):
     # crash the consistency check at startup — the "warn, don't crash" contract.
     with pytest.raises(ConfigError):
         _load(tmp_path, {"auth": {"canonical_base_url": "http://h:99999"}})
+
+
+def test_telemetry_host_os_defaults_to_none():
+    """Hand-rolled configs (no CLI stamp) leave host_os unset → runtime fallback."""
+    assert TelemetryConfig().host_os is None
+
+
+def test_telemetry_host_os_from_yaml(tmp_path: Path):
+    minimal = {
+        "databases": {
+            "registry": {"name": "reg"},
+            "admin": {"name": "admin"},
+            "control": {"name": "ctrl"},
+        },
+        "telemetry": {"enabled": True, "host_os": "darwin"},
+    }
+    path = tmp_path / "telemetry.yaml"
+    path.write_text(yaml.dump(minimal))
+    config = load_config(path)
+    assert config.telemetry.host_os == "darwin"
+
+
+def test_telemetry_host_os_env_override(config_file: Path):
+    with patch.dict(os.environ, {"JENTIC__TELEMETRY__HOST_OS": "windows"}):
+        config = load_config(config_file)
+    assert config.telemetry.host_os == "windows"
+
+
+# --- EntitlementConfig (AWS Marketplace license gate) -------------------------
+
+
+def test_entitlement_defaults_off(config_file: Path):
+    config = load_config(config_file)
+    assert config.entitlement.enabled is False
+    assert config.entitlement.product_code is None
+    # The live listing is contract-priced, hence the default.
+    assert config.entitlement.pricing_model == "contract"
+    assert config.entitlement.license_dimensions == []
+
+
+def test_entitlement_enabled_requires_product_code():
+    with pytest.raises(ValidationError, match=r"entitlement\.product_code"):
+        EntitlementConfig(enabled=True)
+
+
+def test_entitlement_contract_requires_sku():
+    with pytest.raises(ValidationError, match=r"entitlement\.license_sku"):
+        EntitlementConfig(enabled=True, product_code="prod-abc", pricing_model="contract")
+
+
+def test_entitlement_env_override_round_trip(config_file: Path):
+    env = {
+        "JENTIC__ENTITLEMENT__ENABLED": "true",
+        "JENTIC__ENTITLEMENT__PRODUCT_CODE": "prod-abc123",
+        "JENTIC__ENTITLEMENT__LICENSE_SKU": "prod-id-abc123",
+        "JENTIC__ENTITLEMENT__LICENSE_DIMENSIONS": "users,executions",
+        "JENTIC__ENTITLEMENT__REGION": "eu-west-1",
+        "JENTIC__ENTITLEMENT__REFRESH_INTERVAL_SECONDS": "600",
+    }
+    with patch.dict(os.environ, env, clear=False):
+        config = load_config(config_file)
+    assert config.entitlement.enabled is True
+    assert config.entitlement.product_code == "prod-abc123"
+    assert config.entitlement.license_sku == "prod-id-abc123"
+    assert config.entitlement.license_dimensions == ["users", "executions"]
+    assert config.entitlement.region == "eu-west-1"
+    assert config.entitlement.refresh_interval_seconds == 600

@@ -3,6 +3,7 @@ package install
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -103,6 +104,41 @@ func yamlEqual(a, b any) bool {
 	}
 }
 
+func TestReuseSecretsCarriesManagedPGPassword(t *testing.T) {
+	// POSTGRES_PASSWORD only applies at initdb: an existing db volume keeps
+	// its original password forever, so a reinstall must carry it over or the
+	// freshly generated credential (secrets.go) locks the stack out of its
+	// own database.
+	src := NewDraft() // Docker + Postgres by default
+	if err := src.FillSecrets(); err != nil {
+		t.Fatalf("FillSecrets: %v", err)
+	}
+	orig := src.PGPassword
+	if orig == "" {
+		t.Fatalf("precondition: FillSecrets should generate a managed pg password")
+	}
+	path := writeRenderedConfig(t, src)
+
+	dst := NewDraft()
+	reused, err := ReuseSecrets(dst, path)
+	if err != nil {
+		t.Fatalf("ReuseSecrets: %v", err)
+	}
+	if !reused {
+		t.Fatalf("expected reused=true")
+	}
+	if dst.PGPassword != orig {
+		t.Errorf("PGPassword = %q, want carried-over %q", dst.PGPassword, orig)
+	}
+	// And FillSecrets must not rotate it afterwards.
+	if err := dst.FillSecrets(); err != nil {
+		t.Fatalf("FillSecrets (dst): %v", err)
+	}
+	if dst.PGPassword != orig {
+		t.Errorf("PGPassword rotated by FillSecrets after reuse")
+	}
+}
+
 func TestReuseSecretsPreservesMultiKeyKeysetVerbatim(t *testing.T) {
 	// A hand-rotated keyset (active_id: v2 + v1/v2 entries) must survive
 	// reinstall. Flattening it back to a single v1 entry would silently
@@ -139,6 +175,54 @@ func TestReuseSecretsPreservesMultiKeyKeysetVerbatim(t *testing.T) {
 	}
 	if dst.EncryptionKeyset.Entries[1].Material != "active-key-material" {
 		t.Errorf("active v2 material dropped")
+	}
+}
+
+func TestReuseSecretsPreservesMaterialFileAndEnvKeyset(t *testing.T) {
+	// A keyset whose entries carry material_file/material_env (no inline
+	// material) must survive reinstall verbatim. Treating those entries as
+	// empty would mint a fresh inline key while reporting reused=true —
+	// every stored credential becomes undecryptable with a success message.
+	src := NewDraft()
+	if err := src.FillSecrets(); err != nil {
+		t.Fatalf("FillSecrets: %v", err)
+	}
+	src.EncryptionKeyset = &encryptionOut{
+		ActiveID: "v2",
+		Entries: []encryptionEntryOut{
+			{ID: "v1", MaterialEnv: "JENTIC_ENC_KEY_V1"},
+			{ID: "v2", MaterialFile: "/run/credentials/jentic-one/enc-key"},
+		},
+	}
+	path := writeRenderedConfig(t, src)
+
+	dst := NewDraft()
+	if _, err := ReuseSecrets(dst, path); err != nil {
+		t.Fatalf("ReuseSecrets: %v", err)
+	}
+	if dst.EncryptionKeyset == nil {
+		t.Fatalf("material_file/material_env keyset should be preserved")
+	}
+	if len(dst.EncryptionKeyset.Entries) != 2 {
+		t.Fatalf("Entries len = %d, want 2", len(dst.EncryptionKeyset.Entries))
+	}
+	if dst.EncryptionKeyset.Entries[0].MaterialEnv != "JENTIC_ENC_KEY_V1" {
+		t.Errorf("material_env entry dropped")
+	}
+	if dst.EncryptionKeyset.Entries[1].MaterialFile != "/run/credentials/jentic-one/enc-key" {
+		t.Errorf("material_file entry dropped")
+	}
+	// Round-trip through render: no source entry may grow a spurious
+	// `material: ""` (the backend rejects entries with two sources set).
+	if err := dst.FillSecrets(); err != nil {
+		t.Fatalf("FillSecrets (dst): %v", err)
+	}
+	rendered, err := dst.Render()
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if strings.Contains(string(rendered), `material: ""`) {
+		t.Errorf("rendered config carries an empty inline material alongside a source:\n%s", rendered)
 	}
 }
 

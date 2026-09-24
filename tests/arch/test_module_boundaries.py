@@ -126,6 +126,20 @@ def test_shared_does_not_import_broker(shared_source_dir: Path) -> None:
 
 
 @pytest.mark.arch
+def test_shared_does_not_import_admin_permissions(shared_source_dir: Path) -> None:
+    # The permission catalogue moved to shared.auth.permission_catalog (#938) so shared
+    # callers expand grants without a shared→admin layering inversion. Scoped to the
+    # permissions module specifically: shared jobs/events/audit machinery still references
+    # admin-tier ORM schemas (a separate, pre-existing structural coupling — admin owns
+    # those canonical schemas), which is out of scope for #938.
+    violations = _check_boundary(shared_source_dir, "jentic_one.admin.core.permissions")
+    assert not violations, (
+        "Shared imports the admin permissions module (layering inversion #938); "
+        "import from jentic_one.shared.auth.permission_catalog instead:\n" + "\n".join(violations)
+    )
+
+
+@pytest.mark.arch
 def test_auth_does_not_import_broker(auth_source_dir: Path) -> None:
     violations = _check_boundary(auth_source_dir, "jentic_one.broker")
     assert not violations, "Auth imports from broker:\n" + "\n".join(violations)

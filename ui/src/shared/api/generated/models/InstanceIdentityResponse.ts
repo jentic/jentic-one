@@ -15,6 +15,10 @@ export type InstanceIdentityResponse = {
      */
     backend: InstanceIdentityResponse.backend;
     /**
+     * The broker (data plane) base URL a client should send `execute` traffic to, as configured by the operator (server.mcp.broker_url), with any userinfo stripped. Null when the platform cannot honestly advertise one: on a 'remote' backend a loopback-host value (the config default) describes the control plane's own machine, not an address any client can dial, so it is withheld rather than published as misleading guidance. Deployment metadata, not a secret — the broker URL is handed to every client expected to call it (issue #1249).
+     */
+    broker_url?: (string | null);
+    /**
      * The instance's own canonical base URL (auth.canonical_base_url), with any userinfo stripped; '' if unset.
      */
     canonical_base_url: string;
@@ -26,6 +30,10 @@ export type InstanceIdentityResponse = {
      * Opaque digest derived from the telemetry instance id — stable per install, but not the telemetry id itself. Null when telemetry has not resolved an id (e.g. telemetry disabled).
      */
     instance_id?: (string | null);
+    /**
+     * Whether this instance serves the daemon-native Streamable HTTP MCP endpoint at /mcp (server.mcp.enabled). Lets clients (notably the UI's agent MCP card) advertise the HTTP transport only when it exists. Not sensitive: the endpoint's enabled state is observable by probing /mcp anyway.
+     */
+    mcp_enabled?: boolean;
 };
 export namespace InstanceIdentityResponse {
     /**

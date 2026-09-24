@@ -1,7 +1,7 @@
 """Architecture enforcement: mandatory query scoping coverage.
 
 1. Every model referenced in a surface's scoping/filters.py must appear in that
-   surface's _OWNER_MODELS or _CHILD_MODELS dict.
+   surface's scoping dicts (_OWNER_MODELS / _DELEGATION_SCOPES).
 2. No service in control/ or admin/ (the scoped surfaces) may declare
    `identity: Identity | None` — identity must be mandatory.
 3. verify_only_presence must not appear anywhere in the codebase.
@@ -14,7 +14,6 @@ import ast
 import pytest
 
 from jentic_one.admin.scoping.filters import _OWNER_MODELS as _ADMIN_OWNER_MODELS
-from jentic_one.control.scoping.filters import _CHILD_MODELS as _CONTROL_CHILD_MODELS
 from jentic_one.control.scoping.filters import _DELEGATION_SCOPES as _CONTROL_DELEGATION_SCOPES
 from jentic_one.control.scoping.filters import _OWNER_MODELS as _CONTROL_OWNER_MODELS
 
@@ -69,9 +68,7 @@ def test_no_optional_identity_in_scoped_services() -> None:
 @pytest.mark.arch
 def test_control_scoping_model_completeness() -> None:
     """All ORM model imports in control/scoping/filters.py must be in scoping dicts."""
-    covered = (
-        set(_CONTROL_OWNER_MODELS) | set(_CONTROL_CHILD_MODELS) | set(_CONTROL_DELEGATION_SCOPES)
-    )
+    covered = set(_CONTROL_OWNER_MODELS) | set(_CONTROL_DELEGATION_SCOPES)
 
     filters_file = SRC_ROOT / "control" / "scoping" / "filters.py"
     source = filters_file.read_text(encoding="utf-8")

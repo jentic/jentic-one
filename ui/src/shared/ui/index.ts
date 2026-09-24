@@ -56,8 +56,6 @@ export { SegmentedToggle } from '@/shared/ui/SegmentedToggle';
 export type { SegmentedToggleOption } from '@/shared/ui/SegmentedToggle';
 export { StatCard } from '@/shared/ui/StatCard';
 export type { StatAccent } from '@/shared/ui/StatCard';
-export { ToolkitGlyph } from '@/shared/ui/ToolkitGlyph';
-export type { ToolkitGlyphProps } from '@/shared/ui/ToolkitGlyph';
 export { TabNav } from '@/shared/ui/TabNav';
 export type { TabNavOption } from '@/shared/ui/TabNav';
 
@@ -79,6 +77,9 @@ export { EmptyState } from '@/shared/ui/EmptyState';
 
 export { ErrorAlert } from '@/shared/ui/ErrorAlert';
 
+export { Banner } from '@/shared/ui/Banner';
+export type { BannerProps } from '@/shared/ui/Banner';
+
 export { ErrorBoundary } from '@/shared/ui/ErrorBoundary';
 
 export { DataTable } from '@/shared/ui/DataTable';
@@ -99,6 +100,9 @@ export { toast, dismissToast, clearAllToasts, useToasts } from '@/shared/ui/toas
 export type { ToastEntry, ToastInput, ToastVariant } from '@/shared/ui/toastStore';
 
 export { CopyButton } from '@/shared/ui/CopyButton';
+
+export { CodeSnippet } from '@/shared/ui/CodeSnippet';
+export type { CodeSnippetProps } from '@/shared/ui/CodeSnippet';
 
 export { BackButton } from '@/shared/ui/BackButton';
 
@@ -160,6 +164,9 @@ export {
 	toActorStatus,
 } from '@/shared/ui/ActorStatusBadge';
 export type { ActorStatus } from '@/shared/ui/ActorStatusBadge';
+
+export { GrantAgentStatusChip } from '@/shared/ui/GrantAgentStatusChip';
+export type { GrantAgentStatusChipProps } from '@/shared/ui/GrantAgentStatusChip';
 
 export { ScopePicker } from '@/shared/ui/ScopePicker';
 export type { ScopePickerProps } from '@/shared/ui/ScopePicker';

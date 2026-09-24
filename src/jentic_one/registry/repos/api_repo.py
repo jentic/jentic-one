@@ -89,6 +89,7 @@ class ApiRepository:
         display_name: str | None = None,
         description: str | None = None,
         created_by: str,
+        catalog_api_id: str | None = None,
     ) -> Api:
         result = await session.execute(
             select(Api).where(Api.vendor == vendor, Api.name == name, Api.version == version)
@@ -99,6 +100,10 @@ class ApiRepository:
                 api.display_name = display_name
             if description is not None:
                 api.description = description
+            # A catalog re-import refreshes (or backfills) the catalog identity;
+            # a manual re-import (None) never clears one already recorded.
+            if catalog_api_id is not None:
+                api.catalog_api_id = catalog_api_id
         else:
             api = Api(
                 vendor=vendor,
@@ -107,6 +112,7 @@ class ApiRepository:
                 display_name=display_name,
                 description=description,
                 created_by=created_by,
+                catalog_api_id=catalog_api_id,
             )
             session.add(api)
         await session.flush()
@@ -127,6 +133,34 @@ class ApiRepository:
     async def clear_current_revision(session: AsyncSession, api_id: uuid.UUID) -> None:
         await session.execute(update(Api).where(Api.id == api_id).values(current_revision_id=None))
         await session.flush()
+
+    @staticmethod
+    async def compare_and_set_current_revision(
+        session: AsyncSession,
+        api_id: uuid.UUID,
+        *,
+        expected_revision_id: uuid.UUID | None,
+        new_revision_id: uuid.UUID,
+    ) -> int:
+        """Flip ``current_revision_id`` only if it still equals ``expected_revision_id``.
+
+        A compare-and-swap on the revision chain: returns the number of rows updated (1 on
+        success, 0 if another writer already moved the pointer). Used by the overlay
+        rollback (A5b) and the overlay-superseding re-import (A4b) so two concurrent
+        transitions can't double-flip the served revision — the loser sees rowcount 0 and
+        backs off instead of clobbering. ``expected_revision_id`` may be ``None`` to assert
+        the API currently has no served revision.
+        """
+        result = cast(
+            "CursorResult[Any]",
+            await session.execute(
+                update(Api)
+                .where(Api.id == api_id, Api.current_revision_id == expected_revision_id)
+                .values(current_revision_id=new_revision_id)
+            ),
+        )
+        await session.flush()
+        return result.rowcount
 
     @staticmethod
     async def apply_counts(
@@ -207,6 +241,24 @@ class ApiRepository:
                 parsed = urlparse(row.url)
                 mapping[row.revision_id] = parsed.hostname
         return mapping
+
+    @staticmethod
+    async def load_revision_provenance(
+        session: AsyncSession, revision_ids: list[uuid.UUID]
+    ) -> dict[uuid.UUID, tuple[str | None, str | None]]:
+        """Batch-load ``(origin, source_url)`` for the given revisions (Flow-3 provenance).
+
+        Keyed by revision id so the API list can surface each current revision's origin +
+        catalog linkage without an N+1. Missing revisions simply aren't in the map.
+        """
+        if not revision_ids:
+            return {}
+        result = await session.execute(
+            select(ApiRevision.id, ApiRevision.origin, ApiRevision.source_url).where(
+                ApiRevision.id.in_(revision_ids)
+            )
+        )
+        return {row.id: (row.origin, row.source_url) for row in result}
 
     _UPDATABLE_FIELDS = frozenset({"display_name", "description", "icon_url"})
 

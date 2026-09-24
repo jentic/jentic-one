@@ -1,4 +1,4 @@
-"""The single shared, bounded outbound ``httpx.AsyncClient`` (§04, PR-B).
+"""The single shared, bounded outbound ``httpx.AsyncClient``.
 
 Infrastructure adapter (it owns the transport), **not** ``broker/core/``. One
 client per process, shared by the sync handler **and** the in-process async
@@ -7,7 +7,7 @@ connections. Lifecycle (create on startup / close on shutdown) is owned by the
 app lifespan; handlers reach it only through a ``Depends()`` provider.
 
 The accessor is a small **provider keyed on an optional client-cert fingerprint**
-so the deferred mTLS scheme (§08/E2.3b) can register a per-cert sub-client later
+so the deferred mTLS scheme can register a per-cert sub-client later
 without reworking the single-pool assumption. Today there is a single key (the
 shared client).
 """
@@ -25,7 +25,7 @@ def build_client(
 ) -> httpx.AsyncClient:
     """Build the single bounded outbound client from config.
 
-    ``follow_redirects=False``: §08/E2 owns redirect policy; off is safe now.
+    ``follow_redirects=False``: the egress layer owns redirect policy; off is safe now.
     ``http2`` negotiates h2 via ALPN and falls back to 1.1 (needs the ``h2``
     package). The broker is a passthrough and must not transparently decompress
     upstream bodies (zip-bomb vector), so callers stream raw bytes and forward
@@ -34,7 +34,7 @@ def build_client(
     When *egress* enables DNS pinning, the underlying transport is wrapped in a
     :class:`DnsPinningTransport` so every connection is resolved, re-validated
     against the egress policy, and pinned to the validated IP (the DNS-rebind
-    guard, §08 E2).
+    guard).
     """
     limits = httpx.Limits(
         max_connections=cfg.max_connections,
@@ -63,7 +63,7 @@ class HttpClientProvider:
     """Provides the outbound client, keyed on an optional client-cert fingerprint.
 
     v1 is HTTP-only: a single ``None`` key maps to the shared client. The keyed
-    shape exists so adding mTLS later (§08/E2.3b) means registering a sub-client
+    shape exists so adding mTLS later means registering a sub-client
     per client-cert identity — TLS sessions can't be reused across certs — rather
     than reworking the single-pool assumption. The provider owns close on
     shutdown.
@@ -79,7 +79,7 @@ class HttpClientProvider:
         client = self._clients.get(cert_fingerprint)
         if client is None:
             # No registered sub-pool for this cert yet; fall back to the shared
-            # client. mTLS (§08/E2.3b) will register per-cert sub-clients here.
+            # client. mTLS will register per-cert sub-clients here.
             client = self._clients[None]
         return client
 

@@ -3,8 +3,8 @@
 // into the local registry, inspects operations, and executes against them.
 package main
 
-import "github.com/jentic/jentic-one/cli/internal/cmd"
+import "github.com/jentic/jentic-one/cli/internal/cli/api"
 
 func main() {
-	cmd.ExecuteAPI()
+	api.ExecuteAPI()
 }

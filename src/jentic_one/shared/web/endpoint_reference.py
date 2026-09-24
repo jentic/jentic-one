@@ -49,7 +49,7 @@ REFERENCE_SCHEMA = "jentic.endpoint-scope-tree/v1"
 _HTTP_METHODS = ("get", "post", "put", "patch", "delete")
 
 #: Actor types that ride the agent token flow (mirrored in the Go CLI grouping).
-_AGENT_ACTORS: tuple[str, ...] = ("agent", "service_account", "toolkit")
+_AGENT_ACTORS: tuple[str, ...] = ("agent", "service_account")
 
 #: The broker's only unauthenticated routes (liveness / readiness probes); every
 #: other broker route is the execute proxy and requires BROKER_EXECUTE_SCOPE.
@@ -68,7 +68,7 @@ _BROKER_PROXY_METHODS: tuple[str, ...] = ("DELETE", "GET", "PATCH", "POST", "PUT
 # real gate). Endpoints are scope-gated, not actor-gated, so we group by who
 # usually calls a route rather than by an enforced actor restriction.
 GROUP_PUBLIC = "Public (unauthenticated)"
-GROUP_AGENT = "Agent-facing (typically agent / service-account / toolkit)"
+GROUP_AGENT = "Agent-facing (typically agent / service-account)"
 GROUP_OPERATOR = "Operator-facing (typically a human operator / admin)"
 GROUP_ANY = "Any authenticated actor"
 
@@ -123,7 +123,7 @@ def _endpoints_from_app(app: FastAPI, surface_default: str) -> list[Endpoint]:
 
     The scope/actor/typical_caller/auth_note all come from
     :func:`build_operation_auth_map` (the curated source of truth) — never from
-    OpenAPI vendor extensions, which the spec no longer carries.
+    OpenAPI vendor extensions (the spec carries none).
     """
     auth_map = build_operation_auth_map(app)
     spec: dict[str, Any] = app.openapi()

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from datetime import datetime
 
 from pydantic import BaseModel
@@ -9,6 +10,7 @@ from pydantic import BaseModel
 from jentic_one.broker.services.credentials.errors import (
     AmbiguousCredentialError,
     CredentialCandidate,
+    CredentialIdNotFoundError,
     CredentialNameNotFoundError,
     CredentialNotProvisionedError,
 )
@@ -61,6 +63,13 @@ class ResolvedCredential(BaseModel):
     token_expires_at: datetime | None = None
     provider_account_ref: str | None = None
 
+    # sigv4
+    access_key_id: str | None = None
+    encrypted_secret_access_key: str | None = None
+    encrypted_session_token: str | None = None
+    aws_region: str | None = None
+    aws_service: str | None = None
+
 
 class CredentialResolver:
     """Resolves a credential for an API tuple from the control DB."""
@@ -69,7 +78,13 @@ class CredentialResolver:
         self._ctx = ctx
 
     async def resolve(
-        self, *, api: APIReference, caller: str, credential_name: str | None = None
+        self,
+        *,
+        api: APIReference,
+        caller: str,
+        credential_name: str | None = None,
+        credential_id: str | None = None,
+        allowed_credential_ids: Collection[str] | None = None,
     ) -> ResolvedCredential:
         """Resolve a single active credential for the API tuple.
 
@@ -77,19 +92,39 @@ class CredentialResolver:
             api: API vendor/name/version tuple to resolve credentials for.
             caller: Identity of the requesting party — reserved for future ACL/audit-logging.
             credential_name: Optional human-readable name to disambiguate multiple matches.
+            credential_id: Optional exact credential id — the authoritative
+                disambiguation signal (``Jentic-Credential-Id``); applied before
+                the name filter and specificity narrowing.
+            allowed_credential_ids: When not ``None``, the **injection boundary**
+                (theme-5 Q-02): only these credential ids may resolve, filtered
+                *before* coverage matching. ``None`` means "no binding filter"
+                (the legacy toolkit path, whose binding check happens upstream).
+                An **empty** collection is a real, deny-all filter — the caller
+                is bound to nothing — never a wildcard.
 
         Raises CredentialNotProvisionedError if no match.
         Raises AmbiguousCredentialError if >1 match and no credential_name given.
         Raises CredentialNameNotFoundError if credential_name doesn't match any candidate.
+        Raises CredentialIdNotFoundError if credential_id doesn't match any candidate.
 
-        Resolution order: filter to credentials whose stored scope *covers* the
-        API, then — if a ``credential_name`` is given — restrict to that name
-        across **all** covering credentials (an explicit name is the strongest
-        disambiguation signal, so it can select a covering-but-less-specific
-        credential), and only then apply most-specific-wins to break ties.
+        Resolution order: restrict to ``allowed_credential_ids`` (pre-coverage),
+        filter to credentials whose stored scope *covers* the API, then apply
+        ``credential_id`` (strongest signal — an explicit id is exact), then —
+        if a ``credential_name`` is given — restrict to that name across **all**
+        covering credentials (an explicit name can select a
+        covering-but-less-specific credential), and only then apply
+        most-specific-wins to break ties.
         """
         async with self._ctx.control_db.session() as session:
             candidates = await CredentialRepository.list_by_vendor(session, api.vendor)
+
+            # Injection boundary (Q-02): an unbound credential must never be
+            # considered, even if it covers the API. Applied before coverage
+            # matching so nothing downstream (name filter, specificity, the
+            # ambiguity 409 candidate list) can ever surface an unbound row.
+            if allowed_credential_ids is not None:
+                allowed = set(allowed_credential_ids)
+                candidates = [c for c in candidates if c.id in allowed]
 
             # Coverage + specificity via the shared seam. A credential's stored
             # scope (canonicalized here so legacy '' / non-slug rows compare on
@@ -109,8 +144,25 @@ class CredentialResolver:
             if not covering:
                 raise CredentialNotProvisionedError(api.vendor, api.name, api.version)
 
-            # An explicit credential_name is the strongest disambiguation signal,
-            # so it searches *all* covering credentials — including a
+            # An explicit credential_id is exact — the authoritative tie-breaker
+            # (Jentic-Credential-Id). Applied first: an id names one row, so no
+            # later filter can meaningfully narrow further; a name/specificity
+            # pass after an id match would only manufacture spurious errors.
+            if credential_id is not None:
+                by_id = [(c, s) for (c, s) in covering if c.id == credential_id]
+                if not by_id:
+                    raise CredentialIdNotFoundError(
+                        api.vendor,
+                        api.name,
+                        api.version,
+                        credential_id,
+                        [self._to_candidate(c) for (c, _) in covering],
+                    )
+                covering = by_id
+
+            # An explicit credential_name is the strongest *name-side* signal
+            # (only an exact id beats it), so it searches *all* covering
+            # credentials — including a
             # covering-but-less-specific one (e.g. the vendor-wide credential
             # while a pin also exists). Applying it before specificity narrowing
             # means naming that credential resolves it instead of a spurious
@@ -130,7 +182,7 @@ class CredentialResolver:
             # Among the remaining covering credentials, most-specific-wins: a
             # vendor.name.version pin beats a vendor.name which beats a bare
             # vendor wildcard, so a vendor-wide credential coexisting with a pin
-            # no longer forces a spurious 409.
+            # doesn't force a spurious 409.
             best = max(credential_specificity(s) for (_, s) in covering)
             matches = [c for (c, s) in covering if credential_specificity(s) == best]
 
@@ -235,6 +287,22 @@ class CredentialResolver:
                 stored_type=stored_type,
                 provider=credential.provider,
                 server_variables=credential.server_variables,
+            )
+
+        if wire_type == CredentialType.SIGV4:
+            sig = credential.sigv4_credential
+            return ResolvedCredential(
+                credential_id=credential.id,
+                name=credential.name,
+                wire_type=wire_type,
+                stored_type=stored_type,
+                provider=credential.provider,
+                server_variables=credential.server_variables,
+                access_key_id=sig.access_key_id if sig else None,
+                encrypted_secret_access_key=sig.encrypted_secret_access_key if sig else None,
+                encrypted_session_token=sig.encrypted_session_token if sig else None,
+                aws_region=sig.region if sig else None,
+                aws_service=sig.service if sig else None,
             )
 
         raise CredentialNotProvisionedError(

@@ -27,6 +27,9 @@ class CredentialCreate(BaseModel):
     type: CredentialType
     name: str
     api: APIReference
+    # Catalog identity slug of the target API when the client knows it —
+    # display-only, stored verbatim (never part of resolution identity).
+    catalog_api_id: str | None = None
     provider: str = "static"
     server_variables: dict[str, str] | None = None
 
@@ -49,6 +52,13 @@ class CredentialCreate(BaseModel):
     client_id: str | None = None
     client_secret: str | None = None
     scopes: list[str] | None = None
+
+    # sigv4 fields
+    access_key_id: str | None = None
+    secret_access_key: str | None = None
+    session_token: str | None = None
+    aws_region: str | None = None
+    aws_service: str | None = None
 
 
 class CredentialUpdate(BaseModel):
@@ -78,6 +88,14 @@ class CredentialUpdate(BaseModel):
     client_secret: str | None = None
     token_url: str | None = None
     scopes: list[str] | None = None
+
+    # sigv4 rotation/update
+    access_key_id: str | None = None
+    secret_access_key: str | None = None
+    session_token: str | None = None
+    clear_session_token: bool = False
+    aws_region: str | None = None
+    aws_service: str | None = None
 
 
 class BearerTokenFull(BaseModel):
@@ -113,6 +131,16 @@ class OAuth2Full(BaseModel):
 
 class NoAuthFull(BaseModel):
     """Placeholder detail block for a no-auth credential (no secret)."""
+
+
+class Sigv4Full(BaseModel):
+    """Full SigV4 details (shown once on create)."""
+
+    access_key_id: str
+    secret_access_key: str
+    session_token: str | None = None
+    aws_region: str
+    aws_service: str
 
 
 class BearerTokenRedacted(BaseModel):
@@ -157,6 +185,16 @@ class NoAuthRedacted(BaseModel):
     """Redacted detail block for a no-auth credential (no secret)."""
 
 
+class Sigv4Redacted(BaseModel):
+    """Redacted SigV4 details — identifier + preview, never the secret."""
+
+    access_key_id: str
+    secret_preview: str | None = None
+    has_session_token: bool = False
+    aws_region: str
+    aws_service: str
+
+
 class CredentialFullView(BaseModel):
     """Create response — echoes the secret block once."""
 
@@ -164,11 +202,12 @@ class CredentialFullView(BaseModel):
     type: CredentialType
     name: str
     api: APIReference
+    catalog_api_id: str | None = None
     provider: str
     active: bool
     created_at: datetime
     server_variables: dict[str, str] | None = None
-    secret: BearerTokenFull | ApiKeyFull | BasicAuthFull | OAuth2Full | NoAuthFull
+    secret: BearerTokenFull | ApiKeyFull | BasicAuthFull | OAuth2Full | NoAuthFull | Sigv4Full
 
 
 class CredentialRedactedView(BaseModel):
@@ -178,6 +217,7 @@ class CredentialRedactedView(BaseModel):
     type: CredentialType
     name: str
     api: APIReference
+    catalog_api_id: str | None = None
     provider: str
     provider_account_ref: str | None = None
     active: bool
@@ -185,7 +225,12 @@ class CredentialRedactedView(BaseModel):
     created_at: datetime
     updated_at: datetime | None = None
     details: (
-        BearerTokenRedacted | ApiKeyRedacted | BasicAuthRedacted | OAuth2Redacted | NoAuthRedacted
+        BearerTokenRedacted
+        | ApiKeyRedacted
+        | BasicAuthRedacted
+        | OAuth2Redacted
+        | NoAuthRedacted
+        | Sigv4Redacted
     )
     server_variables: dict[str, str] | None = None
 

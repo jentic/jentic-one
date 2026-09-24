@@ -4,8 +4,8 @@
 // and teardown.
 package main
 
-import "github.com/jentic/jentic-one/cli/internal/cmd"
+import "github.com/jentic/jentic-one/cli/internal/cli/ctlcmd"
 
 func main() {
-	cmd.ExecuteCtl()
+	ctlcmd.ExecuteCtl()
 }

@@ -59,6 +59,21 @@ class AgentRepository:
         return result.scalar_one_or_none()
 
     @staticmethod
+    async def get_status_by_ids(session: AsyncSession, agent_ids: Sequence[str]) -> dict[str, str]:
+        """Batch-fetch ``{agent_id: status}`` for the given ids.
+
+        One query for a page of rows that need agent-status annotation
+        (#1233: the grant listings surface the bound agent's lifecycle state
+        so a dormant grant on a disabled agent is never mistaken for a
+        working connection). Missing ids are simply absent from the result.
+        """
+        if not agent_ids:
+            return {}
+        stmt = select(Agent.id, Agent.status).where(Agent.id.in_(agent_ids))
+        result = await session.execute(stmt)
+        return {row[0]: row[1] for row in result.all()}
+
+    @staticmethod
     async def list_by_owner(
         session: AsyncSession,
         owner_id: str,
@@ -112,7 +127,14 @@ class AgentRepository:
 
     @staticmethod
     async def set_approval(session: AsyncSession, agent_id: str, *, approved_by: str) -> Agent:
-        agent = await session.get(Agent, agent_id)
+        # Lock the row: approval sets owner_id only when still unowned, and a
+        # concurrent `:claim` (which locks + commits owner_id) can interleave
+        # under READ COMMITTED. Taking the same row lock serializes the two, so
+        # the `owner_id is None` check below sees a just-committed claim and does
+        # not overwrite the claimant — the exact "operator silently becomes
+        # owner" outcome the claim flow exists to prevent.
+        stmt = select(Agent).where(Agent.id == agent_id).with_for_update()
+        agent = (await session.execute(stmt)).scalar_one_or_none()
         if agent is None:
             raise AgentNotFoundError(agent_id)
         agent.status = ActorStatus.ACTIVE
@@ -157,6 +179,8 @@ class AgentRepository:
         jwks: dict[str, Any],
         rat_hash: str,
         rat_expires_at: datetime,
+        claim_token_hash: str | None = None,
+        claim_expires_at: datetime | None = None,
     ) -> Agent:
         agent = Agent(
             name=name,
@@ -165,6 +189,8 @@ class AgentRepository:
             jwks=jwks,
             registration_access_token_hash=rat_hash,
             rat_expires_at=rat_expires_at,
+            claim_token_hash=claim_token_hash,
+            claim_expires_at=claim_expires_at,
             created_by="self",
         )
         session.add(agent)
@@ -193,3 +219,18 @@ class AgentRepository:
         stmt = select(Agent).where(Agent.id == agent_id).with_for_update()
         result = await session.execute(stmt)
         return result.scalar_one_or_none()
+
+    @staticmethod
+    async def set_owner_from_claim(session: AsyncSession, agent: Agent, *, owner_id: str) -> Agent:
+        """Assign ``owner_id`` to a claimant and consume the claim token.
+
+        Caller (service) is responsible for locking the row, verifying the token
+        hash + expiry, and checking the agent is still unowned. This method just
+        performs the mutation: set the owner and null the single-use claim token
+        so it cannot be replayed.
+        """
+        agent.owner_id = owner_id
+        agent.claim_token_hash = None
+        agent.claim_expires_at = None
+        await session.flush()
+        return agent

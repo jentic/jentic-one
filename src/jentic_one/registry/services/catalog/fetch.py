@@ -18,6 +18,7 @@ from urllib.parse import urljoin
 import httpx
 
 from jentic_one.shared.config import IngestConfig
+from jentic_one.shared.egress import build_pinned_transport
 from jentic_one.shared.url_validation import validate_upstream_url
 
 
@@ -67,6 +68,7 @@ async def fetch_json(url: str, *, config: IngestConfig) -> dict[str, Any]:
         async with httpx.AsyncClient(
             timeout=config.fetch_timeout_s,
             follow_redirects=False,
+            transport=build_pinned_transport(config.egress),
         ) as client:
             resp = await client.get(validated_url, headers={"user-agent": _USER_AGENT})
             for _ in range(config.max_redirects):
@@ -140,6 +142,7 @@ async def fetch_bytes_conditional(
         async with httpx.AsyncClient(
             timeout=config.fetch_timeout_s,
             follow_redirects=False,
+            transport=build_pinned_transport(config.egress),
         ) as client:
             resp = await client.get(validated_url, headers=headers)
             for _ in range(config.max_redirects):

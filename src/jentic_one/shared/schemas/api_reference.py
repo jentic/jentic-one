@@ -1,6 +1,6 @@
 """Canonical API identity models shared across layers."""
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class APIReference(BaseModel):
@@ -20,6 +20,12 @@ class APIReferenceRequest(BaseModel):
     vendor: str
     name: str = ""
     version: str = ""
+    # The catalog identity slug of the API this credential targets
+    # (`domain[/sub-api]`, e.g. `nytimes.com/article_search`), when the client
+    # knows it (catalog imports and workspace APIs carry it). Stored verbatim
+    # so credential surfaces can derive friendly titles; purely display-side —
+    # never part of credential-resolution identity.
+    catalog_api_id: str | None = Field(default=None, max_length=255)
 
 
 class ServedApiRef(BaseModel):

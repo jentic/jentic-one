@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Any
 
 from pydantic import BaseModel, Field
+
+from jentic_one.shared.schemas import ServedApiRef
+from jentic_one.shared.web.sensitive import SENSITIVE
 
 ScopeStr = Annotated[str, Field(min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_:./-]+$")]
 
@@ -42,19 +45,33 @@ class DenyRequest(BaseModel):
     reason: str = Field(min_length=1, max_length=1024)
 
 
-class ToolkitBindingResponse(BaseModel):
-    """Toolkit binding representation in API responses."""
+class ClaimRequest(BaseModel):
+    """Request body for claiming ownership of a self-registered agent."""
+
+    # The single-use claim capability, presented once to take ownership. Marked
+    # sensitive so the CLI's Layer-1 redactor masks it in output.
+    token: str = Field(min_length=1, max_length=512, json_schema_extra=SENSITIVE)
+
+
+class CredentialBindingResponse(BaseModel):
+    """Direct agent↔credential binding representation in API responses."""
 
     id: str
     agent_id: str
-    toolkit_id: str
+    credential_id: str
+    # Human-readable credential name (control DB); None when unresolvable.
+    name: str | None = None
     bound_at: datetime
+    suspended: bool
+    # Shared permission rule set the binding points at (None = inline rules).
+    rule_set_id: str | None = None
+    serves: list[ServedApiRef] = []
 
 
-class ToolkitBindingListResponse(BaseModel):
-    """List of toolkit bindings."""
+class CredentialBindingListResponse(BaseModel):
+    """List of direct credential bindings."""
 
-    data: list[ToolkitBindingResponse]
+    data: list[CredentialBindingResponse]
 
 
 class AgentPatchRequest(BaseModel):
@@ -117,7 +134,17 @@ class ApiKeyHistoryResponse(BaseModel):
     data: list[ApiKeyHistoryEntryResponse]
 
 
-class ToolkitBindRequest(BaseModel):
-    """Request body for binding a toolkit."""
+class CredentialBindRequest(BaseModel):
+    """Request body for directly binding a credential to an agent."""
 
-    toolkit_id: str = Field(min_length=1, max_length=255)
+    credential_id: str = Field(min_length=1, max_length=255)
+
+
+class JwksUpdateRequest(BaseModel):
+    """Request body for updating an agent's JWKS (public keys).
+
+    The JWKS must contain at least one Ed25519 public key and must not
+    contain any private key material.
+    """
+
+    jwks: dict[str, Any] = Field(description="JWKS containing public keys")

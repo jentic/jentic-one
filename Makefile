@@ -5,7 +5,7 @@ SERVICES := app registry admin control broker
 
 BUILD_DIR := build
 
-.PHONY: help install sync lock upgrade fmt format fix lint typecheck test test-unit test-fast test-integration test-integration-sqlite test-integration-all test-arch test-smoke cov cov-all check score openapi openapi-parity endpoints cli-reference broker-reference hooks clean dev start-fixtures stop-fixtures destroy-fixtures start-app start-registry start-admin start-control start-broker build-wheel build-base build-all save-all images release-image $(addprefix build-,$(SERVICES)) $(addprefix push-,$(SERVICES)) $(addprefix save-,$(SERVICES))
+.PHONY: help install sync lock upgrade fmt format fix lint typecheck test test-unit test-fast test-integration test-integration-sqlite test-integration-all test-arch test-smoke cov cov-all check score openapi openapi-parity config-schema config-reference endpoints cli-reference broker-reference skills hooks clean dev start-fixtures stop-fixtures destroy-fixtures start-app start-registry start-admin start-control start-broker build-wheel build-base build-all save-all images release-image $(addprefix build-,$(SERVICES)) $(addprefix push-,$(SERVICES)) $(addprefix save-,$(SERVICES))
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*##"; printf "Usage: make <target>\n\nTargets:\n"} /^[a-zA-Z_-]+:.*?##/ { printf "  \033[36m%-13s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -78,6 +78,15 @@ openapi: ## Regenerate the control-plane OpenAPI spec (+ UI client schema) from 
 openapi-parity: ## Print the reference-vs-generated OpenAPI coverage report
 	uv run python -m tools.openapi_parity
 
+config-schema: ## Regenerate the backend config JSON Schema (config/config-schema.json) from the AppConfig model
+	uv run python -m tools.config_schema_export
+	@echo "Regenerated config/config-schema.json."
+	@echo "Run 'cd cli && make generate-config' to refresh the generated installer config struct."
+	@echo "Run 'make config-reference' to refresh the configuration reference doc."
+
+config-reference: ## Regenerate the configuration reference (docs/reference/config.md) from the AppConfig model
+	uv run python -m tools.config_reference
+	@echo "Regenerated docs/reference/config.md."
 endpoints: ## Regenerate the endpoint + scope reference (docs/reference/endpoints.{md,json}) from code
 	uv run python -m tools.endpoint_tree
 	@echo "Regenerated docs/reference/endpoints.md and docs/reference/endpoints.json."
@@ -90,6 +99,10 @@ broker-reference: ## Regenerate the Broker OpenAPI artifact (ui/public/broker-op
 	uv run python -m tools.broker_reference
 	@echo "Regenerated ui/public/broker-openapi.json."
 
+skills: ## Mirror skills/<name>/SKILL.md into both content/ dirs (CLI embed + wheel-served copies)
+	uv run python -m tools.skills_sync
+	@echo "Mirrored the served skill set; run 'go build ./...' in cli/ to re-embed."
+
 score: ## Validate OpenAPI specs with the Jentic API Scorecard CLI (requires 80+)
 	# control.openapi.yaml is generated from code (make openapi) and carries the
 	# full metadata catalogue, so it must clear the 80+ scorecard floor.
@@ -100,7 +113,7 @@ score: ## Validate OpenAPI specs with the Jentic API Scorecard CLI (requires 80+
 detect-secrets: ## Check for new secrets not in baseline
 	uv run detect-secrets scan --baseline .secrets.baseline --exclude-files '\.git/'
 
-check: lint score detect-secrets test-arch ## Run lint, score, secrets audit, and arch-tests
+check: lint detect-secrets test-arch score ## Run lint, secrets audit, arch-tests, and score (score last: it needs npx/network and shouldn't block the offline gates)
 
 hooks: ## Install lefthook git hooks (pre-commit + commit-msg)
 	uv run lefthook install
@@ -149,7 +162,7 @@ migrate-sqlite: ## Apply all migrations to the local SQLite databases (config/lo
 start-app-sqlite: migrate-sqlite ## Start combined app on local SQLite (ingest only; search disabled)
 	JENTIC_CONFIG_FILE=config/local-sqlite.yaml uv run python -m jentic_one
 
-build-wheel: ## Build Python wheel
+build-wheel: ## Build Python wheel (packaging TEST ONLY — never published; the container image is the canonical backend distribution)
 	uv build --wheel
 
 # ─── UI (frontend) ───────────────────────────────────────────────────────
@@ -210,37 +223,40 @@ images: ## List locally built jentic-one images
 
 # ─── Release (publish the app image to a real registry) ───────────────────
 # One `app` image serves every surface — the surface set is chosen at runtime
-# via JENTIC__APPS (see deploy/README.md "Self-hosted"). So publishing the
-# single `app` image is enough for a self-hosted app + broker deployment.
+# via JENTIC__APPS (see deploy/README.md "One image, runtime surfaces"). So
+# publishing the single `app` image is enough for a self-hosted app + broker
+# deployment.
 #
 #   make release-image REGISTRY=ghcr.io/jentic
 #
-# builds deploy/docker/app.Dockerfile and pushes it to
-# $(REGISTRY)/jentic-one-app tagged with the pyproject version and the short
-# git SHA. `latest` only moves when the version is a stable X.Y.Z (no
-# prerelease suffix), mirroring CI's guard so a dev/rc push can never hijack
-# the tag self-hosters float on. Requires `docker login <registry>` first. CI
-# does this automatically on a vX.Y.Z tag (see .github/workflows/release.yml)
-# with its own inline script rather than this target: CI must interleave
-# signing between the version and :latest pushes (and lower-case the GHCR
-# owner), which this all-in-one target can't express.
+# builds deploy/docker/app.multiarch.Dockerfile for linux/amd64 + linux/arm64
+# with `docker buildx` and pushes the OCI index to $(REGISTRY)/jentic-one-app
+# tagged with the pyproject version and the short git SHA. `latest` only moves
+# when the version is a stable X.Y.Z (no prerelease suffix), mirroring CI's
+# guard so a dev/rc push can never hijack the tag self-hosters float on.
+# Requires `docker login <registry>` first AND a buildx builder that can build
+# both arches (`docker buildx create --use` + QEMU for the non-native leg). CI
+# does this on a vX.Y.Z tag (see .github/workflows/release.yml) with its own
+# inline script rather than this target: CI must scan each arch, interleave
+# cosign signing between the version and :latest tags, and lower-case the GHCR
+# owner — which this all-in-one target can't express.
 REGISTRY ?=
 RELEASE_IMAGE := $(REGISTRY)/jentic-one-app
+RELEASE_PLATFORMS ?= linux/amd64,linux/arm64
 
-release-image: build-base ## Build + push the app image to REGISTRY (e.g. REGISTRY=ghcr.io/jentic)
+release-image: ## Build + push the multi-arch app image to REGISTRY (e.g. REGISTRY=ghcr.io/jentic)
 	@if [ -z "$(REGISTRY)" ]; then \
 		echo "ERROR: set REGISTRY, e.g. make release-image REGISTRY=ghcr.io/jentic"; exit 1; \
 	fi
-	docker build -f deploy/docker/app.Dockerfile \
+	docker buildx build -f deploy/docker/app.multiarch.Dockerfile \
+		--platform $(RELEASE_PLATFORMS) \
 		-t $(RELEASE_IMAGE):$(VERSION) \
-		-t $(RELEASE_IMAGE):$(GIT_SHA) .
-	docker push $(RELEASE_IMAGE):$(VERSION)
-	docker push $(RELEASE_IMAGE):$(GIT_SHA)
+		-t $(RELEASE_IMAGE):$(GIT_SHA) \
+		--push .
 	@if echo "$(VERSION)" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$$'; then \
-		docker tag $(RELEASE_IMAGE):$(VERSION) $(RELEASE_IMAGE):latest; \
-		docker push $(RELEASE_IMAGE):latest; \
-		echo "Pushed $(RELEASE_IMAGE) ($(VERSION), $(GIT_SHA), latest)"; \
+		docker buildx imagetools create -t $(RELEASE_IMAGE):latest $(RELEASE_IMAGE):$(VERSION); \
+		echo "Pushed $(RELEASE_IMAGE) ($(VERSION), $(GIT_SHA), latest) [$(RELEASE_PLATFORMS)]"; \
 	else \
 		echo "Prerelease version — not moving :latest"; \
-		echo "Pushed $(RELEASE_IMAGE) ($(VERSION), $(GIT_SHA))"; \
+		echo "Pushed $(RELEASE_IMAGE) ($(VERSION), $(GIT_SHA)) [$(RELEASE_PLATFORMS)]"; \
 	fi

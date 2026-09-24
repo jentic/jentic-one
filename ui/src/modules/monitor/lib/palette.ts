@@ -2,11 +2,9 @@
  * Shared palette + initials helpers for the Overview charts (bubble chart,
  * breakdown table, HealthStrip avatar cluster).
  *
- * jentic-mini resolves per-vendor brand colours/icons via its `vendor-icons`
- * registry; jentic-one has no such registry, so every lens gets a stable
- * index-based palette with initials tiles (the same approach the module's
- * Breakdown already used). Palettes are lifted verbatim from jentic-mini so
- * the look carries over.
+ * jentic-one has no per-vendor brand-colour/icon registry, so every lens gets
+ * a stable index-based palette with initials tiles (the same approach the
+ * module's Breakdown uses).
  */
 
 export const API_PALETTE = [
@@ -20,7 +18,7 @@ export const API_PALETTE = [
 	'#ec4899',
 ];
 
-export const TOOLKIT_PALETTE = [
+export const CREDENTIAL_PALETTE = [
 	'#6366f1',
 	'#8b5cf6',
 	'#0ea5e9',
@@ -33,18 +31,18 @@ export const TOOLKIT_PALETTE = [
 
 export const AGENT_PALETTE = ['#0891b2', '#7c3aed', '#db2777', '#16a34a', '#ea580c', '#475569'];
 
-export type UsageLens = 'apis' | 'toolkits' | 'agents';
+export type UsageLens = 'apis' | 'credentials' | 'agents';
 
 export function lensPalette(lens: UsageLens): string[] {
 	if (lens === 'agents') return AGENT_PALETTE;
-	if (lens === 'toolkits') return TOOLKIT_PALETTE;
+	if (lens === 'credentials') return CREDENTIAL_PALETTE;
 	return API_PALETTE;
 }
 
 /**
- * "stripe-api" → "S", "Billing Agent" → "BA". Mirrors jentic-mini's helper:
+ * "stripe-api" → "S", "Billing Agent" → "BA":
  * strip the first "api" occurrence, split on whitespace/hyphen/underscore
- * (NOT dots or slashes — mini keeps "stripe.com" as one word → "S"), take the
+ * (NOT dots or slashes — "stripe.com" stays one word → "S"), take the
  * first letter of the first two words. Falls back to "?" so an initials tile
  * never renders blank.
  */

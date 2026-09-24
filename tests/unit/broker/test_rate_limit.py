@@ -71,3 +71,24 @@ async def test_recovers_after_refill() -> None:
 
     clock.advance(1.0)  # 1 token refilled at 1 token/s
     assert (await limiter.acquire("agent-1")).allowed
+
+
+@pytest.mark.asyncio
+async def test_namespaced_limiters_use_independent_buckets() -> None:
+    """Two limiters on one store with different namespaces must not share a
+    bucket for the same caller key (e.g. the DCR registration limiter and
+    /authorize's bare-IP fallback both key by client IP)."""
+    backend = MemoryStateBackend(clock=_Clock())
+    default_ns = RateLimiter(backend, default_rpm=60, burst=1)
+    registration = RateLimiter(backend, default_rpm=60, burst=1, namespace="oauth-registration")
+
+    assert (await default_ns.acquire("10.0.0.1")).allowed
+    assert not (await default_ns.acquire("10.0.0.1")).allowed
+
+    # The namespaced limiter's bucket for the same key is untouched.
+    assert (await registration.acquire("10.0.0.1")).allowed
+    assert not (await registration.acquire("10.0.0.1")).allowed
+
+    # Same-namespace limiters still share (the historical behavior).
+    same_ns = RateLimiter(backend, default_rpm=60, burst=1)
+    assert not (await same_ns.acquire("10.0.0.1")).allowed

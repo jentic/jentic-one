@@ -8,8 +8,7 @@ import { cn } from '@/shared/lib/utils';
  * activity rows); the glyph is the actor's initials, falling back to a bot
  * icon when there's no name.
  *
- * Ported from the jentic-mini agent-centre revamp and generalised into a
- * shared primitive so the agents table, detail page, and any future
+ * A shared primitive so the agents table, detail page, and any future
  * dashboard/monitor surface can reuse one identity treatment.
  */
 

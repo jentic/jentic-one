@@ -31,7 +31,6 @@ func TestLoadMissingFile(t *testing.T) {
 func TestLoadPresentFile(t *testing.T) {
 	paths := writeConfig(t, `
 base_url: http://example:9000
-default_profile: work
 broker:
   scheme: http
   host: localhost:4000
@@ -43,7 +42,7 @@ broker:
 	if !cfg.Loaded {
 		t.Fatalf("Loaded should be true")
 	}
-	if cfg.BaseURL != "http://example:9000" || cfg.DefaultProfile != "work" {
+	if cfg.BaseURL != "http://example:9000" {
 		t.Errorf("unexpected top-level: %+v", cfg)
 	}
 	if cfg.Broker.Scheme != "http" || cfg.Broker.Host != "localhost:4000" {
@@ -62,9 +61,6 @@ func TestResolvedDefaults(t *testing.T) {
 	cfg := &FileConfig{}
 	if got := cfg.ResolvedBaseURL(); got != DefaultBaseURL {
 		t.Errorf("ResolvedBaseURL = %q, want default", got)
-	}
-	if got := cfg.ResolvedDefaultProfile(); got != DefaultProfile {
-		t.Errorf("ResolvedDefaultProfile = %q, want default", got)
 	}
 }
 
@@ -118,53 +114,16 @@ func TestResolvedPrecedence(t *testing.T) {
 		t.Errorf("broker host flag should win: got %q", got)
 	}
 
-	if got := cfg.ResolvedProfileName("explicit"); got != "explicit" {
-		t.Errorf("profile flag should win: got %q", got)
-	}
 	if got := cfg.ResolvedBaseURLOr(""); got != DefaultBaseURL {
 		t.Errorf("base url empty flag -> default: got %q", got)
 	}
 }
 
-func TestResolvedProfilePrecedence(t *testing.T) {
-	cfg := &FileConfig{DefaultProfile: "cfg"}
-
-	t.Run("flag beats env and config", func(t *testing.T) {
-		t.Setenv(ProfileEnv, "envprof")
-		if got := cfg.ResolvedProfileName("flagprof"); got != "flagprof" {
-			t.Errorf("flag should win: got %q", got)
-		}
-	})
-
-	t.Run("env beats config", func(t *testing.T) {
-		t.Setenv(ProfileEnv, "envprof")
-		if got := cfg.ResolvedProfileName(""); got != "envprof" {
-			t.Errorf("env should win over config: got %q", got)
-		}
-	})
-
-	t.Run("config beats default when env unset", func(t *testing.T) {
-		t.Setenv(ProfileEnv, "")
-		if got := cfg.ResolvedProfileName(""); got != "cfg" {
-			t.Errorf("config should win: got %q", got)
-		}
-	})
-
-	t.Run("built-in default when all empty", func(t *testing.T) {
-		t.Setenv(ProfileEnv, "")
-		empty := &FileConfig{}
-		if got := empty.ResolvedProfileName(""); got != DefaultProfile {
-			t.Errorf("default should win: got %q", got)
-		}
-	})
-}
-
 func TestSaveRoundTrip(t *testing.T) {
 	paths := Paths{Root: t.TempDir()}
 	cfg := &FileConfig{
-		BaseURL:        "http://example:9000",
-		DefaultProfile: "work",
-		Broker:         BrokerConfig{Scheme: "http", Host: "localhost:4000"},
+		BaseURL: "http://example:9000",
+		Broker:  BrokerConfig{Scheme: "http", Host: "localhost:4000"},
 	}
 	if err := cfg.Save(paths); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -177,7 +136,7 @@ func TestSaveRoundTrip(t *testing.T) {
 	if !got.Loaded {
 		t.Fatalf("Loaded should be true after Save")
 	}
-	if got.BaseURL != cfg.BaseURL || got.DefaultProfile != cfg.DefaultProfile {
+	if got.BaseURL != cfg.BaseURL {
 		t.Errorf("top-level mismatch: %+v", got)
 	}
 	if got.Broker != cfg.Broker {
@@ -185,20 +144,43 @@ func TestSaveRoundTrip(t *testing.T) {
 	}
 }
 
-func TestSetDefaultProfile(t *testing.T) {
-	paths := writeConfig(t, "base_url: http://example:9000\ndefault_profile: old\n")
-	if err := SetDefaultProfile(paths, "new"); err != nil {
-		t.Fatalf("SetDefaultProfile: %v", err)
+// The agent-account record and its Mutate-style contention guarantees moved to
+// the XDG agent state; see agentstate_test.go. FileConfig keeps only the legacy
+// read-side (the Agent fields parse) covered by TestLegacyAgentFieldsStillParse
+// there.
+
+// TestMutateErrorLeavesConfigUntouched proves a failing mutation does not write:
+// the on-disk config is unchanged when fn returns an error.
+func TestMutateErrorLeavesConfigUntouched(t *testing.T) {
+	paths := writeConfig(t, "base_url: keep\n")
+	_, err := Mutate(paths, func(c *FileConfig) error {
+		c.BaseURL = "clobbered"
+		return os.ErrInvalid
+	})
+	if err == nil {
+		t.Fatal("expected Mutate to propagate the fn error")
 	}
-	got, err := Load(paths)
+	got, _ := Load(paths)
+	if got.BaseURL != "keep" {
+		t.Errorf("failed Mutate must not persist changes, got %q", got.BaseURL)
+	}
+}
+
+// TestSaveLeavesNoTempFile proves the atomic write cleans up its temp file, so a
+// successful Save leaves only config.yaml (plus the lock file if Mutate ran) and
+// no stray .config-*.tmp.
+func TestSaveLeavesNoTempFile(t *testing.T) {
+	paths := Paths{Root: t.TempDir()}
+	if err := (&FileConfig{BaseURL: "x"}).Save(paths); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	entries, err := os.ReadDir(paths.Dir())
 	if err != nil {
-		t.Fatalf("Load: %v", err)
+		t.Fatal(err)
 	}
-	if got.DefaultProfile != "new" {
-		t.Errorf("DefaultProfile = %q, want new", got.DefaultProfile)
-	}
-	// Existing fields must survive the rewrite.
-	if got.BaseURL != "http://example:9000" {
-		t.Errorf("base_url not preserved: %q", got.BaseURL)
+	for _, e := range entries {
+		if len(e.Name()) >= 8 && e.Name()[:8] == ".config-" {
+			t.Errorf("stray temp file left behind: %s", e.Name())
+		}
 	}
 }

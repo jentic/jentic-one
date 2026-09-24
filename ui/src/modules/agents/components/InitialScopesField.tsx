@@ -1,6 +1,6 @@
 /**
  * InitialScopesField — optional "start with these scopes" section for the
- * create sheets (canvas plan, phase 4: POST /agents and /service-accounts
+ * create sheets (POST /agents and /service-accounts
  * already accept `scopes[]`, so a new actor shouldn't need a follow-up PUT
  * from its detail page just to get its first grants).
  *

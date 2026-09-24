@@ -1,8 +1,7 @@
 /**
- * HealthStrip — the headline pill row of the Monitor Overview, ported from
- * jentic-mini (`ui/src/components/monitor/overview/HealthStrip.tsx`).
+ * HealthStrip — the headline pill row of the Monitor Overview.
  *
- * Full parity build (jentic-one-internal#561): health pill with success-rate
+ * Full build (jentic-one-internal#561): health pill with success-rate
  * hover detail, latency "Fast/Normal/Slow" pill with avg/p50/p95 hover
  * detail, and the "N APIs active" avatar cluster (initials tiles — jentic-one
  * has no vendor-icon registry).

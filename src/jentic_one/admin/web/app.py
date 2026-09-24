@@ -20,6 +20,8 @@ from jentic_one.admin.web.routers import (
     health,
     jobs,
     monitoring,
+    oauth_clients,
+    oauth_grants,
     permissions,
     users,
 )
@@ -60,6 +62,8 @@ def get_routers() -> list[tuple[APIRouter, str, list[str]]]:
         (audit.router, "", []),
         (monitoring.router, "", []),
         (config.router, "", []),
+        (oauth_clients.router, "", []),
+        (oauth_grants.router, "", []),
     ]
 
 
@@ -106,7 +110,9 @@ def _make_verifier(ctx: Context) -> Any:
 
 def create_app(ctx: Context) -> FastAPI:
     """Create the admin FastAPI application for standalone deployment."""
-    app = create_surface_app(ctx, title="jentic-one-admin", routers=get_routers())
+    app = create_surface_app(
+        ctx, title="jentic-one-admin", routers=get_routers(), enabled_apps={"admin"}
+    )
     install_on_app(app, ctx)
     for exc_class, handler in get_exception_handlers():
         app.add_exception_handler(exc_class, handler)

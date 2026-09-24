@@ -15,6 +15,8 @@ def to_stored(wire: CredentialType, *, grant_type: str | None = None) -> StoredC
         return StoredCredentialType.BASIC_AUTH
     if wire == CredentialType.NO_AUTH:
         return StoredCredentialType.NO_AUTH
+    if wire == CredentialType.SIGV4:
+        return StoredCredentialType.AWS_SIGV4
     if wire == CredentialType.OAUTH2:
         if grant_type == "authorization_code":
             return StoredCredentialType.OAUTH2_AUTHORIZATION_CODE
@@ -35,6 +37,8 @@ def to_wire(stored: StoredCredentialType) -> CredentialType:
         return CredentialType.BASIC
     if stored == StoredCredentialType.NO_AUTH:
         return CredentialType.NO_AUTH
+    if stored == StoredCredentialType.AWS_SIGV4:
+        return CredentialType.SIGV4
     if stored in (
         StoredCredentialType.OAUTH2_CLIENT_CREDENTIALS,
         StoredCredentialType.OAUTH2_AUTHORIZATION_CODE,

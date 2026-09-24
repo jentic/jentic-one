@@ -19,9 +19,7 @@ _SPEC: dict[str, Any] = {
 _SPEC_BYTES = json.dumps(_SPEC).encode()
 
 
-def _url_source(
-    url: str = "https://example.com/specs/openapi.json", **kwargs: str | None
-) -> UrlSource:
+def _url_source(url: str = "https://example.com/specs/openapi.json", **kwargs: Any) -> UrlSource:
     return UrlSource(type="url", url=url, **kwargs)
 
 

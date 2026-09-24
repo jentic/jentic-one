@@ -1,17 +1,15 @@
 /**
  * KpiStrip — the console's 7-day vitals between the identity header and the
- * tab bar: executions, success share, last activity (+ bound toolkits for
+ * tab bar: executions, success share, last activity (+ bound credentials for
  * agents). Rendered with the shared `StatCard` grid — the same tile grammar
- * the dashboard and the toolkit console use — so the detail pages read as
- * one product.
+ * the dashboard uses — so the detail pages read as one product.
  *
- * Admin-gated by data shape (same contract as the toolkit console's
- * `UsageStrip`): `undefined` = loading → a skeleton with the final footprint
- * so the tab bar doesn't jump; `null` = 403 → the strip hides entirely
- * (non-admins lose nothing they could see elsewhere — the toolkit count
- * lives on the Overview tab).
+ * Admin-gated by data shape: `undefined` = loading → a skeleton with the
+ * final footprint so the tab bar doesn't jump; `null` = 403 → the strip
+ * hides entirely (non-admins lose nothing they could see elsewhere — the
+ * bound credentials live on the Access tab).
  */
-import { Activity, Boxes, CheckCircle2, Clock } from 'lucide-react';
+import { Activity, CheckCircle2, Clock, KeyRound } from 'lucide-react';
 import { Skeleton, StatCard } from '@/shared/ui';
 import { timeAgo } from '@/shared/lib/utils';
 import type { ActorUsageDetail } from '@/modules/agents/api';
@@ -22,12 +20,12 @@ interface KpiStripProps {
 	usage: ActorUsageDetail | null | undefined;
 	/** ISO timestamp of the most recent execution, if the feed loaded any. */
 	lastActivityAt: string | null | undefined;
-	/** Bound-toolkit count; omit for actors without toolkit bindings (SAs). */
-	toolkitCount?: number;
+	/** Bound-credential count; omit for actors without bindings (SAs). */
+	credentialCount?: number;
 }
 
-export function KpiStrip({ usage, lastActivityAt, toolkitCount }: KpiStripProps) {
-	const tiles = toolkitCount != null ? 4 : 3;
+export function KpiStrip({ usage, lastActivityAt, credentialCount }: KpiStripProps) {
+	const tiles = credentialCount != null ? 4 : 3;
 	const gridClass =
 		tiles === 4
 			? 'grid grid-cols-2 gap-3 lg:grid-cols-4'
@@ -49,7 +47,7 @@ export function KpiStrip({ usage, lastActivityAt, toolkitCount }: KpiStripProps)
 		);
 	}
 
-	// Non-admin (403 → null): hide the strip entirely, like the toolkit console.
+	// Non-admin (403 → null): hide the strip entirely.
 	if (usage === null) return null;
 
 	const { total, success, failed } = usage;
@@ -78,11 +76,11 @@ export function KpiStrip({ usage, lastActivityAt, toolkitCount }: KpiStripProps)
 				icon={<Clock className="h-4 w-4" />}
 				accent="orange"
 			/>
-			{toolkitCount != null && (
+			{credentialCount != null && (
 				<StatCard
-					label="Bound toolkits"
-					value={String(toolkitCount)}
-					icon={<Boxes className="h-4 w-4" />}
+					label="Bound credentials"
+					value={String(credentialCount)}
+					icon={<KeyRound className="h-4 w-4" />}
 					accent="primary"
 				/>
 			)}

@@ -132,3 +132,16 @@ def admin_client(web_context: Context) -> Iterator[TestClient]:
     app = _build_app_as(web_context, identity)
     with TestClient(app, headers={"Authorization": "Bearer test-token"}) as tc:
         yield tc
+
+
+@pytest.fixture()
+def overlays_confirm_only_client(web_context: Context) -> Iterator[TestClient]:
+    """TestClient holding only overlays:confirm — gates the overlay confirm route."""
+    identity = Identity(
+        sub="usr_test_registry_overlays_confirm",
+        email="registry-overlaysconfirm@test.local",
+        permissions=["overlays:confirm"],
+    )
+    app = _build_app_as(web_context, identity)
+    with TestClient(app, headers={"Authorization": "Bearer test-token"}) as tc:
+        yield tc

@@ -7,9 +7,14 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from jentic_one.control.web.schemas.permission_rules import (
+    PermissionRuleReadSchema,
+    PermissionRuleSchema,
+)
 from jentic_one.shared.models.credentials import CredentialLocation, CredentialType
 from jentic_one.shared.schemas import APIReference as APIReferenceResponse
 from jentic_one.shared.schemas import APIReferenceRequest
+from jentic_one.shared.web.sensitive import SENSITIVE
 
 __all__ = ["APIReferenceRequest", "APIReferenceResponse"]
 
@@ -52,7 +57,7 @@ class BearerTokenCreateRequest(BaseModel):
     provider: str = "static"
     runtime_config: RuntimeConfig | None = None
     server_variables: dict[str, str] | None = None
-    token: str
+    token: str = Field(json_schema_extra=SENSITIVE)
 
     _check_server_variables = field_validator("server_variables")(_validate_server_variables)
 
@@ -87,7 +92,8 @@ class ApiKeyCreateRequest(BaseModel):
     runtime_config: RuntimeConfig | None = None
     server_variables: dict[str, str] | None = None
     key: str = Field(
-        description="The API key secret. Stored encrypted; never returned after create."
+        description="The API key secret. Stored encrypted; never returned after create.",
+        json_schema_extra=SENSITIVE,
     )
     location: CredentialLocation = Field(description="Where to inject the key on upstream calls.")
     field_name: str = Field(description="Header or query-parameter name carrying the key.")
@@ -105,7 +111,7 @@ class BasicAuthCreateRequest(BaseModel):
     runtime_config: RuntimeConfig | None = None
     server_variables: dict[str, str] | None = None
     username: str
-    password: str
+    password: str = Field(json_schema_extra=SENSITIVE)
 
     _check_server_variables = field_validator("server_variables")(_validate_server_variables)
 
@@ -127,7 +133,7 @@ class OAuth2CreateRequest(BaseModel):
     token_url: str | None = None
     authorize_url: str | None = None
     client_id: str | None = None
-    client_secret: str | None = None
+    client_secret: str | None = Field(default=None, json_schema_extra=SENSITIVE)
     scopes: list[str] | None = None
 
     _check_server_variables = field_validator("server_variables")(_validate_server_variables)
@@ -152,12 +158,44 @@ class NoAuthCreateRequest(BaseModel):
     _check_server_variables = field_validator("server_variables")(_validate_server_variables)
 
 
+class Sigv4CreateRequest(BaseModel):
+    """Create request for sigv4 (AWS Signature V4) credentials."""
+
+    type: Literal["sigv4"]
+    name: str = Field(description="Human-readable label for the credential.")
+    api: APIReferenceRequest = Field(
+        description="Loose (vendor, name, version) API identity tuple."
+    )
+    provider: str = Field(
+        default="static", description="Credential provider; 'static' for stored secrets."
+    )
+    runtime_config: RuntimeConfig | None = None
+    server_variables: dict[str, str] | None = None
+    access_key_id: str = Field(description="AWS access key id (public identifier).")
+    secret_access_key: str = Field(
+        description="AWS secret access key. Stored encrypted; never returned after create.",
+        json_schema_extra=SENSITIVE,
+    )
+    session_token: str | None = Field(
+        default=None,
+        description=(
+            "Optional temporary-credential session token (STS). Expires; re-save when it does."
+        ),
+        json_schema_extra=SENSITIVE,
+    )
+    aws_region: str = Field(description="Signing region, e.g. 'us-east-1'.")
+    aws_service: str = Field(description="Signing service, e.g. 'aoss', 'execute-api', 's3'.")
+
+    _check_server_variables = field_validator("server_variables")(_validate_server_variables)
+
+
 CredentialCreateRequest = Annotated[
     BearerTokenCreateRequest
     | ApiKeyCreateRequest
     | BasicAuthCreateRequest
     | OAuth2CreateRequest
-    | NoAuthCreateRequest,
+    | NoAuthCreateRequest
+    | Sigv4CreateRequest,
     Field(discriminator="type"),
 ]
 
@@ -173,7 +211,7 @@ class BearerTokenUpdateRequest(BaseModel):
     active: bool | None = None
     runtime_config: RuntimeConfig | None = None
     server_variables: dict[str, str] | None = None
-    token: str | None = None
+    token: str | None = Field(default=None, json_schema_extra=SENSITIVE)
 
     _check_server_variables = field_validator("server_variables")(_validate_server_variables)
 
@@ -186,7 +224,7 @@ class ApiKeyUpdateRequest(BaseModel):
     active: bool | None = None
     runtime_config: RuntimeConfig | None = None
     server_variables: dict[str, str] | None = None
-    key: str | None = None
+    key: str | None = Field(default=None, json_schema_extra=SENSITIVE)
     location: CredentialLocation | None = Field(
         default=None,
         description=(
@@ -216,7 +254,7 @@ class BasicAuthUpdateRequest(BaseModel):
     runtime_config: RuntimeConfig | None = None
     server_variables: dict[str, str] | None = None
     username: str | None = None
-    password: str | None = None
+    password: str | None = Field(default=None, json_schema_extra=SENSITIVE)
 
     _check_server_variables = field_validator("server_variables")(_validate_server_variables)
 
@@ -229,15 +267,37 @@ class OAuth2UpdateRequest(BaseModel):
     active: bool | None = None
     runtime_config: RuntimeConfig | None = None
     server_variables: dict[str, str] | None = None
-    client_secret: str | None = None
+    client_secret: str | None = Field(default=None, json_schema_extra=SENSITIVE)
     token_url: str | None = None
     scopes: list[str] | None = None
 
     _check_server_variables = field_validator("server_variables")(_validate_server_variables)
 
 
+class Sigv4UpdateRequest(BaseModel):
+    """Update request for sigv4 credentials (key rotation / scope edit)."""
+
+    type: Literal["sigv4"]
+    name: str | None = None
+    active: bool | None = None
+    runtime_config: RuntimeConfig | None = None
+    server_variables: dict[str, str] | None = None
+    access_key_id: str | None = None
+    secret_access_key: str | None = Field(default=None, json_schema_extra=SENSITIVE)
+    session_token: str | None = Field(default=None, json_schema_extra=SENSITIVE)
+    clear_session_token: bool = False
+    aws_region: str | None = None
+    aws_service: str | None = None
+
+    _check_server_variables = field_validator("server_variables")(_validate_server_variables)
+
+
 CredentialUpdateRequest = Annotated[
-    BearerTokenUpdateRequest | ApiKeyUpdateRequest | BasicAuthUpdateRequest | OAuth2UpdateRequest,
+    BearerTokenUpdateRequest
+    | ApiKeyUpdateRequest
+    | BasicAuthUpdateRequest
+    | OAuth2UpdateRequest
+    | Sigv4UpdateRequest,
     Field(discriminator="type"),
 ]
 
@@ -308,6 +368,13 @@ class CredentialRedactedResponse(BaseModel):
     api: APIReferenceResponse = Field(
         description="The (vendor, name, version) API this credential targets."
     )
+    catalog_api_id: str | None = Field(
+        default=None,
+        description=(
+            "Catalog identity slug of the target API (`domain[/sub-api]`), when "
+            "recorded at create time. Display-only; null for older credentials."
+        ),
+    )
     provider: str = Field(description="Credential provider; 'static' for stored secrets.")
     provider_account_ref: str | None = Field(
         default=None, description="Opaque reference to the provider account, when applicable."
@@ -338,7 +405,7 @@ class CredentialCreateResponse(BaseModel):
     """Create response: redacted + secret shown once."""
 
     credential: CredentialRedactedResponse
-    secret: dict[str, Any]
+    secret: dict[str, Any] = Field(json_schema_extra=SENSITIVE)
 
 
 class CredentialListResponse(BaseModel):
@@ -396,3 +463,92 @@ class ProviderDiscoveryResponse(BaseModel):
     """Discovery response listing all available credential providers."""
 
     providers: list[ProviderDiscoveryEntryResponse]
+
+
+class CredentialAgentResponse(BaseModel):
+    """Agent directly bound to a credential (theme 5 phase 1)."""
+
+    agent_id: str
+    agent_name: str
+    status: str
+    bound_at: datetime
+    suspended: bool = Field(
+        description=(
+            "True when the binding is soft-suspended (reversible cut-off): the "
+            "binding and its rules survive, but the agent cannot execute "
+            "through this credential until resumed."
+        )
+    )
+    rule_set_id: str | None = Field(
+        default=None,
+        description=(
+            "Shared permission rule set this binding points at, if any. While "
+            "attached, the set's ordered list is the binding's effective "
+            "policy; null means the binding's inline rules apply."
+        ),
+    )
+
+
+class CredentialAgentListResponse(BaseModel):
+    """Paginated list of agents directly bound to a credential."""
+
+    data: list[CredentialAgentResponse]
+    has_more: bool
+    next_cursor: str | None = None
+
+
+class RuleSetAttachRequest(BaseModel):
+    """Point a direct agent↔credential binding at a shared rule set."""
+
+    rule_set_id: str = Field(description="Id (`prs_…`) of the rule set to attach.")
+
+
+class RuleSetCreateRequest(BaseModel):
+    """Create a shared permission rule set (theme 5 phase 1, Q-04)."""
+
+    name: str = Field(max_length=255, description="Unique human-readable name.")
+    description: str | None = Field(default=None, max_length=1000)
+    rules: Annotated[list[PermissionRuleSchema], Field(max_length=100)] = Field(
+        default_factory=list,
+        description="Initial ordered rule list (first-match-wins, default-deny).",
+    )
+
+
+class RuleSetUpdateRequest(BaseModel):
+    """Rename or re-describe a rule set."""
+
+    name: str | None = Field(default=None, max_length=255)
+    description: str | None = Field(default=None, max_length=1000)
+
+
+class RuleSetSummaryResponse(BaseModel):
+    """Rule set list entry."""
+
+    rule_set_id: str
+    name: str
+    description: str | None = None
+    rule_count: int
+    created_by: str | None = None
+    created_at: datetime
+
+
+class RuleSetResponse(BaseModel):
+    """Rule set detail — the ordered rules plus its referencing-binding count."""
+
+    rule_set_id: str
+    name: str
+    description: str | None = None
+    rules: list[PermissionRuleReadSchema]
+    binding_count: int = Field(
+        description="How many agent-credential bindings currently point at this set."
+    )
+    created_by: str | None = None
+    created_at: datetime
+
+
+class RuleSetListResponse(BaseModel):
+    """Paginated list of rule sets."""
+
+    data: list[RuleSetSummaryResponse]
+    has_more: bool
+    next_cursor: str | None = None

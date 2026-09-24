@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime as dt
 from typing import Any, Literal
 
+from jentic.problem_details import ProblemDetail
 from pydantic import BaseModel, Field, model_validator
 
 from jentic_one.control.web.schemas.permission_rules import BasePermissionRuleSchema
@@ -29,25 +30,31 @@ class AccessRequestItemRequest(BaseModel):
     """A single line-item in a file request.
 
     **Permission rules:** Rules control which upstream API operations the broker
-    allows through a credential binding. They are enforced per (toolkit_id,
-    credential_id) pair, so they can only be attached to credential:bind items —
-    not toolkit:bind or scope:grant. You do not need toolkits:write scope to set
-    rules; include them directly on the credential:bind item when filing the
-    access request, and the approver's decision persists them on the binding.
+    allows through a direct agent↔credential binding. They are enforced per
+    (agent, credential) pair, so they can only be attached to credential:bind
+    items — not scope:grant. Include them (or a shared ``rule_set_id``)
+    directly on the credential:bind item when filing the access request, and
+    the approver's decision persists them on the binding.
     """
 
-    resource_type: Literal["credential", "toolkit", "scope"]
-    action: Literal["bind", "grant", "create", "provision"]
+    resource_type: Literal["credential", "scope"]
+    action: Literal["bind", "grant", "provision"]
     resource_id: str | None = None
     resource_reference: dict[str, Any] | None = None
-    to_type: str | None = None
-    to_id: str | None = None
     rules: list[PermissionRuleSchema] | None = Field(
         default=None,
         description=(
             "Permission rules for the binding (credential:bind only). "
             "Rules are evaluated first-match-wins by the broker; if no rule matches, "
             'the request is denied. Example: [{"effect": "allow", "path": ".*"}].'
+        ),
+    )
+    rule_set_id: str | None = Field(
+        default=None,
+        description=(
+            "Shared permission rule set for the binding (credential:bind only), "
+            "as an alternative to inline rules. While attached, the set's "
+            "ordered list is the binding's effective policy."
         ),
     )
 
@@ -58,20 +65,24 @@ class AccessRequestItemRequest(BaseModel):
         if has_id and has_ref:
             msg = "Provide exactly one of resource_id or resource_reference, not both"
             raise ValueError(msg)
+        if self.rules is not None and self.rule_set_id is not None:
+            msg = "Provide at most one of rules or rule_set_id, not both"
+            raise ValueError(msg)
         # Only the (resource_type, action) pairs the system understands are
         # meaningful. Two families:
         #   * enforced effects — the applicator dispatches on them at approval
-        #     (credential:bind, toolkit:bind, scope:grant).
+        #     (credential:bind, scope:grant).
         #   * fulfilment intents — placeholders in a provisioning plan that a
         #     human fulfils via the existing create endpoints; the applicator
-        #     never executes them (toolkit:create, credential:provision).
+        #     never executes them (credential:provision).
         # Reject anything else (e.g. ("scope", "bind")) so a filer gets immediate
-        # feedback instead of a silent no-op.
+        # feedback instead of a silent no-op. The toolkit-era pairs
+        # (toolkit:create, toolkit:bind) were retired in theme-5 Phase 3 and are
+        # already unrepresentable via the resource_type/action Literals — this
+        # keeps the residual combinations tight.
         valid = {
             ("credential", "bind"),
-            ("toolkit", "bind"),
             ("scope", "grant"),
-            ("toolkit", "create"),
             ("credential", "provision"),
         }
         if (self.resource_type, self.action) not in valid:
@@ -108,8 +119,15 @@ class AmendItemSchema(BaseModel):
 
     item_id: str
     rules: list[PermissionRuleSchema] | None = None
+    rule_set_id: str | None = None
     resource_id: str | None = None
-    to_id: str | None = None
+
+    @model_validator(mode="after")
+    def _check_policy_carriers(self) -> AmendItemSchema:
+        if self.rules is not None and self.rule_set_id is not None:
+            msg = "Provide at most one of rules or rule_set_id, not both"
+            raise ValueError(msg)
+        return self
 
 
 class AmendRequest(BaseModel):
@@ -134,6 +152,13 @@ class AccessRequestItemResponse(BaseModel):
     toolkit_name: str | None = None
     credential_name: str | None = None
     rules: list[dict[str, Any]] | None = None
+    rule_set_id: str | None = Field(
+        default=None,
+        description=(
+            "Shared permission rule set attached to a credential:bind item, as "
+            "an alternative policy carrier to inline rules."
+        ),
+    )
     status: str
     applied_effects: dict[str, Any] | None = None
     decided_by: str | None = None
@@ -145,25 +170,25 @@ class AccessRequestItemResponse(BaseModel):
             "Whether this item's outcome is already in effect (the binding or "
             "grant it asks for already exists), letting a reviewer approve "
             "manually-fulfilled work instead of re-doing it in the wizard. "
-            "Populated on single-request GETs for pending credential:bind, "
-            "toolkit:bind, and scope:grant items; null when not computed "
+            "Populated on single-request GETs for pending credential:bind "
+            "and scope:grant items; null when not computed "
             "(list endpoints, decided items, fulfilment-only intents, an item "
-            "whose target cannot be determined, an ambiguous toolkit "
+            "whose target cannot be determined, an ambiguous credential "
             "reference — which approval would refuse as filed — or a "
             "credential:bind whose credential is not visible to the caller). "
-            "Toolkit REFERENCES are resolved under the caller's visibility, "
+            "API REFERENCES are resolved under the caller's visibility, "
             "mirroring decide-time resolution, so False can also mean "
-            "'satisfied by a toolkit this caller cannot see'; explicit-id "
+            "'satisfied by a credential this caller cannot see'; explicit-id "
             "targets are probed directly."
         ),
     )
     already_satisfied_by: str | None = Field(
         default=None,
         description=(
-            "For a satisfied toolkit:bind, the id of the toolkit the agent is "
-            "already bound to — names the exact object so consumers can point "
-            "the operator at it. Null for other item types and whenever "
-            "already_satisfied is not true."
+            "For a satisfied credential:bind, the id of the credential the "
+            "agent is already bound to — names the exact object so consumers "
+            "can point the operator at it. Null for other item types and "
+            "whenever already_satisfied is not true."
         ),
     )
 
@@ -226,3 +251,28 @@ class AccessRequestListResponse(BaseModel):
     data: list[AccessRequestResponse]
     has_more: bool
     next_cursor: str | None = None
+
+
+class DuplicatePendingProblem(ProblemDetail):
+    """RFC 9457 Problem Details for a 409 on ``POST /access-requests``.
+
+    Filing a request whose target already has a pending request is refused with
+    a 409 whose body carries two extension members on top of the standard
+    Problem Details shape, so a client can attach to the existing request rather
+    than re-file. These are emitted at runtime by the access-request error hook
+    (``control/web/errors.py``); this model documents them in the OpenAPI spec so
+    the generated SDK exposes a typed 409
+    (``FileAccessRequestHTTPResp.ApplicationproblemJSON409``) instead of forcing
+    callers to parse the raw body (ARCH-21 Step 0).
+    """
+
+    existing_request_id: str = Field(
+        description=(
+            "The id of the pending access request that already covers the conflicting target."
+        ),
+        examples=["acr_01HXXY..."],
+    )
+    approve_url: str = Field(
+        description="Console URL to review/approve the existing pending request.",
+        examples=["https://app.jentic.com/access-requests/acr_01HXXY..."],
+    )

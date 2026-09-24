@@ -1,7 +1,7 @@
 /**
  * Actor (agent / service account) lifecycle status — the SINGLE source of truth
  * for the status vocabulary and its visual mapping, shared across every module
- * that renders an actor's status (agents roster/detail, the toolkit detail
+ * that renders an actor's status (agents roster/detail, the service-account detail
  * "Bound Agents" card, the link-agent picker, …).
  *
  * Lives in `shared/` so sibling modules can render an actor status identically

@@ -1,10 +1,10 @@
-"""Broker readiness probe — saturation-aware (§05 R5.2).
+"""Broker readiness probe — saturation-aware.
 
 Liveness (``/health``, shared router) stays green as long as the process is up;
 **readiness** (``/ready``, here) flips to ``503`` once sustained in-flight load
 nears the admission cap, so the load balancer sheds *this* instance before it
 starts shedding requests itself — without the pod being killed. The probe reads
-the very same ``_AdmissionGate`` the §04 middleware counts on (shared via
+the very same ``_AdmissionGate`` the admission middleware counts on (shared via
 ``app.state``), so there is one source of truth for in-flight.
 
 ``/ready`` is admission-excluded (see ``middleware._EXCLUDED_PREFIXES``) so it

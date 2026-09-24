@@ -61,7 +61,7 @@ test('the service-account create sheet opens from the agents surface', async ({ 
 });
 
 /**
- * Phase 4/5 (agents rebuild): a DCR-registered agent gets the full identity
+ * A DCR-registered agent gets the full identity
  * console — KPI strip, tab shell, per-actor Activity with a Monitor deep-link —
  * and can be renamed in place through the Settings tab (real PATCH /agents/:id
  * round trip against the backend, not MSW).

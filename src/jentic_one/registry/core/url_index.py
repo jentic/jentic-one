@@ -90,15 +90,33 @@ def normalize_path(path: str) -> str:
 
 
 def normalize_path_template(template: str) -> str:
-    """Normalize a path template, preserving parameter placeholders."""
+    """Normalize a path template to the same canonical form as ``normalize_path``.
+
+    ``{...}`` parameter tokens are preserved verbatim (including RFC 6570
+    operators such as ``{+param}``); everything else — trailing slash, dot
+    segments, percent-encoding — is normalized exactly as ``normalize_path``
+    normalizes a request path. This symmetry is what lets an index entry built
+    from the template match a request path normalized at lookup time (#1085).
+
+    Tokens are shielded behind NUL-delimited sentinels while the whole template
+    goes through ``normalize_path`` in one pass; normalizing literal chunks
+    individually would strip the slash *before* a token (``/pets/{petId}`` →
+    ``/pets{petId}``), because each chunk's trailing slash looks like a
+    trailing slash to ``normalize_path``.
+    """
     parts = PATH_PARAM_RE.split(template)
-    normalized_parts: list[str] = []
+    tokens: list[str] = []
+    shielded: list[str] = []
     for i, part in enumerate(parts):
         if i % 2 == 0:
-            normalized_parts.append(normalize_path(part) if part else "")
+            shielded.append(part)
         else:
-            normalized_parts.append("{" + part + "}")
-    return "".join(normalized_parts)
+            tokens.append(part)
+            shielded.append(f"\x00{len(tokens) - 1}\x00")
+    normalized = normalize_path("".join(shielded))
+    for idx, token in enumerate(tokens):
+        normalized = normalized.replace(f"\x00{idx}\x00", "{" + token + "}")
+    return normalized
 
 
 def normalise_host(host: str, scheme: str = "https") -> str:
@@ -318,17 +336,27 @@ def build_index_entry(
     path_template: str,
     scheme: str = "https",
 ) -> URLIndexEntry:
-    """Build a complete URL index entry for an operation."""
+    """Build a complete URL index entry for an operation.
+
+    The template is canonicalized through ``normalize_path_template`` first and
+    every derived field (regex, params, segment count, stored pattern) comes
+    from that canonical form. ``URLLookupService.resolve`` normalizes the
+    incoming request path with ``normalize_path`` before matching, so both
+    sides of the comparison must agree on one canonical form — building the
+    regex from the raw template made any trailing-slash path unmatchable
+    (#1085).
+    """
     normalized_host = normalise_host(host, scheme)
     host_regex = build_host_regex(normalized_host)
-    path_regex = build_path_regex(path_template)
-    param_names = extract_param_names(path_template)
-    segment_count = count_segments(path_template)
+    normalized_template = normalize_path_template(path_template)
+    path_regex = build_path_regex(normalized_template)
+    param_names = extract_param_names(normalized_template)
+    segment_count = count_segments(normalized_template)
 
     return URLIndexEntry(
         host_pattern=normalized_host,
         host_regex=host_regex,
-        path_pattern=path_template,
+        path_pattern=normalized_template,
         path_regex=path_regex,
         segment_count=segment_count,
         param_names=param_names,

@@ -83,7 +83,7 @@ export function useExecution(executionId: string | null) {
 /**
  * Enriched usage aggregation for the Overview tab (`GET /monitoring/usage`,
  * jentic-one-internal#561). One call per grouping dimension — the Overview
- * fires three (api / toolkit / agent) so the bubble chart and breakdown can
+ * fires three (api / credential / agent) so the bubble chart and breakdown can
  * toggle between lenses without refetching.
  */
 export function useUsageStats(params: UsageStatsParams = {}) {

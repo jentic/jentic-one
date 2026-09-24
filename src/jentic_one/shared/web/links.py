@@ -23,3 +23,16 @@ def deployment_base_url(config: AppConfig, request: Request) -> str:
     gateway the operator sets one of the two config knobs.
     """
     return effective_auth_base_url(config) or str(request.base_url).rstrip("/")
+
+
+def public_base_url(config: AppConfig, request: Request) -> str:
+    """The deployment's public origin: ``server.public_base_url``, else the request's.
+
+    Used for URLs a *browser* must reach on this deployment that are not owned by
+    the auth surface (e.g. the credential-connect OAuth callback), so an
+    ``auth.canonical_base_url`` override fronting the auth surface on another
+    origin does not redirect them. The request-origin fallback trusts the
+    ``Host`` header; operators behind a TLS-terminating proxy pin
+    ``server.public_base_url``.
+    """
+    return config.server.public_base_url or str(request.base_url).rstrip("/")

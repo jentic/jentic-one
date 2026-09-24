@@ -82,18 +82,27 @@ func TestNextStepsDockerNotStarted(t *testing.T) {
 	}
 }
 
-func TestNextStepsDockerStartedHasOnlyFirstAdmin(t *testing.T) {
+func TestNextStepsDockerStartedHasFirstAdminAndConnect(t *testing.T) {
 	d := NewDraft()
 	d.RuntimePath = RuntimeDocker
 	d.AppStarted = true
 	steps := d.NextSteps("/cfg.yaml", SetupRequired)
 	// A started stack has no start step, but the no-credential model always
-	// leaves the create-first-admin step.
-	if len(steps) != 1 {
-		t.Fatalf("a started docker stack should have exactly the first-admin step, got %+v", steps)
+	// leaves the create-first-admin step, followed by the connect-an-agent step.
+	if len(steps) != 2 {
+		t.Fatalf("a started docker stack should have the first-admin + connect-agent steps, got %+v", steps)
 	}
-	if !strings.Contains(stepTitles(steps), "jenticctl setup") {
-		t.Errorf("started docker stack should still prompt to create the first admin:\n%s", stepTitles(steps))
+	out := stepTitles(steps)
+	if !strings.Contains(out, "jenticctl setup") {
+		t.Errorf("started docker stack should still prompt to create the first admin:\n%s", out)
+	}
+	// The connect step must steer to 127.0.0.1 (not localhost) — the audience
+	// match is exact against the local canonical_base_url.
+	if !strings.Contains(out, "jentic register --url http://127.0.0.1:8000") {
+		t.Errorf("started docker stack should tell the user how to connect an agent:\n%s", out)
+	}
+	if strings.Contains(out, "http://localhost") {
+		t.Errorf("connect step must use a 127.0.0.1 URL, not localhost:\n%s", out)
 	}
 }
 

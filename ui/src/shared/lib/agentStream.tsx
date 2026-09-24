@@ -62,11 +62,19 @@ export type StreamSeverity = 'critical' | 'error' | 'warning' | 'info';
  * the backend adds later so the rail never crashes on an unknown type.
  */
 export type StreamKind =
-	'import' | 'execution' | 'access_request' | 'credential' | 'agent' | 'other';
+	| 'import'
+	| 'execution'
+	| 'access_request'
+	| 'credential'
+	| 'agent'
+	| 'catalog'
+	| 'oauth'
+	| 'other';
 
 /** Tokens lifted from `EventResponse` (`trace_id` + the free-form `data` map). */
 export type StreamTokens = {
 	trace_id?: string;
+	/** Historical events only — new events carry `credential_id` instead. */
 	toolkit_id?: string;
 	operation_id?: string;
 	credential_id?: string;
@@ -74,6 +82,27 @@ export type StreamTokens = {
 	execution_id?: string;
 	access_request_id?: string;
 	agent_id?: string;
+	// Catalog/overlay events carry the affected API's identity triple (so the
+	// row can deep-link to its Workspace detail page) plus the overlay id for
+	// overlay-lifecycle events and conflict metadata.
+	api_id?: string;
+	vendor?: string;
+	name?: string;
+	version?: string;
+	overlay_id?: string;
+	// OAuth surface: DCR/approval events carry the client's
+	// INTERNAL id (`oauth_client_id` = the admin row's ksuid); grant events
+	// carry the grant id plus the client's PUBLIC client_id under the same
+	// `oauth_client_id` data key (the token-lineage join key).
+	oauth_client_id?: string;
+	grant_id?: string;
+};
+
+/** Conflict digests from a `catalog.update_conflicts_overlay` event's `data.conflict`. */
+export type ConflictDigests = {
+	base_digest?: string;
+	served_digest?: string;
+	upstream_digest?: string;
 };
 
 /** Deep-links carried by `EventResponse._links` (HAL-style). */
@@ -102,6 +131,8 @@ export type StreamEvent = {
 	requiresAction: boolean;
 	acknowledged: boolean;
 	acknowledgedAt?: number;
+	/** Conflict digests for a `catalog.update_conflicts_overlay` event (L5 "why"). */
+	conflict?: ConflictDigests;
 	// Stable key for grouping. Format: "<kind>:<type>:<trace|''>".
 	groupKey: string;
 };
@@ -124,12 +155,26 @@ const KNOWN_KINDS = new Set<StreamKind>([
 	'access_request',
 	'credential',
 	'agent',
+	'catalog',
 ]);
 
-/** Namespace before the first dot → `StreamKind` (`other` for anything else). */
+/**
+ * Namespace before the first dot → `StreamKind` (`other` for anything else).
+ *
+ * `catalog.*` and `overlay.*` events both belong to the catalog/overlay update
+ * loop (an upstream spec change, an overlay conflict, an overlay deprecation),
+ * so they collapse into a single `catalog` kind — one filter chip, one label,
+ * one deep-link target (the affected API's Workspace detail page).
+ *
+ * `oauth_client.*` and `oauth_grant.*` likewise collapse into one `oauth` kind:
+ * client registration/approval and consent-grant lifecycle
+ * are two halves of the same interactive-OAuth surface.
+ */
 export function kindForType(type: string): StreamKind {
-	const ns = type.split('.', 1)[0] as StreamKind;
-	return KNOWN_KINDS.has(ns) ? ns : 'other';
+	const ns = type.split('.', 1)[0];
+	if (ns === 'overlay') return 'catalog';
+	if (ns === 'oauth_client' || ns === 'oauth_grant') return 'oauth';
+	return KNOWN_KINDS.has(ns as StreamKind) ? (ns as StreamKind) : 'other';
 }
 
 /**
@@ -143,6 +188,8 @@ export const STREAM_KIND_LABEL: Record<StreamKind, string> = {
 	credential: 'Credential',
 	access_request: 'Access request',
 	agent: 'Agent',
+	catalog: 'Catalog',
+	oauth: 'OAuth',
 	other: 'Platform',
 };
 
@@ -189,13 +236,18 @@ export function idFromLink(link: string | null | undefined): string | undefined 
 function buildGroupKey(t: Pick<StreamEvent, 'kind' | 'type' | 'tokens'>): string {
 	const token =
 		t.tokens.operation_id ??
-		t.tokens.toolkit_id ??
 		t.tokens.credential_id ??
+		// Historical events may only carry the retired toolkit attribution.
+		t.tokens.toolkit_id ??
 		// The request id must outrank the agent id: real `access_request.*`
 		// events carry BOTH (the requesting agent is the top-level actor), and
 		// keying on the agent would collapse two requests filed by the same
 		// agent in one burst — the normal CLI provisioning case — into one row.
 		t.tokens.access_request_id ??
+		// A grant id keys the grant-lifecycle pair; the client id keys the
+		// registration/approval pair (distinct clients → distinct rows).
+		t.tokens.grant_id ??
+		t.tokens.oauth_client_id ??
 		// Distinct registering agents still get distinct rows.
 		t.tokens.agent_id ??
 		t.tokens.trace_id ??
@@ -205,6 +257,25 @@ function buildGroupKey(t: Pick<StreamEvent, 'kind' | 'type' | 'tokens'>): string
 
 /** Test-only re-export of the internal group-key builder. */
 export const buildGroupKeyForTest = buildGroupKey;
+
+/**
+ * Short human hint explaining WHY an upstream update conflicts with a confirmed
+ * overlay (L5 "why"): the overlay was built on a base spec that upstream has
+ * since moved off. Returns null for any event without conflict digests, so the
+ * row only shows it for `catalog.update_conflicts_overlay`. Digests are shown as
+ * 12-char prefixes to stay compact within the rail row.
+ */
+export function conflictHint(ev: StreamEvent): string | null {
+	const c = ev.conflict;
+	if (!c) return null;
+	const base = c.base_digest ? c.base_digest.slice(0, 12) : null;
+	const upstream = c.upstream_digest ? c.upstream_digest.slice(0, 12) : null;
+	if (!base && !upstream) return 'Upstream moved off the base your overlay was built on';
+	const suffix = [base && `base ${base}`, upstream && `upstream ${upstream}`]
+		.filter(Boolean)
+		.join(' → ');
+	return `Upstream moved off the base your overlay was built on (${suffix})`;
+}
 
 /** Adapt a wire `EventResponse` into the rail's UI `StreamEvent`. */
 export function adaptEvent(e: EventResponse): StreamEvent {
@@ -236,9 +307,39 @@ export function adaptEvent(e: EventResponse): StreamEvent {
 		// that did could carry a NON-agent id (e.g. the deciding user), which
 		// would deep-link "View agent" to /agents/<user_id>.
 		agent_id: stringField(data, 'agent_id') ?? actorAgentId,
+		// Catalog/overlay events carry the affected API's identity so the row can
+		// deep-link into Workspace: `api_id` (catalog slug) + the (vendor, name,
+		// version) triple, plus the overlay id for overlay-lifecycle events.
+		api_id: stringField(data, 'api_id'),
+		vendor: stringField(data, 'vendor'),
+		name: stringField(data, 'name'),
+		version: stringField(data, 'version'),
+		overlay_id: stringField(data, 'overlay_id'),
+		// OAuth events: both halves stamp `oauth_client_id`;
+		// grant lifecycle events also carry the grant id (and an `agent_id`,
+		// picked up by the shared field above).
+		oauth_client_id: stringField(data, 'oauth_client_id'),
+		grant_id: stringField(data, 'grant_id'),
 	};
 	const kind = kindForType(e.type);
 	const parsedTs = e.created_at ? Date.parse(e.created_at) : NaN;
+	// A `catalog.update_conflicts_overlay` event carries `data.conflict` with the
+	// three digests explaining WHY the upstream update collides with the overlay.
+	const rawConflict = data.conflict;
+	const conflict: ConflictDigests | undefined =
+		rawConflict && typeof rawConflict === 'object'
+			? {
+					base_digest: stringField(rawConflict as Record<string, unknown>, 'base_digest'),
+					served_digest: stringField(
+						rawConflict as Record<string, unknown>,
+						'served_digest',
+					),
+					upstream_digest: stringField(
+						rawConflict as Record<string, unknown>,
+						'upstream_digest',
+					),
+				}
+			: undefined;
 	const ev: StreamEvent = {
 		id: e.event_id,
 		// Fall back to "now" only when the wire timestamp is missing/unparseable,
@@ -259,6 +360,7 @@ export function adaptEvent(e: EventResponse): StreamEvent {
 		requiresAction: e.requires_action,
 		acknowledged: e.acknowledged,
 		acknowledgedAt: e.acknowledged_at ? Date.parse(e.acknowledged_at) || undefined : undefined,
+		conflict,
 		groupKey: '',
 	};
 	ev.groupKey = buildGroupKey(ev);
@@ -297,6 +399,17 @@ type AgentStreamValue = {
 	 * stream and supersedes this optimistic flip.
 	 */
 	resolveEvent: (eventId: string) => void;
+	/**
+	 * Settle every unacknowledged actionable `oauth_client.registered` row for
+	 * one client (matched on the internal `oauth_client_id` token). The approve
+	 * arm gets this mirror for free from the `oauth_client.approved` SSE event;
+	 * a DENY emits no event (§4.8 / D7), so the deny mutation — which knows the
+	 * client id — calls this on success. The backend settles the row inside the
+	 * decision transaction either way; this only syncs the live session's local
+	 * copy so a stale "Review" prompt doesn't linger until the next backlog
+	 * fetch.
+	 */
+	settleOAuthClientRegistration: (oauthClientId: string) => void;
 	/** Fetch one older page from `GET /events?cursor=…` and append it. */
 	loadOlderEvents: () => Promise<void>;
 	canLoadOlder: boolean;
@@ -361,9 +474,22 @@ export function AgentStreamProvider({
 		// aggressively (5-min staleTime) as reference data, and a CLI agent
 		// files its provisioning request seconds after registering. Without
 		// this, every `actor_id` resolution for the new agent (rail rows, the
-		// setup wizard's badge and agent-named toolkit suggestion) misses and
+		// setup wizard's header badge) misses and
 		// falls back to the raw `agnt_…` id until the cache expires.
 		void queryClient.invalidateQueries({ queryKey: sharedQueryKeys.actorDirectoryRoot });
+	}, [queryClient]);
+
+	/**
+	 * Refresh the interactive-OAuth surfaces (Settings approval queue + client
+	 * rows with their grant counts, per-agent "Connected clients" panels). A
+	 * DCR registration, an approval decision, or a consent grant all land as
+	 * `oauth_client.*` / `oauth_grant.*` SSE events; without
+	 * this bridge those surfaces sat on their staleTime right after the change.
+	 */
+	const invalidateOAuthSurfaces = useCallback(() => {
+		void queryClient.invalidateQueries({ queryKey: sharedQueryKeys.oauthClientsRoot });
+		void queryClient.invalidateQueries({ queryKey: sharedQueryKeys.oauthGrantsRoot });
+		void queryClient.invalidateQueries({ queryKey: DASHBOARD_ROOT_KEY });
 	}, [queryClient]);
 
 	// Fresh mirror of `events` for callbacks that need the current list WITHOUT
@@ -432,6 +558,24 @@ export function AgentStreamProvider({
 			return merged.slice(0, MAX_EVENTS);
 		});
 	}, []);
+
+	// One definition for both `oauth_client.registered` settle arms (approve
+	// via its SSE event in the live subscription below, deny via the deny
+	// mutation through the context) so the matching predicate can't drift.
+	const settleOAuthClientRegistration = useCallback(
+		(oauthClientId: string) => {
+			setEvents((prev) =>
+				prev.map((row) =>
+					row.type === 'oauth_client.registered' &&
+					row.tokens.oauth_client_id === oauthClientId &&
+					!row.acknowledged
+						? markResolved(row)
+						: row,
+				),
+			);
+		},
+		[markResolved],
+	);
 
 	// 1. Backlog seed.
 	useEffect(() => {
@@ -528,18 +672,32 @@ export function AgentStreamProvider({
 							),
 						);
 					}
+					if (
+						ev.kind === 'oauth' &&
+						ev.type === 'oauth_client.approved' &&
+						ev.tokens.oauth_client_id
+					) {
+						// The backend settles the actionable oauth_client.registered
+						// alert inside the approve/deny transaction (§4.8 / D7);
+						// mirror on local rows so the live session drops the stale
+						// "Review" prompt immediately. (A deny emits no event, so
+						// the deny mutation calls this same settle directly —
+						// see settleOAuthClientRegistration.)
+						settleOAuthClientRegistration(ev.tokens.oauth_client_id);
+					}
 					if (!firstDelivery) return;
 					setLatest(ev);
 					// Bridge: a filed/decided access request changes the durable
 					// queue + dashboard counts. Refresh those surfaces so they
-					// stop going stale (the rail used to be the ONLY thing that
-					// reacted to these events). Agent lifecycle events (CLI
+					// don't go stale. Agent lifecycle events (CLI
 					// self-registration, approval) likewise refresh the agent
 					// surfaces the instant they land.
 					if (ev.kind === 'access_request') {
 						invalidateApprovalSurfaces();
 					} else if (ev.kind === 'agent') {
 						invalidateAgentSurfaces();
+					} else if (ev.kind === 'oauth') {
+						invalidateOAuthSurfaces();
 					}
 				},
 				onError: () => setStatus('error'),
@@ -547,7 +705,15 @@ export function AgentStreamProvider({
 			},
 		);
 		return unsubscribe;
-	}, [live, upsert, invalidateApprovalSurfaces, invalidateAgentSurfaces, markResolved]);
+	}, [
+		live,
+		upsert,
+		invalidateApprovalSurfaces,
+		invalidateAgentSurfaces,
+		invalidateOAuthSurfaces,
+		markResolved,
+		settleOAuthClientRegistration,
+	]);
 
 	const acknowledge = useCallback(
 		async (eventId: string) => {
@@ -639,6 +805,7 @@ export function AgentStreamProvider({
 			acknowledge,
 			decide,
 			resolveEvent,
+			settleOAuthClientRegistration,
 			loadOlderEvents,
 			canLoadOlder: hasMore && cursor != null,
 			loadingOlder,
@@ -650,6 +817,7 @@ export function AgentStreamProvider({
 			acknowledge,
 			decide,
 			resolveEvent,
+			settleOAuthClientRegistration,
 			loadOlderEvents,
 			hasMore,
 			cursor,
@@ -748,8 +916,22 @@ export function formatFailurePillCount(count: number): string {
 	return n > 99 ? '99+' : String(n);
 }
 
+/**
+ * Left-edge stripe class for a rail row, keyed by severity.
+ *
+ * CRITICAL and ERROR share the danger colour (both are failures — see
+ * `RailEventRow`'s `isCritical` background tint) but CRITICAL renders a
+ * doubled-width stripe. Before this, the two tiers were pixel-identical on
+ * the rail (`border-l-danger` for both, `border-l-2` from the row's base
+ * class) — an operator had no way to tell "one failure" from "this failure
+ * pattern crossed the critical threshold" without opening the row (issue
+ * #907). Relies on `cn`'s `tailwind-merge` to let `border-l-4` win over the
+ * row's base `border-l-2` (later class in the merge wins on the same
+ * property group) — do not reorder the row's `cn(...)` call without
+ * preserving that.
+ */
 export function severityStripeClass(s: StreamSeverity): string {
-	if (s === 'critical') return 'border-l-danger';
+	if (s === 'critical') return 'border-l-4 border-l-danger';
 	if (s === 'error') return 'border-l-danger';
 	if (s === 'warning') return 'border-l-warning';
 	return 'border-l-primary';
@@ -850,9 +1032,11 @@ export type InlineActionKind =
 	| 'deny'
 	| 'view_request'
 	| 'view_agent'
+	| 'view_api'
 	| 'view_execution'
 	| 'view_job'
-	| 'view_trace';
+	| 'view_trace'
+	| 'view_oauth_queue';
 
 export type InlineActionSpec = {
 	kind: InlineActionKind;
@@ -906,6 +1090,20 @@ const NAV = {
 			: null,
 	agent: (ev: StreamEvent) =>
 		ev.tokens.agent_id ? `/agents/${encodeURIComponent(ev.tokens.agent_id)}` : null,
+	// Catalog/overlay events deep-link to the affected API's Workspace detail
+	// page. The route mirrors `ROUTE_PATHS.workspaceApi(encodeApiId(...))`:
+	// `/workspace/:vendor/:name/:version`, each segment percent-encoded (this is
+	// shared-layer code, so the path shape is inlined rather than imported from a
+	// module's encoder). Router-relative — the rail prepends the `/app` basename.
+	workspaceApi: (ev: StreamEvent) => {
+		const { vendor, name, version } = ev.tokens;
+		if (!vendor || !name || !version) return null;
+		return `/workspace/${[vendor, name, version].map(encodeURIComponent).join('/')}`;
+	},
+	// The Settings OAuth approval queue (D7) — where the
+	// approve/deny verbs for a pending DCR registration live. Static target:
+	// the queue tab lists every pending client.
+	oauthQueue: () => '/settings?tab=queue',
 };
 
 export function inlineActionsFor(ev: StreamEvent): InlineActionSpec[] {
@@ -929,6 +1127,22 @@ export function inlineActionsFor(ev: StreamEvent): InlineActionSpec[] {
 			// agent's page (where approve/deny lives) instead of a bare Acknowledge.
 			actions.push({ kind: 'view_agent', label: 'Review', href: NAV.agent });
 			actions.push({ kind: 'acknowledge', label: 'Acknowledge', acknowledges: true });
+		} else if (ev.type === 'oauth_client.registered') {
+			// A DCR client registration awaiting approval — route
+			// the operator to the Settings approval queue, where the D7
+			// approve/deny verbs live, alongside Acknowledge.
+			actions.push({ kind: 'view_oauth_queue', label: 'Review', href: NAV.oauthQueue });
+			actions.push({ kind: 'acknowledge', label: 'Acknowledge', acknowledges: true });
+		} else if (
+			(ev.type === 'catalog.update_available' ||
+				ev.type === 'catalog.update_conflicts_overlay') &&
+			NAV.workspaceApi(ev)
+		) {
+			// An upstream spec change (or a change that conflicts with a confirmed
+			// overlay) — deep-link the operator to the API's Workspace detail page
+			// (where Re-import / overlay resolution lives) alongside Acknowledge.
+			actions.push({ kind: 'view_api', label: 'Review', href: NAV.workspaceApi });
+			actions.push({ kind: 'acknowledge', label: 'Acknowledge', acknowledges: true });
 		} else {
 			actions.push({ kind: 'acknowledge', label: 'Acknowledge', acknowledges: true });
 		}
@@ -942,6 +1156,16 @@ export function inlineActionsFor(ev: StreamEvent): InlineActionSpec[] {
 		if (!actions.some((a) => a.kind === 'view_agent')) {
 			actions.push({ kind: 'view_agent', label: 'View agent', href: NAV.agent });
 		}
+	} else if (ev.kind === 'catalog' && NAV.workspaceApi(ev)) {
+		// Catalog/overlay rows (e.g. `overlay.deprecated`) deep-link to the API
+		// detail page. Skip if a "Review" action already links there.
+		if (!actions.some((a) => a.kind === 'view_api')) {
+			actions.push({ kind: 'view_api', label: 'View API', href: NAV.workspaceApi });
+		}
+	} else if (ev.kind === 'oauth' && ev.tokens.agent_id) {
+		// Grant lifecycle rows deep-link to the bound agent, whose "Connected
+		// clients" panel lists (and can revoke) the grant (§4.8).
+		actions.push({ kind: 'view_agent', label: 'View agent', href: NAV.agent });
 	} else if (ev.tokens.trace_id) {
 		actions.push({ kind: 'view_trace', label: 'View trace', href: NAV.trace });
 	}
@@ -1009,6 +1233,12 @@ export function primaryDestinationFor(ev: StreamEvent): string | null {
 			return ev.tokens.agent_id ? `/agents/${ev.tokens.agent_id}` : NAV.trace(ev);
 		case 'agent':
 			return NAV.agent(ev) ?? NAV.trace(ev);
+		case 'catalog':
+			return NAV.workspaceApi(ev) ?? NAV.trace(ev);
+		case 'oauth':
+			// Grant rows go to the bound agent's console (its Connected-clients
+			// panel); client registration/approval rows go to the Settings queue.
+			return ev.tokens.grant_id && ev.tokens.agent_id ? NAV.agent(ev) : NAV.oauthQueue();
 		default:
 			return NAV.trace(ev);
 	}

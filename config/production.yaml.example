@@ -11,7 +11,7 @@ databases:
     host: db.internal
     port: 5432
     name: jentic
-    user: app_registry
+    user: registry_user
     password: CHANGE_ME
     pool_max: 20
     schema_name: registry
@@ -19,7 +19,7 @@ databases:
     host: db.internal
     port: 5432
     name: jentic
-    user: app_control
+    user: control_user
     password: CHANGE_ME
     pool_max: 15
     schema_name: control
@@ -27,7 +27,7 @@ databases:
     host: db.internal
     port: 5432
     name: jentic
-    user: app_admin
+    user: admin_user
     password: CHANGE_ME
     pool_max: 10
     schema_name: admin
@@ -57,6 +57,16 @@ server:
   # "local" (default) for a self-hosted install on your own machine/network,
   # "remote" for a hosted install run elsewhere.
   # backend: local
+  # Daemon-native MCP over Streamable HTTP (/mcp) and its interactive-OAuth
+  # surface. Both are off by default. OAuth-client self-registrations (DCR)
+  # land in the admin approval queue by default — auto_approve_clients is an
+  # explicit opt-in for deployments that accept self-registered clients
+  # without review.
+  # mcp:
+  #   enabled: true
+  #   oauth:
+  #     enabled: true
+  #     auto_approve_clients: false   # default; set true to skip the queue
 
 apps:
   - registry
@@ -74,16 +84,56 @@ apps:
 #   broker.account_linking_base_url                # 424 provisioning_url
 #   credentials.providers.<id>.redirect_uri        # OAuth callback override
 
+auth:
+  platform_clients:
+    - client_id: "jentic-one-spa"
+      redirect_uris:
+        - "https://jentic.example.com/app/auth/callback"
+  # ES256 ID-token signing keys. Required as soon as any OAuth client requests
+  # the `openid` scope (browser/OIDC sign-in, MCP interactive OAuth) — the
+  # authorization-code exchange fails with "No signing keys configured"
+  # without one. Nothing generates this for you. Mint a P-256 key with:
+  #   openssl ecparam -name prime256v1 -genkey -noout -out id-signing.pem
+  # id_signing:
+  #   - kid: prod-1              # [a-zA-Z0-9_-]+; the first entry signs
+  #     private_key_pem: |
+  #       -----BEGIN EC PRIVATE KEY-----
+  #       ...contents of id-signing.pem...
+  #       -----END EC PRIVATE KEY-----
+
 # Credential-at-rest encryption keyset (AES-256-GCM). Required for credential
-# WRITES. The keyset is a LIST, so it can't come from a single JENTIC__… env
-# var — fill it here and treat the whole file as a secret. Generate material:
+# WRITES. Keep the key material out of this file in production: point each
+# entry at a secret file (docker/k8s secret mount, systemd LoadCredential —
+# readable only by the server user, 0600) with `material_file`, or name an
+# environment variable holding it with `material_env`. Inline `material` also
+# works (vault-templated files) — then treat the whole file as a secret.
+# Exactly one source per entry; each entry can also be injected via the
+# indexed env vars (JENTIC__CREDENTIALS__ENCRYPTION__ENTRIES__0__ID and
+# …__0__MATERIAL_FILE / …__0__MATERIAL_ENV / …__0__MATERIAL). Generate material:
 #   python -c "import os,base64;print(base64.b64encode(os.urandom(32)).decode())"
 credentials:
   encryption:
     active_id: v1
     entries:
       - id: v1
-        material: CHANGE_ME   # pragma: allowlist secret
+        material_file: /run/secrets/jentic-encryption-key
+        # or:  material_env: JENTIC_ENCRYPTION_KEY_V1
+        # or:  material: CHANGE_ME   # pragma: allowlist secret
+
+# Shared-state backend for cross-process coordination. The default (memory)
+# keeps rate limiters, consent handles, and circuit state per-process — fine
+# for a single-worker install, but a multi-worker or multi-instance deployment
+# needs Redis so the token-endpoint limiter and consent-nonce anti-replay
+# survive across workers. The redis client is an optional extra
+# (pip install jentic-one[redis]) and is NOT in the published container
+# image — enabling this backend there fails at startup.
+broker:
+  resilience:
+    backend:
+      backend: memory
+      # backend: redis
+      # redis_url: rediss://user:pass@redis.example.com:6379/0
+      # redis_key_prefix: jentic:prod:
 
 admin:
   auth:

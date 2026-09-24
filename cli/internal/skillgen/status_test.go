@@ -7,12 +7,10 @@ import (
 	"testing"
 )
 
-// installed reports whether any placement scope of the adapter holds a managed
-// block, returning the first installed state when so. Test-side convenience
-// over InstallStates (production callers want every state — a user and a
-// project install can coexist).
-func installed(a Adapter, env DetectEnv) (InstallState, bool) {
-	for _, st := range InstallStates(a, env) {
+// installed reports whether any placement scope of the adapter holds the named
+// skill, returning the first installed state when so.
+func installed(a Adapter, name string, env DetectEnv) (InstallState, bool) {
+	for _, st := range InstallStates(a, name, env) {
 		if st.Installed {
 			return st, true
 		}
@@ -20,11 +18,7 @@ func installed(a Adapter, env DetectEnv) (InstallState, bool) {
 	return InstallState{}, false
 }
 
-// TestDefaultScopePolicy pins the placement policy ratified in #552: dir-skill
-// runtimes (claude/cursor) and hermes install user-globally so the skill is
-// available from any directory; AGENTS.md operators (codex/generic) install
-// into the project. Changing a DefaultScope must be a deliberate decision —
-// update this test AND the #552 discussion, not just the adapter.
+// TestDefaultScopePolicy pins the placement policy ratified in #552.
 func TestDefaultScopePolicy(t *testing.T) {
 	want := map[Operator]Scope{
 		OpClaude:  ScopeUser,
@@ -52,10 +46,8 @@ func TestInstallStatesSeparatesDetectionFromInstall(t *testing.T) {
 	home := t.TempDir()
 	cwd := t.TempDir()
 	env := DetectEnv{
-		Home: home,
-		Cwd:  cwd,
-		// Detection fires (binary on PATH) even though nothing is installed —
-		// the exact #752 scenario.
+		Home:   home,
+		Cwd:    cwd,
 		Lookup: func(name string) bool { return name == "claude" },
 		Stat:   func(p string) bool { _, err := os.Stat(p); return err == nil },
 	}
@@ -63,16 +55,19 @@ func TestInstallStatesSeparatesDetectionFromInstall(t *testing.T) {
 	if !ad.Detect(env) {
 		t.Fatal("claude should be detected via PATH")
 	}
-	if _, ok := installed(ad, env); ok {
+	if _, ok := installed(ad, "jentic", env); ok {
 		t.Fatal("nothing written yet; installed must be false even when detected")
 	}
 
-	if _, err := Apply(ad, testContent(), env, ApplyOptions{}); err != nil {
+	if _, err := Apply(ad, jenticContent(t), env, ApplyOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	st, ok := installed(ad, env)
+	st, ok := installed(ad, "jentic", env)
 	if !ok {
 		t.Fatal("skill written; installed must be true")
+	}
+	if st.Skill != "jentic" {
+		t.Errorf("state Skill = %q, want jentic", st.Skill)
 	}
 	if st.Scope != ScopeUser {
 		t.Errorf("installed scope = %q, want user", st.Scope)
@@ -85,25 +80,58 @@ func TestInstallStatesSeparatesDetectionFromInstall(t *testing.T) {
 	}
 }
 
+// TestInstallStatesPerSkill proves state is tracked per skill: installing one
+// leaves the others reported as not installed.
+func TestInstallStatesPerSkill(t *testing.T) {
+	home := t.TempDir()
+	env := DetectEnv{Home: home, Cwd: t.TempDir()}
+	ad, _ := DefaultRegistry().Resolve("claude")
+
+	if _, err := Apply(ad, jenticContent(t), env, ApplyOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := installed(ad, "jentic", env); !ok {
+		t.Error("jentic should be installed")
+	}
+	if _, ok := installed(ad, "import-new-api", env); ok {
+		t.Error("import-new-api was not installed; must report not installed")
+	}
+
+	all := InstallStatesForSkills(ad, BundledNames(), env)
+	var jenticInstalled, otherInstalled bool
+	for _, st := range all {
+		if st.Skill == "jentic" && st.Installed {
+			jenticInstalled = true
+		}
+		if st.Skill != "jentic" && st.Installed {
+			otherInstalled = true
+		}
+	}
+	if !jenticInstalled {
+		t.Error("flattened states missing installed jentic")
+	}
+	if otherInstalled {
+		t.Error("only jentic was installed")
+	}
+}
+
 func TestInstallStatesProbesBothScopes(t *testing.T) {
 	home := t.TempDir()
 	cwd := t.TempDir()
 	env := DetectEnv{Home: home, Cwd: cwd}
 	ad, _ := DefaultRegistry().Resolve("cursor")
 
-	// Install into the NON-default (project) scope; it must still be found.
-	if _, err := Apply(ad, testContent(), env, ApplyOptions{Scope: ScopeProject}); err != nil {
+	if _, err := Apply(ad, jenticContent(t), env, ApplyOptions{Scope: ScopeProject}); err != nil {
 		t.Fatal(err)
 	}
-	st, ok := installed(ad, env)
+	st, ok := installed(ad, "jentic", env)
 	if !ok {
 		t.Fatal("project-scoped install not found")
 	}
 	if st.Scope != ScopeProject {
 		t.Errorf("installed scope = %q, want project", st.Scope)
 	}
-
-	states := InstallStates(ad, env)
+	states := InstallStates(ad, "jentic", env)
 	if len(states) != 2 {
 		t.Fatalf("cursor has two distinct targets, got %d states", len(states))
 	}
@@ -114,20 +142,19 @@ func TestInstallStatesReportsUserEdits(t *testing.T) {
 	env := DetectEnv{Home: home, Cwd: t.TempDir()}
 	ad, _ := DefaultRegistry().Resolve("generic")
 
-	out, err := Apply(ad, testContent(), env, ApplyOptions{Scope: ScopeUser})
+	out, err := Apply(ad, jenticContent(t), env, ApplyOptions{Scope: ScopeUser})
 	if err != nil {
 		t.Fatal(err)
 	}
 	data, _ := os.ReadFile(out.Path)
-	tampered := strings.Replace(string(data), "jentic register", "jentic register --tampered", 1)
+	tampered := strings.Replace(string(data), "See the full skill", "See the TAMPERED skill", 1)
 	if tampered == string(data) {
 		t.Fatal("tamper target not found in written skill")
 	}
 	if err := os.WriteFile(out.Path, []byte(tampered), 0o644); err != nil {
 		t.Fatal(err)
 	}
-
-	st, ok := installed(ad, env)
+	st, ok := installed(ad, "jentic", env)
 	if !ok {
 		t.Fatal("edited block is still installed")
 	}
@@ -136,37 +163,29 @@ func TestInstallStatesReportsUserEdits(t *testing.T) {
 	}
 }
 
-// TestInstallStatesSharedTarget pins the deliberate cross-operator semantics:
-// codex and generic splice into the same project AGENTS.md, so a block written
-// via one reports as installed for both — "installed" describes the artifact
-// both runtimes load, not which operator name wrote it.
+// TestInstallStatesSharedTarget: codex and generic share the project AGENTS.md.
 func TestInstallStatesSharedTarget(t *testing.T) {
 	env := DetectEnv{Home: t.TempDir(), Cwd: t.TempDir()}
 	reg := DefaultRegistry()
 	codex, _ := reg.Resolve("codex")
 	generic, _ := reg.Resolve("generic")
-	if codex.Target(ScopeProject, env) != generic.Target(ScopeProject, env) {
-		t.Fatal("codex and generic no longer share the project AGENTS.md; update the shared-target semantics in InstallStates")
+	if codex.Target(ScopeProject, "jentic", env) != generic.Target(ScopeProject, "jentic", env) {
+		t.Fatal("codex and generic no longer share the project AGENTS.md")
 	}
-
-	if _, err := Apply(codex, testContent(), env, ApplyOptions{Scope: ScopeProject}); err != nil {
+	if _, err := Apply(codex, jenticContent(t), env, ApplyOptions{Scope: ScopeProject}); err != nil {
 		t.Fatal(err)
 	}
-	st, ok := installed(generic, env)
+	st, ok := installed(generic, "jentic", env)
 	if !ok || st.Scope != ScopeProject {
-		t.Fatalf("generic must report the codex-written project AGENTS.md as installed, got ok=%v state=%+v", ok, st)
+		t.Fatalf("generic must report the codex-written AGENTS.md as installed, got ok=%v state=%+v", ok, st)
 	}
 }
 
-// TestInstallStatesDedupesEqualTargets covers Home == Cwd (running from $HOME):
-// both scopes resolve to the same path, so only one state — labeled with the
-// adapter's default scope, which is probed first — must be reported.
 func TestInstallStatesDedupesEqualTargets(t *testing.T) {
 	dir := t.TempDir()
 	env := DetectEnv{Home: dir, Cwd: dir}
 	ad, _ := DefaultRegistry().Resolve("claude")
-
-	states := InstallStates(ad, env)
+	states := InstallStates(ad, "jentic", env)
 	if len(states) != 1 {
 		t.Fatalf("equal targets must collapse to one state, got %d", len(states))
 	}
@@ -175,8 +194,6 @@ func TestInstallStatesDedupesEqualTargets(t *testing.T) {
 	}
 }
 
-// TestInstallStatesReadErrorDegrades pins the documented policy that a probe
-// read error means "not installed" rather than failing the listing.
 func TestInstallStatesReadErrorDegrades(t *testing.T) {
 	if os.Getuid() == 0 {
 		t.Skip("root ignores file permissions")
@@ -185,7 +202,7 @@ func TestInstallStatesReadErrorDegrades(t *testing.T) {
 	env := DetectEnv{Home: home, Cwd: t.TempDir()}
 	ad, _ := DefaultRegistry().Resolve("claude")
 
-	out, err := Apply(ad, testContent(), env, ApplyOptions{})
+	out, err := Apply(ad, jenticContent(t), env, ApplyOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -194,7 +211,7 @@ func TestInstallStatesReadErrorDegrades(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(out.Path, 0o644) })
 
-	for _, st := range InstallStates(ad, env) {
+	for _, st := range InstallStates(ad, "jentic", env) {
 		if st.Path == out.Path && st.Installed {
 			t.Error("unreadable target must degrade to not-installed")
 		}

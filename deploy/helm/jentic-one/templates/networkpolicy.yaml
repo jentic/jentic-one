@@ -1,0 +1,145 @@
+{{- /*
+NetworkPolicies for the application surfaces, off by default.
+
+Off by default for two reasons: a policy is a no-op on clusters whose CNI does
+not enforce them (so enabling it by default would give a false sense of
+isolation), and the allowed sources depend entirely on where the operator's
+ingress controller and scrapers live — the chart cannot guess those.
+
+Ingress is default-deny-except-listed: pods in this release, plus whatever
+`networkPolicy.allowFromNamespaces` and `networkPolicy.extraIngress` add. That
+covers the gateway-to-surface and ingress-controller-to-gateway hops without the
+operator enumerating them.
+
+Egress is a SEPARATE opt-in (`networkPolicy.restrictEgress`), not part of the
+same switch. The broker's entire job is calling arbitrary third-party APIs on
+the operator's behalf, so a default-deny egress policy breaks the data plane by
+design rather than by accident. When it is turned on, the broker keeps
+unrestricted egress and the other surfaces get DNS, the database, and whatever
+`networkPolicy.extraEgress` allows.
+
+The bundled Postgres gets its own policy at the bottom of this file, because it
+is the one pod whose allowed callers are fully knowable from the chart.
+*/ -}}
+{{- if .Values.networkPolicy.enabled }}
+{{- $dbPort := (index .Values.global.databases "registry").port | default 5432 }}
+{{- range $name := (list "app" "admin" "registry" "control" "broker" "gateway") }}
+{{- $svc := index $.Values $name }}
+{{- if and $svc $svc.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $.Release.Name }}-{{ $name }}
+  labels:
+    app.kubernetes.io/name: {{ $name }}
+    app.kubernetes.io/instance: {{ $.Release.Name }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ $name }}
+      app.kubernetes.io/instance: {{ $.Release.Name }}
+  policyTypes:
+    - Ingress
+    {{- if $.Values.networkPolicy.restrictEgress }}
+    {{- if ne $name "broker" }}
+    - Egress
+    {{- end }}
+    {{- end }}
+  ingress:
+    # Same release: the gateway reaching its upstreams, and the surfaces
+    # reaching each other's discovery endpoints.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ $.Release.Name }}
+      ports:
+        - port: 8000
+          protocol: TCP
+    {{- range $ns := $.Values.networkPolicy.allowFromNamespaces }}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $ns | quote }}
+      ports:
+        - port: 8000
+          protocol: TCP
+    {{- end }}
+    {{- with $.Values.networkPolicy.extraIngress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- if and $.Values.networkPolicy.restrictEgress (ne $name "broker") }}
+  egress:
+    # DNS, or nothing resolves — including the database hostname.
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # The database, bundled or external. An external host outside the cluster
+    # network needs an entry under networkPolicy.extraEgress instead.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: postgresql
+              app.kubernetes.io/instance: {{ $.Release.Name }}
+      ports:
+        - port: {{ $dbPort }}
+          protocol: TCP
+    # Same release: surface-to-surface calls and the OTel sidecar's collector.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ $.Release.Name }}
+    {{- with $.Values.networkPolicy.extraEgress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- end }}
+{{- end }}
+{{- end }}
+{{- if .Values.postgresql.enabled }}
+---
+{{- /*
+The bundled database, which is the whole point of enabling this: without a policy
+selecting it, a cluster-wide `networkPolicy.enabled=true` still leaves the DB
+reachable from every pod in the cluster.
+
+Its callers are exactly the pods of this release — the surfaces and the migrate
+Job, which carries the same instance label — so this needs no knob:
+`allowFromNamespaces` deliberately does NOT apply here (the namespace an ingress
+controller lives in has no business reaching Postgres), and a backup or DBA
+workload outside the release gets its own policy from the operator. Kubernetes
+unions NetworkPolicies selecting the same pod, so that policy adds to this one
+rather than replacing it.
+
+Ingress-only, and not gated on `restrictEgress`: the database initiates nothing,
+so an egress policy here would only add a way to break it.
+*/ -}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-postgresql
+  labels:
+    app.kubernetes.io/name: postgresql
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: postgresql
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ .Release.Name }}
+      ports:
+        {{- /* Same value the surfaces' egress rule allows, so the two halves of
+        a restricted install always agree. */}}
+        - port: {{ $dbPort }}
+          protocol: TCP
+{{- end }}
+{{- end }}

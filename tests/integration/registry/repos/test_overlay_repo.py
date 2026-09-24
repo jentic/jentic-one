@@ -7,8 +7,9 @@ import uuid
 from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy import delete
+from sqlalchemy import delete, update
 
+from jentic_one.registry.core.schema.api_revisions import ApiRevision
 from jentic_one.registry.core.schema.apis import Api
 from jentic_one.registry.repos.overlay_repo import OverlayRepository
 from jentic_one.shared.db.session import DatabaseSession
@@ -272,6 +273,73 @@ async def test_set_confirmed_revision(registry_db: DatabaseSession, sample_api: 
     assert fetched.updated_at is not None
 
 
+async def test_set_confirmed_revision_records_superseded(
+    registry_db: DatabaseSession, sample_api: Api
+) -> None:
+    """set_confirmed_revision persists the superseded revision when supplied."""
+    revision_id = uuid.uuid4()
+    superseded_id = uuid.uuid4()
+
+    async with registry_db.session() as session:
+        overlay = await OverlayRepository.create(
+            session, api_id=sample_api.id, document={"m": 1}, created_by="usr_test"
+        )
+        await session.commit()
+        overlay_id = overlay.id
+
+    async with registry_db.session() as session:
+        rows = await OverlayRepository.set_confirmed_revision(
+            session, overlay_id, revision_id, superseded_revision_id=superseded_id
+        )
+        await session.commit()
+
+    assert rows == 1
+
+    async with registry_db.session() as session:
+        fetched = await OverlayRepository.get_for_api(session, sample_api.id, overlay_id)
+
+    assert fetched is not None
+    assert fetched.confirmed_revision_id == revision_id
+    assert fetched.superseded_revision_id == superseded_id
+
+
+async def test_set_confirmed_revision_none_superseded_does_not_clobber(
+    registry_db: DatabaseSession, sample_api: Api
+) -> None:
+    """A later relink without a superseded id must not NULL an already-captured one.
+
+    The recovery/relink path (duplicate re-ingest) doesn't know the superseded
+    revision, so it passes None — that must leave a previously-recorded
+    superseded_revision_id intact rather than overwriting it with NULL.
+    """
+    first_rev, superseded_id, relink_rev = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+
+    async with registry_db.session() as session:
+        overlay = await OverlayRepository.create(
+            session, api_id=sample_api.id, document={"m": 1}, created_by="usr_test"
+        )
+        await session.commit()
+        overlay_id = overlay.id
+
+    async with registry_db.session() as session:
+        await OverlayRepository.set_confirmed_revision(
+            session, overlay_id, first_rev, superseded_revision_id=superseded_id
+        )
+        await session.commit()
+
+    # A relink that doesn't carry the superseded id (None) must preserve it.
+    async with registry_db.session() as session:
+        await OverlayRepository.set_confirmed_revision(session, overlay_id, relink_rev)
+        await session.commit()
+
+    async with registry_db.session() as session:
+        fetched = await OverlayRepository.get_for_api(session, sample_api.id, overlay_id)
+
+    assert fetched is not None
+    assert fetched.confirmed_revision_id == relink_rev
+    assert fetched.superseded_revision_id == superseded_id  # preserved, not clobbered
+
+
 async def test_set_confirmed_revision_missing_overlay_returns_zero(
     registry_db: DatabaseSession, sample_api: Api
 ) -> None:
@@ -302,3 +370,92 @@ async def test_cascade_delete(registry_db: DatabaseSession, sample_api: Api) -> 
         fetched = await OverlayRepository.get_for_api(session, sample_api.id, overlay_id)
 
     assert fetched is None
+
+
+async def test_get_live_confirmed_for_api_ignores_link_lag(
+    registry_db: DatabaseSession, sample_api: Api
+) -> None:
+    """get_live_confirmed_for_api returns the CONFIRMED overlay even with a NULL link.
+
+    Regression: the Flow-3 sweep enriches a ``conflicts_overlay`` event with the overlay
+    id via this lookup. ``confirmed_revision_id`` is linked *lazily* by the materialize
+    path, so it can be NULL while the overlay is already CONFIRMED and its revision served.
+    The lookup must key on ``(api_id, status==CONFIRMED)`` — not the revision link — or the
+    event drops the overlay id (caught by the manual flywheel E2E, missed by mocked units).
+    """
+    async with registry_db.session() as session:
+        overlay = await OverlayRepository.create(
+            session, api_id=sample_api.id, document={"x": 1}, created_by="usr_test"
+        )
+        # CONFIRMED but not yet linked to a materialized revision (the lazy-link window).
+        await OverlayRepository.set_status(
+            session, overlay.id, OverlayStatus.CONFIRMED, confirmed_at=datetime.now(UTC)
+        )
+        await session.commit()
+        overlay_id = overlay.id
+
+    async with registry_db.session() as session:
+        found = await OverlayRepository.get_live_confirmed_for_api(session, sample_api.id)
+        assert found is not None and found.id == overlay_id
+        assert found.confirmed_revision_id is None  # link still lagging
+
+    # A deprecated overlay is not "live".
+    async with registry_db.session() as session:
+        await OverlayRepository.set_status(
+            session, overlay_id, OverlayStatus.DEPRECATED, deprecated_at=datetime.now(UTC)
+        )
+        await session.commit()
+
+    async with registry_db.session() as session:
+        assert await OverlayRepository.get_live_confirmed_for_api(session, sample_api.id) is None
+
+
+async def test_get_live_confirmed_for_api_prefers_live_link_over_recency(
+    registry_db: DatabaseSession, sample_api: Api
+) -> None:
+    """With 2+ CONFIRMED overlays, prefer the one backing the current revision.
+
+    The confirm path does not deprecate a prior CONFIRMED overlay, so stacking confirm A
+    then confirm B leaves both CONFIRMED. The sweep's deep-link must point at the overlay
+    whose materialization *is* the served revision — keyed on
+    ``confirmed_revision_id == Api.current_revision_id`` — not merely the newest/oldest by
+    ``confirmed_at``. Here A is confirmed *later* but B backs the current revision, so B wins.
+    """
+    async with registry_db.session() as session:
+        rev_b = ApiRevision(
+            api_id=sample_api.id, state="imported", spec_digest="sha256:b", source_type="url"
+        )
+        session.add(rev_b)
+        await session.flush()
+        rev_b_id = rev_b.id
+        await session.execute(
+            update(Api).where(Api.id == sample_api.id).values(current_revision_id=rev_b_id)
+        )
+
+        overlay_a = await OverlayRepository.create(
+            session, api_id=sample_api.id, document={"a": 1}, created_by="usr_test"
+        )
+        overlay_b = await OverlayRepository.create(
+            session, api_id=sample_api.id, document={"b": 1}, created_by="usr_test"
+        )
+        # B backs the current revision but was confirmed EARLIER; A is confirmed LATER but is
+        # the superseded/stacked overlay. Newest-confirmed would wrongly pick A.
+        await OverlayRepository.set_status(
+            session,
+            overlay_b.id,
+            OverlayStatus.CONFIRMED,
+            confirmed_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+        await OverlayRepository.set_confirmed_revision(session, overlay_b.id, rev_b_id)
+        await OverlayRepository.set_status(
+            session,
+            overlay_a.id,
+            OverlayStatus.CONFIRMED,
+            confirmed_at=datetime(2026, 6, 1, tzinfo=UTC),
+        )
+        await session.commit()
+        overlay_b_id = overlay_b.id
+
+    async with registry_db.session() as session:
+        found = await OverlayRepository.get_live_confirmed_for_api(session, sample_api.id)
+        assert found is not None and found.id == overlay_b_id

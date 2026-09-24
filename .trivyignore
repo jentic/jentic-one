@@ -1,0 +1,12 @@
+# Trivy overrides for the image/fs CVE gates (ci.yml image-scan + security,
+# release.yml publish-image).
+#
+# Policy: every entry needs all three of
+#   1. the CVE id,
+#   2. a one-line justification (why it does not apply / cannot be fixed yet),
+#   3. an expiry — a date or condition for removal, checked at review time.
+#
+# Example:
+#   # CVE-2026-XXXXX: false positive — vulnerable function not reachable from
+#   # the wheel; remove when trivy DB marks the debian package fixed (~2026-09).
+#   CVE-2026-XXXXX

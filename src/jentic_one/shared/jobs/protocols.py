@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Protocol
 
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.aws.sigv4 import SigV4Material
 
 
 @dataclass(frozen=True, slots=True)
@@ -18,6 +20,12 @@ class InjectedAuth:
     dropped (a headers-only return would lose both). Cookie entries are merged
     into the outbound ``Cookie`` header by the call-site (sync router / worker).
     Server-variable entries are substituted into the upstream URL template.
+
+    ``signing`` carries **decrypted** SigV4 material (exactly as the plaintext
+    bearer/basic values above ride in ``headers``); it is applied by the signing
+    runner against the final method/URL/body and is never persisted. Its
+    ``__repr__`` elides the secret so an enclosing dataclass ``repr`` can't leak
+    it.
 
     ``credential_id`` / ``credential_name`` attribute the material back to the
     stored credential the resolver chose (#740) so downstream call-sites can
@@ -33,6 +41,7 @@ class InjectedAuth:
     server_variables: dict[str, str] | None = None
     credential_id: str | None = None
     credential_name: str | None = None
+    signing: SigV4Material | None = None
 
 
 class CredentialInjector(Protocol):
@@ -53,9 +62,18 @@ class CredentialInjector(Protocol):
         api_version: str,
         identity: Identity,
         credential_name: str | None = None,
+        credential_id: str | None = None,
+        allowed_credential_ids: Collection[str] | None = None,
         trace_id: str | None = None,
     ) -> InjectedAuth:
-        """Return the auth to apply; empty ``InjectedAuth`` when there is no credential path."""
+        """Return the auth to apply; empty ``InjectedAuth`` when there is no credential path.
+
+        ``allowed_credential_ids`` is the direct-binding injection boundary
+        (theme-5 Q-02): when not ``None``, only these credential ids may
+        resolve (an empty set denies all). ``credential_id`` pins the exact
+        credential selected at the web edge so the async worker replays the
+        same selection.
+        """
         ...
 
 
@@ -77,6 +95,9 @@ class UpstreamExecRequest:
     # toolkit, operation, trace, execution id) — opaque to the worker, consumed
     # by the executor when it persists the ``executions`` row.
     metadata: dict[str, Any]
+    # SigV4 signing material, when the resolved credential is a sigv4 type; the
+    # runner signs the final request. None for every other credential type.
+    signing: SigV4Material | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,8 +121,8 @@ class UpstreamExecutor(Protocol):
     The async worker depends on this protocol — never on ``broker/`` — so the
     concrete broker adapter (``PipelineExecutor``, wrapping
     ``run_execution(broker=default_broker(runner))``) can be dependency-
-    injected at worker startup. This is the "one pipeline, two callers" seam
-    (§00 / §05 / §11 RN-0.3): the worker goes through the **same** composed
+    injected at worker startup. This is the "one pipeline, two callers" seam:
+    the worker goes through the **same** composed
     runner (circuit breaker + per-host bulkhead + post-response enrichment) and
     the **same** ``executions``-row persistence as the sync router, instead of a
     second raw-``httpx`` path.

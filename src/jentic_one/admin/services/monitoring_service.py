@@ -23,7 +23,11 @@ _cache_misses = _meter.create_counter(
     "monitoring.cache.misses", description="Monitoring cache misses"
 )
 
-_CACHE_TTL_SECONDS = 120.0
+# Short enough that a repeated cache key (the fallback window is stable for a
+# whole minute — see get_usage_stats) can't pin the first response of the
+# minute much beyond the feed's freshness; long enough to absorb a dashboard
+# fan-out's thundering herd (#913).
+_CACHE_TTL_SECONDS = 30.0
 _USAGE_CACHE_MAX_ENTRIES = 256
 
 
@@ -159,9 +163,13 @@ class MonitoringService:
         filters: UsageFilters | None = None,
     ) -> UsageStats:
         current_ts = int(datetime.now(tz=UTC).timestamp())
-        # Floor the fallback to the nearest minute so default-parameter requests
-        # arriving within the same 60s window share an identical cache key.
-        stable_now_ts = (current_ts // 60) * 60
+        # Round the fallback UP to the next minute boundary: requests arriving
+        # within the same 60s window still share an identical cache key, but —
+        # because every aggregate filters `started_at < until` strictly — the
+        # current partial minute is INCLUDED. Flooring here made executions
+        # invisible to the volume chart / KPI for up to a minute while the
+        # executions feed (no upper bound) already listed them (#913).
+        stable_now_ts = (current_ts // 60 + 1) * 60
         resolved_until = until if until is not None else stable_now_ts
         resolved_since = since if since is not None else resolved_until - 86400
 

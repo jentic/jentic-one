@@ -26,7 +26,6 @@ def test_list_catalogue_vocabulary(authed_client: TestClient) -> None:
     names = [e["name"] for e in resp.json()["data"]]
     assert "users:write" in names
     assert "users:read" in names
-    assert "toolkits:write" in names
     assert "jobs:write" in names
     assert "events:write" in names
     assert "credentials:read" in names

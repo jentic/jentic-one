@@ -1,17 +1,16 @@
 /**
- * "Execution Volume" card — jentic-mini's ApiDailyBarChart, rebuilt on the
+ * "Execution Volume" card — built on the
  * enriched usage endpoint (jentic-one-internal#561): an SVG stacked bar chart
- * colored per entity, with the APIs / Toolkits / Agents grouping toggle, an
+ * colored per entity, with the APIs / Credentials / Agents grouping toggle, an
  * interactive legend (hovering a chip or segment dims the rest), y-axis
  * gridlines, and a per-segment hover tooltip.
  *
- * Mini bucketed raw TimelinePoints client-side into a handful of display
- * buckets (six 4h slices for 24h, one bar per calendar day for 7d, six range
- * slices for 30d). Here the per-entity series comes from the endpoint's
+ * The per-entity series comes from the endpoint's
  * `top[].trend` — equal segments spanning exactly [since, until), one per
- * aggregate bucket tier — so buildBars re-buckets those segments into the
- * same mini-style display buckets. Rendering the raw segments directly (the
- * old approach) drew 12 bars whose 7d labels straddled 8 calendar dates and
+ * aggregate bucket tier — and buildBars re-buckets those segments into a
+ * handful of display buckets (six 4h slices for 24h, one bar per calendar day
+ * for 7d, six range slices for 30d). Rendering the raw segments directly
+ * would draw 12 bars whose 7d labels straddled 8 calendar dates and
  * crammed the x-axis on mobile. Executions outside the top rows (or
  * unattributed) appear as a muted "Other" remainder derived from the
  * aggregate `buckets`, so bar heights always add up to the real totals.
@@ -55,7 +54,7 @@ interface Bar {
 
 const LENS_NOUNS: Record<UsageLens, string> = {
 	apis: 'API',
-	toolkits: 'toolkit',
+	credentials: 'credential',
 	agents: 'agent',
 };
 
@@ -227,12 +226,12 @@ interface UsageChartsProps {
 	/** API-grouped response (also carries the aggregate buckets/window). */
 	usage: UsageResponse;
 	apis: EntityUsageRow[];
-	toolkits: EntityUsageRow[];
+	credentials: EntityUsageRow[];
 	agents: EntityUsageRow[];
 	className?: string;
 }
 
-export function UsageCharts({ usage, apis, toolkits, agents, className }: UsageChartsProps) {
+export function UsageCharts({ usage, apis, credentials, agents, className }: UsageChartsProps) {
 	const containerRef = useRef<HTMLDivElement>(null);
 	const [width, setWidth] = useState(700);
 	const [lens, setLens] = useState<UsageLens>('apis');
@@ -255,7 +254,7 @@ export function UsageCharts({ usage, apis, toolkits, agents, className }: UsageC
 		return () => observer.disconnect();
 	}, []);
 
-	const rows = lens === 'apis' ? apis : lens === 'toolkits' ? toolkits : agents;
+	const rows = lens === 'apis' ? apis : lens === 'credentials' ? credentials : agents;
 	const palette = lensPalette(lens);
 	const windowSeconds = usage.until - usage.since;
 
@@ -310,7 +309,7 @@ export function UsageCharts({ usage, apis, toolkits, agents, className }: UsageC
 				<SegmentedToggle
 					options={[
 						{ value: 'apis', label: 'APIs' },
-						{ value: 'toolkits', label: 'Toolkits' },
+						{ value: 'credentials', label: 'Credentials' },
 						{ value: 'agents', label: 'Agents' },
 					]}
 					value={lens}

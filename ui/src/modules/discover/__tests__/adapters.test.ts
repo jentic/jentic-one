@@ -58,6 +58,21 @@ const umbrellaSubApi = {
 	},
 } as unknown as CatalogEntryResponse;
 
+const outdatedEntry = {
+	api_id: 'twilio.com',
+	vendor: 'twilio',
+	path: 'apis/twilio.com/openapi.json',
+	spec_url: 'https://example.com/twilio.json',
+	registered: true,
+	update_available: true,
+	_links: {
+		self: '/catalog/twilio.com',
+		operations: '/catalog/twilio.com/operations',
+		import: '/catalog/twilio.com:import',
+		github: null,
+	},
+} as unknown as CatalogEntryResponse;
+
 describe('catalogEntryToEntity', () => {
 	it('maps a registered entry to an imported entity', () => {
 		const entity = catalogEntryToEntity(registeredEntry);
@@ -67,6 +82,19 @@ describe('catalogEntryToEntity', () => {
 		expect(entity.summary).toBe('stripe.com');
 		expect(entity.subtitle).toBe('stripe');
 		expect(entity.githubUrl).toBeUndefined();
+	});
+
+	it('defaults updateAvailable to false when the entry omits update_available', () => {
+		// The three baseline fixtures carry no `update_available` field, so the
+		// adapter must default it defensively rather than surface `undefined`.
+		expect(catalogEntryToEntity(registeredEntry).updateAvailable).toBe(false);
+		expect(catalogEntryToEntity(availableEntry).updateAvailable).toBe(false);
+	});
+
+	it('maps update_available: true → updateAvailable on an outdated imported entry', () => {
+		const entity = catalogEntryToEntity(outdatedEntry);
+		expect(entity.registered).toBe(true);
+		expect(entity.updateAvailable).toBe(true);
 	});
 
 	it('maps an unregistered entry with a github link', () => {

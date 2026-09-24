@@ -147,6 +147,7 @@ export default function DiscoverPage() {
 				<DiscoverStatusRow
 					catalogTotal={catalog.catalogTotal}
 					registeredCount={catalog.registeredCount}
+					outdatedCount={catalog.outdatedCount}
 					manifestAgeSeconds={catalog.manifestAgeSeconds}
 					loading={catalog.isPending}
 				/>

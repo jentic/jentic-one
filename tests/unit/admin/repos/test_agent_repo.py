@@ -28,7 +28,11 @@ async def test_set_approval_assigns_owner_id_when_none() -> None:
     """DCR agents (owner_id=None) get owner_id set to the approver."""
     agent = _make_agent(owner_id=None)
     session = AsyncMock()
-    session.get = AsyncMock(return_value=agent)
+    # set_approval locks the row via `select(...).with_for_update()` then reads
+    # `scalar_one_or_none()` (not `session.get`), so mock the execute path.
+    execute_result = MagicMock()
+    execute_result.scalar_one_or_none.return_value = agent
+    session.execute = AsyncMock(return_value=execute_result)
     session.flush = AsyncMock()
 
     result = await AgentRepository.set_approval(session, "agnt_test1", approved_by="usr_admin1")
@@ -43,7 +47,9 @@ async def test_set_approval_preserves_existing_owner_id() -> None:
     """Manually-created agents retain their original owner_id on approval."""
     agent = _make_agent(owner_id="usr_original_owner")
     session = AsyncMock()
-    session.get = AsyncMock(return_value=agent)
+    execute_result = MagicMock()
+    execute_result.scalar_one_or_none.return_value = agent
+    session.execute = AsyncMock(return_value=execute_result)
     session.flush = AsyncMock()
 
     result = await AgentRepository.set_approval(session, "agnt_test1", approved_by="usr_admin1")

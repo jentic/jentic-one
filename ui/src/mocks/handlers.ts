@@ -1,5 +1,4 @@
 import { http, HttpResponse } from 'msw';
-import { toolkitsHandlers, toolkitsE2eHooks } from '@/modules/toolkits/mocks/handlers';
 import { agentsHandlers } from '@/modules/agents/mocks/handlers';
 import { discoverHandlers } from '@/modules/discover/mocks/handlers';
 import { dashboardHandlers } from '@/modules/dashboard/mocks/handlers';
@@ -7,6 +6,7 @@ import { workspaceHandlers } from '@/modules/workspace/mocks/handlers';
 import { credentialsHandlers, credentialsE2eHooks } from '@/shared/credentials/mocks/handlers';
 import { railEventsHandlers } from '@/shared/app/rail/mocks/handlers';
 import { monitorHandlers } from '@/modules/monitor/mocks/handlers';
+import { settingsHandlers } from '@/modules/settings/mocks/handlers';
 
 /**
  * Root MSW handler table.
@@ -66,6 +66,16 @@ const actorDirectorySeed = [
 		created_at: '2026-01-01T00:00:00Z',
 	},
 	{
+		// The DISABLED agent behind the settings store's dormant grant
+		// (#1345) — resolves so the grant row reads "Nightly Reporter ·
+		// Agent disabled", not a raw id next to the dormancy chip.
+		id: 'nightly-reporter',
+		actor_type: 'agent',
+		name: 'Nightly Reporter',
+		active: false,
+		created_at: '2026-01-01T00:00:00Z',
+	},
+	{
 		id: 'agnt_active_1',
 		actor_type: 'agent',
 		name: 'support-agent',
@@ -121,6 +131,9 @@ export const handlers = [
 		}
 		return HttpResponse.json(mockUser);
 	}),
+	// External-IdP (SSO) login capability hint (GET /auth/idp). Default: disabled,
+	// so the login page shows password-only. SSO tests enable it via worker.use.
+	http.get('/auth/idp', () => HttpResponse.json({ enabled: false, provider: null })),
 	// Actor directory (GET /actors) — cross-cutting reference data the UI hydrates
 	// once to resolve raw `actor_id` values into names. Seeded to match the ids
 	// other module stores emit (agents store + the access-request fixtures) so
@@ -132,10 +145,26 @@ export const handlers = [
 			next_cursor: null,
 		}),
 	),
+	// Running/latest app version (GET /system/version) — cross-cutting shell
+	// endpoint powering the update banner + UserMenu version line. Default: no
+	// newer release (banner hidden); tests override via worker.use(...).
+	http.get('/system/version', () =>
+		HttpResponse.json({ current: '0.26.0', latest: null, update_available: false }),
+	),
+	// Backend self-identity (GET /instance, unauthenticated) — the per-agent
+	// MCP config card shows which instance a pasted snippet registers against
+	// (local-MCP 2-E2). Canonical base URL configured, local install.
+	http.get('/instance', () =>
+		HttpResponse.json({
+			backend: 'local',
+			canonical_base_url: 'https://jentic.example.test',
+			host: 'jentic.example.test',
+			instance_id: 'inst_digest_1',
+		}),
+	),
 	// Feature modules append their handlers here, e.g.:
 	//   import { discoverHandlers } from '@/modules/discover/mocks/handlers';
 	//   ...discoverHandlers,
-	...toolkitsHandlers,
 	...agentsHandlers,
 	// Credentials registers before Discover so its guided-picker `/catalog`
 	// handler (which falls through when its store is empty) gets a chance to
@@ -147,6 +176,9 @@ export const handlers = [
 	...dashboardHandlers,
 	...workspaceHandlers,
 	...railEventsHandlers,
+	// Settings owns the admin OAuth-client registry (/admin/oauth-clients),
+	// including the DCR approval queue.
+	...settingsHandlers,
 	// Monitor owns the full observability surface (/executions, /jobs, /events
 	// + SSE, /audit). Several of these paths are ALSO mocked by the dashboard
 	// and the ambient Agent Rail for their own shell widgets; those modules
@@ -182,6 +214,5 @@ export const handlers = [
 export function installE2eTestHooks(target: Record<string, unknown>): void {
 	target.__mswTestHooks = {
 		...credentialsE2eHooks,
-		...toolkitsE2eHooks,
 	};
 }

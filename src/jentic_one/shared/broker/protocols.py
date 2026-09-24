@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Protocol, runtime_checkable
@@ -26,7 +27,7 @@ class RevisionPinOutcome(StrEnum):
 
     A neutral, transport-free enum so the resolver (which lives in ``registry/``)
     never leaks registry exception types across the architecture boundary — the
-    broker maps each outcome to its own domain exception (§10).
+    broker maps each outcome to its own domain exception.
     """
 
     RESOLVED = "resolved"
@@ -72,7 +73,7 @@ class RegistryResolverProtocol(Protocol):
         rev_label: str,
         identity: Identity,
     ) -> RevisionPinResult:
-        """Translate a ``vendor:name:version=rev_…`` pin to a ``revision_id`` (§10).
+        """Translate a ``vendor:name:version=rev_…`` pin to a ``revision_id``.
 
         Performs the in-process lookup + access-rule check and returns a neutral
         :class:`RevisionPinResult`; it never raises a registry-specific exception
@@ -93,9 +94,8 @@ class TokenResolverProtocol(Protocol):
 class RuleEvaluation:
     """Outcome of a permission-rule evaluation with just enough context to explain a deny.
 
-    ``allowed`` is the same signal the pre-#578 bare-bool evaluator emitted.
-    ``rules_loaded`` distinguishes two very different deny paths that used to
-    collapse into one bare 403 (#578): a zero-length pool (nothing matched
+    ``rules_loaded`` distinguishes two very different deny paths (#578): a
+    zero-length pool (nothing matched
     because there was nothing to match — wrong vendor, unbound credential,
     empty binding, misconfigured store) vs a non-empty pool where no rule
     happened to match. The router turns this into a two-variant detail
@@ -125,13 +125,6 @@ class RuleEvaluatorProtocol(Protocol):
         operation_id: str | None,
         api_vendor: str = "",
     ) -> RuleEvaluation: ...
-
-
-@runtime_checkable
-class ToolkitBindingCheckerProtocol(Protocol):
-    """Checks whether an agent has a binding to a specific toolkit."""
-
-    async def has_binding(self, agent_id: str, toolkit_id: str) -> bool: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,12 +165,18 @@ class ToolkitDerivation:
     - ``identity_mismatch`` — a nearest-miss for the diagnostic when the agent is
       bound but nothing serves the API because a bound credential's identity does
       not cover the operation.
+    - ``credentials_by_toolkit`` — for each toolkit in ``toolkits``, the ids of
+      its bound credentials that cover the API. This is the **injection
+      boundary** of the toolkit path: once a toolkit is selected, only these
+      credentials may resolve. A toolkit absent from the map resolves nothing
+      (fail closed).
     """
 
     toolkits: tuple[str, ...]
     agent_bound_any: bool
     api_served_toolkits: tuple[str, ...]
     identity_mismatch: IdentityMismatch | None
+    credentials_by_toolkit: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
 
 
 @runtime_checkable
@@ -192,6 +191,80 @@ class ToolkitDeriverProtocol(Protocol):
     async def derive_toolkits(
         self, *, agent_id: str, vendor: str, name: str, version: str
     ) -> ToolkitDerivation: ...
+
+
+@dataclass(frozen=True, slots=True)
+class BoundCredential:
+    """One direct agent→credential binding candidate for an API identity.
+
+    Carries the binding's ``rule_set_id`` alongside the credential id so the
+    rule evaluator can honour an attached shared rule set without a second
+    admin-DB round-trip after credential selection.
+    """
+
+    credential_id: str
+    rule_set_id: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class CredentialDerivation:
+    """Result of direct-binding credential derivation (theme-5 Phase 2).
+
+    The direct-binding twin of :class:`ToolkitDerivation` — ``credentials`` is
+    the intersection of the agent's **active** (non-suspended) direct bindings
+    with the credentials whose stored identity covers the API. The remaining
+    fields explain an empty set so the denial picks the right directive:
+
+    - ``agent_bound_any`` — the agent has at least one active direct binding.
+    - ``api_served`` — at least one active credential (bound to this agent or
+      not) covers the API. Deliberately a *bool*, not ids: covering credentials
+      can belong to other owners, so carrying their ids here would invite a
+      cross-tenant leak into a directive (mirrors the ``api_served_toolkits``
+      truthiness-only caveat).
+    - ``identity_mismatch`` — nearest-miss diagnostic when the agent is bound
+      but none of its bound credentials cover the operation identity.
+    """
+
+    credentials: tuple[BoundCredential, ...]
+    agent_bound_any: bool
+    api_served: bool
+    identity_mismatch: IdentityMismatch | None
+
+
+@runtime_checkable
+class CredentialDeriverProtocol(Protocol):
+    """Derives which of an agent's directly-bound credentials cover an API identity.
+
+    Empty ``credentials`` → 403, one → use it, many → name/id header
+    disambiguation then most-specific-wins (a genuine unaddressed tie → 409).
+    """
+
+    async def derive_credentials(
+        self, *, agent_id: str, vendor: str, name: str, version: str
+    ) -> CredentialDerivation: ...
+
+
+@runtime_checkable
+class AgentRuleEvaluatorProtocol(Protocol):
+    """Evaluates direct-binding permission rules against an inbound request.
+
+    Keyed on ``(agent_id, credential_id)`` — no vendor pooling (direct bindings
+    evaluate strictly against the specific binding). When the binding carries a
+    ``rule_set_id`` the shared ``permission_rule_set_rules`` list is evaluated
+    *instead of* the inline rows. First-match-wins over the ordered list; an
+    exhausted list defaults to deny (secure-by-default).
+    """
+
+    async def evaluate(
+        self,
+        *,
+        agent_id: str,
+        credential_id: str,
+        rule_set_id: str | None,
+        method: str,
+        path: str,
+        operation_id: str | None,
+    ) -> RuleEvaluation: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -214,7 +287,7 @@ class IdempotencyClaim:
 class IdempotencyStore(Protocol):
     """Cross-instance idempotency: claim a key, then store the final response.
 
-    The concrete implementation (§07) is backed by an ``AtomicStore`` so claims
+    The concrete implementation is backed by an ``AtomicStore`` so claims
     are atomic across broker instances.
     """
 
@@ -235,19 +308,19 @@ class TelemetrySink(Protocol):
 
 
 # ---------------------------------------------------------------------------
-# Transport-neutral runner value objects (RN-0.1)
+# Transport-neutral runner value objects
 #
-# These types are the *transport-neutral* foundation for the pluggable upstream
-# runners roadmap (design: ``docs/design/designs/broker/impl/11-pluggable-runners.md``).
-# They are deliberately **not** HTTP-shaped: the web layer maps an HTTP method to a
-# neutral :class:`Verb`, headers travel in ``metadata`` as an ``HttpRunner`` detail,
-# and ``code`` is a normalised result code rather than "an HTTP status".
+# These types are the *transport-neutral* foundation for pluggable upstream
+# runners. They are deliberately **not** HTTP-shaped: the web layer maps an HTTP
+# method to a neutral :class:`Verb`, headers travel in ``metadata`` as an
+# ``HttpRunner`` detail, and ``code`` is a normalised result code rather than
+# "an HTTP status".
 #
-# RN-0.1 lands these alongside the existing HTTP-shaped
+# They live alongside the existing HTTP-shaped
 # ``broker/adapters/runners/base.py`` objects (``RunnerRequest``/``RunnerResult``/
-# ``UpstreamRunner``), which stay live and unchanged. The incremental migration of
-# the live runner path onto :class:`PluggableUpstreamRunner` (registry, capability
-# gating, the decorator envelope) is deferred to later §11 sub-PRs.
+# ``UpstreamRunner``), which the live runner path still uses; migrating that path
+# onto :class:`PluggableUpstreamRunner` (registry, capability gating, the
+# decorator envelope) is future work.
 # ---------------------------------------------------------------------------
 
 
@@ -310,7 +383,7 @@ class UpstreamResult:
 
 @dataclass(frozen=True, slots=True)
 class RunnerCapabilities:
-    """What a runner can do — used by later sub-PRs to gate the execution envelope."""
+    """What a runner can do — gates which execution-envelope layers may wrap it."""
 
     verbs: frozenset[Verb]
     credential_types: frozenset[CredentialType]
@@ -323,13 +396,13 @@ class RunnerCapabilities:
 
 @runtime_checkable
 class EgressPolicy(Protocol):
-    """Minimal placeholder for the scheme-aware egress policy (RN-1.1, deferred).
+    """Minimal placeholder for the scheme-aware egress policy (future work).
 
     The real ``EgressPolicy`` (per-runner allowed schemes, host allowlists,
-    private-IP/metadata blocking, DNS pinning) is built in RN-1.1 on top of §08/E2.
-    RN-0.1 only needs a type for the :meth:`PluggableUpstreamRunner.validate_target`
-    signature; this defines just the ``check`` shape so the protocol is mypy-strict
-    clean without prematurely building the full policy.
+    private-IP/metadata blocking, DNS pinning) builds on the shared egress guard.
+    For now only the :meth:`PluggableUpstreamRunner.validate_target` signature
+    needs a type; this defines just the ``check`` shape so the protocol is
+    mypy-strict clean without prematurely building the full policy.
     """
 
     def check(self, target: Target) -> None: ...
@@ -337,19 +410,20 @@ class EgressPolicy(Protocol):
 
 @runtime_checkable
 class PluggableUpstreamRunner(Protocol):
-    """Transport-neutral, pooled upstream runner (RN-0.1 foundation protocol).
+    """Transport-neutral, pooled upstream runner (foundation protocol).
 
     This is the neutral successor to the HTTP-shaped
-    ``broker/adapters/runners/base.py::UpstreamRunner``; that one stays live and is
-    migrated onto this shape in a later §11 sub-PR. Runners are **long-lived pooled
+    ``broker/adapters/runners/base.py::UpstreamRunner``; that one is still what
+    the live path uses — migrating it onto this shape is future work. Runners are
+    **long-lived pooled
     objects** — ``startup()``/``aclose()`` own the connection lifecycle — and apply
     the credential **inside** :meth:`run` (HTTP sets a per-request header; MQTT/FTP
     authenticate at connection establishment).
 
     ``credential`` is typed ``object | None`` for now: the concrete resolved-credential
     type lives in ``broker/services/credentials`` and ``shared`` must not import
-    ``broker`` (layering, enforced by ``tests/arch/test_module_boundaries.py``). The
-    credential-application slice that tightens this type lands in a later sub-PR.
+    ``broker`` (layering, enforced by ``tests/arch/test_module_boundaries.py``);
+    tightening this type is future work.
     """
 
     name: str

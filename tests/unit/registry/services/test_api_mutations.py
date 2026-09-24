@@ -69,6 +69,11 @@ async def test_update_applies_partial_fields() -> None:
             new_callable=AsyncMock,
             return_value=api,
         ),
+        patch(
+            "jentic_one.registry.services.api_service.CatalogUpdateCheckRepository.outdated_api_ids",
+            new_callable=AsyncMock,
+            return_value=set(),
+        ),
     ):
         svc = ApiService(ctx)
         await svc.update(
@@ -100,6 +105,11 @@ async def test_update_null_clears_field() -> None:
             "jentic_one.registry.services.api_service.ApiRepository.get_by_identifier_with_current_revision",
             new_callable=AsyncMock,
             return_value=api,
+        ),
+        patch(
+            "jentic_one.registry.services.api_service.CatalogUpdateCheckRepository.outdated_api_ids",
+            new_callable=AsyncMock,
+            return_value=set(),
         ),
     ):
         svc = ApiService(ctx)

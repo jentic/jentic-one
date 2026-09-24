@@ -1,9 +1,9 @@
 """Broker-specific FastAPI dependencies for token validation and authorization.
 
-Toolkit *selection* no longer lives here: it needs the discovered API identity,
-which is only known inside the handler (after discovery). These dependencies do
-auth + scope only; the handler calls ``select_toolkit`` (see ``routers/execute``)
-through the injected ``get_toolkit_deriver`` provider (§03 / §00 DI convention).
+Toolkit *selection* happens in the handler (see ``routers/execute``): it needs
+the discovered API identity, which is only known after discovery. These
+dependencies do auth + scope only; the handler calls ``select_toolkit``
+through the injected ``get_toolkit_deriver`` provider.
 """
 
 from __future__ import annotations
@@ -24,9 +24,15 @@ from jentic_one.broker.services.auth import CompositeTokenValidator
 from jentic_one.broker.services.idempotency import SharedStateIdempotencyStore
 from jentic_one.shared.auth.errors import TokenValidationError
 from jentic_one.shared.auth.identity import Identity
-from jentic_one.shared.broker.protocols import RuleEvaluatorProtocol, ToolkitDeriverProtocol
+from jentic_one.shared.broker.protocols import (
+    AgentRuleEvaluatorProtocol,
+    CredentialDeriverProtocol,
+    RuleEvaluatorProtocol,
+    ToolkitDeriverProtocol,
+)
 from jentic_one.shared.context import Context
 from jentic_one.shared.events import emit_event
+from jentic_one.shared.events.mcp_session import SESSION_ID_HEADER, schedule_mcp_session_emit
 from jentic_one.shared.metrics import get_meter
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.resilience import RateLimiter
@@ -114,6 +120,17 @@ async def require_broker_identity(request: Request) -> Identity:
         ) from exc
 
     resolved.origin = derive_origin(request.headers.get("user-agent"))
+
+    # Broker half of the two-plane ``mcp.session_started`` emit: an MCP session
+    # whose only traffic is ``execute`` never touches the control plane, so it
+    # must be detected here too (table-backed dedupe keeps it to one event).
+    schedule_mcp_session_emit(
+        getattr(request.app.state, "ctx", None),
+        user_agent=request.headers.get("user-agent"),
+        session_id=request.headers.get(SESSION_ID_HEADER),
+        actor_id=resolved.sub,
+        actor_type=resolved.actor_type.value,
+    )
     return resolved
 
 
@@ -121,10 +138,11 @@ async def require_execute_scope(request: Request) -> Identity:
     """Authenticate and require the broker execute scope (no toolkit logic here)."""
     resolved = await require_broker_identity(request)
 
-    # Toolkit keys carry BROKER_EXECUTE_SCOPE implicitly (set by ToolkitKeyResolver):
-    # a toolkit has no actor_scope_grants, so holding a valid key *is* the execute
-    # capability. Anything beyond "may execute" is gated by the toolkit permission
-    # rules (RuleEvaluator) in the handler, not by scopes.
+    # Every executing actor carries BROKER_EXECUTE_SCOPE via actor_scope_grants —
+    # including service accounts the theme-5 Phase 4 retirement job created for
+    # jntc_live_ toolkit keys (the job grants exactly this scope). Anything
+    # beyond "may execute" is gated by the permission rules in the handler,
+    # not by scopes.
     if BROKER_EXECUTE_SCOPE not in resolved.permissions:
         _record_auth_failure(resolved.sub, request)
         raise Forbidden(
@@ -142,11 +160,23 @@ def get_toolkit_deriver(request: Request) -> ToolkitDeriverProtocol:
     return deriver
 
 
+def get_credential_deriver(request: Request) -> CredentialDeriverProtocol:
+    """Provide the direct-binding credential deriver (theme-5 Phase 2)."""
+    deriver: CredentialDeriverProtocol = request.app.state.broker_credential_deriver
+    return deriver
+
+
+def get_agent_rule_evaluator(request: Request) -> AgentRuleEvaluatorProtocol:
+    """Provide the direct-binding rule evaluator (theme-5 Phase 2)."""
+    evaluator: AgentRuleEvaluatorProtocol = request.app.state.broker_agent_rule_evaluator
+    return evaluator
+
+
 async def require_execute_within_rate_limit(request: Request) -> Identity:
     """Auth + scope, then enforce the per-caller rate limit keyed on ``sub``.
 
     Enforced here — a post-auth dependency — because the actor isn't resolved at
-    admission time (§04 middleware runs before auth). The limiter lives on
+    admission time (the admission middleware runs before auth). The limiter lives on
     ``app.state``; when rate limiting is disabled it is ``None`` and this is a
     pure pass-through of ``require_execute_scope``. A deny surfaces directly as a
     ``429`` carrying ``RateLimit-*`` + ``Retry-After`` (we are at the web edge).
@@ -173,9 +203,9 @@ async def require_execute_within_rate_limit(request: Request) -> Identity:
 def get_http_runner(request: Request) -> UpstreamRunner:
     """Select the upstream runner for this request via the scheme→runner registry.
 
-    Handlers reach the runner only through this provider (§04 DI convention),
+    Handlers reach the runner only through this provider (DI convention),
     never by reading ``request.app.state`` inline. The runner is chosen by the
-    upstream URL's **scheme** through the :class:`RunnerRegistry` (§11 RN-0.3):
+    upstream URL's **scheme** through the :class:`RunnerRegistry`:
     an unsupported scheme raises ``501`` and a degraded runner ``503``, before
     any operation discovery. A test swaps the runner via
     ``app.dependency_overrides[get_http_runner]``.
@@ -186,7 +216,7 @@ def get_http_runner(request: Request) -> UpstreamRunner:
 
 
 def get_idempotency_store(request: Request) -> SharedStateIdempotencyStore | None:
-    """Provide the idempotency store, or ``None`` when idempotency is disabled (§07).
+    """Provide the idempotency store, or ``None`` when idempotency is disabled.
 
     The handler treats ``None`` as "no idempotency": an ``Idempotency-Key`` is
     ignored and the request executes normally. A test swaps the store via
@@ -204,6 +234,8 @@ def get_rule_evaluator(request: Request) -> RuleEvaluatorProtocol:
 RequireBrokerIdentity = Annotated[Identity, Depends(require_broker_identity)]
 RequireToolkitAccess = Annotated[Identity, Depends(require_execute_within_rate_limit)]
 ToolkitDeriver = Annotated[ToolkitDeriverProtocol, Depends(get_toolkit_deriver)]
+CredentialDeriver = Annotated[CredentialDeriverProtocol, Depends(get_credential_deriver)]
 RuleEvaluatorDep = Annotated[RuleEvaluatorProtocol, Depends(get_rule_evaluator)]
+AgentRuleEvaluatorDep = Annotated[AgentRuleEvaluatorProtocol, Depends(get_agent_rule_evaluator)]
 HttpRunnerDep = Annotated[UpstreamRunner, Depends(get_http_runner)]
 IdempotencyStoreDep = Annotated[SharedStateIdempotencyStore | None, Depends(get_idempotency_store)]
