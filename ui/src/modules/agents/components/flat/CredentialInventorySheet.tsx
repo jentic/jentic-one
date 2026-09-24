@@ -20,6 +20,8 @@ import {
 	toast,
 } from '@/shared/ui';
 import { useEagerCursorDrain } from '@/shared/hooks';
+import { ORG_ADMIN, usePermission } from '@/shared/auth/usePermission';
+import { SharedOAuthAppsSection } from '@/shared/credentials/oauth-app-registrations/components/SharedOAuthAppsSection';
 import {
 	useAgents,
 	useAgentsCredentialBindings,
@@ -77,6 +79,8 @@ export function CredentialInventorySheet({
 	onApprovalClose?: () => void;
 }) {
 	const headingId = 'credential-inventory-sheet-title';
+
+	const isAdmin = usePermission(ORG_ADMIN);
 
 	const [search, setSearch] = useState('');
 	const [typeFilter, setTypeFilter] = useState<CredentialTypeFilter>('all');
@@ -438,6 +442,13 @@ export function CredentialInventorySheet({
 					</div>
 
 					<div className="flex-1 overflow-y-auto px-5 py-4">
+						{isAdmin && (
+							<div className="mb-6">
+								<SharedOAuthAppsSection
+									onAddCredential={(): void => setCreateOpen(true)}
+								/>
+							</div>
+						)}
 						{unboundUnknown ? (
 							// Withheld, not guessed: the list would read as "used by nobody",
 							// and the next move on that reading is to delete them.

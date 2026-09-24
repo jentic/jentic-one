@@ -106,7 +106,6 @@ import { discoverRoutes } from '@/modules/discover/routes';
 import { workspaceRoutes } from '@/modules/workspace/routes';
 import { monitorRoutes } from '@/modules/monitor/routes';
 import { settingsRoutes } from '@/modules/settings/routes';
-import { oauthAppRegistrationsRoutes } from '@/modules/oauth-app-registrations/routes';
 
 export const moduleRoutes: RouteObject[] = [
 	// <-- feature route spreads go here (one `...xRoutes,` line per module) -->
@@ -115,5 +114,4 @@ export const moduleRoutes: RouteObject[] = [
 	...workspaceRoutes,
 	...monitorRoutes,
 	...settingsRoutes,
-	...oauthAppRegistrationsRoutes,
 ];
