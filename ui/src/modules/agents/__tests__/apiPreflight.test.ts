@@ -249,6 +249,46 @@ describe('preflightApi', () => {
 	});
 });
 
+describe('preflightApi — only credentials the viewer may bind are offered', () => {
+	// Binding is ownership-scoped server-side: a non-admin binding a credential
+	// they did not create gets a 404, so the queue must not offer it.
+	const ME = 'usr_member_1';
+	const mine = makeCredential({ credential_id: 'cred_mine', created_by: ME });
+	const theirs = makeCredential({ credential_id: 'cred_theirs', created_by: 'usr_someone_else' });
+	const unowned = makeCredential({ credential_id: 'cred_unowned', created_by: null });
+	const credentials = [mine, theirs, unowned];
+	const ids = (item: { covering: Credential[] }) => item.covering.map((c) => c.credential_id);
+
+	it('offers a non-admin only the credentials they own', () => {
+		const viewer = { id: ME, permissions: ['agents:read', 'agents:write', 'credentials:read'] };
+		const item = preflightApi(makePick(), inputs({ credentials, viewer }));
+		expect(item.outcome).toBe('choose');
+		expect(ids(item)).toEqual(['cred_mine']);
+	});
+
+	it('offers an org:admin every covering credential', () => {
+		const viewer = { id: ME, permissions: ['org:admin'] };
+		const item = preflightApi(makePick(), inputs({ credentials, viewer }));
+		expect(ids(item)).toEqual(['cred_mine', 'cred_theirs', 'cred_unowned']);
+	});
+
+	it('filters nothing while the viewer is unknown — the server still enforces', () => {
+		expect(ids(preflightApi(makePick(), inputs({ credentials, viewer: null })))).toEqual([
+			'cred_mine',
+			'cred_theirs',
+			'cred_unowned',
+		]);
+		expect(ids(preflightApi(makePick(), inputs({ credentials })))).toHaveLength(3);
+	});
+
+	it('asks a non-admin for a new credential when only others’ credentials cover the API', () => {
+		const viewer = { id: ME, permissions: ['credentials:read'] };
+		const item = preflightApi(makePick(), inputs({ credentials: [theirs], viewer }));
+		expect(item.outcome).toBe('form');
+		expect(item.covering).toEqual([]);
+	});
+});
+
 describe('defaultChoice', () => {
 	it('preselects a lone covering credential, and nothing among several or none', () => {
 		const production = makeCredential({ credential_id: 'cred_1' });

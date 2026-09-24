@@ -9,13 +9,14 @@ import type { Credential, SelectedApi } from '@/shared/credentials/api';
 import { apiRefKey, apiScopeCovers } from '@/shared/credentials/lib/apiIdentity';
 import type { CredentialChoice } from '@/shared/credentials/lib/credentialIdentity';
 import type { CredentialBindingEntity, ServedApiEntity } from '@/modules/agents/api/types';
+import { credentialsBindableBy, type BindViewer } from '@/modules/agents/lib/bindAuthority';
 
 /**
  * What a pick will cost, worst-to-best as work for the operator. The tray only
  * DESCRIBES the outcome; every decision is made in the setup queue.
  *
  * - `attached` — this agent already reaches the API; the tray blocks the pick.
- * - `choose` — one or more org credentials cover it. The queue asks which to use
+ * - `choose` — one or more credentials the viewer may bind cover it. The queue asks which to use
  *   (or to add a new one) — never bound silently, even when only one covers it:
  *   reuse matches API identity, not account, so a wrong-tenant match must be
  *   the operator's call.
@@ -29,7 +30,7 @@ export interface PreflightItem {
 	key: string;
 	api: SelectedApi;
 	outcome: PreflightOutcome;
-	/** Every org credential that covers this pick, in list order — the options the
+	/** Every bindable credential that covers this pick, in list order — the options the
 	 * queue offers alongside a new credential. Empty for `oauth` / `form`. */
 	covering: Credential[];
 	/** `attached` only: the credential the agent already reaches this API
@@ -42,6 +43,10 @@ export interface PreflightItem {
 export interface PreflightInputs {
 	/** Every org credential — pass a DRAINED list; a first page misclassifies. */
 	credentials: Credential[];
+	/** The signed-in user. Only credentials they may bind are offered (see
+	 * {@link credentialsBindableBy}); `null`/absent = unknown, so nothing is
+	 * filtered and the server's 404 stays the backstop. */
+	viewer?: BindViewer | null;
 	/** The agent's existing bindings, whose `serves` entries say which APIs it
 	 *  already reaches (and through which credential). */
 	bindings: CredentialBindingEntity[];
@@ -121,7 +126,11 @@ export function preflightApi(api: SelectedApi, inputs: PreflightInputs): Preflig
 		};
 	}
 
-	const covering = inputs.credentials.filter((c) => credentialCoversApi(c, api));
+	// Only credentials this viewer may bind: offering another user's credential
+	// would end in a 404 on bind and a "Try again" that can never succeed.
+	const covering = credentialsBindableBy(inputs.credentials, inputs.viewer).filter((c) =>
+		credentialCoversApi(c, api),
+	);
 	if (covering.length > 0) return { key, api, outcome: 'choose', covering, importsApi };
 	return {
 		key,

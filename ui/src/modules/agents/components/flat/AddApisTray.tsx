@@ -5,7 +5,8 @@
  * Each pick is preflighted as choose-a-credential / one sign-in click /
  * needs-a-new-credential, so what the next step asks for is on screen before
  * anything commits. The rows are labels only: nothing is chosen here. A pick
- * existing credentials cover says how many, and the setup queue offers them
+ * existing credentials cover says how many — counting only credentials the
+ * operator may bind (`credentialsBindableBy`) — and the setup queue offers them
  * alongside "Add a new credential" — even a lone match is never reused silently.
  * The selection survives a dismissal and clears on commit or an agent change.
  *
@@ -27,6 +28,7 @@ import {
 import { Button, ErrorAlert, LoadingState, SheetPrimitive } from '@/shared/ui';
 import { cn } from '@/shared/lib/utils';
 import { useAllCredentials, useProviders, type SelectedApi } from '@/shared/credentials/api';
+import { useOptionalCurrentUser } from '@/shared/auth';
 import { apiRefKey } from '@/shared/credentials/lib/apiIdentity';
 import { ApiPicker } from '@/shared/credentials/components/ApiPicker';
 import { ImportSpecDialog } from '@/shared/credentials/components/ImportSpecDialog';
@@ -129,6 +131,8 @@ export function AddApisTray({
 	// Preflight reads the WHOLE credential list: a first-page-only list would call
 	// an existing credential "needs a new credential" and hide it from the choice.
 	const credentialsSource = useAllCredentials();
+	// Narrows the choice to credentials this user may bind; unknown → no filter.
+	const viewer = useOptionalCurrentUser();
 	const providersQuery = useProviders();
 	const managedOAuthAvailable = useMemo(
 		() => (providersQuery.data?.providers ?? []).some((p) => p.managed && p.configured),
@@ -139,10 +143,11 @@ export function AddApisTray({
 		() =>
 			preflightApis(picks, {
 				credentials: credentialsSource.items,
+				viewer,
 				bindings,
 				managedOAuthAvailable,
 			}),
-		[picks, credentialsSource.items, bindings, managedOAuthAvailable],
+		[picks, credentialsSource.items, viewer, bindings, managedOAuthAvailable],
 	);
 	const tally = useMemo(() => preflightTally(items), [items]);
 

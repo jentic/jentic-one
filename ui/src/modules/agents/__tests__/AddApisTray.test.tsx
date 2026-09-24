@@ -28,6 +28,7 @@ import {
 	resetCredentialsStore,
 } from '@/shared/credentials/mocks/handlers';
 import { CredentialType } from '@/shared/credentials/api';
+import { AuthProvider } from '@/shared/auth';
 import { AddApisTray } from '@/modules/agents/components/flat/AddApisTray';
 import type { PreflightItem } from '@/modules/agents/lib/apiPreflight';
 import type { CredentialBindingEntity } from '@/modules/agents/api/types';
@@ -543,5 +544,86 @@ describe('AddApisTray — multi-select picks and the preflight tally', () => {
 			await user.click(done);
 			expect(onContinue).toHaveBeenCalledWith([]);
 		});
+	});
+});
+
+describe('AddApisTray — offers only credentials the viewer may bind', () => {
+	// Binding is ownership-scoped server-side (a non-admin binding a credential
+	// they don't own gets a 404), so the tray and queue must not offer those.
+	const ME = 'usr_member_1';
+
+	function seedMe(permissions: string[]) {
+		worker.use(
+			http.get('/users/me', () =>
+				HttpResponse.json({
+					id: ME,
+					email: 'member@local',
+					first_name: 'Member',
+					last_name: 'User',
+					active: true,
+					permissions,
+					must_change_password: false,
+					created_at: '2026-01-01T00:00:00Z',
+					updated_at: null,
+				}),
+			),
+		);
+	}
+
+	beforeEach(async () => {
+		await page.viewport(1280, 900);
+		setToken('test-token');
+		resetApisStore(WORKSPACE_APIS);
+		resetCredentialsStore([
+			makeMockCredential({
+				credential_id: 'cred_mine',
+				name: 'My token',
+				api: { vendor: 'stripe.com', name: 'main', version: '1.0.0' },
+				created_by: ME,
+			}),
+			makeMockCredential({
+				credential_id: 'cred_theirs',
+				name: 'Shared token',
+				api: { vendor: 'stripe.com', name: 'main', version: '1.0.0' },
+				created_by: 'usr_someone_else',
+			}),
+		]);
+	});
+
+	/** Pick Stripe (both credentials cover it) and return what Continue hands on. */
+	async function coveringIdsOnContinue(expectedLabel: string): Promise<string[]> {
+		const onContinue = vi.fn();
+		const user = userEvent.setup();
+		renderWithProviders(
+			<AuthProvider>
+				<TrayHarness onContinue={onContinue} />
+			</AuthProvider>,
+		);
+		await user.click(await row(/Stripe/));
+		await waitFor(() => expect(selectionRows()).toHaveLength(1));
+		await waitFor(() =>
+			expect(screen.getByTestId('tray-covering-count')).toHaveTextContent(expectedLabel),
+		);
+		await user.click(screen.getByRole('button', { name: 'Continue' }));
+		const [item] = onContinue.mock.calls[0][0] as PreflightItem[];
+		return item.covering.map((c) => c.credential_id);
+	}
+
+	it('offers a non-admin only the credentials they own', async () => {
+		seedMe(['agents:read', 'agents:write', 'credentials:read']);
+		expect(
+			await coveringIdsOnContinue(
+				'1 of your credentials covers this API — use it or add a new one',
+			),
+		).toEqual(['cred_mine']);
+	});
+
+	it('offers an org:admin every credential', async () => {
+		seedMe(['org:admin']);
+		expect(
+			await coveringIdsOnContinue(
+				'2 of your credentials cover this API — use one or add a new one',
+			),
+		).toEqual(['cred_mine', 'cred_theirs']);
 	});
 });
