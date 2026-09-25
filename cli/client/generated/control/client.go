@@ -1923,18 +1923,24 @@ type ExecutionRecordLinks struct {
 // ExecutionResponse Execution record representation in API responses.
 type ExecutionResponse struct {
 	// UnderscoreLinks HATEOAS links for an execution record.
-	UnderscoreLinks ExecutionRecordLinks    `json:"_links"`
-	ActorId         string                  `json:"actor_id"`
-	ActorType       string                  `json:"actor_type"`
-	Api             *ApiInfoResponse        `json:"api,omitempty"`
-	CreatedAt       time.Time               `json:"created_at"`
-	CredentialId    *string                 `json:"credential_id,omitempty"`
-	CredentialName  *string                 `json:"credential_name,omitempty"`
-	DurationMs      *int                    `json:"duration_ms,omitempty"`
-	Error           *string                 `json:"error,omitempty"`
-	ExecutionId     string                  `json:"execution_id"`
-	HttpStatus      *int                    `json:"http_status,omitempty"`
-	OperationId     *string                 `json:"operation_id,omitempty"`
+	UnderscoreLinks ExecutionRecordLinks `json:"_links"`
+	ActorId         string               `json:"actor_id"`
+	ActorType       string               `json:"actor_type"`
+	Api             *ApiInfoResponse     `json:"api,omitempty"`
+	CreatedAt       time.Time            `json:"created_at"`
+	CredentialId    *string              `json:"credential_id,omitempty"`
+	CredentialName  *string              `json:"credential_name,omitempty"`
+	DurationMs      *int                 `json:"duration_ms,omitempty"`
+	Error           *string              `json:"error,omitempty"`
+	ExecutionId     string               `json:"execution_id"`
+	HttpStatus      *int                 `json:"http_status,omitempty"`
+	OperationId     *string              `json:"operation_id,omitempty"`
+
+	// OperationMethod The operation's HTTP method, e.g. GET. Null whenever operation_path is null.
+	OperationMethod *string `json:"operation_method,omitempty"`
+
+	// OperationPath The operation's spec path template, e.g. /repos/{owner}/{repo}. Null when the record carries no human-readable operation identity: records predating the column, executions of a URL that resolved to no registered operation, and async jobs enqueued with only an operation_id. Display surfaces show a placeholder for such rows — the opaque operation_id is a machine key, not a human fallback.
+	OperationPath   *string                 `json:"operation_path,omitempty"`
 	Origin          *string                 `json:"origin,omitempty"`
 	PinnedRevisions *map[string]interface{} `json:"pinned_revisions,omitempty"`
 	StartedAt       time.Time               `json:"started_at"`
@@ -2655,14 +2661,17 @@ type OperationResultResponse struct {
 	UnderscoreLinks SearchLinksResponse `json:"_links"`
 
 	// Api Core API identifier triple plus derived host.
-	Api            ApiReferenceResponse         `json:"api"`
-	Description    *string                      `json:"description,omitempty"`
-	Method         string                       `json:"method"`
-	Name           *string                      `json:"name,omitempty"`
-	OperationId    string                       `json:"operation_id"`
-	RelevanceScore float32                      `json:"relevance_score"`
-	Type           *OperationResultResponseType `json:"type,omitempty"`
-	Url            string                       `json:"url"`
+	Api            ApiReferenceResponse `json:"api"`
+	Description    *string              `json:"description,omitempty"`
+	Method         string               `json:"method"`
+	Name           *string              `json:"name,omitempty"`
+	OperationId    string               `json:"operation_id"`
+	RelevanceScore float32              `json:"relevance_score"`
+
+	// Target The value to pass as the operation target to inspect/execute (CLI argument; MCP operation_id argument). METHOD:url when url is absolute; the registry operation_id when url is host-relative (the spec declares no servers, or only a relative one) — such a target is inspect-only: with no upstream host there is nothing for the broker to proxy, so execute refuses it.
+	Target string                       `json:"target"`
+	Type   *OperationResultResponseType `json:"type,omitempty"`
+	Url    string                       `json:"url"`
 }
 
 // OperationResultResponseType defines model for OperationResultResponse.Type.

@@ -30,14 +30,18 @@ from jentic_one.broker.services.execution.pipeline import (
 from jentic_one.shared.aws.sigv4 import SigV4Material
 from jentic_one.shared.broker.broker import Broker
 from jentic_one.shared.config import SecurityConfig
-from jentic_one.shared.events import emit_event, valid_trace_id_or_none
+from jentic_one.shared.events import (
+    MAX_EVENT_SUMMARY_FIELD_LEN,
+    emit_event,
+    valid_trace_id_or_none,
+)
 from jentic_one.shared.events.repeated_failure import maybe_emit_repeated_failure
 from jentic_one.shared.executions import record_execution
 from jentic_one.shared.metrics import get_meter
 from jentic_one.shared.models import ExecutionStatus
 from jentic_one.shared.models.actors import origin_or_none
 from jentic_one.shared.models.events import ErrorSource, EventSeverity, EventTag, EventType
-from jentic_one.shared.schemas import APIReference
+from jentic_one.shared.schemas import APIReference, OperationInfo
 from jentic_one.shared.tracing import jentic_tracestate, pack_jentic_tracestate
 
 logger = structlog.get_logger(__name__)
@@ -55,7 +59,6 @@ _execution_duration = _meter.create_histogram(
 )
 
 _circuit_event_last_emitted: dict[str, datetime] = {}
-_MAX_EVENT_SUMMARY_LEN = 128
 
 #: Upstream auth-rejection status → third-party ``auth_failure`` tag. 401 is an
 #: RFC-tight authentication rejection; 403 mixes auth + authorization (kept as a
@@ -144,12 +147,13 @@ async def run_execution(
     execution_id = execution_id or mint_execution_id()
     started_at = datetime.now(UTC)
     t0 = time.perf_counter()
+    operation_id = ctx_req.operation_id
 
     logger.info(
         "execution_started",
         execution_id=execution_id,
         actor_id=actor_id,
-        operation_id=ctx_req.operation_id,
+        operation_id=operation_id,
         api_vendor=ctx_req.api_vendor,
     )
 
@@ -164,7 +168,7 @@ async def run_execution(
     exec_context = ExecutionContext(
         execution_id=execution_id,
         toolkit_id=ctx_req.toolkit_id,
-        operation_id=ctx_req.operation_id,
+        operation=ctx_req.operation,
         api=_api_reference(ctx_req),
         trace_id=ctx_req.trace_id,
     )
@@ -180,7 +184,7 @@ async def run_execution(
     try:
         with _tracer.start_as_current_span("broker.execute") as span:
             span.set_attribute("execution_id", execution_id)
-            span.set_attribute("operation_id", ctx_req.operation_id or "")
+            span.set_attribute("operation_id", operation_id or "")
             span.set_attribute("toolkit_id", ctx_req.toolkit_id or "")
             span.set_attribute("api_vendor", ctx_req.api_vendor or "")
             with jentic_tracestate(tracestate_member):
@@ -210,7 +214,7 @@ async def run_execution(
             actor_type=actor_type,
             toolkit_id=ctx_req.toolkit_id,
             credential_id=ctx_req.credential_id,
-            operation_id=ctx_req.operation_id,
+            operation=ctx_req.operation,
             security_config=security_config,
             origin=origin,
         )
@@ -250,8 +254,8 @@ async def run_execution(
         duration_ms=duration_ms,
     )
 
-    _executions_total.add(1, {"operation": ctx_req.operation_id or "", "status": status})
-    _execution_duration.record(result.duration_ms, {"operation": ctx_req.operation_id or ""})
+    _executions_total.add(1, {"operation": operation_id or "", "status": status})
+    _execution_duration.record(result.duration_ms, {"operation": operation_id or ""})
 
     await _persist(
         ctx_req,
@@ -291,7 +295,7 @@ async def run_execution(
         actor_type=actor_type,
         toolkit_id=ctx_req.toolkit_id,
         credential_id=ctx_req.credential_id,
-        operation_id=ctx_req.operation_id,
+        operation=ctx_req.operation,
         security_config=security_config,
         error_tags=error_tags,
         origin=origin,
@@ -350,9 +354,9 @@ async def persist_streaming_execution(
     (or terminates with an error). Shares metrics instrumentation with the
     buffered path for observability parity.
     """
-    operation = ctx_req.operation_id or ""
-    _executions_total.add(1, {"operation": operation, "status": status})
-    _execution_duration.record(duration_ms, {"operation": operation})
+    operation_id = ctx_req.operation_id
+    _executions_total.add(1, {"operation": operation_id or "", "status": status})
+    _execution_duration.record(duration_ms, {"operation": operation_id or ""})
 
     logger.info(
         "execution_recorded",
@@ -370,7 +374,7 @@ async def persist_streaming_execution(
         started_at=started_at,
         status=status,
         duration_ms=duration_ms,
-        operation_id=ctx_req.operation_id,
+        operation=ctx_req.operation,
         api_vendor=ctx_req.api_vendor,
         api_name=ctx_req.api_name,
         api_version=ctx_req.api_version,
@@ -405,7 +409,7 @@ async def persist_streaming_execution(
         actor_type=actor_type,
         toolkit_id=ctx_req.toolkit_id,
         credential_id=ctx_req.credential_id,
-        operation_id=ctx_req.operation_id,
+        operation=ctx_req.operation,
         security_config=security_config,
         error_tags=error_tags,
         origin=origin,
@@ -434,7 +438,7 @@ async def _persist(
         started_at=started_at,
         status=status,
         duration_ms=duration_ms,
-        operation_id=ctx_req.operation_id,
+        operation=ctx_req.operation,
         api_vendor=ctx_req.api_vendor,
         api_name=ctx_req.api_name,
         api_version=ctx_req.api_version,
@@ -460,7 +464,7 @@ async def _emit_execution_lifecycle(
     actor_type: str,
     toolkit_id: str | None = None,
     credential_id: str | None = None,
-    operation_id: str | None = None,
+    operation: OperationInfo | None = None,
     security_config: SecurityConfig | None = None,
     error_tags: set[EventTag] | None = None,
     origin: str | None = None,
@@ -499,7 +503,7 @@ async def _emit_execution_lifecycle(
                 tags={origin_tag} if origin_tag is not None else None,
             )
         else:
-            sanitized = (error_msg or "unknown")[:_MAX_EVENT_SUMMARY_LEN]
+            sanitized = (error_msg or "unknown")[:MAX_EVENT_SUMMARY_FIELD_LEN]
             failed_tags: set[EventTag] = set(error_tags or ())
             if origin_tag is not None:
                 failed_tags.add(origin_tag)
@@ -526,7 +530,7 @@ async def _emit_execution_lifecycle(
             actor_type=actor_type,
             toolkit_id=toolkit_id,
             credential_id=credential_id,
-            operation_id=operation_id,
+            operation=operation,
             trace_id=event_trace_id,
             config=security_config,
         )

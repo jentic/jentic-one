@@ -355,3 +355,62 @@ async def test_unreachable_broker_envelope_carries_no_dangling_pointer(broker) -
     assert payload["error_code"] == "TRANSPORT_ERROR"
     assert payload["retryable"] is True
     assert "next_tool" not in payload
+
+
+@pytest.mark.parametrize(
+    ("target", "inspected"),
+    [
+        # Broker-relative short-circuit: parsed as TRACE, never an opaque id.
+        ("TRACE:/v1/debug", None),
+        # Inspected form: the registry resolves the target to a TRACE operation.
+        ("TRACE:https://api.example.com/v1/debug", "TRACE"),
+    ],
+)
+async def test_trace_targets_are_refused_before_the_broker_is_dialed(
+    broker, monkeypatch: pytest.MonkeyPatch, target: str, inspected: str | None
+) -> None:
+    """Pins the mount's parity with the Go ``ensureExecutableMethod`` gate: TRACE
+    echoes the request back (reflecting the credentials the broker injects), so
+    execute refuses it with a coded RESOLVE_FAILED and never sends it."""
+
+    async def fake_inspect(env: CallEnv, target: str, revision: str) -> dict[str, Any]:
+        return {"method": inspected, "url": "https://api.example.com/v1/debug"}
+
+    monkeypatch.setattr(tools_mod, "_inspect_document", fake_inspect)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("a TRACE target must never reach the broker")
+
+    broker(handler)
+    env = make_env("http://127.0.0.1:8100")
+    result = await dispatch_tool_call(env, "execute", {"operation_id": target})
+
+    assert result.is_error
+    payload = decode_tool_json(result)
+    assert payload["error_code"] == "RESOLVE_FAILED"
+    assert payload["next_tool"] == "search_apis"
+
+
+async def test_host_relative_operation_is_refused_before_the_broker_is_dialed(
+    broker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Parity with the Go ``ensureAbsoluteUpstream`` gate: an operation whose
+    spec declares no absolute server (a search hit whose target is the registry
+    operation_id) has no upstream host to proxy to, so execute refuses it."""
+
+    async def fake_inspect(env: CallEnv, target: str, revision: str) -> dict[str, Any]:
+        return {"method": "GET", "url": "/pets"}
+
+    monkeypatch.setattr(tools_mod, "_inspect_document", fake_inspect)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("a host-relative operation must never reach the broker")
+
+    broker(handler)
+    env = make_env("http://127.0.0.1:8100")
+    result = await dispatch_tool_call(env, "execute", {"operation_id": "op_pets"})
+
+    assert result.is_error
+    payload = decode_tool_json(result)
+    assert payload["error_code"] == "RESOLVE_FAILED"
+    assert "no upstream host" in str(payload)

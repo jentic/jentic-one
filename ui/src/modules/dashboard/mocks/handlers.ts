@@ -78,6 +78,10 @@ export const dashboardExecutions = [
 		execution_id: 'exec_1',
 		http_status: 200,
 		operation_id: 'charges/create',
+		// Human-readable identity present → the card renders method + path
+		// template (the opaque operation_id never renders).
+		operation_path: '/v1/charges',
+		operation_method: 'POST',
 		started_at: minutesAgo(2),
 		status: 'completed',
 		credential_id: 'cred_payments',
@@ -91,6 +95,8 @@ export const dashboardExecutions = [
 		execution_id: 'exec_2',
 		http_status: 500,
 		operation_id: 'repos/get',
+		operation_path: '/repos/{owner}/{repo}',
+		operation_method: 'GET',
 		started_at: minutesAgo(8),
 		status: 'failed',
 		credential_id: 'cred_dev',
@@ -103,6 +109,8 @@ export const dashboardExecutions = [
 		duration_ms: 203,
 		execution_id: 'exec_3',
 		http_status: 200,
+		// Legacy id-only row: no operation_path/method — pins that the card
+		// renders the empty placeholder, never the opaque id.
 		operation_id: 'messages/send',
 		started_at: minutesAgo(15),
 		status: 'completed',

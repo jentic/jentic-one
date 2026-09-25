@@ -57,7 +57,7 @@ from jentic_one.shared.broker.protocols import (
 )
 from jentic_one.shared.config import AppConfig
 from jentic_one.shared.context import Context
-from jentic_one.shared.schemas import APIReference
+from jentic_one.shared.schemas import APIReference, OperationInfo
 from jentic_one.shared.web.app_factory import create_combined_app, create_surface_app
 from jentic_one.shared.web.container import AppContainer
 from jentic_one.shared.web.protocols import UnregisteredUrlHandler
@@ -384,7 +384,7 @@ class _PinnedMissResolver:
     ) -> ResolveResult | None:
         if revision_id is None:
             return ResolveResult(
-                operation_id="op-1",
+                operation=OperationInfo(id="op-1"),
                 api=APIReference(vendor="acme", name="payments", version="v1"),
                 path_params={},
             )

@@ -26,7 +26,7 @@ export interface RecentExecutionItem {
 	status: string;
 	/** HTTP status of the upstream call, shown inline after the label. */
 	httpStatus?: number | null;
-	/** Mono operation label (e.g. `github.create_issue`). */
+	/** Mono operation label (e.g. `github · POST /repos/{owner}/{repo}/issues`). */
 	label: string;
 	/** Error detail rendered under the label for failures/denials. */
 	error?: string | null;

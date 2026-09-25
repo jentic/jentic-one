@@ -39,11 +39,15 @@ func newSearchCmd(app *app) *cobra.Command {
 		Long: "search finds API operations whose descriptions, names, or paths match a\n" +
 			"query. Results are ranked by lexical (full-text) relevance. The\n" +
 			"query can also be passed via -q for piping.\n\n" +
+			"Each hit carries a `target` to pass verbatim to inspect/execute:\n" +
+			"its METHOD:url pair, or its operation_id when the url is host-relative\n" +
+			"(the spec declares no absolute server, e.g. /pets). Such an\n" +
+			"operation_id target is inspect-only — execute refuses it.\n\n" +
 			"Output defaults to JSON when stdout is not a TTY (agent-friendly);\n" +
 			"use --json to force JSON on a terminal.",
 		Example: "  jentic search \"list users\"\n" +
 			"  jentic search -q \"create issue\" --api github-com/api-github-com --limit 5\n" +
-			"  jentic search \"list pets\" --all --json | jq '.data[].operation_id'",
+			"  jentic search \"list pets\" --all --json | jq -r '.data[].target'",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) > 0 {
@@ -133,11 +137,15 @@ func (a *app) searchE(cmd *cobra.Command, opts *searchOptions) error {
 // the golden fixtures are unchanged, while the wire call goes through the
 // generated SDK.
 type searchHit struct {
-	Type        string      `json:"type"`
-	API         searchAPI   `json:"api"`
-	OperationID string      `json:"operation_id"`
-	Method      string      `json:"method"`
-	URL         string      `json:"url"`
+	Type        string    `json:"type"`
+	API         searchAPI `json:"api"`
+	OperationID string    `json:"operation_id"`
+	Method      string    `json:"method"`
+	URL         string    `json:"url"`
+	// Target is the server-computed inspect/execute target (METHOD:url, or the
+	// operation_id for a spec with no servers). omitempty keeps the frozen
+	// envelope byte-identical against a control plane that doesn't send it.
+	Target      string      `json:"target,omitempty"`
 	Name        string      `json:"name"`
 	Description string      `json:"description"`
 	Score       float64     `json:"relevance_score"`
@@ -179,6 +187,7 @@ func toSearchHit(h control.OperationResultResponse) searchHit {
 		OperationID: h.OperationId,
 		Method:      h.Method,
 		URL:         h.Url,
+		Target:      h.Target,
 		Name:        deref(h.Name),
 		Description: deref(h.Description),
 		Score:       float32ToFloat64(h.RelevanceScore),

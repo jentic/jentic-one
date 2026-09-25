@@ -88,6 +88,7 @@ async def search_operations(
             operation_id=r.operation_id,
             method=r.method,
             url=r.url,
+            target=r.target,
             name=r.name,
             description=r.description,
             relevance_score=r.relevance_score,

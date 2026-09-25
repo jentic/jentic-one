@@ -207,8 +207,9 @@ var inspectOperationSchema = map[string]any{
 	"properties": map[string]any{
 		"operation_id": map[string]any{
 			"type": "string",
-			"description": "The operation to inspect (required; \"id\" and \"uuid\" are accepted aliases): a registry " +
-				"operation id from a search_apis hit, or a METHOD:url pair like \"GET:https://api.example.com/v1/things\".",
+			"description": "The operation to inspect (required; \"id\" and \"uuid\" are accepted aliases): a METHOD:url " +
+				"pair like \"GET:https://api.example.com/v1/things\" — pass a search_apis hit's target verbatim. " +
+				"(A registry operation id also resolves, for compatibility — prefer METHOD:url.)",
 		},
 		"revision": map[string]any{
 			"type":        "string",
@@ -284,10 +285,13 @@ func (s *mcpServer) toolSpecs() []mcpToolSpec {
 				Description: "Search the connected Jentic One registry for API operations by " +
 					"natural-language query. This is the first step of the discovery flow " +
 					"(whoami → search_apis → inspect_operation → execute): call it whenever " +
-					"you need an operation you don't already have the id of. " +
+					"you need an operation you don't already know the method + URL of. " +
 					`Example: {"query": "create github issue", "limit": 5}. Returns one page ` +
-					"as {data, has_more, next_cursor}; each hit carries the operation_id to " +
-					"pass to inspect_operation. When has_more is true, pass next_cursor back " +
+					"as {data, has_more, next_cursor}; each hit carries a target (its " +
+					"METHOD:url, or its operation_id when the url is host-relative — " +
+					"such a target is inspect-only, execute refuses it) — " +
+					"pass it verbatim as inspect_operation's operation_id. When has_more " +
+					"is true, pass next_cursor back " +
 					"as cursor for the next page. Optionally restrict to specific APIs with " +
 					`apis (vendor/name/version slugs from earlier hits), e.g. ` +
 					`{"query": "list pets", "apis": ["acme/pets/v1"]}. An empty data array ` +
@@ -305,11 +309,11 @@ func (s *mcpServer) toolSpecs() []mcpToolSpec {
 					"URL, parameters, request/response schemas, and security requirements. " +
 					"This is the read-contract step of the flow (whoami → search_apis → " +
 					"inspect_operation → execute) — always inspect before you execute. " +
-					`Example: {"operation_id": "op_abc123"} with an id from a search_apis ` +
-					`hit, or a METHOD:url pair like {"operation_id": ` +
-					`"GET:https://rest.coincap.io/v3/markets"}. Optionally pin a revision ` +
+					`Example: {"operation_id": "GET:https://rest.coincap.io/v3/markets"} — ` +
+					"a search_apis hit's target, passed verbatim. " +
+					"Optionally pin a revision " +
 					"for reproducibility. If the operation is not found, call search_apis " +
-					"to rediscover the right id.",
+					"to rediscover the right target.",
 				InputSchema: inspectOperationSchema,
 				Annotations: readOnly,
 			},

@@ -18,6 +18,7 @@
  */
 import { ExternalLink } from 'lucide-react';
 import { ActorLabel, DataTable, VendorIcon, type Column } from '@/shared/ui';
+import { formatOperation } from '@/shared/lib';
 import { toExecutionStatus } from '@/modules/monitor/api';
 import type { ExecutionResponse } from '@/modules/monitor/api';
 import { ExecutionStatusPill } from '@/modules/monitor/components/StatusPill';
@@ -68,7 +69,7 @@ export function ExecutionTable({ executions, isLoading, onRowClick }: ExecutionT
 			render: (row) => (
 				<div className="flex min-w-0 flex-col">
 					<span className="text-muted-foreground truncate font-mono text-xs">
-						{row.operation_id ?? '—'}
+						{formatOperation(row) ?? '—'}
 					</span>
 					{row.error && (
 						<span className="text-danger mt-0.5 truncate text-xs" title={row.error}>
@@ -158,7 +159,7 @@ export function ExecutionTable({ executions, isLoading, onRowClick }: ExecutionT
 				emptyMessage="No executions match your filters."
 				onRowClick={onRowClick}
 				ariaLabel="Executions"
-				getRowLabel={(row) => `View trace for ${row.operation_id ?? row.execution_id}`}
+				getRowLabel={(row) => `View trace for ${formatOperation(row) ?? row.execution_id}`}
 				renderCard={(row) => (
 					<div className="space-y-2">
 						<div className="flex items-center justify-between gap-2">
@@ -168,7 +169,7 @@ export function ExecutionTable({ executions, isLoading, onRowClick }: ExecutionT
 							</span>
 						</div>
 						<div className="text-foreground truncate font-mono text-sm">
-							{row.operation_id ?? '—'}
+							{formatOperation(row) ?? '—'}
 						</div>
 						{row.error && (
 							<div className="text-danger truncate text-xs" title={row.error}>

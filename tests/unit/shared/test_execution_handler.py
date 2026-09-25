@@ -410,3 +410,55 @@ async def test_handler_missing_origin_emits_untagged_event() -> None:
         )
 
     assert mock_emit.call_args.kwargs["tags"] is None
+
+
+@pytest.mark.asyncio
+async def test_handler_forwards_operation_dict_in_metadata() -> None:
+    """The payload's ``operation`` dict (id + path template + method) reaches
+    the executor metadata — validated once here (the handler folds it for the
+    repeated-failure detector) — alongside the dual-written flat
+    ``operation_id``."""
+    executor = _RecordingExecutor(
+        UpstreamExecResult(status_code=200, body=b"", content_type=None, duration_ms=1)
+    )
+    handler = ExecutionHandler(executor=executor)
+    operation = {"id": "op_x", "path": "/v1/things/{id}", "method": "GET"}
+
+    await handler.execute(
+        "job_op",
+        _FakeSession(),
+        payload=_payload(operation=operation, operation_id="op_x"),
+        created_by="agt_abc123",
+        actor_type="agent",
+    )
+
+    assert executor.last_request is not None
+    assert executor.last_request.metadata["operation"] == operation
+    assert executor.last_request.metadata["operation_id"] == "op_x"
+
+
+@pytest.mark.asyncio
+async def test_handler_forwards_legacy_flat_operation_id() -> None:
+    """A job enqueued before the ``operation`` dict existed carries only the
+    flat ``operation_id`` — the handler folds it into an id-only operation, so
+    the executor metadata keeps the id on the record either way."""
+    executor = _RecordingExecutor(
+        UpstreamExecResult(status_code=200, body=b"", content_type=None, duration_ms=1)
+    )
+    handler = ExecutionHandler(executor=executor)
+
+    await handler.execute(
+        "job_legacy_op",
+        _FakeSession(),
+        payload=_payload(operation_id="op_legacy"),
+        created_by="agt_abc123",
+        actor_type="agent",
+    )
+
+    assert executor.last_request is not None
+    assert executor.last_request.metadata["operation"] == {
+        "id": "op_legacy",
+        "path": None,
+        "method": None,
+    }
+    assert executor.last_request.metadata["operation_id"] == "op_legacy"

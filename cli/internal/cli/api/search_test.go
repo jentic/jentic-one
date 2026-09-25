@@ -58,6 +58,56 @@ func TestSearchCmdJSON(t *testing.T) {
 	}
 }
 
+// TestSearchCmdForwardsServerTarget pins that each hit's server-computed
+// `target` reaches the JSON envelope verbatim — the value the steering docs
+// tell agents to pass to inspect/execute (`jq -r '.data[].target'`).
+func TestSearchCmdForwardsServerTarget(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/search" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"data": [
+				{"type":"operation","api":{"vendor":"acme","name":"pets","version":"v1","host":"acme.com"},"operation_id":"op1","method":"GET","url":"https://acme.com/pets","target":"GET:https://acme.com/pets","relevance_score":0.9,"_links":{"inspect":"/inspect?id=x"}},
+				{"type":"operation","api":{"vendor":"acme","name":"pets","version":"v1","host":"acme.com"},"operation_id":"op2","method":"GET","url":"/pets","target":"op2","relevance_score":0.8,"_links":{"inspect":"/inspect?id=y"}}
+			],
+			"has_more": false
+		}`))
+	}))
+	defer srv.Close()
+
+	app := testApp(t)
+	seedRegistered(t, app, "default", srv.URL)
+	root := newAPIRootCmd(app.App)
+	out := new(bytes.Buffer)
+	app.Out = out
+	root.SetOut(out)
+	root.SetErr(new(bytes.Buffer))
+	root.SetArgs([]string{"search", "pets", "--json"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+
+	var result struct {
+		Data []struct {
+			Target string `json:"target"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("unmarshal output: %v\nraw: %s", err, out.String())
+	}
+	got := make([]string, 0, len(result.Data))
+	for _, h := range result.Data {
+		got = append(got, h.Target)
+	}
+	want := []string{"GET:https://acme.com/pets", "op2"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("targets = %v, want %v", got, want)
+	}
+}
+
 func TestSearchCmdEmptyResultsEmitEmptyArray(t *testing.T) {
 	// Regression: an empty result set must serialize as `"data": []`, never
 	// `null`, so an agent's `jq '.data[]'` recipe never crashes (the CLI side of

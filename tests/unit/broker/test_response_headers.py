@@ -6,6 +6,7 @@ from jentic_one.broker.core.headers import TRACESTATE_HEADER, JenticHeader
 from jentic_one.broker.core.schemas import ExecuteRequestContext
 from jentic_one.broker.web.routers.execute import _metadata_headers
 from jentic_one.broker.web.streaming import _metadata_headers as _stream_metadata_headers
+from jentic_one.shared.schemas import OperationInfo
 
 
 def _ctx(**overrides: object) -> ExecuteRequestContext:
@@ -14,7 +15,7 @@ def _ctx(**overrides: object) -> ExecuteRequestContext:
         "method": "POST",
         "trace_id": "trace-1",
         "toolkit_id": "tk_abc123",
-        "operation_id": "op_1",
+        "operation": OperationInfo(id="op_1"),
         "api_vendor": "stripe",
         "api_name": "payments",
         "api_version": "2023-10-16",

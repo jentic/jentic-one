@@ -10,14 +10,14 @@ from typing import Any, Protocol, runtime_checkable
 
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.models.credentials import CredentialType
-from jentic_one.shared.schemas import APIReference
+from jentic_one.shared.schemas import APIReference, OperationInfo
 
 
 @dataclass(frozen=True, slots=True)
 class ResolveResult:
     """A resolved operation with its API identity and extracted path parameters."""
 
-    operation_id: str
+    operation: OperationInfo
     api: APIReference
     path_params: dict[str, str]
 

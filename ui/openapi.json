@@ -4082,6 +4082,30 @@
             ],
             "title": "Operation Id"
           },
+          "operation_method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The operation's HTTP method, e.g. GET. Null whenever operation_path is null.",
+            "title": "Operation Method"
+          },
+          "operation_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The operation's spec path template, e.g. /repos/{owner}/{repo}. Null when the record carries no human-readable operation identity: records predating the column, executions of a URL that resolved to no registered operation, and async jobs enqueued with only an operation_id. Display surfaces show a placeholder for such rows — the opaque operation_id is a machine key, not a human fallback.",
+            "title": "Operation Path"
+          },
           "origin": {
             "anyOf": [
               {
@@ -6705,6 +6729,11 @@
             "title": "Relevance Score",
             "type": "number"
           },
+          "target": {
+            "description": "The value to pass as the operation target to inspect/execute (CLI argument; MCP operation_id argument). METHOD:url when url is absolute; the registry operation_id when url is host-relative (the spec declares no servers, or only a relative one) — such a target is inspect-only: with no upstream host there is nothing for the broker to proxy, so execute refuses it.",
+            "title": "Target",
+            "type": "string"
+          },
           "type": {
             "const": "operation",
             "default": "operation",
@@ -6721,6 +6750,7 @@
           "operation_id",
           "method",
           "url",
+          "target",
           "relevance_score",
           "_links"
         ],

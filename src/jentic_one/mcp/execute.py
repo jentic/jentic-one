@@ -113,7 +113,9 @@ def parse_method_path(target: str) -> tuple[str, str]:
     if idx + 2 < len(target) and target[idx + 2] == "/":
         return "", ""
     method = target[:idx].upper()
-    if method not in {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}:
+    # TRACE parses (so execute can refuse it with a coded error rather than
+    # misreading ``TRACE:/x`` as an opaque id); the caller rejects it.
+    if method not in {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "TRACE"}:
         return "", ""
     return method, target[idx + 1 :]
 

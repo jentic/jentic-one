@@ -17,6 +17,7 @@ import {
 	StatusBadge,
 	AppLink,
 	ActorLabel,
+	CopyButton,
 } from '@/shared/ui';
 import {
 	useExecutions,
@@ -28,6 +29,7 @@ import {
 import { ExecutionStatusPill } from '@/modules/monitor/components/StatusPill';
 import { DetailRow, DetailSection } from '@/modules/monitor/components/Detail';
 import { formatDuration, formatTimestamp } from '@/modules/monitor/lib/format';
+import { formatOperation } from '@/shared/lib';
 import { monitorHref, hasTrace } from '@/modules/monitor/lib/links';
 
 interface TraceDetailSheetProps {
@@ -154,7 +156,24 @@ export function TraceDetailSheet({
 											</div>
 											<DetailRow
 												label="Operation"
-												value={exec.operation_id ?? '—'}
+												value={
+													<span className="inline-flex items-center gap-1">
+														{formatOperation(exec) ?? '—'}
+														{exec.operation_id && (
+															// The opaque id never renders as
+															// text (it's a machine key), but
+															// stays reachable for debugging and
+															// support hand-offs.
+															<CopyButton
+																value={exec.operation_id}
+																ariaLabel="Copy operation ID"
+																toastMessage="Operation ID copied"
+																size="icon"
+																variant="ghost"
+															/>
+														)}
+													</span>
+												}
 												mono
 											/>
 											<DetailRow

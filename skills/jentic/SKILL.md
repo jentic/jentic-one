@@ -186,7 +186,8 @@ right base URL rather than importing/searching again.
 
 Resolve an operation to its method, path, parameters, and schemas before
 calling it (CLI `jentic inspect`; MCP `inspect_operation`). Pass the
-`operation_id` from the search hit, or a `METHOD URL` pair. Always inspect
+search hit's `target` verbatim — a `METHOD:url` pair such as
+`GET:https://api.example.com/v1/things`. Always inspect
 before you execute — the contract names the parameters and the security
 requirements you'll propose rules against.
 
@@ -195,10 +196,10 @@ requirements you'll propose rules against.
 Send the request through the Jentic broker (CLI `jentic execute`; MCP
 `execute` / `execute_read`). The broker is a transparent forward proxy, so
 the target is the **full upstream URL** (scheme + host + path), not a
-host-relative path. Reference an `operation_id` from the search/inspect step
-— the surface fills in the upstream URL for you — or pass `METHOD:URL`
-directly. The broker authenticates you and injects the stored upstream
-credential server-side; credentials never pass through your session.
+host-relative path. Pass the same `target` (`METHOD:URL`) from the
+search step. The broker authenticates you and injects the stored
+upstream credential server-side; credentials never pass through your
+session.
 
 A held or async execution does not answer inline: it returns a **job
 envelope** (`{job_id, status, …}`). Poll the job until its status is

@@ -201,7 +201,7 @@ func (OperationPreviewListResponse) RequiredFields() []string {
 	return []string{"data", "info", "offset", "security_schemes", "total", "truncated"}
 }
 func (OperationResultResponse) RequiredFields() []string {
-	return []string{"_links", "api", "method", "operation_id", "relevance_score", "url"}
+	return []string{"_links", "api", "method", "operation_id", "relevance_score", "target", "url"}
 }
 func (OperationSummaryLinksResponse) RequiredFields() []string { return []string{"inspect"} }
 func (OperationSummaryListResponse) RequiredFields() []string  { return []string{"data", "has_more"} }
