@@ -118,7 +118,30 @@ func ResolveOperation(ctx context.Context, ins Inspector, target, revision strin
 	if err := ensureExecutableMethod(op.Method, target, fmt.Sprintf("jentic inspect %q", target)); err != nil {
 		return nil, err
 	}
+	if err := ensureAbsoluteUpstream(op.URL, target); err != nil {
+		return nil, err
+	}
 	return &op, nil
+}
+
+// ensureAbsoluteUpstream rejects an inspected operation whose url is
+// host-relative (e.g. "/pets": its spec declares no servers, or only a relative
+// one). The broker proxies to an absolute upstream URL and its URL index holds
+// no host-less entries, so sending it would fail opaquely at the data plane.
+// Such an operation's contract is still readable (`jentic inspect`); only
+// executing it is refused, locally, as a coded RESOLVE_FAILED.
+func ensureAbsoluteUpstream(upstream, target string) error {
+	if strings.HasPrefix(upstream, "http://") || strings.HasPrefix(upstream, "https://") {
+		return nil
+	}
+	return &ux.CodedError{
+		Code: ux.CodeResolveFailed,
+		Msg: fmt.Sprintf(
+			"operation %q has no upstream host (url %q): its spec declares no absolute server, so it cannot be executed",
+			target, upstream,
+		),
+		Actionable: `jentic search "<what you want to do>"`,
+	}
 }
 
 // BuildRequest assembles the outbound broker request from a resolved

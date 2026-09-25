@@ -389,3 +389,28 @@ async def test_trace_targets_are_refused_before_the_broker_is_dialed(
     payload = decode_tool_json(result)
     assert payload["error_code"] == "RESOLVE_FAILED"
     assert payload["next_tool"] == "search_apis"
+
+
+async def test_host_relative_operation_is_refused_before_the_broker_is_dialed(
+    broker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Parity with the Go ``ensureAbsoluteUpstream`` gate: an operation whose
+    spec declares no absolute server (a search hit whose target is the registry
+    operation_id) has no upstream host to proxy to, so execute refuses it."""
+
+    async def fake_inspect(env: CallEnv, target: str, revision: str) -> dict[str, Any]:
+        return {"method": "GET", "url": "/pets"}
+
+    monkeypatch.setattr(tools_mod, "_inspect_document", fake_inspect)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("a host-relative operation must never reach the broker")
+
+    broker(handler)
+    env = make_env("http://127.0.0.1:8100")
+    result = await dispatch_tool_call(env, "execute", {"operation_id": "op_pets"})
+
+    assert result.is_error
+    payload = decode_tool_json(result)
+    assert payload["error_code"] == "RESOLVE_FAILED"
+    assert "no upstream host" in str(payload)

@@ -196,9 +196,11 @@ prints a job id). This needs `apis:write` rather than `catalog:import`.
 
 `search` returns JSON when piped. Each hit carries a `target` — pass it
 verbatim to `inspect`/`execute`. It is the hit's `METHOD:url` pair (e.g.
-`GET:https://…`), or its registry `operation_id` when the spec declares no
-servers (a host-relative `url` such as `/pets` can't form a `METHOD:url`
-target). Don't build targets yourself from `method` + `url`. (The id shown
+`GET:https://…`), or its registry `operation_id` when the hit's `url` is
+host-relative (e.g. `/pets` — the spec declares no absolute server, so it
+can't form a `METHOD:url` target). An `operation_id` target is
+inspect-only: `execute` refuses it with `RESOLVE_FAILED`, since there is no
+upstream host to proxy to. Don't build targets yourself from `method` + `url`. (The id shown
 by `jentic catalog show` is the spec's `operationId`; it also resolves, as
 a compatibility fallback.)
 

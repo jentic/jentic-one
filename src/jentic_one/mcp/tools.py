@@ -1014,6 +1014,18 @@ async def _execute_tool(
         upstream_target = str(doc.get("url", ""))
         if not method or not upstream_target:
             raise ToolError(CODE_INTERNAL_ERROR, "inspect response missing method or url")
+        if not upstream_target.startswith(("http://", "https://")):
+            # A host-relative url (spec declares no absolute server — the case
+            # where a search hit's target is the registry operation_id): the
+            # contract is inspectable, but there is no upstream host to proxy
+            # to (Go: ``agentops.ensureAbsoluteUpstream``).
+            raise ToolError(
+                CODE_RESOLVE_FAILED,
+                f"operation {target!r} has no upstream host (url {upstream_target!r}): "
+                "its spec declares no absolute server, so it cannot be executed",
+                actionable="Call search_apis for an operation whose target is a METHOD:url pair.",
+                next_tool="search_apis",
+            )
     if method == "TRACE":
         # The broker's proxy route never serves TRACE: it echoes the request
         # back, which would reflect the credentials the broker injects. Refuse

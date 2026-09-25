@@ -30,8 +30,10 @@ this file adds the lane-specific detail.
   needs `apis:write`.) Don't invent other "catalog read" scopes; they're
   rejected.
 - Address operations by a search hit's `target` — pass it verbatim. It is
-  the `METHOD:url` pair (or, for a spec that declares no servers, the
-  registry `operation_id`, since a host-relative url can't form one). The
+  the `METHOD:url` pair (or, when the hit's url is host-relative because the
+  spec declares no absolute server, the registry `operation_id` — such an
+  operation is inspect-only; execute refuses it, as there is no upstream
+  host to proxy to). The
   spec `operationId` from `catalog show` also resolves, as a fallback.
   Never build targets by hand and never guess ids.
 - A `METHOD:url` that matches more than one operation fails with an

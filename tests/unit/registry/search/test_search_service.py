@@ -123,9 +123,10 @@ def test_resolve_url_falls_back_to_path_without_servers() -> None:
     [
         ("GET", "https://api.example.com/v1/things", "GET:https://api.example.com/v1/things"),
         ("post", "http://localhost:8080/x", "POST:http://localhost:8080/x"),
-        # No servers in the spec → host-relative url, which would be misread as a
-        # broker-relative METHOD:/path; the target is the registry id instead.
+        # Host-relative url (no servers, or only a relative one) — would be
+        # misread as a broker-relative METHOD:/path; the target is the id.
         ("GET", "/pets", "op_pets"),
+        ("GET", "/api/v3/pets", "op_pets"),
     ],
 )
 def test_build_execute_target(method: str, url: str, expected: str) -> None:

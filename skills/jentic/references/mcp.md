@@ -120,8 +120,9 @@ result carries a non-terminal `status` (queued, tracking timed out), poll
 `get_execution_result` with the `job_id` from that result rather than
 re-importing. Each `search_apis` hit carries a `target` — pass it verbatim
 as the `operation_id` argument of `inspect_operation`/`execute`. It is the
-hit's `METHOD:url` pair (or its registry `operation_id` when the spec
-declares no servers, since a host-relative url can't form one); don't build
+hit's `METHOD:url` pair (or its registry `operation_id` when the hit's url
+is host-relative because the spec declares no absolute server — that
+operation is inspect-only, and `execute` refuses it); don't build
 it yourself from `method` + `url`. If a `METHOD:url` target fails as an
 ambiguous match (409), pin `revision` or pass the hit's `operation_id`.
 

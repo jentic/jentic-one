@@ -288,7 +288,8 @@ func (s *mcpServer) toolSpecs() []mcpToolSpec {
 					"you need an operation you don't already know the method + URL of. " +
 					`Example: {"query": "create github issue", "limit": 5}. Returns one page ` +
 					"as {data, has_more, next_cursor}; each hit carries a target (its " +
-					"METHOD:url, or its operation_id when the spec declares no servers) — " +
+					"METHOD:url, or its operation_id when the url is host-relative — " +
+					"such a target is inspect-only, execute refuses it) — " +
 					"pass it verbatim as inspect_operation's operation_id. When has_more " +
 					"is true, pass next_cursor back " +
 					"as cursor for the next page. Optionally restrict to specific APIs with " +

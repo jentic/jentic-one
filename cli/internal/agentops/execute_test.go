@@ -325,3 +325,36 @@ func TestResolveOperationRejectsTrace(t *testing.T) {
 		})
 	}
 }
+
+// staticInspector resolves any target to a fixed inspect document.
+type staticInspector string
+
+func (s staticInspector) Inspect(_ context.Context, _, _, _ string) ([]byte, error) {
+	return []byte(s), nil
+}
+
+// TestResolveOperationRejectsHostRelativeUpstream pins that an inspected
+// operation whose url is host-relative (its spec declares no absolute server —
+// the case where a search hit's target is the registry operation_id) is refused
+// for execute as a coded RESOLVE_FAILED, instead of being sent to the broker as
+// a malformed "//pets" path. An absolute url still resolves.
+func TestResolveOperationRejectsHostRelativeUpstream(t *testing.T) {
+	op, err := ResolveOperation(context.Background(),
+		staticInspector(`{"method":"get","url":"/pets"}`), "op_pets", "")
+	if op != nil {
+		t.Fatalf("ResolveOperation returned %+v, want none", op)
+	}
+	var coded *ux.CodedError
+	if !errors.As(err, &coded) || coded.Code != ux.CodeResolveFailed {
+		t.Fatalf("error = %T (%v), want RESOLVE_FAILED CodedError", err, err)
+	}
+	if !strings.Contains(coded.Msg, "no upstream host") {
+		t.Errorf("msg = %q, want it to name the missing upstream host", coded.Msg)
+	}
+
+	op, err = ResolveOperation(context.Background(),
+		staticInspector(`{"method":"get","url":"https://api.example.com/pets"}`), "op_pets", "")
+	if err != nil || op == nil || op.URL != "https://api.example.com/pets" {
+		t.Fatalf("absolute url: op=%+v err=%v, want resolved", op, err)
+	}
+}

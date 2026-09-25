@@ -40,8 +40,9 @@ func newSearchCmd(app *app) *cobra.Command {
 			"query. Results are ranked by lexical (full-text) relevance. The\n" +
 			"query can also be passed via -q for piping.\n\n" +
 			"Each hit carries a `target` to pass verbatim to inspect/execute:\n" +
-			"its METHOD:url pair, or its operation_id when the spec declares no\n" +
-			"servers (a host-relative url such as /pets can't form METHOD:url).\n\n" +
+			"its METHOD:url pair, or its operation_id when the url is host-relative\n" +
+			"(the spec declares no absolute server, e.g. /pets). Such an\n" +
+			"operation_id target is inspect-only — execute refuses it.\n\n" +
 			"Output defaults to JSON when stdout is not a TTY (agent-friendly);\n" +
 			"use --json to force JSON on a terminal.",
 		Example: "  jentic search \"list users\"\n" +

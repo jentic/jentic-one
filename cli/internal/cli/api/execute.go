@@ -68,7 +68,10 @@ func newExecuteCmd(app *app) *cobra.Command {
 			"  2. METHOD:/path — a broker-relative path sent to --broker-host\n" +
 			"     verbatim (e.g. GET:/v1/pets); the caller supplies the broker path.\n\n" +
 			"(An opaque registry operation_id also still resolves, for compatibility\n" +
-			"with older scripts — prefer the METHOD:url form.)\n\n" +
+			"with older scripts — prefer the METHOD:url form. A search hit whose\n" +
+			"target is an operation_id has a host-relative url — its spec declares no\n" +
+			"absolute server — so it is inspect-only: execute refuses it with\n" +
+			"RESOLVE_FAILED, since there is no upstream host to proxy to.)\n\n" +
 			"Path parameters, query parameters, headers, and a request body can be\n" +
 			"supplied via flags.\n\n" +
 			"When the broker denies the call (e.g. you have no credential binding\n" +

@@ -58,9 +58,10 @@ class OperationResultResponse(BaseModel):
         description=(
             "The value to pass as the operation target to inspect/execute "
             "(CLI argument; MCP operation_id argument). METHOD:url when url is "
-            "absolute; the registry operation_id when the operation's spec "
-            "declares no servers (url is then host-relative and does not "
-            "resolve as METHOD:url)."
+            "absolute; the registry operation_id when url is host-relative "
+            "(the spec declares no servers, or only a relative one) — such a "
+            "target is inspect-only: with no upstream host there is nothing "
+            "for the broker to proxy, so execute refuses it."
         ),
     )
     name: str | None = None
