@@ -59,3 +59,13 @@ class ExecuteRequestContext(BaseModel):
     # ``CREDENTIAL_ACCESSED`` audit event to this execution.
     credential_id: str | None = None
     credential_name: str | None = None
+
+    @property
+    def operation_id(self) -> str | None:
+        """The discovered operation's opaque registry id, or ``None``.
+
+        Read-only convenience for telemetry/header seams; the identity itself
+        is set through ``operation`` (an ``operation_id=`` kwarg is rejected by
+        ``extra="forbid"``).
+        """
+        return self.operation.id if self.operation else None

@@ -459,6 +459,10 @@ describe('Monitor inter-linking', () => {
 		const operationRow = operationLabel.parentElement as HTMLElement;
 		expect(within(operationRow).getByText('—')).toBeInTheDocument();
 		expect(screen.queryByText('op_chatpost01')).not.toBeInTheDocument();
+		// …but stays reachable for debugging via an icon-only copy affordance.
+		expect(
+			within(operationRow).getByRole('button', { name: 'Copy operation ID' }),
+		).toBeInTheDocument();
 		// No trace-scoped audit link is offered for an unusable trace.
 		expect(
 			screen.queryByRole('link', { name: /View trace .* in the audit log/ }),

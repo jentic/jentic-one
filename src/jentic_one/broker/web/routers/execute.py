@@ -1336,7 +1336,7 @@ def _async_job_payload(
         # this job reads only the flat key — without it the record would persist
         # with operation_id NULL and the repeated-failure detector would skip
         # it. Drop once no pre-operation-dict workers remain (#1382).
-        "operation_id": ctx_req.operation.id if ctx_req.operation else None,
+        "operation_id": ctx_req.operation_id,
         "api_vendor": ctx_req.api_vendor,
         "api_name": ctx_req.api_name,
         "api_version": ctx_req.api_version,

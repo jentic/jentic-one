@@ -164,9 +164,11 @@ class ExecutionHandler:
                         "trace_id": trace_id,
                         "toolkit_id": payload.get("toolkit_id"),
                         # The resolved operation (id + path template + method)
-                        # as one dict; ``operation_id`` rides alongside for
-                        # legacy in-flight jobs that carry only the flat id.
-                        "operation": payload.get("operation"),
+                        # as one dict — the already-folded value, so a malformed
+                        # payload dict is validated (and warned about) once;
+                        # ``operation_id`` rides alongside for legacy in-flight
+                        # jobs that carry only the flat id.
+                        "operation": operation.model_dump() if operation else None,
                         "operation_id": payload.get("operation_id"),
                         "api_vendor": api_vendor,
                         "api_name": api_name,

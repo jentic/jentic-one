@@ -147,7 +147,7 @@ async def run_execution(
     execution_id = execution_id or mint_execution_id()
     started_at = datetime.now(UTC)
     t0 = time.perf_counter()
-    operation_id = ctx_req.operation.id if ctx_req.operation else None
+    operation_id = ctx_req.operation_id
 
     logger.info(
         "execution_started",
@@ -354,7 +354,7 @@ async def persist_streaming_execution(
     (or terminates with an error). Shares metrics instrumentation with the
     buffered path for observability parity.
     """
-    operation_id = ctx_req.operation.id if ctx_req.operation else None
+    operation_id = ctx_req.operation_id
     _executions_total.add(1, {"operation": operation_id or "", "status": status})
     _execution_duration.record(duration_ms, {"operation": operation_id or ""})
 

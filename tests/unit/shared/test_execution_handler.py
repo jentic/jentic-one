@@ -415,9 +415,9 @@ async def test_handler_missing_origin_emits_untagged_event() -> None:
 @pytest.mark.asyncio
 async def test_handler_forwards_operation_dict_in_metadata() -> None:
     """The payload's ``operation`` dict (id + path template + method) reaches
-    the executor metadata untouched, alongside the dual-written flat
-    ``operation_id`` — the executor, not the handler, folds them into an
-    OperationInfo."""
+    the executor metadata — validated once here (the handler folds it for the
+    repeated-failure detector) — alongside the dual-written flat
+    ``operation_id``."""
     executor = _RecordingExecutor(
         UpstreamExecResult(status_code=200, body=b"", content_type=None, duration_ms=1)
     )
@@ -440,8 +440,8 @@ async def test_handler_forwards_operation_dict_in_metadata() -> None:
 @pytest.mark.asyncio
 async def test_handler_forwards_legacy_flat_operation_id() -> None:
     """A job enqueued before the ``operation`` dict existed carries only the
-    flat ``operation_id`` — it reaches the executor metadata with the dict key
-    None, so the executor's legacy fold keeps the id on the record."""
+    flat ``operation_id`` — the handler folds it into an id-only operation, so
+    the executor metadata keeps the id on the record either way."""
     executor = _RecordingExecutor(
         UpstreamExecResult(status_code=200, body=b"", content_type=None, duration_ms=1)
     )
@@ -456,5 +456,9 @@ async def test_handler_forwards_legacy_flat_operation_id() -> None:
     )
 
     assert executor.last_request is not None
-    assert executor.last_request.metadata["operation"] is None
+    assert executor.last_request.metadata["operation"] == {
+        "id": "op_legacy",
+        "path": None,
+        "method": None,
+    }
     assert executor.last_request.metadata["operation_id"] == "op_legacy"
