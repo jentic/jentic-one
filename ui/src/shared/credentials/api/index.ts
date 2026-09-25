@@ -249,6 +249,17 @@ export function useProviders(): UseQueryResult<ProviderDiscoveryResponse> {
 	});
 }
 
+/** How long a popup sign-in may take before the wait gives up (ms). */
+export const POPUP_CONNECT_TIMEOUT_MS = 120_000;
+
+/**
+ * How long a device-code sign-in may take (ms). The human types a code on
+ * another device, and vendors issue those codes for about 15 minutes; the
+ * challenge doesn't carry the vendor's `expires_in`, so this matches the
+ * backend's own default lifetime (900s) rather than the popup's two minutes.
+ */
+export const DEVICE_CODE_CONNECT_TIMEOUT_MS = 15 * 60_000;
+
 export interface RunConnectOptions {
 	/** Optional scopes/extra forwarded to the begin-connect call. */
 	body?: ConnectRequestBody;
@@ -261,7 +272,11 @@ export interface RunConnectOptions {
 	 * 3s) and the popup branch polls at 1.5s.
 	 */
 	pollMs?: number;
-	/** Give up waiting after this long (ms). */
+	/**
+	 * Give up waiting after this long (ms). Defaults to
+	 * {@link POPUP_CONNECT_TIMEOUT_MS} for a popup sign-in and
+	 * {@link DEVICE_CODE_CONNECT_TIMEOUT_MS} for a device-code one.
+	 */
 	timeoutMs?: number;
 	/**
 	 * Abort the wait loops from the outside (e.g. the device-code
@@ -319,7 +334,7 @@ export async function runConnectFlow(
 	id: string,
 	options: RunConnectOptions = {},
 ): Promise<ConnectOutcome> {
-	const { body, mode = 'popup', pollMs, timeoutMs = 120_000, signal } = options;
+	const { body, mode = 'popup', pollMs, timeoutMs = POPUP_CONNECT_TIMEOUT_MS, signal } = options;
 
 	// Advisory wake-up plumbing (#598). We attach the listener *before* the
 	// connect round-trip so a popup that completes very fast (cached IdP consent)
@@ -413,7 +428,7 @@ export async function runConnectFlow(
 			const deviceTickMs = pollMs ?? (challenge.poll_interval_seconds ?? 5) * 1000;
 			const cleanup = options.onDeviceAuthorizationChallenge(challenge);
 			try {
-				const deadline = Date.now() + timeoutMs;
+				const deadline = Date.now() + (options.timeoutMs ?? DEVICE_CODE_CONNECT_TIMEOUT_MS);
 				while (Date.now() < deadline) {
 					await waitTick(deviceTickMs);
 					// User cancelled (the device dialog's Cancel button aborts

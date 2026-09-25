@@ -43,7 +43,7 @@ export function CredentialsPage() {
 	const [deleteTarget, setDeleteTarget] = useState<Credential | null>(null);
 	// ``cancel`` aborts the in-flight ``runConnectFlow`` device loop so the
 	// dialog's Cancel button actually stops the polling (a ``cancelled``
-	// outcome) instead of leaving it to run out the 120s timeout.
+	// outcome) instead of leaving it to run out the device-code timeout.
 	const [deviceCodeState, setDeviceCodeState] = useState<{
 		challenge: DeviceAuthorizationChallengeResponse;
 		credentialName: string;
