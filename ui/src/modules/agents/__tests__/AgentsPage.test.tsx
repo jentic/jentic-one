@@ -27,6 +27,7 @@ import {
 	type Credential,
 } from '@/shared/credentials/api';
 import AgentsPage from '@/modules/agents/pages/AgentsPage';
+import { resetOrphanPurgeAttemptsForTest } from '@/modules/agents/api/hooks';
 
 /** Surfaces the router's current search string so specs can assert `?agent=`. */
 function LocationProbe() {
@@ -134,6 +135,7 @@ describe('AgentsPage — flat agents surface', () => {
 		setToken('test-token');
 		resetAgentsStore();
 		seedComposedStores();
+		resetOrphanPurgeAttemptsForTest();
 	});
 
 	afterEach(() => {
@@ -514,6 +516,102 @@ describe('AgentsPage — flat agents surface', () => {
 		// The line is the only stats surface, so each clause renders once.
 		expect(screen.getAllByTestId('stat-configured')).toHaveLength(1);
 		expect(screen.getAllByTestId('stat-operations')).toHaveLength(1);
+	});
+
+	// --- Orphan bindings: a deleted credential's leftover link ---------------
+
+	describe('a binding whose credential was deleted', () => {
+		/** Record every purge the grid fires; the row stays, so a remount would see it. */
+		function recordPurges(status = 204): string[] {
+			const purges: string[] = [];
+			worker.use(
+				http.delete('/agents/:id/credentials/:cid', ({ params, request }) => {
+					purges.push(
+						`${String(params.cid)}?purge=${new URL(request.url).searchParams.get('purge')}`,
+					);
+					return new HttpResponse(null, { status });
+				}),
+			);
+			return purges;
+		}
+
+		function seedOrphan(agentId: string) {
+			// The backend keeps the binding after the credential delete (#1426),
+			// enriched with no name and serving nothing.
+			seedCredentialBindings([
+				{ agent_id: agentId, credential_id: 'cred_deleted_9', name: null, serves: [] },
+			]);
+		}
+
+		it('is hidden: no tile, no remove verb, outside the credentials count', async () => {
+			recordPurges();
+			seedOrphan('agnt_active_1');
+			renderPage('/?agent=agnt_active_1');
+			await screen.findByText('Slack');
+
+			// Two live credentials; the dead link unlocks nothing and isn't one.
+			await waitFor(() =>
+				expect(stripFigure('credentials')).toHaveTextContent('2 credentials'),
+			);
+			expect(screen.getAllByTestId('api-tile')).toHaveLength(2);
+			expect(screen.queryByTestId('orphan-binding-tile')).not.toBeInTheDocument();
+			expect(screen.queryByText('Credential deleted')).not.toBeInTheDocument();
+			expect(screen.queryByRole('button', { name: /^Remove/ })).not.toBeInTheDocument();
+		});
+
+		it('never asks for the dead link’s rules (that read 404s)', async () => {
+			recordPurges();
+			seedOrphan('agnt_active_1');
+			const requested: string[] = [];
+			const onRequest = ({ request }: { request: Request }) => {
+				requested.push(new URL(request.url).pathname);
+			};
+			worker.events.on('request:start', onRequest);
+			try {
+				renderPage('/?agent=agnt_active_1');
+				await screen.findByText('1 access rule');
+			} finally {
+				worker.events.removeListener('request:start', onRequest);
+			}
+			expect(requested.some((p) => p.includes('/credentials/cred_slack_1/agents/'))).toBe(
+				true,
+			);
+			expect(requested.some((p) => p.includes('/credentials/cred_deleted_9/'))).toBe(false);
+		});
+
+		it('leaves an agent whose only binding is an orphan on the empty state', async () => {
+			recordPurges();
+			seedOrphan('agnt_disabled_1');
+			renderPage('/?agent=agnt_disabled_1');
+
+			expect(
+				await screen.findByText('legacy-scraper can reach nothing yet'),
+			).toBeInTheDocument();
+			await waitFor(() =>
+				expect(stripFigure('credentials')).toHaveTextContent('0 credentials'),
+			);
+			expect(screen.queryByTestId('api-tile')).not.toBeInTheDocument();
+		});
+
+		it('purges it quietly, once per session — a failure is not retried on remount', async () => {
+			// A 403 (read-only viewer) leaves the row in place, so a remount still sees it.
+			const purges = recordPurges(403);
+			seedOrphan('agnt_active_1');
+			const first = renderPage('/?agent=agnt_active_1');
+			await waitFor(() => expect(purges).toEqual(['cred_deleted_9?purge=true']));
+			await screen.findByText('Slack');
+			first.unmount();
+
+			renderPage('/?agent=agnt_active_1');
+			await screen.findByText('Slack');
+			await waitFor(() =>
+				expect(stripFigure('credentials')).toHaveTextContent('2 credentials'),
+			);
+			expect(purges).toEqual(['cred_deleted_9?purge=true']);
+			// Silent either way: no toast, no error on the grid.
+			expect(document.querySelector('[data-sonner-toast]')).toBeNull();
+			expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+		});
 	});
 
 	it('states the panel identity once: APIs band + aria-label, no header h2', async () => {
@@ -1483,5 +1581,69 @@ describe('AgentsPage — Add APIs: Back from the setup queue to the tray', () =>
 		expect(
 			await screen.findByRole('button', { name: 'Finish adding 2 APIs' }),
 		).toBeInTheDocument();
+	});
+
+	it('after closing midway and reloading, only the API actually bound reads Already added', async () => {
+		const user = userEvent.setup();
+		const first = renderPage('/?agent=agnt_disabled_1');
+		await user.click(await screen.findByRole('button', { name: 'Add APIs' }));
+		for (const name of ['Stripe', 'Notion']) await user.click(await trayRow(name));
+		const tray = screen.getByRole('dialog', { name: 'Add APIs' });
+		await waitFor(() =>
+			expect(within(tray).getByRole('button', { name: 'Continue' })).toBeEnabled(),
+		);
+		await user.click(within(tray).getByRole('button', { name: 'Continue' }));
+		await user.click(await screen.findByRole('button', { name: 'Use this credential' }));
+		await waitFor(() => expect(queueRows()[0]).toBe('Stripe:added'));
+		await user.click(screen.getByRole('button', { name: 'Close for now' }));
+		expect(
+			await screen.findByRole('button', { name: 'Finish adding 1 API' }),
+		).toBeInTheDocument();
+
+		// A reload drops the unfinished batch; nothing about it is remembered.
+		first.unmount();
+		renderPage('/?agent=agnt_disabled_1');
+		await user.click(await screen.findByRole('button', { name: 'Add APIs' }));
+		const stripe = await trayRow('Stripe');
+		expect(within(stripe).getByText('Already added')).toBeInTheDocument();
+		// Queued but never bound: still a plain, pickable row.
+		const notion = await trayRow('Notion');
+		expect(notion).toBeEnabled();
+		expect(within(notion).queryByText(/Already added|Added/)).not.toBeInTheDocument();
+	});
+
+	it('drops an owed API from "Finish adding" once the agent reaches it', async () => {
+		const user = userEvent.setup();
+		const { queryClient } = renderPage('/?agent=agnt_disabled_1');
+		await user.click(await screen.findByRole('button', { name: 'Add APIs' }));
+		for (const name of ['Stripe', 'Notion']) await user.click(await trayRow(name));
+		const tray = screen.getByRole('dialog', { name: 'Add APIs' });
+		await waitFor(() =>
+			expect(within(tray).getByRole('button', { name: 'Continue' })).toBeEnabled(),
+		);
+		await user.click(within(tray).getByRole('button', { name: 'Continue' }));
+		await user.click(await screen.findByRole('button', { name: 'Close for now' }));
+		expect(
+			await screen.findByRole('button', { name: 'Finish adding 2 APIs' }),
+		).toBeInTheDocument();
+
+		// Stripe gets bound some other way while the batch waits.
+		seedCredentialBindings([
+			{
+				agent_id: 'agnt_disabled_1',
+				credential_id: 'cred_stripe_1',
+				name: 'Stripe key',
+				serves: [{ api_vendor: 'stripe.com', api_name: 'default', api_version: null }],
+			},
+		]);
+		await queryClient.invalidateQueries();
+
+		expect(
+			await screen.findByRole('button', { name: 'Finish adding 1 API' }),
+		).toBeInTheDocument();
+		// Re-entry lands on the queue with only what is still owed.
+		await user.click(screen.getByRole('button', { name: 'Finish adding 1 API' }));
+		expect(await screen.findByText('Set up 1 API')).toBeInTheDocument();
+		expect(queueRows()).toEqual(['Notion:active']);
 	});
 });

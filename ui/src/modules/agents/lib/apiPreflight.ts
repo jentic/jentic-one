@@ -57,6 +57,28 @@ function servedCoversPick(served: ServedApiEntity, api: SelectedApi): boolean {
 	return apiScopeCovers(served, api);
 }
 
+/** The binding through which the agent already reaches this API, if any. */
+export function bindingServingApi(
+	bindings: CredentialBindingEntity[],
+	api: SelectedApi,
+): CredentialBindingEntity | undefined {
+	return bindings.find((b) => b.serves.some((s) => servedCoversPick(s, api)));
+}
+
+/**
+ * The part of an owed setup batch that is still owed: items the agent now reaches
+ * through a live binding (added by the queue, or elsewhere meanwhile) are done, so
+ * they neither count toward "Finish adding N" nor reopen in the queue. Returns the
+ * input array itself when nothing changed, so a caller can compare by reference.
+ */
+export function stillOwedItems(
+	items: PreflightItem[],
+	bindings: CredentialBindingEntity[],
+): PreflightItem[] {
+	const owed = items.filter((item) => !bindingServingApi(bindings, item.api));
+	return owed.length === items.length ? items : owed;
+}
+
 /**
  * Does an org credential cover this API? Match on API IDENTITY, never vendor
  * alone: "Stripe — Production" and "Stripe — Sandbox" are not interchangeable.
@@ -87,7 +109,7 @@ export function preflightApi(api: SelectedApi, inputs: PreflightInputs): Preflig
 	const key = apiRefKey(api);
 	const importsApi = api.source === 'catalog' && !api.registered;
 
-	const binding = inputs.bindings.find((b) => b.serves.some((s) => servedCoversPick(s, api)));
+	const binding = bindingServingApi(inputs.bindings, api);
 	if (binding) {
 		return {
 			key,

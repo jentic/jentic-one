@@ -23,6 +23,7 @@
  */
 import { http, HttpResponse } from 'msw';
 import { SERVICE_ACCOUNT_SUCCESSOR_REGISTRAR } from '@/shared/lib';
+import { findMockCredential } from '@/shared/credentials/mocks/handlers';
 
 type Status = 'pending' | 'active' | 'rejected' | 'disabled' | 'archived';
 
@@ -1222,11 +1223,24 @@ export const agentsHandlers = [
 				{ status: 409 },
 			);
 		}
+		// The backend enriches a live binding from its credential: its name, and the
+		// API scope it serves. Only a deleted credential leaves both empty.
+		const credential = findMockCredential(body.credential_id);
 		const row = seedBinding({
 			id: genId('acb'),
 			agent_id: params.id as string,
 			credential_id: body.credential_id,
 			bound_at: now(),
+			name: credential?.name ?? null,
+			serves: credential
+				? [
+						{
+							api_vendor: credential.api.vendor,
+							api_name: credential.api.name ?? null,
+							api_version: credential.api.version || null,
+						},
+					]
+				: [],
 		});
 		credentialBindings.push(row);
 		// The phase-1 bind creates the binding with ZERO rules (default deny);

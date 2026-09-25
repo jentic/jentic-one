@@ -20,7 +20,7 @@ import {
 	useQuery,
 	useQueryClient,
 } from '@tanstack/react-query';
-import { useCallback, useMemo } from 'react';
+import { useCallback, useEffect, useMemo } from 'react';
 import { toast } from '@/shared/ui';
 import {
 	approveAgent,
@@ -427,6 +427,46 @@ export function useUnbindAgentCredential(agentId: string | null) {
 		},
 		onError: (e) => notifyError(e, 'Failed to update the binding.'),
 	});
+}
+
+/**
+ * Orphan bindings already purged (or tried) this session, as `agentId:credentialId`.
+ * Module-level so a remount never re-fires the same purge: one attempt per orphan,
+ * whatever it returned.
+ */
+const attemptedOrphanPurges = new Set<string>();
+
+/** Test-only: forget which orphans were attempted, so each spec starts fresh. */
+export function resetOrphanPurgeAttemptsForTest(): void {
+	attemptedOrphanPurges.clear();
+}
+
+/**
+ * Quietly purge an agent's orphaned bindings — ones whose credential was deleted
+ * (a credential delete leaves its bindings behind, #1426). The caller decides
+ * which bindings are orphans and must only pass ones proven against a COMPLETE,
+ * successfully drained credential list; this hook only fires the purges.
+ *
+ * Silent by design: the grid already hides orphans, so a success needs no toast,
+ * and a failure (403 for a read-only viewer, 404 for an already-gone row) just
+ * leaves the orphan hidden. Each orphan is attempted once per session.
+ */
+export function usePurgeOrphanBindings(agentId: string | null, orphanCredentialIds: string[]) {
+	const qc = useQueryClient();
+	useEffect(() => {
+		if (!agentId) return;
+		for (const credentialId of orphanCredentialIds) {
+			const key = `${agentId}:${credentialId}`;
+			if (attemptedOrphanPurges.has(key)) continue;
+			attemptedOrphanPurges.add(key);
+			unbindCredentialFromAgent(agentId, credentialId, true)
+				.catch(() => undefined)
+				.finally(() => {
+					// A 404 means the row is gone too — refresh either way.
+					qc.invalidateQueries({ queryKey: agentsKeys.credentialBindings(agentId) });
+				});
+		}
+	}, [agentId, orphanCredentialIds, qc]);
 }
 
 /** Lift a suspended binding (`POST …/credentials/{id}:resume`). */

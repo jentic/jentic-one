@@ -93,6 +93,12 @@ export function seedMockCredentials(rows: Credential[]): void {
 	store.push(...rows);
 }
 
+/** Test/mock seam: look up one stored credential, so another module's mock can
+ * enrich a row that references it the way the backend does. */
+export function findMockCredential(credentialId: string): Credential | undefined {
+	return store.find((c) => c.credential_id === credentialId);
+}
+
 /** Build a redacted credential for seeding tests. */
 export function makeMockCredential(overrides: Partial<Credential> = {}): Credential {
 	seq += 1;

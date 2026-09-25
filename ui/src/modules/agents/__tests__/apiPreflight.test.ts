@@ -14,6 +14,7 @@ import {
 	preflightApis,
 	preflightTally,
 	preflightTallyLabel,
+	stillOwedItems,
 	type PreflightInputs,
 } from '@/modules/agents/lib/apiPreflight';
 import { apiRefKey } from '@/shared/credentials/lib/apiIdentity';
@@ -328,5 +329,21 @@ describe('coveringCountLabel', () => {
 		expect(coveringCountLabel(2)).toBe(
 			'2 of your credentials cover this API — use one or add a new one',
 		);
+	});
+});
+
+describe('stillOwedItems', () => {
+	const stripe = preflightApi(makePick(), inputs());
+	const notion = preflightApi(makePick({ vendor: 'notion.so', label: 'Notion' }), inputs());
+
+	it('drops the items a live binding now serves, keeping the rest in order', () => {
+		expect(stillOwedItems([stripe, notion], [makeBinding()])).toEqual([notion]);
+	});
+
+	it('hands back the same array when nothing is served, so a caller can compare by reference', () => {
+		const batch = [stripe, notion];
+		expect(stillOwedItems(batch, [])).toBe(batch);
+		// A binding serving nothing (a deleted credential's leftover) reaches nothing.
+		expect(stillOwedItems(batch, [makeBinding({ serves: [] })])).toBe(batch);
 	});
 });

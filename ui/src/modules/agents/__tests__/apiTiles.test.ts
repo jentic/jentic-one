@@ -8,6 +8,9 @@ import {
 	agentApiCount,
 	agentSetupGapCount,
 	composeApiTiles,
+	isOrphanBinding,
+	partitionBindings,
+	provenOrphanCredentialIds,
 	tileStats,
 } from '@/modules/agents/lib/apiTiles';
 import { credentialAwaitsConsent } from '@/shared/credentials/lib/credentialIdentity';
@@ -391,5 +394,50 @@ describe('agentApiCount', () => {
 	it('is zero for an agent with no bindings', () => {
 		expect(agentApiCount([], apis)).toBe(0);
 		expect(agentApiCount(undefined, apis)).toBe(0);
+	});
+});
+
+describe('orphan bindings (credential deleted, #1426)', () => {
+	const orphan = makeBinding({
+		id: 'acb_dead',
+		credentialId: 'cred_gone',
+		name: null,
+		serves: [],
+	});
+
+	it('flags the backend shape — no name, serving nothing — even before the credentials drain', () => {
+		expect(isOrphanBinding(orphan)).toBe(true);
+	});
+
+	it('flags a named binding serving nothing once a complete list lacks its credential', () => {
+		const named = makeBinding({ credentialId: 'cred_gone', name: 'Old key', serves: [] });
+		expect(isOrphanBinding(named, new Map(), false)).toBe(false);
+		expect(isOrphanBinding(named, new Map(), true)).toBe(true);
+	});
+
+	it('never flags a binding that still serves an API, even against a stale list', () => {
+		const fresh = makeBinding({ credentialId: 'cred_new' });
+		expect(isOrphanBinding(fresh, new Map(), true)).toBe(false);
+	});
+
+	it('partitions live bindings from orphans and draws no tile for an orphan', () => {
+		const live = makeBinding();
+		const { live: kept, orphans } = partitionBindings([live, orphan], [makeCredential()], true);
+		expect(kept).toEqual([live]);
+		expect(orphans).toEqual([orphan]);
+		expect(composeApiTiles([orphan], [], [])).toEqual([]);
+	});
+
+	it('proves an orphan for purging only against a complete credentials list', () => {
+		const named = makeBinding({ credentialId: 'cred_gone', name: 'Old key', serves: [] });
+		// A null name hides a binding, but only a complete list may delete it.
+		expect(provenOrphanCredentialIds([orphan], [], false)).toEqual([]);
+		expect(provenOrphanCredentialIds([orphan, named], [], true)).toEqual([
+			'cred_gone',
+			'cred_gone',
+		]);
+		// A credential the complete list still has is not gone, whatever the name says.
+		const listed = makeCredential({ credential_id: 'cred_gone' });
+		expect(provenOrphanCredentialIds([orphan], [listed], true)).toEqual([]);
 	});
 });

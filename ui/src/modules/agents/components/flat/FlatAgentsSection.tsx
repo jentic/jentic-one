@@ -39,6 +39,7 @@ import {
 	useDisableAgent,
 	useArchiveAgent,
 	useUnbindAgentCredential,
+	usePurgeOrphanBindings,
 	useResumeAgentCredentialBinding,
 	type ActorStatus,
 	type AgentEntity,
@@ -47,6 +48,8 @@ import {
 	agentApiCount,
 	agentSetupGapCount,
 	composeApiTiles,
+	partitionBindings,
+	provenOrphanCredentialIds,
 	tileStats,
 } from '@/modules/agents/lib/apiTiles';
 import { AgentStrip } from '@/modules/agents/components/flat/AgentStrip';
@@ -62,7 +65,7 @@ import { AgentCreateSheet } from '@/modules/agents/components/AgentCreateSheet';
 import { DcrQuickstart } from '@/modules/agents/components/DcrQuickstart';
 import { AddApisTray } from '@/modules/agents/components/flat/AddApisTray';
 import { ApiSetupQueue } from '@/modules/agents/components/flat/ApiSetupQueue';
-import type { PreflightItem } from '@/modules/agents/lib/apiPreflight';
+import { stillOwedItems, type PreflightItem } from '@/modules/agents/lib/apiPreflight';
 import type { QueueBackSeed } from '@/modules/agents/lib/setupQueue';
 import { AgentDock, type AgentDockSurface } from '@/modules/agents/components/flat/AgentDock';
 import {
@@ -546,13 +549,35 @@ function SelectedAgentPanel({
 			: resumeBinding.isPending
 				? resumeBinding.variables
 				: null;
-	const credentialIds = useMemo(() => (bindings ?? []).map((b) => b.credentialId), [bindings]);
+	// Bindings whose credential was deleted are hidden: no tile, no count, and
+	// never asked for their rules (that read 404s without a credential). The ones
+	// a complete credentials list proves orphaned are purged quietly.
+	const { live: liveBindings, orphans: orphanBindings } = useMemo(
+		() =>
+			partitionBindings(bindings ?? [], credentialsSource.items, credentialsSource.complete),
+		[bindings, credentialsSource.items, credentialsSource.complete],
+	);
+	const credentialIds = useMemo(() => liveBindings.map((b) => b.credentialId), [liveBindings]);
 	const ruleSummaries = useAgentBindingRuleSummaries(agent.id, credentialIds);
+	const purgeableOrphanIds = useMemo(
+		() =>
+			provenOrphanCredentialIds(
+				orphanBindings,
+				credentialsSource.items,
+				credentialsSource.complete && !credentialsSource.error,
+			),
+		[
+			orphanBindings,
+			credentialsSource.items,
+			credentialsSource.complete,
+			credentialsSource.error,
+		],
+	);
+	usePurgeOrphanBindings(agent.id, purgeableOrphanIds);
 
 	const tiles = useMemo(
-		() =>
-			bindings ? composeApiTiles(bindings, credentialsSource.items, apisSource.items) : [],
-		[bindings, credentialsSource.items, apisSource.items],
+		() => composeApiTiles(liveBindings, credentialsSource.items, apisSource.items),
+		[liveBindings, credentialsSource.items, apisSource.items],
 	);
 	const stats = useMemo(() => tileStats(tiles), [tiles]);
 
@@ -581,8 +606,9 @@ function SelectedAgentPanel({
 	);
 
 	// A grid joined against a PARTIAL list asserts states it can't prove: hold the
-	// skeleton while either source drains. No bindings, no gate.
-	const hasBindings = (bindings?.length ?? 0) > 0;
+	// skeleton while either source drains. No live bindings, no gate — a hidden
+	// orphan alone must not hold the skeleton.
+	const hasBindings = liveBindings.length > 0;
 	const sourcesError = credentialsSource.error ?? apisSource.error;
 	const sourcesDraining = !sourcesError && (!credentialsSource.complete || !apisSource.complete);
 
@@ -599,7 +625,7 @@ function SelectedAgentPanel({
 		? undefined
 		: bindingsFailed
 			? null
-			: (bindings?.length ?? 0);
+			: liveBindings.length;
 	// Monitor figures: `null` (403 or failure) → the strip omits them.
 	const stripUsage = usageQuery.isError ? null : usageQuery.data;
 	const stripLastActivity = executionsQuery.isError
@@ -628,7 +654,22 @@ function SelectedAgentPanel({
 					: null;
 
 	// Re-entry lands on the queue while a batch is owed — those picks are decided.
-	const openAddApis = (): void => setAddStep(queueBatch.length > 0 ? 'queue' : 'tray');
+	// "Owed" is judged against the live bindings whenever the queue is shut: an API
+	// the agent now reaches (bound by the queue, or elsewhere meanwhile) is done, so
+	// it leaves the batch rather than holding "Finish adding N" or reopening. Never
+	// pruned while the queue is open — it tracks its own progress.
+	const queueShut = addStep === 'closed';
+	const owedBatch = useMemo(
+		() =>
+			queueShut && bindings !== undefined
+				? stillOwedItems(queueBatch, liveBindings)
+				: queueBatch,
+		[queueShut, bindings, queueBatch, liveBindings],
+	);
+	useEffect(() => {
+		if (owedBatch !== queueBatch) onQueueBatchChange(agent.id, owedBatch);
+	}, [owedBatch, queueBatch, onQueueBatchChange, agent.id]);
+	const openAddApis = (): void => setAddStep(owedBatch.length > 0 ? 'queue' : 'tray');
 
 	// Bound only while the verb is available, so it never fires a no-op.
 	useHotkey('a', openAddApis, canBind && addStep === 'closed');
@@ -646,8 +687,8 @@ function SelectedAgentPanel({
 		<span className="flex items-center gap-2">
 			<Button size="sm" disabled={!canBind} onClick={openAddApis}>
 				<Plus className="h-4 w-4" />
-				{queueBatch.length > 0
-					? `Finish adding ${queueBatch.length} ${queueBatch.length === 1 ? 'API' : 'APIs'}`
+				{owedBatch.length > 0
+					? `Finish adding ${owedBatch.length} ${owedBatch.length === 1 ? 'API' : 'APIs'}`
 					: 'Add APIs'}
 			</Button>
 			{bindBlockedReason && (

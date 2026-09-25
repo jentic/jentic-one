@@ -16,6 +16,7 @@ export {
 	useBindableCredentialsForAgent,
 	useBindAgentCredential,
 	useUnbindAgentCredential,
+	usePurgeOrphanBindings,
 	useResumeAgentCredentialBinding,
 	useInvalidateCredentialBindingSurfaces,
 	useAgentBindingPermissions,
