@@ -41,13 +41,17 @@ export function CredentialDeleteDialog({
 	const credentialAgents = useAllCredentialAgents(credentialId, { enabled: open });
 	const rows = credentialAgents.items;
 
-	// An empty list is a real answer, but "will also remove 0 dependents" reads
-	// worse than the generic warning — and a partial drain would understate it.
+	// An empty list is a real answer, but a "0 agents" headline reads worse than
+	// the generic warning — and a partial drain would understate it.
+	//
+	// Deleting a credential does not remove its agent bindings (they stay behind,
+	// pointing at nothing), so the copy says the agents lose access — never that
+	// the delete removes them.
 	const dependents: CascadeDependentGroup[] | undefined =
 		credentialAgents.complete && rows.length > 0
 			? [
 					{
-						label: 'agent binding',
+						label: 'bound agent',
 						count: rows.length,
 						names: [
 							...rows
@@ -73,6 +77,11 @@ export function CredentialDeleteDialog({
 			entityType="credential"
 			entityName={credentialName}
 			dependents={dependents}
+			dependentsHeadline={
+				rows.length === 1
+					? '1 agent uses this credential and will lose access to it.'
+					: `${rows.length} agents use this credential and will lose access to it.`
+			}
 			loading={loading}
 			error={error}
 		/>

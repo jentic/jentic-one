@@ -7,6 +7,7 @@ function Harness({
 	entityType = 'credential',
 	entityName = 'Stripe (prod)',
 	dependents,
+	dependentsHeadline,
 	loading = false,
 	error,
 	confirmWord,
@@ -15,6 +16,7 @@ function Harness({
 	entityType?: CascadeEntityType;
 	entityName?: string;
 	dependents?: CascadeDependentGroup[];
+	dependentsHeadline?: string;
 	loading?: boolean;
 	error?: Error | string | null;
 	confirmWord?: string;
@@ -33,6 +35,7 @@ function Harness({
 				entityType={entityType}
 				entityName={entityName}
 				dependents={dependents}
+				dependentsHeadline={dependentsHeadline}
 				loading={loading}
 				error={error}
 				confirmWord={confirmWord}
@@ -131,6 +134,26 @@ describe('CascadeDeleteDialog', () => {
 		expect(screen.getByText('1 API key')).toBeInTheDocument();
 		expect(screen.getByText('Build Bot')).toBeInTheDocument();
 		expect(screen.getByText('ci-key')).toBeInTheDocument();
+	});
+
+	it('uses the caller-supplied headline instead of the removal copy', () => {
+		renderWithProviders(
+			<Harness
+				entityType="credential"
+				entityName="GitHub key"
+				dependents={[
+					{ label: 'bound agent', count: 2, names: ['Build Bot', 'Deploy Bot'] },
+				]}
+				dependentsHeadline="2 agents use this credential and will lose access to it."
+			/>,
+		);
+
+		expect(
+			screen.getByText('2 agents use this credential and will lose access to it.'),
+		).toBeInTheDocument();
+		expect(screen.queryByText(/will also remove/i)).not.toBeInTheDocument();
+		expect(screen.getByText('2 bound agents')).toBeInTheDocument();
+		expect(screen.getByText('Deploy Bot')).toBeInTheDocument();
 	});
 
 	it('falls back to the generic warning when dependents is an empty array', () => {

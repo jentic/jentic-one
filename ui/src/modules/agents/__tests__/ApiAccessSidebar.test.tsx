@@ -560,7 +560,12 @@ describe('ApiAccessSidebar — the API tile access panel', () => {
 		// The blast radius names names — including the other agent.
 		expect(await inConfirm.findByText(/legacy-scraper/)).toBeInTheDocument();
 		expect(inConfirm.getByText(/support-agent \(this agent\)/)).toBeInTheDocument();
-		expect(inConfirm.getByText(/2 agent bindings/)).toBeInTheDocument();
+		expect(
+			inConfirm.getByText('2 agents use this credential and will lose access to it.'),
+		).toBeInTheDocument();
+		expect(inConfirm.getByText('2 bound agents')).toBeInTheDocument();
+		// The delete leaves bindings behind, so it must not promise to remove them.
+		expect(inConfirm.queryByText(/will also remove/i)).not.toBeInTheDocument();
 
 		// The destructive verb sits behind the type-to-confirm gate.
 		const confirmButton = inConfirm.getByRole('button', { name: 'Delete credential' });

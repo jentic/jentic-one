@@ -41,6 +41,13 @@ interface CascadeDeleteDialogProps {
 	 * renders a strong, type-specific generic warning instead.
 	 */
 	dependents?: CascadeDependentGroup[];
+	/**
+	 * Replaces the blast-radius headline ("Deleting this X will also remove N
+	 * dependents"). Pass it when the dependents are *affected* by the delete
+	 * rather than removed with it, so the copy doesn't promise a cascade the
+	 * backend doesn't perform.
+	 */
+	dependentsHeadline?: string;
 	loading?: boolean;
 	error?: Error | string | null;
 	/**
@@ -147,6 +154,7 @@ export function CascadeDeleteDialog({
 	entityType,
 	entityName,
 	dependents,
+	dependentsHeadline,
 	loading = false,
 	error,
 	confirmWord,
@@ -241,7 +249,11 @@ export function CascadeDeleteDialog({
 					</div>
 
 					{hasDependents ? (
-						<BlastRadius noun={copy.noun} dependents={dependents} />
+						<BlastRadius
+							noun={copy.noun}
+							dependents={dependents}
+							headline={dependentsHeadline}
+						/>
 					) : (
 						<div className="border-danger/30 bg-danger/5 text-foreground/90 flex gap-2.5 rounded-lg border px-3.5 py-3 text-xs leading-relaxed">
 							<AlertTriangle className="text-danger mt-0.5 h-4 w-4 shrink-0" />
@@ -283,7 +295,15 @@ export function CascadeDeleteDialog({
  * endpoint exists, this branch is dormant and the dialog shows the generic
  * warning instead.
  */
-function BlastRadius({ noun, dependents }: { noun: string; dependents: CascadeDependentGroup[] }) {
+function BlastRadius({
+	noun,
+	dependents,
+	headline,
+}: {
+	noun: string;
+	dependents: CascadeDependentGroup[];
+	headline?: string;
+}) {
 	const total = dependents.reduce((sum, g) => sum + g.count, 0);
 
 	return (
@@ -291,8 +311,8 @@ function BlastRadius({ noun, dependents }: { noun: string; dependents: CascadeDe
 			<div className="flex items-center gap-2">
 				<AlertTriangle className="text-danger h-4 w-4 shrink-0" />
 				<span className="text-foreground text-xs font-medium">
-					Deleting this {noun} will also remove {total}{' '}
-					{total === 1 ? 'dependent' : 'dependents'}
+					{headline ??
+						`Deleting this ${noun} will also remove ${total} ${total === 1 ? 'dependent' : 'dependents'}`}
 				</span>
 			</div>
 			<ul className="space-y-2.5">
