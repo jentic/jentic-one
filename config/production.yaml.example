@@ -48,10 +48,10 @@ server:
   reload: false
   # THE public origin of this deployment (scheme + host [+ port] as clients
   # reach it, e.g. behind your load balancer / ingress). This one knob drives
-  # every externally-visible URL: OAuth connect redirect_uri, OIDC issuer &
-  # JWT-Bearer audience, DCR registration_client_uri, access-request approval
-  # links, async-job _links.self, and the 424 provisioning_url. Set this
-  # instead of pinning each of those separately.
+  # the control/auth surfaces' externally-visible URLs: OAuth connect
+  # redirect_uri, OIDC issuer & JWT-Bearer audience, DCR
+  # registration_client_uri, the SPA login callback, and access-request
+  # approval links. Set this instead of pinning each of those separately.
   public_base_url: "https://jentic.example.com"
   # Locality label reported by the public GET /instance identity probe:
   # "local" (default) for a self-hosted install on your own machine/network,
@@ -80,9 +80,12 @@ apps:
 # specific knob wins over public_base_url:
 #   auth.canonical_base_url                       # OIDC issuer / JWT audience / DCR
 #   control.access_requests.canonical_base_url    # approval deep links
-#   broker.jobs_api_base_url                       # async-job self links
-#   broker.account_linking_base_url                # 424 provisioning_url
 #   credentials.providers.<id>.redirect_uri        # OAuth callback override
+#
+# Independent of public_base_url (they name other origins, so they never
+# inherit it): broker.jobs_api_base_url (async-job _links.self; unset keeps a
+# broker-relative /jobs/{id}) and broker.account_linking_base_url (the 424
+# provisioning_url; unset omits it).
 
 auth:
   platform_clients:

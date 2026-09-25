@@ -88,8 +88,9 @@ control:
             # Explicit override: the browser reaches the callback via the
             # gateway NodePort (30080), which differs from the in-cluster
             # public_base_url (localhost:8000). The startup
-            # public_url_origin_mismatch check excludes provider redirect_uri
-            # overrides, so this split origin fires no warning.
+            # public_url_origin_mismatch check compares provider redirect_uri
+            # overrides only on a loopback bind; the pod binds all interfaces,
+            # so this split origin fires no warning.
             redirect_uri: "http://127.0.0.1:30080/credentials/oauth/callback"
 
 global:

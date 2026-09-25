@@ -347,3 +347,18 @@ func TestRenderEncryptionKeysetOverrideWritesVerbatim(t *testing.T) {
 		t.Errorf("entry[1] not preserved: %v", entries[1])
 	}
 }
+
+func TestRenderPublicBaseURLOmittedForLocalhostAlias(t *testing.T) {
+	// `localhost` and the backend-derived 127.0.0.1 reach the same process, so
+	// the answer must not pin public_base_url (which would freeze the port).
+	d := NewDraft()
+	d.RuntimePath = RuntimeDocker
+	d.ServerHost = "localhost"
+	d.ServerPort = "8020"
+	out := renderToMap(t, d)
+
+	server := out["server"].(map[string]any)
+	if _, ok := server["public_base_url"]; ok {
+		t.Errorf("public_base_url must be omitted for a localhost bind, got %v", server["public_base_url"])
+	}
+}

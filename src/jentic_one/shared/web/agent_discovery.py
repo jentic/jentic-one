@@ -33,7 +33,8 @@ are tooling/onboarding documents, not a product API.
 
 Split deployments: the router is mounted on every surface app, but the links
 in ``llms.txt`` span surfaces (auth, registry, control), so standalone
-surfaces should set ``auth.canonical_base_url`` to the gateway URL — otherwise
+surfaces should set ``server.public_base_url`` (or ``auth.canonical_base_url``)
+to the gateway URL — otherwise
 the rendered links point at the single surface's own host and may 404 there.
 """
 

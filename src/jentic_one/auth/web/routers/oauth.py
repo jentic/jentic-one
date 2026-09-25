@@ -434,7 +434,7 @@ async def token_endpoint(
                 oauth_error_code="invalid_request",
             )
         access_token, refresh_token, scopes = await assertion_svc.verify_and_exchange(
-            body.assertion
+            body.assertion, request_base_url=deployment_base_url(ctx.config, request)
         )
         return TokenResponse(
             access_token=access_token,

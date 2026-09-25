@@ -29,13 +29,16 @@ from jentic_one.control.services.toolkit_flattening import Finding, ToolkitFlatt
 from jentic_one.shared.config import (
     AppConfig,
     check_public_url_consistency,
+    has_spa_platform_client,
     load_config,
     oneshot_config_source_active,
+    resolved_auth_base_url,
 )
 from jentic_one.shared.context import Context
 from jentic_one.shared.logging import configure_logging
 from jentic_one.shared.metrics import configure_metrics
 from jentic_one.shared.tracing import configure_tracing
+from jentic_one.shared.url import is_loopback_host
 from jentic_one.shared.web.app_factory import SURFACE_MODULES, create_combined_app
 from jentic_one.wiring import build_default_container
 from jentic_one.wiring import install_broker_registry_resolver as _install_broker_registry_resolver
@@ -152,6 +155,38 @@ def _serve() -> None:
                 "links/callbacks built from it may be unreachable. Set "
                 "server.public_base_url to the deployment's public origin, or "
                 "align this field with it."
+            ),
+        )
+
+    # The SPA platform client is synthesized from the resolved origin when
+    # config omits it; a plain-http non-loopback origin can't host one, and
+    # SPA login then fails with a generic redirect_uri error. Name the fix.
+    if "auth" in config.apps and not has_spa_platform_client(config):
+        logger.warning(
+            "spa_platform_client_unavailable",
+            origin=resolved_auth_base_url(config),
+            detail=(
+                "no 'jentic-one-spa' platform client could be registered for this "
+                "origin (platform redirect URIs must be https or loopback), so SPA "
+                "login will fail. Set server.public_base_url to the https origin "
+                "the browser uses, or declare auth.platform_clients explicitly."
+            ),
+        )
+
+    # With no configured public origin on a non-loopback bind, request-scoped
+    # URLs (OAuth connect callback, discovery issuer) follow the request's Host
+    # header. Say so once, so an operator behind a proxy knows to pin it.
+    if (
+        not config.server.public_base_url
+        and not config.auth.canonical_base_url
+        and not is_loopback_host(config.server.host)
+    ):
+        logger.info(
+            "public_base_url_derived_from_request",
+            detail=(
+                "server.public_base_url is unset on a non-loopback bind; public "
+                "URLs derive from each request's Host header. Pin "
+                "server.public_base_url behind a reverse proxy or TLS terminator."
             ),
         )
 

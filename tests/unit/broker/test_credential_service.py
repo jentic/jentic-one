@@ -162,11 +162,11 @@ async def test_not_provisioned_without_base_url_keeps_directive_omits_url(
 
 
 @pytest.mark.asyncio
-async def test_not_provisioned_falls_back_to_public_base_url(
+async def test_not_provisioned_ignores_public_base_url(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Issue #818: with no broker.account_linking_base_url but a
-    # server.public_base_url set, the provisioning_url derives from the latter.
+    # server.public_base_url names this deployment, not an account-linking UI:
+    # it must not synthesize a provisioning_url (the path would 404 here).
     _patch_resolver(monkeypatch, ResolveNotProvisioned("stripe", "", ""))
 
     with pytest.raises(CredentialNotProvisionedError) as exc:
@@ -175,10 +175,7 @@ async def test_not_provisioned_falls_back_to_public_base_url(
         ).inject(api_vendor="stripe", api_name="", api_version="", identity=_IDENTITY)
 
     params = exc.value.directive.parameters  # type: ignore[union-attr]
-    intent_id = params["intent_id"]
-    assert params["provisioning_url"] == (
-        f"https://gw.example.com/connect/stripe?actor=agent_42&intent={intent_id}"
-    )
+    assert "provisioning_url" not in params
 
 
 @pytest.mark.asyncio

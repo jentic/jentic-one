@@ -70,12 +70,22 @@ class AssertionService:
         self._ctx = ctx
         self._jti_cache = _get_jti_cache(ctx.config.auth.assertion_max_ttl_seconds)
 
-    async def verify_and_exchange(self, assertion: str) -> tuple[str, str, list[str]]:
+    async def verify_and_exchange(
+        self, assertion: str, *, request_base_url: str | None = None
+    ) -> tuple[str, str, list[str]]:
         """Verify a JWT assertion and return (access_token, refresh_token, scopes).
 
         ``scopes`` is the agent's live ``actor_scope_grants`` set stamped on
         the minted pair, returned so the token endpoint can report the
         effective scope per RFC 6749 §5.1.
+
+        ``request_base_url`` is the request-scoped base URL the discovery
+        document advertises (``deployment_base_url``). Its ``/oauth/token`` is
+        accepted as an audience alongside the request-less
+        ``resolved_auth_base_url`` one, so a zero-config deployment reached on
+        an origin other than its bind (port mapping, LAN address) accepts the
+        ``token_endpoint`` it advertised. With a public base URL configured
+        both resolve to the same value.
         """
         try:
             unverified_header = jwt.get_unverified_header(assertion)
@@ -115,7 +125,7 @@ class AssertionService:
                     assertion,
                     public_key,
                     algorithms=["EdDSA"],
-                    audience=self._expected_audience,
+                    audience=self._expected_audiences(request_base_url),
                     options={"require": ["exp", "iss", "aud", "jti"]},
                 )
             except jwt.exceptions.InvalidTokenError:
@@ -171,12 +181,13 @@ class AssertionService:
 
         return access_token, refresh_token, scopes
 
-    @property
-    def _expected_audience(self) -> str:
-        # Normalized like deployment_base_url so a trailing slash in the
-        # configured canonical_base_url can't break assertion validation.
-        base = resolved_auth_base_url(self._ctx.config)
-        return f"{base}/oauth/token"
+    def _expected_audiences(self, request_base_url: str | None) -> list[str]:
+        # Normalized like deployment_base_url so a trailing slash in a
+        # configured base URL can't break assertion validation.
+        bases = [resolved_auth_base_url(self._ctx.config).rstrip("/")]
+        if request_base_url and request_base_url.rstrip("/") not in bases:
+            bases.append(request_base_url.rstrip("/"))
+        return [f"{base}/oauth/token" for base in bases]
 
     def _validate_timing(self, payload: dict[str, Any]) -> None:
         now = time.time()

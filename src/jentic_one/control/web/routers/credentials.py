@@ -80,15 +80,14 @@ router = APIRouter()
 _logger = structlog.get_logger(__name__)
 
 
-def _derive_callback_base(request: Request, ctx: Context) -> str:
-    """The public origin for OAuth callbacks: server.public_base_url or request.
+def _connect_callback_url(request: Request, ctx: Context) -> str:
+    """The deployment-default OAuth connect callback for this request.
 
-    The provider layer applies its own explicit ``redirect_uri`` override on top;
-    the router only supplies the deployment default so a zero-config install on
-    any port produces a reachable callback. Kept here (not in the provider)
-    because only the web layer sees the incoming request's origin.
+    ``server.public_base_url`` (else the request origin) + the callback path.
+    The provider applies its own explicit ``redirect_uri`` override on top;
+    derived here because only the web layer sees the request origin.
     """
-    return public_base_url(ctx.config, request)
+    return f"{public_base_url(ctx.config, request)}{OAUTH_CALLBACK_PATH}"
 
 
 def _to_redacted_response(view: CredentialRedactedView) -> CredentialRedactedResponse:
@@ -128,7 +127,7 @@ async def list_providers(
     ctx: Context = Depends(get_ctx),
 ) -> ProviderDiscoveryResponse:
     """Return discovery metadata for all configured credential providers."""
-    default_callback_url = f"{_derive_callback_base(request, ctx)}{OAUTH_CALLBACK_PATH}"
+    default_callback_url = _connect_callback_url(request, ctx)
     entries = svc.list_providers(default_callback_url=default_callback_url)
     return ProviderDiscoveryResponse(
         providers=[
@@ -785,7 +784,7 @@ async def connect_credential(
 ) -> ConnectChallengeResponse:
     """Initiate the OAuth connect flow for a credential."""
     connect_req = ConnectRequest(scopes=body.scopes, extra=body.extra)
-    redirect_uri = f"{_derive_callback_base(request, ctx)}{OAUTH_CALLBACK_PATH}"
+    redirect_uri = _connect_callback_url(request, ctx)
     try:
         challenge = await svc.begin(
             credential_id,

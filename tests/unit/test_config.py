@@ -37,6 +37,7 @@ from jentic_one.shared.config import (
     bind_origin,
     check_public_url_consistency,
     effective_auth_base_url,
+    has_spa_platform_client,
     load_config,
     resolved_auth_base_url,
 )
@@ -1302,6 +1303,92 @@ def test_check_public_url_consistency_loopback_check_ignores_non_loopback_urls(t
         },
     )
     assert check_public_url_consistency(config) == []
+
+
+def test_check_public_url_consistency_skips_overrides_on_all_interfaces_bind(tmp_path: Path):
+    # No public_base_url + a 0.0.0.0 bind: the public origin is unknowable
+    # (proxy / ingress), so a correctly-proxied override must not be flagged.
+    config = _load(
+        tmp_path,
+        {
+            "server": {"host": "0.0.0.0", "port": 8000},
+            "auth": {"canonical_base_url": "https://jentic.example.com"},
+            "control": {"access_requests": {"canonical_base_url": "https://jentic.example.com"}},
+        },
+    )
+    assert check_public_url_consistency(config) == []
+
+
+def test_check_public_url_consistency_ignores_broker_urls(tmp_path: Path):
+    # The broker's jobs/account-linking URLs name other services' origins.
+    config = _load(
+        tmp_path,
+        {
+            "server": {"host": "127.0.0.1", "port": 8000},
+            "broker": {
+                "jobs_api_base_url": "https://api.example.com",
+                "account_linking_base_url": "https://console.example.com",
+            },
+        },
+    )
+    assert check_public_url_consistency(config) == []
+
+
+def test_redirect_uri_kept_byte_identical(tmp_path: Path):
+    # The IdP exact-matches the registered redirect URI: no slash stripping,
+    # and a query string is legal (RFC 6749 §3.1.2).
+    for uri in (
+        "https://app.example.com/credentials/oauth/callback/",
+        "https://app.example.com/credentials/oauth/callback?tenant=a",
+    ):
+        config = _load(
+            tmp_path,
+            {
+                "credentials": {
+                    "providers": {"direct_oauth2": {"kind": "direct_oauth2", "redirect_uri": uri}}
+                }
+            },
+        )
+        pc = config.credentials.providers["direct_oauth2"]
+        assert isinstance(pc, DirectOAuth2ProviderConfig)
+        assert pc.redirect_uri == uri
+
+
+@pytest.mark.parametrize(
+    "uri",
+    [
+        "https://app.example.com/cb#frag",
+        "ftp://app.example.com/cb",
+        "https://user:pw@app.example.com/cb",
+        "https://app.example.com:99999/cb",
+    ],
+)
+def test_redirect_uri_rejects_invalid(tmp_path: Path, uri: str):
+    with pytest.raises(ConfigError):
+        _load(
+            tmp_path,
+            {
+                "credentials": {
+                    "providers": {"direct_oauth2": {"kind": "direct_oauth2", "redirect_uri": uri}}
+                }
+            },
+        )
+
+
+@pytest.mark.parametrize("host", ["localhost", "0.0.0.0"])
+def test_spa_platform_client_registers_both_loopback_aliases(tmp_path: Path, host: str):
+    # A local browser reaches the process as 127.0.0.1 or localhost whichever
+    # alias the bind names.
+    config = _load(tmp_path, {"server": {"host": host, "port": 8020}})
+    redirects = _spa_redirects(config)
+    assert "http://127.0.0.1:8020/app/auth/callback" in redirects
+    assert "http://localhost:8020/app/auth/callback" in redirects
+    assert len(redirects) == len(set(redirects))
+
+
+def test_has_spa_platform_client(tmp_path: Path):
+    assert has_spa_platform_client(_load(tmp_path, {"server": {"host": "127.0.0.1"}}))
+    assert not has_spa_platform_client(_load(tmp_path, {"server": {"host": "10.0.0.5"}}))
 
 
 def test_shipped_local_configs_follow_the_port(monkeypatch: pytest.MonkeyPatch):

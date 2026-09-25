@@ -80,6 +80,31 @@ def normalize_base_url(raw: str) -> str:
     return raw.rstrip("/")
 
 
+def validate_redirect_uri(raw: str) -> str:
+    """Validate a configured OAuth ``redirect_uri`` and return it **unchanged**.
+
+    Unlike ``normalize_base_url`` this is a full callback URL that the IdP
+    matches byte-for-byte against its registration, so nothing is rewritten: a
+    trailing ``/`` is kept, and a query string is allowed (RFC 6749 §3.1.2).
+    Requires an ``http``/``https`` scheme and a host, and rejects userinfo, a
+    fragment (forbidden by RFC 6749 §3.1.2) and an invalid port.
+    """
+    parts = urlsplit(raw)
+    if parts.scheme not in ("http", "https"):
+        raise ValueError(f"redirect_uri must be http(s): {raw!r}")
+    if not parts.hostname:
+        raise ValueError(f"redirect_uri must include a host: {raw!r}")
+    if parts.username or parts.password:
+        raise ValueError("redirect_uri must not embed userinfo (user:pass@host)")
+    if parts.fragment:
+        raise ValueError(f"redirect_uri must not contain a fragment: {raw!r}")
+    try:
+        _ = parts.port
+    except ValueError as exc:
+        raise ValueError(f"redirect_uri has an invalid port: {raw!r}") from exc
+    return raw
+
+
 def _origin(url: str) -> tuple[str, str, int] | None:
     """Return ``(scheme, host, port)`` for *url*, or ``None`` if unparseable.
 

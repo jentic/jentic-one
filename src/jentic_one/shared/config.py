@@ -35,6 +35,7 @@ from jentic_one.shared.url import (
     is_loopback_url,
     normalize_base_url,
     origins_equivalent,
+    validate_redirect_uri,
 )
 
 _logger = structlog.get_logger(__name__)
@@ -857,7 +858,12 @@ class DirectOAuth2ProviderConfig(BaseModel):
         default_factory=lambda: {"prompt": "consent", "access_type": "offline"}
     )
 
-    _normalize_redirect_uri = field_validator("redirect_uri")(_normalize_optional_base_url)
+    @field_validator("redirect_uri")
+    @classmethod
+    def _validate_redirect_uri(cls, value: str | None) -> str | None:
+        # Kept byte-identical (no trailing-slash stripping): the IdP
+        # exact-matches it against the registered redirect URI.
+        return validate_redirect_uri(value) if value else value
 
 
 class PipedreamProviderConfig(BaseModel):
@@ -1467,13 +1473,15 @@ class ServerConfig(BaseModel):
     """The single public origin of this deployment (e.g.
     ``https://jentic.example.com``).
 
-    Every absolute URL the app builds for external consumption — the OAuth
-    connect ``redirect_uri``, the OIDC issuer / JWT-Bearer audience, the DCR
-    ``registration_client_uri``, the SPA login callback, access-request approval
-    links, async-job ``_links.self``, and the 424 ``provisioning_url`` — falls
-    back to this when its own more specific knob is unset. Explicit per-field
-    values still win (needed behind a reverse proxy that fronts multiple
-    surfaces on distinct origins). Left unset, request-scoped consumers derive
+    Every absolute URL the app builds for external consumption on the
+    control/auth surfaces — the OAuth connect ``redirect_uri``, the OIDC issuer
+    / JWT-Bearer audience, the DCR ``registration_client_uri``, the SPA login
+    callback, and access-request approval links — falls back to this when its
+    own more specific knob is unset. Explicit per-field values still win
+    (needed behind a reverse proxy that fronts multiple surfaces on distinct
+    origins). The broker's ``jobs_api_base_url`` / ``account_linking_base_url``
+    are deliberately independent: they name other services' origins, not this
+    one. Left unset, request-scoped consumers derive
     from the incoming request's origin and request-less ones from the serving
     bind (``http://{host}:{port}``), so zero-config local dev on any port just
     works — set this only when clients reach the app on an origin it can't
@@ -1662,11 +1670,18 @@ class AppConfig(BaseModel):
         if not any(pc.client_id == _SPA_CLIENT_ID for pc in self.auth.platform_clients):
             base = resolved_auth_base_url(self).rstrip("/")
             redirect_uris = [f"{base}{_SPA_CALLBACK_PATH}"]
-            if not effective_auth_base_url(self) and base.startswith("http://127.0.0.1:"):
-                # Derived from a loopback bind: the SPA builds its callback from
+            host = self.server.host
+            if not effective_auth_base_url(self) and (
+                host in _ALL_INTERFACES_HOSTS or is_loopback_host(host)
+            ):
+                # Derived from a local bind: the SPA builds its callback from
                 # window.location.origin, and a local browser reaches the same
-                # process as either 127.0.0.1 or localhost.
-                redirect_uris.append(f"http://localhost:{self.server.port}{_SPA_CALLBACK_PATH}")
+                # process as either 127.0.0.1 or localhost — register both
+                # whichever alias the bind itself names.
+                for alias in ("127.0.0.1", "localhost"):
+                    uri = f"http://{alias}:{self.server.port}{_SPA_CALLBACK_PATH}"
+                    if uri not in redirect_uris:
+                        redirect_uris.append(uri)
             try:
                 spa_client = PlatformClientConfig(
                     client_id=_SPA_CLIENT_ID, redirect_uris=redirect_uris
@@ -1674,7 +1689,7 @@ class AppConfig(BaseModel):
             except ValueError:
                 # e.g. a plain-http bind on a LAN IP, which platform redirect
                 # URIs refuse. SPA login then needs an explicit https
-                # public_base_url — the same requirement as before this fallback.
+                # public_base_url; ``_serve`` warns via has_spa_platform_client.
                 return self
             self.auth.platform_clients.append(spa_client)
         return self
@@ -1682,6 +1697,19 @@ class AppConfig(BaseModel):
     def extension(self, name: str) -> BaseModel | None:
         """Return a registered extension config by section name (None if absent)."""
         return self.extensions.get(name)
+
+
+_ALL_INTERFACES_HOSTS = frozenset({"", "0.0.0.0", "::"})
+
+
+def has_spa_platform_client(config: AppConfig) -> bool:
+    """Whether the operator SPA (``jentic-one-spa``) is a registered platform client.
+
+    ``False`` only when neither config declares it nor a callback could be
+    synthesized for the resolved origin (e.g. a plain-http non-loopback bind);
+    SPA login then fails until an https ``server.public_base_url`` is set.
+    """
+    return any(pc.client_id == _SPA_CLIENT_ID for pc in config.auth.platform_clients)
 
 
 def bind_origin(config: AppConfig) -> str:
@@ -1692,7 +1720,7 @@ def bind_origin(config: AppConfig) -> str:
     actually answers. IPv6 literals are bracketed.
     """
     host = config.server.host
-    if host in ("", "0.0.0.0", "::"):
+    if host in _ALL_INTERFACES_HOSTS:
         host = "127.0.0.1"
     elif ":" in host and not host.startswith("["):
         host = f"[{host}]"
@@ -1744,9 +1772,14 @@ def check_public_url_consistency(config: AppConfig) -> list[PublicUrlMismatch]:
     is reported, matching the "warn, don't crash" contract. Unset fields are
     skipped — they self-derive and cannot be wrong.
 
-    1. Every per-surface override (``auth.canonical_base_url`` and friends) is
-       compared (loopback/bind-host aware) against ``server.public_base_url``
-       when set, else ``bind_origin``.
+    1. Every per-surface override (``auth.canonical_base_url``,
+       ``control.access_requests.canonical_base_url``) is compared
+       (loopback/bind-host aware) against ``server.public_base_url`` when set.
+       When it is unset, the bind is the only known origin only on a loopback
+       bind; on an all-interfaces bind the public origin is unknowable (proxy,
+       ingress, port mapping), so the check is skipped rather than flag every
+       correctly-proxied override. The broker's ``jobs_api_base_url`` /
+       ``account_linking_base_url`` name other services and are not compared.
     2. When the server binds a **loopback** host, it can only be reached from
        the same machine on exactly that port — no port mapping or gateway can
        sit in front of it. A loopback ``server.public_base_url`` or provider
@@ -1755,25 +1788,24 @@ def check_public_url_consistency(config: AppConfig) -> list[PublicUrlMismatch]:
        all-interfaces bind (containers, clusters) is skipped here, because a
        port mapping / NodePort legitimately fronts it on a different port.
     """
-    expected = config.server.public_base_url or bind_origin(config)
+    loopback_bind = is_loopback_host(config.server.host)
+    expected = config.server.public_base_url or (bind_origin(config) if loopback_bind else "")
     candidates: list[tuple[str, str | None]] = [
         ("auth.canonical_base_url", config.auth.canonical_base_url),
         (
             "control.access_requests.canonical_base_url",
             config.control.access_requests.canonical_base_url,
         ),
-        ("broker.jobs_api_base_url", config.broker.jobs_api_base_url),
-        ("broker.account_linking_base_url", config.broker.account_linking_base_url),
     ]
 
     mismatches: list[PublicUrlMismatch] = []
     for field_path, value in candidates:
-        if value and not origins_equivalent(value, expected):
+        if expected and value and not origins_equivalent(value, expected):
             mismatches.append(
                 PublicUrlMismatch(field=field_path, configured=value, expected=expected)
             )
 
-    if is_loopback_host(config.server.host):
+    if loopback_bind:
         served = bind_origin(config)
         loopback_candidates: list[tuple[str, str | None]] = [
             ("server.public_base_url", config.server.public_base_url),

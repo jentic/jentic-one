@@ -9,6 +9,8 @@
 // a Section's fields/summary, and map it in render.go.
 package install
 
+import "strings"
+
 // Runtime paths the user can install onto.
 const (
 	RuntimeSource = "source" // run from source (uv) on the host
@@ -285,8 +287,20 @@ func (d *Draft) backendDerivedBaseURL() string {
 // derived URL (OAuth callback, issuer, token audience, SPA login callback)
 // tracking server.port, so a later port change needs no other edit.
 func (d *Draft) PublicBaseURL() string {
-	if base := d.CanonicalBaseURL(); base != d.backendDerivedBaseURL() {
+	if base := d.CanonicalBaseURL(); !sameLoopbackOrigin(base, d.backendDerivedBaseURL()) {
 		return base
 	}
 	return ""
+}
+
+// sameLoopbackOrigin reports whether a and b are the same URL, treating the
+// loopback aliases 127.0.0.1 and localhost as one host — a browser reaches
+// the backend's derived 127.0.0.1 origin as either, and the backend accepts
+// both, so pinning public_base_url for a `localhost` answer would needlessly
+// freeze the port.
+func sameLoopbackOrigin(a, b string) bool {
+	norm := func(s string) string {
+		return strings.Replace(s, "://localhost:", "://127.0.0.1:", 1)
+	}
+	return norm(a) == norm(b)
 }

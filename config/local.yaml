@@ -49,7 +49,7 @@ server:
   # The deployment's single public origin. Every absolute URL the app builds
   # for external consumption — the OAuth connect redirect_uri, the OIDC
   # issuer / JWT-Bearer audience, the SPA login callback, access-request
-  # approval links, async-job links — falls back to this. It is deliberately
+  # approval links — falls back to this. It is deliberately
   # unset here: they then derive from the request origin or, where there is no
   # request, from this bind (http://127.0.0.1:<port>), so local dev on any port
   # just works. Set it behind a reverse proxy / public hostname the app can't
