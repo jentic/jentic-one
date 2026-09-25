@@ -537,13 +537,17 @@ export function CreateCredentialFlow({
 	};
 
 	// The picked-API summary banner shown atop the form step (label + the
-	// vendor/name@version triple + whether saving will trigger a catalog import).
+	// vendor/name triple + whether saving will trigger a catalog import). The
+	// version shown is the one the credential is saved with: a catalog pick is
+	// unpinned (`apiVersion: ''`, see `seedFormFromSelectedApi`), so it reads
+	// "any version" rather than the catalog's version string.
+	const pinnedVersion = state.apiVersion.trim();
 	const apiSummary = useMemo(() => {
 		if (!selectedApi) return null;
-		const triple = `${selectedApi.vendor}/${selectedApi.name}@${selectedApi.version}`;
+		const triple = `${selectedApi.vendor}/${selectedApi.name}${pinnedVersion ? `@${pinnedVersion}` : ' · any version'}`;
 		const willImport = selectedApi.source === 'catalog' && !selectedApi.registered;
 		return { label: selectedApi.label, triple, willImport };
-	}, [selectedApi]);
+	}, [selectedApi, pinnedVersion]);
 
 	const showManualType = manualMode || activeScheme == null || activeScheme.type === 'unknown';
 	const usingPipedream = isOAuth2 && state.provider === 'pipedream';

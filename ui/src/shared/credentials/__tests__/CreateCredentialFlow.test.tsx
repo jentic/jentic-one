@@ -130,6 +130,24 @@ describe('CreateCredentialFlow', () => {
 		await waitFor(() => expect(screen.getByTestId('import-spec-dialog')).not.toBeVisible());
 	});
 
+	it('shows "any version" for a picked API, since the saved credential is unpinned', async () => {
+		resetApisStore([ACME]);
+		renderWithProviders(
+			<CreateCredentialFlow
+				open
+				onClose={vi.fn()}
+				onCreated={vi.fn()}
+				pinnedApi={PINNED_ACME}
+			/>,
+		);
+
+		const summary = await screen.findByTestId('selected-api-summary');
+		// The picked API reports 1.0.0, but the create body carries no version —
+		// the banner must not claim a pin that isn't sent.
+		expect(summary).toHaveTextContent('acme.io/main · any version');
+		expect(summary).not.toHaveTextContent('@1.0.0');
+	});
+
 	describe('a name another credential for the API holds', () => {
 		beforeEach(() => resetApisStore([ACME]));
 
