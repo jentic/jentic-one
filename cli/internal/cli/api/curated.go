@@ -96,6 +96,8 @@ func CuratedBindings() []CuratedBinding {
 				"agent_id":                   "never sent: an agent caller IS the agent (identity injected server-side; an override is refused 403); connecting FOR an agent is a dashboard action",
 				"preferred_flow":             "the deployment's registry default flow is the right answer on this surface; flow selection is reachable via `jentic api IntegrationsConnect`",
 				"requested_permission_rules": "a nested rule list has no sane flag shape; the approver sets rules on the approve page, and a pre-filled ask is reachable via `jentic api IntegrationsConnect`",
+				"name":                       "credential label is a UI affordance for distinguishing multiple credentials on the credentials page; the CLI creates one credential per connect and the server defaults the label to the vendor display name; the raw field is still reachable via `jentic api IntegrationsConnect`",
+				"oauth_app_registration_id":  "shared-app pinning is a dashboard picker affordance; the CLI resolves the preferred active registration for the vendor server-side, and the raw field is still reachable via `jentic api IntegrationsConnect`",
 			},
 		},
 		{

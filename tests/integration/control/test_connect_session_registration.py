@@ -77,14 +77,17 @@ _VENDOR_API_ID = "shareddev.example/api.shareddev.example"
 @pytest.fixture()
 async def clean_session_tables(control_db: DatabaseSession) -> AsyncGenerator[None, None]:
     """Reset every table this suite writes to, before and after."""
+    # Order matters: ``credentials.oauth_app_registration_id`` is
+    # ``ON DELETE RESTRICT``, so every credential (and its cascading
+    # aux rows) must go before the registrations they point at.
     tables = (
-        AuthorizationCodeAppRegistrationDetails,
-        OAuthAppRegistration,
-        ConnectSession,
         OAuthToken,
         OAuthClientCredential,
         DeviceAuthorizationCredential,
+        ConnectSession,
         Credential,
+        AuthorizationCodeAppRegistrationDetails,
+        OAuthAppRegistration,
     )
     async with control_db.session() as session:
         for table in tables:
