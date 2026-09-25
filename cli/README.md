@@ -391,7 +391,7 @@ The wizard collects, with defaults:
   details for Postgres, or the data directory for SQLite.
 - **Surfaces** — which `apps` to enable (registry / admin / control / auth /
   broker).
-- **Server** — bind host + port (drives `auth.canonical_base_url`).
+- **Server** — bind host + port (the backend derives its public origin — OAuth callback, issuer, token audience — from these; `server.public_base_url` is written only for an explicit base URL or a non-loopback Docker publish).
 - **Runtime** — debug toggle + log level.
 - **Observability** — metrics + tracing exporters.
 

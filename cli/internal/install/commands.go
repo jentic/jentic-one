@@ -144,7 +144,7 @@ func (d *Draft) dockerSteps(setup SetupState) []Step {
 // connectAgentStep tells the operator how to attach an agent to the install they
 // just stood up. It uses d.BaseURL() (always 127.0.0.1, never localhost) because
 // the token-exchange audience is an exact-string match against the backend's
-// canonical_base_url — `--url http://localhost:...` would fail with invalid_grant.
+// public origin (derived from the bind, reported as 127.0.0.1) — `--url http://localhost:...` would fail with invalid_grant.
 // register also seeds the environment's broker_url for a loopback install, so
 // `jentic execute` works without any extra broker flags.
 func connectAgentStep(baseURL string) Step {

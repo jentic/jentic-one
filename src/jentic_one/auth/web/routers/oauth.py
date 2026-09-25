@@ -45,6 +45,7 @@ from jentic_one.shared.resilience import RateLimiter
 from jentic_one.shared.state.backend import MemoryStateBackend, SharedStateBackend
 from jentic_one.shared.web import get_current_identity
 from jentic_one.shared.web.deps import get_ctx
+from jentic_one.shared.web.links import deployment_base_url
 
 logger = structlog.get_logger(__name__)
 
@@ -415,6 +416,7 @@ async def token_endpoint(
             redirect_uri=body.redirect_uri,
             client_id=body.client_id,
             oauth_client_id=third_party_client_id,
+            issuer=deployment_base_url(ctx.config, request),
         )
         return TokenResponse(
             access_token=access_token,
@@ -432,7 +434,7 @@ async def token_endpoint(
                 oauth_error_code="invalid_request",
             )
         access_token, refresh_token, scopes = await assertion_svc.verify_and_exchange(
-            body.assertion
+            body.assertion, request_base_url=deployment_base_url(ctx.config, request)
         )
         return TokenResponse(
             access_token=access_token,

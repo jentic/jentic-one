@@ -33,7 +33,8 @@ are tooling/onboarding documents, not a product API.
 
 Split deployments: the router is mounted on every surface app, but the links
 in ``llms.txt`` span surfaces (auth, registry, control), so standalone
-surfaces should set ``auth.canonical_base_url`` to the gateway URL — otherwise
+surfaces should set ``server.public_base_url`` (or ``auth.canonical_base_url``)
+to the gateway URL — otherwise
 the rendered links point at the single surface's own host and may 404 there.
 """
 
@@ -399,7 +400,7 @@ def get_agent_discovery_router() -> APIRouter:
 
     @router.get("/skills/index.json", include_in_schema=False)
     async def skills_index(request: Request, ctx: Context = Depends(get_ctx)) -> JSONResponse:
-        base = deployment_base_url(ctx.config.auth, request)
+        base = deployment_base_url(ctx.config, request)
         return JSONResponse(skills_index_rows(base), media_type="application/json")
 
     @router.get(SKILL_ALIAS_PATH, include_in_schema=False)
@@ -440,7 +441,7 @@ def get_agent_discovery_router() -> APIRouter:
     @router.get(LLMS_TXT_PATH, include_in_schema=False)
     @router.get(LLMS_TXT_WELL_KNOWN_PATH, include_in_schema=False)
     async def llms_txt(request: Request, ctx: Context = Depends(get_ctx)) -> PlainTextResponse:
-        base = deployment_base_url(ctx.config.auth, request)
+        base = deployment_base_url(ctx.config, request)
         # The enabled arm is gated on the surface actually carrying the mount,
         # not on config alone: this router rides every standalone surface
         # (split deployments), but the real ``/mcp`` transport is installed on

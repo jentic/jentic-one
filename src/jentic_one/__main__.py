@@ -26,11 +26,19 @@ from jentic_one.auth.web.app import install_on_app as _install_auth_verifier
 from jentic_one.control.services.key_retirement import KeyRetirementService
 from jentic_one.control.services.toolkit_export import ToolkitExportError, ToolkitExportService
 from jentic_one.control.services.toolkit_flattening import Finding, ToolkitFlatteningService
-from jentic_one.shared.config import AppConfig, load_config, oneshot_config_source_active
+from jentic_one.shared.config import (
+    AppConfig,
+    check_public_url_consistency,
+    has_spa_platform_client,
+    load_config,
+    oneshot_config_source_active,
+    resolved_auth_base_url,
+)
 from jentic_one.shared.context import Context
 from jentic_one.shared.logging import configure_logging
 from jentic_one.shared.metrics import configure_metrics
 from jentic_one.shared.tracing import configure_tracing
+from jentic_one.shared.url import is_loopback_host
 from jentic_one.shared.web.app_factory import SURFACE_MODULES, create_combined_app
 from jentic_one.wiring import build_default_container
 from jentic_one.wiring import install_broker_registry_resolver as _install_broker_registry_resolver
@@ -124,6 +132,64 @@ def create_app() -> FastAPI:
 def _serve() -> None:
     """Load config, build context, and run the server."""
     config = load_config()
+    # Configure logging up front so any startup warnings below (URL-consistency,
+    # SQLite-reload) are emitted in the standard structured format. The reload
+    # branch re-execs into uvicorn factory workers that configure their own
+    # logging; the single-process path skips re-configuring since it's done here.
+    configure_logging(config)
+    logger = structlog.get_logger(__name__)
+
+    # Warn (never fail) when an explicitly configured public URL's origin does
+    # not match the serving origin — the classic "OAuth redirect points at the
+    # wrong port" misconfiguration (issue #818). Unset URLs self-derive and are
+    # skipped. Behind a reverse proxy the operator sets server.public_base_url,
+    # which then becomes the expected origin — no false positive.
+    for mismatch in check_public_url_consistency(config):
+        logger.warning(
+            "public_url_origin_mismatch",
+            field=mismatch.field,
+            configured=mismatch.configured,
+            expected=mismatch.expected,
+            detail=(
+                "configured public URL origin does not match the serving origin; "
+                "links/callbacks built from it may be unreachable. Set "
+                "server.public_base_url to the deployment's public origin, or "
+                "align this field with it."
+            ),
+        )
+
+    # The SPA platform client is synthesized from the resolved origin when
+    # config omits it; a plain-http non-loopback origin can't host one, and
+    # SPA login then fails with a generic redirect_uri error. Name the fix.
+    if "auth" in config.apps and not has_spa_platform_client(config):
+        logger.warning(
+            "spa_platform_client_unavailable",
+            origin=resolved_auth_base_url(config),
+            detail=(
+                "no 'jentic-one-spa' platform client could be registered for this "
+                "origin (platform redirect URIs must be https or loopback), so SPA "
+                "login will fail. Set server.public_base_url to the https origin "
+                "the browser uses, or declare auth.platform_clients explicitly."
+            ),
+        )
+
+    # With no configured public origin on a non-loopback bind, request-scoped
+    # URLs (OAuth connect callback, discovery issuer) follow the request's Host
+    # header. Say so once, so an operator behind a proxy knows to pin it.
+    if (
+        not config.server.public_base_url
+        and not config.auth.canonical_base_url
+        and not is_loopback_host(config.server.host)
+    ):
+        logger.info(
+            "public_base_url_derived_from_request",
+            detail=(
+                "server.public_base_url is unset on a non-loopback bind; public "
+                "URLs derive from each request's Host header. Pin "
+                "server.public_base_url behind a reverse proxy or TLS terminator."
+            ),
+        )
+
     # Reload mode spawns multiple uvicorn worker processes. A SQLite admin DB is a
     # single file that does not support concurrent writer processes, so reload
     # against it reintroduces the `database is locked` contention this fix targets
@@ -132,13 +198,7 @@ def _serve() -> None:
     # token-mint path; a SQLite registry/control DB under reload would still
     # contend, but that is out of scope here.
     reload_enabled = config.server.reload
-    logging_configured = False
     if reload_enabled and config.databases.admin.backend == "sqlite":
-        # Configure logging up front so the warning is emitted in the standard
-        # format; the reload branch returns before the single-process path, while
-        # the fallthrough below skips re-configuring when we've already done so.
-        configure_logging(config)
-        logger = structlog.get_logger(__name__)
         logger.warning(
             "reload_disabled_sqlite_admin_db",
             detail=(
@@ -147,16 +207,11 @@ def _serve() -> None:
             ),
         )
         reload_enabled = False
-        logging_configured = True
     if reload_enabled and oneshot_config_source_active():
         # The reload worker is a separate process that re-loads config from the
         # environment (see create_app); a one-shot source (pipe / /dev/fd) is
         # already drained in this process and would hang or fail the worker's
         # read. Degrade to a single process instead of hanging boot.
-        if not logging_configured:
-            configure_logging(config)
-            logging_configured = True
-        logger = structlog.get_logger(__name__)
         logger.warning(
             "reload_disabled_oneshot_config_source",
             detail=(
@@ -177,8 +232,6 @@ def _serve() -> None:
         )
         return
 
-    if not logging_configured:
-        configure_logging(config)
     configure_tracing(_service_name(), config.observability.tracing)
     configure_metrics(_service_name(), config.observability.metrics)
     apps = config.apps

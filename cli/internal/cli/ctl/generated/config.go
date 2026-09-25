@@ -876,19 +876,18 @@ type DirectOAuth2ProviderConfig struct {
 	Kind string `json:"kind,omitempty,omitzero" yaml:"kind,omitempty" mapstructure:"kind,omitempty"`
 
 	// RedirectUri corresponds to the JSON schema field "redirect_uri".
-	RedirectUri string `json:"redirect_uri" yaml:"redirect_uri" mapstructure:"redirect_uri"`
+	RedirectUri interface{} `json:"redirect_uri,omitempty,omitzero" yaml:"redirect_uri,omitempty" mapstructure:"redirect_uri,omitempty"`
 }
 
 type DirectOAuth2ProviderConfigAuthorizeExtraParams map[string]string
+
+type DirectOAuth2ProviderConfigRedirectUri_0 *string
 
 // UnmarshalJSON implements json.Unmarshaler.
 func (j *DirectOAuth2ProviderConfig) UnmarshalJSON(value []byte) error {
 	var raw map[string]interface{}
 	if err := json.Unmarshal(value, &raw); err != nil {
 		return err
-	}
-	if _, ok := raw["redirect_uri"]; raw != nil && !ok {
-		return fmt.Errorf("field redirect_uri in DirectOAuth2ProviderConfig: required")
 	}
 	type Plain DirectOAuth2ProviderConfig
 	var plain Plain
@@ -2117,6 +2116,9 @@ type ServerConfig struct {
 	// Port corresponds to the JSON schema field "port".
 	Port int `json:"port,omitempty,omitzero" yaml:"port,omitempty" mapstructure:"port,omitempty"`
 
+	// PublicBaseUrl corresponds to the JSON schema field "public_base_url".
+	PublicBaseUrl string `json:"public_base_url,omitempty,omitzero" yaml:"public_base_url,omitempty" mapstructure:"public_base_url,omitempty"`
+
 	// Reload corresponds to the JSON schema field "reload".
 	Reload bool `json:"reload,omitempty,omitzero" yaml:"reload,omitempty" mapstructure:"reload,omitempty"`
 }
@@ -2170,6 +2172,9 @@ func (j *ServerConfig) UnmarshalJSON(value []byte) error {
 	}
 	if v, ok := raw["port"]; !ok || v == nil {
 		plain.Port = 8000
+	}
+	if v, ok := raw["public_base_url"]; !ok || v == nil {
+		plain.PublicBaseUrl = ""
 	}
 	if v, ok := raw["reload"]; !ok || v == nil {
 		plain.Reload = false

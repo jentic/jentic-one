@@ -62,7 +62,7 @@ async def oauth_authorization_server(
     request: Request, ctx: Context = Depends(get_ctx)
 ) -> dict[str, Any]:
     """Return RFC 8414 authorization-server metadata (endpoints, grant types, algorithms)."""
-    issuer = deployment_base_url(ctx.config.auth, request)
+    issuer = deployment_base_url(ctx.config, request)
     return {
         "issuer": issuer,
         "authorization_endpoint": f"{issuer}/authorize",
@@ -228,7 +228,7 @@ async def mcp_oauth_authorization_server(
     separate, unchanged surface whose `registration_endpoint` remains the agent
     `/register`.
     """
-    base = deployment_base_url(ctx.config.auth, request)
+    base = deployment_base_url(ctx.config, request)
     return _mcp_authorization_server_document(base)
 
 
@@ -246,7 +246,7 @@ async def mcp_oauth_protected_resource(
     same body is also served at the root well-known path for clients that
     ignore the 401's `resource_metadata` pointer.
     """
-    base = deployment_base_url(ctx.config.auth, request)
+    base = deployment_base_url(ctx.config, request)
     return _mcp_protected_resource_document(base)
 
 
@@ -283,7 +283,7 @@ async def oauth_protected_resource(
       without breaking this fallback. The mounted MCP app must re-confirm the
       "exactly one OAuth-protected resource" premise before adding one.
     """
-    base = deployment_base_url(ctx.config.auth, request)
+    base = deployment_base_url(ctx.config, request)
     return _mcp_protected_resource_document(base)
 
 
