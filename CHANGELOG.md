@@ -1,5 +1,74 @@
 # Changelog
 
+## [0.40.0](https://github.com/jentic/jentic-one/compare/v0.39.0...v0.40.0) (2026-09-25)
+
+
+### ⚠ BREAKING CHANGES
+
+* remove toolkits — direct agent-credential bindings (theme 5, phases 0-6a) ([#1370](https://github.com/jentic/jentic-one/issues/1370))
+
+### Features
+
+* **admin:** hard delete for OAuth clients ([#1344](https://github.com/jentic/jentic-one/issues/1344)) ([52dc270](https://github.com/jentic/jentic-one/commit/52dc2704859cb10abff9eed4dd16febf55009fd3))
+* **auth:** accept form-encoded bodies on /oauth/introspect ([#564](https://github.com/jentic/jentic-one/issues/564)) ([bb43ec9](https://github.com/jentic/jentic-one/commit/bb43ec9c40a68859b75e2ad50b8cc6d1a3a9d07f))
+* **auth:** inline agent creation on the zero-agents consent page ([#1332](https://github.com/jentic/jentic-one/issues/1332)) ([be4cb75](https://github.com/jentic/jentic-one/commit/be4cb756b108cb8429ca17cf923d23041a7f2a38))
+* **broker:** unregistered_url_handler seam on AppContainer for discovery misses ([#1281](https://github.com/jentic/jentic-one/issues/1281)) ([012d3f0](https://github.com/jentic/jentic-one/commit/012d3f026cf14fdd2a8b63df1b4488a0d341594b))
+* **cli:** support multipart/form-data bodies in execute ([#1317](https://github.com/jentic/jentic-one/issues/1317)) ([8348cf8](https://github.com/jentic/jentic-one/commit/8348cf84cc16f2dba77d4ee6a59dc953c1c69f30))
+* **config:** EncryptionKey material sources (env/file) + one-shot config caching ([#1286](https://github.com/jentic/jentic-one/issues/1286)) ([8fb8102](https://github.com/jentic/jentic-one/commit/8fb810246afd0f7ecdde8b96b870356440e0d4b3))
+* **helm:** give the chart a production shape ([#1396](https://github.com/jentic/jentic-one/issues/1396)) ([6d65741](https://github.com/jentic/jentic-one/commit/6d65741bc19f6e73d28ad48feea8b4052f3f0ed3))
+* **instance:** expose the MCP broker URL via /instance and both MCP UIs ([#1338](https://github.com/jentic/jentic-one/issues/1338)) ([5651b8e](https://github.com/jentic/jentic-one/commit/5651b8ed502503bb934a2f2f4fc5b2c96c4a7739)), closes [#1249](https://github.com/jentic/jentic-one/issues/1249)
+* **mcp:** serve import_api on the daemon-native /mcp mount ([#1326](https://github.com/jentic/jentic-one/issues/1326)) ([4c5a602](https://github.com/jentic/jentic-one/commit/4c5a60280a3de9111c918ebd7043fef2a5dd2c10))
+* **mcp:** serve request_access on the daemon-native /mcp mount ([#1331](https://github.com/jentic/jentic-one/issues/1331)) ([9cbef66](https://github.com/jentic/jentic-one/commit/9cbef6673e2b514954c7d051125f90bb571782ad))
+* **mcp:** serve the skill set as resources on the /mcp mount ([#1335](https://github.com/jentic/jentic-one/issues/1335)) ([e0561fe](https://github.com/jentic/jentic-one/commit/e0561fe9f14949087dea77d861540b192a2d4c6d))
+* **registry:** identity-scoped GET /governed-hosts digest endpoint ([#1283](https://github.com/jentic/jentic-one/issues/1283)) ([2013cc3](https://github.com/jentic/jentic-one/commit/2013cc3eda3909dbc0e2cb6131c2b6aaa2221149))
+* remove toolkits — direct agent-credential bindings (theme 5, phases 0-6a) ([#1370](https://github.com/jentic/jentic-one/issues/1370)) ([5d154c5](https://github.com/jentic/jentic-one/commit/5d154c54f0887786007932944dce8d555f30628d))
+* **skills:** per-audience jentic skill — router SKILL.md + lane references, served on every surface ([#1336](https://github.com/jentic/jentic-one/issues/1336)) ([3d68fab](https://github.com/jentic/jentic-one/commit/3d68fab467a82d4439b35f30df31628cb43ea3f5))
+* **ui:** hard-delete OAuth clients from the danger zone + Disable/Enable vocabulary ([#1346](https://github.com/jentic/jentic-one/issues/1346)) ([6ef8614](https://github.com/jentic/jentic-one/commit/6ef8614887bc2f5463ba71707a3636967f69eeed))
+* **ui:** rebuild the OAuth clients settings surface ([#1318](https://github.com/jentic/jentic-one/issues/1318)) ([01e4777](https://github.com/jentic/jentic-one/commit/01e4777e8d28f200f5b5834b8a7567f23158d17a))
+* **ui:** render agent_status dormancy marker on OAuth grant rows ([#1358](https://github.com/jentic/jentic-one/issues/1358)) ([b7801b0](https://github.com/jentic/jentic-one/commit/b7801b0d42f1248eb7600b2593e079222e1153b9))
+* **ui:** show the deployment's MCP endpoint on the Settings page ([#1330](https://github.com/jentic/jentic-one/issues/1330)) ([6e80e40](https://github.com/jentic/jentic-one/commit/6e80e4072751a847ab2618d7b8ed2ebfa896f2a7))
+
+
+### Bug Fixes
+
+* **auth:** advertise revocation auth method none in the root RFC 8414 doc ([#1328](https://github.com/jentic/jentic-one/issues/1328)) ([9152c0f](https://github.com/jentic/jentic-one/commit/9152c0fafc6792cda2f5e06489090f674fae7b43))
+* **auth:** keep grants dormant on agent disable and make listings honest ([#1345](https://github.com/jentic/jentic-one/issues/1345)) ([5f93475](https://github.com/jentic/jentic-one/commit/5f934756422d31421f127a304317ae132648ef3b))
+* **auth:** revoke oauth consent grants when an agent is archived ([#1340](https://github.com/jentic/jentic-one/issues/1340)) ([27b4e97](https://github.com/jentic/jentic-one/commit/27b4e97dfdc62b1d9d0025ceff3d8cb2e94d9fa1)), closes [#1233](https://github.com/jentic/jentic-one/issues/1233)
+* **auth:** speak RFC 6749 §5.2 errors on the token endpoint ([#1339](https://github.com/jentic/jentic-one/issues/1339)) ([9dd1f8a](https://github.com/jentic/jentic-one/commit/9dd1f8a9b7113665ef1a370c662abeb292c98813))
+* **cli:** don't block on idle non-TTY stdin in execute ([#1354](https://github.com/jentic/jentic-one/issues/1354)) ([#1361](https://github.com/jentic/jentic-one/issues/1361)) ([5f07a67](https://github.com/jentic/jentic-one/commit/5f07a67f7e70494f26afd955484f803258f6ce5d))
+* **cli:** refuse --token-file with --allow-unauthenticated on jentic mcp --http ([#1329](https://github.com/jentic/jentic-one/issues/1329)) ([59b6dea](https://github.com/jentic/jentic-one/commit/59b6dea3b9f6607bc221b9cf69bdef43a6b9e54d))
+* **cli:** stop TestListenerFromFD leaking a dup that closes recycled fds ([#1350](https://github.com/jentic/jentic-one/issues/1350)) ([6aea232](https://github.com/jentic/jentic-one/commit/6aea232cf17fc003cdcbbfb8a19feef5e88e4cd1))
+* **config,control:** derive OAuth redirect_uri from public origin ([#818](https://github.com/jentic/jentic-one/issues/818)) ([#887](https://github.com/jentic/jentic-one/issues/887)) ([9c1ad6f](https://github.com/jentic/jentic-one/commit/9c1ad6f2efff8d51b52d79ca1f85ad0d258d4e25))
+* **events:** document and enforce event severity classification ([#907](https://github.com/jentic/jentic-one/issues/907)) ([#1397](https://github.com/jentic/jentic-one/issues/1397)) ([503e1cb](https://github.com/jentic/jentic-one/commit/503e1cb245fa324ddd809df752a19e94fe1941e0))
+* **mcp:** drop dangling next_tool pointers on the HTTP lane ([#1327](https://github.com/jentic/jentic-one/issues/1327)) ([a418a70](https://github.com/jentic/jentic-one/commit/a418a70c68305ee4900173414a56f339a6f6ec43))
+* **mcp:** make served tool descriptions and actionable prose lane-true ([#1347](https://github.com/jentic/jentic-one/issues/1347)) ([7898d11](https://github.com/jentic/jentic-one/commit/7898d11174726ddb593c1869eb1d957a3c65a8cb))
+* **migrations:** run the toolkit flatten and key retirement inside the migration run ([#1411](https://github.com/jentic/jentic-one/issues/1411)) ([cd17532](https://github.com/jentic/jentic-one/commit/cd175328a7adc083b1005efe72f3add15adffed0))
+* **security:** scope credential binds to the owner and bound the toolkit injection path ([#1409](https://github.com/jentic/jentic-one/issues/1409)) ([976e312](https://github.com/jentic/jentic-one/commit/976e31239b199847b31612f05beedfff9b9f968c))
+* **setup.sh:** retry db readiness through postgres restart window ([#1357](https://github.com/jentic/jentic-one/issues/1357)) ([2f9af4f](https://github.com/jentic/jentic-one/commit/2f9af4fc00e21aa1f2ca5ba1041e3fbd1b32ba17))
+* **ui:** make the agent rail a containing block to stop phantom page scroll ([#1321](https://github.com/jentic/jentic-one/issues/1321)) ([e6c01c7](https://github.com/jentic/jentic-one/commit/e6c01c70e3d261181e190df9b48f748d0f1d8be9))
+
+
+### Documentation
+
+* **api:** align lifecycle vocabulary across endpoint summaries and docs ([#1348](https://github.com/jentic/jentic-one/issues/1348)) ([5a11e00](https://github.com/jentic/jentic-one/commit/5a11e0069c5416cde9decf8d623c092d50a875a0))
+* **installation:** production install guides, docs restructure, and CLI package channels ([#1142](https://github.com/jentic/jentic-one/issues/1142)) ([96a2f6d](https://github.com/jentic/jentic-one/commit/96a2f6d454814d070cb884b39d9e803474cb5882))
+
+
+### Build System
+
+* **deps-dev:** bump @playwright/test in /ui in the testing group ([#1364](https://github.com/jentic/jentic-one/issues/1364)) ([a5b903a](https://github.com/jentic/jentic-one/commit/a5b903a852bb45fbcef5f2c7006f1d051c7a56ae))
+* **deps-dev:** bump @types/node in /ui in the types group ([#1365](https://github.com/jentic/jentic-one/issues/1365)) ([a7d3eb3](https://github.com/jentic/jentic-one/commit/a7d3eb3abf7467364dab2fa16ee742026709683e))
+* **deps-dev:** bump @types/node in /ui in the types group ([#1391](https://github.com/jentic/jentic-one/issues/1391)) ([486fa86](https://github.com/jentic/jentic-one/commit/486fa8621821f2882daabde1dc29f3772baf07b7))
+* **deps-dev:** bump the vite group in /ui with 5 updates ([#1389](https://github.com/jentic/jentic-one/issues/1389)) ([eccc9d7](https://github.com/jentic/jentic-one/commit/eccc9d72f5dfc28eea8af73b4fae145e23726ec4))
+* **deps-dev:** bump typescript-eslint in /ui in the eslint group ([#1363](https://github.com/jentic/jentic-one/issues/1363)) ([183eb0f](https://github.com/jentic/jentic-one/commit/183eb0f28232a0655ae02c73d36f0ccc1e8a3e81))
+* **deps:** bump anyio from 4.13.0 to 4.14.2 ([#1395](https://github.com/jentic/jentic-one/issues/1395)) ([1f623aa](https://github.com/jentic/jentic-one/commit/1f623aae7980f2636e82a3291843895e8d77e321))
+* **deps:** bump framer-motion from 13.2.0 to 13.4.0 in /ui ([#1393](https://github.com/jentic/jentic-one/issues/1393)) ([4a394bf](https://github.com/jentic/jentic-one/commit/4a394bfef529321e06c61dd8ab5ab8bef7472c23))
+* **deps:** bump lucide-react from 1.40.0 to 1.43.0 in /ui ([#1366](https://github.com/jentic/jentic-one/issues/1366)) ([c522380](https://github.com/jentic/jentic-one/commit/c5223807b0d6e5778493fa1ab4c50d90854bb60f))
+* **deps:** bump lucide-react from 1.43.0 to 1.47.0 in /ui ([#1392](https://github.com/jentic/jentic-one/issues/1392)) ([7e8b00a](https://github.com/jentic/jentic-one/commit/7e8b00aac681a1078f0497918f1270806cf8605e))
+* **deps:** bump the python group with 3 updates ([#1367](https://github.com/jentic/jentic-one/issues/1367)) ([57230b0](https://github.com/jentic/jentic-one/commit/57230b0ba6b12ae648092e82edbf980da96c566d))
+* **deps:** bump the python group with 4 updates ([#1394](https://github.com/jentic/jentic-one/issues/1394)) ([1e48c2e](https://github.com/jentic/jentic-one/commit/1e48c2ef6db86b1e1891e9f9913adb16a55c0270))
+* **deps:** bump the react group across 1 directory with 5 updates ([#1390](https://github.com/jentic/jentic-one/issues/1390)) ([0f5a9ec](https://github.com/jentic/jentic-one/commit/0f5a9ecbdd8803cfa32f2e46f72e89e8c20b0f65))
+
 ## [0.39.1](https://github.com/jentic/jentic-one/compare/v0.39.0...v0.39.1) (2026-09-23)
 
 Hotfix release cut from v0.39.0 (not main): bounds broker credential
