@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { vi } from 'vitest';
 // The real (CDP-driven) keyboard: a native <dialog>'s Escape close request
 // only fires for TRUSTED key events, which @testing-library/user-event's
 // synthetic dispatch cannot produce.
@@ -92,6 +93,36 @@ describe('SheetPrimitive', () => {
 			},
 			{ timeout: 2000 },
 		);
+	});
+
+	it('does not pull focus out of a sheet stacked on top of it', async () => {
+		// The setup queue opens its credential form as a second sheet, portaled
+		// outside the first. Each sheet's delayed initial focus must leave focus
+		// where the user already put it — on a slow runner the outer sheet's timer
+		// fires while the user is typing in the inner one.
+		renderWithProviders(
+			<>
+				<SheetPrimitive open onClose={() => {}} ariaLabel="Queue">
+					<button type="button">Queue action</button>
+				</SheetPrimitive>
+				<SheetPrimitive open onClose={() => {}} ariaLabel="Form">
+					<button type="button">Close</button>
+					<label>
+						Name
+						<input />
+					</label>
+				</SheetPrimitive>
+			</>,
+		);
+		const input = screen.getByLabelText('Name');
+		// Focused before either sheet's initial-focus timer has run.
+		input.focus();
+		const blurs = vi.fn();
+		input.addEventListener('blur', blurs);
+		await new Promise((r) => setTimeout(r, 300));
+		expect(input).toHaveFocus();
+		// Never moved away and back: every keystroke typed meanwhile would be lost.
+		expect(blurs).not.toHaveBeenCalled();
 	});
 
 	it('renders nothing when closed', () => {

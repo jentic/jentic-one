@@ -189,7 +189,14 @@ export function SheetPrimitive({
 			const timer = setTimeout(() => {
 				// Fires well after the sheet is usable: anything already focused inside it
 				// is where the user put focus, and moving it would eat their keystrokes.
-				if (sheetRef.current?.contains(document.activeElement)) return;
+				const current = document.activeElement;
+				if (sheetRef.current?.contains(current)) return;
+				// Nor may it pull focus back out of somewhere the user has moved it since
+				// this sheet began opening — e.g. a second sheet stacked on top (the setup
+				// queue's credential form), which portals outside this one's DOM.
+				if (current && current !== document.body && current !== previousFocusRef.current) {
+					return;
+				}
 				if (initialFocus?.current) {
 					initialFocus.current.focus();
 				} else {
