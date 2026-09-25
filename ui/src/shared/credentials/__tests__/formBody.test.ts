@@ -258,6 +258,45 @@ describe('buildUpdateBody', () => {
 		expect(body).not.toHaveProperty('field_name');
 		expect(body).not.toHaveProperty('location');
 	});
+
+	describe('oauth2 scopes', () => {
+		const oauth = (scopes: string) => ({ ...EMPTY_FORM, name: 'O', scopes });
+
+		it('omits scopes when the selection matches the loaded value', () => {
+			const body = buildUpdateBody(
+				CredentialType.OAUTH2,
+				oauth('read write'),
+				'O',
+				'read write',
+			);
+			expect(body).not.toHaveProperty('scopes');
+		});
+
+		it('omits scopes for a credential stored without any (never writes [])', () => {
+			const body = buildUpdateBody(CredentialType.OAUTH2, oauth(''), 'O', '');
+			expect(body).not.toHaveProperty('scopes');
+		});
+
+		it('treats a reorder or extra whitespace as unchanged', () => {
+			const body = buildUpdateBody(
+				CredentialType.OAUTH2,
+				oauth('  write   read '),
+				'O',
+				'read write',
+			);
+			expect(body).not.toHaveProperty('scopes');
+		});
+
+		it('sends the new list when the user changed it', () => {
+			const body = buildUpdateBody(CredentialType.OAUTH2, oauth('read admin'), 'O', 'read');
+			expect(body).toMatchObject({ scopes: ['read', 'admin'] });
+		});
+
+		it('sends [] only when the user cleared stored scopes', () => {
+			const body = buildUpdateBody(CredentialType.OAUTH2, oauth(''), 'O', 'read write');
+			expect(body).toMatchObject({ scopes: [] });
+		});
+	});
 });
 
 describe('validateCreate', () => {

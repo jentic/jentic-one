@@ -36,6 +36,13 @@ function parseScopes(raw: string): string[] | undefined {
 	return scopes.length ? scopes : undefined;
 }
 
+/** Order-insensitive scope comparison — reordering the field is not an edit. */
+function sameScopeSet(a: string[], b: string[]): boolean {
+	const left = new Set(a);
+	const right = new Set(b);
+	return left.size === right.size && [...left].every((s) => right.has(s));
+}
+
 /**
  * Whether `raw` parses as an absolute http(s) URL with a hostname. The OAuth2
  * Token/Authorize fields render as `<input type="url">`, but that native
@@ -140,12 +147,14 @@ export function buildCreateBody(
 /**
  * Assemble the update body. Only sends fields the user actually changed; blank
  * secret fields are omitted so the existing secret is preserved (rotation is
- * opt-in by typing a new value).
+ * opt-in by typing a new value). `originalScopes` is the scope string the edit
+ * form was seeded with — OAuth2 scopes are sent only when they differ from it.
  */
 export function buildUpdateBody(
 	type: CredentialType,
 	state: CredentialFormState,
 	originalName: string,
+	originalScopes = '',
 ): CredentialUpdateRequest {
 	const name = state.name.trim();
 	const namePatch = name && name !== originalName ? { name } : {};
@@ -174,18 +183,23 @@ export function buildUpdateBody(
 				username: state.username.trim() || undefined,
 				password: secret(state.password),
 			};
-		case CredentialType.OAUTH2:
+		case CredentialType.OAUTH2: {
+			// Scopes ride only when the selection differs from the loaded one, so an
+			// untouched edit never writes `[]` over a credential stored without
+			// scopes. A deliberate "remove all" still sends `[]` — omitting the key
+			// would keep the stored scopes.
+			const nextScopes = parseScopes(state.scopes) ?? [];
+			const loadedScopes = parseScopes(originalScopes) ?? [];
+			const scopesChanged = !sameScopeSet(nextScopes, loadedScopes);
 			return {
 				type,
 				...namePatch,
 				...svPatch,
 				client_secret: secret(state.clientSecret),
 				token_url: state.tokenUrl.trim() || undefined,
-				// An emptied field sends `[]` (clear every scope), not `undefined`:
-				// on update, omitting the key would keep the stored scopes, so a
-				// deliberate "remove all" would never persist.
-				scopes: parseScopes(state.scopes) ?? [],
+				...(scopesChanged ? { scopes: nextScopes } : {}),
 			};
+		}
 		case CredentialType.NO_AUTH:
 			// Nothing to rotate — only name/server-variable edits apply.
 			return { type, ...namePatch, ...svPatch };
