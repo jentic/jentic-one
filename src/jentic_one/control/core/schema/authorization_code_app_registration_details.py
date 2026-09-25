@@ -5,11 +5,11 @@ from __future__ import annotations
 import datetime as dt
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, ForeignKey, String, Text
+from sqlalchemy import ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from jentic_one.shared.db.base import AuditableMixin, ControlBase
-from jentic_one.shared.db.types import json_variant
+from jentic_one.shared.db.types import UTCDateTime, json_variant
 
 if TYPE_CHECKING:
     from jentic_one.control.core.schema.oauth_app_registrations import OAuthAppRegistration
@@ -30,8 +30,11 @@ class AuthorizationCodeAppRegistrationDetails(AuditableMixin, ControlBase):
     token_url: Mapped[str] = mapped_column(String(2048), nullable=False)
     # Pre-populated scope list surfaced to the connect wizard.
     default_scopes: Mapped[list[str] | None] = mapped_column(json_variant(), nullable=True)
+    # ``UTCDateTime`` round-trips tz-aware on every backend (SQLite in tests
+    # returns tz-naive from raw ``DateTime(timezone=True)``, which breaks
+    # ``> datetime.now(UTC)`` comparisons in callers).
     secret_last_rotated_at: Mapped[dt.datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
+        UTCDateTime(), nullable=True
     )
 
     registration: Mapped[OAuthAppRegistration] = relationship(
