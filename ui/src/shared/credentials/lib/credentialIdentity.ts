@@ -36,10 +36,18 @@ export function credentialDistinguisher(
 		.join(' · ');
 }
 
-/** Group key for "the same API": vendor and name in slug form, version ignored,
- * so a credential re-added for a new revision lands beside its predecessor. */
-export function credentialApiGroupKey(cred: Pick<Credential, 'api'>): string {
-	return `${slugifyApiField(cred.api.vendor)}/${slugifyApiField(cred.api.name ?? '')}`;
+/**
+ * Group key for "the same API": the vendor slug, the exact stored API name and —
+ * when the credential carries one — its catalog API id. Two APIs that happen to
+ * slug alike stay apart (the name is compared as stored, and a catalog id tells
+ * catalog entries apart). The version is left out so a credential re-added for a
+ * new revision lands beside its predecessor; the group shows each row's version.
+ */
+export function credentialApiGroupKey(cred: Pick<Credential, 'api' | 'catalog_api_id'>): string {
+	const vendor = slugifyApiField(cred.api.vendor);
+	const name = (cred.api.name ?? '').trim().toLowerCase();
+	const catalogId = cred.catalog_api_id?.trim().toLowerCase() ?? '';
+	return `${vendor}/${name}|${catalogId}`;
 }
 
 /** Which credential an API should use: an existing one, or a new one even though

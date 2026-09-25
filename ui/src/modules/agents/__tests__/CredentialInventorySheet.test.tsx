@@ -492,6 +492,11 @@ describe('CredentialInventorySheet — page-level org-wide inventory', () => {
 			expect(slack).toHaveTextContent('…lack_3');
 			// A name no other row shares needs no tail.
 			expect(slack).not.toHaveTextContent('…lack_2');
+			// The rows pin different revisions; each row says which.
+			const versions = within(slack)
+				.getAllByTestId('credential-row-api')
+				.map((el) => el.textContent);
+			expect(versions).toEqual(expect.arrayContaining(['v1.0.0', 'v2.0.0']));
 
 			// An API with one credential keeps its standalone card.
 			const github = within(sheet).getByText('GitHub PAT').closest('[data-testid]');

@@ -1,6 +1,6 @@
 import { Layers } from 'lucide-react';
 import { Badge, AgentBadge } from '@/shared/ui';
-import { apiRefDisplayName } from '@/shared/lib';
+import { apiRefDisplayName, formatApiVersion } from '@/shared/lib';
 import { formatApiReference, type Credential } from '@/shared/credentials/api';
 import { CredentialTypeBadge } from './CredentialTypeBadge';
 import {
@@ -28,10 +28,15 @@ interface CredentialGroupCardProps {
  * and each credential is a row under it, so three keys for `airlabs.co` read as
  * "one API, three credentials" instead of three identical cards.
  *
- *   [vendor badge] [API name] [vendor/name · version] ........ [N credentials]
+ *   [vendor badge] [API name] [vendor/name] .................. [N credentials]
  *                  [where the secret goes, when every row agrees]
  *   ─ row: [name] [connected] [type] ............ connect · edit · delete
+ *          [pinned version, or "any version"]
  *          [usage · added · …id tail when the name repeats]
+ *
+ * The header carries only what every row shares; the version is per row, since
+ * rows of one API may pin different revisions. Rows that don't share an API get
+ * a neutral vendor + "N APIs" header and each names its own API.
  *
  * A row whose name another row shares carries its id tail — then it is the only
  * thing telling the two apart; a unique name needs nothing more. Each row is a
@@ -46,13 +51,22 @@ export function CredentialGroupCard({
 }: CredentialGroupCardProps) {
 	const [first] = credentials;
 	const vendor = first.api.vendor ?? first.name;
-	const apiTitle =
-		apiRefDisplayName({
-			catalogApiId: first.catalog_api_id,
-			vendor: first.api.vendor,
-			name: first.api.name,
-		}) || formatApiReference(first.api);
-	const apiLine = credentialApiLine(first, apiTitle);
+	// The header names only what every row shares. The version never goes up
+	// there — each row states its own pin — and if the rows don't agree on the
+	// API itself, the header falls back to the vendor and a count of APIs rather
+	// than borrowing the first row's identity.
+	const distinctApis = new Set(credentials.map(apiIdentityKey)).size;
+	const sameApi = distinctApis === 1;
+	const apiTitle = sameApi
+		? apiRefDisplayName({
+				catalogApiId: first.catalog_api_id,
+				vendor: first.api.vendor,
+				name: first.api.name,
+			}) || formatApiReference(unversioned(first.api))
+		: vendor;
+	const apiLine = sameApi
+		? credentialApiLine({ ...first, api: unversioned(first.api) }, apiTitle)
+		: `${distinctApis} APIs`;
 	const headingId = `credential-group-${first.credential_id}`;
 
 	// One placement line in the header when the rows agree; per row otherwise.
@@ -64,7 +78,7 @@ export function CredentialGroupCard({
 		<section
 			data-testid="credential-group"
 			aria-labelledby={headingId}
-			title={formatApiReference(first.api)}
+			title={sameApi ? formatApiReference(unversioned(first.api)) : vendor}
 			className="border-border/60 bg-card min-w-0 overflow-hidden rounded-xl border"
 		>
 			<header className="flex items-start gap-3 p-4 pb-3">
@@ -104,6 +118,7 @@ export function CredentialGroupCard({
 						key={cred.credential_id}
 						cred={cred}
 						placement={sharedPlacement ? null : credentialAuthPlacement(cred)}
+						apiLabel={sameApi ? null : formatApiReference(unversioned(cred.api))}
 						showIdTail={repeatedNames.has(normalizedName(cred))}
 						onEdit={onEdit}
 						onDelete={onDelete}
@@ -118,6 +133,21 @@ export function CredentialGroupCard({
 
 function normalizedName(cred: Credential): string {
 	return cred.name.trim().toLowerCase();
+}
+
+/** The API reference with its version blanked — the formatters read an empty
+ * version as "none", so the header never prints one row's pin. */
+function unversioned(api: Credential['api']): Credential['api'] {
+	return { ...api, version: '' };
+}
+
+/** The API a row serves, version aside — rows agreeing on this share a header. */
+function apiIdentityKey(cred: Credential): string {
+	return [
+		cred.api.vendor.trim().toLowerCase(),
+		(cred.api.name ?? '').trim().toLowerCase(),
+		cred.catalog_api_id?.trim().toLowerCase() ?? '',
+	].join('|');
 }
 
 /** Names two or more rows share, case-insensitively — the rows only an id tells apart. */
@@ -135,6 +165,7 @@ function repeatedCredentialNames(credentials: readonly Credential[]): Set<string
 function CredentialRow({
 	cred,
 	placement,
+	apiLabel,
 	showIdTail,
 	onEdit,
 	onDelete,
@@ -143,6 +174,8 @@ function CredentialRow({
 }: {
 	cred: Credential;
 	placement: string | null;
+	/** The row's own API, set only when the group's rows don't share one. */
+	apiLabel: string | null;
 	showIdTail: boolean;
 	onEdit: (cred: Credential) => void;
 	onDelete: (cred: Credential) => void;
@@ -175,6 +208,14 @@ function CredentialRow({
 					)}
 					<CredentialTypeBadge credential={cred} />
 				</div>
+				<p
+					className="text-muted-foreground mt-0.5 truncate font-mono text-xs"
+					data-testid="credential-row-api"
+				>
+					{[apiLabel, formatApiVersion(cred.api.version) ?? 'any version']
+						.filter(Boolean)
+						.join(' · ')}
+				</p>
 				{placement && (
 					<p className="text-muted-foreground mt-0.5 truncate text-xs">{placement}</p>
 				)}

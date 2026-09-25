@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { makeMockCredential } from '@/shared/credentials/mocks/handlers';
 import {
+	credentialApiGroupKey,
 	credentialNamed,
 	credentialsSharingApi,
 	suggestUniqueName,
@@ -54,5 +55,35 @@ describe('suggestUniqueName', () => {
 
 	it('counts on from a number the name already ends in', () => {
 		expect(suggestUniqueName('airlabs.co 2', [named('airlabs.co 2')])).toBe('airlabs.co 3');
+	});
+});
+
+describe('credentialApiGroupKey', () => {
+	const cred = (api: { vendor: string; name: string; version: string }, catalogId?: string) =>
+		makeMockCredential({ api, catalog_api_id: catalogId ?? null });
+
+	it('groups revisions of one API — the version is not part of the key', () => {
+		expect(
+			credentialApiGroupKey(cred({ vendor: 'slack.com', name: 'web', version: '1' })),
+		).toBe(credentialApiGroupKey(cred({ vendor: 'slack.com', name: 'web', version: '2' })));
+	});
+
+	it('keeps apart APIs whose names only slug alike', () => {
+		expect(
+			credentialApiGroupKey(
+				cred({ vendor: 'gov.co.uk', name: 'land_registry', version: '' }),
+			),
+		).not.toBe(
+			credentialApiGroupKey(
+				cred({ vendor: 'gov.co.uk', name: 'land.registry', version: '' }),
+			),
+		);
+	});
+
+	it('keeps apart catalog entries that share vendor and name', () => {
+		const api = { vendor: 'example.co.uk', name: 'default', version: '' };
+		expect(credentialApiGroupKey(cred(api, 'example.co.uk/payments'))).not.toBe(
+			credentialApiGroupKey(cred(api, 'example.co.uk/accounts')),
+		);
 	});
 });
