@@ -46,6 +46,11 @@ test('header quick-actions menu navigates to its surfaces', async ({ page }) => 
 	// Credentials are an inventory sheet on the Agents surface, and this label
 	// promises a form, so the action lands on the create wizard's first step. The
 	// `?credentials` key is spent on arrival, so the URL settles to the surface.
+	// The pick step is titled plainly "Add credential" (the " — <API>" suffix
+	// only appears once one is picked); "Enter manually" is its escape hatch and
+	// only exists on that step.
 	await expect(page).toHaveURL(/\/app\/agents\b/);
-	await expect(page.getByRole('heading', { name: 'Choose an API' })).toBeVisible();
+	const wizard = page.getByRole('dialog', { name: 'Add credential', exact: true });
+	await expect(wizard).toBeVisible();
+	await expect(wizard.getByRole('button', { name: /Enter manually/i })).toBeVisible();
 });
