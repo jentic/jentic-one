@@ -84,10 +84,27 @@ class CachingCredentialDeriver:
         self._single_flight: SingleFlight[CredentialDerivation] = SingleFlight()
 
     async def derive_credentials(
-        self, *, agent_id: str, vendor: str, name: str, version: str
+        self,
+        *,
+        agent_id: str,
+        vendor: str,
+        name: str,
+        version: str,
+        owner_user_id: str | None = None,
     ) -> CredentialDerivation:
-        """Return the agent's derivation for the API, served from cache when fresh."""
-        key = self._make_key(agent_id=agent_id, vendor=vendor, name=name, version=version)
+        """Return the agent's derivation for the API, served from cache when fresh.
+
+        ``owner_user_id`` participates in the cache key: two callers with
+        different owner scopes see different candidate lists, so their
+        derivations must not collide in the LRU.
+        """
+        key = self._make_key(
+            agent_id=agent_id,
+            vendor=vendor,
+            name=name,
+            version=version,
+            owner_user_id=owner_user_id,
+        )
         now = time.monotonic()
 
         cached = self._cache.get(key)
@@ -98,7 +115,11 @@ class CachingCredentialDeriver:
 
         async def _load() -> CredentialDerivation:
             result = await self._inner.derive_credentials(
-                agent_id=agent_id, vendor=vendor, name=name, version=version
+                agent_id=agent_id,
+                vendor=vendor,
+                name=name,
+                version=version,
+                owner_user_id=owner_user_id,
             )
             self._store(key, _CacheEntry(value=result, cached_at=time.monotonic()))
             _cache_misses.add(1)
@@ -114,9 +135,19 @@ class CachingCredentialDeriver:
             self._cache.popitem(last=False)
 
     @staticmethod
-    def _make_key(*, agent_id: str, vendor: str, name: str, version: str) -> str:
-        # NUL-joined so component boundaries are unambiguous (no value contains it).
-        return "\x00".join((agent_id, vendor, name, version))
+    def _make_key(
+        *,
+        agent_id: str,
+        vendor: str,
+        name: str,
+        version: str,
+        owner_user_id: str | None,
+    ) -> str:
+        # NUL-joined so component boundaries are unambiguous (no value contains
+        # it). ``owner_user_id`` is normalised to the empty string when NULL so
+        # a personal-scope caller with sub="" (impossible in practice) cannot
+        # collide with the org-shared cache slot.
+        return "\x00".join((agent_id, vendor, name, version, owner_user_id or ""))
 
     def clear(self) -> None:
         """Drop all cached entries (useful for tests/operational invalidation)."""

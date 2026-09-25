@@ -60,6 +60,21 @@ class NoOpForFlowError(ConnectSessionServiceError):
         self.flow = flow
 
 
+class InvalidOAuthAppRegistrationError(ConnectSessionServiceError):
+    """The pinned ``oauth_app_registration_id`` on ``:connect`` is not usable.
+
+    Raised when the caller supplied a registration id that either does not
+    exist, is inactive, or references a different ``api_vendor`` than
+    ``body.vendor`` — a mismatch that would otherwise silently mint
+    credentials against the wrong vendor's OAuth app.
+    """
+
+    def __init__(self, registration_id: str, reason: str) -> None:
+        super().__init__(f"oauth_app_registration {registration_id!r} is not usable: {reason}")
+        self.registration_id = registration_id
+        self.reason = reason
+
+
 class CredentialMissingCreatorError(ConnectSessionServiceError):
     """A credential with no ``created_by`` cannot finalise a connect flow.
 

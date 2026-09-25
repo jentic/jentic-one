@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 
 from jentic_one.control.services.vendors.service import VendorRegistryService
 from jentic_one.control.web.deps import get_vendor_registry_service
@@ -14,7 +14,6 @@ from jentic_one.control.web.schemas.integrations import (
     VendorSummaryResponse,
 )
 from jentic_one.shared.auth.identity import Identity
-from jentic_one.shared.config import VendorAuthConfig
 from jentic_one.shared.web import get_current_identity
 
 router = APIRouter(tags=["Vendors"])
@@ -25,18 +24,31 @@ async def list_vendors(
     identity: Identity = get_current_identity(required_permissions=["capabilities:read"]),
     svc: VendorRegistryService = Depends(get_vendor_registry_service),
 ) -> VendorListResponse:
-    """Public metadata for every vendor in the config-seeded registry.
+    """Public metadata for every vendor known to the platform.
 
-    Used by the UI's "Add integration" picker. Never returns secrets.
+    Unioned across two sources: admin-registered ``oauth_app_registrations``
+    rows and the platform-shipped ``vendors`` config. When a vendor slug
+    exists in both, the DB row wins so admin-managed registrations always
+    take precedence in the UI's "Add integration" picker. Never returns
+    secrets.
     """
-    entries = svc.list_all()
+    entries = await svc.list_entries()
+    # For DB-sourced rows the ``vendor`` field (config's fully-qualified
+    # ``<host>/<api-id>`` shape) is not stored — the DB tracks a plain
+    # ``api_vendor`` slug and re-uses it as the entry key. Fall back to the
+    # key in that case so the wire payload stays populated.
+    config_entries = svc._config.entries
     return VendorListResponse(
         data=[
             VendorSummaryResponse(
-                key=_key_for(svc, e),
-                vendor=e.vendor,
+                entry_id=e.entry_id,
+                registration_id=e.registration_id,
+                key=e.key,
+                vendor=(config_entries[e.key].vendor if e.key in config_entries else e.key),
                 display_name=e.display_name,
-                flow_kinds=[f.kind for f in e.flows],
+                name=e.name,
+                source=e.source,
+                flow_kinds=[e.flow_kind],
             )
             for e in entries
         ]
@@ -50,6 +62,15 @@ async def list_vendors(
 )
 async def get_auth_capabilities(
     vendor_key: str,
+    oauth_app_registration_id: str | None = Query(
+        default=None,
+        max_length=30,
+        description=(
+            "Pin to a specific admin-registered OAuth app when the vendor has "
+            "more than one. Returns that registration's scopes + client_id, so "
+            "the picker's tile and the connect payload stay aligned."
+        ),
+    ),
     identity: Identity = get_current_identity(required_permissions=["capabilities:read"]),
     svc: VendorRegistryService = Depends(get_vendor_registry_service),
 ) -> VendorAuthCapabilitiesResponse:
@@ -59,7 +80,7 @@ async def get_auth_capabilities(
     at response build time). ``UnknownVendorError`` maps to a 404 problem
     detail via the handler registered in ``control/web/app.py``.
     """
-    entry = svc.get(vendor_key)
+    entry = await svc.resolve_by_pin(vendor_key, registration_id=oauth_app_registration_id)
     return VendorAuthCapabilitiesResponse(
         vendor=entry.vendor,
         display_name=entry.display_name,
@@ -74,11 +95,3 @@ async def get_auth_capabilities(
             for s in entry.scopes
         ],
     )
-
-
-def _key_for(svc: VendorRegistryService, entry: VendorAuthConfig) -> str:
-    """Look up the registry key (dict key) for a given VendorAuthConfig entry."""
-    for key, cfg in svc._config.entries.items():
-        if cfg is entry:
-            return key
-    return entry.vendor

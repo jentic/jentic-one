@@ -70,7 +70,13 @@ def _dual(admin_db: DatabaseSession, *, with_jwt: bool = True) -> DualTokenValid
     return DualTokenValidator(opaque=opaque, jwt=jwt_validator)
 
 
-async def _seed_agent(admin_db: DatabaseSession, agent_id: str, *, status: str = "active") -> None:
+async def _seed_agent(
+    admin_db: DatabaseSession,
+    agent_id: str,
+    *,
+    status: str = "active",
+    owner_id: str | None = None,
+) -> None:
     """Seed the actor row that token resolution re-checks on every resolve (#1136)."""
     async with admin_db.session() as session:
         session.add(
@@ -80,6 +86,7 @@ async def _seed_agent(admin_db: DatabaseSession, agent_id: str, *, status: str =
                 registered_by=_SEED_MARKER,
                 created_by=_SEED_MARKER,
                 status=status,
+                owner_id=owner_id,
             )
         )
         await session.commit()
@@ -158,6 +165,26 @@ async def test_opaque_token_resolves_via_db(
 
     assert resolved.sub == "agnt_opaque"
     assert BROKER_EXECUTE_SCOPE in resolved.permissions
+
+
+async def test_opaque_token_agent_carries_parent_actor_id(
+    admin_db: DatabaseSession, clean_access_tokens: None
+) -> None:
+    """The opaque-token broker path mints Identity with ``agents.owner_id`` as parent.
+
+    Pins the shape the owner-based credential binding filter keys off — see
+    ``tests/unit/broker/test_parent_actor_id_population.py`` for the sibling
+    seams (JWT + API key) driven without a live DB.
+    """
+    owner_id = "usr_broker_e2e_owner"
+    await _seed_user_row(admin_db, owner_id)
+    await _seed_agent(admin_db, "agnt_owned_opaque", owner_id=owner_id)
+    await _seed_opaque_token(admin_db, plaintext="at_live_owned", actor_id="agnt_owned_opaque")
+
+    resolved = await _dual(admin_db).validate("at_live_owned")
+
+    assert resolved.sub == "agnt_owned_opaque"
+    assert resolved.parent_actor_id == owner_id
 
 
 async def test_signed_jwt_validates_without_db_lookup(

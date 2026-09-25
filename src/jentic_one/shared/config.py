@@ -966,7 +966,11 @@ class VendorAuthConfig(BaseModel):
     display_name: str
     flows: list[VendorFlowConfig]
     scopes: list[VendorScopeConfig] = Field(default_factory=list)
-    identity_probe: VendorIdentityProbeConfig
+    # Optional: platform-shipped vendors always define one; admin-registered
+    # OAuth apps that don't have a matching config entry connect without one
+    # (the credential is still valid — the ``connected_as`` UX label is just
+    # absent). Callers must guard on ``None``.
+    identity_probe: VendorIdentityProbeConfig | None = None
 
     @field_validator("vendor")
     @classmethod

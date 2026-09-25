@@ -230,10 +230,21 @@ class CredentialDeriverProtocol(Protocol):
 
     Empty ``credentials`` → 403, one → use it, many → name/id header
     disambiguation then most-specific-wins (a genuine unaddressed tie → 409).
+
+    ``owner_user_id`` is the caller's effective credential-owner scope: rows
+    with ``owner_user_id`` NULL are org-shared, rows with a matching non-NULL
+    value are the caller's own personal credentials. Anything else is
+    filtered out.
     """
 
     async def derive_credentials(
-        self, *, agent_id: str, vendor: str, name: str, version: str
+        self,
+        *,
+        agent_id: str,
+        vendor: str,
+        name: str,
+        version: str,
+        owner_user_id: str | None = None,
     ) -> CredentialDerivation: ...
 
 

@@ -5,7 +5,11 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urlencode
 
+from jentic_one.control.core.schema.oauth_app_registrations import OAuthAppRegistration
 from jentic_one.control.repos import CredentialRepository, OAuthClientCredentialRepository
+from jentic_one.control.repos.oauth_app_registration_repo import (
+    OAuthAppRegistrationRepository,
+)
 from jentic_one.control.services.credentials.providers.base import (
     NotConnectableError,
     ProviderError,
@@ -35,9 +39,21 @@ from jentic_one.shared.context import Context
 # ``providers.direct_oauth2`` (they now live on the shared OAuth2 base).
 __all__ = [
     "DirectOAuth2Provider",
+    "InactiveRegistrationError",
     "InvalidGrantError",
     "TokenExchangeError",
 ]
+
+
+class InactiveRegistrationError(ProviderError):
+    """Raised when a credential references an inactive ``oauth_app_registrations`` row.
+
+    Refresh (and complete-connect) fail closed against an inactive
+    registration: the operator has flipped the kill switch on this shared
+    OAuth app, so no new tokens may be minted through it. Existing vaulted
+    access tokens keep injecting until their expiry — this only blocks
+    refresh + new grants, matching the ``is_active`` semantics.
+    """
 
 
 class DirectOAuth2Provider(OAuth2Provider):
@@ -66,22 +82,60 @@ class DirectOAuth2Provider(OAuth2Provider):
         if not credential_id:
             raise ProviderError("credential_id required in request.extra")
 
+        # Resolve (client_id, authorize_url, default_scope_str) with the same
+        # registration-first / legacy-fallback shape ``_resolve_client_material``
+        # uses for the token-endpoint side. Kept inline rather than sharing a
+        # helper because the two paths need different fields off each source.
         async with ctx.control_db.session() as session:
             credential = await CredentialRepository.get_by_id(session, credential_id)
             if credential is None:
                 raise ProviderError(f"Credential '{credential_id}' not found")
 
-            occ = await OAuthClientCredentialRepository.get_by_credential(session, credential_id)
-            if occ is None:
-                raise ProviderError(f"No oauth_client_credentials for credential '{credential_id}'")
+            client_id_value: str
+            authorize_url: str
+            default_scope_str: str
 
-            if not occ.authorize_url:
-                raise NotConnectableError(
-                    "Credential has no authorize_url — cannot initiate connect flow"
+            if credential.oauth_app_registration_id is not None:
+                registration = await OAuthAppRegistrationRepository.get_by_id(
+                    session, credential.oauth_app_registration_id
                 )
+                if registration is None:
+                    raise ProviderError(
+                        f"Credential '{credential_id}' references missing "
+                        f"oauth_app_registration '{credential.oauth_app_registration_id}'"
+                    )
+                if not registration.is_active:
+                    raise InactiveRegistrationError(
+                        f"oauth_app_registration {registration.id!r} is inactive — "
+                        "refuse to begin a new connect through a disabled shared app"
+                    )
+                ac = registration.authorization_code_details
+                if ac is None:
+                    raise ProviderError(
+                        f"oauth_app_registration {registration.id!r} is missing its "
+                        "authorization_code_details extension"
+                    )
+                client_id_value = registration.client_id
+                authorize_url = ac.authorize_url
+                default_scope_str = " ".join(ac.default_scopes) if ac.default_scopes else ""
+            else:
+                occ = await OAuthClientCredentialRepository.get_by_credential(
+                    session, credential_id
+                )
+                if occ is None:
+                    raise ProviderError(
+                        f"No oauth_client_credentials for credential '{credential_id}'"
+                    )
+                if not occ.authorize_url:
+                    raise NotConnectableError(
+                        "Credential has no authorize_url — cannot initiate connect flow"
+                    )
+                client_id_value = occ.client_id
+                authorize_url = occ.authorize_url
+                default_scope_str = occ.scope or ""
 
         scopes = request.scopes or self._default_scopes
-        scope_str = " ".join(scopes) if scopes else (occ.scope or "")
+        scope_str = " ".join(scopes) if scopes else default_scope_str
 
         state_secret = ctx.config.credentials.connect.state_secret.get_secret_value()
         ttl = ctx.config.credentials.connect.state_ttl_seconds
@@ -99,7 +153,7 @@ class DirectOAuth2Provider(OAuth2Provider):
 
         params: dict[str, str] = {
             "response_type": "code",
-            "client_id": occ.client_id,
+            "client_id": client_id_value,
             "redirect_uri": self._redirect_uri,
             "state": signed_state,
         }
@@ -112,8 +166,10 @@ class DirectOAuth2Provider(OAuth2Provider):
         # Don't do it unless you really know what you're doing.
         params.update(self._authorize_extra_params)
 
-        authorize_url = f"{occ.authorize_url}?{urlencode(params)}"
-        return AuthCodeChallenge(authorize_url=authorize_url, state=signed_state)
+        return AuthCodeChallenge(
+            authorize_url=f"{authorize_url}?{urlencode(params)}",
+            state=signed_state,
+        )
 
     async def complete_connect(
         self,
@@ -128,21 +184,14 @@ class DirectOAuth2Provider(OAuth2Provider):
         if not callback.code:
             raise ProviderError("No authorization code in callback")
 
-        async with ctx.control_db.session() as session:
-            occ = await OAuthClientCredentialRepository.get_by_credential(
-                session, state.credential_id
-            )
-            if occ is None:
-                raise ProviderError(
-                    f"No oauth_client_credentials for credential '{state.credential_id}'"
-                )
-
-        client_secret = ctx.encryption.decrypt(occ.encrypted_client_secret)
+        client_id, token_url, client_secret = await self._resolve_client_material(
+            ctx, credential_id=state.credential_id
+        )
 
         token_data = await self._exchange_code(
-            token_url=occ.token_url,
+            token_url=token_url,
             code=callback.code,
-            client_id=occ.client_id,
+            client_id=client_id,
             client_secret=client_secret,
             redirect_uri=self._redirect_uri,
         )
@@ -167,21 +216,14 @@ class DirectOAuth2Provider(OAuth2Provider):
         *,
         token: OAuthTokenView,
     ) -> RefreshResult:
-        async with ctx.control_db.session() as session:
-            occ = await OAuthClientCredentialRepository.get_by_credential(
-                session, token.credential_id
-            )
-            if occ is None:
-                raise ProviderError(
-                    f"No oauth_client_credentials for credential '{token.credential_id}'"
-                )
-
-        client_secret = ctx.encryption.decrypt(occ.encrypted_client_secret)
+        client_id, token_url, client_secret = await self._resolve_client_material(
+            ctx, credential_id=token.credential_id
+        )
         refresh_token_value = await token.decrypt()
 
         token_data = await self._refresh_token(
-            token_url=occ.token_url,
-            client_id=occ.client_id,
+            token_url=token_url,
+            client_id=client_id,
             client_secret=client_secret,
             refresh_token=refresh_token_value,
         )
@@ -198,6 +240,54 @@ class DirectOAuth2Provider(OAuth2Provider):
             refresh_token=token_data.get("refresh_token"),
             scope=token_data.get("scope"),
         )
+
+    async def _resolve_client_material(
+        self,
+        ctx: Context,
+        *,
+        credential_id: str,
+    ) -> tuple[str, str, str]:
+        """Return ``(client_id, token_url, client_secret)`` for a credential.
+
+        Prefers the shared ``oauth_app_registrations`` row when the credential's
+        ``oauth_app_registration_id`` is set (mints for this credential are
+        going through admin-registered material). Falls back to the legacy
+        embedded ``oauth_client_credentials`` row when the FK is null.
+
+        A referenced registration that has been flipped ``is_active=False``
+        is refused loudly: refresh / new grants must not silently continue
+        through a disabled shared app, and the operator flipped the switch
+        expecting exactly that behaviour.
+        """
+        async with ctx.control_db.session() as session:
+            credential = await CredentialRepository.get_by_id(session, credential_id)
+            if credential is None:
+                raise ProviderError(f"Credential {credential_id!r} not found")
+            registration: OAuthAppRegistration | None = None
+            if credential.oauth_app_registration_id is not None:
+                registration = await OAuthAppRegistrationRepository.get_by_id(
+                    session, credential.oauth_app_registration_id
+                )
+            if registration is not None:
+                if not registration.is_active:
+                    raise InactiveRegistrationError(
+                        f"oauth_app_registration {registration.id!r} is inactive — "
+                        "refuse to mint / refresh through a disabled shared app"
+                    )
+                ac = registration.authorization_code_details
+                if ac is None:
+                    raise ProviderError(
+                        f"oauth_app_registration {registration.id!r} is missing its "
+                        "authorization_code_details extension"
+                    )
+                client_secret = ctx.encryption.decrypt(ac.encrypted_client_secret)
+                return registration.client_id, ac.token_url, client_secret
+
+            occ = await OAuthClientCredentialRepository.get_by_credential(session, credential_id)
+            if occ is None:
+                raise ProviderError(f"No oauth_client_credentials for credential {credential_id!r}")
+            client_secret = ctx.encryption.decrypt(occ.encrypted_client_secret)
+            return occ.client_id, occ.token_url, client_secret
 
     async def _exchange_code(
         self,

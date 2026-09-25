@@ -101,30 +101,31 @@ func (e ApiSourceUrlType) Valid() bool {
 
 // Defines values for AuditTargetType.
 const (
-	AuditTargetTypeAccessRequest     AuditTargetType = "access_request"
-	AuditTargetTypeAgent             AuditTargetType = "agent"
-	AuditTargetTypeApi               AuditTargetType = "api"
-	AuditTargetTypeCredential        AuditTargetType = "credential"
-	AuditTargetTypeCredentialBinding AuditTargetType = "credential_binding"
-	AuditTargetTypeEvent             AuditTargetType = "event"
-	AuditTargetTypeExecutionRecord   AuditTargetType = "execution_record"
-	AuditTargetTypeInviteToken       AuditTargetType = "invite_token"
-	AuditTargetTypeJob               AuditTargetType = "job"
-	AuditTargetTypeNote              AuditTargetType = "note"
-	AuditTargetTypeOauthClient       AuditTargetType = "oauth_client"
-	AuditTargetTypeOauthGrant        AuditTargetType = "oauth_grant"
-	AuditTargetTypeOrganisation      AuditTargetType = "organisation"
-	AuditTargetTypeOverlay           AuditTargetType = "overlay"
-	AuditTargetTypePermission        AuditTargetType = "permission"
-	AuditTargetTypePermissionRuleSet AuditTargetType = "permission_rule_set"
-	AuditTargetTypeProviderConfig    AuditTargetType = "provider_config"
-	AuditTargetTypeRevision          AuditTargetType = "revision"
-	AuditTargetTypeServiceAccount    AuditTargetType = "service_account"
-	AuditTargetTypeSession           AuditTargetType = "session"
-	AuditTargetTypeToken             AuditTargetType = "token"
-	AuditTargetTypeToolkit           AuditTargetType = "toolkit"
-	AuditTargetTypeToolkitKey        AuditTargetType = "toolkit_key"
-	AuditTargetTypeUser              AuditTargetType = "user"
+	AuditTargetTypeAccessRequest        AuditTargetType = "access_request"
+	AuditTargetTypeAgent                AuditTargetType = "agent"
+	AuditTargetTypeApi                  AuditTargetType = "api"
+	AuditTargetTypeCredential           AuditTargetType = "credential"
+	AuditTargetTypeCredentialBinding    AuditTargetType = "credential_binding"
+	AuditTargetTypeEvent                AuditTargetType = "event"
+	AuditTargetTypeExecutionRecord      AuditTargetType = "execution_record"
+	AuditTargetTypeInviteToken          AuditTargetType = "invite_token"
+	AuditTargetTypeJob                  AuditTargetType = "job"
+	AuditTargetTypeNote                 AuditTargetType = "note"
+	AuditTargetTypeOauthAppRegistration AuditTargetType = "oauth_app_registration"
+	AuditTargetTypeOauthClient          AuditTargetType = "oauth_client"
+	AuditTargetTypeOauthGrant           AuditTargetType = "oauth_grant"
+	AuditTargetTypeOrganisation         AuditTargetType = "organisation"
+	AuditTargetTypeOverlay              AuditTargetType = "overlay"
+	AuditTargetTypePermission           AuditTargetType = "permission"
+	AuditTargetTypePermissionRuleSet    AuditTargetType = "permission_rule_set"
+	AuditTargetTypeProviderConfig       AuditTargetType = "provider_config"
+	AuditTargetTypeRevision             AuditTargetType = "revision"
+	AuditTargetTypeServiceAccount       AuditTargetType = "service_account"
+	AuditTargetTypeSession              AuditTargetType = "session"
+	AuditTargetTypeToken                AuditTargetType = "token"
+	AuditTargetTypeToolkit              AuditTargetType = "toolkit"
+	AuditTargetTypeToolkitKey           AuditTargetType = "toolkit_key"
+	AuditTargetTypeUser                 AuditTargetType = "user"
 )
 
 // Valid indicates whether the value is a known member of the AuditTargetType enum.
@@ -149,6 +150,8 @@ func (e AuditTargetType) Valid() bool {
 	case AuditTargetTypeJob:
 		return true
 	case AuditTargetTypeNote:
+		return true
+	case AuditTargetTypeOauthAppRegistration:
 		return true
 	case AuditTargetTypeOauthClient:
 		return true
@@ -177,6 +180,21 @@ func (e AuditTargetType) Valid() bool {
 	case AuditTargetTypeToolkitKey:
 		return true
 	case AuditTargetTypeUser:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AuthorizationCodeRegistrationCreateRequestFlowKind.
+const (
+	AuthorizationCodeRegistrationCreateRequestFlowKindAuthorizationCode AuthorizationCodeRegistrationCreateRequestFlowKind = "authorization_code"
+)
+
+// Valid indicates whether the value is a known member of the AuthorizationCodeRegistrationCreateRequestFlowKind enum.
+func (e AuthorizationCodeRegistrationCreateRequestFlowKind) Valid() bool {
+	switch e {
+	case AuthorizationCodeRegistrationCreateRequestFlowKindAuthorizationCode:
 		return true
 	default:
 		return false
@@ -330,6 +348,21 @@ func (e CredentialType) Valid() bool {
 	case CredentialTypeOauth2:
 		return true
 	case CredentialTypeSigv4:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for DeviceAuthorizationRegistrationCreateRequestFlowKind.
+const (
+	DeviceAuthorizationRegistrationCreateRequestFlowKindDeviceAuthorization DeviceAuthorizationRegistrationCreateRequestFlowKind = "device_authorization"
+)
+
+// Valid indicates whether the value is a known member of the DeviceAuthorizationRegistrationCreateRequestFlowKind enum.
+func (e DeviceAuthorizationRegistrationCreateRequestFlowKind) Valid() bool {
+	switch e {
+	case DeviceAuthorizationRegistrationCreateRequestFlowKindDeviceAuthorization:
 		return true
 	default:
 		return false
@@ -609,6 +642,24 @@ func (e OAuth2UpdateRequestType) Valid() bool {
 	}
 }
 
+// Defines values for OAuthAppRegistrationFlowKind.
+const (
+	OAuthAppRegistrationFlowKindAuthorizationCode   OAuthAppRegistrationFlowKind = "authorization_code"
+	OAuthAppRegistrationFlowKindDeviceAuthorization OAuthAppRegistrationFlowKind = "device_authorization"
+)
+
+// Valid indicates whether the value is a known member of the OAuthAppRegistrationFlowKind enum.
+func (e OAuthAppRegistrationFlowKind) Valid() bool {
+	switch e {
+	case OAuthAppRegistrationFlowKindAuthorizationCode:
+		return true
+	case OAuthAppRegistrationFlowKindDeviceAuthorization:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for OAuthApprovalDecisionRequestAction.
 const (
 	OAuthApprovalDecisionRequestActionApprove OAuthApprovalDecisionRequestAction = "approve"
@@ -801,6 +852,24 @@ const (
 func (e Sigv4UpdateRequestType) Valid() bool {
 	switch e {
 	case Sigv4UpdateRequestTypeSigv4:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for VendorSummaryResponseSource.
+const (
+	Config VendorSummaryResponseSource = "config"
+	Db     VendorSummaryResponseSource = "db"
+)
+
+// Valid indicates whether the value is a known member of the VendorSummaryResponseSource enum.
+func (e VendorSummaryResponseSource) Valid() bool {
+	switch e {
+	case Config:
+		return true
+	case Db:
 		return true
 	default:
 		return false
@@ -1222,6 +1291,29 @@ type AuditResponse struct {
 // AuditTargetType Entity types that can be the target of an audited action.
 type AuditTargetType string
 
+// AuthorizationCodeRegistrationCreateRequest Create request for an authorization-code registration.
+//
+// Examples: {"api_vendor":"github","authorize_url":"https://github.com/login/oauth/authorize","catalog_api_id":"github.com/api.github.com","client_id":"Iv1.a1b2c3d4","client_secret":"\u003cpaste-client-secret-from-vendor-console\u003e","default_scopes":["repo","read:user"],"display_name":"GitHub","flow_kind":"authorization_code","name":"MyOrg GitHub","token_url":"https://github.com/login/oauth/access_token"}
+type AuthorizationCodeRegistrationCreateRequest struct {
+	ApiVendor    string `json:"api_vendor"`
+	AuthorizeUrl string `json:"authorize_url"`
+
+	// CatalogApiId Catalog API slug this OAuth app targets (e.g. 'github.com/api.github.com'). The credential minted through this registration carries the same slug so its operations preview resolves against a real registered API.
+	CatalogApiId  string    `json:"catalog_api_id"`
+	ClientId      string    `json:"client_id"`
+	ClientSecret  string    `json:"client_secret"`
+	DefaultScopes *[]string `json:"default_scopes,omitempty"`
+
+	// DisplayName Vendor family label ('GitHub'), shown on picker cards.
+	DisplayName string                                             `json:"display_name"`
+	FlowKind    AuthorizationCodeRegistrationCreateRequestFlowKind `json:"flow_kind"`
+	Name        string                                             `json:"name"`
+	TokenUrl    string                                             `json:"token_url"`
+}
+
+// AuthorizationCodeRegistrationCreateRequestFlowKind defines model for AuthorizationCodeRegistrationCreateRequest.FlowKind.
+type AuthorizationCodeRegistrationCreateRequestFlowKind string
+
 // BasicAuthCreateRequest Create request for basic credentials.
 type BasicAuthCreateRequest struct {
 	// Api Relaxed variant for request bodies where partial identification is allowed.
@@ -1565,6 +1657,12 @@ type CredentialRedactedResponse struct {
 	// Name Human-readable label.
 	Name string `json:"name"`
 
+	// OauthAppRegistrationId Id of the shared ``oauth_app_registrations`` row this credential was minted through, if any. Null for legacy embedded OAuth credentials and every non-OAuth type.
+	OauthAppRegistrationId *string `json:"oauth_app_registration_id,omitempty"`
+
+	// OauthAppRegistrationName Admin-facing name of the shared OAuth app registration this credential was minted through. Null when the credential is not backed by a shared registration.
+	OauthAppRegistrationName *string `json:"oauth_app_registration_name,omitempty"`
+
 	// Provider Credential provider; 'static' for stored secrets.
 	Provider string `json:"provider"`
 
@@ -1609,6 +1707,28 @@ type DailyExecutionBucket struct {
 type DenyRequest struct {
 	Reason string `json:"reason"`
 }
+
+// DeviceAuthorizationRegistrationCreateRequest Create request for a device-authorization registration.
+//
+// Examples: {"api_vendor":"github","authorization_endpoint":"https://github.com/login/device/code","catalog_api_id":"github.com/api.github.com","client_id":"Iv1.a1b2c3d4","default_scopes":["repo"],"display_name":"GitHub","flow_kind":"device_authorization","name":"MyOrg GitHub (device flow)","token_endpoint":"https://github.com/login/oauth/access_token"}
+type DeviceAuthorizationRegistrationCreateRequest struct {
+	ApiVendor             string `json:"api_vendor"`
+	AuthorizationEndpoint string `json:"authorization_endpoint"`
+
+	// CatalogApiId Catalog API slug this OAuth app targets (e.g. 'github.com/api.github.com').
+	CatalogApiId  string    `json:"catalog_api_id"`
+	ClientId      string    `json:"client_id"`
+	DefaultScopes *[]string `json:"default_scopes,omitempty"`
+
+	// DisplayName Vendor family label ('GitHub'), shown on picker cards.
+	DisplayName   string                                               `json:"display_name"`
+	FlowKind      DeviceAuthorizationRegistrationCreateRequestFlowKind `json:"flow_kind"`
+	Name          string                                               `json:"name"`
+	TokenEndpoint string                                               `json:"token_endpoint"`
+}
+
+// DeviceAuthorizationRegistrationCreateRequestFlowKind defines model for DeviceAuthorizationRegistrationCreateRequest.FlowKind.
+type DeviceAuthorizationRegistrationCreateRequestFlowKind string
 
 // EffectivePermission A single effective permission with provenance.
 type EffectivePermission struct {
@@ -1802,6 +1922,8 @@ type InstanceIdentityResponseBackend string
 // IntegrationsConnectRequest defines model for IntegrationsConnectRequest.
 type IntegrationsConnectRequest struct {
 	AgentId                  *string                 `json:"agent_id,omitempty"`
+	Name                     *string                 `json:"name,omitempty"`
+	OauthAppRegistrationId   *string                 `json:"oauth_app_registration_id,omitempty"`
 	PreferredFlow            *string                 `json:"preferred_flow,omitempty"`
 	Reason                   *string                 `json:"reason,omitempty"`
 	RequestedPermissionRules *[]PermissionRuleSchema `json:"requested_permission_rules,omitempty"`
@@ -2062,6 +2184,64 @@ type OAuth2UpdateRequest struct {
 
 // OAuth2UpdateRequestType defines model for OAuth2UpdateRequest.Type.
 type OAuth2UpdateRequestType string
+
+// OAuthAppRegistrationFlowKind Which OAuth flow a registration supports.
+type OAuthAppRegistrationFlowKind string
+
+// OAuthAppRegistrationListResponse List envelope for OAuth app registrations.
+type OAuthAppRegistrationListResponse struct {
+	Data []OAuthAppRegistrationResponse `json:"data"`
+}
+
+// OAuthAppRegistrationResponse Registration as returned to admins.
+//
+// Never includes the client secret — only “has_client_secret“ +
+// “secret_last_rotated_at“ so an admin can see rotation history without
+// being able to read the material.
+type OAuthAppRegistrationResponse struct {
+	ApiVendor             string  `json:"api_vendor"`
+	AuthorizationEndpoint *string `json:"authorization_endpoint,omitempty"`
+	AuthorizeUrl          *string `json:"authorize_url,omitempty"`
+
+	// CatalogApiId Catalog API slug this OAuth app targets (e.g. 'googleapis-com/gmail'). Feeds credential.catalog_api_id at connect time so the operations preview resolves against a real registered API. Nullable on pre-refactor rows only — new registrations always carry a value.
+	CatalogApiId             *string   `json:"catalog_api_id,omitempty"`
+	ClientId                 string    `json:"client_id"`
+	CreatedAt                time.Time `json:"created_at"`
+	CreatedBy                *string   `json:"created_by"`
+	DefaultScopes            *[]string `json:"default_scopes,omitempty"`
+	DependentCredentialCount int       `json:"dependent_credential_count"`
+
+	// DisplayName Vendor family label ('Gmail'), shown alongside the admin's per-registration 'name' on the picker card. Nullable on pre-refactor rows only.
+	DisplayName *string `json:"display_name,omitempty"`
+
+	// FlowKind Which OAuth flow a registration supports.
+	FlowKind            OAuthAppRegistrationFlowKind `json:"flow_kind"`
+	HasClientSecret     bool                         `json:"has_client_secret"`
+	Id                  string                       `json:"id"`
+	IsActive            bool                         `json:"is_active"`
+	Name                string                       `json:"name"`
+	SecretLastRotatedAt *time.Time                   `json:"secret_last_rotated_at"`
+	TokenEndpoint       *string                      `json:"token_endpoint,omitempty"`
+	TokenUrl            *string                      `json:"token_url,omitempty"`
+	UpdatedAt           time.Time                    `json:"updated_at"`
+}
+
+// OAuthAppRegistrationRotateSecretRequest Rotate the client secret on an auth-code registration.
+type OAuthAppRegistrationRotateSecretRequest struct {
+	ClientSecret string `json:"client_secret"`
+}
+
+// OAuthAppRegistrationUpdateRequest Partial update — fields not present are left untouched.
+type OAuthAppRegistrationUpdateRequest struct {
+	AuthorizationEndpoint *string   `json:"authorization_endpoint,omitempty"`
+	AuthorizeUrl          *string   `json:"authorize_url,omitempty"`
+	DefaultScopes         *[]string `json:"default_scopes,omitempty"`
+	DisplayName           *string   `json:"display_name,omitempty"`
+	IsActive              *bool     `json:"is_active,omitempty"`
+	Name                  *string   `json:"name,omitempty"`
+	TokenEndpoint         *string   `json:"token_endpoint,omitempty"`
+	TokenUrl              *string   `json:"token_url,omitempty"`
+}
 
 // OAuthApprovalDecisionRequest Inline admin approve/deny posted from the approval-pending page.
 //
@@ -3181,11 +3361,18 @@ type VendorListResponse struct {
 
 // VendorSummaryResponse defines model for VendorSummaryResponse.
 type VendorSummaryResponse struct {
-	DisplayName string   `json:"display_name"`
-	FlowKinds   []string `json:"flow_kinds"`
-	Key         string   `json:"key"`
-	Vendor      string   `json:"vendor"`
+	DisplayName    string                      `json:"display_name"`
+	EntryId        string                      `json:"entry_id"`
+	FlowKinds      []string                    `json:"flow_kinds"`
+	Key            string                      `json:"key"`
+	Name           string                      `json:"name"`
+	RegistrationId *string                     `json:"registration_id,omitempty"`
+	Source         VendorSummaryResponseSource `json:"source"`
+	Vendor         string                      `json:"vendor"`
 }
+
+// VendorSummaryResponseSource defines model for VendorSummaryResponse.Source.
+type VendorSummaryResponseSource string
 
 // VersionResponse The running app version and the latest release known to this backend.
 type VersionResponse struct {
@@ -3551,6 +3738,23 @@ type UpdateNoteParams struct {
 	IfMatch *string `json:"if-match,omitempty"`
 }
 
+// ListOauthAppRegistrationsParams defines parameters for ListOauthAppRegistrations.
+type ListOauthAppRegistrationsParams struct {
+	// ApiVendor Filter by vendor slug.
+	ApiVendor *string `form:"api_vendor,omitempty" json:"api_vendor,omitempty"`
+
+	// IncludeInactive Include registrations with is_active=false in the response.
+	IncludeInactive *bool `form:"include_inactive,omitempty" json:"include_inactive,omitempty"`
+
+	// FlowKind Filter by OAuth flow kind.
+	FlowKind *OAuthAppRegistrationFlowKind `form:"flow_kind,omitempty" json:"flow_kind,omitempty"`
+}
+
+// CreateOauthAppRegistrationJSONBody defines parameters for CreateOauthAppRegistration.
+type CreateOauthAppRegistrationJSONBody struct {
+	union json.RawMessage
+}
+
 // ApprovalStatusEndpointParams defines parameters for ApprovalStatusEndpoint.
 type ApprovalStatusEndpointParams struct {
 	// St Signed approval-state blob minted by /authorize
@@ -3613,6 +3817,12 @@ type ListUsersParams struct {
 	Cursor      *string      `form:"cursor,omitempty" json:"cursor,omitempty"`
 	Limit       *int         `form:"limit,omitempty" json:"limit,omitempty"`
 	InviteState *InviteState `form:"invite_state,omitempty" json:"invite_state,omitempty"`
+}
+
+// GetAuthCapabilitiesParams defines parameters for GetAuthCapabilities.
+type GetAuthCapabilitiesParams struct {
+	// OauthAppRegistrationId Pin to a specific admin-registered OAuth app when the vendor has more than one. Returns that registration's scopes + client_id, so the picker's tile and the connect payload stay aligned.
+	OauthAppRegistrationId *string `form:"oauth_app_registration_id,omitempty" json:"oauth_app_registration_id,omitempty"`
 }
 
 // SetProviderConfigJSONRequestBody defines body for SetProviderConfig for application/json ContentType.
@@ -3710,6 +3920,15 @@ type CreateNoteJSONRequestBody = NoteCreateRequest
 
 // UpdateNoteJSONRequestBody defines body for UpdateNote for application/json ContentType.
 type UpdateNoteJSONRequestBody = NoteUpdateRequest
+
+// CreateOauthAppRegistrationJSONRequestBody defines body for CreateOauthAppRegistration for application/json ContentType.
+type CreateOauthAppRegistrationJSONRequestBody CreateOauthAppRegistrationJSONBody
+
+// UpdateOauthAppRegistrationJSONRequestBody defines body for UpdateOauthAppRegistration for application/json ContentType.
+type UpdateOauthAppRegistrationJSONRequestBody = OAuthAppRegistrationUpdateRequest
+
+// RotateOauthAppRegistrationSecretJSONRequestBody defines body for RotateOauthAppRegistrationSecret for application/json ContentType.
+type RotateOauthAppRegistrationSecretJSONRequestBody = OAuthAppRegistrationRotateSecretRequest
 
 // RegisterOauthClientEndpointJSONRequestBody defines body for RegisterOauthClientEndpoint for application/json ContentType.
 type RegisterOauthClientEndpointJSONRequestBody = OAuthClientRegistrationRequest
@@ -4462,6 +4681,68 @@ func (t GetMe200JSONResponseBody) MarshalJSON() ([]byte, error) {
 }
 
 func (t *GetMe200JSONResponseBody) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
+// AsAuthorizationCodeRegistrationCreateRequest returns the union data inside the CreateOauthAppRegistrationJSONBody as a AuthorizationCodeRegistrationCreateRequest
+func (t CreateOauthAppRegistrationJSONBody) AsAuthorizationCodeRegistrationCreateRequest() (AuthorizationCodeRegistrationCreateRequest, error) {
+	var body AuthorizationCodeRegistrationCreateRequest
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromAuthorizationCodeRegistrationCreateRequest overwrites any union data inside the CreateOauthAppRegistrationJSONBody as the provided AuthorizationCodeRegistrationCreateRequest
+func (t *CreateOauthAppRegistrationJSONBody) FromAuthorizationCodeRegistrationCreateRequest(v AuthorizationCodeRegistrationCreateRequest) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeAuthorizationCodeRegistrationCreateRequest performs a merge with any union data inside the CreateOauthAppRegistrationJSONBody, using the provided AuthorizationCodeRegistrationCreateRequest
+func (t *CreateOauthAppRegistrationJSONBody) MergeAuthorizationCodeRegistrationCreateRequest(v AuthorizationCodeRegistrationCreateRequest) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsDeviceAuthorizationRegistrationCreateRequest returns the union data inside the CreateOauthAppRegistrationJSONBody as a DeviceAuthorizationRegistrationCreateRequest
+func (t CreateOauthAppRegistrationJSONBody) AsDeviceAuthorizationRegistrationCreateRequest() (DeviceAuthorizationRegistrationCreateRequest, error) {
+	var body DeviceAuthorizationRegistrationCreateRequest
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromDeviceAuthorizationRegistrationCreateRequest overwrites any union data inside the CreateOauthAppRegistrationJSONBody as the provided DeviceAuthorizationRegistrationCreateRequest
+func (t *CreateOauthAppRegistrationJSONBody) FromDeviceAuthorizationRegistrationCreateRequest(v DeviceAuthorizationRegistrationCreateRequest) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeDeviceAuthorizationRegistrationCreateRequest performs a merge with any union data inside the CreateOauthAppRegistrationJSONBody, using the provided DeviceAuthorizationRegistrationCreateRequest
+func (t *CreateOauthAppRegistrationJSONBody) MergeDeviceAuthorizationRegistrationCreateRequest(v DeviceAuthorizationRegistrationCreateRequest) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t CreateOauthAppRegistrationJSONBody) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *CreateOauthAppRegistrationJSONBody) UnmarshalJSON(b []byte) error {
 	err := t.union.UnmarshalJSON(b)
 	return err
 }
@@ -6177,6 +6458,102 @@ type ClientInterface interface {
 	// Corresponds with PATCH /notes/{note_id} (the `UpdateNote` operationId).
 	UpdateNote(ctx context.Context, noteId string, params *UpdateNoteParams, body UpdateNoteJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ListOauthAppRegistrations List OAuth app registrations
+	//
+	// List OAuth application registrations visible to the caller.
+	//
+	// Any authenticated caller with ``credentials:read`` sees the shared
+	// registrations they might connect through; admin-only routes gate on
+	// ``org:admin`` separately.
+	//
+	// Corresponds with GET /oauth-app-registrations (the `ListOauthAppRegistrations` operationId).
+	ListOauthAppRegistrations(ctx context.Context, params *ListOauthAppRegistrationsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateOauthAppRegistrationWithBody Register a shared OAuth application
+	//
+	// Register a shared OAuth application that users on this instance can SSO through.
+	//
+	// The client secret is stored encrypted and never returned by any read
+	// endpoint — reads only expose ``has_client_secret`` + ``secret_last_rotated_at``.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /oauth-app-registrations (the `CreateOauthAppRegistration` operationId).
+	CreateOauthAppRegistrationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateOauthAppRegistration Register a shared OAuth application
+	//
+	// Register a shared OAuth application that users on this instance can SSO through.
+	//
+	// The client secret is stored encrypted and never returned by any read
+	// endpoint — reads only expose ``has_client_secret`` + ``secret_last_rotated_at``.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /oauth-app-registrations (the `CreateOauthAppRegistration` operationId).
+	CreateOauthAppRegistration(ctx context.Context, body CreateOauthAppRegistrationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteOauthAppRegistration Delete an OAuth app registration
+	//
+	// Delete a registration.
+	//
+	// Refused if any credentials still reference it — revoke those first, or
+	// deactivate the registration with a PATCH ``is_active=false`` instead.
+	//
+	// Corresponds with DELETE /oauth-app-registrations/{id} (the `DeleteOauthAppRegistration` operationId).
+	DeleteOauthAppRegistration(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetOauthAppRegistration Get an OAuth app registration
+	//
+	// Get an OAuth app registration by id.
+	//
+	// Corresponds with GET /oauth-app-registrations/{id} (the `GetOauthAppRegistration` operationId).
+	GetOauthAppRegistration(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateOauthAppRegistrationWithBody Update an OAuth app registration
+	//
+	// Update mutable fields on a registration.
+	//
+	// ``client_id`` is immutable (would orphan every dependent credential) —
+	// use ``:rotate-secret`` for the client secret.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PATCH /oauth-app-registrations/{id} (the `UpdateOauthAppRegistration` operationId).
+	UpdateOauthAppRegistrationWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateOauthAppRegistration Update an OAuth app registration
+	//
+	// Update mutable fields on a registration.
+	//
+	// ``client_id`` is immutable (would orphan every dependent credential) —
+	// use ``:rotate-secret`` for the client secret.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PATCH /oauth-app-registrations/{id} (the `UpdateOauthAppRegistration` operationId).
+	UpdateOauthAppRegistration(ctx context.Context, id string, body UpdateOauthAppRegistrationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RotateOauthAppRegistrationSecretWithBody Rotate the client secret
+	//
+	// Replace the encrypted client secret. Existing tokens are unaffected;
+	// subsequent refreshes present the new secret.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /oauth-app-registrations/{id}:rotate-secret (the `RotateOauthAppRegistrationSecret` operationId).
+	RotateOauthAppRegistrationSecretWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RotateOauthAppRegistrationSecret Rotate the client secret
+	//
+	// Replace the encrypted client secret. Existing tokens are unaffected;
+	// subsequent refreshes present the new secret.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /oauth-app-registrations/{id}:rotate-secret (the `RotateOauthAppRegistrationSecret` operationId).
+	RotateOauthAppRegistrationSecret(ctx context.Context, id string, body RotateOauthAppRegistrationSecretJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// RegisterOauthClientEndpointWithBody Register OAuth client (anonymous DCR)
 	//
 	// Register a public OAuth client anonymously (RFC 7591 subset).
@@ -7025,9 +7402,13 @@ type ClientInterface interface {
 
 	// ListVendors List verified vendors
 	//
-	// Public metadata for every vendor in the config-seeded registry.
+	// Public metadata for every vendor known to the platform.
 	//
-	// Used by the UI's "Add integration" picker. Never returns secrets.
+	// Unioned across two sources: admin-registered ``oauth_app_registrations``
+	// rows and the platform-shipped ``vendors`` config. When a vendor slug
+	// exists in both, the DB row wins so admin-managed registrations always
+	// take precedence in the UI's "Add integration" picker. Never returns
+	// secrets.
 	//
 	// Corresponds with GET /vendors (the `ListVendors` operationId).
 	ListVendors(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -7041,7 +7422,7 @@ type ClientInterface interface {
 	// detail via the handler registered in ``control/web/app.py``.
 	//
 	// Corresponds with GET /vendors/{vendor_key}/auth-capabilities (the `GetAuthCapabilities` operationId).
-	GetAuthCapabilities(ctx context.Context, vendorKey string, reqEditors ...RequestEditorFn) (*http.Response, error)
+	GetAuthCapabilities(ctx context.Context, vendorKey string, params *GetAuthCapabilitiesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
 // Jwks JSON Web Key Set
@@ -10261,6 +10642,192 @@ func (c *Client) UpdateNote(ctx context.Context, noteId string, params *UpdateNo
 	return c.Client.Do(req)
 }
 
+// ListOauthAppRegistrations List OAuth app registrations
+//
+// List OAuth application registrations visible to the caller.
+//
+// Any authenticated caller with “credentials:read“ sees the shared
+// registrations they might connect through; admin-only routes gate on
+// “org:admin“ separately.
+//
+// Corresponds with GET /oauth-app-registrations (the `ListOauthAppRegistrations` operationId).
+func (c *Client) ListOauthAppRegistrations(ctx context.Context, params *ListOauthAppRegistrationsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListOauthAppRegistrationsRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateOauthAppRegistrationWithBody Register a shared OAuth application
+//
+// Register a shared OAuth application that users on this instance can SSO through.
+//
+// The client secret is stored encrypted and never returned by any read
+// endpoint — reads only expose “has_client_secret“ + “secret_last_rotated_at“.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /oauth-app-registrations (the `CreateOauthAppRegistration` operationId).
+func (c *Client) CreateOauthAppRegistrationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateOauthAppRegistrationRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateOauthAppRegistration Register a shared OAuth application
+//
+// Register a shared OAuth application that users on this instance can SSO through.
+//
+// The client secret is stored encrypted and never returned by any read
+// endpoint — reads only expose “has_client_secret“ + “secret_last_rotated_at“.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /oauth-app-registrations (the `CreateOauthAppRegistration` operationId).
+func (c *Client) CreateOauthAppRegistration(ctx context.Context, body CreateOauthAppRegistrationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateOauthAppRegistrationRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeleteOauthAppRegistration Delete an OAuth app registration
+//
+// Delete a registration.
+//
+// Refused if any credentials still reference it — revoke those first, or
+// deactivate the registration with a PATCH “is_active=false“ instead.
+//
+// Corresponds with DELETE /oauth-app-registrations/{id} (the `DeleteOauthAppRegistration` operationId).
+func (c *Client) DeleteOauthAppRegistration(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteOauthAppRegistrationRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetOauthAppRegistration Get an OAuth app registration
+//
+// Get an OAuth app registration by id.
+//
+// Corresponds with GET /oauth-app-registrations/{id} (the `GetOauthAppRegistration` operationId).
+func (c *Client) GetOauthAppRegistration(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetOauthAppRegistrationRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateOauthAppRegistrationWithBody Update an OAuth app registration
+//
+// Update mutable fields on a registration.
+//
+// “client_id“ is immutable (would orphan every dependent credential) —
+// use “:rotate-secret“ for the client secret.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PATCH /oauth-app-registrations/{id} (the `UpdateOauthAppRegistration` operationId).
+func (c *Client) UpdateOauthAppRegistrationWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateOauthAppRegistrationRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateOauthAppRegistration Update an OAuth app registration
+//
+// Update mutable fields on a registration.
+//
+// “client_id“ is immutable (would orphan every dependent credential) —
+// use “:rotate-secret“ for the client secret.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PATCH /oauth-app-registrations/{id} (the `UpdateOauthAppRegistration` operationId).
+func (c *Client) UpdateOauthAppRegistration(ctx context.Context, id string, body UpdateOauthAppRegistrationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateOauthAppRegistrationRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RotateOauthAppRegistrationSecretWithBody Rotate the client secret
+//
+// Replace the encrypted client secret. Existing tokens are unaffected;
+// subsequent refreshes present the new secret.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /oauth-app-registrations/{id}:rotate-secret (the `RotateOauthAppRegistrationSecret` operationId).
+func (c *Client) RotateOauthAppRegistrationSecretWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRotateOauthAppRegistrationSecretRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RotateOauthAppRegistrationSecret Rotate the client secret
+//
+// Replace the encrypted client secret. Existing tokens are unaffected;
+// subsequent refreshes present the new secret.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /oauth-app-registrations/{id}:rotate-secret (the `RotateOauthAppRegistrationSecret` operationId).
+func (c *Client) RotateOauthAppRegistrationSecret(ctx context.Context, id string, body RotateOauthAppRegistrationSecretJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRotateOauthAppRegistrationSecretRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // RegisterOauthClientEndpointWithBody Register OAuth client (anonymous DCR)
 //
 // Register a public OAuth client anonymously (RFC 7591 subset).
@@ -11719,9 +12286,13 @@ func (c *Client) RedeemInvite(ctx context.Context, body RedeemInviteJSONRequestB
 
 // ListVendors List verified vendors
 //
-// Public metadata for every vendor in the config-seeded registry.
+// Public metadata for every vendor known to the platform.
 //
-// Used by the UI's "Add integration" picker. Never returns secrets.
+// Unioned across two sources: admin-registered “oauth_app_registrations“
+// rows and the platform-shipped “vendors“ config. When a vendor slug
+// exists in both, the DB row wins so admin-managed registrations always
+// take precedence in the UI's "Add integration" picker. Never returns
+// secrets.
 //
 // Corresponds with GET /vendors (the `ListVendors` operationId).
 func (c *Client) ListVendors(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -11745,8 +12316,8 @@ func (c *Client) ListVendors(ctx context.Context, reqEditors ...RequestEditorFn)
 // detail via the handler registered in “control/web/app.py“.
 //
 // Corresponds with GET /vendors/{vendor_key}/auth-capabilities (the `GetAuthCapabilities` operationId).
-func (c *Client) GetAuthCapabilities(ctx context.Context, vendorKey string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetAuthCapabilitiesRequest(c.Server, vendorKey)
+func (c *Client) GetAuthCapabilities(ctx context.Context, vendorKey string, params *GetAuthCapabilitiesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetAuthCapabilitiesRequest(c.Server, vendorKey, params)
 	if err != nil {
 		return nil, err
 	}
@@ -18682,6 +19253,286 @@ func NewUpdateNoteRequestWithBody(server string, noteId string, params *UpdateNo
 	return req, nil
 }
 
+// NewListOauthAppRegistrationsRequest constructs an http.Request for the ListOauthAppRegistrations method
+func NewListOauthAppRegistrationsRequest(server string, params *ListOauthAppRegistrationsParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/oauth-app-registrations")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.ApiVendor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "api_vendor", *params.ApiVendor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.IncludeInactive != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "include_inactive", *params.IncludeInactive, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.FlowKind != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "flow_kind", *params.FlowKind, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreateOauthAppRegistrationRequest calls the generic CreateOauthAppRegistration builder with application/json body
+func NewCreateOauthAppRegistrationRequest(server string, body CreateOauthAppRegistrationJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateOauthAppRegistrationRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewCreateOauthAppRegistrationRequestWithBody constructs an http.Request for the CreateOauthAppRegistration method, with any body, and a specified content type
+func NewCreateOauthAppRegistrationRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/oauth-app-registrations")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewDeleteOauthAppRegistrationRequest constructs an http.Request for the DeleteOauthAppRegistration method
+func NewDeleteOauthAppRegistrationRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/oauth-app-registrations/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetOauthAppRegistrationRequest constructs an http.Request for the GetOauthAppRegistration method
+func NewGetOauthAppRegistrationRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/oauth-app-registrations/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewUpdateOauthAppRegistrationRequest calls the generic UpdateOauthAppRegistration builder with application/json body
+func NewUpdateOauthAppRegistrationRequest(server string, id string, body UpdateOauthAppRegistrationJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewUpdateOauthAppRegistrationRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewUpdateOauthAppRegistrationRequestWithBody constructs an http.Request for the UpdateOauthAppRegistration method, with any body, and a specified content type
+func NewUpdateOauthAppRegistrationRequestWithBody(server string, id string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/oauth-app-registrations/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPatch, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewRotateOauthAppRegistrationSecretRequest calls the generic RotateOauthAppRegistrationSecret builder with application/json body
+func NewRotateOauthAppRegistrationSecretRequest(server string, id string, body RotateOauthAppRegistrationSecretJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRotateOauthAppRegistrationSecretRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewRotateOauthAppRegistrationSecretRequestWithBody constructs an http.Request for the RotateOauthAppRegistrationSecret method, with any body, and a specified content type
+func NewRotateOauthAppRegistrationSecretRequestWithBody(server string, id string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/oauth-app-registrations/%s:rotate-secret", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewRegisterOauthClientEndpointRequest calls the generic RegisterOauthClientEndpoint builder with application/json body
 func NewRegisterOauthClientEndpointRequest(server string, body RegisterOauthClientEndpointJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -20354,7 +21205,7 @@ func NewListVendorsRequest(server string) (*http.Request, error) {
 }
 
 // NewGetAuthCapabilitiesRequest constructs an http.Request for the GetAuthCapabilities method
-func NewGetAuthCapabilitiesRequest(server string, vendorKey string) (*http.Request, error) {
+func NewGetAuthCapabilitiesRequest(server string, vendorKey string, params *GetAuthCapabilitiesParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -20377,6 +21228,33 @@ func NewGetAuthCapabilitiesRequest(server string, vendorKey string) (*http.Reque
 	queryURL, err := serverURL.Parse(operationPath)
 	if err != nil {
 		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.OauthAppRegistrationId != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "oauth_app_registration_id", *params.OauthAppRegistrationId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
 	}
 
 	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
@@ -22256,6 +23134,108 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with PATCH /notes/{note_id} (the `UpdateNote` operationId).
 	UpdateNoteWithResponse(ctx context.Context, noteId string, params *UpdateNoteParams, body UpdateNoteJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateNoteHTTPResp, error)
 
+	// ListOauthAppRegistrationsWithResponse List OAuth app registrations
+	//
+	// List OAuth application registrations visible to the caller.
+	//
+	// Any authenticated caller with ``credentials:read`` sees the shared
+	// registrations they might connect through; admin-only routes gate on
+	// ``org:admin`` separately.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /oauth-app-registrations (the `ListOauthAppRegistrations` operationId).
+	ListOauthAppRegistrationsWithResponse(ctx context.Context, params *ListOauthAppRegistrationsParams, reqEditors ...RequestEditorFn) (*ListOauthAppRegistrationsHTTPResp, error)
+
+	// CreateOauthAppRegistrationWithBodyWithResponse Register a shared OAuth application
+	//
+	// Register a shared OAuth application that users on this instance can SSO through.
+	//
+	// The client secret is stored encrypted and never returned by any read
+	// endpoint — reads only expose ``has_client_secret`` + ``secret_last_rotated_at``.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /oauth-app-registrations (the `CreateOauthAppRegistration` operationId).
+	CreateOauthAppRegistrationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateOauthAppRegistrationHTTPResp, error)
+
+	// CreateOauthAppRegistrationWithResponse Register a shared OAuth application
+	//
+	// Register a shared OAuth application that users on this instance can SSO through.
+	//
+	// The client secret is stored encrypted and never returned by any read
+	// endpoint — reads only expose ``has_client_secret`` + ``secret_last_rotated_at``.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /oauth-app-registrations (the `CreateOauthAppRegistration` operationId).
+	CreateOauthAppRegistrationWithResponse(ctx context.Context, body CreateOauthAppRegistrationJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateOauthAppRegistrationHTTPResp, error)
+
+	// DeleteOauthAppRegistrationWithResponse Delete an OAuth app registration
+	//
+	// Delete a registration.
+	//
+	// Refused if any credentials still reference it — revoke those first, or
+	// deactivate the registration with a PATCH ``is_active=false`` instead.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /oauth-app-registrations/{id} (the `DeleteOauthAppRegistration` operationId).
+	DeleteOauthAppRegistrationWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DeleteOauthAppRegistrationHTTPResp, error)
+
+	// GetOauthAppRegistrationWithResponse Get an OAuth app registration
+	//
+	// Get an OAuth app registration by id.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /oauth-app-registrations/{id} (the `GetOauthAppRegistration` operationId).
+	GetOauthAppRegistrationWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetOauthAppRegistrationHTTPResp, error)
+
+	// UpdateOauthAppRegistrationWithBodyWithResponse Update an OAuth app registration
+	//
+	// Update mutable fields on a registration.
+	//
+	// ``client_id`` is immutable (would orphan every dependent credential) —
+	// use ``:rotate-secret`` for the client secret.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /oauth-app-registrations/{id} (the `UpdateOauthAppRegistration` operationId).
+	UpdateOauthAppRegistrationWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateOauthAppRegistrationHTTPResp, error)
+
+	// UpdateOauthAppRegistrationWithResponse Update an OAuth app registration
+	//
+	// Update mutable fields on a registration.
+	//
+	// ``client_id`` is immutable (would orphan every dependent credential) —
+	// use ``:rotate-secret`` for the client secret.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /oauth-app-registrations/{id} (the `UpdateOauthAppRegistration` operationId).
+	UpdateOauthAppRegistrationWithResponse(ctx context.Context, id string, body UpdateOauthAppRegistrationJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateOauthAppRegistrationHTTPResp, error)
+
+	// RotateOauthAppRegistrationSecretWithBodyWithResponse Rotate the client secret
+	//
+	// Replace the encrypted client secret. Existing tokens are unaffected;
+	// subsequent refreshes present the new secret.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /oauth-app-registrations/{id}:rotate-secret (the `RotateOauthAppRegistrationSecret` operationId).
+	RotateOauthAppRegistrationSecretWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RotateOauthAppRegistrationSecretHTTPResp, error)
+
+	// RotateOauthAppRegistrationSecretWithResponse Rotate the client secret
+	//
+	// Replace the encrypted client secret. Existing tokens are unaffected;
+	// subsequent refreshes present the new secret.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /oauth-app-registrations/{id}:rotate-secret (the `RotateOauthAppRegistrationSecret` operationId).
+	RotateOauthAppRegistrationSecretWithResponse(ctx context.Context, id string, body RotateOauthAppRegistrationSecretJSONRequestBody, reqEditors ...RequestEditorFn) (*RotateOauthAppRegistrationSecretHTTPResp, error)
+
 	// RegisterOauthClientEndpointWithBodyWithResponse Register OAuth client (anonymous DCR)
 	//
 	// Register a public OAuth client anonymously (RFC 7591 subset).
@@ -23146,9 +24126,13 @@ type ClientWithResponsesInterface interface {
 
 	// ListVendorsWithResponse List verified vendors
 	//
-	// Public metadata for every vendor in the config-seeded registry.
+	// Public metadata for every vendor known to the platform.
 	//
-	// Used by the UI's "Add integration" picker. Never returns secrets.
+	// Unioned across two sources: admin-registered ``oauth_app_registrations``
+	// rows and the platform-shipped ``vendors`` config. When a vendor slug
+	// exists in both, the DB row wins so admin-managed registrations always
+	// take precedence in the UI's "Add integration" picker. Never returns
+	// secrets.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -23166,7 +24150,7 @@ type ClientWithResponsesInterface interface {
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /vendors/{vendor_key}/auth-capabilities (the `GetAuthCapabilities` operationId).
-	GetAuthCapabilitiesWithResponse(ctx context.Context, vendorKey string, reqEditors ...RequestEditorFn) (*GetAuthCapabilitiesHTTPResp, error)
+	GetAuthCapabilitiesWithResponse(ctx context.Context, vendorKey string, params *GetAuthCapabilitiesParams, reqEditors ...RequestEditorFn) (*GetAuthCapabilitiesHTTPResp, error)
 }
 
 type JwksHTTPResp struct {
@@ -33347,6 +34331,532 @@ func (r UpdateNoteHTTPResp) ContentType() string {
 	return ""
 }
 
+type ListOauthAppRegistrationsHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *OAuthAppRegistrationListResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListOauthAppRegistrationsHTTPResp) GetJSON200() *OAuthAppRegistrationListResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ListOauthAppRegistrationsHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ListOauthAppRegistrationsHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ListOauthAppRegistrationsHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r ListOauthAppRegistrationsHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r ListOauthAppRegistrationsHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ListOauthAppRegistrationsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ListOauthAppRegistrationsHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListOauthAppRegistrationsHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListOauthAppRegistrationsHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListOauthAppRegistrationsHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreateOauthAppRegistrationHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *OAuthAppRegistrationResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateOauthAppRegistrationHTTPResp) GetJSON201() *OAuthAppRegistrationResponse {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r CreateOauthAppRegistrationHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r CreateOauthAppRegistrationHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r CreateOauthAppRegistrationHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r CreateOauthAppRegistrationHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r CreateOauthAppRegistrationHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r CreateOauthAppRegistrationHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateOauthAppRegistrationHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateOauthAppRegistrationHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateOauthAppRegistrationHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateOauthAppRegistrationHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type DeleteOauthAppRegistrationHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r DeleteOauthAppRegistrationHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r DeleteOauthAppRegistrationHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r DeleteOauthAppRegistrationHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r DeleteOauthAppRegistrationHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r DeleteOauthAppRegistrationHTTPResp) GetApplicationproblemJSON409() *ProblemDetail {
+	return r.ApplicationproblemJSON409
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r DeleteOauthAppRegistrationHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r DeleteOauthAppRegistrationHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r DeleteOauthAppRegistrationHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r DeleteOauthAppRegistrationHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteOauthAppRegistrationHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteOauthAppRegistrationHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeleteOauthAppRegistrationHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetOauthAppRegistrationHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *OAuthAppRegistrationResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetOauthAppRegistrationHTTPResp) GetJSON200() *OAuthAppRegistrationResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r GetOauthAppRegistrationHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r GetOauthAppRegistrationHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r GetOauthAppRegistrationHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r GetOauthAppRegistrationHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r GetOauthAppRegistrationHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r GetOauthAppRegistrationHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r GetOauthAppRegistrationHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r GetOauthAppRegistrationHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetOauthAppRegistrationHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetOauthAppRegistrationHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetOauthAppRegistrationHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type UpdateOauthAppRegistrationHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *OAuthAppRegistrationResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r UpdateOauthAppRegistrationHTTPResp) GetJSON200() *OAuthAppRegistrationResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r UpdateOauthAppRegistrationHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r UpdateOauthAppRegistrationHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r UpdateOauthAppRegistrationHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r UpdateOauthAppRegistrationHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r UpdateOauthAppRegistrationHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r UpdateOauthAppRegistrationHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r UpdateOauthAppRegistrationHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r UpdateOauthAppRegistrationHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r UpdateOauthAppRegistrationHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UpdateOauthAppRegistrationHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r UpdateOauthAppRegistrationHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RotateOauthAppRegistrationSecretHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *OAuthAppRegistrationResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r RotateOauthAppRegistrationSecretHTTPResp) GetJSON200() *OAuthAppRegistrationResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r RotateOauthAppRegistrationSecretHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r RotateOauthAppRegistrationSecretHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r RotateOauthAppRegistrationSecretHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r RotateOauthAppRegistrationSecretHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r RotateOauthAppRegistrationSecretHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r RotateOauthAppRegistrationSecretHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r RotateOauthAppRegistrationSecretHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r RotateOauthAppRegistrationSecretHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RotateOauthAppRegistrationSecretHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RotateOauthAppRegistrationSecretHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RotateOauthAppRegistrationSecretHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type RegisterOauthClientEndpointHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -39305,6 +40815,162 @@ func (c *ClientWithResponses) UpdateNoteWithResponse(ctx context.Context, noteId
 	return ParseUpdateNoteHTTPResp(rsp)
 }
 
+// ListOauthAppRegistrationsWithResponse List OAuth app registrations
+//
+// List OAuth application registrations visible to the caller.
+//
+// Any authenticated caller with “credentials:read“ sees the shared
+// registrations they might connect through; admin-only routes gate on
+// “org:admin“ separately.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /oauth-app-registrations (the `ListOauthAppRegistrations` operationId).
+func (c *ClientWithResponses) ListOauthAppRegistrationsWithResponse(ctx context.Context, params *ListOauthAppRegistrationsParams, reqEditors ...RequestEditorFn) (*ListOauthAppRegistrationsHTTPResp, error) {
+	rsp, err := c.ListOauthAppRegistrations(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListOauthAppRegistrationsHTTPResp(rsp)
+}
+
+// CreateOauthAppRegistrationWithBodyWithResponse Register a shared OAuth application
+//
+// Register a shared OAuth application that users on this instance can SSO through.
+//
+// The client secret is stored encrypted and never returned by any read
+// endpoint — reads only expose “has_client_secret“ + “secret_last_rotated_at“.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /oauth-app-registrations (the `CreateOauthAppRegistration` operationId).
+func (c *ClientWithResponses) CreateOauthAppRegistrationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateOauthAppRegistrationHTTPResp, error) {
+	rsp, err := c.CreateOauthAppRegistrationWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateOauthAppRegistrationHTTPResp(rsp)
+}
+
+// CreateOauthAppRegistrationWithResponse Register a shared OAuth application
+//
+// Register a shared OAuth application that users on this instance can SSO through.
+//
+// The client secret is stored encrypted and never returned by any read
+// endpoint — reads only expose “has_client_secret“ + “secret_last_rotated_at“.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /oauth-app-registrations (the `CreateOauthAppRegistration` operationId).
+func (c *ClientWithResponses) CreateOauthAppRegistrationWithResponse(ctx context.Context, body CreateOauthAppRegistrationJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateOauthAppRegistrationHTTPResp, error) {
+	rsp, err := c.CreateOauthAppRegistration(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateOauthAppRegistrationHTTPResp(rsp)
+}
+
+// DeleteOauthAppRegistrationWithResponse Delete an OAuth app registration
+//
+// Delete a registration.
+//
+// Refused if any credentials still reference it — revoke those first, or
+// deactivate the registration with a PATCH “is_active=false“ instead.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /oauth-app-registrations/{id} (the `DeleteOauthAppRegistration` operationId).
+func (c *ClientWithResponses) DeleteOauthAppRegistrationWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DeleteOauthAppRegistrationHTTPResp, error) {
+	rsp, err := c.DeleteOauthAppRegistration(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteOauthAppRegistrationHTTPResp(rsp)
+}
+
+// GetOauthAppRegistrationWithResponse Get an OAuth app registration
+//
+// Get an OAuth app registration by id.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /oauth-app-registrations/{id} (the `GetOauthAppRegistration` operationId).
+func (c *ClientWithResponses) GetOauthAppRegistrationWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetOauthAppRegistrationHTTPResp, error) {
+	rsp, err := c.GetOauthAppRegistration(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetOauthAppRegistrationHTTPResp(rsp)
+}
+
+// UpdateOauthAppRegistrationWithBodyWithResponse Update an OAuth app registration
+//
+// Update mutable fields on a registration.
+//
+// “client_id“ is immutable (would orphan every dependent credential) —
+// use “:rotate-secret“ for the client secret.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /oauth-app-registrations/{id} (the `UpdateOauthAppRegistration` operationId).
+func (c *ClientWithResponses) UpdateOauthAppRegistrationWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateOauthAppRegistrationHTTPResp, error) {
+	rsp, err := c.UpdateOauthAppRegistrationWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateOauthAppRegistrationHTTPResp(rsp)
+}
+
+// UpdateOauthAppRegistrationWithResponse Update an OAuth app registration
+//
+// Update mutable fields on a registration.
+//
+// “client_id“ is immutable (would orphan every dependent credential) —
+// use “:rotate-secret“ for the client secret.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /oauth-app-registrations/{id} (the `UpdateOauthAppRegistration` operationId).
+func (c *ClientWithResponses) UpdateOauthAppRegistrationWithResponse(ctx context.Context, id string, body UpdateOauthAppRegistrationJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateOauthAppRegistrationHTTPResp, error) {
+	rsp, err := c.UpdateOauthAppRegistration(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateOauthAppRegistrationHTTPResp(rsp)
+}
+
+// RotateOauthAppRegistrationSecretWithBodyWithResponse Rotate the client secret
+//
+// Replace the encrypted client secret. Existing tokens are unaffected;
+// subsequent refreshes present the new secret.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /oauth-app-registrations/{id}:rotate-secret (the `RotateOauthAppRegistrationSecret` operationId).
+func (c *ClientWithResponses) RotateOauthAppRegistrationSecretWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RotateOauthAppRegistrationSecretHTTPResp, error) {
+	rsp, err := c.RotateOauthAppRegistrationSecretWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRotateOauthAppRegistrationSecretHTTPResp(rsp)
+}
+
+// RotateOauthAppRegistrationSecretWithResponse Rotate the client secret
+//
+// Replace the encrypted client secret. Existing tokens are unaffected;
+// subsequent refreshes present the new secret.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /oauth-app-registrations/{id}:rotate-secret (the `RotateOauthAppRegistrationSecret` operationId).
+func (c *ClientWithResponses) RotateOauthAppRegistrationSecretWithResponse(ctx context.Context, id string, body RotateOauthAppRegistrationSecretJSONRequestBody, reqEditors ...RequestEditorFn) (*RotateOauthAppRegistrationSecretHTTPResp, error) {
+	rsp, err := c.RotateOauthAppRegistrationSecret(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRotateOauthAppRegistrationSecretHTTPResp(rsp)
+}
+
 // RegisterOauthClientEndpointWithBodyWithResponse Register OAuth client (anonymous DCR)
 //
 // Register a public OAuth client anonymously (RFC 7591 subset).
@@ -40561,9 +42227,13 @@ func (c *ClientWithResponses) RedeemInviteWithResponse(ctx context.Context, body
 
 // ListVendorsWithResponse List verified vendors
 //
-// Public metadata for every vendor in the config-seeded registry.
+// Public metadata for every vendor known to the platform.
 //
-// Used by the UI's "Add integration" picker. Never returns secrets.
+// Unioned across two sources: admin-registered “oauth_app_registrations“
+// rows and the platform-shipped “vendors“ config. When a vendor slug
+// exists in both, the DB row wins so admin-managed registrations always
+// take precedence in the UI's "Add integration" picker. Never returns
+// secrets.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -40587,8 +42257,8 @@ func (c *ClientWithResponses) ListVendorsWithResponse(ctx context.Context, reqEd
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /vendors/{vendor_key}/auth-capabilities (the `GetAuthCapabilities` operationId).
-func (c *ClientWithResponses) GetAuthCapabilitiesWithResponse(ctx context.Context, vendorKey string, reqEditors ...RequestEditorFn) (*GetAuthCapabilitiesHTTPResp, error) {
-	rsp, err := c.GetAuthCapabilities(ctx, vendorKey, reqEditors...)
+func (c *ClientWithResponses) GetAuthCapabilitiesWithResponse(ctx context.Context, vendorKey string, params *GetAuthCapabilitiesParams, reqEditors ...RequestEditorFn) (*GetAuthCapabilitiesHTTPResp, error) {
+	rsp, err := c.GetAuthCapabilities(ctx, vendorKey, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -48931,6 +50601,445 @@ func ParseUpdateNoteHTTPResp(rsp *http.Response) (*UpdateNoteHTTPResp, error) {
 			return nil, err
 		}
 		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListOauthAppRegistrationsHTTPResp parses an HTTP response from a ListOauthAppRegistrationsWithResponse call
+func ParseListOauthAppRegistrationsHTTPResp(rsp *http.Response) (*ListOauthAppRegistrationsHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListOauthAppRegistrationsHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest OAuthAppRegistrationListResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateOauthAppRegistrationHTTPResp parses an HTTP response from a CreateOauthAppRegistrationWithResponse call
+func ParseCreateOauthAppRegistrationHTTPResp(rsp *http.Response) (*CreateOauthAppRegistrationHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateOauthAppRegistrationHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest OAuthAppRegistrationResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeleteOauthAppRegistrationHTTPResp parses an HTTP response from a DeleteOauthAppRegistrationWithResponse call
+func ParseDeleteOauthAppRegistrationHTTPResp(rsp *http.Response) (*DeleteOauthAppRegistrationHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteOauthAppRegistrationHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetOauthAppRegistrationHTTPResp parses an HTTP response from a GetOauthAppRegistrationWithResponse call
+func ParseGetOauthAppRegistrationHTTPResp(rsp *http.Response) (*GetOauthAppRegistrationHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetOauthAppRegistrationHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest OAuthAppRegistrationResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseUpdateOauthAppRegistrationHTTPResp parses an HTTP response from a UpdateOauthAppRegistrationWithResponse call
+func ParseUpdateOauthAppRegistrationHTTPResp(rsp *http.Response) (*UpdateOauthAppRegistrationHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UpdateOauthAppRegistrationHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest OAuthAppRegistrationResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRotateOauthAppRegistrationSecretHTTPResp parses an HTTP response from a RotateOauthAppRegistrationSecretWithResponse call
+func ParseRotateOauthAppRegistrationSecretHTTPResp(rsp *http.Response) (*RotateOauthAppRegistrationSecretHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RotateOauthAppRegistrationSecretHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest OAuthAppRegistrationResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest ProblemDetail

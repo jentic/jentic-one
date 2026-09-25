@@ -9,6 +9,12 @@ so it runs as raw SQL behind ``CredentialDeriverProtocol``.
 
 The two databases are separate sessions, so the intersection is computed in
 Python rather than via a cross-schema JOIN.
+
+An owner-scope filter narrows the covering-credentials query further: a
+credential row with a non-NULL ``owner_user_id`` is visible only to that user
+(and to agents whose ``parent_actor_id`` matches); a NULL ``owner_user_id`` is
+org-shared. The filter runs *inside* the binding intersection — the binding is
+still the primary boundary; owner scoping narrows within.
 """
 
 from __future__ import annotations
@@ -52,9 +58,20 @@ _AGENT_CREDENTIALS = text(
 # credential row upfront in state ``pending`` (token-less until the vendor
 # flow completes), and the schema contract (core/schema/credentials.py)
 # promises broker resolution skips non-``connected`` rows.
+#
+# Owner scoping: a caller-owned row (``c.owner_user_id = :owner_user_id``) OR
+# an org-shared row (``c.owner_user_id IS NULL``) is visible. When the bound
+# ``:owner_user_id`` is NULL, the equality clause is UNKNOWN for every row and
+# the filter collapses to the ``IS NULL`` branch — only org-shared rows
+# remain. The ORDER BY puts caller-owned rows first (``IS NULL`` sorts last,
+# because TRUE > FALSE in Postgres), so a matching personal row wins over a
+# fallback shared row when both are bound; id ASC keeps the tiebreak
+# deterministic and cache-stable.
 _COVERING_CREDENTIALS = text(
-    f"SELECT c.id FROM credentials c "
-    f"WHERE {credential_coverage_where()} AND c.active AND c.state = 'connected'"
+    "SELECT c.id, c.owner_user_id FROM credentials c "
+    f"WHERE {credential_coverage_where()} AND c.active AND c.state = 'connected' "
+    "AND (c.owner_user_id IS NULL OR c.owner_user_id = :owner_user_id) "
+    "ORDER BY (c.owner_user_id IS NULL) ASC, c.id ASC"
 )
 
 # control DB — the stored identities of a set of credentials. Used only on the
@@ -97,15 +114,28 @@ class CredentialBindingResolver:
         self._control_db = control_db
 
     async def derive_credentials(
-        self, *, agent_id: str, vendor: str, name: str, version: str
+        self,
+        *,
+        agent_id: str,
+        vendor: str,
+        name: str,
+        version: str,
+        owner_user_id: str | None = None,
     ) -> CredentialDerivation:
         """Derive the agent's bound credentials for the API, with empty-set context.
 
         Returns the intersection (active direct bindings ∩ active credentials
-        covering the API) plus enough context to pick the right denial
-        directive: whether the agent is bound to anything, whether any
-        credential serves the API at all, and — when bound but unresolved — a
-        nearest-miss credential identity.
+        covering the API, narrowed to the caller's owner scope) plus enough
+        context to pick the right denial directive: whether the agent is bound
+        to anything, whether any credential serves the API at all, and — when
+        bound but unresolved — a nearest-miss credential identity.
+
+        ``owner_user_id`` is the caller's effective credential owner (compute
+        it from an ``Identity`` via
+        ``shared.auth.identity.owner_user_id_from_identity``). ``None``
+        restricts the result to org-shared (NULL-owner) rows; a user id also
+        admits that user's own rows and prefers them over the shared
+        fallback.
         """
         async with self._admin_db.session() as session:
             binding_rows = (await session.execute(_AGENT_CREDENTIALS, {"agent_id": agent_id})).all()
@@ -115,15 +145,24 @@ class CredentialBindingResolver:
             covering_rows = (
                 await session.execute(
                     _COVERING_CREDENTIALS,
-                    {"vendor": vendor, "name": name, "version": version},
+                    {
+                        "vendor": vendor,
+                        "name": name,
+                        "version": version,
+                        "owner_user_id": owner_user_id,
+                    },
                 )
             ).all()
+        # Preserve the SQL ORDER BY (caller-owned before org-shared, then id
+        # ASC): the DB already put personal rows ahead of the shared fallback,
+        # so iterating in row order and filtering to bound ids keeps that
+        # precedence in the intersection. ``covering_ids`` remains a set for
+        # the ``api_served`` truthiness signal.
         covering_ids = {row[0] for row in covering_rows}
-
-        # Sorted for a deterministic, cache-stable candidate order.
         candidates = tuple(
             BoundCredential(credential_id=cid, rule_set_id=rule_sets[cid])
-            for cid in sorted(rule_sets.keys() & covering_ids)
+            for cid, _owner in covering_rows
+            if cid in rule_sets
         )
 
         # Nearest-miss diagnostic only when nothing covers the API at all: if a

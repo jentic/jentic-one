@@ -25,11 +25,18 @@ from jentic_one.control.services.integrations.errors import (
     AgentNotFoundError,
     ConfirmationForbiddenError,
     ConnectSessionServiceError,
+    InvalidOAuthAppRegistrationError,
     InvalidPollTokenError,
     InvalidStateTransitionError,
     NoOpForFlowError,
     ScopeValidationError,
     SessionNotFoundError,
+)
+from jentic_one.control.services.oauth_app_registrations.errors import (
+    InvalidOAuthAppRegistrationInputError,
+    OAuthAppRegistrationInUseError,
+    OAuthAppRegistrationNotFoundError,
+    SecretRotationNotSupportedError,
 )
 from jentic_one.control.services.vendors.service import (
     UnknownVendorError,
@@ -76,6 +83,7 @@ _CONNECT_SESSION_ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     AgentNotFoundError: (400, "connect_session_agent_not_found"),
     ScopeValidationError: (400, "connect_session_unknown_scopes"),
     NoOpForFlowError: (400, "connect_session_unsupported_flow"),
+    InvalidOAuthAppRegistrationError: (400, "invalid_oauth_app_registration"),
     ConnectSessionServiceError: (500, "connect_session_error"),
 }
 
@@ -148,6 +156,16 @@ _VENDOR_ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
 }
 
 vendor_error_handler = make_service_error_handler(_VENDOR_ERROR_MAP)
+
+
+_OAUTH_APP_REGISTRATION_ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
+    OAuthAppRegistrationNotFoundError: (404, "oauth_app_registration_not_found"),
+    OAuthAppRegistrationInUseError: (409, "oauth_app_registration_in_use"),
+    InvalidOAuthAppRegistrationInputError: (400, "invalid_oauth_app_registration_input"),
+    SecretRotationNotSupportedError: (409, "secret_rotation_not_supported"),
+}
+
+oauth_app_registration_error_handler = make_service_error_handler(_OAUTH_APP_REGISTRATION_ERROR_MAP)
 
 
 # A DB write failure that escapes a service unmapped is not a server fault: a

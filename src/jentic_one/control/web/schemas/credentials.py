@@ -399,6 +399,22 @@ class CredentialRedactedResponse(BaseModel):
         default=None,
         description="OpenAPI server-variable values for URL template substitution.",
     )
+    oauth_app_registration_id: str | None = Field(
+        default=None,
+        description=(
+            "Id of the shared ``oauth_app_registrations`` row this credential "
+            "was minted through, if any. Null for legacy embedded OAuth "
+            "credentials and every non-OAuth type."
+        ),
+    )
+    oauth_app_registration_name: str | None = Field(
+        default=None,
+        description=(
+            "Admin-facing name of the shared OAuth app registration this "
+            "credential was minted through. Null when the credential is not "
+            "backed by a shared registration."
+        ),
+    )
 
 
 class CredentialCreateResponse(BaseModel):

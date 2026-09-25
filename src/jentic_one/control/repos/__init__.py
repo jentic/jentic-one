@@ -7,6 +7,7 @@ from jentic_one.control.repos.basic_credential_repo import BasicCredentialReposi
 from jentic_one.control.repos.connect_nonce_repo import ConnectNonceRepository
 from jentic_one.control.repos.credential_repo import CredentialRepository
 from jentic_one.control.repos.customer_api_key_repo import CustomerAPIKeyRepository
+from jentic_one.control.repos.oauth_app_registration_repo import OAuthAppRegistrationRepository
 from jentic_one.control.repos.oauth_client_credential_repo import OAuthClientCredentialRepository
 from jentic_one.control.repos.oauth_token_repo import OAuthTokenRepository
 from jentic_one.control.repos.permission_rule_set_repo import PermissionRuleSetRepository
@@ -23,6 +24,7 @@ __all__ = [
     "ConnectNonceRepository",
     "CredentialRepository",
     "CustomerAPIKeyRepository",
+    "OAuthAppRegistrationRepository",
     "OAuthClientCredentialRepository",
     "OAuthTokenRepository",
     "PermissionRuleSetRepository",

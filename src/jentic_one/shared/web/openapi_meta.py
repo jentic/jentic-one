@@ -637,6 +637,16 @@ OPENAPI_TAGS: list[dict[str, str]] = [
         ),
     },
     {
+        "name": "OAuth App Registrations",
+        "description": (
+            "Admin-managed OAuth application registrations that end users on the "
+            "instance can SSO through. Each row holds a client_id, endpoints, and "
+            "(for authorization-code flows) an encrypted client secret. Registrations "
+            "are per-vendor and per-flow-kind; users then start a connect session "
+            "against a registration to mint their own tokens."
+        ),
+    },
+    {
         "name": "MCP",
         "description": (
             "MCP (Model Context Protocol) transport reporting. The `jentic mcp` stdio "
@@ -688,6 +698,7 @@ X_TAG_GROUPS: list[dict[str, Any]] = [
             "Monitoring",
             "Configuration",
             "OAuth Clients",
+            "OAuth App Registrations",
         ],
     },
     {
@@ -891,6 +902,8 @@ _TAG_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^/admin/oauth-grants"), "OAuth"),
     # Anonymous DCR front door — before the broader ^/oauth rule below.
     (re.compile(r"^/oauth-clients"), "OAuth Clients"),
+    # Admin-managed shared OAuth application registrations — before ^/oauth.
+    (re.compile(r"^/oauth-app-registrations"), "OAuth App Registrations"),
     # Platform-actor surfaces (superset, not in the original reference).
     (re.compile(r"^/agents"), "Agents"),
     (re.compile(r"^/oauth"), "OAuth"),

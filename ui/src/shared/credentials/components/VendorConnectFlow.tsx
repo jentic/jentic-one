@@ -173,7 +173,11 @@ function VendorSelfConnectFlow({
 	onBack: () => void;
 	onDone: () => void;
 }) {
-	const capabilities = useVendorAuthCapabilities(vendor.key);
+	// Pin the auth-capabilities read to the picker tile's registration id
+	// (when set) so scope catalog / default_scopes come from *this* admin-
+	// registered OAuth app, not the vendor's preferred-active one. Without
+	// the pin, two Gmail registrations would silently show the same scopes.
+	const capabilities = useVendorAuthCapabilities(vendor.key, vendor.registration_id);
 	const agents = useAgentsForPicker();
 
 	const queryClient = useQueryClient();
@@ -183,6 +187,12 @@ function VendorSelfConnectFlow({
 	const [rules, setRules] = useState<PermissionRule[] | null>(null);
 	const [session, setSession] = useState<{ id: string; pollToken: string } | null>(null);
 	const [challenge, setChallenge] = useState<ConfirmResponse | null>(null);
+	// User-editable credential label. Pre-filled with the vendor display
+	// name so the input shows a sensible default the user can edit. Sent
+	// on the ``:connect`` payload; the backend accepts it as the credential
+	// name (falling back to the same vendor display name when omitted, so
+	// pre-filling here is functionally equivalent to omitting it).
+	const [credentialName, setCredentialName] = useState<string>(vendor.display_name);
 	// When ``preselectedAgentId`` is supplied by the caller (entry from
 	// an agent's detail page), the picker starts locked to that id.
 	// Otherwise it starts empty and the user must pick before Continue.
@@ -208,38 +218,40 @@ function VendorSelfConnectFlow({
 	// hit the raw client without depending on the mutation lifecycle.
 	const sessionRef = useRef<{ id: string; pollToken: string } | null>(null);
 	const phaseRef = useRef<Phase>('configure');
-	// StrictMode dev-time mounts effects twice. Without this guard the
-	// ``:connect`` fires twice and we get two orphaned sessions per open.
-	const connectFiredRef = useRef(false);
 
-	// Fire ``:connect`` — called on mount (below) so the session/
-	// credential/import all exist by the time the user reaches the rules
-	// page, and again from the terminal step's "Try again" so a retry
-	// opens a FRESH session (the failed one was cascade-deleted server-
-	// side and can't be reused).
-	const startConnect = async (): Promise<void> => {
+	// Fire ``:connect`` — invoked from Continue-click on the configure
+	// step (the user's credential-name pick is captured first) and from
+	// the terminal step's "Try again" so a retry opens a FRESH session
+	// (the failed one was cascade-deleted server-side and can't be
+	// reused). Idempotent: returns the existing session id/token when
+	// one is already in ``sessionRef``.
+	const startConnect = async (): Promise<{ id: string; pollToken: string } | null> => {
+		if (sessionRef.current) return sessionRef.current;
 		try {
 			startMutation.reset();
-			const result = await startMutation.mutateAsync({ vendor: vendor.key });
-			sessionRef.current = { id: result.session_id, pollToken: result.poll_token };
-			setSession({ id: result.session_id, pollToken: result.poll_token });
+			const trimmedName = credentialName.trim();
+			const result = await startMutation.mutateAsync({
+				vendor: vendor.key,
+				// Omit ``name`` entirely when blank so the server's default
+				// (vendor display name) kicks in instead of storing an
+				// empty label.
+				...(trimmedName ? { name: trimmedName } : {}),
+				// Pin the specific admin-registered app when the picker
+				// entry references one — required to disambiguate when
+				// multiple registrations exist for the same vendor.
+				...(vendor.registration_id
+					? { oauth_app_registration_id: vendor.registration_id }
+					: {}),
+			});
+			const next = { id: result.session_id, pollToken: result.poll_token };
+			sessionRef.current = next;
+			setSession(next);
+			return next;
 		} catch {
 			// surfaced via ErrorAlert on the configure page.
+			return null;
 		}
 	};
-
-	// Fire ``:connect`` on mount so the session/credential/import all
-	// exist by the time the user reaches the rules page — the same
-	// shape the approve flow lands in when the human hits the URL.
-	useEffect(() => {
-		if (connectFiredRef.current) return;
-		connectFiredRef.current = true;
-		void startConnect();
-		// startMutation is stable across renders (react-query hook); vendor.key
-		// only changes when the parent remounts the flow, at which point the
-		// ref resets naturally.
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [vendor.key]);
 
 	const scopes = useMemo<VendorScopeCatalog[]>(
 		() => capabilities.data?.scopes ?? [],
@@ -369,13 +381,21 @@ function VendorSelfConnectFlow({
 	// leaving it empty falls back to allow-all-GETs at ``:confirm`` time.
 	// We do not pre-populate rules from scope classifications — the user
 	// sees exactly what they authored, nothing more.
-	const goToRules = (): void => {
+	const goToRules = async (): Promise<void> => {
+		// Fire ``:connect`` now (deferred from mount so the user's
+		// credential-name pick can be captured first). Idempotent — a
+		// re-click while the mutation is in flight resolves to the same
+		// session. Bails out on failure; the error surfaces via
+		// ``ErrorAlert`` on the configure page.
+		const s = await startConnect();
+		if (!s) return;
 		setRules((prev) => prev ?? []);
 		setPhase('rules');
 	};
 
-	// Continue on the rules page — session already exists (``:connect``
-	// fired at mount). Just POST ``:confirm`` with the human-approved
+	// Continue on the rules page — session exists by the time we reach
+	// this handler (``goToRules`` fires ``:connect`` first). Just POST
+	// ``:confirm`` with the human-approved
 	// scopes + rules + selected agent, and transition to ``awaiting``.
 	// ``agent_id`` lands at ``:confirm`` (not ``:connect``) so the
 	// session-on-vendor-click semantics are preserved for the self flow
@@ -425,16 +445,15 @@ function VendorSelfConnectFlow({
 				onRetry={(): void => {
 					// A retry needs a FRESH session — the failed one was
 					// cascade-deleted server-side. Reset the phase refs so
-					// the unmount cleanup applies to the new session, then
-					// re-fire ``:connect`` directly (the mount effect is
-					// one-shot by design and won't run again).
+					// the unmount cleanup applies to the new session; the
+					// user then hits Continue on the configure page which
+					// fires a fresh ``:connect``.
 					phaseRef.current = 'configure';
 					sessionRef.current = null;
 					setPhase('configure');
 					setSession(null);
 					setChallenge(null);
 					confirmMutation.reset();
-					void startConnect();
 				}}
 			/>
 		);
@@ -473,9 +492,17 @@ function VendorSelfConnectFlow({
 
 	return (
 		<div className="space-y-5">
-			<VendorHeader
+			<EditableVendorHeader
 				display={display}
 				subtitle={`You'll approve this connection on ${display.displayName} in a moment.`}
+				name={credentialName}
+				onNameChange={setCredentialName}
+				// Disabled once the ``:connect`` session exists — the
+				// credential's name landed at ``:connect`` time and the
+				// backend doesn't accept name updates on a pending
+				// session. If the user needs to rename after connecting,
+				// they can do it from the credentials list.
+				disabled={session != null || startMutation.isPending}
 			/>
 
 			<AgentPickerField
@@ -505,17 +532,19 @@ function VendorSelfConnectFlow({
 				<Button
 					type="button"
 					variant="primary"
-					onClick={goToRules}
-					// ``:connect`` fires at mount — wait for the session id
-					// before letting the user advance so the rules page has
-					// something to attach to when it renders. Scope-less
-					// vendors (empty catalog) proceed with the vendor's
-					// defaults, so the empty-selection gate only applies
-					// when there are scopes to choose from. An agent is NOT
-					// required — ``agent_id`` is optional at ``:confirm``
-					// (connect unbound, bind later via the credentials API).
-					disabled={(scopes.length > 0 && selectedScopes.size === 0) || !session}
-					loading={startMutation.isPending && !session}
+					onClick={(): void => void goToRules()}
+					// ``:connect`` fires from this button (not on mount) so
+					// the user's credential-name pick is captured first.
+					// Scope-less vendors (empty catalog) proceed with the
+					// vendor's defaults, so the empty-selection gate only
+					// applies when there are scopes to choose from. An
+					// agent is NOT required — ``agent_id`` is optional at
+					// ``:confirm`` (connect unbound, bind later via the
+					// credentials API).
+					disabled={
+						(scopes.length > 0 && selectedScopes.size === 0) || startMutation.isPending
+					}
+					loading={startMutation.isPending}
 				>
 					Continue
 				</Button>
@@ -1029,6 +1058,42 @@ function VendorHeader({ display, subtitle }: { display: VendorDisplay; subtitle:
 			<div>
 				<p className="text-foreground text-base font-semibold">{display.displayName}</p>
 				<p className="text-muted-foreground text-xs">{subtitle}</p>
+			</div>
+		</div>
+	);
+}
+
+// Variant of :func:`VendorHeader` where the vendor name is inline-editable.
+// Renders an unadorned ``<input>`` styled to match the read-only display so
+// the user can type over the label directly. Pre-filled with the vendor's
+// display name; the caller drives state.
+function EditableVendorHeader({
+	display,
+	subtitle,
+	name,
+	onNameChange,
+	disabled,
+}: {
+	display: VendorDisplay;
+	subtitle: string;
+	name: string;
+	onNameChange: (next: string) => void;
+	disabled: boolean;
+}) {
+	return (
+		<div className="flex items-center gap-3">
+			<VendorIcon name={display.displayName} vendor={display.iconKey} size="lg" />
+			<div className="min-w-0 flex-1">
+				<input
+					type="text"
+					className="text-foreground border-border/60 focus:border-primary focus:ring-primary/20 w-full max-w-xs rounded border bg-transparent px-2 py-1 text-base font-semibold outline-none focus:ring-2 disabled:opacity-60"
+					value={name}
+					placeholder={display.displayName}
+					aria-label="Credential name"
+					disabled={disabled}
+					onChange={(e): void => onNameChange(e.target.value)}
+				/>
+				<p className="text-muted-foreground mt-0.5 text-xs">{subtitle}</p>
 			</div>
 		</div>
 	);

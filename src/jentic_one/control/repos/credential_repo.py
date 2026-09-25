@@ -143,6 +143,32 @@ class CredentialRepository:
         return {row.id: row.name for row in result}
 
     @staticmethod
+    async def set_oauth_app_registration(
+        session: AsyncSession,
+        credential_id: str,
+        *,
+        registration_id: str,
+        owner_user_id: str | None,
+    ) -> Credential | None:
+        """Bind a credential to a shared ``oauth_app_registrations`` row.
+
+        Sanctioned writer for ``credentials.oauth_app_registration_id`` — see
+        ``tests/arch/test_oauth_app_registration_invariants.py``. Setting the
+        FK also captures who owns the resulting grant (``owner_user_id``): the
+        broker's binding resolver uses that column to hide another user's
+        grant against the same shared registration. ``None`` means org-shared
+        (the broker filter fails closed for callers that don't have the owner
+        scope, so unowned rows only surface to org-scoped callers).
+        """
+        credential = await session.get(Credential, credential_id)
+        if credential is None:
+            return None
+        credential.oauth_app_registration_id = registration_id
+        credential.owner_user_id = owner_user_id
+        await session.flush()
+        return credential
+
+    @staticmethod
     async def delete(session: AsyncSession, credential_id: str) -> bool:
         credential = await session.get(Credential, credential_id)
         if credential is None:

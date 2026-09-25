@@ -86,6 +86,10 @@ class Claim(StrEnum):
     EXP = "exp"
     ACTOR_TYPE = "actor_type"
     SCOPES = "scopes"
+    # Owner attribution: the trusted issuer vouches for the agent-owner
+    # binding. Mirrors ``shared/auth/verify.py``'s claim read — needed by
+    # the owner-based credential binding filter downstream.
+    PARENT_ACTOR_ID = "parent_actor_id"
 
 
 def looks_like_jwt(token: str) -> bool:
@@ -207,12 +211,21 @@ class JwtTokenValidator:
         scopes_raw = claims.get(Claim.SCOPES, [])
         permissions = [str(s) for s in scopes_raw] if isinstance(scopes_raw, list) else []
 
+        # Owner attribution: a trusted issuer may vouch for the agent's
+        # owner via ``parent_actor_id`` (mirrors ``shared/auth/verify.py``).
+        # No DB read on this path — an untyped/absent value simply yields
+        # None, and the owner-based credential filter treats that as "no
+        # owner match" downstream.
+        parent_actor_id_raw = claims.get(Claim.PARENT_ACTOR_ID)
+        parent_actor_id = parent_actor_id_raw if isinstance(parent_actor_id_raw, str) else None
+
         return Identity(
             sub=sub,
             actor_type=actor_type,
             permissions=permissions,
             expires_at=expires_at,
             active=True,
+            parent_actor_id=parent_actor_id,
         )
 
 

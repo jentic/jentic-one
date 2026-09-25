@@ -1699,7 +1699,15 @@
           "type": "array"
         },
         "identity_probe": {
-          "$ref": "#/$defs/VendorIdentityProbeConfig"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/VendorIdentityProbeConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "scopes": {
           "items": {
@@ -1716,8 +1724,7 @@
       "required": [
         "vendor",
         "display_name",
-        "flows",
-        "identity_probe"
+        "flows"
       ],
       "title": "VendorAuthConfig",
       "type": "object"

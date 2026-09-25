@@ -36,7 +36,11 @@ const KEYS = {
 	session: (id: string, token: string) => ['integrations', 'session', id, token] as const,
 	status: (id: string, token: string) => ['integrations', 'status', id, token] as const,
 	vendors: ['integrations', 'vendors'] as const,
-	vendor: (key: string) => ['integrations', 'vendor', key] as const,
+	vendor: (key: string, registrationId?: string | null) =>
+		// Include the pinned registration id in the cache key so switching
+		// between two admin-registered OAuth apps for the same vendor slug
+		// misses the cache instead of showing the previous tile's scopes.
+		['integrations', 'vendor', key, registrationId ?? null] as const,
 } as const;
 
 export function useVendors() {
@@ -47,10 +51,13 @@ export function useVendors() {
 	});
 }
 
-export function useVendorAuthCapabilities(vendorKey: string | undefined) {
+export function useVendorAuthCapabilities(
+	vendorKey: string | undefined,
+	registrationId?: string | null,
+) {
 	return useQuery<VendorAuthCapabilities>({
-		queryKey: KEYS.vendor(vendorKey ?? ''),
-		queryFn: () => getVendorAuthCapabilities(vendorKey as string),
+		queryKey: KEYS.vendor(vendorKey ?? '', registrationId ?? null),
+		queryFn: () => getVendorAuthCapabilities(vendorKey as string, registrationId ?? null),
 		enabled: Boolean(vendorKey),
 		staleTime: 60_000,
 	});

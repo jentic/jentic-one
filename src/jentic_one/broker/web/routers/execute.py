@@ -94,7 +94,7 @@ from jentic_one.broker.web.deps import (
 )
 from jentic_one.broker.web.streaming import StreamingOutcome
 from jentic_one.shared.access_guidance import connect_vendor_key
-from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.auth.identity import Identity, owner_user_id_from_identity
 from jentic_one.shared.broker.broker import Broker
 from jentic_one.shared.broker.protocols import (
     AgentRuleEvaluatorProtocol,
@@ -662,6 +662,7 @@ async def derive_credential_bindings(
         vendor=api.vendor,
         name=api.name,
         version=api.version,
+        owner_user_id=owner_user_id_from_identity(identity),
     )
     if not derivation.credentials:
         denial = _empty_credential_derivation_denial(

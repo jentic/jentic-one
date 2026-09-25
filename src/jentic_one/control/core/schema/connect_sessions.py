@@ -90,3 +90,9 @@ class ConnectSession(AuditableMixin, ControlBase):
     # nullable audit column with no operational meaning — logs remain the
     # authoritative source of failure detail.)
     error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # PKCE (RFC 7636) verifier for the auth-code flow. Generated at ``begin``
+    # and echoed back to the vendor at ``complete_from_callback``. Persisted
+    # server-side (never in the state JWT, which transits the browser).
+    # Nullable: device flow never sets it, and existing in-flight sessions
+    # created before this column existed will complete without PKCE.
+    pkce_code_verifier: Mapped[str | None] = mapped_column(String(128), nullable=True)

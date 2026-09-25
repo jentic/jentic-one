@@ -113,6 +113,15 @@ export function CredentialCard({ cred, onEdit, onDelete, onConnect }: Credential
 						{connected && <Badge variant="success">Connected</Badge>}
 						{pendingSignIn && <Badge variant="pending">Pending sign-in</Badge>}
 						<CredentialTypeBadge credential={cred} />
+						{cred.oauth_app_registration_name && (
+							<Badge
+								variant="default"
+								className="max-w-[16rem] truncate"
+								title={cred.oauth_app_registration_name}
+							>
+								Source: {cred.oauth_app_registration_name}
+							</Badge>
+						)}
 					</div>
 				</div>
 			</div>

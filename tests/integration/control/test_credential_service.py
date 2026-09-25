@@ -229,6 +229,12 @@ async def test_create_api_key(svc: CredentialService, clean_credentials: None) -
     redacted = await svc.get(result.credential_id, identity=_ADMIN_IDENTITY)
     assert isinstance(redacted.details, ApiKeyRedacted)
     assert redacted.details.key_preview == "…345"
+    # Non-registration-backed credentials serialise both provenance fields
+    # as ``None`` — the ``CredentialCard`` gates the "Shared:" badge on the
+    # name being non-null, so a null-safety regression here would surface
+    # the badge for every legacy credential.
+    assert redacted.oauth_app_registration_id is None
+    assert redacted.oauth_app_registration_name is None
 
 
 async def test_create_basic_auth(svc: CredentialService, clean_credentials: None) -> None:

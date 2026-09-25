@@ -1186,6 +1186,15 @@ class CredentialService:
         else:
             details = BearerTokenRedacted(token_preview=None)
 
+        # Shared-registration provenance — the ORM relationship is
+        # ``lazy="selectin"`` on ``Credential.oauth_app_registration``, so
+        # reading ``.name`` off it is safe in async context (SQLAlchemy
+        # eager-loads the row on the parent SELECT). ``None`` when the
+        # credential wasn't minted through a shared registration.
+        registration = credential.oauth_app_registration
+        oar_id = credential.oauth_app_registration_id
+        oar_name = registration.name if registration is not None else None
+
         return CredentialRedactedView(
             credential_id=credential.id,
             type=wire_type,
@@ -1204,6 +1213,8 @@ class CredentialService:
             updated_at=credential.updated_at,
             details=details,
             server_variables=credential.server_variables,
+            oauth_app_registration_id=oar_id,
+            oauth_app_registration_name=oar_name,
         )
 
     def _validate_create_fields(self, payload: CredentialCreate, *, managed: bool) -> None:

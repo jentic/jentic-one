@@ -66,3 +66,23 @@ class Identity(BaseModel):
     # row this token was minted under. Lets audit/telemetry separate
     # key-channel from grant-channel agent traffic.
     oauth_grant_id: str | None = None
+
+
+def owner_user_id_from_identity(identity: Identity) -> str | None:
+    """Compute the effective credential-owner user id for an Identity.
+
+    A user caller owns their own credentials; an agent inherits its parent
+    user's ownership (so on-behalf-of executions can resolve the owner's
+    personal credentials). Anything else — a service-account-owned or
+    unparented agent — sees only org-shared (NULL-owner) credentials.
+
+    Kept in ``shared/auth`` so any surface can derive an owner scope from an
+    identity without pulling a surface-specific module.
+    """
+    if identity.actor_type == ActorType.USER:
+        return identity.sub
+    if identity.actor_type == ActorType.AGENT:
+        parent = identity.parent_actor_id
+        if parent is not None and parent.startswith("usr_"):
+            return parent
+    return None
