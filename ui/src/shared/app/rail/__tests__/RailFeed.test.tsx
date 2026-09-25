@@ -117,3 +117,27 @@ describe('RailFeed — day separators (#705)', () => {
 		expect(tip).toHaveTextContent(time);
 	});
 });
+
+describe('RailFeed — search', () => {
+	it('matches the human-readable operation (method + path template)', () => {
+		const ts = new Date(2026, 6, 17, 10, 0, 0).getTime();
+		const events = [
+			ev({
+				id: 'a',
+				tsMs: ts,
+				title: 'repeated failures',
+				tokens: {
+					operation_id: 'op_hash01',
+					operation_path: '/repos/{owner}/{repo}',
+					operation_method: 'GET',
+				},
+			}),
+			ev({ id: 'b', tsMs: ts, title: 'unrelated event' }),
+		];
+		render(
+			<RailFeed events={events} filters={{ ...NO_FILTERS, search: 'get /repos/{owner}' }} />,
+		);
+		expect(screen.getByText('repeated failures')).toBeInTheDocument();
+		expect(screen.queryByText('unrelated event')).not.toBeInTheDocument();
+	});
+});

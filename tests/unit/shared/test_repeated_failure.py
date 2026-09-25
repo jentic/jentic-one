@@ -173,6 +173,10 @@ async def test_summary_renders_the_human_operation_identity(session: AsyncSessio
     assert "GET /v1/things/{id}" in events[0].summary
     assert _OPERATION not in events[0].summary
     assert events[0].data["operation_id"] == _OPERATION
+    # The structured human identity rides ``data`` too, so the UI can render
+    # and filter it the same way it does execution rows.
+    assert events[0].data["operation_path"] == "/v1/things/{id}"
+    assert events[0].data["operation_method"] == "GET"
 
 
 async def test_summary_falls_back_to_the_id_for_legacy_operations(
@@ -345,6 +349,17 @@ async def test_missing_toolkit_or_operation_is_noop(session: AsyncSession) -> No
         operation=OperationInfo(id=_OPERATION),
         trace_id=_TRACE,
         config=SecurityConfig(execution_repeated_failure_threshold=5),
+    )
+    assert await _repeated_events(session) == []
+
+
+async def test_empty_operation_id_is_noop(session: AsyncSession) -> None:
+    """An operation with an empty id has no aggregation key — nothing to count."""
+    await _add_failures(session, 10)
+    await _emit(
+        session,
+        SecurityConfig(execution_repeated_failure_threshold=5),
+        operation=OperationInfo(id=""),
     )
     assert await _repeated_events(session) == []
 

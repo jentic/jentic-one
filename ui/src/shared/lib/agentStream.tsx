@@ -77,6 +77,10 @@ export type StreamTokens = {
 	/** Historical events only — new events carry `credential_id` instead. */
 	toolkit_id?: string;
 	operation_id?: string;
+	/** Human-readable operation identity (spec path template + HTTP method)
+	 * on execution events that carry it; render via `formatOperation`. */
+	operation_path?: string;
+	operation_method?: string;
 	credential_id?: string;
 	job_id?: string;
 	execution_id?: string;
@@ -296,6 +300,8 @@ export function adaptEvent(e: EventResponse): StreamEvent {
 		trace_id: e.trace_id ?? stringField(data, 'trace_id'),
 		toolkit_id: stringField(data, 'toolkit_id'),
 		operation_id: stringField(data, 'operation_id'),
+		operation_path: stringField(data, 'operation_path'),
+		operation_method: stringField(data, 'operation_method'),
 		credential_id: stringField(data, 'credential_id'),
 		job_id: idFromLink(e._links?.job) ?? stringField(data, 'job_id'),
 		execution_id: idFromLink(e._links?.execution) ?? stringField(data, 'execution_id'),

@@ -82,7 +82,7 @@ async def maybe_emit_repeated_failure(
     """
     # An aggregate key needs an operation plus a consumer axis to be meaningful;
     # with neither toolkit nor credential there is nothing to count.
-    if operation is None or not (toolkit_id or credential_id):
+    if operation is None or not operation.id or not (toolkit_id or credential_id):
         return
     operation_id = operation.id
 
@@ -169,6 +169,11 @@ async def maybe_emit_repeated_failure(
                     "actor_id": actor_id,
                     **axis_data,
                     "operation_id": operation_id,
+                    # Structured human identity (nullable for legacy id-only
+                    # jobs) so UI surfaces can render/filter the operation the
+                    # same way as execution rows, without parsing the summary.
+                    "operation_path": operation.path,
+                    "operation_method": operation.method,
                     "failure_count": failure_count,
                     "window_s": config.execution_repeated_failure_window_s,
                 },

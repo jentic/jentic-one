@@ -11,6 +11,7 @@
 import { useMemo, useState } from 'react';
 import { RailEventRow } from '@/shared/app/rail/RailEventRow';
 import { formatStreamDayLabel, streamDayKey } from '@/shared/lib/agentStream';
+import { formatOperation } from '@/shared/lib/api-display';
 import type { InlineActionSpec, StreamEvent } from '@/shared/lib/agentStream';
 
 const GROUP_WINDOW_MS = 10_000;
@@ -88,6 +89,12 @@ function passesFilters(ev: StreamEvent, f: RailFeedFilters): boolean {
 			// Historical events may still carry toolkit attribution.
 			ev.tokens.toolkit_id ?? '',
 			ev.tokens.operation_id ?? '',
+			// The human-readable identity, so an operator can search for the
+			// "GET /repos/{owner}/{repo}" they read in the summary.
+			formatOperation({
+				operation_path: ev.tokens.operation_path,
+				operation_method: ev.tokens.operation_method,
+			}) ?? '',
 			ev.tokens.trace_id ?? '',
 		]
 			.join(' ')
