@@ -16,7 +16,9 @@ from jentic_one.broker.services.credentials.errors import (
     CredentialNameNotFoundError,
 )
 from jentic_one.broker.services.credentials.orchestrator import CredentialService
+from jentic_one.broker.web.routers import execute as execute_mod
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.broker.schemas import ExecuteRequestContext
 from jentic_one.shared.models import ActorType
 
 _IDENTITY = Identity(
@@ -218,3 +220,47 @@ async def test_invalid_credential_name_response_contains_candidates(
     candidates = raised.value.extra["candidates"]
     assert [c["name"] for c in candidates] == ["read-only", "admin"]
     assert raised.value.type == "credential_name_not_found"
+
+
+@pytest.mark.asyncio
+async def test_resolve_credentials_forwards_the_toolkit_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The toolkit path hands its injection boundary and Jentic-Credential-Id to inject().
+
+    Without the boundary the resolver would consider every credential in the
+    tenant for the vendor — the issue #88 cross-toolkit leak.
+    """
+    captured: dict[str, Any] = {}
+
+    class _FakeService:
+        def __init__(self, ctx: Any) -> None:
+            pass
+
+        async def inject(self, **kwargs: Any) -> Any:
+            captured.update(kwargs)
+            return MagicMock()
+
+    monkeypatch.setattr(execute_mod, "CredentialService", _FakeService)
+    ctx_req = ExecuteRequestContext(
+        upstream_url="https://api.acme.test/v1/things",
+        method="GET",
+        trace_id="ab" * 16,
+        toolkit_id="tk_b",
+        api_vendor="acme",
+        api_name="things",
+        api_version="v1",
+    )
+
+    await execute_mod._resolve_credentials(
+        ctx_req,
+        _ctx(),
+        _IDENTITY,
+        "cred-a-name",
+        allowed_credential_ids=["cred_b"],
+        credential_id="cred_b",
+    )
+
+    assert captured["allowed_credential_ids"] == ["cred_b"]
+    assert captured["credential_id"] == "cred_b"
+    assert captured["credential_name"] == "cred-a-name"
