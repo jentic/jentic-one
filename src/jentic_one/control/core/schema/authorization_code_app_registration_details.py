@@ -33,9 +33,7 @@ class AuthorizationCodeAppRegistrationDetails(AuditableMixin, ControlBase):
     # ``UTCDateTime`` round-trips tz-aware on every backend (SQLite in tests
     # returns tz-naive from raw ``DateTime(timezone=True)``, which breaks
     # ``> datetime.now(UTC)`` comparisons in callers).
-    secret_last_rotated_at: Mapped[dt.datetime | None] = mapped_column(
-        UTCDateTime(), nullable=True
-    )
+    secret_last_rotated_at: Mapped[dt.datetime | None] = mapped_column(UTCDateTime(), nullable=True)
 
     registration: Mapped[OAuthAppRegistration] = relationship(
         back_populates="authorization_code_details"
