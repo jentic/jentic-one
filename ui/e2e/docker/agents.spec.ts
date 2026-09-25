@@ -3,10 +3,11 @@ import { captureConsoleErrors } from './helpers';
 import { provisionAdminOwnedAgent } from './agent-flow';
 
 /**
- * Agents (real backend). The Agents surface is a single agents roster (the
- * Service accounts tab was retired in theme 8 — migrated accounts are agents
- * now). Agents are created out-of-band via Dynamic Client Registration or the
- * admin "New agent" sheet, so the shell spec pins the list contract only.
+ * Agents (real backend). One flat fleet with no roster and no tab switch, so the
+ * shell contract is the page's own controls plus the agent strip. Service
+ * accounts were retired in theme 8 — migrated accounts are ordinary agents now.
+ * Agents are created out-of-band via Dynamic Client Registration, so this
+ * asserts the list contract rather than driving a create the UI doesn't own.
  */
 test('the agents surface renders its shell without a service-accounts tab', async ({ page }) => {
 	const errors = captureConsoleErrors(page);
@@ -19,8 +20,11 @@ test('the agents surface renders its shell without a service-accounts tab', asyn
 
 	await expect(page.getByRole('heading', { name: 'Agents', exact: true })).toBeVisible();
 	// No emptiness assertion: the shared docker DB accumulates actors from
-	// other specs and reruns, so this pins the shell contract only.
-	await expect(page.getByRole('button', { name: /new agent/i })).toBeVisible();
+	// other specs and reruns, so this pins the shell contract only — the
+	// page-level fleet controls and the org-wide credential inventory trigger.
+	await expect(page.getByLabel('Filter agents')).toBeVisible();
+	await expect(page.getByRole('button', { name: 'New agent' })).toBeVisible();
+	await expect(page.getByRole('button', { name: 'Credentials' })).toBeVisible();
 	await expect(page.getByRole('button', { name: 'Service accounts' })).toHaveCount(0);
 
 	expect(errors, `unexpected console errors:\n${errors.join('\n')}`).toEqual([]);
@@ -44,7 +48,7 @@ test('a DCR-registered agent gets the identity console and can be renamed', asyn
 
 	// Console shell: KPI strip + tab set render for a real (fresh) agent.
 	await expect(page.getByRole('group', { name: 'Key metrics' })).toBeVisible();
-	for (const tab of ['Overview', 'Activity', 'Access', 'Keys', 'Settings']) {
+	for (const tab of ['Overview', 'Activity', 'Keys', 'MCP', 'Settings']) {
 		await expect(page.getByRole('tab', { name: tab })).toBeVisible();
 	}
 

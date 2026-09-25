@@ -12,6 +12,8 @@
  * The values mirror the backend's `ActorStatus` enum (`shared/models/actors.py`).
  */
 import type { HTMLAttributes } from 'react';
+import { Archive, CircleCheck, Clock, PowerOff, XCircle } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import { Badge } from '@/shared/ui/Badge';
 import type { Variant as BadgeVariant } from '@/shared/ui/Badge';
 
@@ -51,6 +53,32 @@ export const STATUS_DOT: Record<ActorStatus, string> = {
 	rejected: 'bg-danger',
 	disabled: 'bg-warning',
 	archived: 'bg-muted-foreground/40',
+};
+
+/**
+ * The same hues in foreground form (Tailwind text-*), for surfaces that colour a
+ * `STATUS_ICON` glyph rather than a dot. Shared so they don't pick their own:
+ * `pending` and `disabled` are adjacent warm hues, easily collapsed into one.
+ */
+export const STATUS_TINT: Record<ActorStatus, string> = {
+	pending: 'text-accent-orange',
+	active: 'text-success',
+	rejected: 'text-danger',
+	disabled: 'text-warning',
+	archived: 'text-muted-foreground/40',
+};
+
+/**
+ * Glyph per status, for places where a coloured dot is too little to tell the
+ * states apart — a tab in a rail, a notice's icon chip. Colour alone fails anyone
+ * who can't see it, so the shape carries the meaning.
+ */
+export const STATUS_ICON: Record<ActorStatus, LucideIcon> = {
+	pending: Clock,
+	active: CircleCheck,
+	rejected: XCircle,
+	disabled: PowerOff,
+	archived: Archive,
 };
 
 /**

@@ -5,6 +5,7 @@ import {
 	CredentialType,
 	credentialDetails,
 	formatApiReference,
+	useAllCredentials,
 	useConnectCredential,
 	useCredential,
 	useProviders,
@@ -19,12 +20,21 @@ import {
 } from '@/shared/credentials/components/CredentialTypeFields';
 import { buildUpdateBody, validateUpdate } from '@/shared/credentials/lib/formBody';
 import { BoundAgentsSection } from '@/shared/credentials/components/BoundAgentsSection';
+import { credentialNameClash } from '@/shared/credentials/lib/credentialIdentity';
+import { CredentialNameClashNote } from '@/shared/credentials/components/CredentialNameClashNote';
 
 interface EditCredentialSheetProps {
 	credentialId: string | null;
 	open: boolean;
 	onClose: () => void;
 	onAfterClose?: () => void;
+	/**
+	 * An in-app link inside the sheet was followed in this tab. Hosts stacked
+	 * over the link's destination pass a dismissal here (see
+	 * `BoundAgentsSection`); hosts on a route of their own unmount anyway and
+	 * pass nothing.
+	 */
+	onNavigateAway?: () => void;
 }
 
 /**
@@ -38,6 +48,7 @@ export function EditCredentialSheet({
 	open,
 	onClose,
 	onAfterClose,
+	onNavigateAway,
 }: EditCredentialSheetProps) {
 	const headingId = 'edit-credential-sheet-title';
 	const nameId = useId();
@@ -47,6 +58,7 @@ export function EditCredentialSheet({
 	const updateMutation = useUpdateCredential(credentialId ?? '');
 	const connectMutation = useConnectCredential(credentialId ?? '');
 	const providersQuery = useProviders();
+	const credentialsSource = useAllCredentials({ enabled: open });
 
 	const [state, setState] = useState<CredentialFormState>(EMPTY_FORM);
 	const [errors, setErrors] = useState<Partial<Record<keyof CredentialFormState, string>>>({});
@@ -59,6 +71,21 @@ export function EditCredentialSheet({
 	const [initialState, setInitialState] = useState<CredentialFormState>(EMPTY_FORM);
 
 	const originalName = cred?.name ?? '';
+
+	// A name a sibling for the same API holds — including the one it was saved
+	// with, so opening a duplicate says so. A warning only; the save still goes.
+	const nameClash = useMemo(
+		() =>
+			cred
+				? credentialNameClash(
+						credentialsSource.items,
+						{ vendor: cred.api.vendor ?? '', name: cred.api.name ?? '' },
+						state.name,
+						cred.credential_id,
+					)
+				: null,
+		[cred, credentialsSource.items, state.name],
+	);
 	// sigv4: does the stored credential currently carry a session token? Drives
 	// the "Clear session token" affordance in the edit form.
 	const hasStoredSessionToken = useMemo(
@@ -84,6 +111,9 @@ export function EditCredentialSheet({
 			accessKeyId: typeof details.access_key_id === 'string' ? details.access_key_id : '',
 			awsRegion: typeof details.aws_region === 'string' ? details.aws_region : '',
 			awsService: typeof details.aws_service === 'string' ? details.aws_service : '',
+			// oauth2: scopes are non-secret; the seeded value is also the baseline
+			// `buildUpdateBody` diffs against, so an untouched field sends no scopes.
+			scopes: Array.isArray(details.scopes) ? details.scopes.join(' ') : '',
 			serverVars: cred.server_variables ?? {},
 		};
 		setState(seeded);
@@ -104,12 +134,15 @@ export function EditCredentialSheet({
 			return;
 		}
 		setErrors({});
-		updateMutation.mutate(buildUpdateBody(cred.type, state, originalName), {
-			onSuccess: () => {
-				toast({ title: 'Credential updated', variant: 'success' });
-				onClose();
+		updateMutation.mutate(
+			buildUpdateBody(cred.type, state, originalName, initialState.scopes),
+			{
+				onSuccess: () => {
+					toast({ title: 'Credential updated', variant: 'success' });
+					onClose();
+				},
 			},
-		});
+		);
 	};
 
 	const handleConnect = (): void => {
@@ -203,7 +236,17 @@ export function EditCredentialSheet({
 										setState((s) => ({ ...s, name: e.target.value }))
 									}
 									error={errors.name}
+									aria-describedby={nameClash ? `${nameId}-clash` : undefined}
 								/>
+								{nameClash && (
+									<CredentialNameClashNote
+										id={`${nameId}-clash`}
+										{...nameClash}
+										onUseSuggestion={(name): void =>
+											setState((s) => ({ ...s, name }))
+										}
+									/>
+								)}
 							</div>
 
 							<div className="space-y-4">
@@ -240,8 +283,13 @@ export function EditCredentialSheet({
 							)}
 
 							{/* Direct agent bindings (theme 5 phase 5a) — read-only
-							    roster; management lives on each agent's Access tab. */}
-							<BoundAgentsSection credentialId={cred.credential_id} open={open} />
+							    roster; management lives on the flat Agents surface
+							    (each agent's API tiles + access sidebar). */}
+							<BoundAgentsSection
+								credentialId={cred.credential_id}
+								open={open}
+								onNavigateAway={onNavigateAway}
+							/>
 
 							{updateMutation.isError && (
 								<ErrorAlert message={updateMutation.error} />

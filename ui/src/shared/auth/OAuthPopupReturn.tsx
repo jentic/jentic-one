@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import { Button } from '@/shared/ui/Button';
 import { AppLink } from '@/shared/ui/AppLink';
-import { ROUTES } from '@/shared/app/routes';
+import { ROUTE_PATHS } from '@/shared/app/routes';
 
 /**
  * Wire contract for the advisory popup→opener connect signal (#598).
@@ -130,7 +130,7 @@ export function OAuthPopupReturn() {
 						</Button>
 						{sameTab && (
 							<AppLink
-								href={ROUTES.credentials}
+								href={ROUTE_PATHS.credentialInventory()}
 								className="text-muted-foreground hover:text-foreground text-xs underline-offset-2 hover:underline"
 							>
 								Return to credentials

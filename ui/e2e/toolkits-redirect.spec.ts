@@ -24,10 +24,14 @@ test('a stale /app/toolkits deep link redirects to Agents with the retirement no
 	await page.goto('/app/toolkits/tk_0123456789abcdef?tab=agents');
 
 	await expect(page.getByRole('heading', { name: 'Agents', exact: true })).toBeVisible();
-	await expect(page).toHaveURL(/\/app\/agents$/);
+	// The redirect drops the toolkit-era query string, but the Agents surface
+	// then writes its own `?agent=<id>` once the roster resolves — so the
+	// assertion pins the path and allows that param rather than racing it.
+	await expect(page).toHaveURL(/\/app\/agents(\?|$)/);
 
-	// The one-time notice points at the replacement surface.
+	// The one-time notice points at the replacement surface: per-agent selection
+	// on this page, not a tab on a retired one.
 	const toast = page.getByTestId('toast');
 	await expect(toast.getByText('Toolkits were retired')).toBeVisible();
-	await expect(toast.getByText(/Access tab/)).toBeVisible();
+	await expect(toast.getByText(/select an agent on the Agents page/)).toBeVisible();
 });

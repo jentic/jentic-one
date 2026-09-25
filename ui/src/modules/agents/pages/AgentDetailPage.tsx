@@ -6,17 +6,20 @@
  * agent's badge as icon, its name as title, its own description as subtitle,
  * with the kill switch for the reversible active/disabled flip plus the
  * constructive Approve / Deny actions in the header action slot), a back row,
- * a denial banner when rejected, the KPI strip, then six tab panels:
+ * a denial banner when rejected, the KPI strip, then five tab panels:
  *   - Overview  → attribution meta + audit slice
  *   - Activity  → this agent's execution volume + recent executions
  *                 (GET /monitoring/usage?agent_id=…, GET /executions?actor_id=…)
  *                 with a pre-filtered "Open Monitor" deep-link
- *   - Access    → platform scopes (#615)
  *   - Keys      → API-key metadata, generate/regenerate/revoke, rotation history
  *   - MCP       → per-agent MCP config card + session history (local-MCP 2-E2:
  *                 MCP is a transport of this agent, so the surface lives here)
  *   - Settings  → the copyable agent id + editable metadata (PATCH
  *                 /agents/{id}) + danger zone hosting the terminal Archive
+ *
+ * There is no Access tab: credential bindings and their rules live on the flat
+ * Agents surface's API sidebar, and the non-credential cards (scopes, access
+ * requests, connected clients) sit behind the dock's Permissions verb.
  *
  * The active tab lives in `?tab=` (like Monitor's lenses) so every view is
  * shareable and back-button friendly. Activity/KPI sources are admin-gated:
@@ -31,7 +34,6 @@ import {
 	LayoutDashboard,
 	Plug,
 	Settings,
-	ShieldCheck,
 	ShieldX,
 } from 'lucide-react';
 import {
@@ -48,7 +50,7 @@ import {
 	TabNav,
 	type TabNavOption,
 } from '@/shared/ui';
-import { cn, formatTimestamp } from '@/shared/lib/utils';
+import { cn } from '@/shared/lib/utils';
 import {
 	useAgent,
 	useAgentCredentialBindings,
@@ -67,30 +69,26 @@ import {
 	type AgentAction,
 } from '@/modules/agents/api';
 import { ActorStatusBadge } from '@/modules/agents/components/ActorStatusBadge';
-import { ScopesCard } from '@/modules/agents/components/ScopesCard';
-import { ConnectedClientsCard } from '@/modules/agents/components/detail/ConnectedClientsCard';
 import {
 	LifecycleDialogs,
 	type PendingConfirm,
 } from '@/modules/agents/components/LifecycleDialogs';
 import { KpiStrip } from '@/modules/agents/components/detail/KpiStrip';
-import { MetaItem } from '@/modules/agents/components/detail/shared';
+import { AgentProvenance } from '@/modules/agents/components/detail/AgentProvenance';
 import { ActivityPanel } from '@/modules/agents/components/detail/ActivityPanel';
 import { ActorAuditPanel } from '@/modules/agents/components/detail/ActorAuditPanel';
 import { AgentKeysPanel } from '@/modules/agents/components/detail/AgentKeysPanel';
 import { AgentSettingsPanel } from '@/modules/agents/components/detail/AgentSettingsPanel';
-import { BoundCredentialsCard } from '@/modules/agents/components/detail/BoundCredentialsCard';
 import { McpPanel } from '@/modules/agents/components/detail/McpPanel';
 import { ROUTES, ROUTE_PATHS } from '@/shared/app/routes';
 
-const DETAIL_TABS = ['overview', 'activity', 'access', 'keys', 'mcp', 'settings'] as const;
+const DETAIL_TABS = ['overview', 'activity', 'keys', 'mcp', 'settings'] as const;
 type DetailTab = (typeof DETAIL_TABS)[number];
 
 /** Tab options for the console shell. */
 const TAB_OPTIONS: TabNavOption<DetailTab>[] = [
 	{ value: 'overview', label: 'Overview', icon: <LayoutDashboard className="h-4 w-4" /> },
 	{ value: 'activity', label: 'Activity', icon: <ActivityIcon className="h-4 w-4" /> },
-	{ value: 'access', label: 'Access', icon: <ShieldCheck className="h-4 w-4" /> },
 	{ value: 'keys', label: 'Keys', icon: <Key className="h-4 w-4" /> },
 	// MCP is a transport of this agent (local-MCP §3.10), so its config card
 	// and session history live here in the console — no top-level nav.
@@ -113,8 +111,9 @@ export default function AgentDetailPage() {
 	const activeTab: DetailTab = isDetailTab(tabParam) ? tabParam : 'overview';
 
 	const agentQuery = useAgent(id);
-	// Bound-credential count for the KPI strip (the full card lives on the
-	// Access tab); suspended rows included — a suspended binding still exists.
+	// Bound-credential count for the KPI strip (binding management lives on
+	// the flat surface's API sidebar); suspended rows included — a suspended
+	// binding still exists.
 	const credentialBindings = useAgentCredentialBindings(id);
 	// KPI-strip enrichment (admin-gated; resolves null on 403 — see hooks).
 	const usage = useActorUsageDetail(id);
@@ -350,46 +349,9 @@ export default function AgentDetailPage() {
 							title="Attribution"
 							icon={<Fingerprint className="h-4 w-4" />}
 						>
-							<dl className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3 lg:grid-cols-4">
-								<MetaItem
-									label="Registered"
-									value={formatTimestamp(agent.createdAt)}
-								/>
-								{agent.attribution.registeredBy ? (
-									<MetaItem
-										label="Registered by"
-										value={
-											<ActorLabel actorId={agent.attribution.registeredBy} />
-										}
-									/>
-								) : null}
-								{agent.approvedAt ? (
-									<MetaItem
-										label="Approved"
-										value={formatTimestamp(agent.approvedAt)}
-									/>
-								) : null}
-								{agent.attribution.approvedBy ? (
-									<MetaItem
-										label="Approved by"
-										value={
-											<ActorLabel actorId={agent.attribution.approvedBy} />
-										}
-									/>
-								) : null}
-								{agent.ownerId ? (
-									<MetaItem
-										label="Owner"
-										value={<ActorLabel actorId={agent.ownerId} />}
-									/>
-								) : null}
-								{agent.parentAgentId ? (
-									<MetaItem
-										label="Parent agent"
-										value={<ActorLabel actorId={agent.parentAgentId} />}
-									/>
-								) : null}
-							</dl>
+							{/* The same block the flat surface's Settings sheet
+							    renders — one component, two surfaces. */}
+							<AgentProvenance agent={agent} />
 						</DetailSection>
 						{/* Actor-scoped audit slice — the "Recent changes" panel
 						    (admin only; empty for non-admins). */}
@@ -398,18 +360,6 @@ export default function AgentDetailPage() {
 				)}
 
 				{activeTab === 'activity' && <ActivityPanel actorId={agent.id} />}
-
-				{activeTab === 'access' && (
-					<>
-						{/* Direct credential bindings (theme 5 phase 5a) — what this
-						    agent may call, first: the tab's primary capability story. */}
-						<BoundCredentialsCard agentId={agent.id} agentStatus={agent.status} />
-						{/* Scopes — platform permissions granted to this agent (#615). */}
-						<ScopesCard actorId={agent.id} actorName={agent.name} />
-						{/* OAuth clients holding a consent→agent grant. */}
-						<ConnectedClientsCard agentId={agent.id} agentName={agent.name} />
-					</>
-				)}
 
 				{activeTab === 'keys' && <AgentKeysPanel agent={agent} />}
 

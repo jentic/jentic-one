@@ -112,35 +112,6 @@ export const dashboardExecutions = [
 	},
 ];
 
-export const dashboardApis = [
-	{
-		api: { vendor: 'stripe', name: 'stripe-api', version: '2024-01-01', host: 'stripe.com' },
-		display_name: 'Stripe',
-		description: 'Payments APIs.',
-		icon_url: null,
-		current_revision_id: 'rev_1',
-		revision_count: 1,
-		operation_count: 412,
-		security_schemes: ['bearer'],
-		created_at: minutesAgo(5000),
-		updated_at: minutesAgo(100),
-		_links: { self: '/apis/stripe/stripe-api/2024-01-01' },
-	},
-	{
-		api: { vendor: 'github', name: 'github-api', version: '1.1.4', host: 'github.com' },
-		display_name: 'GitHub',
-		description: 'GitHub REST API.',
-		icon_url: null,
-		current_revision_id: 'rev_2',
-		revision_count: 1,
-		operation_count: 900,
-		security_schemes: ['bearer'],
-		created_at: minutesAgo(5000),
-		updated_at: minutesAgo(200),
-		_links: { self: '/apis/github/github-api/1.1.4' },
-	},
-];
-
 export const dashboardHandlers = [
 	http.get('/agents', ({ request }) => {
 		const status = new URL(request.url).searchParams.get('status');
@@ -170,9 +141,10 @@ export const dashboardHandlers = [
 		HttpResponse.json({ data: dashboardExecutions, has_more: false, next_cursor: null }),
 	),
 
-	http.get('/apis', () =>
-		HttpResponse.json({ data: dashboardApis, has_more: false, next_cursor: null }),
-	),
+	// NO `/apis` handler here, deliberately: the Dashboard reads it only for a
+	// catalog-size figure, and `dashboardHandlers` registers EARLIER than the
+	// Workspace module's richer registry fixture, which first-match-wins would
+	// shadow. The empty-catalog case is installed per-test via `worker.use(...)`.
 ];
 
 /* ------------------------------------------------------------------ */

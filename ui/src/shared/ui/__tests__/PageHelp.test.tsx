@@ -44,6 +44,7 @@ describe('PageHelp', () => {
 			<PageHelp title="About" intro="Some help text." bindShortcut={false} />,
 		);
 		await user.click(screen.getByTestId('page-help-trigger'));
-		await checkA11y(container);
+		// The opened help panel IS the surface under test, so the audit says so.
+		await checkA11y(container, { modal: true });
 	});
 });

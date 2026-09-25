@@ -23,6 +23,7 @@
  */
 import { http, HttpResponse } from 'msw';
 import { SERVICE_ACCOUNT_SUCCESSOR_REGISTRAR } from '@/shared/lib';
+import { findMockCredential } from '@/shared/credentials/mocks/handlers';
 
 type Status = 'pending' | 'active' | 'rejected' | 'disabled' | 'archived';
 
@@ -317,10 +318,34 @@ const PERMISSION_CATALOGUE: ReadonlyArray<{
 	},
 ];
 
+/**
+ * Append extra agents to the seeded fleet (call after `resetAgentsStore`).
+ * Lets specs exercise states the default seed doesn't carry — e.g. an
+ * archived agent, which has no UI path to create quickly.
+ */
+export function seedExtraAgents(
+	rows: Array<Partial<AgentRow> & Pick<AgentRow, 'id' | 'name' | 'status'>>,
+): void {
+	agents.push(...rows.map(seedAgent));
+}
+
 export function resetAgentsStore(): void {
 	agents = [
-		seedAgent({ id: 'agnt_pending_1', name: 'inbox-triage-bot', status: 'pending' }),
-		seedAgent({ id: 'agnt_pending_2', name: 'release-notes-bot', status: 'pending' }),
+		// Distinct registration times so the pending-approval banner's
+		// "longest waiting" pick is observable: the backend serves
+		// `created_at DESC`, so `inbox-triage-bot` (oldest) is the LAST row.
+		seedAgent({
+			id: 'agnt_pending_1',
+			name: 'inbox-triage-bot',
+			status: 'pending',
+			created_at: now(-47),
+		}),
+		seedAgent({
+			id: 'agnt_pending_2',
+			name: 'release-notes-bot',
+			status: 'pending',
+			created_at: now(-12),
+		}),
 		seedAgent({
 			id: 'agnt_active_1',
 			name: 'support-agent',
@@ -397,10 +422,10 @@ export function resetAgentsStore(): void {
 			can_revoke: false,
 		},
 	];
-	// Direct credential bindings: agnt_active_1 carries one healthy binding
-	// (with a rule) and one suspended, rule-less binding — so the mocked dev
-	// card shows the resume affordance AND the zero-rules warning out of the
-	// box. Other agents have none (exercises the empty state).
+	// Direct credential bindings: agnt_active_1 carries one healthy binding (with a
+	// rule) and one suspended, rule-less one, so dev shows the resume affordance and
+	// the zero-rules warning out of the box. The vendors are split on purpose —
+	// `github` resolves against the `/apis` fixture, `slack.com` matches nothing.
 	credentialBindings = [
 		seedBinding({
 			agent_id: 'agnt_active_1',
@@ -416,7 +441,7 @@ export function resetAgentsStore(): void {
 			credential_id: 'cred_github_1',
 			name: 'GitHub PAT',
 			suspended: true,
-			serves: [{ api_vendor: 'github.com', api_name: null, api_version: null }],
+			serves: [{ api_vendor: 'github', api_name: null, api_version: null }],
 		}),
 	];
 }
@@ -469,10 +494,14 @@ export function seedOauthGrants(rows: Array<Partial<OAuthGrantRow> & { id: strin
 
 resetAgentsStore();
 
-function paginate<T extends { status: Status }>(rows: T[], url: URL) {
+function paginate<T extends { status: Status; created_at: string }>(rows: T[], url: URL) {
 	const status = url.searchParams.get('status');
 	const filtered = status ? rows.filter((r) => r.status === status) : rows;
-	return HttpResponse.json({ data: filtered, has_more: false, next_cursor: null });
+	// Backend fidelity: `list_all` orders by `created_at DESC` (newest first),
+	// so "longest waiting" is the LAST row of the page — the pending-approval
+	// banner's pick depends on this.
+	const ordered = [...filtered].sort((a, b) => b.created_at.localeCompare(a.created_at));
+	return HttpResponse.json({ data: ordered, has_more: false, next_cursor: null });
 }
 
 const APPROVE: Record<string, Status> = { pending: 'active' };
@@ -1158,7 +1187,14 @@ export const agentsHandlers = [
 		return new HttpResponse(null, { status: 204 });
 	}),
 
-	// ---- Direct agent↔credential bindings (theme 5 phase 5a) ----
+	// ---- Direct agent↔credential bindings ----
+	// A credential delete CASCADES to the bindings table, so this mirrors the cascade
+	// into THIS module's store and falls through (undefined) to the credentials
+	// store's own DELETE handler — agents registers first in src/mocks/handlers.ts.
+	http.delete('/credentials/:cid', ({ params }) => {
+		credentialBindings = credentialBindings.filter((b) => b.credential_id !== params.cid);
+		return undefined;
+	}),
 	http.get('/agents/:id/credentials', ({ params }) => {
 		const agent = agents.find((a) => a.id === params.id);
 		if (!agent) return new HttpResponse(null, { status: 404 });
@@ -1187,11 +1223,24 @@ export const agentsHandlers = [
 				{ status: 409 },
 			);
 		}
+		// The backend enriches a live binding from its credential: its name, and the
+		// API scope it serves. Only a deleted credential leaves both empty.
+		const credential = findMockCredential(body.credential_id);
 		const row = seedBinding({
 			id: genId('acb'),
 			agent_id: params.id as string,
 			credential_id: body.credential_id,
 			bound_at: now(),
+			name: credential?.name ?? null,
+			serves: credential
+				? [
+						{
+							api_vendor: credential.api.vendor,
+							api_name: credential.api.name ?? null,
+							api_version: credential.api.version || null,
+						},
+					]
+				: [],
 		});
 		credentialBindings.push(row);
 		// The phase-1 bind creates the binding with ZERO rules (default deny);

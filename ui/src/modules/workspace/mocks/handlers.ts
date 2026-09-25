@@ -9,6 +9,7 @@
  *   POST /apis                                    — enqueue import (202 + job)
  *   POST /apis/{v}/{n}/{ver}/revisions/{id}:promote|:archive
  *   GET  /jobs/{id}                               — poll import job
+ *   GET  /jobs/{id}/result                        — the API a completed import registered
  *
  * Shapes mirror the REAL wire payloads verified against the running backend on
  * :8000 (incl. the draft-only `no_current_revision` 404 and the async import →
@@ -128,7 +129,54 @@ const showcaseApi = {
 	},
 };
 
-const APIS = [stripeApi, adyenApi, bigApi, showcaseApi];
+/**
+ * The two APIs the agents fixtures bind credentials to (`github` and `slack.com`).
+ * They live in this registry because it is the one the app reads `GET /apis` from:
+ * without them an agent's API tiles fall back to the bare machine tuple.
+ */
+const githubApi = {
+	api: apiRef('github', 'github-api', '1.1.4', 'api.github.com'),
+	display_name: 'GitHub',
+	description: 'Repositories, issues, and pull requests.',
+	icon_url: null,
+	current_revision_id: 'rev_github_live',
+	revision_count: 1,
+	operation_count: 3,
+	security_schemes: ['bearer'],
+	source: 'local',
+	registered: true,
+	created_at: '2026-02-18T14:00:00Z',
+	updated_at: '2026-07-01T08:00:00Z',
+	_links: {
+		self: `/apis/github/github-api/1.1.4`,
+		revisions: `/apis/github/github-api/1.1.4/revisions`,
+		current_revision: `/apis/github/github-api/1.1.4/revisions/rev_github_live`,
+		import: null,
+	},
+};
+
+const slackApi = {
+	api: apiRef('slack.com', 'web-api', '1.0.0', 'slack.com'),
+	display_name: 'Slack',
+	description: 'Messaging, channels, and users.',
+	icon_url: null,
+	current_revision_id: 'rev_slack_live',
+	revision_count: 1,
+	operation_count: 3,
+	security_schemes: ['bearer'],
+	source: 'local',
+	registered: true,
+	created_at: '2026-03-02T09:00:00Z',
+	updated_at: null,
+	_links: {
+		self: `/apis/slack.com/web-api/1.0.0`,
+		revisions: `/apis/slack.com/web-api/1.0.0/revisions`,
+		current_revision: `/apis/slack.com/web-api/1.0.0/revisions/rev_slack_live`,
+		import: null,
+	},
+};
+
+const APIS = [stripeApi, adyenApi, bigApi, showcaseApi, githubApi, slackApi];
 
 const BIG_OPERATIONS = Array.from({ length: 60 }, (_, i) => ({
 	operation_id: `Op${i}`,
@@ -174,6 +222,80 @@ const STRIPE_OPERATIONS = [
 		tags: ['balance'],
 		deprecated: true,
 		revision_id: 'rev_stripe_live',
+		_links: {},
+	},
+];
+
+/** Operations for the two agent-bound APIs, so their detail pages read as
+ * themselves rather than borrowing Stripe's charge endpoints. */
+const GITHUB_OPERATIONS = [
+	{
+		operation_id: 'ReposGet',
+		method: 'get',
+		path: '/repos/{owner}/{repo}',
+		name: 'Get a repository',
+		description: null,
+		tags: ['repos'],
+		deprecated: false,
+		revision_id: 'rev_github_live',
+		_links: {},
+	},
+	{
+		operation_id: 'IssuesListForRepo',
+		method: 'get',
+		path: '/repos/{owner}/{repo}/issues',
+		name: 'List repository issues',
+		description: null,
+		tags: ['issues'],
+		deprecated: false,
+		revision_id: 'rev_github_live',
+		_links: {},
+	},
+	{
+		operation_id: 'IssuesCreate',
+		method: 'post',
+		path: '/repos/{owner}/{repo}/issues',
+		name: 'Create an issue',
+		description: null,
+		tags: ['issues'],
+		deprecated: false,
+		revision_id: 'rev_github_live',
+		_links: {},
+	},
+];
+
+const SLACK_OPERATIONS = [
+	{
+		operation_id: 'ChatPostMessage',
+		method: 'post',
+		path: '/chat.postMessage',
+		name: 'Send a message to a channel',
+		description: null,
+		tags: ['chat'],
+		deprecated: false,
+		revision_id: 'rev_slack_live',
+		_links: {},
+	},
+	{
+		operation_id: 'ConversationsList',
+		method: 'get',
+		path: '/conversations.list',
+		name: 'List channels',
+		description: null,
+		tags: ['conversations'],
+		deprecated: false,
+		revision_id: 'rev_slack_live',
+		_links: {},
+	},
+	{
+		operation_id: 'UsersInfo',
+		method: 'get',
+		path: '/users.info',
+		name: 'Get a user',
+		description: null,
+		tags: ['users'],
+		deprecated: false,
+		revision_id: 'rev_slack_live',
 		_links: {},
 	},
 ];
@@ -261,6 +383,12 @@ const REVISIONS: Record<string, ReturnType<typeof revision>[]> = {
 		revision('adyen/pos-terminal-management-api/1', 'rev_adyen_draft', 'draft', false, 5),
 	],
 	'bigco/big-api/1': [revision('bigco/big-api/1', 'rev_big_live', 'published', true, 60)],
+	'github/github-api/1.1.4': [
+		revision('github/github-api/1.1.4', 'rev_github_live', 'published', true, 3, 'catalog'),
+	],
+	'slack.com/web-api/1.0.0': [
+		revision('slack.com/web-api/1.0.0', 'rev_slack_live', 'published', true, 3, 'catalog'),
+	],
 	[KS_KEY]: KS_REVISIONS,
 };
 
@@ -631,8 +759,60 @@ function keyOf(params: Record<string, string | readonly string[] | undefined>): 
 	return `${params.vendor}/${params.name}/${params.version}`;
 }
 
+interface MockImportJob {
+	status: string;
+	error: string | null;
+	polls: number;
+	/** The API the import registered, named by `GET /jobs/{id}/result`. */
+	api: ReturnType<typeof apiRef>;
+}
+
 /** In-memory job table so a polled import transitions queued → succeeded. */
-const jobs = new Map<string, { status: string; error: string | null; polls: number }>();
+const jobs = new Map<string, MockImportJob>();
+
+/**
+ * Register a workspace row for an uploaded spec, so the result's API resolves
+ * through `GET /apis/{v}/{n}/{ver}` like a real import. The vendor comes from
+ * the URL's host or the filename; a re-upload of the same source reuses its row.
+ */
+function registerUploadedApi(source: { type?: string; url?: string; filename?: string }) {
+	let vendor = 'uploaded';
+	if (source.type === 'url' && source.url) {
+		try {
+			vendor = new URL(source.url).hostname.replace(/^api\./, '') || vendor;
+		} catch {
+			// An unparseable URL keeps the placeholder vendor.
+		}
+	} else if (source.filename) {
+		vendor = source.filename.replace(/\.(json|ya?ml)$/i, '') || vendor;
+	}
+	const ref = apiRef(vendor, 'main', '1.0.0', null);
+	const key = `${ref.vendor}/${ref.name}/${ref.version}`;
+	const self = `/apis/${key}`;
+	if (!APIS.some((a) => `${a.api.vendor}/${a.api.name}/${a.api.version}` === key)) {
+		APIS.push({
+			api: ref,
+			display_name: vendor,
+			description: 'Imported from an uploaded OpenAPI spec.',
+			icon_url: null,
+			current_revision_id: 'rev_uploaded_live',
+			revision_count: 1,
+			operation_count: 1,
+			security_schemes: ['apiKey'],
+			source: 'local',
+			registered: true,
+			created_at: '2026-01-01T00:00:00Z',
+			updated_at: null,
+			_links: {
+				self,
+				revisions: `${self}/revisions`,
+				current_revision: `${self}/revisions/rev_uploaded_live`,
+				import: null,
+			},
+		});
+	}
+	return ref;
+}
 
 export const workspaceHandlers = [
 	http.get(`/apis`, ({ request }) => {
@@ -797,7 +977,11 @@ export const workspaceHandlers = [
 				? BIG_OPERATIONS
 				: key === KS_KEY
 					? KS_OPERATIONS
-					: STRIPE_OPERATIONS;
+					: key === 'github/github-api/1.1.4'
+						? GITHUB_OPERATIONS
+						: key === 'slack.com/web-api/1.0.0'
+							? SLACK_OPERATIONS
+							: STRIPE_OPERATIONS;
 		return HttpResponse.json(paginate(ops, cursor, limit));
 	}),
 
@@ -818,22 +1002,59 @@ export const workspaceHandlers = [
 		return new HttpResponse(null, { status: 404 });
 	}),
 
-	http.post(`/apis`, () => {
+	http.post(`/apis`, async ({ request }) => {
+		const body = (await request.json().catch(() => null)) as {
+			sources?: Array<{ type?: string; url?: string; filename?: string }>;
+		} | null;
 		const jobId = `job_${Math.random().toString(36).slice(2, 10)}`;
-		jobs.set(jobId, { status: 'queued', error: null, polls: 0 });
+		const api = registerUploadedApi(body?.sources?.[0] ?? {});
+		jobs.set(jobId, { status: 'queued', error: null, polls: 0, api });
 		return HttpResponse.json(
 			{ job_id: jobId, status: 'queued', _links: { self: `/jobs/${jobId}` } },
 			{ status: 202 },
 		);
 	}),
 
+	http.get(`/jobs/:jobId/result`, ({ params }) => {
+		const jobId = String(params.jobId);
+		const job = jobs.get(jobId);
+		if (!job) {
+			return HttpResponse.json(
+				{ type: 'not_found', status: 404, detail: 'Job not found' },
+				{ status: 404 },
+			);
+		}
+		if (job.status !== 'completed') {
+			return HttpResponse.json(
+				{ type: 'conflict', status: 409, detail: 'Job has not completed' },
+				{ status: 409 },
+			);
+		}
+		return HttpResponse.json({
+			revisions: [
+				{
+					api: { vendor: job.api.vendor, name: job.api.name, version: job.api.version },
+					revision_id: 'rev_uploaded_live',
+					superseded_revision_id: null,
+					state: 'active',
+				},
+			],
+		});
+	}),
+
 	http.get(`/jobs/:jobId`, ({ params }) => {
 		const jobId = String(params.jobId);
-		const job = jobs.get(jobId) ?? { status: 'succeeded', error: null, polls: 99 };
-		// Transition to succeeded after the first poll so the happy path resolves
-		// quickly in dev/tests without hanging on a fake "queued" forever.
+		const job = jobs.get(jobId) ?? {
+			status: 'completed',
+			error: null,
+			polls: 99,
+			api: apiRef('uploaded', 'main', '1.0.0', null),
+		};
+		// Transition to `completed` — the backend's own terminal success spelling
+		// (`shared/models/jobs.py`) — after the first poll, so the happy path
+		// resolves quickly in dev/tests without hanging on a fake "queued" forever.
 		job.polls += 1;
-		if (job.polls >= 1 && job.status === 'queued') job.status = 'succeeded';
+		if (job.polls >= 1 && job.status === 'queued') job.status = 'completed';
 		jobs.set(jobId, job);
 		return HttpResponse.json({
 			job_id: jobId,

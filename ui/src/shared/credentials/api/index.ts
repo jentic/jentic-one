@@ -2,7 +2,15 @@
 // module's cache slice (query keys namespaced under `['credentials', …]`),
 // pagination policy, and invalidation. Components/pages call these hooks ONLY —
 // never the data client, the facade, or the generated services directly.
-import { useMutation, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
+import { useCallback, useMemo } from 'react';
+import {
+	useInfiniteQuery,
+	useMutation,
+	useQuery,
+	useQueryClient,
+	type UseQueryResult,
+} from '@tanstack/react-query';
+import { useEagerCursorDrain, type DrainedList } from '@/shared/hooks/useEagerCursorDrain';
 import {
 	connectCredential,
 	createCredential,
@@ -19,6 +27,7 @@ import type {
 	ConnectChallengeResponse,
 	ConnectRequestBody,
 	CredentialAgentListResponse,
+	CredentialAgentResponse,
 	CredentialCreateRequest,
 	CredentialCreateResponse,
 	CredentialListResponse,
@@ -37,6 +46,10 @@ import {
 export const credentialKeys = {
 	all: ['credentials'] as const,
 	list: (params: ListCredentialsParams = {}) => ['credentials', 'list', params] as const,
+	/** Every page of {@link useAllCredentials} — its own key (an infinite query
+	 * can't share one with {@link useCredentials}) but under the same
+	 * `['credentials', 'list', …]` prefix so existing invalidations sweep it. */
+	listAll: () => ['credentials', 'list', 'all-pages'] as const,
 	detail: (id: string) => ['credentials', 'detail', id] as const,
 	/**
 	 * Agents directly bound to one credential (`GET /credentials/{id}/agents`,
@@ -46,6 +59,10 @@ export const credentialKeys = {
 	 * never shows a binding the agent side just changed.
 	 */
 	agents: (id: string) => ['credentials', 'agents', id] as const,
+	/** Every page of {@link useAllCredentialAgents} — own key for the same reason
+	 * as {@link credentialKeys.listAll}, under the same prefix so the agents
+	 * module's bind/unbind invalidations sweep it. */
+	agentsAll: (id: string) => ['credentials', 'agents', id, 'all-pages'] as const,
 };
 
 /**
@@ -76,6 +93,45 @@ export function useCredentials(
 	});
 }
 
+/**
+ * EVERY credential in the workspace — the cursor pages drained eagerly, for
+ * consumers that join against credentials rather than list them. `complete` is
+ * true only when every page loaded; until then the join may not assert
+ * credential-derived states like the auth label or awaiting-consent. `enabled`
+ * gates the read to when the host is actually open.
+ */
+export function useAllCredentials(
+	opts: { enabled?: boolean } = {},
+): DrainedList<CredentialRedactedResponse> {
+	const query = useInfiniteQuery({
+		queryKey: credentialKeys.listAll(),
+		enabled: opts.enabled ?? true,
+		queryFn: ({ pageParam }): Promise<CredentialListResponse> =>
+			listCredentials({ cursor: pageParam }),
+		initialPageParam: null as string | null,
+		getNextPageParam: (last) => (last.has_more ? (last.next_cursor ?? null) : null),
+	});
+	useEagerCursorDrain(query);
+
+	const { data, isError, refetch, fetchNextPage } = query;
+	const items = useMemo(() => data?.pages.flatMap((page) => page.data) ?? [], [data]);
+	const retry = useCallback(() => {
+		if (isError && !data) void refetch();
+		else void fetchNextPage();
+	}, [isError, data, refetch, fetchNextPage]);
+	const refresh = useCallback(() => void refetch(), [refetch]);
+
+	return {
+		items,
+		isPending: query.isPending,
+		error: query.error,
+		complete: query.isSuccess && !query.hasNextPage,
+		retry,
+		refresh,
+		isFetching: query.isFetching,
+	};
+}
+
 /** A single credential's redacted detail. */
 export function useCredential(id: string | undefined): UseQueryResult<CredentialRedactedResponse> {
 	return useQuery({
@@ -101,6 +157,46 @@ export function useCredentialAgents(
 		queryFn: () => listCredentialAgents(id as string),
 		enabled: (opts.enabled ?? true) && !!id,
 	});
+}
+
+/**
+ * EVERY agent bound to a credential. Separate from the first-page
+ * {@link useCredentialAgents} because the delete confirm states a COUNT, and on
+ * `limit=50` a credential bound to 88 agents would read as 50. `complete` is
+ * false until every page lands, so the caller can withhold the figure.
+ */
+export function useAllCredentialAgents(
+	id: string | undefined,
+	opts: { enabled?: boolean } = {},
+): DrainedList<CredentialAgentResponse> {
+	const enabled = (opts.enabled ?? true) && !!id;
+	const query = useInfiniteQuery({
+		queryKey: credentialKeys.agentsAll(id ?? '__none__'),
+		queryFn: ({ pageParam }): Promise<CredentialAgentListResponse> =>
+			listCredentialAgents(id as string, { cursor: pageParam }),
+		initialPageParam: null as string | null,
+		getNextPageParam: (last) => (last.has_more ? (last.next_cursor ?? null) : null),
+		enabled,
+	});
+	useEagerCursorDrain(query);
+
+	const { data, isError, refetch, fetchNextPage } = query;
+	const items = useMemo(() => data?.pages.flatMap((page) => page.data) ?? [], [data]);
+	const retry = useCallback(() => {
+		if (isError && !data) void refetch();
+		else void fetchNextPage();
+	}, [isError, data, refetch, fetchNextPage]);
+	const refresh = useCallback(() => void refetch(), [refetch]);
+
+	return {
+		items,
+		isPending: query.isPending,
+		error: query.error,
+		complete: query.isSuccess && !query.hasNextPage,
+		retry,
+		refresh,
+		isFetching: query.isFetching,
+	};
 }
 
 /** Create a credential. The one-time `secret` is on the resolved value. */
@@ -153,6 +249,17 @@ export function useProviders(): UseQueryResult<ProviderDiscoveryResponse> {
 	});
 }
 
+/** How long a popup sign-in may take before the wait gives up (ms). */
+export const POPUP_CONNECT_TIMEOUT_MS = 120_000;
+
+/**
+ * How long a device-code sign-in may take (ms). The human types a code on
+ * another device, and vendors issue those codes for about 15 minutes; the
+ * challenge doesn't carry the vendor's `expires_in`, so this matches the
+ * backend's own default lifetime (900s) rather than the popup's two minutes.
+ */
+export const DEVICE_CODE_CONNECT_TIMEOUT_MS = 15 * 60_000;
+
 export interface RunConnectOptions {
 	/** Optional scopes/extra forwarded to the begin-connect call. */
 	body?: ConnectRequestBody;
@@ -165,7 +272,11 @@ export interface RunConnectOptions {
 	 * 3s) and the popup branch polls at 1.5s.
 	 */
 	pollMs?: number;
-	/** Give up waiting after this long (ms). */
+	/**
+	 * Give up waiting after this long (ms). Defaults to
+	 * {@link POPUP_CONNECT_TIMEOUT_MS} for a popup sign-in and
+	 * {@link DEVICE_CODE_CONNECT_TIMEOUT_MS} for a device-code one.
+	 */
 	timeoutMs?: number;
 	/**
 	 * Abort the wait loops from the outside (e.g. the device-code
@@ -223,7 +334,7 @@ export async function runConnectFlow(
 	id: string,
 	options: RunConnectOptions = {},
 ): Promise<ConnectOutcome> {
-	const { body, mode = 'popup', pollMs, timeoutMs = 120_000, signal } = options;
+	const { body, mode = 'popup', pollMs, timeoutMs = POPUP_CONNECT_TIMEOUT_MS, signal } = options;
 
 	// Advisory wake-up plumbing (#598). We attach the listener *before* the
 	// connect round-trip so a popup that completes very fast (cached IdP consent)
@@ -317,7 +428,7 @@ export async function runConnectFlow(
 			const deviceTickMs = pollMs ?? (challenge.poll_interval_seconds ?? 5) * 1000;
 			const cleanup = options.onDeviceAuthorizationChallenge(challenge);
 			try {
-				const deadline = Date.now() + timeoutMs;
+				const deadline = Date.now() + (options.timeoutMs ?? DEVICE_CODE_CONNECT_TIMEOUT_MS);
 				while (Date.now() < deadline) {
 					await waitTick(deviceTickMs);
 					// User cancelled (the device dialog's Cancel button aborts
@@ -399,17 +510,49 @@ export async function runConnectFlow(
 	}
 }
 
+/**
+ * {@link runConnectFlow} bound to the query cache — the hooks-layer entry point for
+ * view code. A completed sign-in changes state other surfaces join against, so it
+ * invalidates the whole `credentials` slice; `timeout` invalidates too, since the
+ * handshake may have landed just after we stopped watching.
+ */
+export function useRunConnectFlow(): (
+	id: string,
+	options?: RunConnectOptions,
+) => Promise<ConnectOutcome> {
+	const queryClient = useQueryClient();
+	return useCallback(
+		async (id: string, options: RunConnectOptions = {}): Promise<ConnectOutcome> => {
+			const outcome = await runConnectFlow(id, options);
+			if (outcome.status === 'connected' || outcome.status === 'timeout') {
+				void queryClient.invalidateQueries({ queryKey: credentialKeys.all });
+			}
+			return outcome;
+		},
+		[queryClient],
+	);
+}
+
 export type { ListCredentialsParams } from './client';
 export * from './types';
 
+// Drained-list return contract of the `useAll*` hooks, for join consumers.
+export type { DrainedList } from '@/shared/hooks/useEagerCursorDrain';
+
 export {
 	apiPickerKeys,
+	apiRowToSelected,
+	workspaceApiFor,
 	useApis,
+	useAllApis,
 	useApiSchemes,
 	useCatalog,
 	useImportCatalogEntry,
+	useImportSpec,
+	type ImportSpecResult,
 	type SelectedApi,
 	type ServerVarDef,
+	type UseImportSpec,
 } from './apis-hooks';
 
 export {
@@ -442,6 +585,15 @@ export type {
 	VendorScopeCatalog,
 	VendorSummary,
 } from './vendors-types';
+// Spec-import wire shapes — the import dialog builds one and reads the other.
+export type { ImportJob, ImportSource, JobStatus } from './apis';
+
+// The `/jobs/{id}` poll: async-import callers drive their own loop. Feature-module
+// HOOKS may import it; view code must not.
+export { getJob } from './apis';
+
+// The job poll and its success test, shared with the workspace catalog re-import.
+export { jobSucceeded, pollJobToTerminal } from './apis-hooks';
 
 // Re-export the API/catalog response models so view code can stay within the
 // module boundary (the lint rule blocks direct `@/shared/api` imports).

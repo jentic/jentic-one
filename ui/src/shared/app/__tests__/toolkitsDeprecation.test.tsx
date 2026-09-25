@@ -63,7 +63,7 @@ describe('toolkits deprecation alias (theme-5 5d — delete in 6b)', () => {
 		// The notice points operators at the replacement surface.
 		expect(await screen.findByText('Toolkits were retired')).toBeInTheDocument();
 		expect(screen.getByText(/managed per agent/)).toBeInTheDocument();
-		expect(screen.getByText(/Access tab/)).toBeInTheDocument();
+		expect(screen.getByText(/Agents page/)).toBeInTheDocument();
 	});
 
 	it('redirects a /toolkits/{tk_id} detail deep link without resolving the id', async () => {

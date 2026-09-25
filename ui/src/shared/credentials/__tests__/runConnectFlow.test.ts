@@ -3,7 +3,9 @@ import { http, HttpResponse } from 'msw';
 import { worker } from '@/mocks/browser';
 import {
 	CredentialType,
+	DEVICE_CODE_CONNECT_TIMEOUT_MS,
 	OAUTH_CONNECT_MESSAGE_TYPE,
+	POPUP_CONNECT_TIMEOUT_MS,
 	runConnectFlow,
 	type CredentialRedactedResponse,
 } from '@/shared/credentials/api';
@@ -376,5 +378,12 @@ describe('runConnectFlow — device-code branch', () => {
 		// If cleanup ever stops firing on timeout, a stranded modal would
 		// linger over the credentials page after the flow expires.
 		expect(cleanupCalls).toBe(1);
+	});
+
+	it('gives a device code its full lifetime by default, not the popup’s two minutes', () => {
+		// The human enters the code on another device; vendors issue codes for
+		// about 15 minutes, so the default wait must not discard it sooner (#1428).
+		expect(DEVICE_CODE_CONNECT_TIMEOUT_MS).toBe(15 * 60_000);
+		expect(DEVICE_CODE_CONNECT_TIMEOUT_MS).toBeGreaterThan(POPUP_CONNECT_TIMEOUT_MS);
 	});
 });

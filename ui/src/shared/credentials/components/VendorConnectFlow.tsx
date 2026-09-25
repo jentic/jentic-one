@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
 	ArrowLeft,
@@ -8,9 +8,11 @@ import {
 	ExternalLink,
 	Loader2,
 	ShieldAlert,
+	Unlink,
 	XCircle,
 } from 'lucide-react';
 import {
+	ActorStatusBadge,
 	AgentBadge,
 	AppLink,
 	Badge,
@@ -19,10 +21,13 @@ import {
 	CopyButton,
 	ErrorAlert,
 	Label,
+	RadioCardGroup,
+	SearchInput,
 	Skeleton,
 	VendorIcon,
 	toast,
 } from '@/shared/ui';
+import type { RadioCardOption } from '@/shared/ui';
 import {
 	useAgentsForPicker,
 	useCancelConnectSession,
@@ -524,17 +529,26 @@ function VendorSelfConnectFlow({
 	);
 }
 
+// Sentinel radio value for "connect without binding" — agent ids are
+// never empty, so ``''`` can't collide; mapped back to ``null`` on change.
+const NO_AGENT_VALUE = '';
+
+// Above this many agents the picker grows a name filter.
+const AGENT_FILTER_THRESHOLD = 6;
+
 /**
- * Agent-selection dropdown on the self-flow configure page. Renders
- * ``agent.name`` — actor IDs are non-obvious identifiers, so surfacing
- * them would only confuse the user. Binding is OPTIONAL: ``agent_id``
- * is nullable at ``:confirm`` (connect unbound, bind an agent later),
- * so the dropdown always carries an explicit "no agent" choice and the
- * empty state (no agents in this user's account) explains that the
- * user can proceed anyway — with a link to the Agents page for when
- * they'd rather create one first. ``disabled`` locks the field to its
- * current value so the "Bind credential" entry from an agent's detail
- * page can pre-select without risk of accidental re-target.
+ * Agent-selection radio cards on the self-flow configure page. One card
+ * per agent (avatar + ``agent.name`` + lifecycle status) — actor IDs are
+ * non-obvious identifiers, so surfacing them would only confuse the
+ * user. Binding is OPTIONAL: ``agent_id`` is nullable at ``:confirm``
+ * (connect unbound, bind an agent later), so the list always leads with
+ * a quieter "no agent" card, and the empty state (no agents in this
+ * user's account) explains that the user can proceed anyway — with a
+ * link to the Agents page for when they'd rather create one first.
+ * ``disabled`` locks the field to its current value (only that agent's
+ * card is shown, checked and inert) so the "Bind credential" entry from
+ * an agent's detail page can pre-select without risk of accidental
+ * re-target.
  */
 function AgentPickerField({
 	agents,
@@ -544,18 +558,24 @@ function AgentPickerField({
 	onChange,
 	disabled,
 }: {
-	agents: readonly { id: string; name: string }[];
+	agents: readonly { id: string; name: string; status?: string }[];
 	loading: boolean;
 	error: Error | null;
 	value: string | null;
 	onChange: (id: string | null) => void;
 	disabled: boolean;
 }) {
+	const labelId = useId();
+	const [filter, setFilter] = useState('');
+
 	if (loading) {
 		return (
 			<div className="space-y-2">
 				<Label>Which agent uses this credential?</Label>
-				<Skeleton className="h-9 w-full" />
+				<div className="space-y-1.5">
+					<Skeleton className="h-12 w-full" />
+					<Skeleton className="h-12 w-full" />
+				</div>
 			</div>
 		);
 	}
@@ -578,23 +598,85 @@ function AgentPickerField({
 			</div>
 		);
 	}
+	const agentOption = (a: {
+		id: string;
+		name: string;
+		status?: string;
+	}): RadioCardOption<string> => ({
+		value: a.id,
+		label: a.name,
+		leading: <AgentBadge id={a.id} name={a.name} size="sm" />,
+		// Status only when the backend sent one — ``toActorStatus`` maps an
+		// unknown value to ``archived``, which would mislabel a sparse row.
+		trailing: a.status ? <ActorStatusBadge status={a.status} /> : undefined,
+	});
+
+	let options: RadioCardOption<string>[];
+	if (disabled) {
+		// Locked: show only the pinned agent's card (checked, inert). Falls
+		// back to a nameless card if it isn't in the picker page (the list
+		// is capped server-side) so the lock is still visible.
+		const locked = agents.find((a) => a.id === value);
+		options = [
+			locked
+				? agentOption(locked)
+				: {
+						value: value ?? NO_AGENT_VALUE,
+						label: value ? 'Selected agent' : 'No agent — connect without binding',
+						leading: <AgentBadge id={value ?? undefined} size="sm" />,
+					},
+		];
+	} else {
+		const q = filter.trim().toLowerCase();
+		const visible = q
+			? agents.filter((a) => a.name.toLowerCase().includes(q) || a.id === value)
+			: agents;
+		options = [
+			{
+				value: NO_AGENT_VALUE,
+				label: 'No agent — connect without binding',
+				description: 'You can bind an agent to this credential later.',
+				muted: true,
+				leading: (
+					<span
+						aria-hidden="true"
+						className="border-border text-muted-foreground flex h-7 w-7 items-center justify-center rounded-lg border border-dashed"
+					>
+						<Unlink className="h-3.5 w-3.5" />
+					</span>
+				),
+			},
+			...visible.map(agentOption),
+		];
+	}
+
 	return (
 		<div className="space-y-2">
-			<Label htmlFor="connect-agent-picker">Which agent uses this credential?</Label>
-			<select
-				id="connect-agent-picker"
-				value={value ?? ''}
-				onChange={(e): void => onChange(e.target.value || null)}
+			<div className="flex items-baseline justify-between">
+				<Label id={labelId}>Which agent uses this credential?</Label>
+				{disabled && (
+					<span className="text-muted-foreground text-xs">Locked to this agent</span>
+				)}
+			</div>
+			{!disabled && agents.length > AGENT_FILTER_THRESHOLD && (
+				<SearchInput
+					value={filter}
+					onValueChange={setFilter}
+					size="sm"
+					placeholder="Filter agents…"
+					aria-label="Filter agents"
+				/>
+			)}
+			<RadioCardGroup
+				options={options}
+				value={value ?? NO_AGENT_VALUE}
+				onChange={(v): void => onChange(v === NO_AGENT_VALUE ? null : v)}
+				ariaLabelledBy={labelId}
 				disabled={disabled}
-				className="border-border bg-background text-foreground disabled:text-muted-foreground w-full rounded-md border px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-70"
-			>
-				<option value="">No agent — connect without binding</option>
-				{agents.map((a) => (
-					<option key={a.id} value={a.id}>
-						{a.name}
-					</option>
-				))}
-			</select>
+				// ~5 rows visible; the rest scroll so the scopes list below
+				// stays reachable with long agent rosters.
+				maxHeightClass="max-h-72"
+			/>
 		</div>
 	);
 }

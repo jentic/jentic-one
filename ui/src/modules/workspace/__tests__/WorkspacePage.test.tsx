@@ -33,9 +33,9 @@ async function settleAnimations(container: HTMLElement): Promise<void> {
 describe('WorkspacePage', () => {
 	beforeEach(() => {
 		setToken('test-token');
-		// A sibling module (dashboard) also registers `GET /apis` in the global
-		// table; MSW resolves first-match, so prepend the workspace handlers to
-		// guarantee these tests see the workspace fixture regardless of order.
+		// Sibling modules also register `GET /apis` in the global table and MSW
+		// resolves first-match, so prepend the workspace handlers rather than
+		// depend on the root table's order for these assertions.
 		worker.use(...workspaceHandlers);
 	});
 

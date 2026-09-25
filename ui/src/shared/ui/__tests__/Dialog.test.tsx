@@ -53,6 +53,7 @@ describe('Dialog', () => {
 
 	it('has no critical a11y violations', async () => {
 		const { container } = renderWithProviders(<DialogHarness />);
-		await checkA11y(container);
+		// The open dialog IS the component under test, so the audit says so.
+		await checkA11y(container, { modal: true });
 	});
 });

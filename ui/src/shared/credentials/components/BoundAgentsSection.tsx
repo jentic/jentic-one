@@ -5,10 +5,18 @@
  * "everything about this credential" surface, so the section lives here
  * rather than as a new page or a per-row table expandable.
  *
- * Read-only by design: binding/rule management belongs to the agent detail
- * Access tab (BoundCredentialsCard), so each row just shows the agent name,
- * suspended state, bound-at time and links out to the agent's console.
+ * Read-only by design: binding/rule management belongs to each agent's API
+ * sidebar on the Agents surface (ApiAccessSidebar), so each row just shows
+ * the agent name, suspended state, bound-at time and links to that agent AS
+ * SELECTED on the flat surface — the tab whose tiles hold the bindings this
+ * list is talking about, not a separate per-agent page.
+ *
+ * Every host renders this inside an overlay, and on the Agents surface that
+ * overlay covers the destination. So a plain in-tab click asks the host to
+ * dismiss itself (`onNavigateAway`); a modified click opens a second tab and
+ * leaves this one exactly as it was.
  */
+import type { MouseEvent } from 'react';
 import { Bot, PauseCircle } from 'lucide-react';
 import { AppLink, Badge, ErrorAlert, LoadingState } from '@/shared/ui';
 import { ROUTE_PATHS } from '@/shared/app/routes';
@@ -18,13 +26,28 @@ import { useCredentialAgents } from '@/shared/credentials/api';
 export function BoundAgentsSection({
 	credentialId,
 	open,
+	onNavigateAway,
 }: {
 	credentialId: string;
 	/** Host sheet visibility — gates the fetch so closed sheets don't poll. */
 	open: boolean;
+	/**
+	 * An agent link was followed IN THIS TAB. Hosts that sit over the Agents
+	 * surface use it to close themselves, so the agent that was just asked for
+	 * isn't left underneath the overlay that asked for it.
+	 */
+	onNavigateAway?: () => void;
 }) {
 	const agents = useCredentialAgents(credentialId, { enabled: open });
 	const rows = agents.data?.data ?? [];
+
+	// Only a plain left click navigates this tab; a modified click is the
+	// browser's own "open elsewhere" and must leave this view untouched.
+	const handleAgentClick = (event: MouseEvent<HTMLAnchorElement>): void => {
+		if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+		if (event.button !== 0) return;
+		onNavigateAway?.();
+	};
 
 	return (
 		<div className="border-border space-y-2 rounded-lg border border-dashed p-3">
@@ -33,7 +56,7 @@ export function BoundAgentsSection({
 			</p>
 			<p className="text-muted-foreground text-xs">
 				Agents allowed to call APIs with this credential. Manage bindings from each
-				agent&apos;s Access tab.
+				agent&apos;s API tiles on the Agents page.
 			</p>
 
 			{agents.isPending ? (
@@ -58,7 +81,8 @@ export function BoundAgentsSection({
 							<span className="flex min-w-0 items-center gap-1.5">
 								<Bot className="text-muted-foreground h-3.5 w-3.5 shrink-0" />
 								<AppLink
-									href={ROUTE_PATHS.agent(row.agent_id)}
+									href={ROUTE_PATHS.agentTab(row.agent_id)}
+									onClick={handleAgentClick}
 									className="text-foreground truncate text-xs font-medium hover:underline"
 								>
 									{row.agent_name}

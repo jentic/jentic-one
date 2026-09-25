@@ -8,9 +8,12 @@
  * Behaviour:
  *   - Slides from right (default), left, or bottom
  *   - Focus trap + restoration to the trigger on close
- *   - Escape + backdrop click close (opt-out with `preventClose`)
+ *   - Escape + backdrop click close (opt out of both with `preventClose`, of
+ *     the backdrop alone with `dismissOnBackdrop={false}`); Escape is left to a
+ *     native modal `<dialog>` open above the sheet
  *   - Body scroll lock via `overscroll-behavior: contain`
  *   - ARIA dialog semantics
+ *   - Children unmount on close; `keepMounted` holds a form's draft
  */
 
 import {
@@ -24,6 +27,7 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import { cn } from '@/shared/lib/utils';
+import { useCoversRightEdge } from '@/shared/ui/rightEdge';
 
 export interface SheetPrimitiveProps {
 	/** Whether the sheet is open. */
@@ -40,6 +44,16 @@ export interface SheetPrimitiveProps {
 	overlayClassName?: string;
 	/** If true, clicking outside / Escape will NOT close the sheet. */
 	preventClose?: boolean;
+	/**
+	 * If `false`, clicking the backdrop will NOT close the sheet — Escape and the
+	 * sheet's own close controls still do. Same name and meaning as `Dialog`'s.
+	 */
+	dismissOnBackdrop?: boolean;
+	/**
+	 * Keep `children` mounted (but `hidden`) while closed, so a form's draft survives
+	 * a dismissal. Leave off for a sheet holding a secret mid-entry.
+	 */
+	keepMounted?: boolean;
 	/** Ref to the element that should receive focus when the sheet opens. */
 	initialFocus?: RefObject<HTMLElement | null>;
 	/** Fired after the closing animation has fully completed. */
@@ -90,6 +104,8 @@ export function SheetPrimitive({
 	className,
 	overlayClassName,
 	preventClose = false,
+	dismissOnBackdrop = true,
+	keepMounted = false,
 	initialFocus,
 	onAfterClose,
 	ariaLabel,
@@ -104,6 +120,11 @@ export function SheetPrimitive({
 
 	const styles = SIDE_STYLES[side];
 
+	// A right-hand sheet covers the right edge from its first frame until it starts
+	// closing, so corner overlays (toasts) move beside it instead of over its
+	// footer actions.
+	useCoversRightEdge(sheetRef, side === 'right' && open && animationState !== 'closed');
+
 	useEffect(() => {
 		setMounted(true);
 	}, []);
@@ -112,7 +133,11 @@ export function SheetPrimitive({
 	// Including it would create races between user toggles and animation timers.
 	useEffect(() => {
 		if (open) {
-			if (animationState === 'closed') setAnimationState('entering');
+			// Re-opened mid-exit (e.g. the setup queue's Back straight after the tray
+			// handed over): enter again rather than finishing the exit and staying shut.
+			if (animationState === 'closed' || animationState === 'exiting') {
+				setAnimationState('entering');
+			}
 		} else {
 			if (animationState === 'open' || animationState === 'entering') {
 				setAnimationState('exiting');
@@ -162,6 +187,16 @@ export function SheetPrimitive({
 
 		if (animationState === 'open') {
 			const timer = setTimeout(() => {
+				// Fires well after the sheet is usable: anything already focused inside it
+				// is where the user put focus, and moving it would eat their keystrokes.
+				const current = document.activeElement;
+				if (sheetRef.current?.contains(current)) return;
+				// Nor may it pull focus back out of somewhere the user has moved it since
+				// this sheet began opening — e.g. a second sheet stacked on top (the setup
+				// queue's credential form), which portals outside this one's DOM.
+				if (current && current !== document.body && current !== previousFocusRef.current) {
+					return;
+				}
 				if (initialFocus?.current) {
 					initialFocus.current.focus();
 				} else {
@@ -179,7 +214,18 @@ export function SheetPrimitive({
 			const elementToFocus = previousFocusRef.current;
 			previousFocusRef.current = null;
 			setTimeout(() => {
-				elementToFocus?.focus();
+				// A hand-off between overlays (the Add-APIs tray ↔ setup queue) has
+				// already put focus in the next one; restoring here would yank it
+				// back out to a trigger behind that overlay.
+				const current = document.activeElement;
+				if (
+					current &&
+					current !== document.body &&
+					current.closest('[role="dialog"], dialog[open]')
+				) {
+					return;
+				}
+				if (elementToFocus?.isConnected) elementToFocus.focus();
 			}, 10);
 		}
 	}, [animationState]);
@@ -204,11 +250,20 @@ export function SheetPrimitive({
 
 	const handleKeyDown = useCallback(
 		(e: KeyboardEvent) => {
-			if (animationState !== 'open') return;
+			// Escape is honoured from the moment the sheet mounts, including during the
+			// entrance. Tab containment waits for `open`, where there is something to cycle.
+			if (animationState !== 'open' && animationState !== 'entering') return;
+			if (e.key !== 'Escape' && animationState !== 'open') return;
 
-			if (e.key === 'Escape' && !preventClose) {
-				e.preventDefault();
-				onClose();
+			if (e.key === 'Escape') {
+				// A native modal <dialog> renders in the top layer, ABOVE any sheet, and the
+				// browser turns an unprevented Escape into its cancel — so the sheet must
+				// neither preventDefault nor close itself underneath the dialog.
+				if (document.querySelector('dialog:modal')) return;
+				if (!preventClose) {
+					e.preventDefault();
+					onClose();
+				}
 				return;
 			}
 
@@ -238,17 +293,23 @@ export function SheetPrimitive({
 	}, [handleKeyDown]);
 
 	const handleBackdropClick = useCallback(() => {
-		if (!preventClose && animationState === 'open') {
+		if (!preventClose && dismissOnBackdrop && animationState === 'open') {
 			onClose();
 		}
-	}, [preventClose, onClose, animationState]);
+	}, [preventClose, dismissOnBackdrop, onClose, animationState]);
 
-	if (!mounted || animationState === 'closed') return null;
+	if (!mounted) return null;
+	const isClosed = animationState === 'closed';
+	if (isClosed && !keepMounted) return null;
 
 	const isVisible = animationState === 'open';
 
 	return createPortal(
-		<div className="fixed inset-0 z-50" style={{ overscrollBehavior: 'contain' }}>
+		<div
+			hidden={isClosed}
+			className={cn('fixed inset-0 z-50', isClosed && 'hidden')}
+			style={{ overscrollBehavior: 'contain' }}
+		>
 			<div
 				className={cn(
 					'absolute inset-0 overflow-hidden bg-black/50 backdrop-blur-sm',
@@ -259,6 +320,7 @@ export function SheetPrimitive({
 				style={{ overscrollBehavior: 'contain' }}
 				onClick={handleBackdropClick}
 				aria-hidden="true"
+				data-testid={isClosed ? undefined : 'sheet-backdrop'}
 			/>
 
 			<div className={cn('fixed max-w-full', styles.container)}>
@@ -266,6 +328,8 @@ export function SheetPrimitive({
 					ref={sheetRef}
 					role="dialog"
 					aria-modal="true"
+					// On the panel too: "is an overlay open?" is asked of the dialog node itself.
+					hidden={isClosed}
 					aria-label={ariaLabel}
 					aria-labelledby={ariaLabelledBy}
 					className={cn(
@@ -282,7 +346,8 @@ export function SheetPrimitive({
 						willChange: 'transform',
 						overscrollBehavior: 'contain',
 					}}
-					data-testid="sheet-primitive"
+					// Tagged only while on screen — a closed `keepMounted` sheet is not open.
+					data-testid={isClosed ? undefined : 'sheet-primitive'}
 				>
 					{children}
 				</div>

@@ -52,13 +52,39 @@ export * from '@testing-library/react';
 export { default as userEvent } from '@testing-library/user-event';
 
 /**
- * Run axe against a rendered container and assert no critical/serious a11y
- * violations. Uses axe-core directly (browser-mode compatible). Feature PRs
- * call this on every page-level test.
+ * Run axe against a rendered container and assert no critical/serious violations.
+ *
+ * The caller declares the scope: an overlay spec passes `{ modal: true }` (usually
+ * with `document.body`, since the sheet portals out) and gets the topmost modal
+ * audited. Both directions throw rather than silently audit the other surface.
  */
-export async function checkA11y(container: Element): Promise<void> {
+export async function checkA11y(
+	container: Element,
+	options: { modal?: boolean } = {},
+): Promise<void> {
 	const { default: axe } = await import('axe-core');
-	const results = await axe.run(container);
+	// Topmost = last in DOM order: each overlay portals to the end of <body>.
+	// `:not([hidden])` skips a closed `keepMounted` sheet.
+	const modals = container.querySelectorAll<HTMLElement>(
+		'[aria-modal="true"]:not([hidden]), dialog[open]',
+	);
+	if (options.modal && modals.length === 0) {
+		throw new Error(
+			'checkA11y({ modal: true }) found no open modal in the container — ' +
+				'the overlay under test never opened, so nothing was audited.',
+		);
+	}
+	if (!options.modal && modals.length > 0) {
+		throw new Error(
+			`checkA11y found ${modals.length} open modal(s) in a page-level audit. ` +
+				'Pass `{ modal: true }` if the overlay is the surface under test; ' +
+				'otherwise close it and await its removal from the DOM (the exit ' +
+				'transition keeps `aria-modal` in place for ~300ms) before auditing ' +
+				'the page — the backdrop makes contrast results indeterminate.',
+		);
+	}
+	const target = options.modal ? modals[modals.length - 1] : container;
+	const results = await axe.run(target);
 	const critical = results.violations.filter(
 		(v) => v.impact === 'critical' || v.impact === 'serious',
 	);

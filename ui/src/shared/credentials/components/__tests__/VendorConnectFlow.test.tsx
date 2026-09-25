@@ -1,7 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { worker } from '@/mocks/browser';
-import { renderWithProviders, screen, userEvent, waitFor, within } from '@/__tests__/test-utils';
+import {
+	checkA11y,
+	renderWithProviders,
+	screen,
+	userEvent,
+	waitFor,
+	within,
+} from '@/__tests__/test-utils';
 import { VendorConnectFlow } from '@/shared/credentials/components/VendorConnectFlow';
 import {
 	getConnectSession,
@@ -81,6 +88,14 @@ function stubAgents(): void {
 						name: 'Scout',
 						description: 'The team scout',
 						actor_type: 'agent',
+						status: 'active',
+					},
+					{
+						id: 'agnt_2',
+						name: 'Ranger',
+						description: 'A second agent',
+						actor_type: 'agent',
+						status: 'pending',
 					},
 				],
 				has_more: false,
@@ -116,13 +131,79 @@ describe('VendorConnectFlow — self mode', () => {
 		// Agent picker IS rendered — theme-5 landed on main and
 		// credentials now bind directly to a specified agent at
 		// ``:confirm``, so the choice has to be surfaced here. Uses the
-		// agent's ``name`` in the options.
-		const picker = await screen.findByLabelText(/which agent uses this/i);
-		expect(picker).toBeInTheDocument();
-		expect(await screen.findByRole('option', { name: 'Scout' })).toBeInTheDocument();
+		// agent's ``name`` as each radio card's accessible name.
+		const picker = await screen.findByRole('radiogroup', { name: /which agent uses this/i });
+		expect(within(picker).getByRole('radio', { name: 'Scout' })).toBeInTheDocument();
+		// Each agent card carries the shared actor-status badge.
+		expect(within(picker).getByText('Active')).toBeInTheDocument();
+		expect(within(picker).getByText('Pending')).toBeInTheDocument();
 	});
 
-	it('disables the agent picker when preselectedAgentId is provided (agent-page entry)', async () => {
+	it('lists "No agent" first, checked by default, and lets the user switch back to it', async () => {
+		renderWithProviders(
+			<VendorConnectFlow mode="self" vendor={vendor} onBack={vi.fn()} onDone={vi.fn()} />,
+		);
+		const user = userEvent.setup();
+		const picker = await screen.findByRole('radiogroup', { name: /which agent uses this/i });
+		const radios = within(picker).getAllByRole('radio');
+		expect(radios.map((r) => r.getAttribute('aria-checked'))).toEqual([
+			'true',
+			'false',
+			'false',
+		]);
+		const none = within(picker).getByRole('radio', { name: /no agent/i });
+		expect(radios[0]).toBe(none);
+
+		await user.click(within(picker).getByRole('radio', { name: 'Scout' }));
+		expect(within(picker).getByRole('radio', { name: 'Scout' })).toHaveAttribute(
+			'aria-checked',
+			'true',
+		);
+		expect(none).toHaveAttribute('aria-checked', 'false');
+
+		await user.click(none);
+		expect(none).toHaveAttribute('aria-checked', 'true');
+		await checkA11y(picker);
+	});
+
+	it('supports roving-tabindex arrow-key navigation across the agent cards', async () => {
+		renderWithProviders(
+			<VendorConnectFlow mode="self" vendor={vendor} onBack={vi.fn()} onDone={vi.fn()} />,
+		);
+		const user = userEvent.setup();
+		const picker = await screen.findByRole('radiogroup', { name: /which agent uses this/i });
+		const none = within(picker).getByRole('radio', { name: /no agent/i });
+		const scout = within(picker).getByRole('radio', { name: 'Scout' });
+		const ranger = within(picker).getByRole('radio', { name: 'Ranger' });
+
+		// One tab stop for the group: the checked card.
+		expect(none).toHaveAttribute('tabindex', '0');
+		expect(scout).toHaveAttribute('tabindex', '-1');
+
+		none.focus();
+		await user.keyboard('{ArrowDown}');
+		expect(scout).toHaveFocus();
+		expect(scout).toHaveAttribute('aria-checked', 'true');
+		expect(scout).toHaveAttribute('tabindex', '0');
+
+		await user.keyboard('{ArrowDown}');
+		expect(ranger).toHaveFocus();
+		expect(ranger).toHaveAttribute('aria-checked', 'true');
+
+		// Wraps from the last card back to the first.
+		await user.keyboard('{ArrowDown}');
+		expect(none).toHaveFocus();
+		expect(none).toHaveAttribute('aria-checked', 'true');
+
+		await user.keyboard('{ArrowUp}');
+		expect(ranger).toHaveFocus();
+		await user.keyboard('{Home}');
+		expect(none).toHaveFocus();
+		await user.keyboard('{End}');
+		expect(ranger).toHaveFocus();
+	});
+
+	it('locks the agent picker when preselectedAgentId is provided (agent-page entry)', async () => {
 		renderWithProviders(
 			<VendorConnectFlow
 				mode="self"
@@ -132,14 +213,15 @@ describe('VendorConnectFlow — self mode', () => {
 				onDone={vi.fn()}
 			/>,
 		);
-		// The dropdown renders but is disabled — locked to the agent
-		// whose page opened the flow, so the user can't accidentally
-		// re-target a binding during the connect step.
-		const picker = (await screen.findByLabelText(
-			/which agent uses this/i,
-		)) as HTMLSelectElement;
-		expect(picker).toBeDisabled();
-		expect(picker.value).toBe('agnt_1');
+		// Only the locked agent's card renders — checked and disabled — so
+		// the user can't accidentally re-target a binding during connect.
+		const picker = await screen.findByRole('radiogroup', { name: /which agent uses this/i });
+		const radios = within(picker).getAllByRole('radio');
+		expect(radios).toHaveLength(1);
+		const scout = within(picker).getByRole('radio', { name: 'Scout' });
+		expect(scout).toBeDisabled();
+		expect(scout).toHaveAttribute('aria-checked', 'true');
+		expect(screen.getByText(/locked to this agent/i)).toBeInTheDocument();
 	});
 
 	it('connect-on-mount, then confirm on rules-continue, lands on awaiting', async () => {
@@ -206,10 +288,8 @@ describe('VendorConnectFlow — self mode', () => {
 		// hydrated; picking Scout satisfies the agent gate; the button
 		// un-disables when ``:connect`` also returns.
 		await screen.findByText('read:user');
-		const picker = (await screen.findByLabelText(
-			/which agent uses this/i,
-		)) as HTMLSelectElement;
-		await user.selectOptions(picker, 'agnt_1');
+		const picker = await screen.findByRole('radiogroup', { name: /which agent uses this/i });
+		await user.click(within(picker).getByRole('radio', { name: 'Scout' }));
 		await waitFor(() =>
 			expect(screen.getByRole('button', { name: /^continue$/i })).not.toBeDisabled(),
 		);

@@ -12,7 +12,7 @@ import { useSearchParams } from 'react-router';
 import { Upload } from 'lucide-react';
 import { PageShell, PageHeader, PageHelp, Button } from '@/shared/ui';
 import { ApiGrid } from '@/modules/workspace/components/ApiGrid';
-import { ImportSpecDialog } from '@/modules/workspace/components/ImportSpecDialog';
+import { ImportSpecDialog } from '@/shared/credentials/components/ImportSpecDialog';
 import { WorkspaceStatsStrip } from '@/modules/workspace/components/WorkspaceStatsStrip';
 import { WorkspaceFilterBar } from '@/modules/workspace/components/WorkspaceFilterBar';
 import { WorkspaceCatalogFooter } from '@/modules/workspace/components/WorkspaceCatalogFooter';
@@ -21,9 +21,10 @@ import { useWorkspaceApis } from '@/modules/workspace/api';
 export default function WorkspacePage() {
 	const [searchParams, setSearchParams] = useSearchParams();
 	// Deep-link support: Discover cross-links here with `?import=1` to open the
-	// import dialog on arrival (the import UI is a Workspace-module concern, so
-	// Discover navigates rather than embedding the dialog). Strip the param once
-	// consumed so a refresh or back-nav doesn't re-trigger it.
+	// import dialog on arrival — landing on the Workspace is the point (the new
+	// API appears in the list behind it), so Discover navigates rather than
+	// embedding the dialog. Strip the param once consumed so a refresh or
+	// back-nav doesn't re-trigger it.
 	//
 	// Seed the open state from the URL in the initializer AND re-sync in the
 	// effect below on purpose: the initializer opens the dialog on the very

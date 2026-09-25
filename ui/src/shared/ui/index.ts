@@ -30,8 +30,8 @@ export type { DangerZoneProps, DangerZoneAction } from '@/shared/ui/DangerZone';
 export { IdentitySettingsCard } from '@/shared/ui/IdentitySettingsCard';
 export type { IdentitySettingsCardProps } from '@/shared/ui/IdentitySettingsCard';
 
-export { Badge, MethodBadge, StatusBadge } from '@/shared/ui/Badge';
-export type { Variant as BadgeVariant } from '@/shared/ui/Badge';
+export { Badge, MethodBadge, StatusBadge, StatusText, Tag } from '@/shared/ui/Badge';
+export type { Variant as BadgeVariant, StatusTone } from '@/shared/ui/Badge';
 
 export { AgentBadge, agentInitials } from '@/shared/ui/AgentBadge';
 export type { AgentBadgeSize } from '@/shared/ui/AgentBadge';
@@ -51,6 +51,9 @@ export { Checkbox } from '@/shared/ui/Checkbox';
 
 export { SearchInput } from '@/shared/ui/SearchInput';
 export type { SearchInputProps } from '@/shared/ui/SearchInput';
+
+export { RadioCardGroup } from '@/shared/ui/RadioCardGroup';
+export type { RadioCardGroupProps, RadioCardOption } from '@/shared/ui/RadioCardGroup';
 
 export { SegmentedToggle } from '@/shared/ui/SegmentedToggle';
 export type { SegmentedToggleOption } from '@/shared/ui/SegmentedToggle';
@@ -80,6 +83,9 @@ export { ErrorAlert } from '@/shared/ui/ErrorAlert';
 export { Banner } from '@/shared/ui/Banner';
 export type { BannerProps } from '@/shared/ui/Banner';
 
+export { FooterActionBar, FOOTER_ACTION_BAR_PAGE_PADDING } from '@/shared/ui/FooterActionBar';
+export type { FooterActionBarProps } from '@/shared/ui/FooterActionBar';
+
 export { ErrorBoundary } from '@/shared/ui/ErrorBoundary';
 
 export { DataTable } from '@/shared/ui/DataTable';
@@ -94,6 +100,8 @@ export type { CascadeEntityType, CascadeDependentGroup } from '@/shared/ui/Casca
 
 export { SheetPrimitive } from '@/shared/ui/SheetPrimitive';
 export type { SheetPrimitiveProps } from '@/shared/ui/SheetPrimitive';
+
+export { useCoversRightEdge, useRightEdgeInset } from '@/shared/ui/rightEdge';
 
 export { Toaster } from '@/shared/ui/Toaster';
 export { toast, dismissToast, clearAllToasts, useToasts } from '@/shared/ui/toastStore';
@@ -125,6 +133,9 @@ export type { KeyboardShortcut, KeyboardShortcutsBarProps } from '@/shared/ui/Ke
 export { JenticLogo } from '@/shared/ui/Logo';
 export type { JenticLogoProps } from '@/shared/ui/Logo';
 
+export { McpIcon } from '@/shared/ui/McpIcon';
+export type { McpIconProps } from '@/shared/ui/McpIcon';
+
 export {
 	useDismissable,
 	useViewportClamp,
@@ -141,6 +152,8 @@ export { LazyMount } from '@/shared/ui/LazyMount';
 export type { LazyMountProps } from '@/shared/ui/LazyMount';
 
 export { TruncateWithTooltip } from '@/shared/ui/TruncateWithTooltip';
+
+export { ExpandableText } from '@/shared/ui/ExpandableText';
 
 export { Tooltip } from '@/shared/ui/Tooltip';
 
@@ -161,6 +174,8 @@ export {
 	STATUS_LABELS,
 	STATUS_BADGE_VARIANT,
 	STATUS_DOT,
+	STATUS_ICON,
+	STATUS_TINT,
 	toActorStatus,
 } from '@/shared/ui/ActorStatusBadge';
 export type { ActorStatus } from '@/shared/ui/ActorStatusBadge';
@@ -186,6 +201,8 @@ export {
 	PermissionRuleEditor,
 	isEmptyAllowRule,
 	cleanPermissionRule,
+	allowAllRule,
+	grantsEverything,
 	PERMISSION_EFFECTS,
 	PERMISSION_MATCH_MODES,
 } from '@/shared/ui/PermissionRuleEditor';

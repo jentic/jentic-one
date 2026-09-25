@@ -43,5 +43,14 @@ test('header quick-actions menu navigates to its surfaces', async ({ page }) => 
 	// Quick actions live behind a header dropdown now (the bottom band is gone).
 	await page.getByRole('button', { name: 'Quick actions' }).click();
 	await page.getByRole('menuitem', { name: 'Add credential' }).click();
-	await expect(page).toHaveURL(/\/app\/credentials\b/);
+	// Credentials are an inventory sheet on the Agents surface, and this label
+	// promises a form, so the action lands on the create wizard's first step. The
+	// `?credentials` key is spent on arrival, so the URL settles to the surface.
+	// The pick step is titled plainly "Add credential" (the " — <API>" suffix
+	// only appears once one is picked); "Enter manually" is its escape hatch and
+	// only exists on that step.
+	await expect(page).toHaveURL(/\/app\/agents\b/);
+	const wizard = page.getByRole('dialog', { name: 'Add credential', exact: true });
+	await expect(wizard).toBeVisible();
+	await expect(wizard.getByRole('button', { name: /Enter manually/i })).toBeVisible();
 });

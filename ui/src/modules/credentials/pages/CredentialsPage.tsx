@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import { Plus } from 'lucide-react';
-import { Button, CascadeDeleteDialog, PageHeader, PageHelp, PageShell, toast } from '@/shared/ui';
+import { Button, PageHeader, PageHelp, PageShell, toast } from '@/shared/ui';
 import {
 	CredentialType,
-	runConnectFlow,
 	useCredentials,
 	useDeleteCredential,
+	useRunConnectFlow,
 	type Credential,
 } from '@/shared/credentials/api';
 import { CredentialsList } from '@/shared/credentials/components/CredentialsList';
@@ -15,18 +15,19 @@ import {
 	type CredentialTypeFilter,
 } from '@/shared/credentials/components/CredentialsToolbar';
 import {
-	CreateCredentialDialog,
+	CreateCredentialFlow,
 	type CreatedCredentialInfo,
-} from '@/shared/credentials/components/CreateCredentialDialog';
+} from '@/shared/credentials/components/CreateCredentialFlow';
+import { CredentialDeleteDialog } from '@/shared/credentials/components/CredentialDeleteDialog';
 import { DeviceCodeConnectDialog } from '@/shared/credentials/components/DeviceCodeConnectDialog';
 import { EditCredentialSheet } from '@/shared/credentials/components/EditCredentialSheet';
 import { PostConnectBindMore } from '@/shared/credentials/components/PostConnectBindMore';
 import type { DeviceAuthorizationChallengeResponse } from '@/shared/credentials/api/types';
 
 /**
- * Credentials module home. Lists stored credentials and hosts the create
- * dialog, edit sheet, and the delete confirmation. Data flows through the
- * module's React Query hooks only.
+ * Credentials module home. Lists stored credentials and hosts the create flow,
+ * edit sheet, and the delete confirmation. Data flows through the module's
+ * React Query hooks only.
  *
  * Note: creation deliberately doesn't echo the raw secret back (no
  * one-time-secret dialog) — echoing a value the user just typed adds friction
@@ -42,7 +43,7 @@ export function CredentialsPage() {
 	const [deleteTarget, setDeleteTarget] = useState<Credential | null>(null);
 	// ``cancel`` aborts the in-flight ``runConnectFlow`` device loop so the
 	// dialog's Cancel button actually stops the polling (a ``cancelled``
-	// outcome) instead of leaving it to run out the 120s timeout.
+	// outcome) instead of leaving it to run out the device-code timeout.
 	const [deviceCodeState, setDeviceCodeState] = useState<{
 		challenge: DeviceAuthorizationChallengeResponse;
 		credentialName: string;
@@ -79,6 +80,10 @@ export function CredentialsPage() {
 
 	const { data, isLoading, error, refetch, isFetching } = useCredentials();
 	const deleteMutation = useDeleteCredential();
+	// Cache-aware connect: a successful sign-in invalidates the whole
+	// credentials slice (this page's list AND the drained listAll query the
+	// flat Agents surface joins against), not just the local first page.
+	const runConnect = useRunConnectFlow();
 
 	const credentials = useMemo(() => data?.data ?? [], [data]);
 
@@ -128,7 +133,7 @@ export function CredentialsPage() {
 		};
 		const controller = new AbortController();
 		try {
-			const outcome = await runConnectFlow(credentialId, {
+			const outcome = await runConnect(credentialId, {
 				signal: controller.signal,
 				onDeviceAuthorizationChallenge: (challenge) => {
 					setDeviceCodeState({
@@ -141,8 +146,9 @@ export function CredentialsPage() {
 			});
 			switch (outcome.status) {
 				case 'connected':
+					// The connect hook invalidated the credentials slice, which
+					// refetches this page's list along with every other join.
 					toast({ title: 'Connected', variant: 'success' });
-					void refetch();
 					break;
 				case 'redirected':
 					break;
@@ -184,7 +190,7 @@ export function CredentialsPage() {
 		toast({ title: `Opening sign-in for ${cred.name}…` });
 		const controller = new AbortController();
 		try {
-			const outcome = await runConnectFlow(cred.credential_id, {
+			const outcome = await runConnect(cred.credential_id, {
 				signal: controller.signal,
 				onDeviceAuthorizationChallenge: (challenge) => {
 					setDeviceCodeState({
@@ -198,7 +204,6 @@ export function CredentialsPage() {
 			switch (outcome.status) {
 				case 'connected':
 					toast({ title: 'Connected', variant: 'success' });
-					void refetch();
 					break;
 				case 'redirected':
 					break;
@@ -284,7 +289,7 @@ export function CredentialsPage() {
 				/>
 			</div>
 
-			<CreateCredentialDialog
+			<CreateCredentialFlow
 				open={createOpen}
 				onClose={(): void => {
 					setCreateOpen(false);
@@ -331,12 +336,13 @@ export function CredentialsPage() {
 			/>
 
 			{deleteTarget != null && (
-				<CascadeDeleteDialog
+				// Org-wide delete: the confirm names the agents that lose access.
+				<CredentialDeleteDialog
 					open
+					credentialId={deleteTarget.credential_id}
+					credentialName={deleteTarget.name}
 					onClose={(): void => setDeleteTarget(null)}
 					onConfirm={confirmDelete}
-					entityType="credential"
-					entityName={deleteTarget.name}
 					loading={deleteMutation.isPending}
 					error={deleteMutation.error}
 				/>
