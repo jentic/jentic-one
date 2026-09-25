@@ -270,13 +270,13 @@ var databaseSection = Section{
 var authSection = Section{
 	ID:    "auth",
 	Title: "Auth",
-	Blurb: "Canonical base URL and optional Google SSO (external OIDC provider).",
+	Blurb: "Public base URL and optional Google SSO (external OIDC provider).",
 	Groups: func(d *Draft) []*huh.Group {
 		return []*huh.Group{
 			huh.NewGroup(
 				Input().
-					Title("Canonical base URL").
-					Description("Leave blank to derive from the server binding.").
+					Title("Public base URL").
+					Description("Leave blank to derive from the server binding. Set it only when clients reach this install on another origin (reverse proxy, TLS).").
 					Placeholder(d.BaseURL()).
 					Value(&d.AuthBaseURL),
 				huh.NewConfirm().

@@ -586,13 +586,18 @@
           "type": "string"
         },
         "redirect_uri": {
-          "title": "Redirect Uri",
-          "type": "string"
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Redirect Uri"
         }
       },
-      "required": [
-        "redirect_uri"
-      ],
       "title": "DirectOAuth2ProviderConfig",
       "type": "object"
     },
@@ -1425,6 +1430,11 @@
           "default": 8000,
           "title": "Port",
           "type": "integer"
+        },
+        "public_base_url": {
+          "default": "",
+          "title": "Public Base Url",
+          "type": "string"
         },
         "reload": {
           "default": false,

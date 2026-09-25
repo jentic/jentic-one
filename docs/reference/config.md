@@ -131,6 +131,7 @@ HTTP server settings.
 | `server.mcp.oauth.enabled` | boolean | `false` | `JENTIC__SERVER__MCP__OAUTH__ENABLED` |  |
 | `server.mcp.oauth.auto_approve_clients` | boolean | `false` | `JENTIC__SERVER__MCP__OAUTH__AUTO_APPROVE_CLIENTS` |  |
 | `server.mcp.oauth.registration_gc_days` | integer | `90` | `JENTIC__SERVER__MCP__OAUTH__REGISTRATION_GC_DAYS` |  |
+| `server.public_base_url` | string | `""` | `JENTIC__SERVER__PUBLIC_BASE_URL` |  |
 
 ## `observability`
 
@@ -308,7 +309,7 @@ Credentials subsystem configuration.
 | `credentials.encryption.entries.<n>.material_file` | string \| null | `null` | `JENTIC__CREDENTIALS__ENCRYPTION__ENTRIES__<N>__MATERIAL_FILE` | Path to a regular file holding the base64-encoded key material (docker/k8s secret mount, systemd LoadCredential path). |
 | `credentials.providers` | map of DirectOAuth2ProviderConfig \| PipedreamProviderConfig | — | `JENTIC__CREDENTIALS__PROVIDERS` |  |
 | `credentials.providers.<name>.kind` | "direct_oauth2" \| "pipedream" | `"direct_oauth2"` | `JENTIC__CREDENTIALS__PROVIDERS__<NAME>__KIND` |  |
-| `credentials.providers.<name>.redirect_uri` | string | *required* | `JENTIC__CREDENTIALS__PROVIDERS__<NAME>__REDIRECT_URI` |  |
+| `credentials.providers.<name>.redirect_uri` | string \| null | `null` | `JENTIC__CREDENTIALS__PROVIDERS__<NAME>__REDIRECT_URI` |  |
 | `credentials.providers.<name>.default_scopes` | list of string | — | `JENTIC__CREDENTIALS__PROVIDERS__<NAME>__DEFAULT_SCOPES` |  |
 | `credentials.providers.<name>.expiry_skew_seconds` | integer | `60` | `JENTIC__CREDENTIALS__PROVIDERS__<NAME>__EXPIRY_SKEW_SECONDS` |  |
 | `credentials.providers.<name>.authorize_extra_params` | map of string | — | `JENTIC__CREDENTIALS__PROVIDERS__<NAME>__AUTHORIZE_EXTRA_PARAMS` |  |

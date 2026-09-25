@@ -19,11 +19,12 @@ that owns everything the platform — not the SDK — must decide:
   and clients keep landing on the served RFC 8414 path-insertion documents.
 - **Strict Origin validation** (spec §security, DNS-rebinding): a request
   carrying an ``Origin`` that is neither the config-derived canonical origin
-  (``auth.canonical_base_url`` — the same source the discovery documents
-  build absolute URLs from) nor loopback is refused with 403 before anything
-  else runs. The request's own ``Host`` header is never trusted — in the
-  rebinding attack it is attacker-controlled. Absent ``Origin`` (non-browser
-  clients — every real MCP client today) passes.
+  (``auth.canonical_base_url``, else ``server.public_base_url`` — the same
+  source the discovery documents build absolute URLs from) nor loopback is
+  refused with 403 before anything else runs. The request's own ``Host``
+  header is never trusted — in the rebinding attack it is attacker-controlled.
+  Absent ``Origin`` (non-browser clients — every real MCP client today)
+  passes.
 - **Bearer auth** reusing the identity-resolution LOGIC — the app-state
   ``verify_token`` the auth surface installs (``make_superset_verifier``),
   which resolves ``jak_``/``sak_`` API keys, ``at_`` access tokens (including
@@ -81,6 +82,7 @@ from jentic_one.mcp.resources import read_skill_resource, skill_resources
 from jentic_one.mcp.spec import served_tools
 from jentic_one.mcp.tools import CallEnv, dispatch_tool_call
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.config import effective_auth_base_url
 from jentic_one.shared.context import Context
 from jentic_one.shared.events.mcp_session import (
     SESSION_ID_HEADER,
@@ -166,7 +168,7 @@ def challenge_header(ctx: Context, request: Request) -> str:
     """
     if not ctx.config.server.mcp.oauth.enabled:
         return "Bearer"
-    base = deployment_base_url(ctx.config.auth, request)
+    base = deployment_base_url(ctx.config, request)
     return f'Bearer resource_metadata="{base}{MCP_PRM_PATH}"'
 
 
@@ -219,8 +221,9 @@ def origin_allowed(ctx: Context, request: Request) -> bool:
 
     Absent ``Origin`` passes (non-browser clients never send one). A present
     one must match a trusted set derived from **server config only**: the
-    canonical base URL's origin (``auth.canonical_base_url`` — the same source
-    the discovery documents build their absolute URLs from), or a
+    canonical base URL's origin (``auth.canonical_base_url``, else
+    ``server.public_base_url`` — the same source the discovery documents
+    build their absolute URLs from), or a
     loopback/localhost origin for local dev. ``null`` and unparseable origins
     fail.
 
@@ -245,7 +248,7 @@ def origin_allowed(ctx: Context, request: Request) -> bool:
         return False
     if _is_loopback_origin_host(hostname):
         return True
-    canonical = ctx.config.auth.canonical_base_url
+    canonical = effective_auth_base_url(ctx.config)
     if not canonical:
         return False
     canonical_parts = urlsplit(canonical)
@@ -357,7 +360,7 @@ def _request_base_url(ctx: Context, sctx: ServerRequestContext[Any, Any]) -> str
     request = sctx.request
     if request is None:  # pragma: no cover - the transport always attaches it
         return ""
-    return deployment_base_url(ctx.config.auth, request)
+    return deployment_base_url(ctx.config, request)
 
 
 def build_mcp_server(ctx: Context) -> Server[Any]:
@@ -632,7 +635,7 @@ class McpMount:
         state = scope.setdefault("state", {})
         state["mcp_identity"] = identity
         state["mcp_credential"] = credential
-        state["mcp_base_url"] = deployment_base_url(self.ctx.config.auth, request)
+        state["mcp_base_url"] = deployment_base_url(self.ctx.config, request)
         state["mcp_session_id"] = valid_session_id_or_none(request.headers.get(SESSION_ID_HEADER))
 
     async def _buffered_body(self, receive: Receive) -> bytes | None:

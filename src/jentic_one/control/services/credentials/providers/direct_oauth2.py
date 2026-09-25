@@ -49,7 +49,8 @@ class DirectOAuth2Provider:
     name: str = "direct_oauth2"
 
     def __init__(self, cfg: DirectOAuth2ProviderConfig) -> None:
-        self._redirect_uri = cfg.redirect_uri
+        # Explicit override; when None, begin_connect derives per request.
+        self._configured_redirect_uri = cfg.redirect_uri
         self._default_scopes = cfg.default_scopes
         self._expiry_skew_seconds = cfg.expiry_skew_seconds
         self._authorize_extra_params = dict(cfg.authorize_extra_params)
@@ -93,6 +94,17 @@ class DirectOAuth2Provider:
         scopes = request.scopes or self._default_scopes
         scope_str = " ".join(scopes) if scopes else (occ.scope or "")
 
+        # Explicit config wins; otherwise use the callback URL the web layer
+        # derived for this request (public_base_url or request origin). The
+        # resolved value is embedded in the signed state so the token exchange
+        # replays it byte-identically (RFC 6749 §4.1.3).
+        redirect_uri = self._configured_redirect_uri or request.redirect_uri
+        if not redirect_uri:
+            raise ProviderError(
+                "No redirect_uri available: set providers.direct_oauth2.redirect_uri "
+                "or server.public_base_url, or call via the web connect endpoint"
+            )
+
         state_secret = ctx.config.credentials.connect.state_secret.get_secret_value()
         ttl = ctx.config.credentials.connect.state_ttl_seconds
         nonce = generate_nonce()
@@ -104,13 +116,14 @@ class DirectOAuth2Provider:
             actor_type=request.extra.get("actor_type"),
             issued_at=datetime.now(UTC),
             nonce=nonce,
+            redirect_uri=redirect_uri,
         )
         signed_state = encode_state(state_secret, connect_state, ttl)
 
         params: dict[str, str] = {
             "response_type": "code",
             "client_id": occ.client_id,
-            "redirect_uri": self._redirect_uri,
+            "redirect_uri": redirect_uri,
             "state": signed_state,
         }
         if scope_str:
@@ -149,12 +162,20 @@ class DirectOAuth2Provider:
 
         client_secret = ctx.encryption.decrypt(occ.encrypted_client_secret)
 
+        # Replay the exact redirect_uri the authorize request used (carried in
+        # the signed state); RFC 6749 requires the token exchange to match. Fall
+        # back to the configured value for states minted before this claim
+        # existed (rolling upgrade).
+        redirect_uri = state.redirect_uri or self._configured_redirect_uri
+        if not redirect_uri:
+            raise ProviderError("Connect state is missing the redirect_uri")
+
         token_data = await self._exchange_code(
             token_url=occ.token_url,
             code=callback.code,
             client_id=occ.client_id,
             client_secret=client_secret,
-            redirect_uri=self._redirect_uri,
+            redirect_uri=redirect_uri,
         )
 
         expires_at = None

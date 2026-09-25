@@ -25,13 +25,10 @@ server:
   host: 127.0.0.1
   port: 8000
   reload: true
-
-auth:
-  canonical_base_url: "http://127.0.0.1:8000"
-  platform_clients:
-    - client_id: "jentic-one-spa"
-      redirect_uris:
-        - "http://127.0.0.1:8000/app/auth/callback"
+  # server.public_base_url is deliberately unset: the OAuth callback, OIDC
+  # issuer, JWT-Bearer audience, SPA login callback and links all derive from
+  # this bind (http://127.0.0.1:<port>), so changing the port is the only edit
+  # needed. See config/local.yaml for detail.
 
 search:
   enabled: true
@@ -49,11 +46,11 @@ credentials:
       - id: v1
         material: "Z9BctysLqeHhzbFLfSU4djsvAX7N5EVVos5G0QN7C5Q="  # pragma: allowlist secret
   # Register the platform-managed OAuth2 provider so the authorization-code
-  # connect flow can run locally.
+  # connect flow can run locally. The callback redirect_uri derives from
+  # server.public_base_url, else the serving origin, so no pinning needed.
   providers:
     direct_oauth2:
       kind: direct_oauth2
-      redirect_uri: "http://127.0.0.1:8000/credentials/oauth/callback"
 
 observability:
   metrics:
