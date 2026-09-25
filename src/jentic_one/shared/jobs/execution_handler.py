@@ -119,11 +119,12 @@ class ExecutionHandler:
         credential_name: str | None = None
         signing = None
         if self._credential_injector is not None and api_vendor:
-            # Direct-binding path (theme-5 Phase 2): the web edge selected the
-            # credential and derived the allowed set before enqueueing; replay
-            # both so the worker's injection honours the same binding boundary
-            # (Q-02) and picks the same credential. Absent keys (legacy jobs,
-            # toolkit path) keep the unfiltered legacy behaviour.
+            # The web edge derived the injection boundary before enqueueing (the
+            # caller's bound credentials on the direct path, the selected
+            # toolkit's on the toolkit path) and, when known, the credential id;
+            # replay both so the worker honours the same boundary (Q-02) and
+            # picks the same credential. A payload without a boundary resolves
+            # nothing (fail closed) — never the unfiltered tenant-wide set.
             allowed = payload.get("allowed_credential_ids")
             injection = await self._credential_injector.inject(
                 api_vendor=api_vendor,
@@ -131,7 +132,7 @@ class ExecutionHandler:
                 api_version=api_version or "",
                 identity=_worker_identity(created_by, actor_type),
                 credential_id=payload.get("credential_id"),
-                allowed_credential_ids=list(allowed) if allowed is not None else None,
+                allowed_credential_ids=list(allowed) if allowed is not None else [],
                 trace_id=trace_id,
             )
             applied = _apply_injection(upstream_url, injection)

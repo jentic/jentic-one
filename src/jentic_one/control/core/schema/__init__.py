@@ -22,6 +22,7 @@ from jentic_one.control.core.schema.toolkit_flattening_acks import ToolkitFlatte
 from jentic_one.control.core.schema.toolkit_keys import ToolkitKey
 from jentic_one.control.core.schema.toolkit_permission_rules import ToolkitPermissionRule
 from jentic_one.control.core.schema.toolkits import Toolkit
+from jentic_one.control.core.schema.upgrade_steps import UpgradeStep
 from jentic_one.shared.db.base import ControlBase
 
 __all__ = [
@@ -44,4 +45,5 @@ __all__ = [
     "ToolkitFlatteningAck",
     "ToolkitKey",
     "ToolkitPermissionRule",
+    "UpgradeStep",
 ]

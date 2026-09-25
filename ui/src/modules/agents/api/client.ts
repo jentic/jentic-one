@@ -308,6 +308,7 @@ export async function listBindableCredentialsForAgent(): Promise<AgentBindableCr
 			apiName: c.api?.name ?? null,
 			catalogApiId: c.catalog_api_id ?? null,
 			provider: c.provider ?? null,
+			createdBy: c.created_by ?? null,
 		}));
 	} catch (error) {
 		throw toAgentsError(error, 'Failed to load credentials.');

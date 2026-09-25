@@ -10,7 +10,7 @@ filters use toolkit/trace/status/api/actor; monitoring groups by
 ``operation_id``); they are display-only.
 
 Revision ID: 0679072d60eb
-Revises: b9d0e1f2a3b4
+Revises: 5c7e2a9d4f16
 Create Date: 2026-09-16
 
 """
@@ -21,7 +21,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "0679072d60eb"  # pragma: allowlist secret
-down_revision: str | None = "b9d0e1f2a3b4"  # pragma: allowlist secret
+down_revision: str | None = "5c7e2a9d4f16"  # pragma: allowlist secret
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

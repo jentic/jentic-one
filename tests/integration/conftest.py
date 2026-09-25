@@ -42,6 +42,11 @@ def _test_backend() -> str:
     return backend
 
 
+def _pg_port() -> int:
+    """Fixture Postgres host port: ``JENTIC_PG_PORT``, as docker/local-setup publishes it."""
+    return int(os.environ.get("JENTIC_PG_PORT", "5432"))
+
+
 def _postgres_config() -> AppConfig:
     """AppConfig pointing at the local Docker PostgreSQL instance (single DB, multiple schemas)."""
     return AppConfig.model_validate(
@@ -49,7 +54,7 @@ def _postgres_config() -> AppConfig:
             "databases": {
                 "registry": {
                     "host": "localhost",
-                    "port": 5432,
+                    "port": _pg_port(),
                     "name": "jentic",
                     "user": "registry_user",
                     "password": "registry_pass",
@@ -58,7 +63,7 @@ def _postgres_config() -> AppConfig:
                 },
                 "admin": {
                     "host": "localhost",
-                    "port": 5432,
+                    "port": _pg_port(),
                     "name": "jentic",
                     "user": "admin_user",
                     "password": "admin_pass",
@@ -67,7 +72,7 @@ def _postgres_config() -> AppConfig:
                 },
                 "control": {
                     "host": "localhost",
-                    "port": 5432,
+                    "port": _pg_port(),
                     "name": "jentic",
                     "user": "control_user",
                     "password": "control_pass",

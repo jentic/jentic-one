@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from typing import TypeVar
 
 import structlog
+from sqlalchemy import text
 from sqlalchemy.engine import URL
 from sqlalchemy.exc import (
     DataError,
@@ -214,6 +215,45 @@ class DatabaseSession:
                         if _is_data_error(exc):
                             raise DatabaseDataError(str(exc)) from exc
                         raise
+
+    @asynccontextmanager
+    async def advisory_lock(self, key: int) -> AsyncGenerator[None, None]:
+        """Hold a cross-process, **session-level** advisory lock for the block.
+
+        Postgres only; a no-op on SQLite, which has no advisory locks and
+        serialises writers per transaction instead (``BEGIN IMMEDIATE``).
+
+        The lock lives on a dedicated connection in AUTOCOMMIT mode, so it
+        spans the block's own transactions (a transaction-scoped lock would
+        release at the first commit) without leaving the lock connection
+        *idle in transaction* — managed Postgres commonly kills such
+        connections (``idle_in_transaction_session_timeout``), silently
+        dropping the lock mid-run. A crashed process releases the lock when
+        its connection closes.
+
+        Release is best-effort: a lock connection lost mid-block has already
+        released the lock server-side, so a failing unlock is logged and the
+        connection discarded rather than raised over the block's own result.
+        Session-level locks need a real session: a transaction-mode pooler
+        (pgbouncer ``pool_mode=transaction``) in front of the database cannot
+        hold them.
+        """
+        if self._is_sqlite:
+            yield
+            return
+        async with self.engine.connect() as raw:
+            conn = await raw.execution_options(isolation_level="AUTOCOMMIT")
+            await conn.execute(text("SELECT pg_advisory_lock(:key)"), {"key": key})
+            try:
+                yield
+            finally:
+                try:
+                    await conn.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": key})
+                except Exception as exc:  # best-effort release
+                    logger.warning("advisory_lock_release_failed", key=key, error=str(exc))
+                    # Never hand a connection that may still hold the lock back
+                    # to the pool.
+                    await conn.invalidate()
 
     async def run_in_transaction(
         self,

@@ -595,6 +595,30 @@ def test_render_dead_logging_values_are_gone() -> None:
 
 
 @pytest.mark.smoke
+def test_render_migrate_job_extra_args() -> None:
+    """migrate.extraArgs reaches the runner; by default the Job passes none.
+
+    It is the Helm escape hatch for a post-migration upgrade step that blocks
+    an upgrade (`--skip-upgrade-step NAME`) — the command itself is fixed.
+    """
+    default = _manifests("-f", str(VALUES_DIR / "local-combined.yaml"))
+    job = next(doc for doc in default if doc.get("kind") == "Job")
+    container = job["spec"]["template"]["spec"]["containers"][0]
+    assert container["command"] == ["python", "-m", "jentic_one.migrations.run"]
+    assert "args" not in container
+
+    docs = _manifests(
+        "-f",
+        str(VALUES_DIR / "local-combined.yaml"),
+        "--set-json",
+        'migrate.extraArgs=["--skip-upgrade-step","theme5_flatten_toolkits"]',
+    )
+    job = next(doc for doc in docs if doc.get("kind") == "Job")
+    container = job["spec"]["template"]["spec"]["containers"][0]
+    assert container["args"] == ["--skip-upgrade-step", "theme5_flatten_toolkits"]
+
+
+@pytest.mark.smoke
 def test_render_migrate_job_hook_ordering() -> None:
     """Install runs the migration after the DB exists; upgrade runs it before pods roll.
 
