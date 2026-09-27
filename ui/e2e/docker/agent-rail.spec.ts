@@ -1,10 +1,11 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 import { captureConsoleErrors } from './helpers';
 
 /**
- * Agent rail (real backend). The rail is the persistent `complementary` landmark
- * pinned to the right of every authenticated page at `xl+` (≥1280px — the
- * Playwright default 1280×720 viewport clears it). It is backed by the REAL
+ * Activity rail (real backend). The rail is the `complementary` landmark
+ * pinned to the right of authenticated pages at `xl+` (≥1280px — the
+ * Playwright default 1280×720 viewport clears it), except Monitor,
+ * which show the stream in-page. It ships collapsed to a strip. It is backed by the REAL
  * platform event feed: a backlog page from `GET /events` plus a live `GET
  * /events/stream` SSE (see ui/src/shared/app/rail/AgentRail.tsx). This spec
  * drives the operator controls (collapse/expand, pause/resume) and proves a
@@ -13,46 +14,42 @@ import { captureConsoleErrors } from './helpers';
  * Reuses the authenticated storageState from auth.setup.ts (the `e2e` project
  * in playwright.docker.config.ts) — no per-spec login.
  */
-test('agent rail mounts with its live feed and no console errors', async ({ page }) => {
-	const errors = captureConsoleErrors(page);
+async function openRail(page: Page) {
+	await page.goto('/app/agents');
+	await page.getByRole('button', { name: /^Show live activity/ }).click();
+	const rail = page.getByRole('complementary', { name: 'Activity' });
+	await expect(rail).toBeVisible();
+	return rail;
+}
 
-	await page.goto('/app');
+test('activity rail mounts with its live feed and no console errors', async ({ page }) => {
+	const errors = captureConsoleErrors(page);
 
 	// The rail is a labelled complementary landmark with a header and an
 	// aria-live event log — all owned by the rail, not data-dependent.
-	const rail = page.getByRole('complementary', { name: 'Agent rail' });
-	await expect(rail).toBeVisible();
-	await expect(rail.getByText('Agent rail')).toBeVisible();
-	await expect(rail.getByRole('log', { name: 'Agent event feed' })).toBeVisible();
+	const rail = await openRail(page);
+	await expect(rail.getByRole('log', { name: 'Activity feed' })).toBeVisible();
 
 	expect(errors, `unexpected console errors:\n${errors.join('\n')}`).toEqual([]);
 });
 
-test('agent rail collapses and expands', async ({ page }) => {
-	await page.goto('/app');
+test('activity rail expands and collapses', async ({ page }) => {
+	const rail = await openRail(page);
 
-	const rail = page.getByRole('complementary', { name: 'Agent rail' });
-	await expect(rail).toBeVisible();
-
-	// Collapse: the expanded header label goes away and the narrow rail exposes
-	// only an "Expand agent rail" affordance.
-	await rail.getByRole('button', { name: 'Collapse agent rail' }).click();
-	await expect(rail.getByText('Agent rail')).toBeHidden();
-	const expand = page.getByRole('button', { name: 'Expand agent rail' });
+	// Collapse: the feed goes away and the strip exposes only a
+	// "Show live activity" affordance.
+	await rail.getByRole('button', { name: 'Collapse activity' }).click();
+	await expect(rail.getByRole('log', { name: 'Activity feed' })).toBeHidden();
+	const expand = page.getByRole('button', { name: /^Show live activity/ });
 	await expect(expand).toBeVisible();
 
 	// Expand restores the full rail.
 	await expand.click();
-	await expect(
-		page.getByRole('complementary', { name: 'Agent rail' }).getByText('Agent rail'),
-	).toBeVisible();
+	await expect(page.getByRole('log', { name: 'Activity feed' })).toBeVisible();
 });
 
-test('agent rail pauses and resumes the live feed', async ({ page }) => {
-	await page.goto('/app');
-
-	const rail = page.getByRole('complementary', { name: 'Agent rail' });
-	await expect(rail).toBeVisible();
+test('activity rail pauses and resumes the live feed', async ({ page }) => {
+	const rail = await openRail(page);
 
 	// The single toggle swaps its accessible name between the two states.
 	const pause = rail.getByRole('button', { name: 'Pause live feed' });

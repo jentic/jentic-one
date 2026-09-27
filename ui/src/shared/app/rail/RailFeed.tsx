@@ -2,26 +2,29 @@
  * RailFeed — rendering layer for the live feed.
  *
  * Responsibilities:
- *   1. Apply filters: the rail header's search/severity/kind, or the
- *      Activity panel's "Failures only".
- *   2. Group consecutive same-`groupKey`, same-actor events inside a 10s
- *      window into a single row with a count (the row names ONE actor).
- *   3. Keep critical/error events always individual (they never group).
+ *   1. Apply the view filters: "Failures only" and the "What" categories.
+ *   2. Fold a run of consecutive routine events — same type, same actor, same
+ *      day — into ONE row ("Support Triage · 6 calls succeeded") that expands.
+ *   3. Keep anything that went wrong or needs a human individual: failures,
+ *      actionable and acknowledged events never fold.
  *   4. Defer to RailEventRow for actual rendering, so density is decided per-row.
  */
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { RailEventRow } from '@/shared/app/rail/RailEventRow';
-import { formatStreamDayLabel, isFailureSeverity, streamDayKey } from '@/shared/lib/agentStream';
-import type { InlineActionSpec, StreamEvent } from '@/shared/lib/agentStream';
-
-const GROUP_WINDOW_MS = 10_000;
+import {
+	categoryForKind,
+	formatStreamDayLabel,
+	isFailureSeverity,
+	railGroupTitle,
+	streamDayKey,
+} from '@/shared/lib/agentStream';
+import type { ActivityCategory, InlineActionSpec, StreamEvent } from '@/shared/lib/agentStream';
 
 export type RailFeedFilters = {
-	search?: string;
-	severities?: Set<StreamEvent['severity']>;
-	kinds?: Set<StreamEvent['kind']>;
 	/** Only error/critical events (acknowledged ones included, dimmed). */
-	failuresOnly?: boolean;
+	failuresOnly: boolean;
+	/** Only these kinds of activity; empty or absent = every kind. */
+	categories?: ReadonlySet<ActivityCategory>;
 };
 
 export type RailFeedProps = {
@@ -31,6 +34,11 @@ export type RailFeedProps = {
 	resolveActor?: (ev: StreamEvent) => string | undefined;
 	onAction?: (eventId: string, action: InlineActionSpec) => void;
 	onNavigate?: (href: string) => void;
+	/**
+	 * Set when the feed is narrowed to one actor: the empty state names them
+	 * and offers a way back to everything, instead of a misleading "All quiet".
+	 */
+	scopedTo?: { label: string; onClear: () => void };
 };
 
 type FeedRow =
@@ -79,25 +87,12 @@ function withDaySeparators(rows: FeedRow[]): FeedRow[] {
 	return out;
 }
 
-function passesFilters(ev: StreamEvent, f: RailFeedFilters): boolean {
+/** Does `ev` survive the view filters? Shared with the rail's "N new" count. */
+export function passesFeedFilters(ev: StreamEvent, f: RailFeedFilters): boolean {
 	if (f.failuresOnly && !isFailureSeverity(ev.severity)) return false;
-	if (f.severities?.size && !f.severities.has(ev.severity)) return false;
-	if (f.kinds?.size && !f.kinds.has(ev.kind)) return false;
-	const q = f.search?.trim().toLowerCase();
-	if (q) {
-		const hay = [
-			ev.title,
-			ev.meta ?? '',
-			ev.type,
-			ev.tokens.credential_id ?? '',
-			// Historical events may still carry toolkit attribution.
-			ev.tokens.toolkit_id ?? '',
-			ev.tokens.operation_id ?? '',
-			ev.tokens.trace_id ?? '',
-		]
-			.join(' ')
-			.toLowerCase();
-		if (!hay.includes(q)) return false;
+	if (f.categories && f.categories.size > 0) {
+		const category = categoryForKind(ev.kind);
+		if (!category || !f.categories.has(category)) return false;
 	}
 	return true;
 }
@@ -114,27 +109,29 @@ function formatLastEventAgo(tsMs: number): string {
 	return `${day}d ago`;
 }
 
+/** Routine events fold; anything that went wrong or wants a human stays its own row. */
+function isFoldable(ev: StreamEvent): boolean {
+	return !isFailureSeverity(ev.severity) && !ev.requiresAction && !ev.acknowledged;
+}
+
+function foldsWith(a: StreamEvent, b: StreamEvent): boolean {
+	return (
+		a.type === b.type &&
+		a.actorId === b.actorId &&
+		a.actorType === b.actorType &&
+		streamDayKey(a.tsMs) === streamDayKey(b.tsMs)
+	);
+}
+
 function buildRows(events: StreamEvent[]): FeedRow[] {
 	const out: FeedRow[] = [];
 	for (const ev of events) {
-		// Critical/error and acknowledged events never group — visibility floor.
-		if (ev.severity === 'critical' || ev.severity === 'error' || ev.acknowledged) {
-			out.push({ kind: 'single', ev });
-			continue;
-		}
 		const last = out[out.length - 1];
-		if (last && last.kind === 'group') {
-			const within = last.head.tsMs - ev.tsMs <= GROUP_WINDOW_MS;
-			const sameKey = last.head.groupKey === ev.groupKey && last.head.actorId === ev.actorId;
-			if (within && sameKey) {
-				last.members.push(ev);
-				continue;
-			}
-		} else if (last && last.kind === 'single') {
-			const within = last.ev.tsMs - ev.tsMs <= GROUP_WINDOW_MS;
-			const sameKey = last.ev.groupKey === ev.groupKey && last.ev.actorId === ev.actorId;
-			if (within && sameKey) {
-				out[out.length - 1] = { kind: 'group', head: last.ev, members: [last.ev, ev] };
+		if (isFoldable(ev) && last && last.kind !== 'day') {
+			const head = last.kind === 'group' ? last.head : last.ev;
+			if (isFoldable(head) && foldsWith(head, ev)) {
+				if (last.kind === 'group') last.members.push(ev);
+				else out[out.length - 1] = { kind: 'group', head, members: [head, ev] };
 				continue;
 			}
 		}
@@ -143,12 +140,49 @@ function buildRows(events: StreamEvent[]): FeedRow[] {
 	return out;
 }
 
-export function RailFeed({ events, filters, resolveActor, onAction, onNavigate }: RailFeedProps) {
+type GroupRow = Extract<FeedRow, { kind: 'group' }>;
+
+/**
+ * A group keeps ONE identity while it grows at either end — live arrivals join
+ * the newest end, Load older the oldest, and the feed's cap trims it — so the
+ * row never remounts (collapsing it and replaying its arrival). The key is
+ * the first member it was ever seen with; `seen` remembers member → key
+ * across renders.
+ */
+function groupIdFor(row: GroupRow, seen: Map<string, string>): string {
+	const known = row.members.find((m) => seen.has(m.id));
+	const id = known ? seen.get(known.id)! : row.members[row.members.length - 1].id;
+	for (const m of row.members) seen.set(m.id, id);
+	return id;
+}
+
+export function RailFeed({
+	events,
+	filters,
+	resolveActor,
+	onAction,
+	onNavigate,
+	scopedTo,
+}: RailFeedProps) {
 	const filtered = useMemo(
-		() => events.filter((ev) => passesFilters(ev, filters)),
+		() => events.filter((ev) => passesFeedFilters(ev, filters)),
 		[events, filters],
 	);
-	const rows = useMemo(() => withDaySeparators(buildRows(filtered)), [filtered]);
+	const groupKeys = useRef(new Map<string, string>());
+	const rows = useMemo(() => {
+		const built = withDaySeparators(buildRows(filtered));
+		// Rebuilt per render set, so ids that left the feed don't pile up.
+		const seen = new Map<string, string>();
+		const prev = groupKeys.current;
+		const keyed = built.map((row) => {
+			if (row.kind !== 'group') return { row, id: null };
+			const carried = row.members.find((m) => prev.has(m.id));
+			if (carried) seen.set(carried.id, prev.get(carried.id)!);
+			return { row, id: groupIdFor(row, seen) };
+		});
+		groupKeys.current = seen;
+		return keyed;
+	}, [filtered]);
 	const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
 
 	function toggle(id: string) {
@@ -167,6 +201,20 @@ export function RailFeed({ events, filters, resolveActor, onAction, onNavigate }
 			<div className="text-muted-foreground border-border bg-background/40 rounded border border-dashed px-3 py-6 text-center text-[11px]">
 				{filters.failuresOnly && events.length > 0 ? (
 					<>No failures in what's loaded.</>
+				) : filters.categories && filters.categories.size > 0 && events.length > 0 ? (
+					<>Nothing of this kind in what's loaded.</>
+				) : scopedTo ? (
+					<>
+						No recent activity from{' '}
+						<span className="text-foreground font-medium">{scopedTo.label}</span>.
+						<button
+							type="button"
+							onClick={scopedTo.onClear}
+							className="text-primary mt-1.5 block w-full font-medium hover:underline"
+						>
+							Show everyone
+						</button>
+					</>
 				) : ago ? (
 					<>All quiet. Last event was {ago}.</>
 				) : (
@@ -178,7 +226,7 @@ export function RailFeed({ events, filters, resolveActor, onAction, onNavigate }
 
 	return (
 		<div className="space-y-1">
-			{rows.map((row) => {
+			{rows.map(({ row, id: groupKey }) => {
 				if (row.kind === 'day') {
 					return (
 						<div
@@ -206,25 +254,30 @@ export function RailFeed({ events, filters, resolveActor, onAction, onNavigate }
 						/>
 					);
 				}
-				const isOpen = expanded.has(row.head.id);
+				const id = groupKey!;
+				const isOpen = expanded.has(id);
 				return (
-					<div key={row.head.id}>
+					<div key={id}>
 						<RailEventRow
 							ev={row.head}
 							actorName={resolveActor?.(row.head)}
 							groupCount={row.members.length}
+							groupTitle={
+								railGroupTitle(row.head.type, row.members.length) ?? undefined
+							}
 							expanded={isOpen}
-							onToggleExpand={() => toggle(row.head.id)}
+							onToggleExpand={() => toggle(id)}
 							onAction={onAction}
 							onNavigate={onNavigate}
 						/>
 						{isOpen && (
-							<div className="border-border ml-3 space-y-0.5 border-l pl-2">
-								{row.members.slice(1).map((member) => (
+							<div className="border-border ml-3.5 space-y-0.5 border-l pl-1.5">
+								{row.members.map((member) => (
 									<RailEventRow
 										key={member.id}
 										ev={member}
 										actorName={resolveActor?.(member)}
+										hideActor
 										onAction={onAction}
 										onNavigate={onNavigate}
 									/>

@@ -1,4 +1,12 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import {
+	createContext,
+	useCallback,
+	useContext,
+	useEffect,
+	useMemo,
+	useRef,
+	useState,
+} from 'react';
 import type { ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { EventSeverity, type EventResponse } from '@/shared/api';
@@ -24,7 +32,7 @@ const DASHBOARD_ROOT_KEY = sharedQueryKeys.dashboardRoot;
 const AGENTS_ROOT_KEY = sharedQueryKeys.agentsRoot;
 
 /*
-  AGENT RAIL STREAM — backed by the REAL platform event feed.
+  ACTIVITY RAIL STREAM — backed by the REAL platform event feed.
 
   The rail consumes jentic-one's `/events` contract: a backlog fetch
   (`GET /events`) seeds the feed, then a live SSE subscription
@@ -32,9 +40,11 @@ const AGENTS_ROOT_KEY = sharedQueryKeys.agentsRoot;
   adapts the wire `EventResponse` into the rail's UI-shaped `StreamEvent` and
   exposes the same provider/hook surface the rail components already consume.
 
-  This is an ORG-WIDE platform feed (import/execution/credential events) —
-  there is no per-agent lens because `/events` carries no actor filter
-  (tracked: jentic/jentic-one#387). Event types the backend can emit today:
+  The SSE subscription is ORG-WIDE (toasts and the query-cache bridge below
+  must see every event). The Activity rail can narrow to one actor: `setScope`
+  fetches that actor's backlog via `GET /events?actor_id=&actor_type=` and the
+  rail filters the shared list client-side with `matchesActivityScope` — so one
+  connection serves every consumer. Event types the backend can emit today:
   `import.*`, `execution.*`, `credential.*`, `agent.*`, plus retired
   namespaces that may linger as history (see RETIRED_EVENT_TYPE_PREFIXES).
 */
@@ -127,7 +137,6 @@ export const TOAST_SCOPE_STORAGE_KEY = 'j1.toasts.scope';
 export const RAIL_COLLAPSED_STORAGE_KEY = 'j1.agentRail.collapsed';
 export const RAIL_AUDIO_STORAGE_KEY = 'j1.rail.audioOnCritical';
 export const TOAST_SCOPE_CHANGE_EVENT = 'j1:toast-scope-change';
-export const RAIL_COLLAPSE_CHANGE_EVENT = 'j1:rail-collapse-change';
 
 /* ------------------------------------------------------------------ */
 /* Wire → UI adaptation                                                */
@@ -182,6 +191,74 @@ export const STREAM_KIND_LABEL: Record<StreamKind, string> = {
 	oauth: 'OAuth',
 	other: 'Platform',
 };
+
+/**
+ * The Activity filter's "What" buckets — the kinds an operator thinks in, not
+ * the wire namespaces. `other` belongs to none, so it only shows unfiltered.
+ */
+export type ActivityCategory = 'calls' | 'apis' | 'credentials' | 'agents';
+
+export const ACTIVITY_CATEGORIES: { value: ActivityCategory; label: string }[] = [
+	{ value: 'calls', label: 'Calls' },
+	{ value: 'apis', label: 'APIs' },
+	{ value: 'credentials', label: 'Credentials' },
+	{ value: 'agents', label: 'Agents' },
+];
+
+const CATEGORY_FOR_KIND: Record<StreamKind, ActivityCategory | null> = {
+	execution: 'calls',
+	import: 'apis',
+	catalog: 'apis',
+	credential: 'credentials',
+	agent: 'agents',
+	// OAuth clients and grants are how agents connect.
+	oauth: 'agents',
+	other: null,
+};
+
+export function categoryForKind(kind: StreamKind): ActivityCategory | null {
+	return CATEGORY_FOR_KIND[kind];
+}
+
+const EXECUTION_COMPLETED = /^Execution completed:\s*(.+)$/;
+const EXECUTION_COMPLETED_BY_ID = /^Execution \S+ completed$/;
+const EXECUTION_FAILED = /^Execution failed:\s*(.+)$/;
+const IMPORT_COMPLETED = /^Import completed:\s*(.+)$/;
+
+/**
+ * The feed's short wording for an event. The row's icon and stripe already say
+ * what kind of thing happened and whether it went wrong, so the text keeps only
+ * what's new: the operation, the error, the API. A bare execution id says
+ * nothing to a human ("Execution exec_2Kx… completed") — it reads "Call
+ * succeeded" and the row still opens the execution. Anything unrecognised
+ * keeps its summary as-is; the full summary is always the row's accessible
+ * name.
+ */
+export function railTitle(ev: Pick<StreamEvent, 'type' | 'title'>): string {
+	const t = ev.title.trim();
+	if (ev.type === 'execution.completed') {
+		const m = EXECUTION_COMPLETED.exec(t);
+		if (m) return m[1];
+		if (EXECUTION_COMPLETED_BY_ID.test(t)) return 'Call succeeded';
+	}
+	if (ev.type === 'execution.failed') {
+		const m = EXECUTION_FAILED.exec(t);
+		if (m) return `Failed: ${m[1]}`;
+	}
+	if (ev.type === 'import.completed') {
+		const m = IMPORT_COMPLETED.exec(t);
+		if (m) return `Imported ${m[1]}`;
+	}
+	return t;
+}
+
+/** Plural wording for a folded run of `count` same-type events, when there is one. */
+export function railGroupTitle(type: string, count: number): string | null {
+	if (type === 'execution.completed') return `${count} calls succeeded`;
+	if (type === 'import.completed') return `${count} imports completed`;
+	if (type === 'credential.created') return `${count} credentials added`;
+	return null;
+}
 
 /**
  * Map the real `EventSeverity` to the rail's `StreamSeverity`. They share the
@@ -358,8 +435,56 @@ export function adaptEvent(e: EventResponse): StreamEvent {
 
 export type StreamStatus = 'idle' | 'connecting' | 'live' | 'error';
 
+/**
+ * A snapshot of the feed's head: what was loaded, and how new the newest of it
+ * was. Pause and "scrolled away" both hold back only what arrived AFTER it —
+ * older history loaded later (Load older, a lens's backlog) still shows, and
+ * never counts as "new".
+ */
+export type FeedFreeze = { ids: ReadonlySet<string>; newestTs: number };
+
+export function freezeFeed(events: readonly StreamEvent[]): FeedFreeze {
+	let newestTs = Number.NEGATIVE_INFINITY;
+	for (const e of events) if (e.tsMs > newestTs) newestTs = e.tsMs;
+	return { ids: new Set(events.map((e) => e.id)), newestTs };
+}
+
+/** Did `ev` arrive after the freeze? Compares server timestamps only. */
+export function isAfterFreeze(ev: StreamEvent, freeze: FeedFreeze): boolean {
+	return !freeze.ids.has(ev.id) && !(ev.tsMs < freeze.newestTs);
+}
+
+/** The Activity rail's actor lens. `null` = every actor in the org. */
+export type ActivityScope = { actorId: string; actorType: string } | null;
+
+/** Does `ev` belong to the rail's current actor lens? */
+export function matchesActivityScope(ev: StreamEvent, scope: ActivityScope): boolean {
+	if (!scope) return true;
+	if (ev.actorId === scope.actorId && ev.actorType === scope.actorType) return true;
+	// Events ABOUT an agent that another actor caused (an admin approving it)
+	// still belong on that agent's lens.
+	return scope.actorType === 'agent' && ev.tokens.agent_id === scope.actorId;
+}
+
 type AgentStreamValue = {
 	events: StreamEvent[];
+	/** The Activity rail's actor lens, shared by the docked rail and the drawer. */
+	scope: ActivityScope;
+	setScope: (scope: ActivityScope) => void;
+	/**
+	 * The rest of the Activity view state, owned here with the lens so it's ONE
+	 * choice everywhere — the docked rail, the drawer and Monitor's panel, on
+	 * every page. `paused` holds back what arrives after the pause (`frozen`);
+	 * rows keep reading their live objects, so an acknowledge still reflects.
+	 */
+	failuresOnly: boolean;
+	setFailuresOnly: (next: boolean) => void;
+	/** The rail's "What" filter; empty = every kind. */
+	categories: ReadonlySet<ActivityCategory>;
+	setCategories: (next: ReadonlySet<ActivityCategory>) => void;
+	paused: boolean;
+	setPaused: (next: boolean) => void;
+	frozen: FeedFreeze | null;
 	latest: StreamEvent | null;
 	status: StreamStatus;
 	/** Acknowledge an event against the real backend (`PATCH /events/{id}`). */
@@ -420,7 +545,20 @@ export function AgentStreamProvider({
 	const [cursor, setCursor] = useState<string | null>(null);
 	const [hasMore, setHasMore] = useState(false);
 	const [loadingOlder, setLoadingOlder] = useState(false);
+	const [scope, setScopeState] = useState<ActivityScope>(null);
+	// Cursor for the scoped backlog — paging "older" under a lens pages THAT
+	// actor's history, not the org's (which could take many pages to reach it).
+	const [scopedCursor, setScopedCursor] = useState<string | null>(null);
+	const [scopedHasMore, setScopedHasMore] = useState(false);
+	const [failuresOnly, setFailuresOnly] = useState(false);
+	const [categories, setCategories] = useState<ReadonlySet<ActivityCategory>>(() => new Set());
+	const [frozen, setFrozen] = useState<FeedFreeze | null>(null);
 	const queryClient = useQueryClient();
+	const setScope = useCallback((next: ActivityScope) => {
+		setScopeState((prev) =>
+			prev?.actorId === next?.actorId && prev?.actorType === next?.actorType ? prev : next,
+		);
+	}, []);
 
 	/**
 	 * Refresh the agent-approval surfaces (pending-agents card, "Awaiting
@@ -508,7 +646,11 @@ export function AgentStreamProvider({
 			const base = prev.map((e) => byId.get(e.id) ?? e);
 			const merged = front ? [...appended, ...base] : [...base, ...appended];
 			merged.sort((a, b) => b.tsMs - a.tsMs);
-			return merged.slice(0, MAX_EVENTS);
+			// History the user asked for (Load older, a lens's backlog) raises the
+			// cap instead of being sorted past it and dropped on arrival; live
+			// events keep the list at whatever size it has reached.
+			const cap = Math.max(MAX_EVENTS, front ? prev.length : prev.length + appended.length);
+			return merged.slice(0, cap);
 		});
 	}, []);
 
@@ -548,6 +690,33 @@ export function AgentStreamProvider({
 			cancelled = true;
 		};
 	}, [upsert]);
+
+	// 1b. Scoped backlog. The shared list only holds the newest org-wide page,
+	// which may contain nothing from a quiet agent — seed that actor's history.
+	useEffect(() => {
+		setScopedCursor(null);
+		setScopedHasMore(false);
+		if (!scope) return undefined;
+		let cancelled = false;
+		void (async () => {
+			try {
+				const page = await listEvents({
+					actorId: scope.actorId,
+					actorType: scope.actorType,
+					limit: BACKLOG_LIMIT,
+				});
+				if (cancelled) return;
+				upsert(page.data.filter((e) => !isRetiredEventType(e.type)).map(adaptEvent), false);
+				setScopedCursor(page.next_cursor ?? null);
+				setScopedHasMore(page.has_more);
+			} catch {
+				// Non-fatal: the lens still filters whatever the org feed holds.
+			}
+		})();
+		return () => {
+			cancelled = true;
+		};
+	}, [scope, upsert]);
 
 	// 2. Live SSE subscription (with auto-reconnect inside `streamEvents`).
 	useEffect(() => {
@@ -678,35 +847,76 @@ export function AgentStreamProvider({
 		[patchEvent, markResolved],
 	);
 
+	// The lens at call time vs. now: a Load older still in flight when the lens
+	// changes must not write its actor's cursor under the new one.
+	const scopeRef = useRef(scope);
+	useEffect(() => {
+		scopeRef.current = scope;
+	}, [scope]);
+
 	const loadOlderEvents = useCallback(async () => {
-		if (!cursor) return;
+		const from = scope ? scopedCursor : cursor;
+		if (!from) return;
 		setLoadingOlder(true);
 		try {
-			const page = await listEvents({ cursor, limit: BACKLOG_LIMIT });
+			const page = await listEvents({
+				cursor: from,
+				limit: BACKLOG_LIMIT,
+				actorId: scope?.actorId,
+				actorType: scope?.actorType,
+			});
 			upsert(page.data.filter((e) => !isRetiredEventType(e.type)).map(adaptEvent), false);
-			setCursor(page.next_cursor ?? null);
-			setHasMore(page.has_more);
+			if (scopeRef.current !== scope) return;
+			if (scope) {
+				setScopedCursor(page.next_cursor ?? null);
+				setScopedHasMore(page.has_more);
+			} else {
+				setCursor(page.next_cursor ?? null);
+				setHasMore(page.has_more);
+			}
 		} catch {
 			/* leave the cursor in place so the user can retry */
 		} finally {
 			setLoadingOlder(false);
 		}
-	}, [cursor, upsert]);
+	}, [cursor, scope, scopedCursor, upsert]);
+
+	const setPaused = useCallback(
+		(next: boolean) => setFrozen(next ? freezeFeed(events) : null),
+		[events],
+	);
 
 	const value = useMemo<AgentStreamValue>(
 		() => ({
 			events,
+			scope,
+			setScope,
+			failuresOnly,
+			setFailuresOnly,
+			categories,
+			setCategories,
+			paused: frozen !== null,
+			setPaused,
+			frozen,
 			latest,
 			status,
 			acknowledge,
 			settleOAuthClientRegistration,
 			resolveEvent,
 			loadOlderEvents,
-			canLoadOlder: hasMore && cursor != null,
+			canLoadOlder: scope ? scopedHasMore && scopedCursor != null : hasMore && cursor != null,
 			loadingOlder,
 		}),
 		[
 			events,
+			scope,
+			setScope,
+			failuresOnly,
+			categories,
+			frozen,
+			setPaused,
+			scopedHasMore,
+			scopedCursor,
 			latest,
 			status,
 			acknowledge,
@@ -837,6 +1047,23 @@ export function formatStreamTime(tsMs: number): string {
 	const mm = d.getMinutes().toString().padStart(2, '0');
 	const ss = d.getSeconds().toString().padStart(2, '0');
 	return `${hh}:${mm}:${ss}`;
+}
+
+/**
+ * Compact relative time for feed rows: "now", "4m", "2h", "3d", then a date.
+ * The exact time lives in the row's tooltip.
+ */
+export function formatStreamAgo(tsMs: number, now: number = Date.now()): string {
+	if (!Number.isFinite(tsMs)) return '—';
+	const sec = Math.max(0, Math.floor((now - tsMs) / 1000));
+	if (sec < 45) return 'now';
+	const min = Math.max(1, Math.round(sec / 60));
+	if (min < 60) return `${min}m`;
+	const hr = Math.floor(min / 60);
+	if (hr < 24) return `${hr}h`;
+	const day = Math.floor(hr / 24);
+	if (day < 7) return `${day}d`;
+	return new Date(tsMs).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
 }
 
 /**

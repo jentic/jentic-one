@@ -70,7 +70,7 @@ describe('RailEventRow — action slot vs severity (issue #652)', () => {
 		expect(screen.queryByRole('button', { name: 'Review' })).not.toBeInTheDocument();
 		// Handled rows just dim — no "Acked" label competing with the summary.
 		expect(screen.queryByText('Acked')).not.toBeInTheDocument();
-		expect(container.firstElementChild).toHaveClass('opacity-55');
+		expect(container.querySelector('[data-rail-row]')).toHaveClass('opacity-55');
 	});
 });
 
@@ -94,8 +94,8 @@ describe('RailEventRow — plain-language rows', () => {
 
 	it('only colours failures: info rows carry no stripe, errors a red one', () => {
 		const { container, rerender } = render(<RailEventRow ev={makeEvent({})} />);
-		expect(container.firstElementChild).toHaveClass('border-l-transparent');
+		expect(container.querySelector('[data-rail-row]')).toHaveClass('border-l-transparent');
 		rerender(<RailEventRow ev={makeEvent({ severity: 'error', title: 'boom' })} />);
-		expect(container.firstElementChild).toHaveClass('border-l-danger');
+		expect(container.querySelector('[data-rail-row]')).toHaveClass('border-l-danger');
 	});
 });

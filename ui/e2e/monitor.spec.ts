@@ -4,7 +4,8 @@ import { test, expect, type Page } from '@playwright/test';
  * Monitor layout flow (mocked, Mode A). The Overview is a stat strip over the
  * usage charts with the live activity stream docked beside them; Expand opens
  * the stream into the full log and "Overview" folds it back. Arriving from a
- * rail page swaps the docked rail for that panel — Monitor never shows both.
+ * rail page morphs the rail into the docked panel (a view transition) — the
+ * navigation must land cleanly whether or not the browser animates it.
  */
 
 function captureConsoleErrors(page: Page): string[] {
@@ -33,9 +34,9 @@ test('Monitor overview docks live activity beside the charts and expands it', as
 	await page.setViewportSize({ width: 1440, height: 900 });
 	await signIn(page);
 
-	// Arrive from a rail page, via the top nav.
+	// Arrive from a rail page with the rail open, via the top nav.
 	await page.goto('/app/agents');
-	await expect(page.getByRole('complementary', { name: /Agent rail/i })).toBeVisible();
+	await page.getByRole('button', { name: /^Show live activity/ }).click();
 	await page.getByRole('navigation').getByRole('link', { name: 'Monitor' }).first().click();
 	await expect(page).toHaveURL(/\/app\/monitor$/);
 
@@ -44,7 +45,7 @@ test('Monitor overview docks live activity beside the charts and expands it', as
 	const panel = page.getByRole('region', { name: 'Live activity' });
 	await expect(panel.getByRole('log', { name: 'Activity feed' })).toBeVisible();
 	// Monitor hides the docked rail — the panel IS the stream here.
-	await expect(page.getByRole('complementary', { name: /Agent rail/i })).toHaveCount(0);
+	await expect(page.getByRole('complementary', { name: 'Activity' })).toHaveCount(0);
 
 	await panel.getByRole('button', { name: 'Expand activity to the full log' }).click();
 	await expect(page).toHaveURL(/view=activity/);

@@ -1,6 +1,11 @@
 /**
  * RailEventRow — one platform event in the Activity feed, in plain language:
- * "<who> · <what happened>" plus the time.
+ * "<who> · <what happened>" plus how long ago. The text is the short
+ * `railTitle` (the icon already says what kind of thing it was); the full
+ * summary is the row's accessible name and tooltip.
+ *
+ * A folded run of routine events renders as ONE row — "Support Triage · 6 calls
+ * succeeded" — that expands into its members.
  *
  * Colour is reserved for things that went wrong:
  *   • error / critical: red stripe + faint tint, full layout (summary wraps)
@@ -17,18 +22,21 @@
  *   • "View …" / "Review" — pure-navigation deep-links into the
  *     execution/job/trace/agent the event references
  */
-import { useState } from 'react';
-import { ChevronDown, ChevronUp } from 'lucide-react';
+import { useState, type ReactNode } from 'react';
+import { motion, useReducedMotion } from 'framer-motion';
+import { ChevronDown } from 'lucide-react';
 import { Button } from '@/shared/ui/Button';
 import { Tooltip } from '@/shared/ui';
 import { StreamEventIcon } from '@/shared/app/rail/StreamEventIcon';
+import { useNow } from '@/shared/app/rail/useNow';
 import {
-	formatStreamTime,
+	formatStreamAgo,
 	formatStreamDateTimeParts,
 	conflictHint,
 	inlineActionsFor,
 	isFailureSeverity,
 	primaryDestinationFor,
+	railTitle,
 } from '@/shared/lib/agentStream';
 import type { InlineActionSpec, StreamEvent } from '@/shared/lib/agentStream';
 import { cn } from '@/shared/lib/utils';
@@ -41,6 +49,10 @@ export type RailEventRowProps = {
 	/** Friendly name of whoever caused the event; omitted when unknown. */
 	actorName?: string;
 	groupCount?: number; // > 1 means this row represents a collapsed group
+	/** A group's plural wording ("6 calls succeeded"); replaces the title. */
+	groupTitle?: string;
+	/** Inside an expanded group, the actor is already named on the group row. */
+	hideActor?: boolean;
 	expanded?: boolean;
 	onToggleExpand?: () => void;
 	onAction?: (eventId: string, action: InlineActionSpec) => void;
@@ -77,32 +89,76 @@ function stripeClass(ev: StreamEvent): string {
 }
 
 function TimeStamp({ tsMs, className }: { tsMs: number; className?: string }) {
+	const now = useNow();
 	return (
-		<Tooltip content={<TimeTooltipContent tsMs={tsMs} />} className={cn('shrink-0', className)}>
-			<span className="text-muted-foreground font-mono text-[10px] tabular-nums">
-				{formatStreamTime(tsMs)}
-			</span>
+		// `relative z-10`: above the row's stretched overlay, or the pointer
+		// could never reach the tooltip.
+		<Tooltip
+			content={<TimeTooltipContent tsMs={tsMs} />}
+			className={cn('relative z-10 shrink-0', className)}
+		>
+			<time
+				dateTime={Number.isNaN(tsMs) ? undefined : new Date(tsMs).toISOString()}
+				className="text-muted-foreground/80 text-[10px] tabular-nums"
+			>
+				{formatStreamAgo(tsMs, now)}
+			</time>
 		</Tooltip>
 	);
 }
 
-export function RailEventRow({
+/**
+ * A live arrival opens its own space: the row grows from zero height, so the
+ * feed below slides down to make room instead of jumping, and fades up as it
+ * lands. The clip is only on while it grows — a resting row must not clip its
+ * focus ring.
+ */
+function ArrivalReveal({ children }: { children: ReactNode }) {
+	const reduce = useReducedMotion();
+	const [settled, setSettled] = useState(false);
+	if (reduce) return <>{children}</>;
+	return (
+		<motion.div
+			initial={{ height: 0, opacity: 0 }}
+			animate={{ height: 'auto', opacity: 1 }}
+			transition={{
+				height: { duration: 0.36, ease: [0.32, 0.72, 0, 1] },
+				opacity: { duration: 0.28, delay: 0.1 },
+			}}
+			onAnimationComplete={() => setSettled(true)}
+			style={{ overflow: settled ? 'visible' : 'hidden' }}
+		>
+			{children}
+		</motion.div>
+	);
+}
+
+export function RailEventRow(props: RailEventRowProps) {
+	// A row for an event that happened moments ago is a live arrival: it
+	// pushes in and glows briefly (`animate-arrive`). Decided once, at mount,
+	// so history loads and re-renders stay still.
+	const [arrived] = useState(() => Date.now() - props.ev.tsMs < ARRIVAL_WINDOW_MS);
+	const row = <RailEventRowContent {...props} arrived={arrived} />;
+	return arrived ? <ArrivalReveal>{row}</ArrivalReveal> : row;
+}
+
+function RailEventRowContent({
+	arrived,
 	ev,
 	actorName,
 	groupCount = 1,
+	groupTitle,
+	hideActor = false,
 	expanded = false,
 	onToggleExpand,
 	onAction,
 	onNavigate,
-}: RailEventRowProps) {
-	// A row for an event that happened moments ago is a live arrival: it
-	// slides in with a brief glow (`animate-arrive`). Decided once, at mount,
-	// so history loads and re-renders stay still.
-	const [arrived] = useState(() => Date.now() - ev.tsMs < ARRIVAL_WINDOW_MS);
+}: RailEventRowProps & { arrived: boolean }) {
 	const compact = isCompact(ev);
 	const failing = isFailureSeverity(ev.severity) && !ev.acknowledged;
 	const actions = inlineActionsFor(ev);
-	const who = actorName;
+	const who = hideActor ? undefined : actorName;
+	const text = groupTitle ?? railTitle(ev);
 	const sentence = (
 		<>
 			{who && (
@@ -111,54 +167,74 @@ export function RailEventRow({
 					<span aria-hidden="true"> · </span>
 				</>
 			)}
-			{ev.title}
+			{text}
 		</>
 	);
 	// The conflict "why" hint (if any) rides in the detail line alongside the
 	// event's own meta, so a `catalog.update_conflicts_overlay` row explains the
 	// digest drift without a new layout element.
 	const detail = [ev.meta, conflictHint(ev)].filter(Boolean).join(' · ');
-	const dest = onNavigate ? primaryDestinationFor(ev) : null;
-	// The whole row opens the detail, but its verbs (group toggle, inline
-	// actions) must not nest inside that control. A stretched overlay carries
-	// the navigation; the verbs sit above it (`relative z-10`) as siblings.
-	const overlay = dest ? (
+	const grouped = groupCount > 1;
+	const dest = onNavigate && !grouped ? primaryDestinationFor(ev) : null;
+	// The whole row is one control — it opens the detail, or, for a folded
+	// group, unfolds it — but its verbs (inline actions) must not nest inside
+	// that control. A stretched overlay carries the click; the verbs sit above
+	// it (`relative z-10`) as siblings.
+	const overlayClass =
+		'focus-visible:ring-ring absolute inset-0 rounded-r focus-visible:ring-2 focus-visible:outline-none';
+	const overlay = grouped ? (
+		<button
+			type="button"
+			onClick={onToggleExpand}
+			aria-expanded={expanded}
+			aria-label={`${actorName ? `${actorName}: ` : ''}${groupTitle ?? ev.title}. ${
+				expanded ? 'Collapse group' : `Expand group of ${groupCount}`
+			}.`}
+			className={overlayClass}
+		/>
+	) : dest ? (
 		<button
 			type="button"
 			role="link"
 			onClick={() => onNavigate?.(dest)}
-			title={`Open ${dest}`}
-			aria-label={`${who ? `${who}: ` : ''}${ev.title}. Open detail.`}
-			className="focus-visible:ring-ring absolute inset-0 rounded-r focus-visible:ring-2 focus-visible:outline-none"
+			title={ev.title}
+			aria-label={`${actorName ? `${actorName}: ` : ''}${ev.title}. Open detail.`}
+			className={overlayClass}
 		/>
 	) : null;
 
-	const groupToggle =
-		groupCount > 1 ? (
-			<button
-				type="button"
-				onClick={onToggleExpand}
-				className="text-muted-foreground hover:text-foreground relative z-10 shrink-0 rounded-full px-1 font-mono text-[10px] font-semibold tabular-nums"
-				aria-label={expanded ? 'Collapse group' : `Expand group of ${groupCount}`}
-			>
-				×{groupCount}
-				{expanded ? (
-					<ChevronUp className="ml-0.5 inline h-2.5 w-2.5" />
-				) : (
-					<ChevronDown className="ml-0.5 inline h-2.5 w-2.5" />
+	// Decorative: the overlay is the control. The count is in the group's
+	// words when it has them ("6 calls succeeded"), else a ×N chip — re-keyed
+	// on the count so a live arrival that joins the group pops it.
+	const groupToggle = grouped ? (
+		<span
+			aria-hidden="true"
+			className="text-muted-foreground inline-flex shrink-0 items-center text-[10px] font-semibold tabular-nums"
+		>
+			{!groupTitle && (
+				<span key={groupCount} className="animate-pop inline-block">
+					×{groupCount}
+				</span>
+			)}
+			<ChevronDown
+				className={cn(
+					'h-3 w-3 transition-transform duration-200',
+					expanded && 'rotate-180',
 				)}
-			</button>
-		) : null;
+			/>
+		</span>
+	) : null;
 
 	if (compact) {
 		return (
 			<div
+				data-rail-row
 				className={cn(
 					'relative flex items-center gap-2 rounded-r border-l-2 px-2 py-1',
 					stripeClass(ev),
 					arrived && 'animate-arrive',
 					ev.acknowledged && 'opacity-55',
-					dest && 'hover:bg-background/50 cursor-pointer',
+					(dest || grouped) && 'hover:bg-background/50 cursor-pointer',
 				)}
 			>
 				{overlay}
@@ -174,12 +250,13 @@ export function RailEventRow({
 
 	return (
 		<div
+			data-rail-row
 			className={cn(
 				'relative flex gap-2 rounded-r border-l-2 px-2 py-1.5',
 				stripeClass(ev),
 				arrived && 'animate-arrive',
 				failing && 'bg-danger/5',
-				dest && 'hover:bg-background/50 cursor-pointer',
+				(dest || grouped) && 'hover:bg-background/50 cursor-pointer',
 			)}
 		>
 			{overlay}

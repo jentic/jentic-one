@@ -383,45 +383,91 @@
 	animation: j1-dialog-in 0.2s var(--ease-out-soft);
 }
 
-/* Arriving stream row — a new live event slides in and glows briefly so the
-   eye catches it, then settles to the row's own background. Translate + tint
-   only (no opacity from 0; see j1-rise). */
+/* Arriving stream row — a new live event pushes the feed down (the row's
+   height reveal is framer-motion, in RailEventRow) and glows briefly so the
+   eye catches it, then settles to the row's own background. */
 @keyframes j1-arrive {
 	from {
-		transform: translateX(10px);
-		background-color: hsl(var(--primary) / 0.14);
+		background-color: hsl(var(--primary) / 0.16);
+		box-shadow: inset 0 0 0 1px hsl(var(--primary) / 0.25);
 	}
-	60% {
+	55% {
 		background-color: hsl(var(--primary) / 0.08);
 	}
 	to {
-		transform: translateX(0);
+		box-shadow: inset 0 0 0 1px transparent;
 	}
 }
 
 .animate-arrive {
-	animation: j1-arrive 0.9s var(--ease-out-soft);
+	animation: j1-arrive 1.4s var(--ease-out-soft);
+}
+
+/* The stream's status light (LiveDot): a slow, soft ring that breathes out
+   from the dot — calmer than Tailwind's 1s ping, which reads as an alarm. */
+@keyframes j1-live-ping {
+	0% {
+		transform: scale(1);
+		opacity: 0.55;
+	}
+	70%,
+	100% {
+		transform: scale(2.8);
+		opacity: 0;
+	}
+}
+
+.animate-live-ping {
+	animation: j1-live-ping 2.4s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+
+/* A dot that pops in when a state first appears (a failure landing). */
+@keyframes j1-pop {
+	0% {
+		transform: scale(0);
+	}
+	60% {
+		transform: scale(1.45);
+	}
+	100% {
+		transform: scale(1);
+	}
+}
+
+.animate-pop {
+	animation: j1-pop 0.45s var(--ease-out-soft) both;
 }
 
 /* ----------------------------------------------------------------------------
-   VIEW TRANSITIONS — shared/app/viewTransitions.ts. The page cross-fades
-   quickly; the live activity stream (`activity-stream`: Monitor's docked
-   panel and its full log) morphs from where it was docked to where it lands.
-   Snapshots are anchored top-left and clipped so a tall feed reveals/crops
-   instead of squashing while the box resizes.
+   VIEW TRANSITIONS — page-to-page motion (shared/app/viewTransitions.ts).
+   Pages fade through quickly; the top bar holds still on its own layer; the
+   live activity stream (`activity-stream`: the rail, Monitor's panel and
+   full log) morphs from where it was docked to where it lands. Snapshots are anchored top-left and clipped so a tall feed
+   reveals/crops instead of squashing while the box resizes.
    ---------------------------------------------------------------------------- */
 @media (prefers-reduced-motion: no-preference) {
-	::view-transition-old(root),
+	/* Fade-through, not a cross-fade: the old page is gone before the new one
+	   arrives, so two layouts never ghost over each other (and the page never
+	   dims to half-opacity mid-way). Only the activity stream travels. */
+	::view-transition-old(root) {
+		animation: j1-page-out 110ms ease-in both;
+	}
+
 	::view-transition-new(root) {
-		animation-duration: 180ms;
-		animation-timing-function: var(--ease-out-soft);
+		animation: j1-page-in 220ms var(--ease-out-soft) 80ms both;
+	}
+
+	::view-transition-group(app-header) {
+		animation: none;
 	}
 
 	::view-transition-group(activity-stream) {
 		animation-duration: 420ms;
 		animation-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1);
+		/* No radius here: the rail is flush and square, and a group radius
+		   rounded its corners for the length of every navigation. The panel's
+		   snapshot already carries its card's own rounded corners. */
 		overflow: clip;
-		border-radius: 0.75rem;
 	}
 
 	::view-transition-old(activity-stream),
@@ -430,7 +476,18 @@
 		height: 100%;
 		object-fit: none;
 		object-position: top left;
-		animation-duration: 420ms;
+	}
+
+	/* The stream swaps, it doesn't cross-fade: the new snapshot is opaque from
+	   the first frame and sits on top, so the box travels with the new content
+	   inside it — and a rail that stays put between pages never shows two
+	   feeds ghosting over each other. */
+	::view-transition-new(activity-stream) {
+		animation: none;
+	}
+
+	::view-transition-old(activity-stream) {
+		animation: j1-page-out 90ms ease-in both;
 	}
 
 	/* The log's detail pane (LogDetailPane): the list narrows to make room
@@ -457,6 +514,19 @@
 
 	::view-transition-old(log-detail):only-child {
 		animation: log-detail-out 200ms var(--ease-out-soft) both;
+	}
+}
+
+@keyframes j1-page-out {
+	to {
+		opacity: 0;
+	}
+}
+
+@keyframes j1-page-in {
+	from {
+		opacity: 0;
+		transform: translateY(6px);
 	}
 }
 

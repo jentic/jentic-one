@@ -63,6 +63,28 @@ describe('app shell / navbar', () => {
 	});
 });
 
+describe('activity rail placement', () => {
+	it('docks the rail on ordinary pages but steps aside on Monitor', async () => {
+		await page.viewport(1440, 900);
+		for (const route of ['/', '/agents']) {
+			const shell = renderShell(route);
+			expect(
+				await screen.findByRole('complementary', { name: 'Activity' }),
+			).toBeInTheDocument();
+			shell.unmount();
+		}
+
+		for (const route of ['/monitor']) {
+			const view = renderShell(route);
+			await screen.findByRole('navigation', { name: 'Primary' });
+			expect(screen.queryByRole('complementary', { name: 'Activity' })).toBeNull();
+			// The bell is shell chrome, present everywhere.
+			expect(screen.getByRole('button', { name: /^Notifications/ })).toBeInTheDocument();
+			view.unmount();
+		}
+	});
+});
+
 describe('toast region', () => {
 	afterEach(() => {
 		clearAllToasts();
@@ -88,7 +110,8 @@ describe('toast region', () => {
 
 	it('moves toasts beside an open side panel, off its footer actions, and back when it closes', async () => {
 		await page.viewport(1440, 900);
-		renderShell();
+		// A page that carries the rail (Home and Monitor show the stream in-page).
+		renderShell('/agents');
 		await screen.findByRole('navigation', { name: 'Primary' });
 		const sheet = renderWithProviders(
 			<SheetPrimitive open onClose={() => {}} ariaLabel="Panel">
@@ -109,7 +132,7 @@ describe('toast region', () => {
 			</SheetPrimitive>,
 		);
 		// Back beside the rail, the only thing left on the right edge.
-		const rail = screen.getByRole('complementary', { name: /agent rail/i });
+		const rail = screen.getByRole('complementary', { name: 'Activity' });
 		await expect
 			.poll(async () => (await showToast()).right)
 			.toBeCloseTo(window.innerWidth - rail.offsetWidth - 16, 0);
@@ -146,21 +169,5 @@ describe('isNavItemActive', () => {
 		expect(isNavItemActive(discover, '/discover')).toBe(true);
 		expect(isNavItemActive(discover, '/discover/abc')).toBe(true);
 		expect(isNavItemActive(discover, '/discoverable')).toBe(false);
-	});
-});
-
-describe('agent rail placement', () => {
-	it('docks the rail beside ordinary pages', async () => {
-		renderShell('/agents');
-		await screen.findByRole('navigation', { name: 'Primary' });
-		// Expanded or collapsed (the state persists), the rail is the shell's
-		// only complementary landmark — the Outlet renders nothing here.
-		expect(await screen.findAllByRole('complementary', { hidden: true })).toHaveLength(1);
-	});
-
-	it('leaves the rail off Monitor, whose Live activity panel is the stream', async () => {
-		renderShell('/monitor');
-		await screen.findByRole('navigation', { name: 'Primary' });
-		expect(screen.queryAllByRole('complementary', { hidden: true })).toHaveLength(0);
 	});
 });

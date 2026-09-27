@@ -1,12 +1,14 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, onTestFinished } from 'vitest';
 import { page, cdp } from 'vitest/browser';
-import { act, type ReactElement } from 'react';
+import { act, useState, type ReactElement } from 'react';
 import { http, HttpResponse } from 'msw';
 import { MemoryRouter, Routes, Route, useLocation } from 'react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor, fireEvent, userEvent, checkA11y } from '@/__tests__/test-utils';
+import { render, screen, waitFor, within, userEvent, checkA11y } from '@/__tests__/test-utils';
 import { worker } from '@/mocks/browser';
+import { ActivityStreamPanel } from '@/shared/app/rail/ActivityStreamPanel';
 import { AgentRail } from '@/shared/app/rail/AgentRail';
+import { ShellActivityEffects } from '@/shared/app/rail/ShellActivityEffects';
 import { ToastHost } from '@/shared/app/rail/ToastHost';
 import {
 	AgentStreamProvider,
@@ -28,9 +30,10 @@ import {
 	useAgentStream,
 	RAIL_COLLAPSED_STORAGE_KEY,
 	TOAST_SCOPE_STORAGE_KEY,
+	writeToastScope,
 	type StreamEvent,
 } from '@/shared/lib/agentStream';
-import type { EventResponse } from '@/shared/api';
+import { clearToken, setToken, type EventResponse } from '@/shared/api';
 
 /** A location probe so navigation from the rail can be asserted. */
 function LocationProbe() {
@@ -47,6 +50,8 @@ function renderRail(ui: ReactElement, route = '/dashboard') {
 		<QueryClientProvider client={queryClient}>
 			<MemoryRouter initialEntries={[route]}>
 				<AgentStreamProvider live={false}>
+					{/* The shell owns the stream-level effects (it outlives the rail). */}
+					<ShellActivityEffects />
 					<Routes>
 						<Route path="/*" element={ui} />
 					</Routes>
@@ -91,6 +96,9 @@ function makeEvent(partial: Partial<StreamEvent>): StreamEvent {
 beforeEach(async () => {
 	window.localStorage.clear();
 	window.sessionStorage.clear();
+	// The rail ships collapsed; these tests exercise the open rail, so start
+	// from a user who has expanded it (the default is asserted on its own).
+	window.localStorage.setItem(RAIL_COLLAPSED_STORAGE_KEY, '0');
 	// The rail is `hidden xl:flex` (xl = 1280px). Widen the page so the rail
 	// and its controls join the accessibility tree; role queries skip
 	// `display:none` content.
@@ -549,31 +557,36 @@ describe('agentStream — wire adaptation + pure helpers', () => {
 	});
 });
 
-describe('AgentRail — shell-mounted live surface', () => {
+describe('AgentRail — shell-mounted Activity surface', () => {
 	it('renders the header + seeded backlog, and has no critical a11y violations', async () => {
 		const { container } = renderRail(<AgentRail />);
-		expect(await screen.findByText('Agent rail')).toBeInTheDocument();
+		expect(await screen.findByRole('complementary', { name: 'Activity' })).toBeInTheDocument();
+		expect(screen.getByRole('log', { name: 'Activity feed' })).toBeInTheDocument();
 		// A seeded backlog event renders in the feed.
-		expect(
-			await screen.findByText(/Execution failed: slack\.postMessage/i),
-		).toBeInTheDocument();
+		expect(await screen.findByText(/Failed: slack\.postMessage/i)).toBeInTheDocument();
 		await checkA11y(container);
 	});
 
-	it('does not hold the feed empty when the cursor rests on the rail during mount', async () => {
-		// Regression pin: `mouseenter` before the backlog fetch resolves must
-		// not snapshot ZERO visible ids — that would hold back every seeded
-		// event, leaving the feed at "Holding · 3" with no rows. This is exactly
-		// what happens in browser-mode CI, where the shared pointer can be
-		// parked over the rail when the iframe mounts (and in prod when a
-		// user's cursor rests there during page load). An empty feed must
-		// never freeze.
+	it('writes rows in plain language: "<actor> · <summary>"', async () => {
+		// The actor directory only loads for a signed-in session.
+		setToken('test-token');
+		onTestFinished(() => clearToken());
 		renderRail(<AgentRail />);
-		const aside = await screen.findByRole('complementary', { name: 'Agent rail' });
-		fireEvent.mouseEnter(aside);
-		expect(
-			await screen.findByText(/Execution failed: slack\.postMessage/i),
-		).toBeInTheDocument();
+		// The fixture's failure was caused by `invoice-bot`, which the actor
+		// directory resolves to "Invoice Bot".
+		const row = await screen.findByRole('link', {
+			name: /^Invoice Bot: Execution failed: slack\.postMessage/,
+		});
+		expect(row).toBeInTheDocument();
+	});
+
+	it('has no search box, filter chips or event counter any more', async () => {
+		renderRail(<AgentRail />);
+		await screen.findByText(/Failed: slack\.postMessage/i);
+		expect(screen.queryByRole('searchbox')).not.toBeInTheDocument();
+		expect(screen.queryByLabelText('Filter rail events')).not.toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: 'executions' })).not.toBeInTheDocument();
+		expect(screen.queryByText(/\d+ events/)).not.toBeInTheDocument();
 	});
 
 	it('is a containing block, so sr-only descendants cannot leak scroll height (phantom-scroll pin)', async () => {
@@ -581,63 +594,61 @@ describe('AgentRail — shell-mounted live surface', () => {
 		// Absolute boxes are clipped only by CONTAINING-BLOCK ancestors — the
 		// aside's static `overflow-hidden` didn't qualify, so those spans
 		// escaped to the shell's sticky wrapper and added ~240px of phantom
-		// document scroll on short pages, dragging the whole rail up with the
-		// scroll (seen on Settings/Toolkits; Workspace masked it with tall
-		// content). The aside must be `position: relative`, which both clips
-		// the escapees and keeps them out of the document's scroll overflow.
-		// The shell caps the rail at viewport height; reproduce that constraint
-		// here — an unconstrained aside would grow to fit and pass vacuously.
+		// document scroll on short pages. The aside must be `position: relative`.
 		renderRail(
 			<div style={{ display: 'flex', height: '320px' }}>
 				<AgentRail />
 			</div>,
 		);
-		const aside = await screen.findByRole('complementary', { name: 'Agent rail' });
-		await screen.findByText(/Execution failed: slack\.postMessage/i);
+		const aside = await screen.findByRole('complementary', { name: 'Activity' });
+		await screen.findByText(/Failed: slack\.postMessage/i);
 		expect(getComputedStyle(aside).position).toBe('relative');
-		// And the observable consequence: a 320px-tall rail must not give the
-		// DOCUMENT any scroll height beyond the viewport. Without `relative`,
-		// the sr-only boxes anchor to the initial containing block and extend
-		// the page's scrollable overflow (the phantom scroll from the bug).
-		// (In-flow feed rows may have rects past the aside — they're inside the
-		// feed's own scroll container — so we pin the document, not the rects.)
 		expect(document.documentElement.scrollHeight).toBeLessThanOrEqual(window.innerHeight);
 	});
 
-	it('collapses and persists the collapsed state to localStorage', async () => {
+	it('starts collapsed to the strip on a first visit', async () => {
+		window.localStorage.removeItem(RAIL_COLLAPSED_STORAGE_KEY);
 		const user = userEvent.setup();
 		renderRail(<AgentRail />);
-		await screen.findByText('Agent rail');
+		const expand = await screen.findByRole('button', { name: /^Show live activity/ });
+		expect(screen.queryByRole('log', { name: 'Activity feed' })).not.toBeInTheDocument();
+		await user.click(expand);
+		expect(await screen.findByRole('log', { name: 'Activity feed' })).toBeInTheDocument();
+		await waitFor(() =>
+			expect(window.localStorage.getItem(RAIL_COLLAPSED_STORAGE_KEY)).toBe('0'),
+		);
+	});
 
-		await user.click(screen.getByRole('button', { name: 'Collapse agent rail' }));
+	it('collapses to a strip and persists the collapsed state to localStorage', async () => {
+		const user = userEvent.setup();
+		renderRail(<AgentRail />);
+		await screen.findByText(/Failed: slack\.postMessage/i);
+
+		await user.click(screen.getByRole('button', { name: 'Collapse activity' }));
 		await waitFor(() =>
 			expect(window.localStorage.getItem(RAIL_COLLAPSED_STORAGE_KEY)).toBe('1'),
 		);
-		expect(screen.getByRole('button', { name: 'Expand agent rail' })).toBeInTheDocument();
-		expect(screen.queryByText('Agent rail')).not.toBeInTheDocument();
-	});
-
-	it('toggles audio-on-critical and persists the preference', async () => {
-		const user = userEvent.setup();
-		renderRail(<AgentRail />);
-		await screen.findByText('Agent rail');
-
-		// Audio on critical is ON by default.
-		const toggle = screen.getByRole('button', { name: /Audio on critical/i });
-		expect(toggle).toHaveAttribute('aria-pressed', 'true');
-		await user.click(toggle);
-		expect(toggle).toHaveAttribute('aria-pressed', 'false');
-	});
-
-	it('writes the toast scope to localStorage when changed', async () => {
-		const user = userEvent.setup();
-		renderRail(<AgentRail />);
-		await screen.findByText('Agent rail');
-
-		const select = screen.getByLabelText('Toasts');
-		await user.selectOptions(select, 'critical');
+		// One expand control; its name carries the failure signal (red dot).
+		expect(
+			await screen.findByRole('button', {
+				name: /^Show live activity.*1 unacknowledged failure/,
+			}),
+		).toBeInTheDocument();
 		await waitFor(() =>
-			expect(window.localStorage.getItem(TOAST_SCOPE_STORAGE_KEY)).toBe('critical'),
+			expect(screen.queryByRole('log', { name: 'Activity feed' })).not.toBeInTheDocument(),
+		);
+	});
+
+	it('hands keyboard focus across the collapse/expand swap instead of dropping it', async () => {
+		const user = userEvent.setup();
+		renderRail(<AgentRail />);
+		await screen.findByText(/Failed: slack\.postMessage/i);
+		await user.click(screen.getByRole('button', { name: 'Collapse activity' }));
+		const expand = await screen.findByRole('button', { name: /^Show live activity/ });
+		await waitFor(() => expect(expand).toHaveFocus());
+		await user.keyboard('{Enter}');
+		await waitFor(() =>
+			expect(screen.getByRole('button', { name: 'Collapse activity' })).toHaveFocus(),
 		);
 	});
 
@@ -653,93 +664,292 @@ describe('AgentRail — shell-mounted live surface', () => {
 		);
 	});
 
-	it('shows a failure pill for unacknowledged failures and clears it once acknowledged (#671)', async () => {
+	it('links the footer to the activity log in Monitor', async () => {
+		renderRail(<AgentRail />);
+		const link = await screen.findByRole('link', { name: 'Open in Monitor →' });
+		expect(link).toHaveAttribute('href', '/monitor');
+	});
+
+	it('"Failures only" hides non-failures and counts unacknowledged ones (#671)', async () => {
 		const user = userEvent.setup();
 		renderRail(<AgentRail />);
-		await screen.findByText('Agent rail');
-		// The seeded backlog has exactly one unacknowledged failure (the critical
-		// execution.failed) → the pill reads "1 unacknowledged failure".
-		const pill = await screen.findByRole('button', {
-			name: /1 unacknowledged failure in recent activity. Show failures./i,
-		});
-		expect(pill).toBeInTheDocument();
+		await screen.findByText(/Imported petstore/i);
 
-		// Acknowledge the failure → the count drops to zero and the pill disappears.
+		const toggle = screen.getByRole('button', { name: /^Failures only/ });
+		expect(toggle).toHaveAttribute('aria-pressed', 'false');
+		expect(toggle).toHaveAccessibleName(/1 unacknowledged/);
+		await user.click(toggle);
+		expect(toggle).toHaveAttribute('aria-pressed', 'true');
+		await waitFor(() =>
+			expect(screen.queryByText(/Imported petstore/i)).not.toBeInTheDocument(),
+		);
+		expect(screen.getByText(/Failed: slack\.postMessage/i)).toBeInTheDocument();
+	});
+
+	it('acknowledging a failure dims the row (no "Acked" label) and clears the count', async () => {
+		const user = userEvent.setup();
+		renderRail(<AgentRail />);
+		await screen.findByText(/Failed: slack\.postMessage/i);
 		const ack = screen.getAllByRole('button', { name: 'Acknowledge' })[0];
 		await user.click(ack);
+		// The row re-renders as the compact line, so re-query it.
 		await waitFor(() =>
 			expect(
-				screen.queryByRole('button', { name: /unacknowledged failure/i }),
+				screen.getByText(/Failed: slack\.postMessage/i).closest('.opacity-55'),
+			).not.toBeNull(),
+		);
+		expect(screen.queryByText('Acked')).not.toBeInTheDocument();
+		expect(screen.getByRole('button', { name: /^Failures only/ })).not.toHaveAccessibleName(
+			/unacknowledged/,
+		);
+	});
+
+	it('offers "Only this agent" on /agents/:agentId, and scoping fetches its backlog by actor', async () => {
+		// The shortcut names the agent, which needs the (signed-in) actor directory.
+		setToken('test-token');
+		onTestFinished(() => clearToken());
+		const user = userEvent.setup();
+		const seen: string[] = [];
+		worker.events.on('request:start', ({ request }) => {
+			if (new URL(request.url).pathname === '/events') seen.push(request.url);
+		});
+		renderRail(<AgentRail />, '/agents/support-triage');
+		const filter = await screen.findByRole('button', { name: /^Show activity for/ });
+		// Navigating to an agent never changes the lens by itself…
+		expect(filter).toHaveAccessibleName(/Everyone/);
+		// …the Filter offers the shortcut instead.
+		await user.click(filter);
+		const panel = await screen.findByRole('dialog', { name: 'Filter activity' });
+		expect(await within(panel).findByText('On this page')).toBeInTheDocument();
+		await user.click(within(panel).getByRole('button', { name: 'Only this agent' }));
+		expect(filter).toHaveAccessibleName(/Support Triage/);
+		await waitFor(() =>
+			expect(
+				seen.some((u) => {
+					const q = new URL(u).searchParams;
+					return (
+						q.get('actor_id') === 'support-triage' && q.get('actor_type') === 'agent'
+					);
+				}),
+			).toBe(true),
+		);
+		worker.events.removeAllListeners();
+		// Other actors' rows drop out; this agent's stay.
+		expect(await screen.findByText(/github\.repos\.list/)).toBeInTheDocument();
+		expect(screen.queryByText(/Failed: slack\.postMessage/)).not.toBeInTheDocument();
+		// The shortcut goes away once it's applied.
+		await user.click(filter);
+		expect(
+			within(await screen.findByRole('dialog', { name: 'Filter activity' })).queryByRole(
+				'button',
+				{ name: 'Only this agent' },
+			),
+		).not.toBeInTheDocument();
+		// And the footer carries the lens to Monitor.
+		expect(screen.getByRole('link', { name: 'Open in Monitor →' })).toHaveAttribute(
+			'href',
+			'/monitor?actor_id=support-triage&actor_type=agent',
+		);
+	});
+
+	it("offers the shortcut from /agents?agent=<id> and keeps the user's lens otherwise", async () => {
+		setToken('test-token');
+		onTestFinished(() => clearToken());
+		const user = userEvent.setup();
+		renderRail(<AgentRail />, '/agents?agent=invoice-bot');
+		const filter = await screen.findByRole('button', { name: /^Show activity for/ });
+		expect(await screen.findByText(/Imported petstore/)).toBeInTheDocument();
+		expect(filter).toHaveAccessibleName(/Everyone/);
+		await user.click(filter);
+		await user.click(await screen.findByRole('button', { name: 'Only this agent' }));
+		expect(filter).toHaveAccessibleName(/Invoice Bot/);
+		await waitFor(() =>
+			expect(screen.queryByText(/Imported petstore/)).not.toBeInTheDocument(),
+		);
+		// Widening back is the user's call, from the same control.
+		await user.click(filter);
+		await user.click(await screen.findByRole('button', { name: /^Everyone/ }));
+		expect(filter).toHaveAccessibleName(/Everyone/);
+		expect(await screen.findByText(/Imported petstore/)).toBeInTheDocument();
+	});
+
+	it('names the agent in an empty scoped feed and offers a way back to everyone', async () => {
+		setToken('test-token');
+		onTestFinished(() => clearToken());
+		const user = userEvent.setup();
+		renderRail(<AgentRail />);
+		const filter = await screen.findByRole('button', { name: /^Show activity for/ });
+		await user.click(filter);
+		const panel = await screen.findByRole('dialog', { name: 'Filter activity' });
+		// People sit beside agents — the lens is anyone, not just agents.
+		expect(await within(panel).findByText('People')).toBeInTheDocument();
+		expect(
+			within(panel).getAllByRole('button', { name: /^Admin User/ }).length,
+		).toBeGreaterThan(0);
+		await user.click(await within(panel).findByRole('button', { name: /^Nightly Reporter/ }));
+		expect(await screen.findByText(/No recent activity from/)).toHaveTextContent(
+			'No recent activity from Nightly Reporter.',
+		);
+		await user.click(screen.getByRole('button', { name: 'Show everyone' }));
+		expect(filter).toHaveAccessibleName(/Everyone/);
+		expect(await screen.findByText(/Imported petstore/)).toBeInTheDocument();
+	});
+
+	it('Escape closes the Filter popover and hands focus back to its trigger', async () => {
+		const user = userEvent.setup();
+		renderRail(<AgentRail />);
+		const filter = await screen.findByRole('button', { name: /^Show activity for/ });
+		await user.click(filter);
+		const panel = await screen.findByRole('dialog', { name: 'Filter activity' });
+		await user.click(within(panel).getByRole('button', { name: 'Calls' }));
+		await user.keyboard('{Escape}');
+		await waitFor(() =>
+			expect(
+				screen.queryByRole('dialog', { name: 'Filter activity' }),
 			).not.toBeInTheDocument(),
 		);
+		expect(filter).toHaveFocus();
 	});
 
-	it('focuses the feed on failures when the failure pill is clicked (#671)', async () => {
+	it('filters by kind of activity from the Filter popover', async () => {
 		const user = userEvent.setup();
 		renderRail(<AgentRail />);
-		await screen.findByText('Agent rail');
-		// Before: an info event (import completed) is visible in the feed.
-		await screen.findByText(/Import completed: petstore/i);
-
-		await user.click(
-			await screen.findByRole('button', {
-				name: /unacknowledged failure in recent activity. Show failures./i,
-			}),
-		);
-
-		// After: the feed is filtered to error+critical, so the info import row
-		// drops out while the critical failure remains.
+		await screen.findByText(/Imported petstore/);
+		const filter = screen.getByRole('button', { name: /^Show activity for/ });
+		await user.click(filter);
+		const what = within(await screen.findByRole('group', { name: 'What' }));
+		await user.click(what.getByRole('button', { name: 'Calls' }));
+		expect(what.getByRole('button', { name: 'Calls' })).toHaveAttribute('aria-pressed', 'true');
 		await waitFor(() =>
-			expect(screen.queryByText(/Import completed: petstore/i)).not.toBeInTheDocument(),
+			expect(screen.queryByText(/Imported petstore/)).not.toBeInTheDocument(),
 		);
-		expect(screen.getByText(/Execution failed: slack\.postMessage/i)).toBeInTheDocument();
+		expect(screen.getByText(/Failed: slack\.postMessage/)).toBeInTheDocument();
+		// The trigger reads the choice back.
+		expect(filter).toHaveAccessibleName(/Everyone.*Calls/);
+		await user.click(screen.getByRole('button', { name: 'Reset filters' }));
+		expect(await screen.findByText(/Imported petstore/)).toBeInTheDocument();
 	});
 
-	it('focusFailures preserves the operator’s search + kind filters', async () => {
+	it('counts what arrived while paused, and "N new" resumes the feed', async () => {
 		const user = userEvent.setup();
-		renderRail(<AgentRail />);
-		await screen.findByText('Agent rail');
+		let push: ((frame: string) => void) | null = null;
+		worker.use(
+			http.get(
+				'/events/stream',
+				() =>
+					new HttpResponse(
+						new ReadableStream({
+							start(controller) {
+								const enc = new TextEncoder();
+								push = (frame) => controller.enqueue(enc.encode(frame));
+							},
+						}),
+						{ headers: { 'Content-Type': 'text/event-stream' } },
+					),
+			),
+		);
+		render(
+			<QueryClientProvider
+				client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+			>
+				<MemoryRouter initialEntries={['/dashboard']}>
+					<AgentStreamProvider live={true}>
+						<AgentRail />
+					</AgentStreamProvider>
+				</MemoryRouter>
+			</QueryClientProvider>,
+		);
+		await screen.findByText(/Imported petstore/);
+		await waitFor(() => expect(push).not.toBeNull());
+		await user.click(screen.getByRole('button', { name: 'Pause live feed' }));
+		const live = wireEvent({
+			event_id: 'evt_while_paused',
+			type: 'import.completed',
+			summary: 'Import completed: weather-api',
+			created_at: new Date().toISOString(),
+		});
+		act(() =>
+			push?.(`event: ${live.type}\nid: ${live.event_id}\ndata: ${JSON.stringify(live)}\n\n`),
+		);
+		const pill = await screen.findByRole('button', { name: /1\s*new/ });
+		expect(screen.queryByText(/Imported weather-api/)).not.toBeInTheDocument();
+		await user.click(pill);
+		expect(await screen.findByText(/Imported weather-api/)).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Pause live feed' })).toBeInTheDocument();
+		await waitFor(() =>
+			expect(screen.queryByRole('button', { name: /\d+\s*new/ })).not.toBeInTheDocument(),
+		);
+	});
 
-		// The operator has narrowed the view: a search term + a kind chip + a
-		// severity chip (warning) they picked on purpose.
-		const searchBox = screen.getByLabelText('Filter rail events');
-		await user.click(searchBox);
-		await user.paste('slack');
-		const execChip = screen.getByRole('button', { name: 'executions' });
-		await user.click(execChip);
-		await waitFor(() => expect(execChip).toHaveAttribute('aria-pressed', 'true'));
-		const warningChip = screen.getByRole('button', { name: 'warning' });
-		await user.click(warningChip);
-		await waitFor(() => expect(warningChip).toHaveAttribute('aria-pressed', 'true'));
+	it('keeps Failures only and pause across remounts and shares them with the Monitor panel', async () => {
+		const user = userEvent.setup();
+		// The rail unmounts on Monitor and remounts on the way back; its view
+		// state lives in the provider, so it must come back as the user left it.
+		function Host() {
+			const [showRail, setShowRail] = useState(true);
+			return (
+				<>
+					<button type="button" onClick={() => setShowRail((s) => !s)}>
+						Toggle rail
+					</button>
+					{showRail && <AgentRail />}
+					<ActivityStreamPanel />
+				</>
+			);
+		}
+		renderRail(<Host />);
+		const rail = await screen.findByRole('complementary', { name: 'Activity' });
+		await screen.findAllByText(/Imported petstore/);
+		await user.click(within(rail).getByRole('button', { name: /^Failures only/ }));
+		await user.click(within(rail).getByRole('button', { name: 'Pause live feed' }));
+		// Monitor's All / Failures control is the same choice.
+		const panelFilter = screen.getByRole('group', { name: 'Filter activity' });
+		expect(within(panelFilter).getByRole('button', { name: 'Failures' })).toHaveAttribute(
+			'aria-pressed',
+			'true',
+		);
 
-		// Clicking the failure pill must ADD failure severities, NOT wipe the
-		// operator's search or kind filters.
-		await user.click(
-			screen.getByRole('button', {
-				name: /unacknowledged failure in recent activity. Show failures./i,
-			}),
+		await user.click(screen.getByRole('button', { name: 'Toggle rail' }));
+		await waitFor(() =>
+			expect(
+				screen.queryByRole('complementary', { name: 'Activity' }),
+			).not.toBeInTheDocument(),
 		);
+		await user.click(screen.getByRole('button', { name: 'Toggle rail' }));
+		const back = await screen.findByRole('complementary', { name: 'Activity' });
+		expect(within(back).getByRole('button', { name: /^Failures only/ })).toHaveAttribute(
+			'aria-pressed',
+			'true',
+		);
+		expect(within(back).getByRole('button', { name: 'Resume live feed' })).toBeInTheDocument();
 
-		expect(searchBox).toHaveValue('slack');
-		expect(screen.getByRole('button', { name: 'executions' })).toHaveAttribute(
+		// And flipping it from the panel flips the rail.
+		await user.click(within(panelFilter).getByRole('button', { name: 'All' }));
+		expect(within(back).getByRole('button', { name: /^Failures only/ })).toHaveAttribute(
 			'aria-pressed',
-			'true',
+			'false',
 		);
-		// The union path: the operator's `warning` chip survives alongside the
-		// failure severities that were added.
-		expect(screen.getByRole('button', { name: 'warning' })).toHaveAttribute(
-			'aria-pressed',
-			'true',
+	});
+
+	it('holds "Reconnecting…" while the stream keeps failing (no Offline/Connecting flicker)', async () => {
+		worker.use(http.get('/events/stream', () => new HttpResponse(null, { status: 503 })));
+		render(
+			<QueryClientProvider
+				client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+			>
+				<MemoryRouter initialEntries={['/dashboard']}>
+					<AgentStreamProvider live={true}>
+						<AgentRail />
+					</AgentStreamProvider>
+				</MemoryRouter>
+			</QueryClientProvider>,
 		);
-		// And the severities were added: both error and critical chips are pressed.
-		expect(screen.getByRole('button', { name: 'error' })).toHaveAttribute(
-			'aria-pressed',
-			'true',
-		);
-		expect(screen.getByRole('button', { name: 'critical' })).toHaveAttribute(
-			'aria-pressed',
-			'true',
-		);
+		expect(await screen.findByText('Reconnecting…')).toBeInTheDocument();
+		expect(screen.getByRole('img', { name: 'Stream offline' })).toBeInTheDocument();
+		// Across the first retry (1s backoff) the label must not blink away.
+		await new Promise((r) => setTimeout(r, 1500));
+		expect(screen.getByText('Reconnecting…')).toBeInTheDocument();
+		expect(screen.queryByRole('img', { name: 'Connecting to stream' })).not.toBeInTheDocument();
 	});
 
 	it('re-inserting a dismissed failure toast does not happen on scope change', async () => {
@@ -762,54 +972,8 @@ describe('AgentRail — shell-mounted live surface', () => {
 			data: { execution_id: 'exec_solo' },
 			_links: { self: '/events/evt_only_failure' },
 		};
-		worker.use(
-			http.get('/events', () =>
-				HttpResponse.json({ data: [failure], has_more: false, next_cursor: null }),
-			),
-			http.get('/events/stream', () => {
-				const frame = `event: ${failure.type}\nid: ${failure.event_id}\ndata: ${JSON.stringify(
-					failure,
-				)}\n\n`;
-				const encoder = new TextEncoder();
-				const stream = new ReadableStream<Uint8Array>({
-					start(controller) {
-						controller.enqueue(encoder.encode(frame));
-					},
-				});
-				return new HttpResponse(stream, {
-					headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' },
-				});
-			}),
-		);
-
-		render(
-			<QueryClientProvider
-				client={
-					new QueryClient({
-						defaultOptions: {
-							queries: { retry: false },
-							mutations: { retry: false },
-						},
-					})
-				}
-			>
-				<MemoryRouter initialEntries={['/dashboard']}>
-					<AgentStreamProvider live={true}>
-						<Routes>
-							<Route
-								path="/*"
-								element={
-									<>
-										<AgentRail />
-										<ToastHost />
-									</>
-								}
-							/>
-						</Routes>
-					</AgentStreamProvider>
-				</MemoryRouter>
-			</QueryClientProvider>,
-		);
+		useSingleFailureStream(failure);
+		renderLiveRailWithToasts();
 
 		// The failure toast pops, then the operator dismisses it.
 		const dismiss = await screen.findByRole('button', { name: 'Dismiss toast' });
@@ -820,22 +984,15 @@ describe('AgentRail — shell-mounted live surface', () => {
 
 		// Flip the toast scope (this re-runs ToastHost's insert effect with the
 		// SAME `latest`). The dismissed failure toast must NOT re-appear.
-		const scopeSelect = screen.getByLabelText('Toasts');
-		await user.selectOptions(scopeSelect, 'all');
-		await waitFor(() =>
-			expect(window.localStorage.getItem(TOAST_SCOPE_STORAGE_KEY)).toBe('all'),
-		);
-		await user.selectOptions(scopeSelect, 'critical');
-		await waitFor(() =>
-			expect(window.localStorage.getItem(TOAST_SCOPE_STORAGE_KEY)).toBe('critical'),
-		);
+		// (The switch lives in the Notifications settings; flip it at the source.)
+		act(() => writeToastScope('all'));
+		expect(window.localStorage.getItem(TOAST_SCOPE_STORAGE_KEY)).toBe('all');
+		act(() => writeToastScope('critical'));
+		expect(window.localStorage.getItem(TOAST_SCOPE_STORAGE_KEY)).toBe('critical');
 		expect(screen.queryByRole('button', { name: 'Dismiss toast' })).not.toBeInTheDocument();
 	});
 
 	it('re-toasts a failure that only TTL-expired (not operator-dismissed) after a scope change', async () => {
-		const user = userEvent.setup();
-		// A single critical failure so `latest` is deterministically the failure
-		// and no later event overwrites it. Failures toast regardless of scope.
 		const failure = {
 			event_id: 'evt_ttl_failure',
 			type: 'execution.failed',
@@ -851,62 +1008,14 @@ describe('AgentRail — shell-mounted live surface', () => {
 			data: { execution_id: 'exec_ttl' },
 			_links: { self: '/events/evt_ttl_failure' },
 		};
-		worker.use(
-			http.get('/events', () =>
-				HttpResponse.json({ data: [failure], has_more: false, next_cursor: null }),
-			),
-			http.get('/events/stream', () => {
-				const frame = `event: ${failure.type}\nid: ${failure.event_id}\ndata: ${JSON.stringify(
-					failure,
-				)}\n\n`;
-				const encoder = new TextEncoder();
-				const stream = new ReadableStream<Uint8Array>({
-					start(controller) {
-						controller.enqueue(encoder.encode(frame));
-					},
-				});
-				return new HttpResponse(stream, {
-					headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' },
-				});
-			}),
-		);
+		useSingleFailureStream(failure);
+		renderLiveRailWithToasts();
 
-		render(
-			<QueryClientProvider
-				client={
-					new QueryClient({
-						defaultOptions: {
-							queries: { retry: false },
-							mutations: { retry: false },
-						},
-					})
-				}
-			>
-				<MemoryRouter initialEntries={['/dashboard']}>
-					<AgentStreamProvider live={true}>
-						<Routes>
-							<Route
-								path="/*"
-								element={
-									<>
-										<AgentRail />
-										<ToastHost />
-									</>
-								}
-							/>
-						</Routes>
-					</AgentStreamProvider>
-				</MemoryRouter>
-			</QueryClientProvider>,
-		);
-
-		// The failure toast pops. The rail feed also shows a row for the same
-		// event, so key off the toast-only "Dismiss toast" control rather than the
-		// title text (which the feed row shares).
+		// The failure toast pops. Key off the toast-only "Dismiss toast" control
+		// rather than the title text (which the feed row shares).
 		await screen.findByRole('button', { name: 'Dismiss toast' });
 
-		// Let it AUTO-DISMISS via TTL (no operator interaction). The TTL is 6s and
-		// the sweeper runs every 250ms, so wait past the horizon.
+		// Let it AUTO-DISMISS via TTL (6s; the sweeper runs every 250ms).
 		await waitFor(
 			() =>
 				expect(
@@ -915,33 +1024,12 @@ describe('AgentRail — shell-mounted live surface', () => {
 			{ timeout: 9000 },
 		);
 
-		// Flip the toast scope — this re-runs ToastHost's insert effect with the
-		// SAME `latest`. A TTL-expired failure must re-toast (its id was NOT
-		// remembered as dismissed): #671 says a failure must never be missed.
-		const scopeSelect = screen.getByLabelText('Toasts');
-		await user.selectOptions(scopeSelect, 'all');
-		await waitFor(() =>
-			expect(window.localStorage.getItem(TOAST_SCOPE_STORAGE_KEY)).toBe('all'),
-		);
+		// Flip the toast scope — a TTL-expired failure must re-toast (its id was
+		// NOT remembered as dismissed): #671 says a failure must never be missed.
+		act(() => writeToastScope('all'));
+		expect(window.localStorage.getItem(TOAST_SCOPE_STORAGE_KEY)).toBe('all');
 		await screen.findByRole('button', { name: 'Dismiss toast' });
 	}, 20000);
-
-	it('acknowledges a seeded action-required event → row dims to the compact line', async () => {
-		const user = userEvent.setup();
-		renderRail(<AgentRail />);
-		// The seeded backlog has multiple action-required events; acknowledge the
-		// first (the critical execution failure).
-		await screen.findByText(/Execution failed: slack\.postMessage/i);
-		const ack = screen.getAllByRole('button', { name: 'Acknowledge' })[0];
-		await user.click(ack);
-		// The row re-renders as the compact line, so re-query it.
-		await waitFor(() =>
-			expect(
-				screen.getByText(/Execution failed: slack\.postMessage/i).closest('.opacity-55'),
-			).not.toBeNull(),
-		);
-		expect(screen.queryByText('Acked')).not.toBeInTheDocument();
-	});
 
 	it('drops SSE heartbeat frames — no "Platform" row leaks into the feed', async () => {
 		// The mocked /events/stream emits an `event: heartbeat` frame ahead of the
@@ -967,12 +1055,63 @@ describe('AgentRail — shell-mounted live surface', () => {
 				</MemoryRouter>
 			</QueryClientProvider>,
 		);
-		// A real seeded event arrives over the same stream.
-		await screen.findByText(/Execution failed: slack\.postMessage/i);
-		// The heartbeat must NOT have produced a "Platform" row.
+		await screen.findByText(/Failed: slack\.postMessage/i);
 		expect(screen.queryByText('Platform')).not.toBeInTheDocument();
 	});
 });
+
+/** Serve exactly one failure from both the backlog and the live stream. */
+function useSingleFailureStream(
+	failure: Record<string, unknown> & { type: string; event_id: string },
+) {
+	worker.use(
+		http.get('/events', () =>
+			HttpResponse.json({ data: [failure], has_more: false, next_cursor: null }),
+		),
+		http.get('/events/stream', () => {
+			const frame = `event: ${failure.type}\nid: ${failure.event_id}\ndata: ${JSON.stringify(
+				failure,
+			)}\n\n`;
+			const encoder = new TextEncoder();
+			const stream = new ReadableStream<Uint8Array>({
+				start(controller) {
+					controller.enqueue(encoder.encode(frame));
+				},
+			});
+			return new HttpResponse(stream, {
+				headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' },
+			});
+		}),
+	);
+}
+
+function renderLiveRailWithToasts() {
+	return render(
+		<QueryClientProvider
+			client={
+				new QueryClient({
+					defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+				})
+			}
+		>
+			<MemoryRouter initialEntries={['/dashboard']}>
+				<AgentStreamProvider live={true}>
+					<Routes>
+						<Route
+							path="/*"
+							element={
+								<>
+									<AgentRail />
+									<ToastHost />
+								</>
+							}
+						/>
+					</Routes>
+				</AgentStreamProvider>
+			</MemoryRouter>
+		</QueryClientProvider>,
+	);
+}
 
 describe('rail — oauth additions (3a-5, phase-3a §4.8)', () => {
 	const OAUTH_CLIENT_ID = 'oc_dcr_app';
