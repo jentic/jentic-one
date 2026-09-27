@@ -18,6 +18,9 @@
  * deserializes them unchanged.
  */
 import { http, HttpResponse } from 'msw';
+// Side effect: appends the Everything feed's event mix to the rail's store;
+// the dev-only records behind it join the fixtures below.
+import { DEV_AUDIT, DEV_EXECUTIONS } from '@/modules/monitor/mocks/activityMix';
 
 // ── Rolling fixture clock ────────────────────────────────────────────────────
 // Fixtures were authored against a fixed 2026-06-19 anchor. The Monitor filters
@@ -156,7 +159,7 @@ const USAGE_DAILY = rebaseFixture([
 // Sub-day activity anchored to the request's `until`, so the 24h (hourly
 // buckets) window renders real bars: the rebase delta parks the newest daily
 // fixture point ≥ ~24h back, which would otherwise leave `days=1` empty and
-// gate the whole Overview behind its EmptyState in dev/tests. Sums to 34
+// gate the whole Usage tab behind its EmptyState in dev/tests. Sums to 34
 // executions (31 success / 3 failed).
 const USAGE_RECENT = [
 	{ hoursAgo: 2, total: 9, success: 8, failed: 1, avg_ms: 430 },
@@ -468,6 +471,17 @@ const AUDIT = rebaseFixture([
 	},
 ]);
 
+const byNewest =
+	<T>(at: (row: T) => string) =>
+	(a: T, b: T) =>
+		at(b).localeCompare(at(a));
+const ALL_EXECUTIONS_NEWEST_FIRST = [...EXECUTIONS, ...DEV_EXECUTIONS].sort(
+	byNewest((r) => r.started_at),
+);
+const ALL_AUDIT = DEV_AUDIT.length
+	? [...AUDIT, ...DEV_AUDIT].sort(byNewest((r) => r.occurred_at))
+	: AUDIT;
+
 function paginate<T>(rows: T[]) {
 	return { data: rows, has_more: false, next_cursor: null };
 }
@@ -513,21 +527,35 @@ export const monitorHandlers = [
 		const actorId = url.searchParams.get('actor_id');
 		const origin = url.searchParams.get('origin');
 		const from = url.searchParams.get('from');
+		const to = url.searchParams.get('to');
 		const statuses = url.searchParams.getAll('status');
 		const cursor = url.searchParams.get('cursor');
+		// Colon-encoded `vendor[:name[:version]]`, like the real router.
+		const api = url.searchParams.get('api');
 		// Fixed small page size (independent of the client's limit) so the
-		// three-row fixture spans two pages and exercises the cursor pager.
-		const limit = 2;
-		let rows = EXECUTIONS;
+		// three-row fixture spans two pages and exercises the cursor pager;
+		// mocked dev pages its larger, newest-first set like the real API.
+		const limit = DEV_EXECUTIONS.length ? 25 : 2;
+		let rows = DEV_EXECUTIONS.length ? ALL_EXECUTIONS_NEWEST_FIRST : EXECUTIONS;
 		if (traceId) rows = rows.filter((r) => r.trace_id === traceId);
 		if (actorId) rows = rows.filter((r) => r.actor_id === actorId);
 		if (origin) rows = rows.filter((r) => (r as { origin?: string }).origin === origin);
 		if (from) rows = rows.filter((r) => r.started_at >= from);
+		if (to) rows = rows.filter((r) => r.started_at <= to);
 		if (statuses.length) rows = rows.filter((r) => statuses.includes(r.status));
+		if (api) {
+			const [vendor, name, version] = api.split(':');
+			rows = rows.filter(
+				(r) =>
+					r.api?.vendor === vendor &&
+					(!name || r.api?.name === name) &&
+					(!version || r.api?.version === version),
+			);
+		}
 		return HttpResponse.json(paginateCursor(rows, cursor, limit));
 	}),
 	http.get('/executions/:id', ({ params }) => {
-		const row = EXECUTIONS.find((r) => r.execution_id === String(params.id));
+		const row = ALL_EXECUTIONS_NEWEST_FIRST.find((r) => r.execution_id === String(params.id));
 		return row ? HttpResponse.json(row) : new HttpResponse(null, { status: 404 });
 	}),
 	http.get('/monitoring/usage', ({ request }) => {
@@ -670,8 +698,12 @@ export const monitorHandlers = [
 		const url = new URL(request.url);
 		const statuses = url.searchParams.getAll('status');
 		const kind = url.searchParams.get('kind');
+		const from = url.searchParams.get('from');
+		const to = url.searchParams.get('to');
 		let rows = JOBS;
 		if (kind) rows = rows.filter((r) => r.kind === kind);
+		if (from) rows = rows.filter((r) => r.created_at >= from);
+		if (to) rows = rows.filter((r) => r.created_at <= to);
 		if (statuses.length) rows = rows.filter((r) => statuses.includes(r.status));
 		return HttpResponse.json(paginate(rows));
 	}),
@@ -765,7 +797,7 @@ export const monitorHandlers = [
 		const actorId = url.searchParams.get('actor_id');
 		const since = url.searchParams.get('since');
 		const until = url.searchParams.get('until');
-		let rows = AUDIT;
+		let rows = ALL_AUDIT;
 		// Mirror the backend: target_type and target_id must be supplied together
 		// (a lone target id is rejected with 400 invalid_input).
 		if ((targetType == null) !== (targetId == null)) {

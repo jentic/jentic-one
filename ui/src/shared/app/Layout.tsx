@@ -16,7 +16,9 @@ import { AgentStreamProvider } from '@/shared/lib/agentStream';
  *  - a fixed mobile `BottomNavbar` (`md:hidden`),
  *  - a full-bleed `<main>` that owns NO horizontal padding,
  *  - a persistent, collapsible **Agent Rail** mounted on the right at `xl+`
- *    (the live platform event feed — see `shared/lib/agentStream`),
+ *    (the live platform event feed — see `shared/lib/agentStream`). Not
+ *    mounted on Monitor, whose Live activity panel already IS the stream
+ *    (`isRailHiddenOn`),
  *  - the `ToastRegion`, bottom-right beside the rail or an open sheet.
  *
  * The body below the fixed navbar is a flex row: `<main>` takes the remaining
@@ -32,11 +34,17 @@ import { AgentStreamProvider } from '@/shared/lib/agentStream';
  * share one live event stream. Rendered behind AuthGuard, so `user` is always
  * present downstream.
  */
+/** Pages whose content already is the activity stream — no rail beside them. */
+export function isRailHiddenOn(pathname: string): boolean {
+	return pathname.startsWith('/monitor');
+}
+
 export function Layout() {
 	const location = useLocation();
 	const railRef = useRef<HTMLDivElement>(null);
+	const showRail = !isRailHiddenOn(location.pathname);
 	// The rail's column is `hidden` below `xl`, where it measures 0 and takes no room.
-	useCoversRightEdge(railRef, true);
+	useCoversRightEdge(railRef, showRail);
 
 	return (
 		<AgentStreamProvider>
@@ -59,12 +67,14 @@ export function Layout() {
 					 * pages and push the RailFooter (toast scope + audio toggle) below
 					 * the fold. `self-start` pins it to the top instead of stretching.
 					 */}
-					<div
-						ref={railRef}
-						className="sticky top-12 hidden h-[calc(100dvh-3rem)] shrink-0 self-start xl:flex"
-					>
-						<AgentRail />
-					</div>
+					{showRail && (
+						<div
+							ref={railRef}
+							className="sticky top-12 hidden h-[calc(100dvh-3rem)] shrink-0 self-start xl:flex"
+						>
+							<AgentRail />
+						</div>
+					)}
 				</div>
 
 				<BottomNavbar />

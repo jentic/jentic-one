@@ -112,6 +112,9 @@ export type StreamEvent = {
 	requiresAction: boolean;
 	acknowledged: boolean;
 	acknowledgedAt?: number;
+	/** Who caused the event (`actor_id`/`actor_type` on the wire), when known. */
+	actorId?: string;
+	actorType?: string;
 	/** Conflict digests for a `catalog.update_conflicts_overlay` event (L5 "why"). */
 	conflict?: ConflictDigests;
 	// Stable key for grouping. Format: "<kind>:<type>:<trace|''>".
@@ -340,6 +343,8 @@ export function adaptEvent(e: EventResponse): StreamEvent {
 		requiresAction: e.requires_action,
 		acknowledged: e.acknowledged,
 		acknowledgedAt: e.acknowledged_at ? Date.parse(e.acknowledged_at) || undefined : undefined,
+		actorId: e.actor_id ?? undefined,
+		actorType: e.actor_type ?? undefined,
 		conflict,
 		groupKey: '',
 	};
@@ -627,7 +632,10 @@ export function AgentStreamProvider({
 					}
 				},
 				onError: () => setStatus('error'),
-				onReconnecting: () => setStatus('connecting'),
+				// The client fires onError then onReconnecting back-to-back on
+				// every failed attempt; keep 'error' until a connect succeeds
+				// (onOpen) so the header doesn't flicker Offline ↔ Connecting.
+				onReconnecting: () => setStatus((s) => (s === 'error' ? 'error' : 'connecting')),
 			},
 		);
 		return unsubscribe;
@@ -926,9 +934,9 @@ export type InlineActionSpec = {
 /**
  * Resolve a HAL `_links` URL or token into a router-relative monitor route.
  *
- * The detail-param vocabulary MUST match what the Monitor tabs read off the URL:
- * the Executions tab opens its trace/execution sheet from `trace_id`/`execution_id`
- * and the Jobs tab from `job_id` (the underscore names — see
+ * The detail-param vocabulary MUST match what Monitor's Activity view reads off
+ * the URL: `show=calls` opens its trace/execution sheet from `trace_id`/
+ * `execution_id` and `show=jobs` from `job_id` (the underscore names — see
  * `modules/monitor/lib/links.ts` and the tabs' `searchParams.get(...)`). Emitting
  * the short `trace`/`execution`/`job` aliases here switched the tab but left the
  * detail sheet closed, so a rail "View execution" click looked like a dead end
@@ -941,18 +949,18 @@ const hasUsableTrace = (traceId: string | null | undefined): traceId is string =
 const NAV = {
 	trace: (ev: StreamEvent) =>
 		hasUsableTrace(ev.tokens.trace_id)
-			? `/monitor?tab=executions&trace_id=${encodeURIComponent(ev.tokens.trace_id)}`
+			? `/monitor?show=calls&trace_id=${encodeURIComponent(ev.tokens.trace_id)}`
 			: null,
 	execution: (ev: StreamEvent) => {
 		const id = ev.tokens.execution_id;
-		if (id) return `/monitor?tab=executions&execution_id=${encodeURIComponent(id)}`;
+		if (id) return `/monitor?show=calls&execution_id=${encodeURIComponent(id)}`;
 		return hasUsableTrace(ev.tokens.trace_id)
-			? `/monitor?tab=executions&trace_id=${encodeURIComponent(ev.tokens.trace_id)}`
+			? `/monitor?show=calls&trace_id=${encodeURIComponent(ev.tokens.trace_id)}`
 			: null;
 	},
 	job: (ev: StreamEvent) =>
 		ev.tokens.job_id
-			? `/monitor?tab=jobs&job_id=${encodeURIComponent(ev.tokens.job_id)}`
+			? `/monitor?show=jobs&job_id=${encodeURIComponent(ev.tokens.job_id)}`
 			: null,
 	agent: (ev: StreamEvent) =>
 		ev.tokens.agent_id ? `/agents/${encodeURIComponent(ev.tokens.agent_id)}` : null,

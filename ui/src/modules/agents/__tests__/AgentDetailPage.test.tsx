@@ -164,7 +164,7 @@ describe('AgentDetailPage', () => {
 		const links = screen.getAllByRole('link', { name: /Open Monitor/ });
 		expect(links).toHaveLength(2);
 		for (const link of links) {
-			expect(link.getAttribute('href')).toContain('tab=executions');
+			expect(link.getAttribute('href')).toContain('show=calls');
 			expect(link.getAttribute('href')).toContain('actor_id=agnt_active_1');
 			expect(link.getAttribute('href')).toContain('actor_type=agent');
 		}

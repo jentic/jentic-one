@@ -1,6 +1,6 @@
 /**
  * Usage-aggregation transformers — map `GET /monitoring/usage` responses
- * (`UsageResponse`) into the UI-shaped rows the Overview charts render.
+ * (`UsageResponse`) into the UI-shaped rows the Usage charts render.
  * A single entity-row shape covers every grouping dimension, since the
  * endpoint returns the same `{key,label,total,success,
  * failed,avg_ms,trend}` rows for each.

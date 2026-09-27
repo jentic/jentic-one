@@ -1,10 +1,10 @@
 /**
  * UsageBubbleChart.
  *
- * One bubble per api / credential / agent: bubble area encodes execution volume,
+ * One bubble per API / agent: bubble area encodes execution volume,
  * the partial ring around it encodes success rate, and hovering surfaces a
  * calls / success / latency tooltip. The segmented toggle flips between the
- * three lenses without refetching (the Overview pre-fetches all three
+ * two lenses without refetching (the Overview pre-fetches both
  * groupings).
  *
  * Differences from the mini original: no vendor-icon registry in jentic-one,
@@ -28,7 +28,6 @@ import type { EntityUsageRow } from '@/modules/monitor/lib/usage';
 
 interface UsageBubbleChartProps {
 	apis: EntityUsageRow[];
-	credentials: EntityUsageRow[];
 	agents: EntityUsageRow[];
 	className?: string;
 }
@@ -44,13 +43,11 @@ interface BubbleNode {
 
 const LENS_TITLES: Record<UsageLens, string> = {
 	apis: 'API Usage',
-	credentials: 'Credential Activity',
 	agents: 'Agent Activity',
 };
 
 const LENS_NOUNS: Record<UsageLens, string> = {
 	apis: 'API',
-	credentials: 'credential',
 	agents: 'agent',
 };
 
@@ -124,7 +121,7 @@ function packCircles(
 	return placed;
 }
 
-export function UsageBubbleChart({ apis, credentials, agents, className }: UsageBubbleChartProps) {
+export function UsageBubbleChart({ apis, agents, className }: UsageBubbleChartProps) {
 	const containerRef = useRef<HTMLDivElement>(null);
 	const [dimensions, setDimensions] = useState({ width: 600, height: 420 });
 	// Store only the hovered entity id, not the node: background refetches
@@ -157,7 +154,7 @@ export function UsageBubbleChart({ apis, credentials, agents, className }: Usage
 		setHoveredId(null);
 	}, [lens]);
 
-	const items = lens === 'apis' ? apis : lens === 'credentials' ? credentials : agents;
+	const items = lens === 'apis' ? apis : agents;
 
 	const bubbles = useMemo(() => {
 		if (items.length === 0) return [];
@@ -207,7 +204,6 @@ export function UsageBubbleChart({ apis, credentials, agents, className }: Usage
 				<SegmentedToggle
 					options={[
 						{ value: 'apis', label: 'APIs' },
-						{ value: 'credentials', label: 'Credentials' },
 						{ value: 'agents', label: 'Agents' },
 					]}
 					value={lens}

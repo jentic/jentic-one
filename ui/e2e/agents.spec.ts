@@ -94,7 +94,7 @@ test('the Activity tab feeds per-agent executions and deep-links to Monitor', as
 		.getByRole('link', { name: /Open Monitor/ })
 		.first()
 		.getAttribute('href');
-	expect(href).toContain('tab=executions');
+	expect(href).toContain('show=calls');
 	expect(href).toContain('actor_id=agnt_active_1');
 	expect(href).toContain('actor_type=agent');
 
