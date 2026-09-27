@@ -61,6 +61,9 @@ export interface ListEventsParams {
 	from?: string | null;
 	to?: string | null;
 	traceId?: string | null;
+	/** Narrow to one actor (`actor_id` + `actor_type`, e.g. a single agent). */
+	actorId?: string | null;
+	actorType?: string | null;
 	cursor?: string | null;
 	limit?: number;
 }
@@ -76,6 +79,8 @@ export async function listEvents(params: ListEventsParams = {}): Promise<EventLi
 			from: params.from ?? null,
 			to: params.to ?? null,
 			traceId: params.traceId ?? null,
+			actorId: params.actorId ?? null,
+			actorType: params.actorType ?? null,
 			cursor: params.cursor ?? null,
 			limit: params.limit ?? 25,
 		});
@@ -102,6 +107,8 @@ export interface StreamEventsParams {
 	severity?: EventSeverity[] | null;
 	requiresAction?: boolean | null;
 	traceId?: string | null;
+	actorId?: string | null;
+	actorType?: string | null;
 }
 
 export interface StreamEventsHandlers {
@@ -189,6 +196,8 @@ export function streamEvents(
 		if (params.requiresAction != null)
 			query.set('requires_action', String(params.requiresAction));
 		if (params.traceId) query.set('trace_id', params.traceId);
+		if (params.actorId) query.set('actor_id', params.actorId);
+		if (params.actorType) query.set('actor_type', params.actorType);
 		for (const t of params.eventType ?? []) query.append('event_type', t);
 		for (const s of params.severity ?? []) query.append('severity', s);
 		const qs = query.toString();

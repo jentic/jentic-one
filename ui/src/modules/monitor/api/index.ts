@@ -12,9 +12,9 @@ export {
 	useJobs,
 	useJob,
 	useCancelJob,
-	useEvents,
 	useAcknowledgeEvent,
 	useEventStream,
+	useEventFeed,
 	useAudit,
 	useActorForTrace,
 	useActorForJob,
@@ -34,13 +34,14 @@ export type {
 } from '@/modules/monitor/api/client';
 
 export {
-	MONITOR_TABS,
+	ACTIVITY_SOURCES,
 	toExecutionStatus,
 	toJobStatus,
 	isTerminalJobStatus,
 } from '@/modules/monitor/api/types';
 export type {
-	MonitorTab,
+	MonitorView,
+	ActivitySource,
 	ExecutionStatusUi,
 	JobStatusUi,
 	AuditActor,

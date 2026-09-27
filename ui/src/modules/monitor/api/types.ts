@@ -13,16 +13,26 @@
  */
 
 /**
- * The Monitor tabs. Drives the `?tab=` deep-link + the segmented toggle.
+ * Monitor's two layouts. Drives the `?view=` deep-link:
  *
- * `overview` leads (it's the natural landing lens) and is fully wired: its
- * charts read the enriched usage-aggregation endpoint `GET /monitoring/usage`
- * (jentic-one-internal#561) and per-agent attribution reads
- * `actor_id`/`actor_type` off executions (#375). All five tabs are functional.
+ *   overview  (default) the usage overview beside a docked live activity
+ *             panel — org:admin; members only ever get `activity`
+ *   activity  the activity log expanded to the full page, with its sources
+ *             (implied by any `?show=`)
  */
-export type MonitorTab = 'overview' | 'executions' | 'jobs' | 'events' | 'audit';
+export type MonitorView = 'overview' | 'activity';
 
-export const MONITOR_TABS: MonitorTab[] = ['overview', 'executions', 'jobs', 'events', 'audit'];
+/**
+ * What the Activity view is showing. Drives the `?show=` deep-link:
+ *
+ *   all    (default) the live platform event feed (`/events` + SSE)
+ *   calls  the execution log (`/executions`) — dense table
+ *   jobs   the async job queue (`/jobs`)
+ *   audit  the org:admin audit log (`/audit`) — who changed what
+ */
+export type ActivitySource = 'all' | 'calls' | 'jobs' | 'audit';
+
+export const ACTIVITY_SOURCES: ActivitySource[] = ['all', 'calls', 'jobs', 'audit'];
 
 /**
  * Execution lifecycle, in UI vocabulary. The live backend's `ExecutionStatus`

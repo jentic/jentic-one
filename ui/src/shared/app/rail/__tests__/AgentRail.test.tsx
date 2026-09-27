@@ -480,7 +480,7 @@ describe('agentStream — wire adaptation + pure helpers', () => {
 		});
 		// The detail param is the underscore vocabulary the Executions tab reads —
 		// `execution`/`trace` aliases switched the tab but left the sheet closed (#617).
-		expect(primaryDestinationFor(ev)).toBe('/monitor?tab=executions&execution_id=exec%20x');
+		expect(primaryDestinationFor(ev)).toBe('/monitor?show=calls&execution_id=exec%20x');
 	});
 
 	it('primaryDestinationFor falls back to trace_id when an execution has no execution_id', () => {
@@ -490,7 +490,7 @@ describe('agentStream — wire adaptation + pure helpers', () => {
 			severity: 'error',
 			tokens: { trace_id: 'tr_9' },
 		});
-		expect(primaryDestinationFor(ev)).toBe('/monitor?tab=executions&trace_id=tr_9');
+		expect(primaryDestinationFor(ev)).toBe('/monitor?show=calls&trace_id=tr_9');
 	});
 
 	it('primaryDestinationFor never deep-links a placeholder "unknown" trace', () => {
@@ -510,7 +510,7 @@ describe('agentStream — wire adaptation + pure helpers', () => {
 			severity: 'info',
 			tokens: { job_id: 'job_7' },
 		});
-		expect(primaryDestinationFor(ev)).toBe('/monitor?tab=jobs&job_id=job_7');
+		expect(primaryDestinationFor(ev)).toBe('/monitor?show=jobs&job_id=job_7');
 	});
 
 	it('primaryDestinationFor routes credential events to the credential detail', () => {
@@ -644,10 +644,12 @@ describe('AgentRail — shell-mounted live surface', () => {
 	it('navigates to the monitor when a feed row is clicked', async () => {
 		const user = userEvent.setup();
 		renderRail(<AgentRail />);
-		const row = await screen.findByText(/Execution failed: slack\.postMessage/i);
+		const row = await screen.findByRole('link', {
+			name: /Execution failed: slack\.postMessage.*Open detail/i,
+		});
 		await user.click(row);
 		await waitFor(() =>
-			expect(screen.getByTestId('location')).toHaveTextContent('/monitor?tab=executions'),
+			expect(screen.getByTestId('location')).toHaveTextContent('/monitor?show=calls'),
 		);
 	});
 
@@ -924,7 +926,7 @@ describe('AgentRail — shell-mounted live surface', () => {
 		await screen.findByRole('button', { name: 'Dismiss toast' });
 	}, 20000);
 
-	it('acknowledges a seeded action-required event → row flips to Acked', async () => {
+	it('acknowledges a seeded action-required event → row dims to the compact line', async () => {
 		const user = userEvent.setup();
 		renderRail(<AgentRail />);
 		// The seeded backlog has multiple action-required events; acknowledge the
@@ -932,7 +934,13 @@ describe('AgentRail — shell-mounted live surface', () => {
 		await screen.findByText(/Execution failed: slack\.postMessage/i);
 		const ack = screen.getAllByRole('button', { name: 'Acknowledge' })[0];
 		await user.click(ack);
-		await waitFor(() => expect(screen.getAllByText('Acked').length).toBeGreaterThanOrEqual(1));
+		// The row re-renders as the compact line, so re-query it.
+		await waitFor(() =>
+			expect(
+				screen.getByText(/Execution failed: slack\.postMessage/i).closest('.opacity-55'),
+			).not.toBeNull(),
+		);
+		expect(screen.queryByText('Acked')).not.toBeInTheDocument();
 	});
 
 	it('drops SSE heartbeat frames — no "Platform" row leaks into the feed', async () => {
