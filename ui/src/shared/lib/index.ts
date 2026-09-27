@@ -43,11 +43,6 @@ export {
 	holdsMigratedServiceAccountKey,
 } from '@/shared/lib/retiredActors';
 
-// Canonical per-severity event icon — the single source of truth shared by
-// Monitor's Events tab and the Dashboard's "Needs attention" card so the same
-// event reads identically in both surfaces.
-export { eventSeverityIcon } from '@/shared/lib/eventSeverity';
-
 // Narrow, module-consumable slices of the agent-stream data layer (NOT the
 // rail's React components): the HAL-link id parser (so Monitor's Events
 // drill-in and the rail parse links with the same rules) and the

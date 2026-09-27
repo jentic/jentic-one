@@ -29,12 +29,13 @@ export const ROUTES = {
 	// once the first admin is created (see SetupPage / setup_required health gate).
 	setup: '/setup',
 	changePassword: '/change-password',
-	// Authenticated app shell home (Dashboard) — the basename index (`/app`).
+	// Authenticated app shell home — the basename index (`/app`), which
+	// redirects to Agents (see App.tsx).
 	app: '/',
 
 	// ── Feature pages ────────────────────────────────────────────────────
 	// Root-relative client paths for the primary feature surfaces, so call-sites
-	// (nav, dashboard quick-actions, cross-module links, back buttons) link by
+	// (nav, first-run checklist, cross-module links, back buttons) link by
 	// a single shared constant instead of a scattered literal. These MUST stay
 	// in lockstep with `nav.ts` and each module's `routes.tsx`. New surfaces
 	// append here.
@@ -69,7 +70,7 @@ export const ROUTE_PATHS = {
 	 * page's URL vocabulary (read by `modules/agents/pages/AgentsPage`);
 	 * `credentials=new` also opens the create wizard, so a call-site whose
 	 * label promises a new credential still lands on the form. The builder
-	 * lives here because cross-module links (dashboard, OAuth popup return)
+	 * lives here because cross-module links (OAuth popup return, the shell)
 	 * need it and modules can't import each other.
 	 */
 	credentialInventory: (opts?: { create?: boolean }) =>
@@ -101,7 +102,6 @@ export const ROUTE_PATHS = {
  * The matching nav entry in `nav.ts` uses the absolute `/app/discover`.
  */
 // <-- feature route imports go here (one import line per module) -->
-import { dashboardRoutes } from '@/modules/dashboard/routes';
 import { agentsRoutes } from '@/modules/agents/routes';
 import { discoverRoutes } from '@/modules/discover/routes';
 import { workspaceRoutes } from '@/modules/workspace/routes';
@@ -111,7 +111,6 @@ import { settingsRoutes } from '@/modules/settings/routes';
 
 export const moduleRoutes: RouteObject[] = [
 	// <-- feature route spreads go here (one `...xRoutes,` line per module) -->
-	...dashboardRoutes,
 	...agentsRoutes,
 	...discoverRoutes,
 	...workspaceRoutes,

@@ -4,7 +4,7 @@ import { renderWithProviders, screen, userEvent, waitFor } from '@/__tests__/tes
 import { Layout } from '@/shared/app/Layout';
 import { AuthProvider } from '@/shared/auth/AuthContext';
 import { setToken } from '@/shared/api';
-import { isNavItemActive, navItems } from '@/shared/app/nav';
+import { isNavItemActive, navItems, sortedNavItems } from '@/shared/app/nav';
 import { SheetPrimitive } from '@/shared/ui/SheetPrimitive';
 import { clearAllToasts, toast } from '@/shared/ui/toastStore';
 
@@ -15,7 +15,7 @@ import { clearAllToasts, toast } from '@/shared/ui/toastStore';
  * nothing here — we're asserting the shell chrome, not routed page content.
  *
  * Routes are basename-relative: the router `basename` (`/app`) is applied once
- * in `main.tsx` and is not exercised here, so the Dashboard home is `/` and
+ * in `main.tsx` and is not exercised here, so the app home is `/` and
  * link hrefs are root-relative (the bare MemoryRouter has no basename).
  */
 function renderShell(route = '/') {
@@ -47,8 +47,8 @@ describe('app shell / navbar', () => {
 		// The active strip depends on viewport (desktop NavTabs vs mobile
 		// BottomNavbar tiles), but every item must be reachable as a link in
 		// one of them. The first TILE_LIMIT-1 always render as direct tiles;
-		// assert those plus the dashboard to stay viewport-agnostic.
-		for (const item of navItems.slice(0, 4)) {
+		// assert those to stay viewport-agnostic.
+		for (const item of sortedNavItems().slice(0, 4)) {
 			expect(
 				screen.getAllByRole('link', { name: new RegExp(item.label) }).length,
 			).toBeGreaterThan(0);
@@ -158,10 +158,16 @@ describe('toast region', () => {
 });
 
 describe('isNavItemActive', () => {
-	it('matches the dashboard only on the exact / path', () => {
-		const dash = navItems.find((i) => i.to === '/')!;
-		expect(isNavItemActive(dash, '/')).toBe(true);
-		expect(isNavItemActive(dash, '/discover')).toBe(false);
+	it('matches a root item only on the exact / path', () => {
+		// No built-in item sits at `/` (it redirects to Agents), but a
+		// downstream `extraNavItems` entry may.
+		const home = { id: 'home', label: 'Home', to: '/', order: 1 };
+		expect(isNavItemActive(home, '/')).toBe(true);
+		expect(isNavItemActive(home, '/discover')).toBe(false);
+	});
+
+	it('leads with Agents, the home surface', () => {
+		expect(sortedNavItems()[0]?.id).toBe('agents');
 	});
 
 	it('matches feature items by prefix so nested routes stay highlighted', () => {

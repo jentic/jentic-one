@@ -55,7 +55,7 @@ describe('SSO login', () => {
 		expect(screen.getByRole('button', { name: 'Sign in' })).toBeVisible();
 	});
 
-	it('exchanges the callback code for a session and lands on the dashboard', async () => {
+	it('exchanges the callback code for a session and lands on Agents', async () => {
 		sessionStorage.setItem(PKCE_VERIFIER_KEY, 'test-verifier');
 		let exchanged = false;
 		worker.use(
@@ -91,7 +91,8 @@ describe('SSO login', () => {
 
 		renderApp('/auth/callback?code=platform-code-xyz');
 
-		expect(await screen.findByRole('heading', { name: 'Dashboard' })).toBeVisible();
+		// The page header fades in, so wait for it to settle visible.
+		await waitFor(() => expect(screen.getByRole('heading', { name: 'Agents' })).toBeVisible());
 		await waitFor(() => expect(exchanged).toBe(true));
 		await waitFor(() =>
 			expect(localStorage.getItem('jentic-one.access_token')).toBe('sso-access-token'),

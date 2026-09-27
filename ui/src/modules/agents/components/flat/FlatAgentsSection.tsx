@@ -7,16 +7,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import { motion, useReducedMotion } from 'framer-motion';
-import { Bot, Plus } from 'lucide-react';
-import {
-	Button,
-	Card,
-	EmptyState,
-	ErrorAlert,
-	ExpandableText,
-	Skeleton,
-	STATUS_ICON,
-} from '@/shared/ui';
+import { Plus } from 'lucide-react';
+import { Button, Card, ErrorAlert, ExpandableText, Skeleton, STATUS_ICON } from '@/shared/ui';
 import { cn } from '@/shared/lib/utils';
 import { useEagerCursorDrain, useHotkey } from '@/shared/hooks';
 import {
@@ -64,6 +56,7 @@ import {
 } from '@/modules/agents/components/LifecycleDialogs';
 import { AgentCreateSheet } from '@/modules/agents/components/AgentCreateSheet';
 import { DcrQuickstart } from '@/modules/agents/components/DcrQuickstart';
+import { FirstRunChecklist } from '@/modules/agents/components/flat/FirstRunChecklist';
 import { AddApisTray } from '@/modules/agents/components/flat/AddApisTray';
 import { ApiSetupQueue } from '@/modules/agents/components/flat/ApiSetupQueue';
 import { stillOwedItems, type PreflightItem } from '@/modules/agents/lib/apiPreflight';
@@ -260,18 +253,12 @@ export function FlatAgentsSection({ createOpen, setCreateOpen, filter }: FlatAge
 	if (agents.length === 0) {
 		return (
 			<>
-				<EmptyState
-					icon={<Bot className="h-6 w-6" />}
-					title="No agents yet"
-					description="An agent either registers itself — landing here as pending, waiting for your approval — or you create one now and give it the APIs it needs in the same flow."
-					action={
-						<Button size="sm" onClick={() => setCreateOpen(true)}>
-							<Plus className="h-4 w-4" />
-							Create an agent
-						</Button>
-					}
-				/>
-				<DcrQuickstart />
+				{/* Agents is the app's home, so an empty fleet is a fresh workspace:
+				    the setup steps, then the self-registration route. */}
+				<div className="space-y-4">
+					<FirstRunChecklist onCreateAgent={() => setCreateOpen(true)} />
+					<DcrQuickstart />
+				</div>
 				{createSheet}
 			</>
 		);

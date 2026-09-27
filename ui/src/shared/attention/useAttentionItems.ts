@@ -2,7 +2,7 @@
  * The ONE definition of "what needs a human right now".
  *
  * Before this hook, four surfaces each counted attention their own way (the
- * dashboard bell, the Agents nav badge, the rail's failure pill, Monitor's
+ * Notifications bell, the Agents nav badge, the rail's failure pill, Monitor's
  * "Unacknowledged" filter) and the bell double-counted a self-registered agent
  * (once as a pending agent, once as its `agent.self_registered` alert). Every
  * surface that shows an attention count or list now reads this hook, so the
@@ -66,8 +66,8 @@ export interface AttentionState {
 }
 
 export const attentionKeys = {
-	events: [...sharedQueryKeys.dashboardRoot, 'attention', 'events'] as const,
-	oauthClients: [...sharedQueryKeys.dashboardRoot, 'attention', 'oauth-clients'] as const,
+	events: [...sharedQueryKeys.attentionRoot, 'events'] as const,
+	oauthClients: [...sharedQueryKeys.attentionRoot, 'oauth-clients'] as const,
 };
 
 const REFETCH_MS = 45_000;

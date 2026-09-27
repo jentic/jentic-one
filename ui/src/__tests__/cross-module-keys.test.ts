@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { sharedQueryKeys } from '@/shared/api';
 import { workspaceKeys } from '@/modules/workspace/api/hooks';
-import { dashboardKeys } from '@/modules/dashboard/api';
+import { attentionKeys } from '@/shared/attention/useAttentionItems';
 import { pendingAgentsCountKey } from '@/shared/hooks/usePendingAgentsCount';
 import { actorDirectoryKey } from '@/shared/hooks/useActorDirectory';
 import { agentsKeysForTest } from '@/modules/agents/api/hooks';
@@ -22,13 +22,15 @@ describe('cross-module query-key registry', () => {
 		expect([...workspaceKeys.apis()]).toEqual([...sharedQueryKeys.workspaceApis]);
 	});
 
-	it('dashboardKeys.all derives from sharedQueryKeys.dashboardRoot', () => {
-		// The shared SSE→query bridge (`agentStream`) invalidates
-		// `sharedQueryKeys.dashboardRoot` on every approval event to refresh the
-		// dashboard tiles. If the Dashboard's own root forked from the shared
-		// one, that invalidation would silently miss — this pins them to one
-		// definition.
-		expect([...dashboardKeys.all]).toEqual([...sharedQueryKeys.dashboardRoot]);
+	it('attentionKeys sit under sharedQueryKeys.attentionRoot', () => {
+		// The SSE→query bridge (`agentStream`) and the Agents module's
+		// approve/deny/create mutations invalidate `sharedQueryKeys.attentionRoot`
+		// to refresh the Notifications bell. A key outside that root would
+		// silently miss the refresh — this pins every attention slice under it.
+		const root = sharedQueryKeys.attentionRoot;
+		for (const key of Object.values(attentionKeys)) {
+			expect([...key].slice(0, root.length)).toEqual([...root]);
+		}
 	});
 
 	it('agentsKeys.all derives from sharedQueryKeys.agentsRoot', () => {

@@ -73,7 +73,7 @@ describe('MonitorPage', () => {
 	beforeEach(() => {
 		setToken('mock-access-token');
 		// `/executions`, `/events`(+stream), and `/audit` are also mocked by the
-		// dashboard + Agent Rail handlers, which register earlier in the global
+		// agents + Activity rail handlers, which register earlier in the global
 		// table. Install Monitor's handlers at runtime so they take precedence
 		// for this page's requests; MSW resets runtime handlers after each test.
 		worker.use(...monitorHandlers);
