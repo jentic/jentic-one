@@ -7,9 +7,9 @@ import { captureConsoleErrors, importInlineApi, sampleOpenApiSpec, uniqueSuffix 
  * (POST /apis -> 202 + job id, the UI polls /jobs/{id}), unlike the synchronous
  * MSW mock — so the paste-import spec asserts the dialog INITIATED the import
  * rather than racing its (timing-sensitive) completion, while a helper-seeded
- * spec covers the card landing in the grid deterministically.
+ * spec covers the row landing in the list deterministically.
  *
- * On a clean DB the grid is empty; each spec seeds its own API so they stay
+ * On a clean DB the list is empty; each spec seeds its own API so they stay
  * hermetic.
  */
 test('workspace renders its empty state on a clean backend', async ({ page }) => {
@@ -18,10 +18,13 @@ test('workspace renders its empty state on a clean backend', async ({ page }) =>
 	await page.goto('/app');
 	await page
 		.getByRole('navigation', { name: 'Primary' })
-		.getByRole('link', { name: 'Workspace' })
+		.getByRole('link', { name: 'APIs', exact: true })
 		.click();
 
-	await expect(page.getByRole('heading', { name: 'Workspace' })).toBeVisible();
+	await expect(page.getByRole('heading', { name: 'APIs', exact: true })).toBeVisible();
+	await expect(
+		page.getByRole('navigation', { name: 'APIs' }).getByRole('link', { name: 'Workspace' }),
+	).toHaveAttribute('aria-current', 'page');
 
 	expect(errors, `unexpected console errors:\n${errors.join('\n')}`).toEqual([]);
 });
@@ -32,7 +35,7 @@ test('import an API by pasting a spec drives the async import', async ({ page })
 	const title = `E2E Paste ${uniqueSuffix()}`;
 
 	await page.goto('/app/workspace');
-	await expect(page.getByRole('heading', { name: 'Workspace' })).toBeVisible();
+	await expect(page.getByRole('heading', { name: 'APIs', exact: true })).toBeVisible();
 
 	await page.getByTestId('workspace-import-open').first().click();
 	await expect(page.getByRole('heading', { name: 'Choose import method' })).toBeVisible();
@@ -54,12 +57,12 @@ test('import an API by pasting a spec drives the async import', async ({ page })
 	await expect(page.getByTestId('import-spec-error')).toBeHidden();
 });
 
-test('an imported API renders as a card in the grid', async ({ page, request }) => {
+test('an imported API renders as a row in the list', async ({ page, request }) => {
 	// A cold worker's first import can take ~25s; widen the per-test budget so
 	// the deterministic job-poll (helpers.ts) fits inside it.
 	test.slow();
 
-	// Seed via the helper (polls the job to done) so the card assertion is
+	// Seed via the helper (polls the job to done) so the row assertion is
 	// deterministic rather than racing the UI's import poll.
 	const apiName = `e2e-grid-${uniqueSuffix()}`;
 	await importInlineApi(request, {
@@ -69,11 +72,11 @@ test('an imported API renders as a card in the grid', async ({ page, request }) 
 	});
 
 	await page.goto('/app/workspace');
-	// The card heading is humanized (#631: apiRefDisplayName title-cases the
-	// slug), so match on the mono `vendor/name/version` subtitle, which still
-	// renders the raw api_name verbatim, and scope to the enclosing card.
+	// The row heading is humanized (#631: apiRefDisplayName title-cases the
+	// slug), so match on the mono `vendor/name · version` line, which still
+	// renders the raw api_name verbatim, and scope to the enclosing row.
 	await expect(
-		page.getByTestId('workspace-api-card').filter({ hasText: apiName }).first(),
+		page.getByTestId('workspace-api-row').filter({ hasText: apiName }).first(),
 	).toBeVisible({ timeout: 30_000 });
 });
 
@@ -90,11 +93,11 @@ test('open an API detail page for an imported spec', async ({ page, request }) =
 	});
 
 	await page.goto('/app/workspace');
-	await expect(page.getByRole('heading', { name: 'Workspace' })).toBeVisible();
+	await expect(page.getByRole('heading', { name: 'APIs', exact: true })).toBeVisible();
 
-	// Match the mono `vendor/name/version` subtitle (raw api_name) rather than
-	// the humanized heading/aria-label (#631), then click the enclosing card.
-	const card = page.getByTestId('workspace-api-card').filter({ hasText: apiName }).first();
+	// Match the mono `vendor/name · version` line (raw api_name) rather than
+	// the humanized heading/aria-label (#631), then click the enclosing row.
+	const card = page.getByTestId('workspace-api-row').filter({ hasText: apiName }).first();
 	await expect(card).toBeVisible({ timeout: 30_000 });
 	await card.click();
 

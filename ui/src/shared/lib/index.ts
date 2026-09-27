@@ -78,3 +78,7 @@ export {
 	apiIdentityTuple,
 	formatApiVersion,
 } from '@/shared/lib/api-display';
+
+// The one set of health cutoffs for usage figures, so an API's "failing"
+// reads the same on its workspace row as in Monitor.
+export { healthTier, type HealthTier } from '@/shared/lib/usageThresholds';

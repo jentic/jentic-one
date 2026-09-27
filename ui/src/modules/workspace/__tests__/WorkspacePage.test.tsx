@@ -3,6 +3,7 @@ import {
 	renderWithProviders,
 	screen,
 	waitFor,
+	within,
 	userEvent,
 	checkA11y,
 	createErrorHandler,
@@ -46,12 +47,45 @@ describe('WorkspacePage', () => {
 		// now prefers a humanised sub-API `name` over the vendor when the two
 		// don't share a prefix — so the tile heading reads as the specific
 		// sub-API (`pos-terminal-management-api` → `Pos Terminal Management
-		// Api`) rather than the generic vendor. The mono
-		// `{vendor}/{name}/{version}` subtitle still shows the copyable
-		// technical identifier.
+		// Api`) rather than the generic vendor. The mono `vendor/name · version`
+		// line still shows the technical identifier.
 		expect(await screen.findByText('Pos Terminal Management Api')).toBeInTheDocument();
-		expect(screen.getByText('adyen/pos-terminal-management-api/1')).toBeInTheDocument();
-		expect(screen.getByText('Draft')).toBeInTheDocument();
+		expect(screen.getByText('adyen/pos-terminal-management-api · 1')).toBeInTheDocument();
+		const adyen = screen.getByRole('link', { name: 'Open Pos Terminal Management Api' });
+		expect(within(adyen).getByText('Draft only')).toBeInTheDocument();
+		expect(within(adyen).getByText('Not serving')).toBeInTheDocument();
+	});
+
+	it('joins traffic and credentials onto each row', async () => {
+		renderWithProviders(<WorkspacePage />);
+		const stripe = await screen.findByRole('link', { name: 'Open Stripe' });
+		// The credentials mock holds one credential for stripe/stripe-api/2024-01-01.
+		expect(await within(stripe).findByText('1 credential')).toBeInTheDocument();
+		// Monitoring reports calls for `stripe/stripe-api`.
+		expect(await within(stripe).findByText(/\d+ calls/)).toBeInTheDocument();
+
+		// Kitchen Sink needs a bearer token and no credential targets it.
+		const sink = screen.getByRole('link', { name: 'Open Kitchen Sink (all states)' });
+		expect(await within(sink).findByText('None')).toBeInTheDocument();
+		expect(within(sink).getByText('No credential')).toBeInTheDocument();
+	});
+
+	it('narrows to the APIs that need attention', async () => {
+		const user = userEvent.setup();
+		renderWithProviders(<WorkspacePage />);
+		await screen.findByText('Stripe');
+
+		// The count waits for the credential list, so wait for it to appear.
+		const attention = await screen.findByRole('button', { name: /Needs attention \(\d+\)/ });
+		await user.click(attention);
+
+		// Adyen (draft) stays; BigCo (live, needs no credential) goes.
+		await waitFor(() => {
+			expect(screen.queryByRole('link', { name: 'Open BigCo' })).not.toBeInTheDocument();
+		});
+		expect(
+			screen.getByRole('link', { name: 'Open Pos Terminal Management Api' }),
+		).toBeVisible();
 	});
 
 	it('has no critical a11y violations', async () => {
@@ -69,7 +103,9 @@ describe('WorkspacePage', () => {
 		await user.type(screen.getByLabelText('Filter your APIs'), 'stripe');
 
 		await waitFor(() => {
-			expect(screen.queryByText('adyen/pos-terminal-management-api')).not.toBeInTheDocument();
+			expect(
+				screen.queryByText('adyen/pos-terminal-management-api · 1'),
+			).not.toBeInTheDocument();
 		});
 		expect(screen.getByText('Stripe')).toBeInTheDocument();
 	});
@@ -89,7 +125,7 @@ describe('WorkspacePage', () => {
 	it('surfaces a load error with a retry affordance', async () => {
 		worker.use(createErrorHandler('get', '/apis', { status: 500 }));
 		renderWithProviders(<WorkspacePage />);
-		expect(await screen.findByTestId('workspace-grid-error')).toBeInTheDocument();
+		expect(await screen.findByTestId('workspace-list-error')).toBeInTheDocument();
 		expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
 	});
 

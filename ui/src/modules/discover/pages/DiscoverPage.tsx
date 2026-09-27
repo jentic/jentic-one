@@ -1,5 +1,6 @@
 /**
- * Discover page — the public API catalog surface.
+ * Discover page — the public API catalog, the "Catalog" half of the APIs
+ * surface (the Workspace list is the other half; `ApisSectionNav` switches).
  *
  * Browses the public Jentic catalog (`GET /catalog`): each entry carries a
  * `registered` flag (Imported vs Available). The user can search, filter by
@@ -16,6 +17,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Upload } from 'lucide-react';
 import { PageShell, PageHeader, PageHelp, AppLink } from '@/shared/ui';
 import { ROUTES } from '@/shared/app/routes';
+import { ApisSectionNav } from '@/shared/app';
 import { DiscoverToolbar } from '@/modules/discover/components/DiscoverToolbar';
 import { DiscoveryGrid } from '@/modules/discover/components/DiscoveryGrid';
 import { ApiDetailSheet } from '@/modules/discover/components/ApiDetailSheet';
@@ -86,8 +88,8 @@ export default function DiscoverPage() {
 	return (
 		<PageShell spacing="space-y-0">
 			<PageHeader
-				title="Discover APIs"
-				subtitle="Browse the public Jentic catalog. Import an API to use it — or import your own in Workspace."
+				title="APIs"
+				subtitle="The public Jentic catalog. Importing an API adds it to the workspace for everyone in it."
 				actions={
 					<>
 						<AppLink
@@ -100,11 +102,11 @@ export default function DiscoverPage() {
 							Import your own API
 						</AppLink>
 						<PageHelp
-							title="About Discover"
+							title="About the catalog"
 							intro={
 								<p>
-									Discover lists the public Jentic catalog of importable APIs,
-									flagging which are already imported into your workspace.
+									The catalog lists the public Jentic APIs you can import,
+									flagging which are already in your workspace.
 								</p>
 							}
 							sections={[
@@ -114,7 +116,9 @@ export default function DiscoverPage() {
 										<p>
 											<strong>Imported</strong> APIs already live in your
 											workspace. <strong>Available</strong> APIs can be
-											imported to register them locally.
+											imported to register them locally. The workspace is
+											shared: an import is visible to everyone in it, and to
+											any agent granted the API.
 										</p>
 									),
 								},
@@ -132,6 +136,9 @@ export default function DiscoverPage() {
 					</>
 				}
 			/>
+
+			{/* `space-y-0` shell: match the Workspace page's gaps (16px above, 12px below). */}
+			<ApisSectionNav className="mt-4 mb-3" />
 
 			<DiscoverToolbar
 				query={query}

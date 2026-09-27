@@ -19,6 +19,8 @@ import {
 	ApiSpecService,
 	ApiOperationsService,
 	CatalogService,
+	GroupBy,
+	MonitoringService,
 	OverlaysService,
 } from '@/shared/api';
 import {
@@ -35,6 +37,7 @@ import type {
 	CursorPage,
 	ImportJob,
 	Overlay,
+	UsageRow,
 	WorkspaceApi,
 } from '@/modules/workspace/api/types';
 
@@ -342,6 +345,39 @@ export async function unsnoozeCatalogEntry(apiId: string): Promise<void> {
 		await CatalogService.unsnoozeCatalogEntry({ apiId });
 	} catch (error) {
 		throw toWorkspaceError(error, 'Failed to resume update notifications.');
+	}
+}
+
+/** The backend's cap on `top_limit` — also how many rows one usage read can return. */
+export const USAGE_TOP_LIMIT = 50;
+
+/**
+ * Call volume since `since` (unix seconds), grouped by API or by agent
+ * (`GET /monitoring/usage`). `apiId` narrows to one API (`vendor/name`). Only
+ * the `top` rows are returned: the workspace shows per-API and per-agent
+ * figures, not the time series Monitor charts.
+ */
+export async function getUsage(params: {
+	since: number;
+	groupBy: 'api' | 'agent';
+	apiId?: string;
+	topLimit?: number;
+}): Promise<UsageRow[]> {
+	try {
+		const res = await MonitoringService.getUsageStats({
+			since: params.since,
+			groupBy: params.groupBy === 'api' ? GroupBy.API : GroupBy.AGENT,
+			topLimit: params.topLimit ?? USAGE_TOP_LIMIT,
+			apiId: params.apiId ?? null,
+		});
+		return res.top.map((row) => ({
+			key: row.key,
+			label: row.label,
+			total: row.total,
+			failed: row.failed,
+		}));
+	} catch (error) {
+		throw toWorkspaceError(error, 'Failed to load API usage.');
 	}
 }
 

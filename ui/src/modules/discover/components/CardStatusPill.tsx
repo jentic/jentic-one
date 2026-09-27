@@ -5,7 +5,7 @@
  * neutral outline for available). Keyed off the catalog
  * entry's `registered` flag — the single source of truth under D-005a. A
  * registered entry with an upstream spec update also gets a warning-styled
- * "Update available" badge, matching the Workspace ApiCard signal.
+ * "Update available" badge, matching the Workspace list's signal.
  */
 import { CheckCircle2, Globe, Loader2, RefreshCw } from 'lucide-react';
 
@@ -16,7 +16,7 @@ interface CardStatusPillProps {
 	/**
 	 * Registered entry whose upstream spec has an update the local revision
 	 * hasn't adopted. Renders an extra "Update available" badge beside the
-	 * Imported pill, mirroring the Workspace ApiCard signal.
+	 * Imported pill, mirroring the Workspace list's signal.
 	 */
 	updateAvailable?: boolean;
 	className?: string;

@@ -7,7 +7,14 @@
  * summaries, a lifecycle state distinct from origin, revision origin labels,
  * and the "current serving state" header line. Pure + unit-tested; no I/O.
  */
-import type { ApiRevision, Overlay, RevisionState } from '@/modules/workspace/api/types';
+import { healthTier } from '@/shared/lib';
+import type {
+	ApiRevision,
+	Overlay,
+	RevisionState,
+	UsageRow,
+	WorkspaceApi,
+} from '@/modules/workspace/api/types';
 
 // ---------------------------------------------------------------------------
 // Short ids
@@ -42,6 +49,23 @@ export function shortRevisionId(id: string): string {
 // ---------------------------------------------------------------------------
 // Dates
 // ---------------------------------------------------------------------------
+
+/** Coarse age of an instant (`just now`, `5m ago`, `3d ago`, `2y ago`); null if unparseable. */
+export function formatAgo(iso: string): string | null {
+	const ts = Date.parse(iso);
+	if (Number.isNaN(ts)) return null;
+	const sec = Math.round((Date.now() - ts) / 1000);
+	if (sec < 60) return 'just now';
+	const min = Math.round(sec / 60);
+	if (min < 60) return `${min}m ago`;
+	const hr = Math.round(min / 60);
+	if (hr < 24) return `${hr}h ago`;
+	const day = Math.round(hr / 24);
+	if (day < 30) return `${day}d ago`;
+	const mo = Math.round(day / 30);
+	if (mo < 12) return `${mo}mo ago`;
+	return `${Math.round(mo / 12)}y ago`;
+}
 
 /**
  * Compact absolute datetime (e.g. "7 Aug 2026, 10:52") — the one date format
@@ -370,14 +394,26 @@ export function diffBaseFor(
 // Current serving state header
 // ---------------------------------------------------------------------------
 
+export interface ChangeEvent {
+	at: string;
+	label: string;
+	/**
+	 * Who made the change, when the wire records it: the submitter of a
+	 * revision's spec or of an overlay. Promotions, confirms and deprecations
+	 * carry no actor on these rows (the audit log has them), so they're null
+	 * rather than guessed.
+	 */
+	actorId: string | null;
+}
+
 /**
- * The most recent lifecycle event across revisions + overlays, described.
- * Overlay deprecations are labeled from the persisted `deprecated_reason`
- * (durable — a past rollback stays "rolled back" no matter what happened
- * since), not re-derived from the current revision pointer.
+ * The most recent lifecycle event across revisions + overlays. Overlay
+ * deprecations are labeled from the persisted `deprecated_reason` (durable — a
+ * past rollback stays "rolled back" no matter what happened since), not
+ * re-derived from the current revision pointer.
  */
-export function describeLastChange(revisions: ApiRevision[], overlays: Overlay[]): string | null {
-	const events: { at: string; label: string }[] = [];
+export function lastChangeEvent(revisions: ApiRevision[], overlays: Overlay[]): ChangeEvent | null {
+	const events: ChangeEvent[] = [];
 
 	for (const rev of revisions) {
 		// A plain upload creates a *draft* serving nothing — "imported" would
@@ -388,14 +424,18 @@ export function describeLastChange(revisions: ApiRevision[], overlays: Overlay[]
 				: rev.state === 'draft'
 					? 'uploaded (draft)'
 					: 'imported';
-		events.push({ at: rev.createdAt, label: noun });
-		if (rev.promotedAt) events.push({ at: rev.promotedAt, label: 'promoted' });
-		if (rev.archivedAt) events.push({ at: rev.archivedAt, label: 'archived' });
+		events.push({ at: rev.createdAt, label: noun, actorId: rev.submittedBy });
+		if (rev.promotedAt) events.push({ at: rev.promotedAt, label: 'promoted', actorId: null });
+		if (rev.archivedAt) events.push({ at: rev.archivedAt, label: 'archived', actorId: null });
 	}
 	for (const overlay of overlays) {
-		events.push({ at: overlay.createdAt, label: 'overlay submitted' });
+		events.push({
+			at: overlay.createdAt,
+			label: 'overlay submitted',
+			actorId: overlay.createdBy,
+		});
 		if (overlay.confirmedAt)
-			events.push({ at: overlay.confirmedAt, label: 'overlay confirmed' });
+			events.push({ at: overlay.confirmedAt, label: 'overlay confirmed', actorId: null });
 		if (overlay.deprecatedAt) {
 			const label =
 				overlay.deprecatedReason === 'rollback'
@@ -403,14 +443,78 @@ export function describeLastChange(revisions: ApiRevision[], overlays: Overlay[]
 					: overlay.deprecatedReason === 'superseded_by_reimport'
 						? 'superseded by re-import'
 						: 'overlay deprecated';
-			events.push({ at: overlay.deprecatedAt, label });
+			events.push({ at: overlay.deprecatedAt, label, actorId: null });
 		}
 	}
 
 	const valid = events.filter((e) => !Number.isNaN(Date.parse(e.at)));
 	if (valid.length === 0) return null;
-	const latest = valid.reduce((a, b) => (Date.parse(a.at) >= Date.parse(b.at) ? a : b));
-	return `${latest.label} ${shortDate(latest.at)}`;
+	return valid.reduce((a, b) => (Date.parse(a.at) >= Date.parse(b.at) ? a : b));
+}
+
+/** {@link lastChangeEvent}, described (e.g. `rolled back Aug 7`). */
+export function describeLastChange(revisions: ApiRevision[], overlays: Overlay[]): string | null {
+	const latest = lastChangeEvent(revisions, overlays);
+	return latest ? `${latest.label} ${shortDate(latest.at)}` : null;
+}
+
+/**
+ * Who first brought the API into the workspace: the submitter of its oldest
+ * revision. Null when that revision records no submitter (older rows, system
+ * imports).
+ */
+export function importedBy(revisions: ApiRevision[]): string | null {
+	if (revisions.length === 0) return null;
+	const oldest = revisions.reduce((a, b) =>
+		Date.parse(a.createdAt) <= Date.parse(b.createdAt) ? a : b,
+	);
+	return oldest.submittedBy;
+}
+
+/** Overlays submitted but not yet confirmed — someone has to review them. */
+export function pendingOverlayCount(overlays: Overlay[]): number {
+	return overlays.filter((o) => o.status === 'pending').length;
+}
+
+// ---------------------------------------------------------------------------
+// Workspace list: what needs someone's attention
+// ---------------------------------------------------------------------------
+
+/**
+ * Why an API in a shared workspace needs someone to look at it, most urgent
+ * first. Each reason is something an operator can act on from the API's
+ * page; plain facts (operation counts, revision counts) are not reasons.
+ */
+export type ApiAttention = 'failing' | 'no-credential' | 'draft' | 'update';
+
+export const API_ATTENTION_LABEL: Record<ApiAttention, string> = {
+	failing: 'Calls failing',
+	'no-credential': 'No credential',
+	draft: 'Not serving',
+	update: 'Update available',
+};
+
+export function apiAttention(
+	api: Pick<WorkspaceApi, 'currentRevisionId' | 'updateAvailable' | 'securitySchemes'>,
+	context: {
+		/** Credentials targeting the API; undefined while unknown. */
+		credentialCount: number | undefined;
+		/** Calls over the usage window; null = none, undefined = unknown. */
+		traffic: UsageRow | null | undefined;
+	},
+): ApiAttention[] {
+	const reasons: ApiAttention[] = [];
+	const { traffic, credentialCount } = context;
+	if (traffic && traffic.total > 0) {
+		const successRate = ((traffic.total - traffic.failed) / traffic.total) * 100;
+		if (healthTier(successRate) === 'failing') reasons.push('failing');
+	}
+	// Only an API that declares a security scheme needs a credential to be
+	// callable; an open API with none is fine.
+	if (api.securitySchemes.length > 0 && credentialCount === 0) reasons.push('no-credential');
+	if (api.currentRevisionId === null) reasons.push('draft');
+	if (api.updateAvailable) reasons.push('update');
+	return reasons;
 }
 
 /**
@@ -442,4 +546,27 @@ export function describeServingState(revisions: ApiRevision[], overlays: Overlay
 	return [serving, overlaysPart, lastChange ? `last change: ${lastChange}` : null]
 		.filter(Boolean)
 		.join(' · ');
+}
+
+// ---------------------------------------------------------------------------
+// Access tab: who is calling
+// ---------------------------------------------------------------------------
+
+export interface UsageCaller {
+	actorType: string;
+	actorId: string;
+}
+
+/**
+ * Split a `group_by=agent` usage key — `actor_type/actor_id`, e.g.
+ * `agent/agnt_…` or `user/usr_…` — into its parts. Null for the
+ * unattributed bucket (an empty or malformed key), which has no one to name.
+ */
+export function parseUsageCaller(key: string | null | undefined): UsageCaller | null {
+	if (!key) return null;
+	const slash = key.indexOf('/');
+	if (slash <= 0) return null;
+	const actorId = key.slice(slash + 1);
+	if (!actorId) return null;
+	return { actorType: key.slice(0, slash), actorId };
 }

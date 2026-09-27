@@ -1,26 +1,39 @@
 /**
- * WorkspacePage — the user's home base: the APIs registered in this jentic-one
- * instance.
+ * WorkspacePage — the Workspace half of the APIs surface: every API registered
+ * in this jentic-one instance.
  *
- * Scoped to **APIs only** (credentials + agents live in other modules).
- * The page owns the import dialog open-state (a single dialog reachable from
- * both the header button and the empty-state CTA) and an in-memory filter over
- * the loaded rows. Catalog-wide search lives in Discover, not here.
+ * The workspace is SHARED — every operator in the org sees the same list and
+ * every agent they grant draws on it — so each row carries the context a
+ * teammate needs before relying on or changing an API: is it serving, who is
+ * calling it and is that working, does the gateway hold a credential for it.
+ * "Needs attention" narrows to the APIs where one of those answers is bad.
+ *
+ * The page owns the import dialog open-state (one dialog reachable from the
+ * header and the empty state), the in-memory filter, and the joins; the
+ * public catalog is the other tab of the same surface (`ApisSectionNav`).
  */
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router';
-import { Upload } from 'lucide-react';
-import { PageShell, PageHeader, PageHelp, Button } from '@/shared/ui';
-import { ApiGrid } from '@/modules/workspace/components/ApiGrid';
+import { Compass, Upload } from 'lucide-react';
+import { PageShell, PageHeader, PageHelp, Button, AppLink } from '@/shared/ui';
+import { ApisSectionNav, ROUTES } from '@/shared/app';
+import { ApiList } from '@/modules/workspace/components/ApiList';
+import type { ApiRowProps } from '@/modules/workspace/components/ApiRow';
 import { ImportSpecDialog } from '@/shared/credentials/components/ImportSpecDialog';
-import { WorkspaceStatsStrip } from '@/modules/workspace/components/WorkspaceStatsStrip';
-import { WorkspaceFilterBar } from '@/modules/workspace/components/WorkspaceFilterBar';
-import { WorkspaceCatalogFooter } from '@/modules/workspace/components/WorkspaceCatalogFooter';
-import { useWorkspaceApis } from '@/modules/workspace/api';
+import {
+	WorkspaceFilterBar,
+	type WorkspaceScope,
+} from '@/modules/workspace/components/WorkspaceFilterBar';
+import {
+	apiAttention,
+	useWorkspaceApis,
+	useWorkspaceCredentials,
+	useWorkspaceTraffic,
+} from '@/modules/workspace/api';
 
 export default function WorkspacePage() {
 	const [searchParams, setSearchParams] = useSearchParams();
-	// Deep-link support: Discover cross-links here with `?import=1` to open the
+	// Deep-link support: the Catalog view cross-links here with `?import=1` to open the
 	// import dialog on arrival — landing on the Workspace is the point (the new
 	// API appears in the list behind it), so Discover navigates rather than
 	// embedding the dialog. Strip the param once consumed so a refresh or
@@ -32,7 +45,10 @@ export default function WorkspacePage() {
 	// param changes and strips it. Don't collapse the two into one.
 	const [importOpen, setImportOpen] = useState(() => searchParams.get('import') === '1');
 	const [filter, setFilter] = useState('');
+	const [scope, setScope] = useState<WorkspaceScope>('all');
 	const query = useWorkspaceApis();
+	const { forApi: trafficFor } = useWorkspaceTraffic();
+	const { forApi: credentialsFor, complete: credentialsComplete } = useWorkspaceCredentials();
 
 	useEffect(() => {
 		if (searchParams.get('import') !== '1') return;
@@ -43,11 +59,33 @@ export default function WorkspacePage() {
 	}, [searchParams, setSearchParams]);
 
 	const apis = query.data?.items;
+	const rows = useMemo<ApiRowProps[]>(
+		() =>
+			(apis ?? []).map((api) => {
+				const credentialCount = credentialsComplete
+					? credentialsFor(api.api).length
+					: undefined;
+				const apiTraffic = trafficFor(api.api);
+				return {
+					api,
+					traffic: apiTraffic,
+					credentialCount,
+					attention: apiAttention(api, { credentialCount, traffic: apiTraffic }),
+				};
+			}),
+		[apis, credentialsFor, credentialsComplete, trafficFor],
+	);
+	// The count waits for the credential join: "0 need attention" while the
+	// credential pages are still loading would be a claim, not a fact.
+	const attentionCount = credentialsComplete
+		? rows.filter((row) => row.attention.length > 0).length
+		: undefined;
+
 	const filtered = useMemo(() => {
-		const rows = apis ?? [];
 		const needle = filter.trim().toLowerCase();
-		if (!needle) return rows;
-		return rows.filter((api) => {
+		return rows.filter(({ api, attention }) => {
+			if (scope === 'attention' && attention.length === 0) return false;
+			if (!needle) return true;
 			const haystack = [
 				api.displayName ?? '',
 				api.description ?? '',
@@ -59,10 +97,10 @@ export default function WorkspacePage() {
 				.toLowerCase();
 			return haystack.includes(needle);
 		});
-	}, [apis, filter]);
+	}, [rows, filter, scope]);
 
-	const total = apis?.length ?? 0;
-	const isFiltering = filter.trim().length > 0;
+	const total = rows.length;
+	const isFiltering = filter.trim().length > 0 || scope === 'attention';
 	const resultsLabel = isFiltering ? `${filtered.length} of ${total}` : undefined;
 
 	const importButton = (
@@ -77,28 +115,42 @@ export default function WorkspacePage() {
 		</Button>
 	);
 
+	const emptyActions = (
+		<div className="flex flex-wrap justify-center gap-2">
+			<AppLink href={ROUTES.discover} variant="primary" size="sm">
+				<Compass size={14} aria-hidden="true" />
+				Browse the catalog
+			</AppLink>
+			{importButton}
+		</div>
+	);
+
 	return (
 		<PageShell>
 			<PageHeader
-				title="Workspace"
-				subtitle="The APIs registered in this instance."
+				title="APIs"
+				subtitle="Shared by everyone in this workspace, and by the agents you grant."
 				actions={
 					<>
 						{importButton}
 						<PageHelp
-							title="About Workspace"
+							title="About APIs"
 							sections={[
 								{
-									heading: 'What lives here',
-									body: 'Every API you have imported into this jentic-one instance — its operations, revisions, and security schemes. Click an API to open its detail page.',
+									heading: 'Workspace and Catalog',
+									body: 'Workspace lists the APIs registered in this jentic-one instance. Catalog is the public Jentic catalog: import an API from there and it joins the workspace.',
 								},
 								{
-									heading: 'Adding an API',
-									body: 'Use "Import API" to register an OpenAPI spec by URL, paste, or file upload. Imports run server-side; a freshly imported API starts as a draft revision you can promote to make its operations live.',
+									heading: 'A shared workspace',
+									body: 'Everyone in your organisation sees the same APIs. Each row shows whether the API is serving, how many calls agents made to it in the last 7 days and how many failed, and whether a credential exists for it — check these before you change or remove an API someone else depends on.',
 								},
 								{
-									heading: 'Filtering',
-									body: 'The filter box narrows the APIs shown right now — an in-memory match over name, description, and vendor. To search the public catalog, open Discover.',
+									heading: 'Needs attention',
+									body: 'An API needs attention when its calls are failing, it declares a security scheme but has no credential, it has no live revision, or its upstream spec has an update you have not adopted.',
+								},
+								{
+									heading: 'Adding your own API',
+									body: 'Use "Import API" to register an OpenAPI spec by URL, paste, or file upload. A freshly imported API starts as a draft revision you promote to make its operations live.',
 								},
 							]}
 						/>
@@ -106,21 +158,26 @@ export default function WorkspacePage() {
 				}
 			/>
 
-			<WorkspaceStatsStrip apis={apis ?? []} loading={query.isLoading} />
+			<ApisSectionNav className="-mt-2" />
 
-			<WorkspaceFilterBar value={filter} onChange={setFilter} resultsLabel={resultsLabel} />
+			<WorkspaceFilterBar
+				value={filter}
+				onChange={setFilter}
+				resultsLabel={resultsLabel}
+				scope={scope}
+				onScopeChange={setScope}
+				attentionCount={attentionCount}
+			/>
 
-			<ApiGrid
-				apis={filtered}
+			<ApiList
+				rows={filtered}
 				isLoading={query.isLoading}
 				isError={query.isError}
 				error={query.error}
 				onRetry={() => query.refetch()}
-				emptyAction={importButton}
+				emptyAction={emptyActions}
 				filtered={isFiltering}
 			/>
-
-			<WorkspaceCatalogFooter />
 
 			<ImportSpecDialog open={importOpen} onClose={() => setImportOpen(false)} />
 		</PageShell>

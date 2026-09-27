@@ -1,9 +1,10 @@
 /**
- * DiscoveryGrid — the responsive card grid with loading / empty / error states
- * and keyset infinite scroll.
+ * DiscoveryGrid — the catalog as a single-column list of rows (matching the
+ * Workspace list), with loading / empty / error states and keyset infinite
+ * scroll.
  *
  * Stateless presentational shell: the page owns data + handlers and passes
- * entities in. Loading shows skeleton cards (no layout shift); empty shows the
+ * entities in. Loading shows skeleton rows (no layout shift); empty shows the
  * shared EmptyState; errors surface the shared ErrorAlert. When `hasNextPage`
  * is set, an IntersectionObserver sentinel calls `onLoadMore` as it scrolls
  * into view (with a shared Button fallback for keyboard/no-IO environments).
@@ -34,19 +35,18 @@ interface DiscoveryGridProps {
 	onLoadMore: () => void;
 }
 
-const GRID_CLASS = 'grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3';
+const LIST_CLASS =
+	'border-border bg-card divide-border/60 divide-y overflow-hidden rounded-xl border';
 
-function SkeletonCard() {
+function SkeletonRow() {
 	return (
-		<div className="border-border bg-card flex h-[148px] flex-col gap-3 rounded-xl border p-5">
-			<div className="flex items-start gap-4">
-				<Skeleton className="h-10 w-10 rounded-[10px]" />
-				<div className="flex-1 space-y-2">
-					<Skeleton className="h-4 w-2/3" />
-					<Skeleton className="h-3 w-full" />
-				</div>
+		<div className="flex items-center gap-3 px-4 py-3">
+			<Skeleton className="h-8 w-8 rounded-lg" />
+			<div className="flex-1 space-y-1.5">
+				<Skeleton className="h-3.5 w-1/3" />
+				<Skeleton className="h-3 w-1/5" />
 			</div>
-			<Skeleton className="mt-auto h-5 w-20 rounded-full" />
+			<Skeleton className="h-8 w-20 rounded-lg" />
 		</div>
 	);
 }
@@ -85,9 +85,9 @@ export function DiscoveryGrid({
 
 	if (loading && entities.length === 0) {
 		return (
-			<div className={GRID_CLASS} data-testid="discovery-grid-loading" aria-busy="true">
-				{Array.from({ length: 6 }).map((_, i) => (
-					<SkeletonCard key={i} />
+			<div className={LIST_CLASS} data-testid="discovery-grid-loading" aria-busy="true">
+				{Array.from({ length: 8 }).map((_, i) => (
+					<SkeletonRow key={i} />
 				))}
 			</div>
 		);
@@ -120,18 +120,19 @@ export function DiscoveryGrid({
 
 	return (
 		<div className="flex flex-col gap-4">
-			<div className={GRID_CLASS} data-testid="discovery-grid">
+			<ul className={LIST_CLASS} data-testid="discovery-grid">
 				{entities.map((entity) => (
-					<DiscoveryCard
-						key={entity.id}
-						entity={entity}
-						active={entity.id === activeId}
-						onOpen={onOpen}
-						onImport={onImport}
-						importPending={pendingApiIds.has(entity.apiId)}
-					/>
+					<li key={entity.id}>
+						<DiscoveryCard
+							entity={entity}
+							active={entity.id === activeId}
+							onOpen={onOpen}
+							onImport={onImport}
+							importPending={pendingApiIds.has(entity.apiId)}
+						/>
+					</li>
 				))}
-			</div>
+			</ul>
 
 			{hasNextPage && (
 				<div ref={sentinelRef} className="flex justify-center py-2">

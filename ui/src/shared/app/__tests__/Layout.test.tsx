@@ -171,9 +171,19 @@ describe('isNavItemActive', () => {
 	});
 
 	it('matches feature items by prefix so nested routes stay highlighted', () => {
-		const discover = navItems.find((i) => i.to === '/discover')!;
-		expect(isNavItemActive(discover, '/discover')).toBe(true);
-		expect(isNavItemActive(discover, '/discover/abc')).toBe(true);
-		expect(isNavItemActive(discover, '/discoverable')).toBe(false);
+		const apis = navItems.find((i) => i.to === '/workspace')!;
+		expect(isNavItemActive(apis, '/workspace')).toBe(true);
+		expect(isNavItemActive(apis, '/workspace/stripe/stripe-api/1')).toBe(true);
+		expect(isNavItemActive(apis, '/workspaces')).toBe(false);
+	});
+
+	it('keeps the APIs item lit on the catalog, its other half', () => {
+		const apis = navItems.find((i) => i.to === '/workspace')!;
+		expect(apis.label).toBe('APIs');
+		expect(isNavItemActive(apis, '/discover')).toBe(true);
+		expect(isNavItemActive(apis, '/discover/abc')).toBe(true);
+		expect(isNavItemActive(apis, '/discoverable')).toBe(false);
+		// One entry for both halves: the catalog has no nav item of its own.
+		expect(navItems.some((i) => i.to === '/discover')).toBe(false);
 	});
 });

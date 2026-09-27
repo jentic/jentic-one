@@ -24,6 +24,7 @@ import {
 	getApi,
 	getApiSpec,
 	getRevisionSpec,
+	getUsage,
 	listApis,
 	listOperations,
 	listOverlays,
@@ -32,6 +33,7 @@ import {
 	reimportCatalogEntry,
 	rollbackOverlay,
 	snoozeCatalogEntry,
+	USAGE_TOP_LIMIT,
 } from '@/modules/workspace/api/client';
 import type { ApiKey } from '@/modules/workspace/api/apiId';
 import { formatApiKey } from '@/modules/workspace/api/apiId';
@@ -40,12 +42,20 @@ import type {
 	ApiRevision,
 	CursorPage,
 	Overlay,
+	UsageRow,
 	WorkspaceApi,
 } from '@/modules/workspace/api/types';
+import { USAGE_WINDOW_DAYS } from '@/modules/workspace/api/types';
 // The job poll is shared with the spec import (which is itself shared, so the
 // Add-APIs tray can upload a spec) — one loop, two callers, one reading of the
 // backend's terminal-status vocabulary.
-import { jobSucceeded, pollJobToTerminal } from '@/shared/credentials/api';
+import {
+	jobSucceeded,
+	pollJobToTerminal,
+	useAllCredentialAgents,
+	useAllCredentials,
+} from '@/shared/credentials/api';
+import type { Credential, CredentialAgentResponse, DrainedList } from '@/shared/credentials/api';
 import { sharedQueryKeys } from '@/shared/api';
 
 /** Stable query-key roots so callers/tests can target invalidation precisely. */
@@ -62,6 +72,8 @@ export const workspaceKeys = {
 	spec: (key: ApiKey) => [...workspaceKeys.all, 'spec', formatApiKey(key)] as const,
 	revisionSpec: (key: ApiKey, revisionId: string) =>
 		[...workspaceKeys.all, 'spec', formatApiKey(key), revisionId] as const,
+	usage: () => [...workspaceKeys.all, 'usage'] as const,
+	apiUsage: (key: ApiKey) => [...workspaceKeys.all, 'usage', formatApiKey(key)] as const,
 };
 
 /** The workspace API list. */
@@ -620,4 +632,106 @@ export function useReimportFromCatalog(key: ApiKey) {
 		},
 		isReimporting,
 	};
+}
+
+// ---------------------------------------------------------------------------
+// Shared-workspace context: who calls an API, and with which credentials
+// ---------------------------------------------------------------------------
+
+/** How long a usage read is reused before refetching — it's a glance, not a live feed. */
+const USAGE_STALE_MS = 60_000;
+
+function usageSince(): number {
+	return Math.floor(Date.now() / 1000) - USAGE_WINDOW_DAYS * 24 * 60 * 60;
+}
+
+/**
+ * The monitoring store groups by `vendor/name` (not version), so every
+ * version of an API shares one traffic figure.
+ */
+export function usageKeyFor(api: Pick<ApiKey, 'vendor' | 'name'>): string {
+	return `${api.vendor}/${api.name}`;
+}
+
+export interface WorkspaceTraffic {
+	/**
+	 * Calls for an API over the window. `null` means "none recorded"; `undefined`
+	 * means unknown — still loading, failed, or beyond the busiest
+	 * {@link USAGE_TOP_LIMIT} APIs the backend returns (so absent ≠ zero).
+	 */
+	forApi: (api: Pick<ApiKey, 'vendor' | 'name'>) => UsageRow | null | undefined;
+	isPending: boolean;
+	isError: boolean;
+}
+
+/** Per-API call volume for the whole workspace over the last {@link USAGE_WINDOW_DAYS} days. */
+export function useWorkspaceTraffic(): WorkspaceTraffic {
+	const query = useQuery({
+		queryKey: workspaceKeys.usage(),
+		queryFn: () => getUsage({ since: usageSince(), groupBy: 'api' }),
+		staleTime: USAGE_STALE_MS,
+	});
+	const { data } = query;
+	const byApi = useMemo(() => new Map((data ?? []).map((row) => [row.key, row])), [data]);
+	const truncated = (data?.length ?? 0) >= USAGE_TOP_LIMIT;
+	const forApi = useCallback(
+		(api: Pick<ApiKey, 'vendor' | 'name'>) => {
+			if (!data) return undefined;
+			return byApi.get(usageKeyFor(api)) ?? (truncated ? undefined : null);
+		},
+		[data, byApi, truncated],
+	);
+	return { forApi, isPending: query.isPending, isError: query.isError };
+}
+
+/** The agents that called one API over the last {@link USAGE_WINDOW_DAYS} days, busiest first. */
+export function useApiAgentTraffic(key: ApiKey | null): UseQueryResult<UsageRow[]> {
+	return useQuery({
+		queryKey: key ? workspaceKeys.apiUsage(key) : workspaceKeys.usage(),
+		queryFn: () =>
+			getUsage({
+				since: usageSince(),
+				groupBy: 'agent',
+				apiId: usageKeyFor(key as ApiKey),
+			}),
+		enabled: key !== null,
+		staleTime: USAGE_STALE_MS,
+	});
+}
+
+function sameApi(a: ApiKey, b: ApiKey): boolean {
+	return a.vendor === b.vendor && a.name === b.name && a.version === b.version;
+}
+
+export interface WorkspaceCredentials {
+	/** Credentials that target exactly this `(vendor, name, version)`. */
+	forApi: (api: ApiKey) => Credential[];
+	/** False until every credential page has loaded — withhold "none" until then. */
+	complete: boolean;
+	isPending: boolean;
+	error: unknown;
+}
+
+/**
+ * Every credential in the workspace, joined to APIs by their target triple.
+ * One drained list shared by the table and the detail page (same cache as
+ * the credential inventory), rather than a read per API.
+ */
+export function useWorkspaceCredentials(): WorkspaceCredentials {
+	const { items, complete, isPending, error } = useAllCredentials();
+	const forApi = useCallback(
+		(api: ApiKey) => items.filter((credential) => sameApi(credential.api, api)),
+		[items],
+	);
+	return { forApi, complete, isPending, error };
+}
+
+/**
+ * The agents bound to one credential — which agents a shared credential
+ * actually serves. Same drained cache as the credential inventory's view.
+ */
+export function useCredentialBindings(
+	credentialId: string | undefined,
+): DrainedList<CredentialAgentResponse> {
+	return useAllCredentialAgents(credentialId);
 }

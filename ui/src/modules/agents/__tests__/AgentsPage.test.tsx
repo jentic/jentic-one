@@ -1078,7 +1078,7 @@ describe('AgentsPage — flat agents surface', () => {
 
 		// Agents is the app's home, so an empty fleet is a fresh workspace.
 		const setup = await screen.findByRole('region', { name: 'Set up your workspace' });
-		expect(within(setup).getByRole('link', { name: /Discover an API/ })).toHaveAttribute(
+		expect(within(setup).getByRole('link', { name: /Add an API/ })).toHaveAttribute(
 			'href',
 			'/discover',
 		);

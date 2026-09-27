@@ -1,23 +1,22 @@
 /**
- * DiscoveryCard — one API row in the Discover grid.
+ * DiscoveryCard — one catalog entry as a row in the Catalog list.
  *
- * Every row is a public-catalog entry; its `registered` flag drives two visual
- * modes:
+ * Rows, like the Workspace list beside it, so the two halves of the APIs
+ * surface read as one: icon, title and vendor on the left, status in the
+ * middle, the action on the right. The entry's `registered` flag drives the
+ * action:
  *
- *   imported (registered)  — emerald left rail; the surface is a button that
- *                            opens the detail sheet (trailing chevron), plus a
- *                            footer "Open Workspace" link to where the imported
- *                            API now lives.
- *   available (!registered) — no rail; inline "Import" CTA (shared Button) plus
- *                            an optional GitHub link. Clicking the surface also
- *                            opens the sheet so the user can preview operations
- *                            before importing.
+ *   imported (registered)  — emerald left rail and an "In workspace" link to
+ *                            where the imported API now lives.
+ *   available (!registered) — an inline "Import" CTA (shared Button) plus an
+ *                            optional GitHub link.
  *
- * The import action is the shared `Button`
- * primitive (never a raw styled <button>), and the external GitHub link is the
- * shared `AppLink` (safe new-tab handling).
+ * Either way the main area is a button that opens the detail sheet, so the
+ * user can preview operations before (or after) importing. The import action
+ * is the shared `Button` primitive (never a raw styled <button>), and the
+ * external GitHub link is the shared `AppLink` (safe new-tab handling).
  */
-import { ArrowRight, ChevronRight, ExternalLink, Plus } from 'lucide-react';
+import { ArrowRight, ExternalLink, Plus } from 'lucide-react';
 import { AppLink, Button, VendorIcon } from '@/shared/ui';
 import { ROUTES } from '@/shared/app';
 import { CardStatusPill } from '@/modules/discover/components/CardStatusPill';
@@ -25,7 +24,7 @@ import type { DiscoveryEntity } from '@/modules/discover/api';
 
 interface DiscoveryCardProps {
 	entity: DiscoveryEntity;
-	/** True while the detail sheet for this entity is open (highlights border). */
+	/** True while the detail sheet for this entity is open (highlights the row). */
 	active: boolean;
 	/** Open the detail sheet for this entity. */
 	onOpen: (entity: DiscoveryEntity) => void;
@@ -43,88 +42,72 @@ export function DiscoveryCard({
 	importPending,
 }: DiscoveryCardProps) {
 	const { registered } = entity;
-	const railClass = registered ? 'border-l-2 border-l-emerald-500/60' : '';
-	const activeClass = active
-		? 'border-primary/50 bg-card/80'
-		: 'hover:border-primary/50 hover:bg-card/80';
+	const railClass = registered ? 'border-l-emerald-500/60' : 'border-l-transparent';
 
 	return (
 		<div
 			data-testid="discovery-card-api"
 			data-registered={registered}
-			className={`group border-border bg-card relative flex h-full flex-col overflow-hidden rounded-xl border transition-all ${railClass} ${activeClass}`}
+			className={`group flex items-center gap-3 border-l-2 pr-4 transition-colors ${railClass} ${
+				active ? 'bg-muted/60' : 'hover:bg-muted/40'
+			}`}
 		>
 			<button
 				type="button"
 				onClick={() => onOpen(entity)}
 				aria-label={`View ${entity.summary}`}
-				className="flex w-full flex-1 cursor-pointer items-start gap-4 p-5 text-left"
+				className="focus-visible:ring-primary/40 flex min-w-0 flex-1 cursor-pointer items-center gap-3 py-3 pl-4 text-left focus-visible:ring-2 focus-visible:outline-none focus-visible:ring-inset"
 			>
-				<VendorIcon name={entity.summary} vendor={entity.vendor} />
-
-				<div className="flex h-full min-w-0 flex-1 flex-col">
-					<h3 className="text-foreground truncate leading-tight font-semibold">
+				<VendorIcon name={entity.summary} vendor={entity.vendor} size="sm" />
+				<div className="min-w-0 flex-1">
+					<h3 className="text-foreground truncate text-sm font-semibold">
 						{entity.summary}
 					</h3>
 					{entity.subtitle && (
-						<p className="text-muted-foreground mt-0.5 truncate text-xs">
-							{entity.subtitle}
-						</p>
+						<p className="text-muted-foreground truncate text-xs">{entity.subtitle}</p>
 					)}
-
-					<div
-						className="mt-auto flex w-full flex-wrap items-center gap-1.5 pt-2.5"
-						data-testid="discovery-card-footer"
-					>
-						<CardStatusPill
-							registered={registered}
-							pending={importPending}
-							updateAvailable={entity.updateAvailable}
-						/>
-					</div>
 				</div>
-
-				{registered && (
-					<ChevronRight
-						className="text-muted-foreground h-4 w-4 shrink-0 self-center"
-						aria-hidden="true"
+				<div
+					className="hidden shrink-0 items-center gap-1.5 sm:flex"
+					data-testid="discovery-card-footer"
+				>
+					<CardStatusPill
+						registered={registered}
+						pending={importPending}
+						updateAvailable={entity.updateAvailable}
 					/>
-				)}
+				</div>
 			</button>
 
-			{registered && (
-				<div className="border-border/60 flex items-center justify-end gap-1.5 border-t px-5 py-2.5">
-					{/*
+			<div className="flex shrink-0 items-center gap-1.5">
+				{entity.githubUrl && (
+					<AppLink
+						href={entity.githubUrl}
+						className="text-muted-foreground hover:bg-muted hover:text-foreground inline-flex h-8 w-8 items-center justify-center rounded-lg transition-colors"
+						aria-label={`View ${entity.summary} on GitHub`}
+						title="View on GitHub"
+					>
+						<ExternalLink size={14} aria-hidden="true" />
+					</AppLink>
+				)}
+				{registered ? (
+					/*
 					 * Links to the Workspace **list**, not a per-API deep link: a
 					 * catalog entry carries no resolved `(vendor, name, version)`
 					 * triple, and its `vendor` maps to 0..N workspace rows, so a
 					 * precise jump isn't derivable client-side. Deterministic
 					 * deep-linking is tracked by backend prerequisite #507.
-					 */}
+					 */
 					<AppLink
 						href={ROUTES.workspace}
 						className="text-primary hover:bg-muted inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-sm font-medium transition-colors"
 						aria-label="Open your workspace"
 						data-testid="discovery-card-open-workspace"
 					>
-						Open Workspace
+						In workspace
 						<ArrowRight size={14} aria-hidden="true" />
 					</AppLink>
-				</div>
-			)}
-
-			{!registered && (
-				<div className="border-border/60 flex items-center justify-end gap-1.5 border-t px-5 py-2.5">
-					{entity.githubUrl && (
-						<AppLink
-							href={entity.githubUrl}
-							className="text-muted-foreground hover:bg-muted hover:text-foreground inline-flex h-8 w-8 items-center justify-center rounded-lg transition-colors"
-							aria-label={`View ${entity.summary} on GitHub`}
-							title="View on GitHub"
-						>
-							<ExternalLink size={14} aria-hidden="true" />
-						</AppLink>
-					)}
+				) : (
 					<Button
 						variant="primary"
 						size="sm"
@@ -135,8 +118,8 @@ export function DiscoveryCard({
 						{!importPending && <Plus size={14} aria-hidden="true" />}
 						{importPending ? 'Importing…' : 'Import'}
 					</Button>
-				</div>
-			)}
+				)}
+			</div>
 		</div>
 	);
 }

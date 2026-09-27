@@ -10,27 +10,10 @@
  */
 import { useState } from 'react';
 import { Activity, BellOff, GitBranch, RefreshCw, ShieldCheck, Zap } from 'lucide-react';
-import { Badge, Button } from '@/shared/ui';
-import { useReimportFromCatalog, useSnoozeCatalogUpdate } from '@/modules/workspace/api';
+import { ActorLabel, Badge, Button } from '@/shared/ui';
+import { formatAgo, useReimportFromCatalog, useSnoozeCatalogUpdate } from '@/modules/workspace/api';
 import { ConfirmDialog } from '@/modules/workspace/components/ConfirmDialog';
 import type { ApiKey, WorkspaceApi } from '@/modules/workspace/api';
-
-function relativeTime(iso: string): string | null {
-	const ts = Date.parse(iso);
-	if (Number.isNaN(ts)) return null;
-	const diffMs = Date.now() - ts;
-	const sec = Math.round(diffMs / 1000);
-	if (sec < 60) return 'just now';
-	const min = Math.round(sec / 60);
-	if (min < 60) return `${min}m ago`;
-	const hr = Math.round(min / 60);
-	if (hr < 24) return `${hr}h ago`;
-	const day = Math.round(hr / 24);
-	if (day < 30) return `${day}d ago`;
-	const mo = Math.round(day / 30);
-	if (mo < 12) return `${mo}mo ago`;
-	return `${Math.round(mo / 12)}y ago`;
-}
 
 function MetaItem({
 	icon,
@@ -52,9 +35,16 @@ function MetaItem({
 	);
 }
 
-export function OverviewStrip({ api }: { api: WorkspaceApi }) {
+export function OverviewStrip({
+	api,
+	importedBy,
+}: {
+	api: WorkspaceApi;
+	/** Who submitted the API's first revision, once the full list is known. */
+	importedBy?: string | null;
+}) {
 	const hasLive = api.currentRevisionId !== null;
-	const importedAgo = relativeTime(api.createdAt);
+	const importedAgo = formatAgo(api.createdAt);
 	const key: ApiKey = api.api;
 	const { reimport, isReimporting } = useReimportFromCatalog(key);
 	const { snooze, isSnoozing } = useSnoozeCatalogUpdate(key);
@@ -157,6 +147,12 @@ export function OverviewStrip({ api }: { api: WorkspaceApi }) {
 					<span className="text-muted-foreground ml-auto text-xs">
 						Imported{' '}
 						<time dateTime={new Date(api.createdAt).toISOString()}>{importedAgo}</time>
+						{importedBy ? (
+							<>
+								{' '}
+								by <ActorLabel actorId={importedBy} className="text-foreground" />
+							</>
+						) : null}
 					</span>
 				) : null}
 			</div>

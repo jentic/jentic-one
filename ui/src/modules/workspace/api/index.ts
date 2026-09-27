@@ -17,9 +17,20 @@ export {
 	useSnoozeCatalogUpdate,
 	useDeleteApi,
 	useReimportFromCatalog,
+	useWorkspaceTraffic,
+	useApiAgentTraffic,
+	useWorkspaceCredentials,
+	useCredentialBindings,
+	usageKeyFor,
 	workspaceKeys,
 } from '@/modules/workspace/api/hooks';
-export type { UseApiOperations, UsePagedList } from '@/modules/workspace/api/hooks';
+export type { Credential } from '@/shared/credentials/api';
+export type {
+	UseApiOperations,
+	UsePagedList,
+	WorkspaceTraffic,
+	WorkspaceCredentials,
+} from '@/modules/workspace/api/hooks';
 
 export { WorkspaceApiError } from '@/modules/workspace/api/client';
 
@@ -30,6 +41,7 @@ export {
 	shortOverlayId,
 	shortRevisionId,
 	formatDateTime,
+	formatAgo,
 	summarizeOverlayActions,
 	overlayLifecycle,
 	overlayLifecycleNote,
@@ -41,8 +53,20 @@ export {
 	diffBaseFor,
 	describeLastChange,
 	describeServingState,
+	lastChangeEvent,
+	importedBy,
+	pendingOverlayCount,
+	apiAttention,
+	API_ATTENTION_LABEL,
+	parseUsageCaller,
 } from '@/modules/workspace/api/insights';
-export type { OverlayLifecycle, SpecDiffBase } from '@/modules/workspace/api/insights';
+export type {
+	OverlayLifecycle,
+	SpecDiffBase,
+	ChangeEvent,
+	ApiAttention,
+	UsageCaller,
+} from '@/modules/workspace/api/insights';
 
 export { diffSpecs } from '@/modules/workspace/api/specDiff';
 export type { SpecDiffEntry, SpecDiffKind, SpecDiffResult } from '@/modules/workspace/api/specDiff';
@@ -63,4 +87,6 @@ export type {
 	ImportJob,
 	JobStatus,
 	ImportSource,
+	UsageRow,
 } from '@/modules/workspace/api/types';
+export { USAGE_WINDOW_DAYS } from '@/modules/workspace/api/types';

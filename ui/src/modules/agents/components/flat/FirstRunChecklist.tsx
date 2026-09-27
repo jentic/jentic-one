@@ -72,8 +72,9 @@ export function FirstRunChecklist({ onCreateAgent }: { onCreateAgent: () => void
 	const steps: SetupStep[] = [
 		{
 			target: { href: ROUTES.discover },
-			title: 'Discover an API',
-			description: 'Browse the catalog and register the APIs your agents will call.',
+			title: 'Add an API',
+			description:
+				'Import the APIs your agents will call from the catalog. Everyone in the workspace shares them.',
 			icon: Compass,
 		},
 		{

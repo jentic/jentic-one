@@ -1,11 +1,18 @@
 /**
  * ApiDetailPage — a single workspace API's detail view.
  *
- * Covers the API-only surface
- * jentic-one's registry exposes: overview, operations (current revision), and
- * revision history with promote/archive. Credentials and agents
- * belong to other modules and are out of
- * scope here.
+ * The overview and the serving-state line (with who last changed it and any
+ * overlays waiting for review) sit above three tabs:
+ *
+ *   - Operations — what the live revision exposes.
+ *   - Revisions & overlays — the change history: promote/archive, and the
+ *     overlay review queue. Counted by pending overlays, since those are
+ *     changes someone is waiting on.
+ *   - Access — the credentials the gateway holds for this API (who added
+ *     them, which agents each serves) and who has been calling it. The
+ *     workspace is shared, so this is the blast radius of changing it.
+ *
+ * The tab is in the URL (`?tab=`) so a link to an API's overlays lands there.
  *
  * The route carries the `(vendor, name, version)` triple as three path
  * segments (`/workspace/:vendor/:name/:version`, → `/app/workspace/...` in the
@@ -13,8 +20,8 @@
  * state rather than issuing a bad request.
  */
 import { useState } from 'react';
-import { useNavigate, useParams } from 'react-router';
-import { FileJson, Trash2 } from 'lucide-react';
+import { useNavigate, useParams, useSearchParams } from 'react-router';
+import { FileJson } from 'lucide-react';
 import {
 	PageShell,
 	PageHeader,
@@ -23,25 +30,38 @@ import {
 	ErrorAlert,
 	Button,
 	CascadeDeleteDialog,
-	CopyButton,
+	TabNav,
 	VendorIcon,
 } from '@/shared/ui';
+import type { TabNavOption } from '@/shared/ui';
 import { OverviewStrip } from '@/modules/workspace/components/OverviewStrip';
 import { OperationsSection } from '@/modules/workspace/components/OperationsSection';
 import { RevisionsSection } from '@/modules/workspace/components/RevisionsSection';
 import { OverlaysSection } from '@/modules/workspace/components/OverlaysSection';
 import { ServingStateStrip } from '@/modules/workspace/components/ServingStateStrip';
 import { SpecViewerDialog } from '@/modules/workspace/components/SpecViewerDialog';
+import { AccessSection } from '@/modules/workspace/components/AccessSection';
+import { ApiActionsMenu } from '@/modules/workspace/components/ApiActionsMenu';
 import {
 	formatApiKey,
 	diffBaseFor,
+	importedBy,
+	pendingOverlayCount,
 	useApiRevisions,
+	useOverlays,
 	useDeleteApi,
 	useWorkspaceApi,
 } from '@/modules/workspace/api';
 import type { ApiKey, SpecDiffBase } from '@/modules/workspace/api';
 import { apiRefDisplayName } from '@/shared/lib';
 import { ROUTES } from '@/shared/app/routes';
+
+type DetailTab = 'operations' | 'changes' | 'access';
+const DETAIL_TABS: readonly DetailTab[] = ['operations', 'changes', 'access'];
+
+function parseTab(raw: string | null): DetailTab {
+	return DETAIL_TABS.includes(raw as DetailTab) ? (raw as DetailTab) : 'operations';
+}
 
 /** Build the identity triple from route params, decoding each segment. */
 function keyFromParams(params: {
@@ -69,7 +89,11 @@ export default function ApiDetailPage() {
 	// Shared cache with RevisionsSection — used to pick the header spec
 	// viewer's diff base (the revision created just before the live one).
 	const revisionsQuery = useApiRevisions(apiKey);
+	// Shared cache with OverlaysSection — counts the review queue on its tab.
+	const overlaysQuery = useOverlays(apiKey);
 	const navigate = useNavigate();
+	const [searchParams, setSearchParams] = useSearchParams();
+	const tab = parseTab(searchParams.get('tab'));
 	const deleteApi = useDeleteApi();
 	const [specOpen, setSpecOpen] = useState(false);
 	const [deleteOpen, setDeleteOpen] = useState(false);
@@ -77,7 +101,7 @@ export default function ApiDetailPage() {
 	if (!apiKey) {
 		return (
 			<PageShell>
-				<BackButton to={ROUTES.workspace} label="Back to Workspace" />
+				<BackButton to={ROUTES.workspace} label="All APIs" />
 				<ErrorAlert message="That API reference is malformed." />
 			</PageShell>
 		);
@@ -92,11 +116,42 @@ export default function ApiDetailPage() {
 	const live = revisions.find((r) => r.isCurrent) ?? null;
 	const liveDiffBase: SpecDiffBase | null = live ? diffBaseFor(live, revisions) : null;
 
+	function selectTab(next: DetailTab) {
+		setSearchParams(
+			(prev) => {
+				const params = new URLSearchParams(prev);
+				if (next === 'operations') params.delete('tab');
+				else params.set('tab', next);
+				return params;
+			},
+			{ replace: true },
+		);
+	}
+
+	// Only once the page walks finish: a partial list would undercount (or
+	// name the wrong first submitter).
+	const revisionsComplete =
+		!revisionsQuery.isLoading && !revisionsQuery.isLoadingAll && !revisionsQuery.isError;
+	// Only once the page walk finishes: a partial list would undercount.
+	const pendingOverlays =
+		!overlaysQuery.isLoading && !overlaysQuery.isLoadingAll && !overlaysQuery.isError
+			? pendingOverlayCount(overlaysQuery.items)
+			: 0;
+	const tabs: TabNavOption<DetailTab>[] = [
+		{ value: 'operations', label: 'Operations' },
+		{
+			value: 'changes',
+			label: 'Revisions & overlays',
+			count: pendingOverlays > 0 ? pendingOverlays : undefined,
+		},
+		{ value: 'access', label: 'Access' },
+	];
+
 	// Route the title through the shared friendly-name rule so a draft-only API
 	// (no user-set display_name) reads as its humanised sub-API/vendor name
 	// instead of the raw `vendor/name` tuple, matching the workspace tile.
 	// `apiRefDisplayName` can return '' for generic/empty identity fields, so
-	// chain the same guaranteed non-empty fallback `ApiCard.titleFor` uses. The
+	// chain the same guaranteed non-empty fallback `apiTitle` uses. The
 	// early return above guarantees `apiKey.vendor` is a non-empty string (a
 	// blank vendor makes `keyFromParams` return null), so it's the final
 	// fallback — the title also feeds the VendorIcon name + the Remove/aria
@@ -111,6 +166,7 @@ export default function ApiDetailPage() {
 
 	return (
 		<PageShell>
+			<BackButton to={ROUTES.workspace} label="All APIs" />
 			<PageHeader
 				title={query.isLoading ? 'Loading…' : title}
 				subtitle={formatApiKey(apiKey)}
@@ -149,22 +205,15 @@ export default function ApiDetailPage() {
 								view its spec.
 							</span>
 						) : null}
-						<CopyButton value={formatApiKey(apiKey)} />
-						<Button
-							variant="danger"
-							size="sm"
-							onClick={() => setDeleteOpen(true)}
+						<ApiActionsMenu
+							apiId={formatApiKey(apiKey)}
+							title={title}
 							disabled={!api}
-							aria-label={`Remove ${title}`}
-							data-testid="remove-api"
-						>
-							<Trash2 size={14} aria-hidden="true" />
-							Remove API
-						</Button>
+							onRemove={() => setDeleteOpen(true)}
+						/>
 					</>
 				}
 			/>
-			<BackButton to={ROUTES.workspace} label="Back to Workspace" />
 
 			{query.isLoading ? (
 				<div className="space-y-4" aria-busy="true">
@@ -186,11 +235,44 @@ export default function ApiDetailPage() {
 				</div>
 			) : (
 				<>
-					<OverviewStrip api={api} />
-					<OperationsSection apiKey={apiKey} totalCount={api.operationCount} />
-					<ServingStateStrip apiKey={apiKey} />
-					<RevisionsSection apiKey={apiKey} />
-					<OverlaysSection apiKey={apiKey} currentRevisionId={api.currentRevisionId} />
+					<OverviewStrip
+						api={api}
+						importedBy={
+							revisionsComplete ? importedBy(revisionsQuery.items) : undefined
+						}
+					/>
+					<ServingStateStrip
+						apiKey={apiKey}
+						onReviewOverlays={() => selectTab('changes')}
+					/>
+					<TabNav
+						options={tabs}
+						value={tab}
+						onChange={selectTab}
+						ariaLabel="API sections"
+						getTabId={(value) => `api-tab-${value}`}
+						getControls={(value) => `api-panel-${value}`}
+					/>
+					<div
+						role="tabpanel"
+						id={`api-panel-${tab}`}
+						aria-labelledby={`api-tab-${tab}`}
+						className="space-y-6"
+					>
+						{tab === 'operations' ? (
+							<OperationsSection apiKey={apiKey} totalCount={api.operationCount} />
+						) : tab === 'changes' ? (
+							<>
+								<OverlaysSection
+									apiKey={apiKey}
+									currentRevisionId={api.currentRevisionId}
+								/>
+								<RevisionsSection apiKey={apiKey} />
+							</>
+						) : (
+							<AccessSection api={api} />
+						)}
+					</div>
 				</>
 			)}
 

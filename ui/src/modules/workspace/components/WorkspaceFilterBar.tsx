@@ -1,6 +1,6 @@
 /**
  * WorkspaceFilterBar — sticky, gutter-bleeding filter row for the Workspace
- * page.
+ * page: a text filter plus an "All / Needs attention" scope.
  *
  * An in-memory filter, *not* a
  * catalog search — hence the funnel icon rather than a magnifying glass — using
@@ -8,21 +8,34 @@
  * `-mx-page-gutter px-page-gutter` backdrop-blur bar the Discover toolbar uses,
  * with a sentinel + IntersectionObserver hairline shadow once it sticks).
  *
- * Catalog-wide search lives in Discover; this only narrows the rows already on
- * screen.
+ * Catalog-wide search lives in the Catalog view; this only narrows the rows
+ * already on screen.
  */
 import { useEffect, useRef } from 'react';
 import { Filter } from 'lucide-react';
-import { SearchInput } from '@/shared/ui';
+import { SearchInput, SegmentedToggle } from '@/shared/ui';
+
+export type WorkspaceScope = 'all' | 'attention';
 
 export interface WorkspaceFilterBarProps {
 	value: string;
 	onChange: (next: string) => void;
 	/** Optional summary line, e.g. "12 of 40". Shown only when filtering. */
 	resultsLabel?: string;
+	scope: WorkspaceScope;
+	onScopeChange: (next: WorkspaceScope) => void;
+	/** How many APIs need attention; undefined while the joins are loading. */
+	attentionCount: number | undefined;
 }
 
-export function WorkspaceFilterBar({ value, onChange, resultsLabel }: WorkspaceFilterBarProps) {
+export function WorkspaceFilterBar({
+	value,
+	onChange,
+	resultsLabel,
+	scope,
+	onScopeChange,
+	attentionCount,
+}: WorkspaceFilterBarProps) {
 	const sentinelRef = useRef<HTMLDivElement | null>(null);
 	const barRef = useRef<HTMLDivElement | null>(null);
 
@@ -48,7 +61,7 @@ export function WorkspaceFilterBar({ value, onChange, resultsLabel }: WorkspaceF
 			data-testid="workspace-filter-bar"
 		>
 			<div ref={sentinelRef} aria-hidden="true" className="absolute top-0 h-px w-full" />
-			<div className="flex items-center gap-3">
+			<div className="flex flex-col gap-3 sm:flex-row sm:items-center">
 				<div className="flex-1">
 					<SearchInput
 						value={value}
@@ -58,6 +71,22 @@ export function WorkspaceFilterBar({ value, onChange, resultsLabel }: WorkspaceF
 						aria-label="Filter your APIs"
 					/>
 				</div>
+				<SegmentedToggle
+					layoutId="workspace-scope"
+					ariaLabel="Show"
+					options={[
+						{ value: 'all', label: 'All' },
+						{
+							value: 'attention',
+							label:
+								attentionCount === undefined
+									? 'Needs attention'
+									: `Needs attention (${attentionCount})`,
+						},
+					]}
+					value={scope}
+					onChange={onScopeChange}
+				/>
 				{value && resultsLabel ? (
 					<p
 						className="text-muted-foreground shrink-0 text-xs"

@@ -43,7 +43,99 @@ describe('ApiDetailPage', () => {
 		// Operations of the live revision show up (GET + POST /v1/charges).
 		expect((await screen.findAllByText('/v1/charges')).length).toBeGreaterThanOrEqual(1);
 		expect(screen.getByTestId('operations-section')).toBeInTheDocument();
-		expect(screen.getByTestId('revisions-section')).toBeInTheDocument();
+		// History lives on its own tab.
+		expect(screen.queryByTestId('revisions-section')).not.toBeInTheDocument();
+	});
+
+	it('switches to the revisions & overlays tab', async () => {
+		const user = userEvent.setup();
+		renderAt('/workspace/stripe/stripe-api/2024-01-01');
+		await screen.findByRole('heading', { name: 'Stripe' });
+
+		await user.click(screen.getByRole('tab', { name: /Revisions & overlays/ }));
+		expect(await screen.findByTestId('revisions-section')).toBeInTheDocument();
+		expect(screen.getByTestId('overlays-section')).toBeInTheDocument();
+		expect(screen.queryByTestId('operations-section')).not.toBeInTheDocument();
+	});
+
+	it('opens a tab from the URL', async () => {
+		renderAt('/workspace/stripe/stripe-api/2024-01-01?tab=changes');
+		expect(await screen.findByTestId('revisions-section')).toBeInTheDocument();
+		expect(screen.getByRole('tab', { name: /Revisions & overlays/ })).toHaveAttribute(
+			'aria-selected',
+			'true',
+		);
+	});
+
+	it('calls out overlays waiting for review and jumps to them', async () => {
+		const user = userEvent.setup();
+		renderAt('/workspace/showcase/kitchen-sink/1.0.0');
+
+		const callout = await screen.findByTestId('pending-overlays-callout');
+		expect(within(callout).getByText(/1 overlay waiting for review/)).toBeInTheDocument();
+		// The tab carries the same count.
+		expect(screen.getByRole('tab', { name: /Revisions & overlays/ })).toHaveTextContent('1');
+
+		await user.click(within(callout).getByRole('button', { name: 'Review' }));
+		expect(await screen.findByTestId('overlays-section')).toBeInTheDocument();
+	});
+
+	it('shows credentials, their agents and recent callers on the access tab', async () => {
+		worker.use(
+			http.get('/credentials/cred_stripe_1/agents', () =>
+				HttpResponse.json({
+					data: [
+						{
+							agent_id: 'agnt_billing',
+							agent_name: 'Billing bot',
+							bound_at: '2026-02-01T00:00:00Z',
+							rule_set_id: null,
+							status: 'active',
+							suspended: false,
+						},
+					],
+					has_more: false,
+					next_cursor: null,
+				}),
+			),
+			http.get('/monitoring/usage', ({ request }) => {
+				const url = new URL(request.url);
+				if (url.searchParams.get('group_by') !== 'agent') return undefined;
+				expect(url.searchParams.get('api_id')).toBe('stripe/stripe-api');
+				return HttpResponse.json({
+					group_by: 'agent',
+					stats: { total: 12, success: 10, failed: 2 },
+					buckets: [],
+					top: [
+						{
+							key: 'agent/agnt_billing',
+							label: 'agent/agnt_billing',
+							total: 12,
+							success: 10,
+							failed: 2,
+							avg_ms: 300,
+							trend: [],
+						},
+					],
+				});
+			}),
+		);
+		const user = userEvent.setup();
+		renderAt('/workspace/stripe/stripe-api/2024-01-01');
+		await screen.findByRole('heading', { name: 'Stripe' });
+
+		await user.click(screen.getByRole('tab', { name: 'Access' }));
+
+		const credentials = await screen.findByTestId('access-credentials');
+		expect(await within(credentials).findByText('Stripe live key')).toBeInTheDocument();
+		expect(
+			await within(credentials).findByRole('link', { name: /Billing bot/ }),
+		).toHaveAttribute('href', '/agents?agent=agnt_billing');
+
+		const callers = screen.getByTestId('access-agents');
+		const caller = await within(callers).findByRole('link', { name: /12 calls/ });
+		expect(caller).toHaveAttribute('href', '/agents?agent=agnt_billing');
+		expect(within(caller).getByText(/2 failed/)).toBeInTheDocument();
 	});
 
 	it('has no critical a11y violations', async () => {
@@ -58,7 +150,8 @@ describe('ApiDetailPage', () => {
 
 		// Operations 404 with no_current_revision → promote-a-revision empty state.
 		expect(await screen.findByText('No live revision yet')).toBeInTheDocument();
-		// The draft revision offers a Promote action.
+		// The draft revision offers a Promote action, on the history tab.
+		await userEvent.setup().click(screen.getByRole('tab', { name: /Revisions & overlays/ }));
 		expect(await screen.findByTestId('revision-promote')).toBeInTheDocument();
 	});
 
@@ -192,6 +285,8 @@ describe('ApiDetailPage', () => {
 		renderAt('/workspace/stripe/stripe-api/2024-01-01');
 		await screen.findByRole('heading', { name: 'Stripe' });
 
+		// Removal sits behind the overflow menu.
+		await user.click(screen.getByRole('button', { name: 'More actions for Stripe' }));
 		await user.click(screen.getByTestId('remove-api'));
 
 		// Generic-warning mode (no `dependents` from the page yet) → the

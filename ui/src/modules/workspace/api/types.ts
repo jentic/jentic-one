@@ -175,3 +175,19 @@ export interface Overlay {
 // Spec-import and job-poll shapes live in `@/shared/credentials/api` — the import
 // dialog is shared. Re-exported so this module's call sites keep one import path.
 export type { ImportJob, JobStatus, ImportSource } from '@/shared/credentials/api';
+
+/**
+ * Call volume for one key over the usage window (`GET /monitoring/usage`
+ * `top` rows). `key` is the grouping key: `vendor/name` when grouped by API
+ * (the monitoring store doesn't split by version), `actor_type/actor_id` when
+ * grouped by agent (see `parseUsageCaller`).
+ */
+export interface UsageRow {
+	key: string;
+	label: string;
+	total: number;
+	failed: number;
+}
+
+/** Rolling window the workspace's traffic figures cover. */
+export const USAGE_WINDOW_DAYS = 7;

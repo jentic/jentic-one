@@ -1,5 +1,5 @@
 import type { ComponentType } from 'react';
-import { Compass, Bot, LayoutGrid, KeyRound, Activity } from 'lucide-react';
+import { Bot, Boxes, KeyRound, Activity } from 'lucide-react';
 
 /**
  * A primary-navigation entry. `order` (not array position) controls placement,
@@ -24,6 +24,11 @@ export interface NavItem {
 	icon?: ComponentType<{ className?: string }>;
 	requiredPermission?: string;
 	secondary?: boolean;
+	/**
+	 * Other root-relative paths this item owns: the tab stays highlighted on
+	 * them too (e.g. APIs covers both the workspace and the catalog).
+	 */
+	alsoActiveOn?: string[];
 }
 
 /**
@@ -40,8 +45,17 @@ export interface NavItem {
  * home surface, which is why Agents and Monitor sort first.
  */
 export const navItems: NavItem[] = [
-	{ id: 'discover', label: 'Discover APIs', to: '/discover', order: 20, icon: Compass },
-	{ id: 'workspace', label: 'Workspace', to: '/workspace', order: 30, icon: LayoutGrid },
+	// One APIs entry for the shared workspace AND the public catalog: they are
+	// two views of the same question ("which APIs can our agents use?"),
+	// switched in-page by `ApisSectionNav`.
+	{
+		id: 'workspace',
+		label: 'APIs',
+		to: '/workspace',
+		order: 30,
+		icon: Boxes,
+		alsoActiveOn: ['/discover'],
+	},
 	{ id: 'credentials', label: 'Credentials', to: '/credentials', order: 50, icon: KeyRound },
 	{ id: 'agents', label: 'Agents', to: '/agents', order: 5, icon: Bot },
 	{ id: 'monitor', label: 'Monitor', to: '/monitor', order: 6, icon: Activity },
@@ -87,9 +101,13 @@ export function visibleNavItems(items: NavItem[], permissions: readonly string[]
  * Whether a nav item is "active" for the given pathname. `pathname` is the
  * router's basename-relative location (react-router strips `/app`). An item
  * at the root (`/`) matches exactly — none ships today, but a downstream
- * `extraNavItems` entry may — while every other item matches by prefix so nested routes (e.g. `/discover/123`) keep their tab highlighted.
+ * `extraNavItems` entry may — while every other item matches by prefix (on
+ * `to` and any `alsoActiveOn` path) so nested routes (e.g.
+ * `/workspace/stripe/api/1`) keep their tab highlighted.
  */
 export function isNavItemActive(item: NavItem, pathname: string): boolean {
 	if (item.to === '/') return pathname === '/';
-	return pathname === item.to || pathname.startsWith(`${item.to}/`);
+	return [item.to, ...(item.alsoActiveOn ?? [])].some(
+		(to) => pathname === to || pathname.startsWith(`${to}/`),
+	);
 }

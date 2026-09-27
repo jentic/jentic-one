@@ -12,6 +12,11 @@ import {
 	diffBaseFor,
 	describeLastChange,
 	describeServingState,
+	lastChangeEvent,
+	importedBy,
+	pendingOverlayCount,
+	apiAttention,
+	parseUsageCaller,
 } from '@/modules/workspace/api/insights';
 import type { ApiRevision, Overlay } from '@/modules/workspace/api/types';
 
@@ -424,5 +429,102 @@ describe('describeLastChange / describeServingState', () => {
 
 	it('reports a missing live revision', () => {
 		expect(describeServingState([base], [])).toContain('No live revision');
+	});
+});
+
+describe('lastChangeEvent', () => {
+	it('attributes a revision to its submitter and an overlay to its author', () => {
+		const rev = revision({ createdAt: '2026-08-01T00:00:00Z', submittedBy: 'usr_ada' });
+		expect(lastChangeEvent([rev], [])?.actorId).toBe('usr_ada');
+
+		const ovr = overlay({ createdAt: '2026-08-02T00:00:00Z', createdBy: 'usr_grace' });
+		expect(lastChangeEvent([rev], [ovr])?.actorId).toBe('usr_grace');
+	});
+
+	it('names no actor for a promotion, which these rows do not attribute', () => {
+		const rev = revision({
+			createdAt: '2026-08-01T00:00:00Z',
+			submittedBy: 'usr_ada',
+			isCurrent: true,
+			promotedAt: '2026-08-03T00:00:00Z',
+		});
+		const event = lastChangeEvent([rev], []);
+		expect(event?.at).toBe('2026-08-03T00:00:00Z');
+		expect(event?.actorId).toBeNull();
+	});
+
+	it('is null with no history', () => {
+		expect(lastChangeEvent([], [])).toBeNull();
+	});
+});
+
+describe('importedBy', () => {
+	it('is the submitter of the oldest revision, whatever the list order', () => {
+		const newer = revision({ createdAt: '2026-08-05T00:00:00Z', submittedBy: 'usr_new' });
+		const oldest = revision({ createdAt: '2026-08-01T00:00:00Z', submittedBy: 'usr_first' });
+		expect(importedBy([newer, oldest])).toBe('usr_first');
+		expect(importedBy([])).toBeNull();
+	});
+});
+
+describe('pendingOverlayCount', () => {
+	it('counts only overlays awaiting review', () => {
+		expect(
+			pendingOverlayCount([
+				overlay({ status: 'pending' }),
+				overlay({ status: 'confirmed' }),
+				overlay({ status: 'pending' }),
+				overlay({ status: 'deprecated' }),
+			]),
+		).toBe(2);
+	});
+});
+
+describe('apiAttention', () => {
+	const live = {
+		currentRevisionId: 'rev_1',
+		updateAvailable: false,
+		securitySchemes: ['bearer'],
+	};
+	const row = (total: number, failed: number) => ({ key: 'a/b', label: 'a/b', total, failed });
+
+	it('is empty for a healthy, credentialed, live API', () => {
+		expect(apiAttention(live, { credentialCount: 1, traffic: row(100, 1) })).toEqual([]);
+	});
+
+	it('flags failing calls, a missing credential, a draft and an update — in that order', () => {
+		expect(
+			apiAttention(
+				{ currentRevisionId: null, updateAvailable: true, securitySchemes: ['bearer'] },
+				{ credentialCount: 0, traffic: row(10, 8) },
+			),
+		).toEqual(['failing', 'no-credential', 'draft', 'update']);
+	});
+
+	it('treats unknown as unknown, not as a problem', () => {
+		// Credentials still loading, traffic beyond the top rows: nothing to flag.
+		expect(apiAttention(live, { credentialCount: undefined, traffic: undefined })).toEqual([]);
+		// No calls at all is not "failing".
+		expect(apiAttention(live, { credentialCount: 1, traffic: null })).toEqual([]);
+	});
+
+	it('does not ask for a credential an open API cannot use', () => {
+		expect(
+			apiAttention({ ...live, securitySchemes: [] }, { credentialCount: 0, traffic: null }),
+		).toEqual([]);
+	});
+});
+
+describe('parseUsageCaller', () => {
+	it('splits actor_type/actor_id', () => {
+		expect(parseUsageCaller('agent/agnt_1')).toEqual({ actorType: 'agent', actorId: 'agnt_1' });
+		expect(parseUsageCaller('user/usr_1')).toEqual({ actorType: 'user', actorId: 'usr_1' });
+	});
+
+	it('is null for the unattributed bucket', () => {
+		expect(parseUsageCaller(null)).toBeNull();
+		expect(parseUsageCaller('')).toBeNull();
+		expect(parseUsageCaller('agent/')).toBeNull();
+		expect(parseUsageCaller('noslash')).toBeNull();
 	});
 });
