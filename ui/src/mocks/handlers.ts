@@ -51,6 +51,22 @@ const mockUser = {
  * mocked dev/e2e. Covers all three actor types.
  */
 const actorDirectorySeed = [
+	// The agents store's pending agents — the Activity rail's agent scope
+	// labels its options from this directory.
+	{
+		id: 'agnt_pending_1',
+		actor_type: 'agent',
+		name: 'inbox-triage-bot',
+		active: false,
+		created_at: '2026-01-01T00:00:00Z',
+	},
+	{
+		id: 'agnt_pending_2',
+		actor_type: 'agent',
+		name: 'release-notes-bot',
+		active: false,
+		created_at: '2026-01-01T00:00:00Z',
+	},
 	{
 		id: 'invoice-bot',
 		actor_type: 'agent',

@@ -1,20 +1,21 @@
 /**
  * ActivityStreamPanel — the live activity stream mounted as a card, for the
- * pages that hide the docked rail (Home's Live activity, Monitor's side
- * panel). It IS the rail's feed (`RailFeed`, same rows, grouping and inline
+ * page that hides the docked rail (Monitor's side panel). It IS the rail's feed (`RailFeed`, same rows, grouping and inline
  * verbs), so the stream reads the same wherever it's docked.
  *
  * Reads the shell's one live stream (`useAgentStreamOptional`) org-wide — the
- * rail's per-agent lens is a rail concern. The built-in control is All /
- * Failures; hosts add their own header actions and footer.
+ * rail's per-agent lens is a rail concern. The built-in All / Failures control
+ * is the same shared Failures only choice the rail shows; hosts add their own
+ * header actions and footer.
  *
  * The panel carries the shared `activity-stream` view-transition name, so
- * navigating from a rail page to Home or Monitor morphs the rail into the
+ * navigating from a rail page to Monitor morphs the rail into the
  * card (and back) instead of cutting.
  */
-import { useMemo, useState, type ReactNode } from 'react';
+import { useMemo, type ReactNode } from 'react';
 import { useNavigate } from 'react-router';
 import { Card, CardBody, CardHeader, CardTitle, SegmentedToggle } from '@/shared/ui';
+import { LiveDot, type LiveDotTone } from '@/shared/app/rail/LiveDot';
 import { RailFeed, type RailFeedProps } from '@/shared/app/rail/RailFeed';
 import { activityStreamVtStyle } from '@/shared/app/viewTransitions';
 import { useActorDirectory } from '@/shared/hooks';
@@ -32,11 +33,12 @@ const LENS_OPTIONS: { value: Lens; label: string }[] = [
 
 type Status = NonNullable<ReturnType<typeof useAgentStreamOptional>>['status'];
 
-const STATUS_COPY: Record<Status, { label: string; dot: string; ping: boolean }> = {
-	live: { label: 'Live', dot: 'bg-accent-green', ping: true },
-	connecting: { label: 'Connecting…', dot: 'bg-warning animate-pulse', ping: false },
-	error: { label: 'Reconnecting…', dot: 'bg-danger', ping: false },
-	idle: { label: 'Paused', dot: 'bg-muted-foreground', ping: false },
+const STATUS_COPY: Record<Status, { label: string; tone: LiveDotTone }> = {
+	live: { label: 'Live', tone: 'live' },
+	connecting: { label: 'Connecting…', tone: 'connecting' },
+	error: { label: 'Reconnecting…', tone: 'warning' },
+	// Not "Paused": that word is the rail's pause, a different thing.
+	idle: { label: 'Offline', tone: 'idle' },
 };
 
 export interface ActivityStreamPanelProps {
@@ -59,8 +61,11 @@ export function ActivityStreamPanel({
 	const stream = useAgentStreamOptional();
 	const navigate = useNavigate();
 	const directory = useActorDirectory();
-	const [lens, setLens] = useState<Lens>('all');
-	const filters = useMemo(() => ({ failuresOnly: lens === 'failures' }), [lens]);
+	// Failures only is the rail's own toggle (shared via the provider), so the
+	// stream keeps the same filter as it morphs between rail and panel.
+	const failuresOnly = stream?.failuresOnly ?? false;
+	const lens: Lens = failuresOnly ? 'failures' : 'all';
+	const filters = useMemo(() => ({ failuresOnly }), [failuresOnly]);
 
 	const status = STATUS_COPY[stream?.status ?? 'idle'];
 	const events = stream?.events ?? [];
@@ -92,22 +97,7 @@ export function ActivityStreamPanel({
 							className="text-muted-foreground flex items-center gap-1.5 text-xs"
 							role="status"
 						>
-							<span className="relative flex h-1.5 w-1.5" aria-hidden="true">
-								{status.ping && (
-									<span
-										className={cn(
-											'absolute inline-flex h-full w-full animate-ping rounded-full opacity-60',
-											status.dot,
-										)}
-									/>
-								)}
-								<span
-									className={cn(
-										'relative inline-flex h-1.5 w-1.5 rounded-full',
-										status.dot,
-									)}
-								/>
-							</span>
+							<LiveDot tone={status.tone} />
 							{status.label}
 						</span>
 					</div>
@@ -115,7 +105,7 @@ export function ActivityStreamPanel({
 						<SegmentedToggle
 							options={LENS_OPTIONS}
 							value={lens}
-							onChange={setLens}
+							onChange={(next) => stream?.setFailuresOnly(next === 'failures')}
 							ariaLabel="Filter activity"
 						/>
 						{actions}
