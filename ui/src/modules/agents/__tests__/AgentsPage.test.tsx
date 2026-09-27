@@ -1067,18 +1067,29 @@ describe('AgentsPage — flat agents surface', () => {
 		expect(stripTab('support-agent')).toBeInTheDocument();
 	});
 
-	it('shows the DCR quickstart when no agents are registered', async () => {
+	it('shows the setup checklist and DCR quickstart when no agents are registered', async () => {
 		worker.use(
 			http.get('/agents', () =>
 				HttpResponse.json({ data: [], has_more: false, next_cursor: null }),
 			),
 		);
+		const user = userEvent.setup();
 		renderPage();
 
-		expect(await screen.findByText('No agents yet')).toBeInTheDocument();
+		// Agents is the app's home, so an empty fleet is a fresh workspace.
+		const setup = await screen.findByRole('region', { name: 'Set up your workspace' });
+		expect(within(setup).getByRole('link', { name: /Discover an API/ })).toHaveAttribute(
+			'href',
+			'/discover',
+		);
+		expect(within(setup).getByRole('link', { name: /Add a credential/ })).toHaveAttribute(
+			'href',
+			'/agents?credentials=new',
+		);
 		// Both routes in: self-registration below, manual creation here — manual is
 		// primary, because it ends with a working agent rather than a pending one.
-		expect(screen.getByRole('button', { name: /Create an agent/ })).toBeInTheDocument();
+		await user.click(within(setup).getByRole('button', { name: /Create an agent/ }));
+		expect(await screen.findByRole('dialog', { name: 'Create agent' })).toBeInTheDocument();
 		expect(screen.getByText('Register an agent from the command line')).toBeInTheDocument();
 		// Pin the real CLI flag: `jentic register` takes --url, not --base-url (#1204).
 		expect(screen.getByText(/jentic register --url /)).toBeInTheDocument();

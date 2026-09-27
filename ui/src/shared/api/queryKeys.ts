@@ -28,14 +28,13 @@
 export const sharedQueryKeys = {
 	workspaceApis: ['workspace', 'apis'] as const,
 	/**
-	 * The Dashboard's query root (`dashboardKeys.all` derives from this). The
-	 * Dashboard composes its overview from sibling endpoints, so several
-	 * sibling-module mutations legitimately need to refresh it — e.g. approving
-	 * or denying a pending agent (Agents module) changes the dashboard's
-	 * action inbox. Those modules can't import `dashboardKeys`
-	 * across the boundary, so they invalidate this shared root instead.
+	 * The Notifications bell's query root (`attentionKeys` in
+	 * `shared/attention` derive from this). The bell composes "needs you" from
+	 * sibling endpoints, so sibling-module mutations legitimately need to
+	 * refresh it — e.g. approving or denying a pending agent (Agents module)
+	 * changes what needs you. They invalidate this shared root.
 	 */
-	dashboardRoot: ['dashboard'] as const,
+	attentionRoot: ['attention'] as const,
 	/**
 	 * The agents root (`GET /agents`). Owned by the Agents module
 	 * (`agentsKeys.all` derives from this), but the persistent nav badge

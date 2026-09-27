@@ -60,7 +60,7 @@ test('bootstrap: ensure the first-run gate is cleared and the admin password is 
 
 	// Post-conditions: the UI lands authenticated and the gate is cleared.
 	await expect(page).toHaveURL(/\/app/);
-	await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible();
+	await expect(page.getByRole('heading', { name: 'Agents', exact: true })).toBeVisible();
 
 	const after = await getHealth(request);
 	expect(after.setup_required).toBe(false);

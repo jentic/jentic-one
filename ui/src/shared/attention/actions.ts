@@ -23,7 +23,7 @@ export function useApproveAgent() {
 		mutationFn: (agentId) => AgentsService.approveAgent({ agentId }),
 		onSuccess: () => {
 			void queryClient.invalidateQueries({ queryKey: sharedQueryKeys.agentsRoot });
-			void queryClient.invalidateQueries({ queryKey: sharedQueryKeys.dashboardRoot });
+			void queryClient.invalidateQueries({ queryKey: sharedQueryKeys.attentionRoot });
 		},
 	});
 }

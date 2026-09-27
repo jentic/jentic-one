@@ -104,7 +104,7 @@ export function useExecution(executionId: string | null) {
  * jentic-one-internal#561), org:admin. Usage asks for the ACTIVE lens
  * only; `keepPreviousData` holds the last lens on screen while a new one loads.
  * The caller gates `enabled` on org:admin so non-admins never fire a doomed
- * request (the gate lives in the view — see the TDZ note in dashboard hooks).
+ * request (the gate lives in the view, not here).
  */
 export function useUsageStats(
 	params: UsageStatsParams = {},

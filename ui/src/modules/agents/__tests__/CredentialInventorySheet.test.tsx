@@ -113,7 +113,9 @@ describe('CredentialInventorySheet — page-level org-wide inventory', () => {
 		renderPage();
 
 		// No agents, no dock — but the org-wide inventory still opens.
-		expect(await screen.findByText('No agents yet')).toBeInTheDocument();
+		expect(
+			await screen.findByRole('heading', { name: 'Set up your workspace' }),
+		).toBeInTheDocument();
 		expect(screen.queryByTestId('agent-dock')).not.toBeInTheDocument();
 
 		await user.click(headerTrigger());

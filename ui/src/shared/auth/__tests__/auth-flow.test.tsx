@@ -30,7 +30,7 @@ describe('auth flow', () => {
 		expect(await screen.findByRole('heading', { name: 'Sign in to Jentic One' })).toBeVisible();
 	});
 
-	it('logs in and lands on the dashboard shell', async () => {
+	it('logs in and lands on the Agents home', async () => {
 		renderApp('/login');
 		const user = userEvent.setup();
 
@@ -39,7 +39,8 @@ describe('auth flow', () => {
 		await user.type(screen.getByLabelText('Password'), 'password');
 		await user.click(screen.getByRole('button', { name: 'Sign in' }));
 
-		expect(await screen.findByRole('heading', { name: 'Dashboard' })).toBeVisible();
+		// The page header fades in, so wait for it to settle visible.
+		await waitFor(() => expect(screen.getByRole('heading', { name: 'Agents' })).toBeVisible());
 		expect(screen.getByRole('navigation', { name: 'Primary' })).toBeVisible();
 	});
 
@@ -115,7 +116,8 @@ describe('auth flow', () => {
 		await user.type(screen.getByLabelText('Confirm new password'), 'a-strong-passw0rd');
 		await user.click(screen.getByRole('button', { name: 'Set password' }));
 
-		expect(await screen.findByRole('heading', { name: 'Dashboard' })).toBeVisible();
+		// The page header fades in, so wait for it to settle visible.
+		await waitFor(() => expect(screen.getByRole('heading', { name: 'Agents' })).toBeVisible());
 		await waitFor(() =>
 			expect(localStorage.getItem('jentic-one.access_token')).toBe('fresh-token-n-false'),
 		);
@@ -280,12 +282,13 @@ describe('auth flow', () => {
 		// The dead token bounces us to login…
 		await screen.findByRole('heading', { name: 'Sign in to Jentic One' });
 
-		// …and a single sign-in lands on the dashboard with the new token held.
+		// …and a single sign-in lands on Agents with the new token held.
 		await user.type(await screen.findByLabelText('Email'), 'admin@local');
 		await user.type(screen.getByLabelText('Password'), 'password');
 		await user.click(screen.getByRole('button', { name: 'Sign in' }));
 
-		expect(await screen.findByRole('heading', { name: 'Dashboard' })).toBeVisible();
+		// The page header fades in, so wait for it to settle visible.
+		await waitFor(() => expect(screen.getByRole('heading', { name: 'Agents' })).toBeVisible());
 		await waitFor(() =>
 			expect(localStorage.getItem('jentic-one.access_token')).toBe('fresh-token'),
 		);
@@ -324,7 +327,7 @@ describe('auth flow', () => {
 		setSession('short-lived-token', 1);
 		renderApp('/');
 
-		await screen.findByRole('heading', { name: 'Dashboard' });
+		await screen.findByRole('heading', { name: 'Agents' });
 		await waitFor(
 			() => expect(localStorage.getItem('jentic-one.access_token')).toBe('refreshed-token'),
 			{ timeout: 5000 },
@@ -351,12 +354,12 @@ describe('auth flow', () => {
 			),
 			http.post('/auth/refresh', () => new HttpResponse(null, { status: 401 })),
 		);
-		// 2s expiry: long enough for the dashboard to render before the refresh
+		// 2s expiry: long enough for the Agents page to render before the refresh
 		// slot (80% → 1.6s) fires and the 401 kicks the session out.
 		setSession('doomed-token', 2);
 		renderApp('/');
 
-		await screen.findByRole('heading', { name: 'Dashboard' });
+		await screen.findByRole('heading', { name: 'Agents' });
 		expect(
 			await screen.findByRole(
 				'heading',
@@ -385,7 +388,7 @@ describe('auth flow', () => {
 		expect(await screen.findByRole('heading', { name: 'Welcome to Jentic One' })).toBeVisible();
 	});
 
-	it('creates the first admin and lands authenticated on the dashboard', async () => {
+	it('creates the first admin and lands authenticated on Agents', async () => {
 		let created = false;
 		worker.use(
 			http.get('/admin/health', () =>
@@ -427,7 +430,8 @@ describe('auth flow', () => {
 		await user.type(screen.getByLabelText('Confirm password'), 'a-strong-passw0rd');
 		await user.click(screen.getByRole('button', { name: 'Create admin account' }));
 
-		expect(await screen.findByRole('heading', { name: 'Dashboard' })).toBeVisible();
+		// The page header fades in, so wait for it to settle visible.
+		await waitFor(() => expect(screen.getByRole('heading', { name: 'Agents' })).toBeVisible());
 		await waitFor(() =>
 			expect(localStorage.getItem('jentic-one.access_token')).toBe('first-admin-token'),
 		);
@@ -468,7 +472,7 @@ describe('auth flow', () => {
 		renderApp('/');
 		const user = userEvent.setup();
 
-		await screen.findByRole('heading', { name: 'Dashboard' });
+		await screen.findByRole('heading', { name: 'Agents' });
 		await user.click(screen.getByRole('button', { name: 'User menu' }));
 		await user.click(screen.getByRole('menuitem', { name: 'Change password' }));
 
@@ -476,9 +480,10 @@ describe('auth flow', () => {
 		expect(await screen.findByRole('heading', { name: 'Change your password' })).toBeVisible();
 		expect(screen.queryByText(/you must change your password/i)).not.toBeInTheDocument();
 
-		// Cancel returns to the dashboard (no forced-gate bounce).
+		// Cancel returns to Agents (no forced-gate bounce).
 		await user.click(screen.getByRole('button', { name: 'Cancel' }));
-		expect(await screen.findByRole('heading', { name: 'Dashboard' })).toBeVisible();
+		// The page header fades in, so wait for it to settle visible.
+		await waitFor(() => expect(screen.getByRole('heading', { name: 'Agents' })).toBeVisible());
 	});
 
 	it('shows setup already complete and routes to login on a 410 race', async () => {

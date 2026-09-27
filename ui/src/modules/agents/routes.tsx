@@ -34,8 +34,19 @@ function RetiredServiceAccountRedirect() {
 	return <Navigate to={ROUTES.agents} replace />;
 }
 
+/**
+ * `/app/access-requests` (the retired access-request queue — theme 7, epic
+ * jentic/jentic-one#1374) redirects to Agents, where agent approvals now live,
+ * so old bookmarks land somewhere useful instead of a 404. A component for the
+ * same TDZ reason as above.
+ */
+function RetiredAccessRequestsRedirect() {
+	return <Navigate to={ROUTES.agents} replace />;
+}
+
 export const agentsRoutes: RouteObject[] = [
 	{ path: 'agents', element: <AgentsPage /> },
+	{ path: 'access-requests', element: <RetiredAccessRequestsRedirect /> },
 	// Declared before `agents/:agentId` so the `service-accounts` segment is
 	// never captured as an `agentId`.
 	{ path: 'agents/service-accounts/*', element: <RetiredServiceAccountRedirect /> },

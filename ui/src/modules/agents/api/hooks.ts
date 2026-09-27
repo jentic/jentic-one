@@ -558,13 +558,13 @@ export function useApproveAgent() {
 		onSuccess: (agent) => {
 			qc.setQueryData(agentsKeys.detail(agent.id), agent);
 			qc.invalidateQueries({ queryKey: agentsKeys.lists() });
-			// Approving removes the agent from the pending pool the Dashboard's
-			// action inbox (`ActionInboxBell`) reads, and the persistent
-			// nav badge (`usePendingAgentsCount`, keyed under the shared agents
-			// root). Refresh both shared roots so those surfaces update instantly
+			// Approving removes the agent from the pending pool the
+			// Notifications bell reads, and the persistent nav badge
+			// (`usePendingAgentsCount`, keyed under the shared agents root).
+			// Refresh both shared roots so those surfaces update instantly
 			// instead of waiting for their fallback poll.
 			qc.invalidateQueries({ queryKey: sharedQueryKeys.agentsRoot });
-			qc.invalidateQueries({ queryKey: sharedQueryKeys.dashboardRoot });
+			qc.invalidateQueries({ queryKey: sharedQueryKeys.attentionRoot });
 			toast({
 				title: 'Agent approved',
 				description: `${agent.name} is now active.`,
@@ -583,10 +583,10 @@ export function useDenyAgent() {
 			qc.setQueryData(agentsKeys.detail(agent.id), agent);
 			qc.invalidateQueries({ queryKey: agentsKeys.lists() });
 			// Denying also clears the agent from the pending pool — keep the
-			// Dashboard's pending-agents surfaces AND the nav badge in sync
+			// Notifications bell AND the nav badge in sync
 			// immediately (both read off the shared agents root).
 			qc.invalidateQueries({ queryKey: sharedQueryKeys.agentsRoot });
-			qc.invalidateQueries({ queryKey: sharedQueryKeys.dashboardRoot });
+			qc.invalidateQueries({ queryKey: sharedQueryKeys.attentionRoot });
 			toast({
 				title: 'Agent denied',
 				description: `${agent.name} was rejected.`,
@@ -698,8 +698,8 @@ export function useCreateAgent() {
 			// (#652). The root prefix subsumes the list cache.
 			qc.invalidateQueries({ queryKey: sharedQueryKeys.agentsRoot });
 			// A freshly created agent starts in the pending pool, so refresh the
-			// Dashboard's pending-agents surfaces too.
-			qc.invalidateQueries({ queryKey: sharedQueryKeys.dashboardRoot });
+			// Notifications bell too.
+			qc.invalidateQueries({ queryKey: sharedQueryKeys.attentionRoot });
 			toast({
 				title: 'Agent created',
 				description: `${agent.name} created successfully.`,
@@ -716,8 +716,8 @@ export function useCreateAgent() {
  * detail cache rather than seeding it from the PATCH response — the response
  * row is built without the `has_api_key` join (always false), so seeding it
  * would make the Keys tab forget an existing key. The roster refresh lets the
- * fleet table pick the new name up immediately, and the dashboard root covers
- * the pending-agents tile, which renders agent names.
+ * fleet table pick the new name up immediately, and the attention root covers
+ * the Notifications bell, which lists pending agents by name.
  */
 export function useUpdateAgent() {
 	const qc = useQueryClient();
@@ -726,7 +726,7 @@ export function useUpdateAgent() {
 		onSuccess: (agent) => {
 			qc.invalidateQueries({ queryKey: agentsKeys.detail(agent.id) });
 			qc.invalidateQueries({ queryKey: agentsKeys.lists() });
-			qc.invalidateQueries({ queryKey: sharedQueryKeys.dashboardRoot });
+			qc.invalidateQueries({ queryKey: sharedQueryKeys.attentionRoot });
 			// A rename changes what every `ActorLabel` renders — monitor rows,
 			// audit trails, and the "Registered by / Approved
 			// by" grid on this very page all resolve names through the actor

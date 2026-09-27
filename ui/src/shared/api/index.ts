@@ -99,10 +99,9 @@ export type { ApiResponse } from '@/shared/api/generated/models/ApiResponse';
 export type { ApiReferenceResponse } from '@/shared/api/generated/models/ApiReferenceResponse';
 export type { ApiLinksResponse } from '@/shared/api/generated/models/ApiLinksResponse';
 
-// [ui-dashboard] Execution models the overview renders. The Event* models
-// (EventResponse/EventListResponse/EventSeverity) the Dashboard also needs are
-// already exported above by the Agent Rail block; re-exporting them here would
-// be a duplicate, so Dashboard reuses those and only adds the Execution models.
+// Execution models (Monitor's calls view, agent activity). The Event* models
+// (EventResponse/EventListResponse/EventSeverity) are already exported above by
+// the Agent Rail block, so only the Execution models are added here.
 export type { ExecutionResponse } from '@/shared/api/generated/models/ExecutionResponse';
 export type { ExecutionListResponse } from '@/shared/api/generated/models/ExecutionListResponse';
 
@@ -167,7 +166,7 @@ export type { AgentScopesResponse } from '@/shared/api/generated/models/AgentSco
 // AdminService into per-tag services: Monitor's tabs use ExecutionsService /
 // JobsService / EventsService / AuditService — all exported above.
 // Note: Execution*, Event*, and Audit* models are already exported above (by the
-// dashboard, agent-rail, and agents blocks respectively); Monitor reuses them.
+// execution, agent-rail, and agents blocks respectively); Monitor reuses them.
 // Only the Job models are not yet re-exported, so add them here (append-only).
 export type { JobResponse } from '@/shared/api/generated/models/JobResponse';
 export type { JobListResponse } from '@/shared/api/generated/models/JobListResponse';
