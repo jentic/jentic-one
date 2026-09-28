@@ -229,6 +229,8 @@ async def test_create_session_device_authorization_seeds_credential_and_aux_row(
     assert created.poll_token
     # Approval URL points at the SPA's Agents page (where the credential
     # inventory lives) with the session id + token so the human can pick it up.
+    # Absolute even with no public URL configured: it is relayed out-of-band.
+    assert urlsplit(created.approval_url).scheme in {"http", "https"}
     assert "/app/agents?" in created.approval_url
     assert f"approve={created.session_id}" in created.approval_url
     assert f"poll_token={created.poll_token}" in created.approval_url

@@ -54,6 +54,7 @@ from jentic_one.control.services.vendors.service import (
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_best_effort
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.catalog import CatalogAutoImportProtocol
+from jentic_one.shared.config import resolved_auth_base_url
 from jentic_one.shared.context import Context
 from jentic_one.shared.metrics import get_meter
 from jentic_one.shared.models import ActorType
@@ -435,8 +436,12 @@ class ConnectSessionService:
         vendor-approval flow. The poll token rides along because the status
         endpoint (RFC-8628 poller) is gated by the token — the human owner needs
         it to observe completion.
+
+        The URL is relayed out-of-band (CLI output, MCP tool result), so it must
+        be absolute even with no public URL configured — ``resolved_auth_base_url``
+        falls back to ``bind_origin`` rather than yielding a bare path.
         """
-        base = (self._ctx.config.auth.canonical_base_url or "").rstrip("/")
+        base = resolved_auth_base_url(self._ctx.config).rstrip("/")
         return f"{base}/app/agents?approve={session_id}&poll_token={poll_token}"
 
     # ---- review data ------------------------------------------------------
