@@ -2,28 +2,33 @@
  * RailFeed — rendering layer for the live feed.
  *
  * Responsibilities:
- *   1. Apply filters (search, severity, kind) from the parent header.
- *   2. Group consecutive same-`groupKey` events inside a 10s window into a
- *      single row with a count.
+ *   1. Apply filters: the rail header's search/severity/kind, or the
+ *      Activity panel's "Failures only".
+ *   2. Group consecutive same-`groupKey`, same-actor events inside a 10s
+ *      window into a single row with a count (the row names ONE actor).
  *   3. Keep critical/error events always individual (they never group).
  *   4. Defer to RailEventRow for actual rendering, so density is decided per-row.
  */
 import { useMemo, useState } from 'react';
 import { RailEventRow } from '@/shared/app/rail/RailEventRow';
-import { formatStreamDayLabel, streamDayKey } from '@/shared/lib/agentStream';
+import { formatStreamDayLabel, isFailureSeverity, streamDayKey } from '@/shared/lib/agentStream';
 import type { InlineActionSpec, StreamEvent } from '@/shared/lib/agentStream';
 
 const GROUP_WINDOW_MS = 10_000;
 
 export type RailFeedFilters = {
-	search: string;
-	severities: Set<StreamEvent['severity']>;
-	kinds: Set<StreamEvent['kind']>;
+	search?: string;
+	severities?: Set<StreamEvent['severity']>;
+	kinds?: Set<StreamEvent['kind']>;
+	/** Only error/critical events (acknowledged ones included, dimmed). */
+	failuresOnly?: boolean;
 };
 
 export type RailFeedProps = {
 	events: StreamEvent[];
 	filters: RailFeedFilters;
+	/** Friendly name for the actor behind an event, when resolvable. */
+	resolveActor?: (ev: StreamEvent) => string | undefined;
 	onAction?: (eventId: string, action: InlineActionSpec) => void;
 	onNavigate?: (href: string) => void;
 };
@@ -75,10 +80,11 @@ function withDaySeparators(rows: FeedRow[]): FeedRow[] {
 }
 
 function passesFilters(ev: StreamEvent, f: RailFeedFilters): boolean {
-	if (f.severities.size > 0 && !f.severities.has(ev.severity)) return false;
-	if (f.kinds.size > 0 && !f.kinds.has(ev.kind)) return false;
-	if (f.search.trim()) {
-		const q = f.search.trim().toLowerCase();
+	if (f.failuresOnly && !isFailureSeverity(ev.severity)) return false;
+	if (f.severities?.size && !f.severities.has(ev.severity)) return false;
+	if (f.kinds?.size && !f.kinds.has(ev.kind)) return false;
+	const q = f.search?.trim().toLowerCase();
+	if (q) {
 		const hay = [
 			ev.title,
 			ev.meta ?? '',
@@ -119,14 +125,14 @@ function buildRows(events: StreamEvent[]): FeedRow[] {
 		const last = out[out.length - 1];
 		if (last && last.kind === 'group') {
 			const within = last.head.tsMs - ev.tsMs <= GROUP_WINDOW_MS;
-			const sameKey = last.head.groupKey === ev.groupKey;
+			const sameKey = last.head.groupKey === ev.groupKey && last.head.actorId === ev.actorId;
 			if (within && sameKey) {
 				last.members.push(ev);
 				continue;
 			}
 		} else if (last && last.kind === 'single') {
 			const within = last.ev.tsMs - ev.tsMs <= GROUP_WINDOW_MS;
-			const sameKey = last.ev.groupKey === ev.groupKey;
+			const sameKey = last.ev.groupKey === ev.groupKey && last.ev.actorId === ev.actorId;
 			if (within && sameKey) {
 				out[out.length - 1] = { kind: 'group', head: last.ev, members: [last.ev, ev] };
 				continue;
@@ -137,7 +143,7 @@ function buildRows(events: StreamEvent[]): FeedRow[] {
 	return out;
 }
 
-export function RailFeed({ events, filters, onAction, onNavigate }: RailFeedProps) {
+export function RailFeed({ events, filters, resolveActor, onAction, onNavigate }: RailFeedProps) {
 	const filtered = useMemo(
 		() => events.filter((ev) => passesFilters(ev, filters)),
 		[events, filters],
@@ -159,7 +165,9 @@ export function RailFeed({ events, filters, onAction, onNavigate }: RailFeedProp
 		const ago = lastEvent ? formatLastEventAgo(lastEvent.tsMs) : null;
 		return (
 			<div className="text-muted-foreground border-border bg-background/40 rounded border border-dashed px-3 py-6 text-center text-[11px]">
-				{ago ? (
+				{filters.failuresOnly && events.length > 0 ? (
+					<>No failures in what's loaded.</>
+				) : ago ? (
 					<>All quiet. Last event was {ago}.</>
 				) : (
 					<>All quiet. Waiting for the next event…</>
@@ -192,6 +200,7 @@ export function RailFeed({ events, filters, onAction, onNavigate }: RailFeedProp
 						<RailEventRow
 							key={row.ev.id}
 							ev={row.ev}
+							actorName={resolveActor?.(row.ev)}
 							onAction={onAction}
 							onNavigate={onNavigate}
 						/>
@@ -202,6 +211,7 @@ export function RailFeed({ events, filters, onAction, onNavigate }: RailFeedProp
 					<div key={row.head.id}>
 						<RailEventRow
 							ev={row.head}
+							actorName={resolveActor?.(row.head)}
 							groupCount={row.members.length}
 							expanded={isOpen}
 							onToggleExpand={() => toggle(row.head.id)}
@@ -214,6 +224,7 @@ export function RailFeed({ events, filters, onAction, onNavigate }: RailFeedProp
 									<RailEventRow
 										key={member.id}
 										ev={member}
+										actorName={resolveActor?.(member)}
 										onAction={onAction}
 										onNavigate={onNavigate}
 									/>

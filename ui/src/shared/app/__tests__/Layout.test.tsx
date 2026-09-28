@@ -148,3 +148,19 @@ describe('isNavItemActive', () => {
 		expect(isNavItemActive(discover, '/discoverable')).toBe(false);
 	});
 });
+
+describe('agent rail placement', () => {
+	it('docks the rail beside ordinary pages', async () => {
+		renderShell('/agents');
+		await screen.findByRole('navigation', { name: 'Primary' });
+		// Expanded or collapsed (the state persists), the rail is the shell's
+		// only complementary landmark — the Outlet renders nothing here.
+		expect(await screen.findAllByRole('complementary', { hidden: true })).toHaveLength(1);
+	});
+
+	it('leaves the rail off Monitor, whose Live activity panel is the stream', async () => {
+		renderShell('/monitor');
+		await screen.findByRole('navigation', { name: 'Primary' });
+		expect(screen.queryAllByRole('complementary', { hidden: true })).toHaveLength(0);
+	});
+});

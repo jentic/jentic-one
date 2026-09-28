@@ -56,7 +56,7 @@ export const ROUTE_PATHS = {
 	workspaceApi: (apiPath: string) => `${ROUTES.workspace}/${apiPath}`,
 	agent: (agentId: string) => `${ROUTES.agents}/${encodeURIComponent(agentId)}`,
 	/**
-	 * Monitor's Executions lens, optionally pre-filtered. The `tab` /
+	 * Monitor's Activity view on API calls, optionally pre-filtered. The `show` /
 	 * `actor_id` / `actor_type` names are Monitor's URL vocabulary (read by
 	 * `modules/monitor/lib/useMonitorFilters`); the builder lives here because
 	 * cross-module deep-links (agents console → Monitor) must agree on it, and
@@ -81,7 +81,7 @@ export const ROUTE_PATHS = {
 	 */
 	agentTab: (agentId: string) => `${ROUTES.agents}?agent=${encodeURIComponent(agentId)}`,
 	monitorExecutions: (filter?: { actorId?: string; actorType?: 'agent' | 'user' }) => {
-		const q = new URLSearchParams({ tab: 'executions' });
+		const q = new URLSearchParams({ show: 'calls' });
 		if (filter?.actorId) q.set('actor_id', filter.actorId);
 		if (filter?.actorType) q.set('actor_type', filter.actorType);
 		return `${ROUTES.monitor}?${q.toString()}`;

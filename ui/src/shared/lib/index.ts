@@ -56,6 +56,21 @@ export { eventSeverityIcon } from '@/shared/lib/eventSeverity';
 // tests/embedded surfaces where it isn't).
 export { idFromLink, useAgentStreamOptional } from '@/shared/lib/agentStream';
 
+// The event → UI adaptation and its wording helpers, so Monitor's Activity
+// feed reads an event exactly the way the rail and toasts do (same kind
+// label, same day separators, same "where does this lead" destination).
+export {
+	adaptEvent,
+	primaryDestinationFor,
+	STREAM_KIND_LABEL,
+	formatStreamDayLabel,
+	formatStreamTime,
+	streamDayKey,
+	isFailureSeverity,
+	isRetiredEventType,
+} from '@/shared/lib/agentStream';
+export type { StreamEvent, StreamKind, StreamSeverity } from '@/shared/lib/agentStream';
+
 // API-identity display helpers — one humanising rule applied everywhere a
 // machine identity (`api_id` / `api_vendor` / `api_name`) needs to render as a
 // friendly primary line — shared so Discover, the credential picker, and the
