@@ -457,8 +457,19 @@
 		animation: j1-page-in 220ms var(--ease-out-soft) 80ms both;
 	}
 
-	::view-transition-group(app-header) {
+	/* The nav bars hold still on their own layers, and only their LIVE image shows.
+	   `animation: none` on the group zeroes the image pair's inherited duration
+	   too, so the old snapshot would sit fully opaque under the translucent bar
+	   for the whole transition — a frozen active-tab marker ghosting under the
+	   one sliding to the new tab, which read as the bar buzzing. */
+	::view-transition-group(app-header),
+	::view-transition-group(app-bottom-nav) {
 		animation: none;
+	}
+
+	::view-transition-old(app-header),
+	::view-transition-old(app-bottom-nav) {
+		display: none;
 	}
 
 	::view-transition-group(activity-stream) {
