@@ -2,11 +2,12 @@
  * Agents page — operator surface for the agent lifecycle.
  *
  * The header carries what the agent-scoped dock cannot: the org-wide credential
- * inventory (a sheet reached through `?credentials`, `=new` for the wizard), the
+ * inventory (a sheet reached through `?credentials`, `=new` for the wizard, and
+ * `?approve=&poll_token=` for an agent's connect approval link), the
  * fleet filter and `New agent`. It owns the keyboard map documented in `PageHelp`;
  * everything else is `FlatAgentsSection`, which keeps its selection in `?agent=`.
  */
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import { Filter, Plus, Wallet } from 'lucide-react';
 import {
@@ -60,6 +61,35 @@ export default function AgentsPage() {
 			{ replace: true },
 		);
 	}, [inventoryParam, setSearchParams]);
+
+	// An agent-initiated connect session hands its owner an approval link (see
+	// `connect_session_service.py::_approval_url_for`) carrying
+	// `?approve=<sid>&poll_token=<tok>`. Those params open the inventory's wizard in
+	// approve mode and stay in the URL until it closes, so a reload mid-approval
+	// reopens it rather than losing the prompt.
+	const approveSessionId = searchParams.get('approve');
+	const approvePollToken = searchParams.get('poll_token');
+	const approvalSession = useMemo(
+		() =>
+			approveSessionId && approvePollToken
+				? { sessionId: approveSessionId, pollToken: approvePollToken }
+				: undefined,
+		[approveSessionId, approvePollToken],
+	);
+	useEffect(() => {
+		if (approvalSession) setInventoryOpen(true);
+	}, [approvalSession]);
+	const clearApprovalParams = (): void => {
+		setSearchParams(
+			(prev) => {
+				const next = new URLSearchParams(prev);
+				next.delete('approve');
+				next.delete('poll_token');
+				return next;
+			},
+			{ replace: true },
+		);
+	};
 
 	return (
 		// The surface mounts the fixed AgentDock, so the page pads its bottom to keep
@@ -147,6 +177,8 @@ export default function AgentsPage() {
 			<CredentialInventorySheet
 				open={inventoryOpen}
 				autoOpenCreate={inventoryWantsCreate}
+				approvalSession={approvalSession}
+				onApprovalClose={clearApprovalParams}
 				onClose={() => {
 					setInventoryOpen(false);
 					setInventoryWantsCreate(false);

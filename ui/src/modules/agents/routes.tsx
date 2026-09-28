@@ -4,7 +4,7 @@
  */
 import { useEffect } from 'react';
 import type { RouteObject } from 'react-router';
-import { Navigate } from 'react-router';
+import { Navigate, useLocation } from 'react-router';
 import { ROUTES } from '@/shared/app';
 import { toast } from '@/shared/ui';
 import AgentsPage from '@/modules/agents/pages/AgentsPage';
@@ -44,9 +44,24 @@ function RetiredAccessRequestsRedirect() {
 	return <Navigate to={ROUTES.agents} replace />;
 }
 
+/**
+ * `/app/credentials` (the retired standalone Credentials page) redirects to the
+ * Agents credential inventory, where credentials now live. The query string is
+ * kept: an agent's connect approval link (`?approve=&poll_token=`, minted by
+ * `connect_session_service.py::_approval_url_for`) still points here, and Agents
+ * opens the approval wizard from it. A component for the same TDZ reason as above.
+ */
+function RetiredCredentialsRedirect() {
+	const { search } = useLocation();
+	const params = new URLSearchParams(search);
+	params.set('credentials', '1');
+	return <Navigate to={`${ROUTES.agents}?${params}`} replace />;
+}
+
 export const agentsRoutes: RouteObject[] = [
 	{ path: 'agents', element: <AgentsPage /> },
 	{ path: 'access-requests', element: <RetiredAccessRequestsRedirect /> },
+	{ path: 'credentials', element: <RetiredCredentialsRedirect /> },
 	// Declared before `agents/:agentId` so the `service-accounts` segment is
 	// never captured as an `agentId`.
 	{ path: 'agents/service-accounts/*', element: <RetiredServiceAccountRedirect /> },

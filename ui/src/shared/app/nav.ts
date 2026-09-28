@@ -1,5 +1,5 @@
 import type { ComponentType } from 'react';
-import { Compass, Bot, LayoutGrid, KeyRound, Activity } from 'lucide-react';
+import { Compass, Bot, LayoutGrid, Activity } from 'lucide-react';
 
 /**
  * A primary-navigation entry. `order` (not array position) controls placement,
@@ -42,7 +42,6 @@ export interface NavItem {
 export const navItems: NavItem[] = [
 	{ id: 'discover', label: 'Discover APIs', to: '/discover', order: 20, icon: Compass },
 	{ id: 'workspace', label: 'Workspace', to: '/workspace', order: 30, icon: LayoutGrid },
-	{ id: 'credentials', label: 'Credentials', to: '/credentials', order: 50, icon: KeyRound },
 	{ id: 'agents', label: 'Agents', to: '/agents', order: 5, icon: Bot },
 	{ id: 'monitor', label: 'Monitor', to: '/monitor', order: 70, icon: Activity },
 	// NOTE: the docs portal ("API Reference", /docs) deliberately does NOT live

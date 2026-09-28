@@ -154,7 +154,7 @@ export function ApiAccessSidebar({
 	const credentialAgents = useCredentialAgents(credentialId ?? undefined, { enabled: open });
 	const boundAgentRows = credentialAgents.data?.data ?? [];
 
-	// Mirrors CredentialsPage/CredentialInventorySheet handleConnect: the
+	// Mirrors CredentialInventorySheet.handleConnect: the
 	// standalone connect keeps the credential whatever the outcome.
 	const handleConnect = async (): Promise<void> => {
 		if (!credentialId || !shown) return;

@@ -14,7 +14,12 @@ import { agentsRoutes } from '@/modules/agents/routes';
 
 function LocationProbe() {
 	const location = useLocation();
-	return <div data-testid="location">{location.pathname}</div>;
+	return (
+		<>
+			<div data-testid="location">{location.pathname}</div>
+			<div data-testid="location-search">{location.search}</div>
+		</>
+	);
 }
 
 function Harness() {
@@ -22,9 +27,11 @@ function Harness() {
 	// data needs are not under test here).
 	const redirect = agentsRoutes.find((r) => r.path === 'agents/service-accounts/*');
 	const accessRequests = agentsRoutes.find((r) => r.path === 'access-requests');
+	const credentials = agentsRoutes.find((r) => r.path === 'credentials');
 	return useRoutes([
 		redirect!,
 		accessRequests!,
+		credentials!,
 		{ path: ROUTES.agents.slice(1), element: <h1>Agents stub</h1> },
 		{ path: 'agents/:agentId', element: <h1>Agent detail stub</h1> },
 	]);
@@ -62,5 +69,38 @@ describe('retired access-request queue (theme 7)', () => {
 
 		expect(await screen.findByRole('heading', { name: 'Agents stub' })).toBeInTheDocument();
 		expect(screen.getByTestId('location').textContent).toBe(ROUTES.agents);
+	});
+});
+
+describe('retired Credentials page', () => {
+	it('redirects /credentials to the Agents credential inventory', async () => {
+		renderWithProviders(
+			<>
+				<Harness />
+				<LocationProbe />
+			</>,
+			{ route: '/credentials' },
+		);
+
+		expect(await screen.findByRole('heading', { name: 'Agents stub' })).toBeInTheDocument();
+		expect(screen.getByTestId('location').textContent).toBe(ROUTES.agents);
+		expect(screen.getByTestId('location-search').textContent).toBe('?credentials=1');
+	});
+
+	it("keeps an agent's approval link params, so the approval still opens on Agents", async () => {
+		// The backend still mints `/app/credentials?approve=…&poll_token=…`.
+		renderWithProviders(
+			<>
+				<Harness />
+				<LocationProbe />
+			</>,
+			{ route: '/credentials?approve=sess_1&poll_token=tok_1' },
+		);
+
+		expect(await screen.findByRole('heading', { name: 'Agents stub' })).toBeInTheDocument();
+		const params = new URLSearchParams(screen.getByTestId('location-search').textContent!);
+		expect(params.get('approve')).toBe('sess_1');
+		expect(params.get('poll_token')).toBe('tok_1');
+		expect(params.get('credentials')).toBe('1');
 	});
 });

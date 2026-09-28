@@ -1,7 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 
 /**
- * Credentials primary flow (mocked): log in, open the Credentials module,
+ * Credentials primary flow (mocked): log in, open the credential inventory on Agents,
  * walk the add-credential wizard (guided picker → manual entry → form), create
  * a bearer-token credential, and confirm it lands in the list. Runs against the
  * in-browser MSW credentials handlers, so it exercises the real routing +
@@ -37,8 +37,8 @@ test('create a credential and see it in the list', async ({ page }) => {
 
 	await login(page);
 
-	await page.goto('/app/credentials');
-	await expect(page.getByRole('heading', { name: 'Credentials' })).toBeVisible();
+	await page.goto('/app/agents?credentials=1');
+	await expect(page.getByRole('dialog', { name: 'Credentials', exact: true })).toBeVisible();
 
 	await page.getByRole('button', { name: 'Add credential' }).click();
 

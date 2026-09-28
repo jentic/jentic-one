@@ -2,8 +2,8 @@ import type { RouteObject } from 'react-router';
 
 /**
  * Canonical client route paths, ALL root-relative to the router `basename`
- * (`/app`, set in `main.tsx` from Vite's `base`). A path like `/credentials`
- * here resolves to `/app/credentials` in the browser; the basename is the
+ * (`/app`, set in `main.tsx` from Vite's `base`). A path like `/agents`
+ * here resolves to `/app/agents` in the browser; the basename is the
  * single source of the `/app` prefix, so it appears in exactly one place
  * (vite.config.ts `base`) and never in route literals.
  *
@@ -41,7 +41,6 @@ export const ROUTES = {
 	// append here.
 	discover: '/discover',
 	workspace: '/workspace',
-	credentials: '/credentials',
 	agents: '/agents',
 	monitor: '/monitor',
 	docs: '/docs',
@@ -105,7 +104,6 @@ export const ROUTE_PATHS = {
 import { agentsRoutes } from '@/modules/agents/routes';
 import { discoverRoutes } from '@/modules/discover/routes';
 import { workspaceRoutes } from '@/modules/workspace/routes';
-import { credentialsRoutes } from '@/modules/credentials/routes';
 import { monitorRoutes } from '@/modules/monitor/routes';
 import { settingsRoutes } from '@/modules/settings/routes';
 
@@ -114,7 +112,6 @@ export const moduleRoutes: RouteObject[] = [
 	...agentsRoutes,
 	...discoverRoutes,
 	...workspaceRoutes,
-	...credentialsRoutes,
 	...monitorRoutes,
 	...settingsRoutes,
 ];

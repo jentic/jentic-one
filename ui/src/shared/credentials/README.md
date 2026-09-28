@@ -1,6 +1,8 @@
-# Credentials module — providers & connect flow
+# Shared credentials kit — providers & connect flow
 
-This module manages stored credentials and the OAuth **connect** flow. It also
+This kit manages stored credentials and the OAuth **connect** flow. Its UI is
+composed by the Agents surface (the org-wide inventory sheet and the per-agent
+dock); there is no standalone Credentials page. It also
 ports the "add credential" style from `jentic-mini` while building strictly
 against `jentic-one`'s real backend contract.
 
