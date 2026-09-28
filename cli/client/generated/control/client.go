@@ -1783,7 +1783,7 @@ type InstanceIdentityResponse struct {
 	// BrokerUrl The broker (data plane) base URL a client should send `execute` traffic to, as configured by the operator (server.mcp.broker_url), with any userinfo stripped. Null when the platform cannot honestly advertise one: on a 'remote' backend a loopback-host value (the config default) describes the control plane's own machine, not an address any client can dial, so it is withheld rather than published as misleading guidance. Deployment metadata, not a secret — the broker URL is handed to every client expected to call it (issue #1249).
 	BrokerUrl *string `json:"broker_url,omitempty"`
 
-	// CanonicalBaseUrl The instance's own canonical base URL (auth.canonical_base_url), with any userinfo stripped; '' if unset.
+	// CanonicalBaseUrl The instance's own canonical base URL (auth.canonical_base_url, else server.public_base_url, else the serving bind origin), with any userinfo stripped.
 	CanonicalBaseUrl string `json:"canonical_base_url"`
 
 	// Host Host (and port, when the canonical base URL declares one) parsed from canonical_base_url; '' if unset or unparseable.
@@ -1809,12 +1809,6 @@ type IntegrationsConnectRequest struct {
 
 	// Vendor Vendor registry key (e.g. 'github')
 	Vendor string `json:"vendor"`
-}
-
-// IntrospectRequest Introspection endpoint request (form body).
-type IntrospectRequest struct {
-	Token         string  `json:"token"`
-	TokenTypeHint *string `json:"token_type_hint,omitempty"`
 }
 
 // IntrospectResponse RFC 7662 introspection response.
@@ -2798,7 +2792,7 @@ type ProviderConfigSetRequest struct {
 
 // ProviderDiscoveryEntryResponse Discovery metadata for a single credential provider.
 type ProviderDiscoveryEntryResponse struct {
-	// CallbackUrl OAuth2 redirect URI for providers that require it.
+	// CallbackUrl OAuth2 redirect URI for providers that require it. When no explicit redirect_uri is configured, this is derived from the deployment's public origin (server.public_base_url or the request origin), so it reflects the exact callback the connect flow will register with the IdP. Add this URL to your OAuth app's allowed redirect URIs.
 	CallbackUrl *string `json:"callback_url,omitempty"`
 
 	// Configured Whether the provider is fully configured and operational.
@@ -3575,6 +3569,18 @@ type ConsentAgentStatusParams struct {
 	St string `form:"st" json:"st"`
 }
 
+// IntrospectEndpointJSONBody defines parameters for IntrospectEndpoint.
+type IntrospectEndpointJSONBody struct {
+	Token         string  `json:"token"`
+	TokenTypeHint *string `json:"token_type_hint,omitempty"`
+}
+
+// IntrospectEndpointFormdataBody defines parameters for IntrospectEndpoint.
+type IntrospectEndpointFormdataBody struct {
+	Token         string  `form:"token" json:"token"`
+	TokenTypeHint *string `form:"token_type_hint,omitempty" json:"token_type_hint,omitempty"`
+}
+
 // TokenEndpointJSONBody defines parameters for TokenEndpoint.
 type TokenEndpointJSONBody struct {
 	Assertion    *string `json:"assertion,omitempty"`
@@ -3724,7 +3730,10 @@ type ConsentSubmitFormdataRequestBody = BodyConsentSubmit
 type ConsentAgentCreateFormdataRequestBody = BodyConsentAgentCreate
 
 // IntrospectEndpointJSONRequestBody defines body for IntrospectEndpoint for application/json ContentType.
-type IntrospectEndpointJSONRequestBody = IntrospectRequest
+type IntrospectEndpointJSONRequestBody IntrospectEndpointJSONBody
+
+// IntrospectEndpointFormdataRequestBody defines body for IntrospectEndpoint for application/x-www-form-urlencoded ContentType.
+type IntrospectEndpointFormdataRequestBody IntrospectEndpointFormdataBody
 
 // RevokeEndpointJSONRequestBody defines body for RevokeEndpoint for application/json ContentType.
 type RevokeEndpointJSONRequestBody = RevokeRequest
@@ -6440,6 +6449,14 @@ type ClientInterface interface {
 	//
 	// Introspect a token (RFC 7662).
 	//
+	// Accepts both ``application/x-www-form-urlencoded`` (the §2.1 request
+	// encoding) and JSON (the platform's own contract) bodies. Both arms
+	// require a platform bearer identity, and both answer an unknown, invalid,
+	// or expired *token value* with 200 ``{"active": false}`` (§2.2) — only a
+	// malformed request body (missing ``token``) is a 400 ``invalid_request``:
+	// Problem Details on the JSON arm, the RFC 6749 §5.2 error dialect on the
+	// form arm.
+	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /oauth/introspect (the `IntrospectEndpoint` operationId).
@@ -6449,10 +6466,35 @@ type ClientInterface interface {
 	//
 	// Introspect a token (RFC 7662).
 	//
+	// Accepts both ``application/x-www-form-urlencoded`` (the §2.1 request
+	// encoding) and JSON (the platform's own contract) bodies. Both arms
+	// require a platform bearer identity, and both answer an unknown, invalid,
+	// or expired *token value* with 200 ``{"active": false}`` (§2.2) — only a
+	// malformed request body (missing ``token``) is a 400 ``invalid_request``:
+	// Problem Details on the JSON arm, the RFC 6749 §5.2 error dialect on the
+	// form arm.
+	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /oauth/introspect (the `IntrospectEndpoint` operationId).
 	IntrospectEndpoint(ctx context.Context, body IntrospectEndpointJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// IntrospectEndpointWithFormdataBody Introspect Endpoint
+	//
+	// Introspect a token (RFC 7662).
+	//
+	// Accepts both ``application/x-www-form-urlencoded`` (the §2.1 request
+	// encoding) and JSON (the platform's own contract) bodies. Both arms
+	// require a platform bearer identity, and both answer an unknown, invalid,
+	// or expired *token value* with 200 ``{"active": false}`` (§2.2) — only a
+	// malformed request body (missing ``token``) is a 400 ``invalid_request``:
+	// Problem Details on the JSON arm, the RFC 6749 §5.2 error dialect on the
+	// form arm.
+	//
+	// Takes a body of the `application/x-www-form-urlencoded` content type.
+	//
+	// Corresponds with POST /oauth/introspect (the `IntrospectEndpoint` operationId).
+	IntrospectEndpointWithFormdataBody(ctx context.Context, body IntrospectEndpointFormdataRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RevokeEndpointWithBody Revoke Endpoint
 	//
@@ -10654,6 +10696,14 @@ func (c *Client) ConsentAgentStatus(ctx context.Context, params *ConsentAgentSta
 //
 // Introspect a token (RFC 7662).
 //
+// Accepts both “application/x-www-form-urlencoded“ (the §2.1 request
+// encoding) and JSON (the platform's own contract) bodies. Both arms
+// require a platform bearer identity, and both answer an unknown, invalid,
+// or expired *token value* with 200 “{"active": false}“ (§2.2) — only a
+// malformed request body (missing “token“) is a 400 “invalid_request“:
+// Problem Details on the JSON arm, the RFC 6749 §5.2 error dialect on the
+// form arm.
+//
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /oauth/introspect (the `IntrospectEndpoint` operationId).
@@ -10673,11 +10723,46 @@ func (c *Client) IntrospectEndpointWithBody(ctx context.Context, contentType str
 //
 // Introspect a token (RFC 7662).
 //
+// Accepts both “application/x-www-form-urlencoded“ (the §2.1 request
+// encoding) and JSON (the platform's own contract) bodies. Both arms
+// require a platform bearer identity, and both answer an unknown, invalid,
+// or expired *token value* with 200 “{"active": false}“ (§2.2) — only a
+// malformed request body (missing “token“) is a 400 “invalid_request“:
+// Problem Details on the JSON arm, the RFC 6749 §5.2 error dialect on the
+// form arm.
+//
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /oauth/introspect (the `IntrospectEndpoint` operationId).
 func (c *Client) IntrospectEndpoint(ctx context.Context, body IntrospectEndpointJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewIntrospectEndpointRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// IntrospectEndpointWithFormdataBody Introspect Endpoint
+//
+// Introspect a token (RFC 7662).
+//
+// Accepts both “application/x-www-form-urlencoded“ (the §2.1 request
+// encoding) and JSON (the platform's own contract) bodies. Both arms
+// require a platform bearer identity, and both answer an unknown, invalid,
+// or expired *token value* with 200 “{"active": false}“ (§2.2) — only a
+// malformed request body (missing “token“) is a 400 “invalid_request“:
+// Problem Details on the JSON arm, the RFC 6749 §5.2 error dialect on the
+// form arm.
+//
+// Takes a body of the `application/x-www-form-urlencoded` content type.
+//
+// Corresponds with POST /oauth/introspect (the `IntrospectEndpoint` operationId).
+func (c *Client) IntrospectEndpointWithFormdataBody(ctx context.Context, body IntrospectEndpointFormdataRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewIntrospectEndpointRequestWithFormdataBody(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -19095,6 +19180,17 @@ func NewIntrospectEndpointRequest(server string, body IntrospectEndpointJSONRequ
 	return NewIntrospectEndpointRequestWithBody(server, "application/json", bodyReader)
 }
 
+// NewIntrospectEndpointRequestWithFormdataBody calls the generic IntrospectEndpoint builder with application/x-www-form-urlencoded body
+func NewIntrospectEndpointRequestWithFormdataBody(server string, body IntrospectEndpointFormdataRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	bodyStr, err := runtime.MarshalForm(body, nil)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = strings.NewReader(bodyStr.Encode())
+	return NewIntrospectEndpointRequestWithBody(server, "application/x-www-form-urlencoded", bodyReader)
+}
+
 // NewIntrospectEndpointRequestWithBody constructs an http.Request for the IntrospectEndpoint method, with any body, and a specified content type
 func NewIntrospectEndpointRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
@@ -22529,6 +22625,14 @@ type ClientWithResponsesInterface interface {
 	//
 	// Introspect a token (RFC 7662).
 	//
+	// Accepts both ``application/x-www-form-urlencoded`` (the §2.1 request
+	// encoding) and JSON (the platform's own contract) bodies. Both arms
+	// require a platform bearer identity, and both answer an unknown, invalid,
+	// or expired *token value* with 200 ``{"active": false}`` (§2.2) — only a
+	// malformed request body (missing ``token``) is a 400 ``invalid_request``:
+	// Problem Details on the JSON arm, the RFC 6749 §5.2 error dialect on the
+	// form arm.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /oauth/introspect (the `IntrospectEndpoint` operationId).
@@ -22538,10 +22642,35 @@ type ClientWithResponsesInterface interface {
 	//
 	// Introspect a token (RFC 7662).
 	//
+	// Accepts both ``application/x-www-form-urlencoded`` (the §2.1 request
+	// encoding) and JSON (the platform's own contract) bodies. Both arms
+	// require a platform bearer identity, and both answer an unknown, invalid,
+	// or expired *token value* with 200 ``{"active": false}`` (§2.2) — only a
+	// malformed request body (missing ``token``) is a 400 ``invalid_request``:
+	// Problem Details on the JSON arm, the RFC 6749 §5.2 error dialect on the
+	// form arm.
+	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /oauth/introspect (the `IntrospectEndpoint` operationId).
 	IntrospectEndpointWithResponse(ctx context.Context, body IntrospectEndpointJSONRequestBody, reqEditors ...RequestEditorFn) (*IntrospectEndpointHTTPResp, error)
+
+	// IntrospectEndpointWithFormdataBodyWithResponse Introspect Endpoint
+	//
+	// Introspect a token (RFC 7662).
+	//
+	// Accepts both ``application/x-www-form-urlencoded`` (the §2.1 request
+	// encoding) and JSON (the platform's own contract) bodies. Both arms
+	// require a platform bearer identity, and both answer an unknown, invalid,
+	// or expired *token value* with 200 ``{"active": false}`` (§2.2) — only a
+	// malformed request body (missing ``token``) is a 400 ``invalid_request``:
+	// Problem Details on the JSON arm, the RFC 6749 §5.2 error dialect on the
+	// form arm.
+	//
+	// Takes a body of the `application/x-www-form-urlencoded` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /oauth/introspect (the `IntrospectEndpoint` operationId).
+	IntrospectEndpointWithFormdataBodyWithResponse(ctx context.Context, body IntrospectEndpointFormdataRequestBody, reqEditors ...RequestEditorFn) (*IntrospectEndpointHTTPResp, error)
 
 	// RevokeEndpointWithBodyWithResponse Revoke Endpoint
 	//
@@ -39656,6 +39785,14 @@ func (c *ClientWithResponses) ConsentAgentStatusWithResponse(ctx context.Context
 //
 // Introspect a token (RFC 7662).
 //
+// Accepts both “application/x-www-form-urlencoded“ (the §2.1 request
+// encoding) and JSON (the platform's own contract) bodies. Both arms
+// require a platform bearer identity, and both answer an unknown, invalid,
+// or expired *token value* with 200 “{"active": false}“ (§2.2) — only a
+// malformed request body (missing “token“) is a 400 “invalid_request“:
+// Problem Details on the JSON arm, the RFC 6749 §5.2 error dialect on the
+// form arm.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /oauth/introspect (the `IntrospectEndpoint` operationId).
@@ -39671,11 +39808,42 @@ func (c *ClientWithResponses) IntrospectEndpointWithBodyWithResponse(ctx context
 //
 // Introspect a token (RFC 7662).
 //
+// Accepts both “application/x-www-form-urlencoded“ (the §2.1 request
+// encoding) and JSON (the platform's own contract) bodies. Both arms
+// require a platform bearer identity, and both answer an unknown, invalid,
+// or expired *token value* with 200 “{"active": false}“ (§2.2) — only a
+// malformed request body (missing “token“) is a 400 “invalid_request“:
+// Problem Details on the JSON arm, the RFC 6749 §5.2 error dialect on the
+// form arm.
+//
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /oauth/introspect (the `IntrospectEndpoint` operationId).
 func (c *ClientWithResponses) IntrospectEndpointWithResponse(ctx context.Context, body IntrospectEndpointJSONRequestBody, reqEditors ...RequestEditorFn) (*IntrospectEndpointHTTPResp, error) {
 	rsp, err := c.IntrospectEndpoint(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseIntrospectEndpointHTTPResp(rsp)
+}
+
+// IntrospectEndpointWithFormdataBodyWithResponse Introspect Endpoint
+//
+// Introspect a token (RFC 7662).
+//
+// Accepts both “application/x-www-form-urlencoded“ (the §2.1 request
+// encoding) and JSON (the platform's own contract) bodies. Both arms
+// require a platform bearer identity, and both answer an unknown, invalid,
+// or expired *token value* with 200 “{"active": false}“ (§2.2) — only a
+// malformed request body (missing “token“) is a 400 “invalid_request“:
+// Problem Details on the JSON arm, the RFC 6749 §5.2 error dialect on the
+// form arm.
+//
+// Takes a body of the `application/x-www-form-urlencoded` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /oauth/introspect (the `IntrospectEndpoint` operationId).
+func (c *ClientWithResponses) IntrospectEndpointWithFormdataBodyWithResponse(ctx context.Context, body IntrospectEndpointFormdataRequestBody, reqEditors ...RequestEditorFn) (*IntrospectEndpointHTTPResp, error) {
+	rsp, err := c.IntrospectEndpointWithFormdataBody(ctx, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}

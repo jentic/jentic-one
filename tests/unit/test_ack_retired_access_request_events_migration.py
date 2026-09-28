@@ -15,7 +15,7 @@ import pytest
 from jentic_one.migrations.run import upgrade
 
 _DB = "admin"
-_PARENT_REV = "b9d0e1f2a3b4"  # pragma: allowlist secret
+_PARENT_REV = "5c7e2a9d4f16"  # pragma: allowlist secret
 
 
 @pytest.fixture

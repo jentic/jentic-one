@@ -122,6 +122,7 @@ from jentic_one.shared.auth.permission_catalog import (
     CREDENTIALS_WRITE,
     compute_implies_transitive,
 )
+from jentic_one.shared.config import effective_auth_base_url
 from jentic_one.shared.context import Context
 from jentic_one.shared.db import DatabaseIntegrityError
 from jentic_one.shared.models import ActorStatus, ActorType
@@ -1103,7 +1104,7 @@ def _render_approval_pending_page(
         resume_params["nonce"] = nonce
     resume_url = f"/authorize?{urlencode(resume_params)}"
 
-    base_url = ctx.config.auth.canonical_base_url.rstrip("/") or str(request.base_url).rstrip("/")
+    base_url = effective_auth_base_url(ctx.config).rstrip("/") or str(request.base_url).rstrip("/")
     queue_url = f"{base_url}{_APPROVAL_QUEUE_SPA_PATH}"
 
     page_config = {
@@ -1234,7 +1235,7 @@ async def authorize_endpoint(
                 redirect_uri, "invalid_scope", state, "requested scopes exceed allowlist"
             )
 
-    callback_uri = _callback_uri(request, ctx.config.auth.canonical_base_url)
+    callback_uri = _callback_uri(request, effective_auth_base_url(ctx.config))
 
     state_payload: dict[str, str | None] = {
         "client_id": client_id,
@@ -1505,7 +1506,7 @@ async def oauth_callback(
     nonce = params.get("nonce")
     original_state = params.get("original_state")
 
-    callback_uri = _callback_uri(request, ctx.config.auth.canonical_base_url)
+    callback_uri = _callback_uri(request, effective_auth_base_url(ctx.config))
 
     oauth_client = await get_cached_oauth_client(request, client_id or "", ctx)
     if oauth_client is not None and not client_gate_passes(oauth_client):
@@ -1886,7 +1887,7 @@ def _render_agent_awaiting_page(
     user_email = str(params.get("user_email") or "unknown")
     status_state = _mint_agent_status_state(ctx, consent_token=consent_token, agent_id=agent_id)
 
-    base_url = ctx.config.auth.canonical_base_url.rstrip("/") or str(request.base_url).rstrip("/")
+    base_url = effective_auth_base_url(ctx.config).rstrip("/") or str(request.base_url).rstrip("/")
     agents_url = f"{base_url}{_AGENTS_SPA_PATH}"
 
     page_config = {

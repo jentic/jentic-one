@@ -1,9 +1,18 @@
-"""Shared URL utilities for server-variable substitution."""
+"""Shared URL utilities: server-variable substitution and public-origin helpers."""
 
 from __future__ import annotations
 
+import ipaddress
 import re
 from urllib.parse import quote, urlsplit
+
+_DEFAULT_PORTS = {"http": 80, "https": 443}
+
+# Bind/loopback hosts that all denote "this host" for origin-comparison
+# purposes. Binding ``0.0.0.0`` (all interfaces) is routinely reached over
+# ``127.0.0.1``/``localhost``, so a configured public URL on any of these must
+# not be flagged as a mismatch against a ``0.0.0.0`` bind.
+_EQUIVALENT_HOSTS = frozenset({"0.0.0.0", "127.0.0.1", "localhost", "::1"})
 
 # A ``{name}`` OpenAPI server-variable placeholder. Names follow the OpenAPI
 # variable-name grammar (letters, digits, underscores, hyphens, dots) so an
@@ -37,3 +46,119 @@ def has_host_server_variable(url: str) -> bool:
     parts = urlsplit(url)
     host = f"{parts.scheme}://{parts.netloc}" if parts.netloc else url.split("/", 1)[0]
     return bool(_SERVER_VAR_PLACEHOLDER.search(host))
+
+
+def normalize_base_url(raw: str) -> str:
+    """Normalize a configured public base URL.
+
+    Strips a trailing ``/``, requires an ``http``/``https`` scheme and a host,
+    rejects embedded userinfo (``user:pass@host`` must never end up in a
+    published link), rejects a query string or fragment (a base URL is an origin
+    + optional path, not a full request URL — a stray ``?x=1`` would corrupt
+    every derived link), and rejects an out-of-range/non-numeric port. A path
+    suffix is allowed — a deployment may be mounted under a gateway prefix.
+    Raises ``ValueError`` on invalid input so pydantic surfaces it with the
+    offending field path (this is where an operator wants to hear about a typo,
+    not as a runtime traceback at startup).
+    """
+    parts = urlsplit(raw)
+    if parts.scheme not in ("http", "https"):
+        raise ValueError(f"base URL must be http(s): {raw!r}")
+    if not parts.hostname:
+        raise ValueError(f"base URL must include a host: {raw!r}")
+    if parts.username or parts.password:
+        raise ValueError("base URL must not embed userinfo (user:pass@host)")
+    if parts.query or parts.fragment:
+        raise ValueError(f"base URL must not contain a query or fragment: {raw!r}")
+    # ``urlsplit`` defers port parsing to attribute access, which raises for an
+    # out-of-range or non-numeric port (``http://h:99999`` / ``http://h:8a``).
+    # Touch it here so a bad port fails at config load, not at startup.
+    try:
+        _ = parts.port
+    except ValueError as exc:
+        raise ValueError(f"base URL has an invalid port: {raw!r}") from exc
+    return raw.rstrip("/")
+
+
+def validate_redirect_uri(raw: str) -> str:
+    """Validate a configured OAuth ``redirect_uri`` and return it **unchanged**.
+
+    Unlike ``normalize_base_url`` this is a full callback URL that the IdP
+    matches byte-for-byte against its registration, so nothing is rewritten: a
+    trailing ``/`` is kept, and a query string is allowed (RFC 6749 §3.1.2).
+    Requires an ``http``/``https`` scheme and a host, and rejects userinfo, a
+    fragment (forbidden by RFC 6749 §3.1.2) and an invalid port.
+    """
+    parts = urlsplit(raw)
+    if parts.scheme not in ("http", "https"):
+        raise ValueError(f"redirect_uri must be http(s): {raw!r}")
+    if not parts.hostname:
+        raise ValueError(f"redirect_uri must include a host: {raw!r}")
+    if parts.username or parts.password:
+        raise ValueError("redirect_uri must not embed userinfo (user:pass@host)")
+    if parts.fragment:
+        raise ValueError(f"redirect_uri must not contain a fragment: {raw!r}")
+    try:
+        _ = parts.port
+    except ValueError as exc:
+        raise ValueError(f"redirect_uri has an invalid port: {raw!r}") from exc
+    return raw
+
+
+def _origin(url: str) -> tuple[str, str, int] | None:
+    """Return ``(scheme, host, port)`` for *url*, or ``None`` if unparseable.
+
+    Never raises — a non-numeric/out-of-range port (which ``urlsplit(...).port``
+    would raise ``ValueError`` on) maps to ``None`` so callers treat it as a
+    non-comparable origin rather than crashing.
+    """
+    parts = urlsplit(url)
+    if not parts.scheme or not parts.hostname:
+        return None
+    try:
+        explicit_port = parts.port
+    except ValueError:
+        return None
+    port = explicit_port or _DEFAULT_PORTS.get(parts.scheme, 0)
+    return parts.scheme, parts.hostname, port
+
+
+def origins_equivalent(a: str, b: str) -> bool:
+    """Whether two URLs share an origin, folding loopback/bind-host aliases.
+
+    Scheme + host + port must match, except that every host in
+    ``_EQUIVALENT_HOSTS`` (``0.0.0.0``/``127.0.0.1``/``localhost``/``::1``) is
+    treated as equivalent, and default ports (``80``/``443``) fold into their
+    scheme. Unparseable input never compares equal.
+    """
+    oa, ob = _origin(a), _origin(b)
+    if oa is None or ob is None:
+        return False
+    scheme_a, host_a, port_a = oa
+    scheme_b, host_b, port_b = ob
+    if scheme_a != scheme_b or port_a != port_b:
+        return False
+    if host_a == host_b:
+        return True
+    return host_a in _EQUIVALENT_HOSTS and host_b in _EQUIVALENT_HOSTS
+
+
+def is_loopback_host(host: str) -> bool:
+    """Whether *host* (a bind host or URL hostname) names this machine only.
+
+    ``localhost`` and any ``127.0.0.0/8`` / ``::1`` literal. The all-interfaces
+    binds (``0.0.0.0`` / ``::``) are deliberately **not** loopback.
+    """
+    host = host.strip("[]").lower()
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def is_loopback_url(url: str) -> bool:
+    """Whether *url*'s hostname is loopback (see ``is_loopback_host``)."""
+    hostname = urlsplit(url).hostname
+    return bool(hostname) and is_loopback_host(hostname or "")

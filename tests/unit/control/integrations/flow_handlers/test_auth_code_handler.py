@@ -38,6 +38,7 @@ from jentic_one.shared.config import (
     EncryptionConfig,
     EncryptionKey,
     PipedreamProviderConfig,
+    ServerConfig,
     VendorAuthorizationCodeFlowConfig,
 )
 from jentic_one.shared.context import Context
@@ -46,13 +47,16 @@ _KEY_MATERIAL = base64.b64encode(os.urandom(32)).decode()
 _STATE_SECRET = "test-state-secret"  # pragma: allowlist secret
 
 
-def _make_context(*, with_direct_oauth2_provider: bool = True) -> Context:
+def _make_context(
+    *, with_direct_oauth2_provider: bool = True, public_base_url: str = ""
+) -> Context:
     providers: dict[str, DirectOAuth2ProviderConfig | PipedreamProviderConfig] = {}
     if with_direct_oauth2_provider:
         providers["direct_oauth2"] = DirectOAuth2ProviderConfig(
             redirect_uri="https://app.example.com/credentials/oauth/callback",
         )
     cfg = AppConfig(
+        server=ServerConfig(public_base_url=public_base_url),
         databases=DatabasesConfig(
             registry=DatabaseConfig(backend="sqlite", path=":memory:"),
             admin=DatabaseConfig(backend="sqlite", path=":memory:"),
@@ -150,15 +154,18 @@ async def test_begin_omits_scope_when_no_confirmed_scopes() -> None:
 
 
 @pytest.mark.asyncio()
-async def test_begin_raises_when_direct_oauth2_redirect_uri_unconfigured() -> None:
-    # The auth-code handler shares the platform redirect_uri with
-    # DirectOAuth2Provider — one URL whitelisted at the vendor for
-    # both entry points. Failing loud if that config is missing beats
-    # silently emitting an authorize URL with no redirect_uri.
-    ctx = _make_context(with_direct_oauth2_provider=False)
+async def test_begin_derives_redirect_uri_from_public_base_url_when_unconfigured() -> None:
+    # No explicit direct_oauth2.redirect_uri: the handler derives the same
+    # callback the web connect endpoint does (server.public_base_url + path),
+    # and the exchange replays it byte-identically.
+    ctx = _make_context(
+        with_direct_oauth2_provider=False, public_base_url="https://jentic.example.com"
+    )
     handler = AuthCodeFlowHandler(ctx)
-    with pytest.raises(RuntimeError, match="redirect_uri must be configured"):
-        await handler.begin(_row(), flow=_flow(), confirmed_scopes=[])
+    result = await handler.begin(_row(), flow=_flow(), confirmed_scopes=[])
+    assert isinstance(result, AuthCodeBeginResult)
+    q = parse_qs(urlparse(result.authorize_url).query)
+    assert q["redirect_uri"] == ["https://jentic.example.com/credentials/oauth/callback"]
 
 
 @pytest.mark.asyncio()

@@ -57,7 +57,7 @@ from jentic_one.shared.catalog import CatalogAutoImportProtocol
 from jentic_one.shared.context import Context
 from jentic_one.shared.metrics import get_meter
 from jentic_one.shared.models import ActorType
-from jentic_one.shared.models.actors import actor_type_from_id
+from jentic_one.shared.models.actors import Origin, actor_type_from_id
 from jentic_one.shared.models.api_identity import canonical_credential_scope
 from jentic_one.shared.pagination import decode_cursor_str, encode_cursor
 
@@ -402,6 +402,8 @@ class ConnectSessionService:
             target_id=row.id,
             actor_type=actor_type_from_id(initiator_actor_id).value,
             actor_id=initiator_actor_id,
+            # Agents open connect sessions; humans only confirm them.
+            origin=Origin.AGENT.value,
             after={
                 "vendor": vendor_key,
                 "resolved_flow": flow.kind,
@@ -734,6 +736,7 @@ class ConnectSessionService:
             target_id=row.id,
             actor_type=identity.actor_type.value,
             actor_id=identity.sub,
+            origin=identity.origin.value,
             after={
                 "vendor": row.vendor,
                 "resolved_flow": row.resolved_flow,
@@ -1257,6 +1260,9 @@ class ConnectSessionService:
             target_id=session_id,
             actor_type=initiator_actor_type.value,
             actor_id=row.initiator_actor_id,
+            # Expiry, a failed poll or a cancel tears the session down on the
+            # platform's side, attributed to its initiator.
+            origin=Origin.SYSTEM.value,
             before={"state": row.state},
             after={
                 "state": state,

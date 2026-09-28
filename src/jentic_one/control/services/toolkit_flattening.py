@@ -36,10 +36,15 @@ Bindings reachable only through **inactive** toolkits are live access on the
 legacy path (``toolkits.active`` never gated bound agents) — they are
 migrated like any other pair AND reported loudly, never skipped.
 
-Operator-invoked only (``jentic_one flatten-toolkits``): unlike the Phase-4
-key retirement there is no startup one-shot, because Phase 6b's drops are
-gated on an explicit operator acknowledgement (``--verify --acknowledge``
-writes the ``toolkit_flattening_acks`` sentinel row 6b's migrations check).
+Run once automatically by the migration runner as an upgrade step
+(``control/services/upgrade_steps.py``), so an upgrade lands with every
+toolkit-reachable pair already bound directly — the broker's default
+direct-binding path would otherwise authorize none of them. The operator CLI
+(``jentic_one flatten-toolkits``) stays for previews, re-runs after toolkit
+changes made on an older version mid-rollout, and verification. The Phase-6b
+acknowledgement is never automatic: the drops stay gated on an explicit
+operator ``--verify --acknowledge`` (which writes the ``toolkit_flattening_acks``
+sentinel row 6b's migrations check).
 """
 
 from __future__ import annotations

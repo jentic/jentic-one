@@ -9,7 +9,7 @@ at ``:connect`` time, session-scoped, flow-agnostic.
 Non-null default ``'[]'`` so existing rows don't need a backfill.
 
 Revision ID: x5f6a7b8c9d0
-Revises: w4e5f6a7b8c9
+Revises: w5a6b7c8d9e0
 """
 
 from collections.abc import Sequence
@@ -19,7 +19,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision: str = "x5f6a7b8c9d0"
-down_revision: str | None = "w4e5f6a7b8c9"
+down_revision: str | None = "w5a6b7c8d9e0"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

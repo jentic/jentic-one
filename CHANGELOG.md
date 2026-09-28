@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.39.1](https://github.com/jentic/jentic-one/compare/v0.39.0...v0.39.1) (2026-09-23)
+
+Hotfix release cut from v0.39.0 (not main): bounds broker credential
+resolution to the toolkit an execution is authorized against, and picks up
+the anyio security update, without shipping main's in-flight work.
+
+### Bug Fixes
+
+* **broker:** bound credential resolution to the selected toolkit ([#1401](https://github.com/jentic/jentic-one/issues/1401))
+
+### Build System
+
+* **deps:** bump anyio from 4.13.0 to 4.14.2 ([#1395](https://github.com/jentic/jentic-one/issues/1395))
+
 ## [0.39.0](https://github.com/jentic/jentic-one/compare/v0.38.0...v0.39.0) (2026-09-08)
 
 

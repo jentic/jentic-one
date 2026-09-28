@@ -7,7 +7,7 @@ holds RFC 8628 registration + polling state per credential, and
 connected rows so the broker can skip half-formed credentials.
 
 Revision ID: v3d4e5f6a7b8
-Revises: u2c3d4e5f6a7
+Revises: w4e5f6a7b8c9
 """
 
 from collections.abc import Sequence
@@ -16,7 +16,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "v3d4e5f6a7b8"
-down_revision: str | None = "u2c3d4e5f6a7"  # pragma: allowlist secret
+down_revision: str | None = "w4e5f6a7b8c9"  # pragma: allowlist secret
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

@@ -245,3 +245,62 @@ async def test_verify_rejects_unknown_agent(mock_agent_repo: MagicMock) -> None:
     assertion = _make_assertion(private_key)
     with pytest.raises(InvalidGrantError, match="invalid"):
         await svc.verify_and_exchange(assertion)
+
+
+def _make_zero_config_ctx() -> MagicMock:
+    # Nothing pinned, all-interfaces bind: the request-less audience derives
+    # from the bind (http://127.0.0.1:8000).
+    ctx = _make_ctx()
+    ctx.config.auth.canonical_base_url = ""
+    ctx.config.server.public_base_url = ""
+    ctx.config.server.host = "0.0.0.0"
+    ctx.config.server.port = 8000
+    return ctx
+
+
+@pytest.mark.parametrize(
+    "aud",
+    [
+        "http://127.0.0.1:8000/oauth/token",  # request-less bind origin
+        "http://192.168.1.20:8000/oauth/token",  # the advertised token_endpoint
+    ],
+)
+@patch("jentic_one.auth.services.assertion_service.ActorScopeGrantRepository")
+@patch("jentic_one.auth.services.assertion_service.AgentRepository")
+@patch("jentic_one.auth.services.assertion_service.TokenService")
+async def test_verify_accepts_request_scoped_audience_zero_config(
+    mock_token_svc_cls: MagicMock,
+    mock_agent_repo: MagicMock,
+    mock_scope_repo: MagicMock,
+    aud: str,
+) -> None:
+    """Zero-config, reached over a LAN address: the discovery token_endpoint
+    (request-scoped) and the bind-derived audience are both accepted."""
+    ctx = _make_zero_config_ctx()
+    private_key, jwks = _generate_keypair()
+    mock_agent_repo.get_by_id_for_update = AsyncMock(return_value=_make_active_agent(jwks))
+    mock_scope_repo.list_for_actor = AsyncMock(return_value=[])
+    mock_token_svc_cls.return_value = MagicMock(issue_pair=AsyncMock(return_value=("at", "rt")))
+
+    svc = AssertionService(ctx)
+    access, _, _ = await svc.verify_and_exchange(
+        _make_assertion(private_key, aud=aud, jti=f"jti-{aud}"),
+        request_base_url="http://192.168.1.20:8000",
+    )
+    assert access == "at"
+
+
+@patch("jentic_one.auth.services.assertion_service.AgentRepository")
+async def test_verify_rejects_audience_not_matching_request_or_bind(
+    mock_agent_repo: MagicMock,
+) -> None:
+    ctx = _make_zero_config_ctx()
+    private_key, jwks = _generate_keypair()
+    mock_agent_repo.get_by_id_for_update = AsyncMock(return_value=_make_active_agent(jwks))
+
+    svc = AssertionService(ctx)
+    with pytest.raises(InvalidGrantError, match="invalid"):
+        await svc.verify_and_exchange(
+            _make_assertion(private_key, aud="http://evil.example:8000/oauth/token"),
+            request_base_url="http://192.168.1.20:8000",
+        )

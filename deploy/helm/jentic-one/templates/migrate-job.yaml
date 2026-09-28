@@ -131,6 +131,10 @@ spec:
             capabilities:
               drop: ["ALL"]
           command: ["python", "-m", "jentic_one.migrations.run"]
+          {{- with .Values.migrate.extraArgs }}
+          args:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           {{- /*
           Deliberately no common.runtime-env here. The runner resolves database
           URLs through load_config() (migrations/env.py), so it validates the

@@ -12,15 +12,17 @@ from __future__ import annotations
 import hashlib
 from typing import Any
 
+import pytest
 from fastapi.testclient import TestClient
 
 from jentic_one.broker.web.app import create_app as create_broker_app
 from jentic_one.control.web.app import create_app as create_control_app
-from jentic_one.shared.config import AppConfig
+from jentic_one.shared.config import AppConfig, ConfigError
 from jentic_one.shared.context import Context
 from jentic_one.shared.web.app_factory import create_combined_app
 from jentic_one.shared.web.instance_identity import (
     InstanceIdentityResponse,
+    _sanitized_url_parts,
     resolve_instance_identity,
 )
 
@@ -169,21 +171,32 @@ def test_resolve_instance_identity_honours_remote(sample_config_dict: dict[str, 
 
 
 def test_resolve_instance_identity_unset_base_url(sample_config_dict: dict[str, Any]) -> None:
+    """With no public URL configured, the instance reports its serving bind —
+    the same origin the JWT-Bearer audience is built from, so a client can
+    register against exactly what ``/instance`` advertises."""
     identity = resolve_instance_identity(_ctx(sample_config_dict, ""))
     assert identity.backend == "local"
-    assert identity.canonical_base_url == ""
-    assert identity.host == ""
+    assert identity.canonical_base_url == "http://127.0.0.1:8000"
+    assert identity.host == "127.0.0.1:8000"
 
 
-def test_resolve_instance_identity_strips_userinfo(sample_config_dict: dict[str, Any]) -> None:
-    """Credentials embedded in the canonical base URL are never echoed back."""
-    identity = resolve_instance_identity(
-        _ctx(sample_config_dict, "https://user:secret@jentic.acme.example:8443/base")
-    )
-    assert identity.canonical_base_url == "https://jentic.acme.example:8443/base"
-    assert identity.host == "jentic.acme.example:8443"
-    assert "secret" not in identity.canonical_base_url
-    assert "user" not in identity.host
+def test_config_rejects_userinfo_in_canonical_base_url(sample_config_dict: dict[str, Any]) -> None:
+    """Credentials embedded in a public base URL are rejected at config load —
+    a stronger guarantee than echo-time stripping (they can't be configured)."""
+    cfg = dict(sample_config_dict)
+    cfg["auth"] = {"canonical_base_url": "https://user:secret@jentic.acme.example:8443/base"}
+    with pytest.raises((ConfigError, ValueError)):
+        AppConfig.model_validate(cfg)
+
+
+def test_resolve_instance_identity_strips_userinfo_defense_in_depth() -> None:
+    """Echo-time stripping remains as defense-in-depth for any value that
+    reaches the resolver with userinfo (e.g. a non-config code path)."""
+    url, host = _sanitized_url_parts("https://user:secret@jentic.acme.example:8443/base")
+    assert url == "https://jentic.acme.example:8443/base"
+    assert host == "jentic.acme.example:8443"
+    assert "secret" not in url
+    assert "user" not in host
 
 
 # ---------------------------------------------------------------------------
