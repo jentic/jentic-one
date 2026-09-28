@@ -12,8 +12,15 @@ from jentic_one.auth.core.idp import (
     OidcAdapter,
     build_idp_adapter,
 )
-from jentic_one.auth.core.idp.adapter import IdpClaims
+from jentic_one.auth.core.idp.adapter import IdpClaims, TokenExchangeResult
 from jentic_one.shared.config import IdpConfig
+
+
+def _exchange(
+    userinfo: dict[str, object],
+    id_token_claims: dict[str, object] | None = None,
+) -> TokenExchangeResult:
+    return TokenExchangeResult(userinfo=userinfo, id_token_claims=id_token_claims or {})
 
 
 @pytest.fixture()
@@ -76,7 +83,7 @@ def test_map_claims_standard(adapter: OidcAdapter) -> None:
         "given_name": "Jane",
         "family_name": "Doe",
     }
-    claims = adapter.map_claims(userinfo)
+    claims = adapter.map_claims(_exchange(userinfo))
     assert claims == IdpClaims(
         external_subject="ext-user-123",
         email="user@example.com",
@@ -87,7 +94,7 @@ def test_map_claims_standard(adapter: OidcAdapter) -> None:
 
 def test_map_claims_handles_missing_optional(adapter: OidcAdapter) -> None:
     userinfo: dict[str, object] = {"sub": "ext-user-123", "email": "user@example.com"}
-    claims = adapter.map_claims(userinfo)
+    claims = adapter.map_claims(_exchange(userinfo))
     assert claims.first_name == ""
     assert claims.last_name == ""
     assert claims.email_verified is False
@@ -99,7 +106,7 @@ def test_map_claims_email_verified_true(adapter: OidcAdapter) -> None:
         "email": "user@example.com",
         "email_verified": True,
     }
-    claims = adapter.map_claims(userinfo)
+    claims = adapter.map_claims(_exchange(userinfo))
     assert claims.email_verified is True
 
 
@@ -109,7 +116,7 @@ def test_map_claims_email_verified_false(adapter: OidcAdapter) -> None:
         "email": "user@example.com",
         "email_verified": False,
     }
-    claims = adapter.map_claims(userinfo)
+    claims = adapter.map_claims(_exchange(userinfo))
     assert claims.email_verified is False
 
 
@@ -147,31 +154,44 @@ def test_google_explicit_endpoint_overrides_default() -> None:
     assert url.startswith("https://custom.example.com/auth?")
 
 
-def test_google_map_claims_surfaces_hd(google_config: IdpConfig) -> None:
+def test_google_map_claims_reads_hd_from_id_token(google_config: IdpConfig) -> None:
+    # Google delivers ``hd`` on the ID token, not on userinfo — the mapper must
+    # read it from the verified ID-token claims so a Workspace user isn't
+    # rejected by an ``hd`` hard gate.
     adapter = GoogleOidcAdapter(google_config)
-    claims = adapter.map_claims(
-        {
-            "sub": "g-1",
-            "email": "user@jentic.com",
-            "email_verified": True,
-            "hd": "jentic.com",
-        }
+    exchange = _exchange(
+        userinfo={"sub": "g-1", "email": "user@jentic.com", "email_verified": True},
+        id_token_claims={"sub": "g-1", "email": "user@jentic.com", "hd": "jentic.com"},
     )
+    claims = adapter.map_claims(exchange)
     assert claims.hosted_domain == "jentic.com"
     assert claims.email_verified is True
 
 
-def test_google_map_claims_hosted_domain_none_without_hd(google_config: IdpConfig) -> None:
-    # Consumer Google accounts carry no `hd` claim.
+def test_google_map_claims_falls_back_to_userinfo_hd(google_config: IdpConfig) -> None:
+    # Backwards compatibility: if the ID token wasn't verified but userinfo
+    # happens to carry ``hd`` (some Workspace tenants do surface it), use it.
     adapter = GoogleOidcAdapter(google_config)
-    claims = adapter.map_claims({"sub": "x", "email": "user@gmail.com"})
+    exchange = _exchange(
+        userinfo={"sub": "g-1", "email": "user@jentic.com", "hd": "jentic.com"},
+    )
+    claims = adapter.map_claims(exchange)
+    assert claims.hosted_domain == "jentic.com"
+
+
+def test_google_map_claims_hosted_domain_none_without_hd(google_config: IdpConfig) -> None:
+    # Consumer Google accounts carry no `hd` claim anywhere.
+    adapter = GoogleOidcAdapter(google_config)
+    claims = adapter.map_claims(_exchange({"sub": "x", "email": "user@gmail.com"}))
     assert claims.hosted_domain is None
 
 
 def test_generic_adapter_never_sets_hosted_domain(adapter: OidcAdapter) -> None:
     # The generic OIDC adapter leaves hosted_domain None even if `hd` is present
     # — `hd` handling is a Google-specific concern.
-    claims = adapter.map_claims({"sub": "x", "email": "user@example.com", "hd": "example.com"})
+    claims = adapter.map_claims(
+        _exchange({"sub": "x", "email": "user@example.com", "hd": "example.com"}),
+    )
     assert claims.hosted_domain is None
 
 
