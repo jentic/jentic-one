@@ -32,12 +32,13 @@ class UrlIndexRepository:
     ) -> APIReference | None:
         """Return the ``APIReference`` for an operation, or ``None`` if unknown.
 
-        ``name`` falls back to the API's ``display_name`` when set, mirroring the
-        Registry inspect service's API-identity derivation. Joins
-        operations → api_revisions → apis.
+        ``name`` is always the API's canonical ``name``, never its editable
+        ``display_name``: the broker matches credentials and revision pins on
+        this identity, so it must not change when the display label does.
+        Joins operations → api_revisions → apis.
         """
         stmt = (
-            select(Api.vendor, Api.display_name, Api.name, Api.version)
+            select(Api.vendor, Api.name, Api.version)
             .select_from(Operation)
             .join(ApiRevision, ApiRevision.id == Operation.revision_id)
             .join(Api, Api.id == ApiRevision.api_id)
@@ -46,8 +47,8 @@ class UrlIndexRepository:
         row = (await session.execute(stmt)).one_or_none()
         if row is None:
             return None
-        vendor, display_name, name, version = row
-        return APIReference(vendor=vendor, name=display_name or name, version=version)
+        vendor, name, version = row
+        return APIReference(vendor=vendor, name=name, version=version)
 
     @staticmethod
     async def upsert_entry(
