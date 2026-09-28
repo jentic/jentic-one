@@ -21,6 +21,9 @@ function DocsLink() {
 	return (
 		<AppLink
 			href={ROUTES.docs}
+			// /docs renders outside the shell, so a transition would snapshot a header
+			// with no counterpart and blink it out.
+			data-no-transition
 			// Accessible name starts with the visible label (WCAG 2.5.3 "Label
 			// in Name") so voice-control users saying "click Docs" match it.
 			aria-label="Docs — API reference"

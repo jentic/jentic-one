@@ -18,3 +18,10 @@ export function shellScrollTop(): number {
 	const scroller = shellScroller();
 	return scroller instanceof Window ? scroller.scrollY : scroller.scrollTop;
 }
+
+/** The `root` for an IntersectionObserver watching page content: the shell's
+ * scroller, or `null` (the viewport) where there is no shell. */
+export function shellScrollRoot(): HTMLElement | null {
+	const scroller = shellScroller();
+	return scroller instanceof Window ? null : scroller;
+}
