@@ -34,6 +34,9 @@ export {
 } from '@/shared/lib/scopes';
 
 export { fetchActorDirectory } from '@/shared/lib/actorDirectory';
+
+// The shell scrolls `<main>`, not the window: read and drive page scroll here.
+export { SHELL_SCROLL_ID, shellScroller, shellScrollTop } from '@/shared/lib/shellScroll';
 export {
 	SERVICE_ACCOUNT_SUCCESSOR_REGISTRAR,
 	RETIRED_SERVICE_ACCOUNT_ACTOR_TYPE,

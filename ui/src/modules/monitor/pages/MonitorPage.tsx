@@ -228,7 +228,7 @@ export default function MonitorPage() {
 						<ActivityStreamPanel
 							// Sticks 1rem under the 3rem top bar and stops 1rem above the
 							// viewport's bottom edge; the log fills whatever's left.
-							className="xl:sticky xl:top-16 xl:h-[calc(100dvh-5rem)]"
+							className="xl:sticky xl:top-4 xl:h-[calc(100dvh-5rem)]"
 							logClassName="max-h-[480px] xl:h-full xl:max-h-none"
 							actions={
 								<Button

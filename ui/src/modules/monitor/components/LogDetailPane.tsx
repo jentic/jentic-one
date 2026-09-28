@@ -67,7 +67,7 @@ export function LogLayout({
 			{paneOpen && detail && (
 				<aside
 					aria-labelledby={headingId}
-					className="border-border bg-card sticky top-[calc(var(--log-top,3rem)+1rem)] flex h-[calc(100dvh-var(--log-top,3rem)-2rem)] min-h-0 flex-col overflow-hidden rounded-xl border shadow-sm"
+					className="border-border bg-card sticky top-[calc(var(--log-top,0px)+1rem)] flex h-[calc(100dvh-3rem-var(--log-top,0px)-2rem)] min-h-0 flex-col overflow-hidden rounded-xl border shadow-sm"
 					style={PANE_VT}
 				>
 					{renderDetail(detail, { mode: 'pane', headingId, onClose })}

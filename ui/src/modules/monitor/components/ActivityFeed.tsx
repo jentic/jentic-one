@@ -40,6 +40,8 @@ import {
 	isFailureSeverity,
 	isRetiredEventType,
 	primaryDestinationFor,
+	shellScroller,
+	shellScrollTop,
 	STREAM_KIND_LABEL,
 	streamDayKey,
 	type StreamEvent,
@@ -112,13 +114,14 @@ function buildDays(events: StreamEvent[], now: number): DayGroup[] {
 	return days;
 }
 
-/** True while the window is scrolled near the top (where inserts are safe). */
+/** True while the page is scrolled near the top (where inserts are safe). */
 function useNearTop(): boolean {
-	const [nearTop, setNearTop] = useState(() => window.scrollY < TOP_THRESHOLD_PX);
+	const [nearTop, setNearTop] = useState(() => shellScrollTop() < TOP_THRESHOLD_PX);
 	useEffect(() => {
-		const onScroll = () => setNearTop(window.scrollY < TOP_THRESHOLD_PX);
-		window.addEventListener('scroll', onScroll, { passive: true });
-		return () => window.removeEventListener('scroll', onScroll);
+		const scroller = shellScroller();
+		const onScroll = () => setNearTop(shellScrollTop() < TOP_THRESHOLD_PX);
+		scroller.addEventListener('scroll', onScroll, { passive: true });
+		return () => scroller.removeEventListener('scroll', onScroll);
 	}, []);
 	return nearTop;
 }
@@ -219,7 +222,7 @@ export function ActivityFeed() {
 			for (const e of liveEvents) next.add(e.event_id);
 			return next;
 		});
-		window.scrollTo({ top: 0, behavior: 'smooth' });
+		shellScroller().scrollTo({ top: 0, behavior: 'smooth' });
 	};
 
 	// Acks flip locally at once; the refetched history confirms them.
@@ -343,7 +346,7 @@ export function ActivityFeed() {
 				</p>
 
 				{pending.length > 0 && (
-					<div className="pointer-events-none sticky top-[calc(var(--log-top,3rem)+1rem)] z-20 flex justify-center">
+					<div className="pointer-events-none sticky top-[calc(var(--log-top,0px)+1rem)] z-20 flex justify-center">
 						<button
 							type="button"
 							onClick={revealAll}

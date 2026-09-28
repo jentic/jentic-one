@@ -10,6 +10,7 @@ import { useLinkViewTransitions } from '@/shared/app/viewTransitions';
 import { ErrorBoundary } from '@/shared/ui/ErrorBoundary';
 import { useCoversRightEdge } from '@/shared/ui/rightEdge';
 import { AgentStreamProvider } from '@/shared/lib/agentStream';
+import { SHELL_SCROLL_ID } from '@/shared/lib/shellScroll';
 
 /**
  * Authenticated app shell:
@@ -24,14 +25,18 @@ import { AgentStreamProvider } from '@/shared/lib/agentStream';
  *    activity stream (`isRailHiddenOn`),
  *  - the `ToastRegion`, bottom-right beside the rail or an open sheet.
  *
- * The body below the fixed navbar is a flex row: `<main>` takes the remaining
- * width (`flex-1 min-w-0`, still full-bleed — no horizontal padding here; pages
- * own their gutter via `PageShell`/`PageHeader`) and the rail sits beside it at
- * `xl+`, wrapped in a `sticky top-12 h-[calc(100dvh-3rem)] self-start` container
- * so it stays pinned under the navbar and its feed scrolls internally (keeping
- * the "Open full log in Monitor" footer always visible). Below `xl` the rail is hidden, so
- * `<main>` spans the full width exactly as before. `pt-12` (on `<main>`) clears
- * the fixed TopNavbar; `pb-20 md:pb-12` clears the mobile BottomNavbar.
+ * The shell is viewport-tall and never scrolls itself. Below the fixed navbar
+ * (`pt-12` clears it) is a flex row: `<main>` takes the remaining width
+ * (`flex-1 min-w-0`, still full-bleed — no horizontal padding here; pages own
+ * their gutter via `PageShell`/`PageHeader`) and is THE scroll container
+ * (`SHELL_SCROLL_ID`), so its scrollbar starts under the navbar rather than
+ * running behind it, and its gutter is reserved so a page switch that adds or
+ * drops the scrollbar doesn't shift the layout sideways. Sticky page bars pin at
+ * `top-0` of it, which is just under the navbar. The rail sits beside `<main>`
+ * at `xl+`, as tall as the row, and its feed scrolls internally (keeping the
+ * "Open full log in Monitor" footer always visible). Below `xl` the rail is
+ * hidden, so `<main>` spans the full width. `pb-20 md:pb-12` clears the mobile
+ * BottomNavbar.
  *
  * In-app link clicks run as view transitions (`useLinkViewTransitions`): pages
  * cross-fade and the activity stream morphs between wherever it's docked —
@@ -52,11 +57,14 @@ export function Layout() {
 	return (
 		<AgentStreamProvider>
 			<ShellActivityEffects />
-			<div className="bg-background text-foreground min-h-dvh">
+			<div className="bg-background text-foreground flex h-dvh flex-col overflow-hidden pt-12">
 				<TopNavbar showActivity={showRail} />
 
-				<div className="flex min-h-dvh">
-					<main className="min-w-0 flex-1 pt-12 pb-20 md:pb-12">
+				<div className="flex min-h-0 flex-1">
+					<main
+						id={SHELL_SCROLL_ID}
+						className="min-w-0 flex-1 [scrollbar-gutter:stable] overflow-y-auto pb-20 md:pb-12"
+					>
 						<UpdateBanner />
 						<ErrorBoundary resetKey={location.pathname}>
 							<Outlet />
@@ -64,18 +72,12 @@ export function Layout() {
 					</main>
 
 					{/*
-					 * Sticky under the fixed h-12 TopNavbar with a viewport-minus-navbar
-					 * height so the rail stays in view and its feed scrolls internally
-					 * (RailFeed is `overflow-y-auto` and needs a bounded height). Without
-					 * this cap the aside would stretch to the full row height on long
-					 * pages and push the RailFooter (the Monitor link) below
-					 * the fold. `self-start` pins it to the top instead of stretching.
+					 * Outside the scroller and as tall as the row, so the rail stays in
+					 * view while the page scrolls and its feed scrolls internally
+					 * (RailFeed is `overflow-y-auto` and needs a bounded height).
 					 */}
 					{showRail && (
-						<div
-							ref={railRef}
-							className="sticky top-12 hidden h-[calc(100dvh-3rem)] shrink-0 self-start xl:flex"
-						>
+						<div ref={railRef} className="hidden shrink-0 xl:flex">
 							<AgentRail />
 						</div>
 					)}
