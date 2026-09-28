@@ -30,8 +30,8 @@ import { SHELL_SCROLL_ID } from '@/shared/lib/shellScroll';
  * (`flex-1 min-w-0`, still full-bleed — no horizontal padding here; pages own
  * their gutter via `PageShell`/`PageHeader`) and is THE scroll container
  * (`SHELL_SCROLL_ID`), so its scrollbar starts under the navbar rather than
- * running behind it, and its gutter is reserved so a page switch that adds or
- * drops the scrollbar doesn't shift the layout sideways. Sticky page bars pin at
+ * running behind it. No reserved scrollbar gutter: it would leave a strip
+ * between the page and the rail on pages that don't scroll. Sticky page bars pin at
  * `top-0` of it, which is just under the navbar. The rail sits beside `<main>`
  * at `xl+`, as tall as the row, and its feed scrolls internally (keeping the
  * "Open full log in Monitor" footer always visible). Below `xl` the rail is
@@ -63,7 +63,7 @@ export function Layout() {
 				<div className="flex min-h-0 flex-1">
 					<main
 						id={SHELL_SCROLL_ID}
-						className="min-w-0 flex-1 [scrollbar-gutter:stable] overflow-y-auto pb-20 md:pb-12"
+						className="min-w-0 flex-1 overflow-y-auto pb-20 md:pb-12"
 					>
 						<UpdateBanner />
 						<ErrorBoundary resetKey={location.pathname}>
