@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, type RefObject } from 'react';
+import { useRef } from 'react';
 import { useLocation, Outlet } from 'react-router';
 import { BottomNavbar } from '@/shared/app/BottomNavbar';
 import { TopNavbar } from '@/shared/app/TopNavbar';
@@ -6,6 +6,7 @@ import { UpdateBanner } from '@/shared/app/UpdateBanner';
 import { AgentRail } from '@/shared/app/rail/AgentRail';
 import { ShellActivityEffects, isRailHiddenOn } from '@/shared/app/rail/ShellActivityEffects';
 import { ToastRegion } from '@/shared/app/ToastRegion';
+import { useShellNavigation } from '@/shared/app/shellNavigation';
 import { useLinkViewTransitions } from '@/shared/app/viewTransitions';
 import { ErrorBoundary } from '@/shared/ui/ErrorBoundary';
 import { useCoversRightEdge } from '@/shared/ui/rightEdge';
@@ -46,34 +47,11 @@ import { SHELL_SCROLL_ID } from '@/shared/lib/shellScroll';
  * the ToastHost share one live event stream. Rendered behind AuthGuard, so `user` is always
  * present downstream.
  */
-/**
- * A new page starts at its top, and `<main>` takes keyboard focus unless the
- * operator is already working somewhere in the page or a dialog: the document
- * no longer scrolls, so Space/PageDown/arrow keys only move the page while focus
- * is inside the scroller. Keyed on the pathname, so a filter or tab change in
- * the query string keeps its place.
- */
-function useShellNavigationReset(mainRef: RefObject<HTMLElement | null>, pathname: string): void {
-	useLayoutEffect(() => {
-		const main = mainRef.current;
-		if (!main) return;
-		main.scrollTo({ top: 0, left: 0 });
-		const active = document.activeElement;
-		if (
-			active &&
-			active !== document.body &&
-			(main.contains(active) || active.closest('dialog, [role="dialog"]'))
-		)
-			return;
-		main.focus({ preventScroll: true });
-	}, [mainRef, pathname]);
-}
-
 export function Layout() {
 	const location = useLocation();
 	const railRef = useRef<HTMLDivElement>(null);
 	const mainRef = useRef<HTMLElement>(null);
-	useShellNavigationReset(mainRef, location.pathname);
+	useShellNavigation(mainRef);
 	const showRail = !isRailHiddenOn(location.pathname);
 	// The rail's column is `hidden` below `xl`, where it measures 0 and takes no room.
 	useCoversRightEdge(railRef, showRail);
