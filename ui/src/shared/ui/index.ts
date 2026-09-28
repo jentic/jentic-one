@@ -2,6 +2,7 @@ export { Button } from '@/shared/ui/Button';
 export type { ButtonProps } from '@/shared/ui/Button';
 
 export { Card, CardHeader, CardBody, CardFooter, CardTitle } from '@/shared/ui/Card';
+export { CardHeaderIcon } from '@/shared/ui/CardHeaderIcon';
 
 export { DetailSection, EmptyRow } from '@/shared/ui/DetailSection';
 export type { DetailSectionProps, SectionActionProps } from '@/shared/ui/DetailSection';

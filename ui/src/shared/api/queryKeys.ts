@@ -36,6 +36,12 @@ export const sharedQueryKeys = {
 	 */
 	attentionRoot: ['attention'] as const,
 	/**
+	 * @deprecated The retired Dashboard's name for {@link attentionRoot}: the
+	 * same key, kept because the enterprise overlay still invalidates it after
+	 * deciding a request. Use `attentionRoot`; delete once the overlay moves.
+	 */
+	dashboardRoot: ['attention'] as const,
+	/**
 	 * The agents root (`GET /agents`). Owned by the Agents module
 	 * (`agentsKeys.all` derives from this), but the persistent nav badge
 	 * (`usePendingAgentsCount`) reads a `pending`/`count` slice off this prefix

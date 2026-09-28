@@ -55,6 +55,15 @@ describe('app shell / navbar', () => {
 		}
 	});
 
+	it('gives every item its own tile on a phone when they all fit', async () => {
+		await page.viewport(375, 812);
+		renderShell();
+		const bottom = await screen.findByRole('link', { name: /Monitor/ });
+		expect(bottom).toBeVisible();
+		expect(screen.queryByRole('button', { name: 'More navigation items' })).toBeNull();
+		await page.viewport(1440, 900);
+	});
+
 	it('opens the user menu and exposes a sign-out action', async () => {
 		renderShell();
 		const user = userEvent.setup();
