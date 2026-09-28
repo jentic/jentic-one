@@ -2,7 +2,7 @@
  * KpiStrip — the console's 7-day vitals between the identity header and the
  * tab bar: executions, success share, last activity (+ bound credentials for
  * agents). Rendered with the shared `StatCard` grid — the same tile grammar
- * the dashboard uses — so the detail pages read as one product.
+ * Monitor uses — so the detail pages read as one product.
  *
  * Admin-gated by data shape: `undefined` = loading → a skeleton with the
  * final footprint so the tab bar doesn't jump; `null` = 403 → the strip

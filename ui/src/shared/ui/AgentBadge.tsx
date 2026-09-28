@@ -9,7 +9,7 @@ import { cn } from '@/shared/lib/utils';
  * icon when there's no name.
  *
  * A shared primitive so the agents table, detail page, and any future
- * dashboard/monitor surface can reuse one identity treatment.
+ * agents/monitor surface can reuse one identity treatment.
  */
 
 export type AgentBadgeSize = 'xs' | 'sm' | 'md' | 'lg';

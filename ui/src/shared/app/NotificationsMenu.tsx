@@ -155,14 +155,7 @@ export function NotificationsMenu() {
 								)}
 							</div>
 
-							<div className="border-border bg-muted/30 flex items-center justify-between border-t px-3 py-2 text-xs font-medium">
-								<AppLink
-									href={ROUTES.app}
-									onClick={close}
-									className="text-muted-foreground hover:text-foreground"
-								>
-									Open dashboard
-								</AppLink>
+							<div className="border-border bg-muted/30 flex items-center justify-end border-t px-3 py-2 text-xs font-medium">
 								<AppLink
 									href={ROUTES.monitor}
 									onClick={close}

@@ -1,6 +1,5 @@
 /**
- * ExecutionVolumeCharts — the console-standard activity chart pair, mirroring
- * the dashboard's arrangement: a stacked succeeded/failed volume chart on the
+ * ExecutionVolumeCharts — the console-standard activity chart pair: a stacked succeeded/failed volume chart on the
  * left (2/3) and a success-rate trend line on the right (1/3). The agent
  * detail console renders the same pair so "activity" reads identically
  * everywhere.
@@ -36,7 +35,7 @@ export interface ExecutionVolumeChartsProps {
 
 /**
  * Label a bucket timestamp for the x-axis: clock time for sub-day buckets,
- * month + day otherwise (the dashboard's bucket-label convention).
+ * month + day otherwise (the console's bucket-label convention).
  */
 function bucketLabel(ts: number, bucketSeconds: number): string {
 	const date = new Date(ts * 1000);

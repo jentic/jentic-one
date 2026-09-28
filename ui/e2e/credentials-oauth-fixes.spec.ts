@@ -54,7 +54,7 @@ async function login(page: Page): Promise<void> {
 	await page.getByLabel('Email').fill('admin@local');
 	await page.getByRole('textbox', { name: 'Password' }).fill('password');
 	await page.getByRole('button', { name: 'Sign in' }).click();
-	await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible();
+	await expect(page.getByRole('heading', { name: 'Agents', exact: true })).toBeVisible();
 }
 
 /** Seed the guided-picker store with a single multi-flow OAuth2 workspace API. */
@@ -81,7 +81,7 @@ async function seedOAuthApi(page: Page): Promise<void> {
 				spec,
 			}),
 		]);
-		// Drop any /apis (etc.) cached from the dashboard render so the picker
+		// Drop any /apis (etc.) cached from the landing render so the picker
 		// refetches against the seeded store.
 		w.__queryClient?.clear();
 	}, OAUTH_SPEC);

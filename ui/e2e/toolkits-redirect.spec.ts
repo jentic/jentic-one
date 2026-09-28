@@ -17,7 +17,7 @@ test('a stale /app/toolkits deep link redirects to Agents with the retirement no
 	await page.getByLabel('Email').fill('admin@local');
 	await page.getByRole('textbox', { name: 'Password' }).fill('password');
 	await page.getByRole('button', { name: 'Sign in' }).click();
-	await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible();
+	await expect(page.getByRole('heading', { name: 'Agents', exact: true })).toBeVisible();
 
 	// A toolkit-era detail deep link (id + ?tab= variant) — the id is not
 	// resolvable anymore and must not be looked up.

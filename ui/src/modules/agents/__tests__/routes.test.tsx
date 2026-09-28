@@ -21,8 +21,10 @@ function Harness() {
 	// The real redirect route, plus stubs for the list and detail pages (their
 	// data needs are not under test here).
 	const redirect = agentsRoutes.find((r) => r.path === 'agents/service-accounts/*');
+	const accessRequests = agentsRoutes.find((r) => r.path === 'access-requests');
 	return useRoutes([
 		redirect!,
+		accessRequests!,
 		{ path: ROUTES.agents.slice(1), element: <h1>Agents stub</h1> },
 		{ path: 'agents/:agentId', element: <h1>Agent detail stub</h1> },
 	]);
@@ -45,5 +47,20 @@ describe('retired service-account routes (theme 8)', () => {
 		expect(
 			await screen.findByText("Service accounts were retired. They're now agents."),
 		).toBeInTheDocument();
+	});
+});
+
+describe('retired access-request queue (theme 7)', () => {
+	it('redirects /access-requests to the agents list, where approvals live', async () => {
+		renderWithProviders(
+			<>
+				<Harness />
+				<LocationProbe />
+			</>,
+			{ route: '/access-requests' },
+		);
+
+		expect(await screen.findByRole('heading', { name: 'Agents stub' })).toBeInTheDocument();
+		expect(screen.getByTestId('location').textContent).toBe(ROUTES.agents);
 	});
 });

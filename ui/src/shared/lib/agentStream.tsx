@@ -17,18 +17,18 @@ import { acknowledgeEvent, listEvents, streamEvents } from '@/shared/lib/railEve
   SSE → QUERY-CACHE BRIDGE.
 
   The rail's event feed is local React state — it never touches the TanStack
-  Query cache the dashboard (and nav badge) read, so surfaces that count or
+  Query cache the Notifications bell (and nav badge) read, so surfaces that count or
   list the same records would go stale until their staleTime lapsed. These
   ROOT keys are invalidated whenever a matching event lands on the stream.
 
-  We invalidate by the shared ROOT keys (not by importing `dashboardKeys`)
-  on purpose: this is shared-layer code and must not reach into a feature
-  module. The roots are a stable contract owned by the shared query-key
-  registry — the dashboard hooks key off `dashboardRoot` (`['dashboard', …]`)
+  We invalidate by the shared ROOT keys (not by importing a module's key
+  factory) on purpose: this is shared-layer code and must not reach into a
+  feature module. The roots are a stable contract owned by the shared
+  query-key registry — the bell keys off `attentionRoot` (`['attention', …]`)
   — so a prefix invalidation here refreshes every matching slice without
   crossing a module boundary.
 */
-const DASHBOARD_ROOT_KEY = sharedQueryKeys.dashboardRoot;
+const ATTENTION_ROOT_KEY = sharedQueryKeys.attentionRoot;
 const AGENTS_ROOT_KEY = sharedQueryKeys.agentsRoot;
 
 /*
@@ -567,7 +567,7 @@ export function AgentStreamProvider({
 	 * 45–60s fallback polls and looked broken right after `jentic register`.
 	 */
 	const invalidateAgentSurfaces = useCallback(() => {
-		void queryClient.invalidateQueries({ queryKey: DASHBOARD_ROOT_KEY });
+		void queryClient.invalidateQueries({ queryKey: ATTENTION_ROOT_KEY });
 		void queryClient.invalidateQueries({ queryKey: AGENTS_ROOT_KEY });
 		// A registration changes the actor DIRECTORY too — it's cached
 		// aggressively (5-min staleTime) as reference data, and a CLI agent
@@ -588,7 +588,7 @@ export function AgentStreamProvider({
 	const invalidateOAuthSurfaces = useCallback(() => {
 		void queryClient.invalidateQueries({ queryKey: sharedQueryKeys.oauthClientsRoot });
 		void queryClient.invalidateQueries({ queryKey: sharedQueryKeys.oauthGrantsRoot });
-		void queryClient.invalidateQueries({ queryKey: DASHBOARD_ROOT_KEY });
+		void queryClient.invalidateQueries({ queryKey: ATTENTION_ROOT_KEY });
 	}, [queryClient]);
 
 	/**
@@ -828,11 +828,11 @@ export function AgentStreamProvider({
 				// created_at-watermark poll that will never re-deliver an old event
 				// just because its acknowledged flag flipped — so eagerly refresh
 				// the other surfaces that count/list unacknowledged events (the
-				// Monitor Events tab and the dashboard action inbox).
+				// Monitor Events tab and the Notifications bell).
 				void queryClient.invalidateQueries({
 					queryKey: sharedQueryKeys.monitorEventsRoot,
 				});
-				void queryClient.invalidateQueries({ queryKey: DASHBOARD_ROOT_KEY });
+				void queryClient.invalidateQueries({ queryKey: ATTENTION_ROOT_KEY });
 			} catch {
 				patchEvent(eventId, markUnresolved);
 			}

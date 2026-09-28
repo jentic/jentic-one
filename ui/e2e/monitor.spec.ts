@@ -26,7 +26,7 @@ async function signIn(page: Page) {
 	await page.getByLabel('Email').fill('admin@local');
 	await page.getByRole('textbox', { name: 'Password' }).fill('password');
 	await page.getByRole('button', { name: 'Sign in' }).click();
-	await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible();
+	await expect(page.getByRole('heading', { name: 'Agents', exact: true })).toBeVisible();
 }
 
 test('Monitor overview docks live activity beside the charts and expands it', async ({ page }) => {

@@ -16,11 +16,11 @@ describe('sharedQueryKeys', () => {
 		expect(sharedQueryKeys.workspaceApis).toEqual(['workspace', 'apis']);
 	});
 
-	it('exposes the dashboard root', () => {
-		// Derived by the Dashboard's own `dashboardKeys.all` and invalidated by
-		// the shared SSE→query bridge (`agentStream`) on every approval event.
-		// Locking the literal keeps that cross-layer invalidation from drifting.
-		expect(sharedQueryKeys.dashboardRoot).toEqual(['dashboard']);
+	it('exposes the attention root', () => {
+		// Prefixes the Notifications bell's queries (`attentionKeys`) and is
+		// invalidated by the shared SSE→query bridge (`agentStream`) on every
+		// approval event. Locking the literal keeps that invalidation from drifting.
+		expect(sharedQueryKeys.attentionRoot).toEqual(['attention']);
 	});
 
 	it('exposes the actor-directory root', () => {

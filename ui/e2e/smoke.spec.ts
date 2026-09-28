@@ -36,15 +36,35 @@ test('app loads, login works, shell renders, health resolves, console clean', as
 	await page.getByRole('textbox', { name: 'Password' }).fill('password');
 	await page.getByRole('button', { name: 'Sign in' }).click();
 
-	// Authenticated shell renders with the dashboard and primary nav.
-	await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible();
+	// `/app` lands on Agents, the home surface, inside the primary nav.
+	await expect(page).toHaveURL(/\/app\/agents\b/);
+	await expect(page.getByRole('heading', { name: 'Agents', exact: true })).toBeVisible();
 	await expect(page.getByRole('navigation', { name: 'Primary' })).toBeVisible();
 
-	// The dashboard composes its overview from real list endpoints (mocked
-	// here): the "Needs your action" header bell renders its count badge once
-	// its sources resolve (the body queue cards were folded into it in the
-	// rebuild).
-	await expect(page.getByRole('button', { name: /Needs your action \(\d+/ })).toBeVisible();
+	// The top-bar Notifications bell renders its count once its sources
+	// (pending agents, actionable events — mocked here) resolve.
+	await expect(
+		page.getByRole('button', { name: /^Notifications \(\d+ needs? you\)/ }),
+	).toBeVisible();
 
 	expect(errors, `unexpected console errors:\n${errors.join('\n')}`).toEqual([]);
+});
+
+test('the Notifications panel stays inside a phone viewport', async ({ page }) => {
+	// On a phone the right-anchored panel must clamp instead of hanging
+	// off-screen. (Ported from the retired Dashboard's own bell.)
+	await page.setViewportSize({ width: 390, height: 844 });
+	await page.goto('/app/');
+
+	await page.getByLabel('Email').fill('admin@local');
+	await page.getByRole('textbox', { name: 'Password' }).fill('password');
+	await page.getByRole('button', { name: 'Sign in' }).click();
+
+	await page.getByRole('button', { name: /^Notifications/ }).click();
+	const panel = page.getByRole('dialog', { name: /^Notifications/ });
+	await expect(panel).toBeVisible();
+	const box = await panel.boundingBox();
+	expect(box).not.toBeNull();
+	expect(box!.x).toBeGreaterThanOrEqual(0);
+	expect(box!.x + box!.width).toBeLessThanOrEqual(390);
 });
