@@ -113,6 +113,23 @@ describe('CredentialInventorySheet — credential flows', () => {
 		expect(await inventory().findByRole('alert')).toBeVisible();
 	});
 
+	it('explains credentials from its help, and Escape closes only the help', async () => {
+		renderInventory();
+		const user = userEvent.setup();
+
+		await user.click(await inventory().findByRole('button', { name: 'About credentials' }));
+		const help = await screen.findByRole('dialog', { name: 'About Credentials' });
+		expect(within(help).getByText('Secrets are write-only')).toBeVisible();
+
+		await browserUser.keyboard('{Escape}');
+		await waitFor(() =>
+			expect(
+				screen.queryByRole('dialog', { name: 'About Credentials' }),
+			).not.toBeInTheDocument(),
+		);
+		expect(screen.getByRole('heading', { name: 'Credentials' })).toBeInTheDocument();
+	});
+
 	it('filters the list by credential type', async () => {
 		resetCredentialsStore([
 			makeMockCredential({

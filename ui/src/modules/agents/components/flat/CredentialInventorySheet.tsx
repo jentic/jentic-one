@@ -12,6 +12,7 @@ import { Filter, Key, Plus, X } from 'lucide-react';
 import {
 	Button,
 	EmptyState,
+	PageHelp,
 	RefreshButton,
 	SearchInput,
 	SegmentedToggle,
@@ -362,6 +363,28 @@ export function CredentialInventorySheet({
 							</p>
 						</div>
 						<div className="flex shrink-0 items-center gap-2">
+							{/* The help the retired Credentials page carried. No `⌘ /`: the
+							    Agents page behind the sheet already binds it. */}
+							<PageHelp
+								title="About Credentials"
+								triggerAriaLabel="About credentials"
+								bindShortcut={false}
+								intro="Credentials hold the secrets (tokens, API keys, OAuth grants) that let agents call external APIs on your behalf."
+								sections={[
+									{
+										heading: 'Secrets are write-only',
+										body: 'Once saved, a secret is redacted everywhere and never shown again — rotate it from the edit panel if you need a new value.',
+									},
+									{
+										heading: 'OAuth credentials',
+										body: 'OAuth 2.0 credentials use the Connect action to run the provider redirect flow and obtain tokens.',
+									},
+									{
+										heading: 'Used by',
+										body: 'Any agent can be bound to a credential. Unbound narrows the list to credentials no agent is bound to — they appear on no agent’s screen, so this is the only place to find them.',
+									},
+								]}
+							/>
 							<Button size="sm" onClick={(): void => setCreateOpen(true)}>
 								<Plus className="h-4 w-4" />
 								Add credential
