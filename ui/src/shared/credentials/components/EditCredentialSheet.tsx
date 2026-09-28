@@ -154,8 +154,8 @@ export function EditCredentialSheet({
 						window.location.assign(challenge.authorize_url);
 						return;
 					}
-					// device_code challenges are handled by the CredentialsPage
-					// connect action (which mounts the human-step dialog).
+					// device_code challenges are handled by the credential row's
+					// Connect action (which mounts the human-step dialog).
 					toast({
 						title: 'Use Connect on the credential row for this sign-in.',
 						variant: 'error',

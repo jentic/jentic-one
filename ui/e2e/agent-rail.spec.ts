@@ -33,11 +33,11 @@ async function login(page: Page) {
 }
 
 /**
- * Land on a page that carries the rail (Home and Monitor don't) and doesn't
- * scope it — Agents auto-selects an agent at xl, which points the lens at it.
+ * Land on a page that carries the rail (Monitor doesn't) and doesn't scope it —
+ * Agents auto-selects an agent at xl, which points the lens at it.
  */
 async function gotoRailPage(page: Page) {
-	await page.goto('/app/credentials');
+	await page.goto('/app/workspace');
 	await expect(page.getByRole('navigation', { name: 'Primary' })).toBeVisible();
 }
 

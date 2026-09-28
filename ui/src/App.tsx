@@ -19,7 +19,7 @@ import { publicDocsRoutes } from '@/modules/docs/routes';
 /**
  * Route tree. All paths are relative to the router `basename` (`/app`, set in
  * `main.tsx` from Vite's `base`), so a path like `/login` resolves to
- * `/app/login` in the browser and `/credentials` to `/app/credentials`. The
+ * `/app/login` in the browser and `/agents` to `/app/agents`. The
  * SPA owns the entire `/app` namespace; nothing here is served outside it.
  *
  *   /login, /setup                   → SetupGate steers by setup_required

@@ -175,7 +175,7 @@ export function LogRow({
 					}
 				}}
 				className={cn(
-					'grid scroll-mt-[calc(var(--log-top,3rem)+4rem)] scroll-mb-4 grid-cols-[minmax(0,1fr)_auto] items-start gap-x-3 gap-y-1 px-3 py-2.5 sm:px-4',
+					'grid scroll-mt-[calc(var(--log-top,0px)+4rem)] scroll-mb-4 grid-cols-[minmax(0,1fr)_auto] items-start gap-x-3 gap-y-1 px-3 py-2.5 sm:px-4',
 					WIDE_COLS,
 					'@3xl:items-center @3xl:gap-x-4',
 					'hover:bg-muted/50 focus-visible:ring-ring cursor-pointer transition-colors outline-none focus-visible:ring-2 focus-visible:ring-inset',
@@ -341,7 +341,7 @@ export function groupByDay<T>(
 export function LogDay({ label, children }: { label: string; children: ReactNode }) {
 	return (
 		<Fragment>
-			<h3 className="bg-muted/85 text-muted-foreground border-border/60 sticky top-[var(--log-top,3rem)] z-10 border-b px-3 py-1.5 text-[11px] font-semibold tracking-wide uppercase backdrop-blur sm:px-4">
+			<h3 className="bg-muted/85 text-muted-foreground border-border/60 sticky top-[var(--log-top,0px)] z-10 border-b px-3 py-1.5 text-[11px] font-semibold tracking-wide uppercase backdrop-blur sm:px-4">
 				{label}
 			</h3>
 			<ul aria-label={label}>{children}</ul>

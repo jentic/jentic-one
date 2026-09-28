@@ -180,7 +180,6 @@ describe('isNavItemActive', () => {
 			'agents',
 			'discover',
 			'workspace',
-			'credentials',
 			'monitor',
 		]);
 	});

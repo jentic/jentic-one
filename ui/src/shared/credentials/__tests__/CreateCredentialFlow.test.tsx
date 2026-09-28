@@ -1,7 +1,7 @@
 /**
  * CreateCredentialFlow — the shell `surface` switches, and nothing else; the
- * wizard's own behaviour is covered where it runs end to end (`CredentialsPage`,
- * `ApiSetupQueue`, `CredentialInventorySheet`). Pins the drawer default, the
+ * wizard's own behaviour is covered where it runs end to end (`ApiSetupQueue`,
+ * `CredentialInventorySheet`). Pins the drawer default, the
  * top-layer host's centred dialog, that no backdrop click discards a draft, and
  * that an uploaded spec lands on the credential form for the API it registered,
  * and that a name another credential for the API holds is warned about, not blocked.

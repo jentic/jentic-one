@@ -32,8 +32,7 @@ function renderSettingsPage(route = '/settings') {
 /**
  * PageHeader's content fades in (250ms); axe sampling mid-animation sees
  * blended colours and reports false contrast violations on the header's
- * primary action. Wait for the motion wrapper to settle before any axe run
- * (the CredentialsPage suite does the same for its stagger).
+ * primary action. Wait for the motion wrapper to settle before any axe run.
  */
 async function settleHeader(): Promise<void> {
 	const h1 = await screen.findByRole('heading', { level: 1, name: 'Settings' });

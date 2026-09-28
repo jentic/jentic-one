@@ -16,8 +16,8 @@ import type { AgentEntity } from '@/modules/agents/api';
 /** Width of the scroll-affordance fade at either end of the rail. */
 const FADE = '1.5rem';
 
-/** Where the rail pins: under the fixed `h-12` TopNavbar. In sync with the
- * `sticky top-12` class below, which the pinned-state observer reads. */
+/** Where the rail pins in the viewport: `top-0` of the shell's scroller, which
+ * starts under the fixed `h-12` TopNavbar. The pinned-state observer reads it. */
 const STICKY_TOP = 48;
 
 /** Non-active states whose verdict is in: their tabs read struck through.
@@ -260,7 +260,7 @@ export function AgentStrip({
 			data-testid="agent-strip"
 			// Bleeds to the gutter edges so the backdrop covers the tiles passing under.
 			// The border is transparent until it sticks, so pinning costs no layout shift.
-			className="-mx-page-gutter px-page-gutter bg-background/85 data-[scrolled=true]:border-border/40 sticky top-12 z-20 border-b border-transparent py-2 backdrop-blur transition-[box-shadow,border-color] data-[scrolled=true]:shadow-[0_1px_0_0_rgb(0_0_0_/0.04)]"
+			className="-mx-page-gutter px-page-gutter bg-background/85 data-[scrolled=true]:border-border/40 sticky top-0 z-20 border-b border-transparent py-2 backdrop-blur transition-[box-shadow,border-color] data-[scrolled=true]:shadow-[0_1px_0_0_rgb(0_0_0_/0.04)]"
 		>
 			{/* The rail's own surface sits OUTSIDE the scroller, so the fade
 			    thins the tabs at an end without thinning the rail itself. */}

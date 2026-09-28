@@ -148,7 +148,7 @@ export function ActivityView({
 
 	return (
 		<div
-			className="space-y-4 [--log-top:3rem] lg:[--log-top:calc(3rem+var(--log-toolbar-h,0px))]"
+			className="space-y-4 [--log-top:0px] lg:[--log-top:var(--log-toolbar-h,0px)]"
 			style={{ '--log-toolbar-h': `${bar.height}px` } as CSSProperties}
 		>
 			<div
@@ -162,7 +162,7 @@ export function ActivityView({
 					// resting layout is unchanged.
 					'-mx-page-gutter px-page-gutter -mt-2 mb-2 py-2',
 					'border-b border-transparent transition-[background-color,border-color,box-shadow] duration-200',
-					'lg:sticky lg:top-12 lg:z-30',
+					'lg:sticky lg:top-0 lg:z-30',
 					'lg:data-stuck:bg-background/85 lg:data-stuck:border-border/70 lg:data-stuck:shadow-[0_8px_16px_-12px_rgb(0_0_0/0.5)] lg:data-stuck:backdrop-blur-md',
 				)}
 			>

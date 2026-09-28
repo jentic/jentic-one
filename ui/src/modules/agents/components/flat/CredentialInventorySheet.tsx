@@ -36,13 +36,15 @@ import {
 } from '@/shared/credentials/api';
 import { useDeviceAwareConnect } from '@/shared/credentials/components/useDeviceAwareConnect';
 import { CredentialsList } from '@/shared/credentials/components/CredentialsList';
-import type { CredentialTypeFilter } from '@/shared/credentials/components/CredentialsToolbar';
 import {
 	CreateCredentialFlow,
 	type CreatedCredentialInfo,
 } from '@/shared/credentials/components/CreateCredentialFlow';
 import { CredentialDeleteDialog } from '@/shared/credentials/components/CredentialDeleteDialog';
 import { EditCredentialSheet } from '@/shared/credentials/components/EditCredentialSheet';
+import { PostConnectBindMore } from '@/shared/credentials/components/PostConnectBindMore';
+
+type CredentialTypeFilter = 'all' | CredentialType;
 
 const FILTER_OPTIONS: { value: CredentialTypeFilter; label: string }[] = [
 	{ value: 'all', label: 'All' },
@@ -59,12 +61,19 @@ export function CredentialInventorySheet({
 	open,
 	onClose,
 	autoOpenCreate = false,
+	approvalSession,
+	onApprovalClose,
 }: {
 	open: boolean;
 	onClose: () => void;
 	/** Open onto the create wizard — for a caller whose own label promised a new
 	 * credential. */
 	autoOpenCreate?: boolean;
+	/** An agent-initiated connect session to approve: opens the wizard in approve
+	 * mode. `onApprovalClose` fires when that wizard closes, so the caller can drop
+	 * the link that carried it. */
+	approvalSession?: { sessionId: string; pollToken: string };
+	onApprovalClose?: () => void;
 }) {
 	const headingId = 'credential-inventory-sheet-title';
 
@@ -88,6 +97,9 @@ export function CredentialInventorySheet({
 		createSignalSpent.current = true;
 		setCreateOpen(true);
 	}, [open, autoOpenCreate]);
+	useEffect(() => {
+		if (open && approvalSession) setCreateOpen(true);
+	}, [open, approvalSession]);
 
 	// Every page, not just the first: the header promises "Every credential in this
 	// workspace", and the Unbound count is taken over the whole inventory.
@@ -212,8 +224,9 @@ export function CredentialInventorySheet({
 		setEditId(cred.credential_id);
 	};
 
-	// Mirrors CredentialsPage.handleConnectAfterCreate: an abandoned OAuth handshake
-	// discards the credential. `redirected` must NOT clean up — the user is mid-flow.
+	// Connect right after create: an abandoned OAuth handshake discards the
+	// credential, which was never usable. `redirected` must NOT clean up — the
+	// user is mid-flow.
 	const handleConnectAfterCreate = async (
 		credentialId: string,
 		credentialName: string,
@@ -279,7 +292,7 @@ export function CredentialInventorySheet({
 		}
 	};
 
-	// Mirrors CredentialsPage.handleConnect (standalone connect keeps the row).
+	// Standalone connect keeps the row whatever the outcome.
 	const handleConnect = async (cred: Credential): Promise<void> => {
 		toast({ title: `Opening sign-in for ${cred.name}…` });
 		try {
@@ -467,7 +480,17 @@ export function CredentialInventorySheet({
 			{createOpen && (
 				<CreateCredentialFlow
 					open
-					onClose={(): void => setCreateOpen(false)}
+					onClose={(): void => {
+						setCreateOpen(false);
+						if (approvalSession) onApprovalClose?.();
+					}}
+					approvalSession={approvalSession}
+					renderPostConnect={({ credentialId, boundAgentId }) => (
+						<PostConnectBindMore
+							credentialId={credentialId}
+							boundAgentId={boundAgentId}
+						/>
+					)}
 					onCreated={(info: CreatedCredentialInfo): void => {
 						setCreateOpen(false);
 						if (

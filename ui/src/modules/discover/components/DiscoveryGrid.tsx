@@ -11,6 +11,7 @@
 import { useEffect, useRef } from 'react';
 import { Compass, Upload } from 'lucide-react';
 import { AppLink, Button, EmptyState, ErrorAlert, Skeleton } from '@/shared/ui';
+import { shellScrollRoot } from '@/shared/lib';
 import { ROUTES } from '@/shared/app/routes';
 import { DiscoveryCard } from '@/modules/discover/components/DiscoveryCard';
 import type { DiscoveryEntity } from '@/modules/discover/api';
@@ -73,7 +74,9 @@ export function DiscoveryGrid({
 			(entries) => {
 				if (entries[0]?.isIntersecting && !isFetchingNextPage) onLoadMore();
 			},
-			{ rootMargin: '200px' },
+			// Rooted on the shell's scroller: a viewport root's margin can't reach past
+			// `<main>`'s clip, so the prefetch would wait for the sentinel to show.
+			{ root: shellScrollRoot(), rootMargin: '200px' },
 		);
 		observer.observe(node);
 		return () => observer.disconnect();
