@@ -20,6 +20,7 @@ from jentic_one.admin.repos import (
 )
 from jentic_one.admin.scoping.filters import build_access_filters
 from jentic_one.auth.repos import CredentialRefRepository, ToolkitNameRepository
+from jentic_one.auth.services.agent_scope_ceiling import check_agent_scope_grant
 from jentic_one.auth.services.errors import (
     ActorNotFoundError,
     AgentAlreadyOwnedError,
@@ -30,6 +31,7 @@ from jentic_one.auth.services.errors import (
     CredentialNotVisibleError,
     InvalidOwnerError,
     InvalidTransitionError,
+    OwnerTransferForbiddenError,
 )
 from jentic_one.auth.services.oauth_grant_service import (
     AGENT_ARCHIVE_REVOCATION_REASON,
@@ -62,6 +64,12 @@ _VALID_TRANSITIONS: dict[ActorVerb, dict[ActorStatus, ActorStatus]] = {
     ActorVerb.ENABLE: {ActorStatus.DISABLED: ActorStatus.ACTIVE},
 }
 
+# Registration decisions stay open to every approver (any ``agents:write``
+# holder, admins included) — they are the review of a pending registration,
+# not a mutation of an agent the caller owns. Every other by-id mutation is
+# owner-or-``org:admin`` (see ``AgentService._load_owned_agent``).
+_APPROVER_WIDE_VERBS: frozenset[ActorVerb] = frozenset({ActorVerb.APPROVE, ActorVerb.DENY})
+
 
 class AgentService:
     """Manages agent lifecycle: create, list, get, approve, deny, disable, enable, archive."""
@@ -92,6 +100,13 @@ class AgentService:
         """
         if status not in (ActorStatus.ACTIVE, ActorStatus.PENDING):
             raise ValueError(f"agents are created active or pending, not {status}")
+        scopes_to_grant: list[str] = []
+        if status is ActorStatus.ACTIVE:
+            if payload.scopes:
+                scopes_to_grant = list(dict.fromkeys(payload.scopes))
+                check_agent_scope_grant(scopes_to_grant, identity=identity)
+            else:
+                scopes_to_grant = list(DEFAULT_AGENT_SCOPES)
         async with self._ctx.admin_db.transaction() as session:
             agent = await AgentRepository.create(
                 session,
@@ -102,21 +117,15 @@ class AgentService:
                 created_by=identity.sub,
                 status=status,
             )
-            if status is ActorStatus.ACTIVE:
-                scopes_to_grant = (
-                    list(dict.fromkeys(payload.scopes))
-                    if payload.scopes
-                    else list(DEFAULT_AGENT_SCOPES)
+            for scope in scopes_to_grant:
+                await ActorScopeGrantRepository.grant(
+                    session,
+                    actor_id=agent.id,
+                    actor_type=ActorType.AGENT,
+                    scope=scope,
+                    granted_by=identity.sub,
+                    created_by=identity.sub,
                 )
-                for scope in scopes_to_grant:
-                    await ActorScopeGrantRepository.grant(
-                        session,
-                        actor_id=agent.id,
-                        actor_type=ActorType.AGENT,
-                        scope=scope,
-                        granted_by=identity.sub,
-                        created_by=identity.sub,
-                    )
             await record_audit(
                 session,
                 action=AuditAction.REGISTER,
@@ -124,7 +133,12 @@ class AgentService:
                 target_id=agent.id,
                 actor_type=identity.actor_type,
                 actor_id=identity.sub,
-                after={"name": payload.name, "owner_id": owner_id, "status": status.value},
+                after={
+                    "name": payload.name,
+                    "owner_id": owner_id,
+                    "status": status.value,
+                    "scopes": scopes_to_grant,
+                },
                 origin=identity.origin.value,
             )
             await emit_event_best_effort(
@@ -240,7 +254,7 @@ class AgentService:
 
     async def approve(self, agent_id: str, *, identity: Identity) -> AgentView:
         async with self._ctx.admin_db.transaction() as session:
-            await self._check_transition(session, agent_id, ActorVerb.APPROVE)
+            await self._check_transition(session, agent_id, ActorVerb.APPROVE, identity=identity)
             agent = await AgentRepository.set_approval(session, agent_id, approved_by=identity.sub)
             existing_grants = await ActorScopeGrantRepository.list_for_actor(
                 session, agent_id, actor_type=ActorType.AGENT
@@ -364,7 +378,7 @@ class AgentService:
 
     async def deny(self, agent_id: str, *, reason: str, identity: Identity) -> AgentView:
         async with self._ctx.admin_db.transaction() as session:
-            await self._check_transition(session, agent_id, ActorVerb.DENY)
+            await self._check_transition(session, agent_id, ActorVerb.DENY, identity=identity)
             agent = await AgentRepository.set_denial(
                 session, agent_id, reason=reason, denied_by=identity.sub
             )
@@ -401,7 +415,7 @@ class AgentService:
         # fixed at the listing layer instead: counts exclude and listings
         # annotate grants whose agent is non-active.
         async with self._ctx.admin_db.transaction() as session:
-            await self._check_transition(session, agent_id, ActorVerb.DISABLE)
+            await self._check_transition(session, agent_id, ActorVerb.DISABLE, identity=identity)
             await AgentRepository.update_status(session, agent_id, ActorStatus.DISABLED)
             await record_audit(
                 session,
@@ -415,7 +429,7 @@ class AgentService:
 
     async def enable(self, agent_id: str, *, identity: Identity) -> None:
         async with self._ctx.admin_db.transaction() as session:
-            await self._check_transition(session, agent_id, ActorVerb.ENABLE)
+            await self._check_transition(session, agent_id, ActorVerb.ENABLE, identity=identity)
             await AgentRepository.update_status(session, agent_id, ActorStatus.ACTIVE)
             await record_audit(
                 session,
@@ -429,9 +443,7 @@ class AgentService:
 
     async def archive(self, agent_id: str, *, identity: Identity) -> None:
         async with self._ctx.admin_db.transaction() as session:
-            agent = await AgentRepository.get_by_id(session, agent_id)
-            if agent is None:
-                raise ActorNotFoundError(agent_id)
+            agent = await self._load_owned_agent(session, agent_id, identity=identity)
             if agent.status == ActorStatus.ARCHIVED:
                 raise InvalidTransitionError(agent_id, ActorStatus.ARCHIVED, "archive")
             await AgentRepository.archive(session, agent_id)
@@ -699,14 +711,25 @@ class AgentService:
     async def replace_scopes(
         self, agent_id: str, scopes: list[str], *, identity: Identity
     ) -> list[str]:
+        """Replace the agent's scope grants (owner or ``org:admin`` only).
+
+        Newly added scopes are subject to the agent scope ceiling
+        (``check_agent_scope_grant``); scopes the agent already holds may be
+        kept, so an owner can narrow a set an admin widened.
+        """
+        scopes = list(dict.fromkeys(scopes))
         async with self._ctx.admin_db.transaction() as session:
-            agent = await AgentRepository.get_by_id(session, agent_id)
-            if agent is None:
-                raise ActorNotFoundError(agent_id)
+            agent = await self._load_owned_agent(session, agent_id, identity=identity)
             if agent.status == ActorStatus.ARCHIVED:
                 raise InvalidTransitionError(agent_id, ActorStatus.ARCHIVED, "replace_scopes")
+            existing = [
+                g.scope
+                for g in await ActorScopeGrantRepository.list_for_actor(
+                    session, agent_id, actor_type=ActorType.AGENT
+                )
+            ]
+            check_agent_scope_grant(scopes, identity=identity, already_held=existing)
             await ActorScopeGrantRepository.revoke_all(session, agent_id)
-            scopes = list(dict.fromkeys(scopes))
             for scope in scopes:
                 await ActorScopeGrantRepository.grant(
                     session,
@@ -723,6 +746,7 @@ class AgentService:
                 target_id=agent_id,
                 actor_type=identity.actor_type,
                 actor_id=identity.sub,
+                before={"scopes": existing},
                 after={"scopes": scopes},
                 reason="replace_scopes",
                 origin=identity.origin.value,
@@ -746,18 +770,23 @@ class AgentService:
         back; the new owner re-consents through the normal flow if the
         connection is still wanted. The agent's key channel (API key, scopes,
         toolkit bindings) is deliberately untouched.
+
+        Only the owner or an ``org:admin`` caller may update the agent (others
+        get a uniform 404); changing ``owner_id`` is ``org:admin``-only.
         """
         try:
             async with self._ctx.admin_db.transaction() as session:
-                agent = await AgentRepository.get_by_id_for_update(session, agent_id)
-                if agent is None:
-                    raise ActorNotFoundError(agent_id)
+                agent = await self._load_owned_agent(
+                    session, agent_id, identity=identity, for_update=True
+                )
                 if agent.status == ActorStatus.ARCHIVED:
                     raise InvalidTransitionError(agent_id, ActorStatus.ARCHIVED, "update")
                 before = {k: getattr(agent, k) for k in update_data}
                 owner_transferred = (
                     "owner_id" in update_data and update_data["owner_id"] != agent.owner_id
                 )
+                if owner_transferred and ORG_ADMIN not in identity.permissions:
+                    raise OwnerTransferForbiddenError(agent_id)
                 agent = await AgentRepository.update_agent(session, agent_id, **update_data)
                 after = {k: getattr(agent, k) for k in update_data}
                 if owner_transferred:
@@ -792,11 +821,9 @@ class AgentService:
         """
         validate_jwks(jwks)
         async with self._ctx.admin_db.transaction() as session:
-            agent = await AgentRepository.get_by_id_for_update(session, agent_id)
-            if agent is None:
-                raise ActorNotFoundError(agent_id)
-            if "org:admin" not in identity.permissions and agent.owner_id != identity.sub:
-                raise ActorNotFoundError(agent_id)
+            agent = await self._load_owned_agent(
+                session, agent_id, identity=identity, for_update=True
+            )
             if agent.status != ActorStatus.ACTIVE:
                 raise InvalidTransitionError(agent_id, agent.status, "update_jwks")
             before_jwks = agent.jwks
@@ -815,12 +842,39 @@ class AgentService:
             )
         return AgentView.model_validate(agent)
 
-    async def _check_transition(
-        self, session: AsyncSession, agent_id: str, verb: ActorVerb
-    ) -> None:
-        agent = await AgentRepository.get_by_id(session, agent_id)
+    async def _load_owned_agent(
+        self,
+        session: AsyncSession,
+        agent_id: str,
+        *,
+        identity: Identity,
+        for_update: bool = False,
+    ) -> Agent:
+        """Load an agent the caller may mutate: its owner or an ``org:admin``.
+
+        A missing agent and one owned by someone else raise the same
+        ``ActorNotFoundError`` so the response does not reveal which agent
+        ids exist outside the caller's ownership.
+        """
+        if for_update:
+            agent = await AgentRepository.get_by_id_for_update(session, agent_id)
+        else:
+            agent = await AgentRepository.get_by_id(session, agent_id)
         if agent is None:
             raise ActorNotFoundError(agent_id)
+        if ORG_ADMIN not in identity.permissions and agent.owner_id != identity.sub:
+            raise ActorNotFoundError(agent_id)
+        return agent
+
+    async def _check_transition(
+        self, session: AsyncSession, agent_id: str, verb: ActorVerb, *, identity: Identity
+    ) -> None:
+        if verb in _APPROVER_WIDE_VERBS:
+            agent = await AgentRepository.get_by_id(session, agent_id)
+            if agent is None:
+                raise ActorNotFoundError(agent_id)
+        else:
+            agent = await self._load_owned_agent(session, agent_id, identity=identity)
         if agent.status == ActorStatus.ARCHIVED:
             raise InvalidTransitionError(agent_id, ActorStatus.ARCHIVED, verb)
         allowed_from = _VALID_TRANSITIONS[verb]
