@@ -113,6 +113,62 @@ describe('CredentialInventorySheet — credential flows', () => {
 		expect(await inventory().findByRole('alert')).toBeVisible();
 	});
 
+	it('filters the list by credential type', async () => {
+		resetCredentialsStore([
+			makeMockCredential({
+				credential_id: 'c1',
+				name: 'Stripe key',
+				type: CredentialType.API_KEY,
+			}),
+			makeMockCredential({
+				credential_id: 'c2',
+				name: 'GitHub token',
+				type: CredentialType.BEARER_TOKEN,
+			}),
+		]);
+		renderInventory();
+		const user = userEvent.setup();
+
+		await inventory().findByText('Stripe key');
+		expect(inventory().getByText('GitHub token')).toBeInTheDocument();
+
+		// Narrow to API keys → the bearer token drops out.
+		await user.click(inventory().getByRole('button', { name: 'API key' }));
+		expect(inventory().getByText('Stripe key')).toBeInTheDocument();
+		await waitFor(() =>
+			expect(inventory().queryByText('GitHub token')).not.toBeInTheDocument(),
+		);
+	});
+
+	it('filters the list by name as the operator types', async () => {
+		resetCredentialsStore([
+			makeMockCredential({ credential_id: 'c1', name: 'Stripe key' }),
+			makeMockCredential({ credential_id: 'c2', name: 'GitHub token' }),
+		]);
+		renderInventory();
+		const user = userEvent.setup();
+
+		await inventory().findByText('Stripe key');
+		await user.type(inventory().getByLabelText('Filter credentials'), 'github');
+		await waitFor(() => expect(inventory().queryByText('Stripe key')).not.toBeInTheDocument());
+		expect(inventory().getByText('GitHub token')).toBeInTheDocument();
+	});
+
+	it('opens the edit sheet when the credential card is clicked', async () => {
+		resetCredentialsStore([
+			makeMockCredential({ credential_id: 'c1', name: 'Clickable cred' }),
+		]);
+		renderInventory();
+		const user = userEvent.setup();
+
+		await inventory().findByText('Clickable cred');
+		// The full-card overlay is the pointer target (aria-hidden; the "Edit
+		// credential <name>" button is the accessible control).
+		await user.click(inventory().getByTestId('credential-card-overlay'));
+
+		expect(await screen.findByRole('heading', { name: 'Edit credential' })).toBeVisible();
+	});
+
 	it('creates a credential via manual entry and surfaces a success toast', async () => {
 		renderInventory();
 		const user = userEvent.setup();

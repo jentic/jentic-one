@@ -427,8 +427,9 @@ class ConnectSessionService:
     def _approval_url_for(self, session_id: str, poll_token: str) -> str:
         """Build the human-facing approval URL for an agent-initiated session.
 
-        Lands on the credentials page (``/app/credentials``) with the session id
-        and poll token as query params; the SPA detects the ``approve`` param
+        Lands on ``/app/credentials`` with the session id and poll token as
+        query params; the SPA redirects that path (keeping the params) to the
+        credential inventory on its Agents page, detects the ``approve`` param
         and auto-opens the credential dialog into the vendor-approval flow. The
         poll token rides along because the status endpoint (RFC-8628 poller) is
         gated by the token — the human owner needs it to observe completion.

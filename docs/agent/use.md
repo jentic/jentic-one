@@ -133,7 +133,7 @@ recovery — follow its instruction instead of retrying the same call.
 | Action | Where the human does it |
 | ------ | ----------------------- |
 | Approve a new agent | `/app/agents` in the console |
-| Approve an agent-initiated connect (the `approval_url` from `jentic connect`) | The link opens `/app/credentials?approve=…` in the console; the human confirms scopes and rules, then consents at the vendor |
+| Approve an agent-initiated connect (the `approval_url` from `jentic connect`) | The link (`/app/credentials?approve=…`) opens the credential inventory on the console's Agents page; the human confirms scopes and rules, then consents at the vendor |
 | Connect/provision credentials, bind agents, enter credential secrets | `/app` console (dashboard) — relay your access ask to the operator in prose; they act on it there |
 | Create/manage users | `/app` admin UI |
 | Re-import an updated API spec (`jentic catalog outdated`) | Their call — suggest it, never run it silently |
