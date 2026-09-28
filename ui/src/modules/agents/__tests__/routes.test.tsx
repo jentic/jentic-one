@@ -88,7 +88,7 @@ describe('retired Credentials page', () => {
 	});
 
 	it("keeps an agent's approval link params, so the approval still opens on Agents", async () => {
-		// The backend still mints `/app/credentials?approve=…&poll_token=…`.
+		// A link minted before the backend moved approvals to `/app/agents`.
 		renderWithProviders(
 			<>
 				<Harness />

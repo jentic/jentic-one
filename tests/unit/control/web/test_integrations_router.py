@@ -97,7 +97,7 @@ def test_connect_uses_agent_identity_when_caller_is_agent() -> None:
     svc.create_session = AsyncMock(
         return_value=CreatedSession(
             session_id="sess_1",
-            approval_url="https://example.com/app/credentials?approve=sess_1&poll_token=tok",
+            approval_url="https://example.com/app/agents?approve=sess_1&poll_token=tok",
             poll_token="tok",
             resolved_flow="device_authorization",
         )
@@ -138,7 +138,7 @@ def test_connect_allows_user_caller_without_agent_id() -> None:
     svc.create_session = AsyncMock(
         return_value=CreatedSession(
             session_id="sess_1",
-            approval_url="https://example.com/app/credentials?approve=sess_1&poll_token=tok",
+            approval_url="https://example.com/app/agents?approve=sess_1&poll_token=tok",
             poll_token="tok",
             resolved_flow="device_authorization",
         )
@@ -170,7 +170,7 @@ def test_connect_returns_session_id_and_poll_token() -> None:
     svc.create_session = AsyncMock(
         return_value=CreatedSession(
             session_id="sess_9",
-            approval_url="https://example.com/app/credentials?approve=sess_9&poll_token=tok9",
+            approval_url="https://example.com/app/agents?approve=sess_9&poll_token=tok9",
             poll_token="tok9",
             resolved_flow="authorization_code",
         )
@@ -184,7 +184,7 @@ def test_connect_returns_session_id_and_poll_token() -> None:
     body = resp.json()
     assert body == {
         "session_id": "sess_9",
-        "approval_url": "https://example.com/app/credentials?approve=sess_9&poll_token=tok9",
+        "approval_url": "https://example.com/app/agents?approve=sess_9&poll_token=tok9",
         "poll_token": "tok9",
         "resolved_flow": "authorization_code",
     }

@@ -235,7 +235,7 @@ describe('VendorConnectFlow — self mode', () => {
 					{
 						session_id: 'sess_1',
 						approval_url:
-							'https://example.com/app/credentials?approve=sess_1&poll_token=tok',
+							'https://example.com/app/agents?approve=sess_1&poll_token=tok',
 						poll_token: 'tok',
 						resolved_flow: 'device_authorization',
 					},
@@ -912,7 +912,7 @@ describe('VendorConnectFlow — connect-wizard regressions', () => {
 				return HttpResponse.json(
 					{
 						session_id: `sess_retry_${connectCalls}`,
-						approval_url: `/app/credentials?approve=sess_retry_${connectCalls}&poll_token=tok_retry_${connectCalls}`,
+						approval_url: `/app/agents?approve=sess_retry_${connectCalls}&poll_token=tok_retry_${connectCalls}`,
 						poll_token: `tok_retry_${connectCalls}`,
 						resolved_flow: 'device_authorization',
 					},
