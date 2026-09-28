@@ -571,6 +571,9 @@ function RunRow({
 				actor={
 					soleActor ? (
 						<ActorLabel actorId={soleActor} actorType={newest.actorType} />
+					) : // One unattributed actor: say so rather than "1 actors".
+					actors.size === 1 ? (
+						'Unattributed'
 					) : (
 						`${actors.size} actors`
 					)

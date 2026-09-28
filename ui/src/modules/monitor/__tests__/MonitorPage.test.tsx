@@ -348,10 +348,13 @@ describe('MonitorPage', () => {
 	});
 
 	it('fetches each grouping once, scoped by the actor, and nothing once expanded', async () => {
+		// Grouped reads only: the expanded log's timeline makes its own
+		// ungrouped histogram read, which isn't a Breakdown refetch.
 		const seen: URLSearchParams[] = [];
 		worker.events.on('request:start', ({ request }) => {
 			const url = new URL(request.url);
-			if (url.pathname.endsWith('/monitoring/usage')) seen.push(url.searchParams);
+			if (url.pathname.endsWith('/monitoring/usage') && url.searchParams.has('group_by'))
+				seen.push(url.searchParams);
 		});
 		const user = userEvent.setup();
 		renderMonitor('/app/monitor?actor_id=agent_billing&actor_type=agent');

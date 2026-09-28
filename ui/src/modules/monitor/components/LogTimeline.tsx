@@ -118,8 +118,11 @@ export function LogTimeline() {
 		[data, sinceSec, untilSec],
 	);
 	const max = Math.max(1, ...bars.map((b) => b.success + b.failed));
-	const total = data?.stats.total ?? bars.reduce((n, b) => n + b.success + b.failed, 0);
+	// Unknown stays unknown: while loading (or after an error) the empty
+	// placeholder bars must not read as "0 calls".
+	const total = data?.stats.total ?? null;
 	const failed = bars.reduce((n, b) => n + b.failed, 0);
+	const status = query.isError ? 'Traffic unavailable' : 'Loading traffic…';
 
 	// Brushing: indices into `bars` while a drag is in flight.
 	const trackRef = useRef<HTMLDivElement>(null);
@@ -160,9 +163,12 @@ export function LogTimeline() {
 	const selLo = brush ? Math.min(brush.a, brush.b) : null;
 	const selHi = brush ? Math.max(brush.a, brush.b) : null;
 	const hovered = hover != null && !brush ? bars[hover] : null;
-	const summary = `API traffic: ${total.toLocaleString()} calls, ${failed.toLocaleString()} failed${
-		range ? `, ${formatRange(range)}` : ''
-	}.`;
+	const summary =
+		total == null
+			? `API traffic: ${status.toLowerCase()}`
+			: `API traffic: ${total.toLocaleString()} calls, ${failed.toLocaleString()} failed${
+					range ? `, ${formatRange(range)}` : ''
+				}.`;
 
 	return (
 		<section
@@ -174,8 +180,10 @@ export function LogTimeline() {
 				<p className="text-muted-foreground text-xs">
 					<span className="text-foreground font-medium">API traffic</span>
 					<span aria-hidden="true"> · </span>
-					<span className="tabular-nums">{total.toLocaleString()} calls</span>
-					{failed > 0 && (
+					<span className="tabular-nums">
+						{total == null ? status : `${total.toLocaleString()} calls`}
+					</span>
+					{total != null && failed > 0 && (
 						<>
 							<span aria-hidden="true"> · </span>
 							<span className="text-danger tabular-nums">
