@@ -451,13 +451,15 @@ describe('CredentialInventorySheet — credential flows', () => {
 				).not.toBeInTheDocument(),
 			);
 			// Spent, so a reload doesn't reopen a stale prompt; the selection survives.
-			await waitFor(() =>
-				expect(screen.getByTestId('location-search')).toHaveTextContent(
-					'?agent=agnt_active_1',
-				),
-			);
-			expect(screen.getByTestId('location-search')).not.toHaveTextContent('approve');
-			expect(screen.getByTestId('location-search')).not.toHaveTextContent('poll_token');
+			// Wait on the params themselves: `?agent=` is in the URL before the clear too.
+			await waitFor(() => {
+				const params = new URLSearchParams(
+					screen.getByTestId('location-search').textContent ?? '',
+				);
+				expect(params.has('approve')).toBe(false);
+				expect(params.has('poll_token')).toBe(false);
+				expect(params.get('agent')).toBe('agnt_active_1');
+			});
 			// Backing out of the approval leaves the operator in the inventory.
 			expect(screen.getByRole('heading', { name: 'Credentials' })).toBeInTheDocument();
 		});
