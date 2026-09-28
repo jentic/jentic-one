@@ -680,7 +680,9 @@ def _is_single_source_duplicate_failure(error: str | None) -> bool:
     )
 
 
-async def _track_import_job(ctx: Context, job_id: str) -> tuple[JobView, bool]:
+async def _track_import_job(
+    ctx: Context, job_id: str, *, identity: Identity
+) -> tuple[JobView, bool]:
     """Poll the import job briefly; returns ``(job, duplicate_content)``.
 
     Mirrors Go's ``trackImportJob`` three-outcome contract: a terminal job
@@ -704,7 +706,7 @@ async def _track_import_job(ctx: Context, job_id: str) -> tuple[JobView, bool]:
     deadline = time.monotonic() + _IMPORT_WAIT_BUDGET_SECONDS
     delay = _IMPORT_POLL_STEP_SECONDS  # the first poll is immediate; back off from the step
     while True:
-        job = await svc.get_by_id(job_id)
+        job = await svc.get_by_id(job_id, identity=identity)
         if job.status != _JOB_COMPLETED and _is_single_source_duplicate_failure(job.error):
             return job, True
         if job.status in _JOB_TERMINAL_STATUSES or time.monotonic() >= deadline:
@@ -885,7 +887,7 @@ async def _file_import(env: CallEnv, api_id: str) -> str:
 async def _finish_import(env: CallEnv, api_id: str, job_id: str) -> mcp_types.CallToolResult:
     """The track-and-promote tail of import_api (runs under the hard ceiling)."""
     try:
-        job, duplicate_content = await _track_import_job(env.ctx, job_id)
+        job, duplicate_content = await _track_import_job(env.ctx, job_id, identity=env.identity)
     except Exception as exc:
         # Go's poll-failure arm: a failing job poll is UNKNOWN state — never a
         # clean "still running" result (which would send the model into a
@@ -925,7 +927,7 @@ async def _finish_import(env: CallEnv, api_id: str, job_id: str) -> mcp_types.Ca
         )
 
     try:
-        view = await JobResultService(env.ctx).get(job_id)
+        view = await JobResultService(env.ctx).get(job_id, identity=env.identity)
     except Exception as exc:
         raise ToolError(
             CODE_INTERNAL_ERROR,
@@ -1082,7 +1084,7 @@ async def handle_get_execution_result(
     _require_db(env.ctx, "admin", "job polling")
 
     try:
-        job = await JobService(env.ctx).get_by_id(job_id)
+        job = await JobService(env.ctx).get_by_id(job_id, identity=env.identity)
     except JobNotFoundError:
         raise ToolError(
             CODE_RESOLVE_FAILED,
@@ -1132,7 +1134,7 @@ async def _attach_job_result(env: CallEnv, job_id: str, payload: dict[str, Any])
     failing the poll — the status the model asked for is already in hand.
     """
     try:
-        view = await JobResultService(env.ctx).get(job_id)
+        view = await JobResultService(env.ctx).get(job_id, identity=env.identity)
     except Exception as exc:
         payload["result_error"] = f"the job completed but its result could not be fetched: {exc}"
         return

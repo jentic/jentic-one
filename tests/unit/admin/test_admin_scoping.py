@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from jentic_one.admin.core.schema.agents import Agent
+from jentic_one.admin.core.schema.jobs import Job
 from jentic_one.admin.core.schema.service_accounts import ServiceAccount
 from jentic_one.admin.core.schema.users import User
 from jentic_one.admin.scoping.filters import build_access_filters
@@ -118,3 +119,31 @@ def test_user_model_returns_self_scope_filter() -> None:
     compiled = filters[0].compile(compile_kwargs={"literal_binds": True})
     sql = str(compiled)
     assert "usr_self" in sql
+
+
+def test_job_model_scopes_to_creator_and_owned_agents() -> None:
+    """Jobs: the creator, or the human owner of the creating agent."""
+    identity = _identity(sub="usr_jobs", permissions=["jobs:read"])
+    filters = build_access_filters(identity, Job)
+    assert len(filters) == 1
+    sql = str(filters[0].compile(compile_kwargs={"literal_binds": True}))
+    assert "jobs.created_by = 'usr_jobs'" in sql
+    assert "agents.owner_id = 'usr_jobs'" in sql
+
+
+def test_job_model_never_delegates_to_parent_actor() -> None:
+    """An agent does not inherit its owner's jobs, even with owner-read scopes."""
+    identity = _identity(
+        sub="agent_1",
+        permissions=[OWNER_AGENTS_READ, "owner:resources:read"],
+        actor_type=ActorType.AGENT,
+        parent_actor_id="user_owner",
+    )
+    filters = build_access_filters(identity, Job)
+    sql = str(filters[0].compile(compile_kwargs={"literal_binds": True}))
+    assert "agent_1" in sql
+    assert "user_owner" not in sql
+
+
+def test_job_model_admin_unrestricted() -> None:
+    assert build_access_filters(_identity(permissions=["org:admin"]), Job) == []
