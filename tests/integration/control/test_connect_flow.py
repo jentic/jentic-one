@@ -196,6 +196,7 @@ async def test_direct_oauth2_derived_redirect_uri_round_trips(
     challenge = await svc.begin(
         credential_id, ConnectRequest(scopes=["read"]), redirect_uri=derived
     )
+    assert isinstance(challenge, AuthCodeChallenge)
     # The non-default port made it into the authorize URL.
     assert "8020" in challenge.authorize_url
 
