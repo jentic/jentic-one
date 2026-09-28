@@ -437,7 +437,6 @@ class ServiceAccountMigrationService:
                 had_client_secret=row.client_secret_hash is not None,
             )
 
-        now = dt.datetime.now(dt.UTC)
         # H1: disposition, digest, owner, and name are derived from the row
         # re-read INSIDE the per-SA transaction (below), never from the
         # ``run()`` snapshot — a disable or key rotation landing between the
@@ -452,6 +451,11 @@ class ServiceAccountMigrationService:
         try:
             async with self._ctx.admin_db.transaction() as session:
                 await ServiceAccountMigrationRepository.acquire_migration_lock(session, row.id)
+                # Stamp time is taken only once the lock is held: rows the
+                # previous holder committed while we waited (key-retirement
+                # binds) predate the stamp and must not read as post-stamp
+                # mutations in verify criterion 5.
+                now = dt.datetime.now(dt.UTC)
                 # In-transaction re-read (FOR UPDATE OF sa on pg; SQLite holds
                 # the BEGIN IMMEDIATE write lock). It serialises with the
                 # service-layer stamp guards and key rotation, which lock the
