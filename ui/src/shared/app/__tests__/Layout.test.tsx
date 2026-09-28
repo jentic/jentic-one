@@ -166,8 +166,14 @@ describe('isNavItemActive', () => {
 		expect(isNavItemActive(home, '/discover')).toBe(false);
 	});
 
-	it('leads with Agents, the home surface', () => {
-		expect(sortedNavItems()[0]?.id).toBe('agents');
+	it('leads with Agents, the home surface, and ends with Monitor', () => {
+		expect(sortedNavItems().map((item) => item.id)).toEqual([
+			'agents',
+			'discover',
+			'workspace',
+			'credentials',
+			'monitor',
+		]);
 	});
 
 	it('matches feature items by prefix so nested routes stay highlighted', () => {

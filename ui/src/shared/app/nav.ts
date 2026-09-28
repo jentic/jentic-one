@@ -37,14 +37,14 @@ export interface NavItem {
  *
  * `to` values are root-relative to the router basename (`/app`). There is no
  * entry for the basename index (`/`, → `/app`): it redirects to Agents, the
- * home surface, which is why Agents and Monitor sort first.
+ * home surface, which is why Agents sorts first. Monitor sorts last.
  */
 export const navItems: NavItem[] = [
 	{ id: 'discover', label: 'Discover APIs', to: '/discover', order: 20, icon: Compass },
 	{ id: 'workspace', label: 'Workspace', to: '/workspace', order: 30, icon: LayoutGrid },
 	{ id: 'credentials', label: 'Credentials', to: '/credentials', order: 50, icon: KeyRound },
 	{ id: 'agents', label: 'Agents', to: '/agents', order: 5, icon: Bot },
-	{ id: 'monitor', label: 'Monitor', to: '/monitor', order: 6, icon: Activity },
+	{ id: 'monitor', label: 'Monitor', to: '/monitor', order: 70, icon: Activity },
 	// NOTE: the docs portal ("API Reference", /docs) deliberately does NOT live
 	// in this registry. It's reference material, not a product destination, so
 	// the TopNavbar renders it as a standalone icon next to the user menu.
