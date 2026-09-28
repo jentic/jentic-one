@@ -17,7 +17,7 @@
 import { useEffect, useId, useRef, type ReactNode } from 'react';
 import { animate, motion, useReducedMotion } from 'framer-motion';
 import { ArrowUpRight } from 'lucide-react';
-import { AppLink } from '@/shared/ui';
+import { AppLink, Skeleton } from '@/shared/ui';
 import { cn } from '@/shared/lib/utils';
 import {
 	HEALTH_LABEL,
@@ -198,6 +198,43 @@ export function StatStrip({
 				</div>
 			</Cell>
 		</motion.section>
+	);
+}
+
+/** The five cells' spans, shared by the strip and its placeholder. */
+const CELL_SPANS = ['col-span-2 sm:col-span-1', '', '', '', 'sm:col-span-2 lg:col-span-1'];
+
+/**
+ * The strip's shape while usage loads. Same grid, same line boxes, so the
+ * charts and the Live activity panel below are already where they'll stay —
+ * the stream morphing in from the rail lands in its final place.
+ */
+export function StatStripSkeleton() {
+	return (
+		<section
+			aria-hidden="true"
+			className="border-border bg-card grid grid-cols-2 overflow-hidden rounded-xl border sm:grid-cols-3 lg:grid-cols-5"
+		>
+			{CELL_SPANS.map((span, i) => (
+				<div
+					key={i}
+					className={cn(
+						'border-border -mt-px -ml-px min-w-0 border-t border-l px-3.5 py-3 sm:px-4',
+						span,
+					)}
+				>
+					<div className="flex h-4 items-center">
+						<Skeleton className="h-2.5 w-16" />
+					</div>
+					<div className="mt-1 flex h-8 items-center">
+						<Skeleton className="h-5 w-20" />
+					</div>
+					<div className="mt-0.5 flex h-4 items-center">
+						<Skeleton className="h-2 w-24" />
+					</div>
+				</div>
+			))}
+		</section>
 	);
 }
 

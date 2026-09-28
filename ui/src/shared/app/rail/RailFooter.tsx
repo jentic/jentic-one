@@ -1,74 +1,38 @@
 /**
- * RailFooter — toast scope selector + audio-on-critical toggle.
- *
- * Both controls live here because they're persistent preferences. The toast
- * scope is read by ToastHost; the audio toggle is read by AgentRail itself
- * when a new critical event arrives.
+ * RailFooter — the way out to the full, filterable activity log in Monitor.
+ * Opens Monitor's full log (`view=activity`; admins otherwise land on the
+ * Overview) and carries the rail's actor lens along (Monitor's `actor_id` /
+ * `actor_type` URL vocabulary) so the log opens on the same agent.
  */
-import { Volume2, VolumeX } from 'lucide-react';
-import type { ToastScope } from '@/shared/lib/agentStream';
-import { cn } from '@/shared/lib/utils';
+import { ROUTES } from '@/shared/app/routes';
+import { AppLink } from '@/shared/ui/AppLink';
+import type { ActivityScope } from '@/shared/lib/agentStream';
+
+export function monitorEventsHref(scope: ActivityScope): string {
+	const params = new URLSearchParams({ view: 'activity' });
+	if (scope) {
+		params.set('actor_id', scope.actorId);
+		params.set('actor_type', scope.actorType);
+	}
+	return `${ROUTES.monitor}?${params.toString()}`;
+}
 
 export type RailFooterProps = {
-	scope: ToastScope;
-	onScopeChange: (s: ToastScope) => void;
-	audioOnCritical: boolean;
-	onAudioToggle: () => void;
+	scope: ActivityScope;
+	/** Fired after the link is followed (the drawer closes itself). */
+	onNavigate?: () => void;
 };
 
-export function RailFooter({
-	scope,
-	onScopeChange,
-	audioOnCritical,
-	onAudioToggle,
-}: RailFooterProps) {
+export function RailFooter({ scope, onNavigate }: RailFooterProps) {
 	return (
-		<div className="border-border bg-background/60 space-y-2 border-t px-3 py-2">
-			<div>
-				<label
-					htmlFor="agent-rail-toast-scope"
-					className="text-muted-foreground mb-1 block font-mono text-[10px] tracking-widest uppercase"
-				>
-					Toasts
-				</label>
-				<select
-					id="agent-rail-toast-scope"
-					value={scope}
-					onChange={(e) => onScopeChange(e.target.value as ToastScope)}
-					className="bg-muted border-border text-foreground w-full rounded border px-2 py-1 text-xs"
-				>
-					<option value="all">All events</option>
-					<option value="warning">Warning &amp; up</option>
-					<option value="critical">Critical only</option>
-					{/* Failures (error/critical) always toast regardless of scope
-					    (#671) — say so, or "Off" is a lie the operator will file
-					    as a bug the first time a failure pops. */}
-					<option value="off">Off (failures still toast)</option>
-				</select>
-			</div>
-			<button
-				type="button"
-				onClick={onAudioToggle}
-				aria-pressed={audioOnCritical}
-				className={cn(
-					'flex w-full items-center gap-2 rounded border px-2 py-1 font-mono text-[11px] tracking-wider transition-colors',
-					audioOnCritical
-						? 'border-danger/40 bg-danger/10 text-danger'
-						: 'border-border text-muted-foreground hover:text-foreground',
-				)}
-				title={
-					audioOnCritical
-						? 'Audio cue on critical events: ON'
-						: 'Audio cue on critical events: OFF'
-				}
+		<div className="border-border border-t px-3 py-2">
+			<AppLink
+				href={monitorEventsHref(scope)}
+				onClick={onNavigate}
+				className="text-muted-foreground hover:text-foreground text-xs font-medium"
 			>
-				{audioOnCritical ? (
-					<Volume2 className="h-3 w-3" />
-				) : (
-					<VolumeX className="h-3 w-3" />
-				)}
-				Audio on critical
-			</button>
+				Open in Monitor →
+			</AppLink>
 		</div>
 	);
 }

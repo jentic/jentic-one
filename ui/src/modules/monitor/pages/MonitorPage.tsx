@@ -29,7 +29,7 @@ import { ActivityView, SOURCE_SCOPED_PARAMS } from '@/modules/monitor/components
 import { MonitorFilterBar } from '@/modules/monitor/components/MonitorFilterBar';
 import { MonitorOverview, type LinkBase } from '@/modules/monitor/components/MonitorOverview';
 import { RefreshControl } from '@/modules/monitor/components/RefreshControl';
-import { StatStrip } from '@/modules/monitor/components/StatStrip';
+import { StatStrip, StatStripSkeleton } from '@/modules/monitor/components/StatStrip';
 import { monitorHref } from '@/modules/monitor/lib/links';
 import { DEFAULT_WINDOW, useMonitorFilters } from '@/modules/monitor/lib/useMonitorFilters';
 import { AUTO_REFRESH_MS, useUsageOverview } from '@/modules/monitor/lib/useUsageOverview';
@@ -202,6 +202,7 @@ export default function MonitorPage() {
 						/>
 					</div>
 
+					{usage.isLoading && <StatStripSkeleton />}
 					{hasData && usage.usage && usage.overview && (
 						<StatStrip
 							key={`${usage.days}-${linkBase.actorId ?? ''}`}

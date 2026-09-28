@@ -2,7 +2,7 @@
  * ToastRegion — where both toasters appear: the agent-stream `ToastHost` and the
  * platform `Toaster`, stacked in one column.
  *
- * Bottom-right, beside whatever covers the right edge (the agent rail at `xl+`,
+ * Bottom-right, beside whatever covers the right edge (the Activity rail at `xl+`,
  * an open right-hand sheet), so a toast never lands on a sheet's footer actions.
  * It sits as high as `FOOTER_ACTION_BAR_PAGE_PADDING`, clearing a page's
  * floating action dock and, below `md`, the bottom nav. When a sheet leaves no
