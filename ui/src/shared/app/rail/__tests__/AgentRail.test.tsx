@@ -667,7 +667,7 @@ describe('AgentRail — shell-mounted Activity surface', () => {
 	it('links the footer to the activity log in Monitor', async () => {
 		renderRail(<AgentRail />);
 		const link = await screen.findByRole('link', { name: 'Open in Monitor →' });
-		expect(link).toHaveAttribute('href', '/monitor');
+		expect(link).toHaveAttribute('href', '/monitor?view=activity');
 	});
 
 	it('"Failures only" hides non-failures and counts unacknowledged ones (#671)', async () => {
@@ -748,7 +748,7 @@ describe('AgentRail — shell-mounted Activity surface', () => {
 		// And the footer carries the lens to Monitor.
 		expect(screen.getByRole('link', { name: 'Open in Monitor →' })).toHaveAttribute(
 			'href',
-			'/monitor?actor_id=support-triage&actor_type=agent',
+			'/monitor?view=activity&actor_id=support-triage&actor_type=agent',
 		);
 	});
 

@@ -1,20 +1,20 @@
 /**
  * RailFooter — the way out to the full, filterable activity log in Monitor.
- * Carries the rail's actor lens along (Monitor's `actor_id` / `actor_type` URL
- * vocabulary) so the log opens on the same agent.
+ * Opens Monitor's full log (`view=activity`; admins otherwise land on the
+ * Overview) and carries the rail's actor lens along (Monitor's `actor_id` /
+ * `actor_type` URL vocabulary) so the log opens on the same agent.
  */
 import { ROUTES } from '@/shared/app/routes';
 import { AppLink } from '@/shared/ui/AppLink';
 import type { ActivityScope } from '@/shared/lib/agentStream';
 
 export function monitorEventsHref(scope: ActivityScope): string {
-	const params = new URLSearchParams();
+	const params = new URLSearchParams({ view: 'activity' });
 	if (scope) {
 		params.set('actor_id', scope.actorId);
 		params.set('actor_type', scope.actorType);
 	}
-	const qs = params.toString();
-	return qs ? `${ROUTES.monitor}?${qs}` : ROUTES.monitor;
+	return `${ROUTES.monitor}?${params.toString()}`;
 }
 
 export type RailFooterProps = {
