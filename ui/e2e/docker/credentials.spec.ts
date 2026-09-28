@@ -108,7 +108,11 @@ test('create an api_key credential via the wizard (manual entry)', async ({ page
 	await page.getByRole('radio', { name: 'API key' }).click();
 
 	await page.getByPlaceholder('Production API key').fill(name);
-	await page.getByLabel('API key', { exact: true }).fill('sk-e2e-apikey');
+	// Scoped to the wizard: the inventory behind it has an "API key" type filter.
+	await page
+		.getByRole('dialog', { name: /^Add credential/ })
+		.getByLabel('API key', { exact: true })
+		.fill('sk-e2e-apikey');
 	await page.getByPlaceholder('X-Api-Key').fill('X-Api-Key');
 	await page.getByRole('button', { name: 'Create credential' }).click();
 
