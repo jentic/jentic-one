@@ -84,6 +84,14 @@ def test_configure_logging_sets_debug_level(debug_config: AppConfig):
     assert root.level == logging.DEBUG
 
 
+def test_configure_logging_clamps_httpcore_trace_logs_at_debug(debug_config: AppConfig):
+    """httpcore's DEBUG trace lines repr transport exceptions (which can quote an
+    outbound header value), so they stay off even when the app runs at DEBUG."""
+    configure_logging(debug_config)
+    assert logging.getLogger().level == logging.DEBUG
+    assert not logging.getLogger("httpcore.http11").isEnabledFor(logging.DEBUG)
+
+
 def test_configure_logging_root_logger_has_single_handler(minimal_config: AppConfig):
     configure_logging(minimal_config)
     root = logging.getLogger()

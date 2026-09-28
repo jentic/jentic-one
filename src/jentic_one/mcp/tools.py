@@ -98,6 +98,7 @@ from jentic_one.shared.auth.permissions import has_effective_permission
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.pagination import InvalidCursorError, InvalidSearchCursorError
+from jentic_one.shared.redaction import redact_value
 from jentic_one.shared.resilience import RateLimiter
 from jentic_one.shared.state import MemoryStateBackend
 
@@ -1352,6 +1353,16 @@ async def dispatch_tool_call(
     except MCPError:
         raise
     except Exception as exc:
+        # The exception text can carry request material (headers, credential
+        # values), so it never reaches the agent — only the class name does.
+        # The server-side log keeps a redacted copy for diagnosis.
+        logger.error(
+            "mcp_tool_unexpected_failure",
+            tool=name,
+            error_type=type(exc).__name__,
+            error=redact_value(str(exc)),
+        )
         return soft_error_result(
-            env.ctx, ToolError(CODE_INTERNAL_ERROR, f"unexpected failure: {exc}")
+            env.ctx,
+            ToolError(CODE_INTERNAL_ERROR, f"unexpected failure ({type(exc).__name__})"),
         )

@@ -26,7 +26,7 @@ from collections.abc import AsyncIterator
 import httpx
 import structlog
 from opentelemetry import trace
-from opentelemetry.trace import StatusCode
+from opentelemetry.trace import Span, StatusCode
 
 from jentic_one.broker.adapters.runners.base import (
     HTTP_RUNNER_CAPABILITIES,
@@ -46,6 +46,33 @@ from jentic_one.shared.broker.protocols import RunnerCapabilities
 
 logger = structlog.get_logger(__name__)
 _tracer = trace.get_tracer("broker.runner")
+
+
+def _transport_error_detail(exc: httpx.HTTPError) -> str:
+    """Caller-facing detail for a transport failure: the exception class only.
+
+    httpx/h11 exception messages can quote request material verbatim (e.g. an
+    ``Illegal header value b'...'`` carries the injected credential header), so
+    the message text is never surfaced — only the class name, which is safe.
+    """
+    return f"Upstream transport error ({type(exc).__name__})"
+
+
+def _record_transport_error(span: Span, exc: httpx.HTTPError) -> None:
+    """Record a transport failure on the span without the exception message.
+
+    ``span.record_exception`` would store ``str(exc)`` plus a traceback that
+    repeats it; for the same reason as :func:`_transport_error_detail`, only the
+    exception type is recorded.
+    """
+    span.add_event(
+        "exception",
+        {
+            "exception.type": type(exc).__qualname__,
+            "exception.message": _transport_error_detail(exc),
+        },
+    )
+    span.set_status(StatusCode.ERROR)
 
 
 class _HostSlot:
@@ -178,8 +205,7 @@ class HttpRunner(UpstreamRunner):
                 # a retry is safe for ANY method. ConnectTimeout
                 # subclasses both ConnectError and TimeoutException — handle it
                 # here, before the generic timeout branch.
-                span.record_exception(exc)
-                span.set_status(StatusCode.ERROR)
+                _record_transport_error(span, exc)
                 logger.error("upstream_network_failure", host=host, error_type=type(exc).__name__)
                 raise UpstreamTimeoutError(
                     detail="The upstream connection could not be established in time.",
@@ -187,21 +213,21 @@ class HttpRunner(UpstreamRunner):
                     pre_send=True,
                 ) from exc
             except httpx.TimeoutException as exc:
-                span.record_exception(exc)
-                span.set_status(StatusCode.ERROR)
+                _record_transport_error(span, exc)
                 logger.error("upstream_network_failure", host=host, error_type=type(exc).__name__)
                 raise UpstreamTimeoutError(
                     detail="The upstream did not respond within the deadline.",
                     origin=ErrorOrigin.UPSTREAM,
                 ) from exc
             except httpx.HTTPError as exc:
-                span.record_exception(exc)
-                span.set_status(StatusCode.ERROR)
+                _record_transport_error(span, exc)
                 logger.error("upstream_network_failure", host=host, error_type=type(exc).__name__)
+                # ``from None``: a chained cause would put the raw message back
+                # into any traceback rendered from this error (span, log).
                 raise BrokerError(
-                    detail=f"Upstream transport error: {str(exc)[:128]}",
+                    detail=_transport_error_detail(exc),
                     origin=ErrorOrigin.UPSTREAM,
-                ) from exc
+                ) from None
 
         elapsed_ms = int((time.perf_counter() - start) * 1000)
         return RunnerResult(
@@ -284,7 +310,10 @@ class HttpRunner(UpstreamRunner):
                     origin=ErrorOrigin.UPSTREAM,
                 ) from exc
             except httpx.HTTPError as exc:
+                logger.error("upstream_network_failure", host=host, error_type=type(exc).__name__)
+                # ``from None``: a chained cause would put the raw message back
+                # into any traceback rendered from this error (span, log).
                 raise BrokerError(
-                    detail=f"Upstream transport error: {str(exc)[:128]}",
+                    detail=_transport_error_detail(exc),
                     origin=ErrorOrigin.UPSTREAM,
-                ) from exc
+                ) from None

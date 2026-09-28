@@ -11,6 +11,7 @@ from typing import Any
 
 import structlog
 from fastapi import APIRouter, FastAPI, Request, Response
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, RedirectResponse
 from jentic.problem_details import ProblemDetailException, problem_detail_exception_handler
 from opentelemetry.instrumentation.asyncpg import AsyncPGInstrumentor
@@ -43,6 +44,7 @@ from jentic_one.shared.tracing import instrument_inbound_app
 from jentic_one.shared.web.agent_discovery import get_agent_discovery_router
 from jentic_one.shared.web.auth import API_KEY_HEADER
 from jentic_one.shared.web.container import AppContainer
+from jentic_one.shared.web.errors import request_validation_error_handler
 from jentic_one.shared.web.instance_identity import get_instance_router
 from jentic_one.shared.web.openapi_meta import (
     fastapi_metadata_kwargs,
@@ -713,6 +715,7 @@ def create_surface_app(
         installer(app, ctx)
     app.add_middleware(RequestIDMiddleware)
     app.add_exception_handler(ProblemDetailException, spa_aware_problem_detail_handler)  # type: ignore[arg-type]
+    app.add_exception_handler(RequestValidationError, request_validation_error_handler)  # type: ignore[arg-type]
     attach_http_observability(app)
     install_openapi_metadata(app)
     return app
@@ -786,6 +789,7 @@ def create_combined_app(
             reason="only the broker catch-all reads this hook and the combined app has no broker",
         )
     root.add_exception_handler(ProblemDetailException, spa_aware_problem_detail_handler)  # type: ignore[arg-type]
+    root.add_exception_handler(RequestValidationError, request_validation_error_handler)  # type: ignore[arg-type]
 
     @root.get(
         "/health",

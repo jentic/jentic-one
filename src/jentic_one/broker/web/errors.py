@@ -52,6 +52,7 @@ from jentic_one.broker.core.exceptions import (
     UpstreamUrlNotAllowedError,
 )
 from jentic_one.broker.core.headers import JenticHeader
+from jentic_one.shared.web.errors import sanitize_validation_errors
 
 _PROBLEM_JSON = "application/problem+json"
 
@@ -129,12 +130,16 @@ async def handle_broker_error(_request: Request, exc: BrokerError) -> JSONRespon
 
 
 async def handle_validation(_request: Request, exc: RequestValidationError) -> JSONResponse:
-    """Override FastAPI's default 422 list with a problem+json envelope."""
+    """Override FastAPI's default 422 list with a problem+json envelope.
+
+    The submitted ``input`` (and value-echoing ``ctx``) is stripped from each
+    error item so a rejected request never reflects its values back.
+    """
     return problem_response(
         422,
         "Request validation failed",
         type="about:blank#validation",
-        extra={"errors": exc.errors()},
+        extra={"errors": sanitize_validation_errors(exc.errors())},
     )
 
 

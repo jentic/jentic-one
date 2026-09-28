@@ -114,6 +114,11 @@ def configure_logging(config: AppConfig) -> None:
     # Clamp it to INFO so our own DEBUG logs stay readable.
     logging.getLogger("aiosqlite").setLevel(logging.INFO)
 
+    # httpcore's DEBUG trace lines ("send_request_headers.failed exception=…")
+    # repr the raw transport exception, which can quote an outbound header value
+    # (i.e. an injected credential). Clamp it to INFO so those never reach a sink.
+    logging.getLogger("httpcore").setLevel(logging.INFO)
+
 
 def _is_valid_request_id(value: str) -> bool:
     """Check that a request ID is safe to propagate."""
