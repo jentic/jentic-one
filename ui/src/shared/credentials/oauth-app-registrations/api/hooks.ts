@@ -6,6 +6,7 @@
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { OAuthAppRegistrationFlowKind } from '@/shared/api';
+import { useProviders } from '@/shared/credentials/api';
 import type {
 	OAuthAppRegistrationResponse,
 	OAuthAppRegistrationRotateSecretRequest,
@@ -105,17 +106,17 @@ export function useDeleteOAuthAppRegistration() {
 /**
  * The platform's OAuth callback redirect URI — what an admin must paste into
  * the vendor's OAuth-app console for the authorization-code flow. Sourced
- * from the running config's `credentials.providers.direct_oauth2.redirect_uri`.
- *
- * TODO(feat/admin-oauth-app-registrations): swap this stub for a real read
- * once the backend exposes an endpoint that returns the configured redirect
- * URI (see the direct_oauth2 provider config module). Until then we derive a
- * best-guess from `window.location.origin` so the field is populated.
+ * from `GET /credentials/providers` (the same discovery response
+ * `CreateCredentialDialog` already reads from), filtered to the
+ * `direct_oauth2` entry so the value matches what the connect flow actually
+ * hands the vendor at authorize time.
  */
-export function usePlatformRedirectUri(): { redirectUri: string; isStub: true } {
-	const origin =
-		typeof window !== 'undefined' && window.location?.origin
-			? window.location.origin
-			: 'https://example.invalid';
-	return { redirectUri: `${origin}/auth/callback`, isStub: true };
+export function usePlatformRedirectUri(): {
+	redirectUri: string | null;
+	isLoading: boolean;
+} {
+	const providersQuery = useProviders();
+	const redirectUri =
+		providersQuery.data?.providers?.find((p) => p.id === 'direct_oauth2')?.callback_url ?? null;
+	return { redirectUri, isLoading: providersQuery.isLoading };
 }
