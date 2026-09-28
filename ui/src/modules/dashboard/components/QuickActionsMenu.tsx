@@ -13,7 +13,7 @@
 import { useState, type ComponentType } from 'react';
 import { Bot, ChevronDown, Compass, FolderOpen, KeyRound, Zap } from 'lucide-react';
 import { AppLink, Button, MenuPanel, menuItemClass, useDismissable } from '@/shared/ui';
-import { ROUTES } from '@/shared/app/routes';
+import { ROUTES, ROUTE_PATHS } from '@/shared/app/routes';
 
 interface QuickAction {
 	href: string;
@@ -27,7 +27,13 @@ export function QuickActionsMenu() {
 
 	const actions: QuickAction[] = [
 		{ href: ROUTES.discover, label: 'Discover APIs', icon: Compass },
-		{ href: ROUTES.credentials, label: 'Add credential', icon: KeyRound },
+		// The inventory is a sheet on the Agents page, not a route — and this
+		// label promises a form, so the link opens onto the create wizard.
+		{
+			href: ROUTE_PATHS.credentialInventory({ create: true }),
+			label: 'Add credential',
+			icon: KeyRound,
+		},
 		{ href: ROUTES.agents, label: 'Register agent', icon: Bot },
 		{ href: ROUTES.workspace, label: 'Open workspace', icon: FolderOpen },
 	];

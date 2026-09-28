@@ -53,6 +53,13 @@ function seed(
 
 let events: EventRow[] = [];
 
+/** Append rail events to the current store. Resets with `resetRailEventsStore()`. */
+export function seedRailEvents(
+	rows: Array<Partial<EventRow> & Pick<EventRow, 'event_id' | 'type' | 'severity' | 'summary'>>,
+): void {
+	for (const over of rows) events.push(seed(over));
+}
+
 export function resetRailEventsStore(): void {
 	events = [
 		seed({

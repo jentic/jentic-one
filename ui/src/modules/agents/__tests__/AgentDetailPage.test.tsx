@@ -70,6 +70,17 @@ describe('AgentDetailPage', () => {
 		expect(screen.queryByText('usr_000000000000000000000admin')).not.toBeInTheDocument();
 	});
 
+	it('has no Access tab — bindings live on the flat surface sidebar', async () => {
+		renderDetail('agnt_active_1');
+		await screen.findByRole('heading', { name: 'support-agent' });
+		// The credential/binding story lives on the Agents page's API access sidebar;
+		// the console keeps its remaining tabs.
+		expect(screen.queryByRole('tab', { name: 'Access' })).not.toBeInTheDocument();
+		for (const name of ['Overview', 'Activity', 'Keys', 'MCP', 'Settings']) {
+			expect(screen.getByRole('tab', { name })).toBeInTheDocument();
+		}
+	});
+
 	it('renders a not-found surface for an unknown id', async () => {
 		renderDetail('agnt_does_not_exist');
 		expect(await screen.findByText('Agent not found')).toBeInTheDocument();

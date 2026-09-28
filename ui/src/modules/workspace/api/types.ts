@@ -172,20 +172,6 @@ export interface Overlay {
 	deprecateHref: string | null;
 }
 
-/** Result of enqueuing an import (`POST /apis` → 202). */
-export interface ImportJob {
-	jobId: string;
-	status: string;
-}
-
-/** Terminal/intermediate job state when polling `/jobs/{id}`. */
-export interface JobStatus {
-	jobId: string;
-	status: string;
-	error: string | null;
-}
-
-/** A single import source for the import dialog. */
-export type ImportSource =
-	| { type: 'url'; url: string; vendor?: string; apiName?: string; version?: string }
-	| { type: 'inline'; content: string; filename: string };
+// Spec-import and job-poll shapes live in `@/shared/credentials/api` — the import
+// dialog is shared. Re-exported so this module's call sites keep one import path.
+export type { ImportJob, JobStatus, ImportSource } from '@/shared/credentials/api';

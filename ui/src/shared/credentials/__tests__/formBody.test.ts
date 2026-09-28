@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CredentialType } from '@/shared/credentials/api';
+import { CredentialType, type SelectedApi } from '@/shared/credentials/api';
 import { EMPTY_FORM } from '@/shared/credentials/components/CredentialTypeFields';
 import {
 	buildCreateBody,
@@ -8,6 +8,7 @@ import {
 	buildUpdateBody,
 	isValidHttpUrl,
 	seedApiKeyFromScheme,
+	seedFormFromSelectedApi,
 	seedOAuth2FromScheme,
 	seedServerVars,
 	validateCreate,
@@ -256,6 +257,45 @@ describe('buildUpdateBody', () => {
 		expect(body).toEqual({ type: 'api_key', key: 'new-key' });
 		expect(body).not.toHaveProperty('field_name');
 		expect(body).not.toHaveProperty('location');
+	});
+
+	describe('oauth2 scopes', () => {
+		const oauth = (scopes: string) => ({ ...EMPTY_FORM, name: 'O', scopes });
+
+		it('omits scopes when the selection matches the loaded value', () => {
+			const body = buildUpdateBody(
+				CredentialType.OAUTH2,
+				oauth('read write'),
+				'O',
+				'read write',
+			);
+			expect(body).not.toHaveProperty('scopes');
+		});
+
+		it('omits scopes for a credential stored without any (never writes [])', () => {
+			const body = buildUpdateBody(CredentialType.OAUTH2, oauth(''), 'O', '');
+			expect(body).not.toHaveProperty('scopes');
+		});
+
+		it('treats a reorder or extra whitespace as unchanged', () => {
+			const body = buildUpdateBody(
+				CredentialType.OAUTH2,
+				oauth('  write   read '),
+				'O',
+				'read write',
+			);
+			expect(body).not.toHaveProperty('scopes');
+		});
+
+		it('sends the new list when the user changed it', () => {
+			const body = buildUpdateBody(CredentialType.OAUTH2, oauth('read admin'), 'O', 'read');
+			expect(body).toMatchObject({ scopes: ['read', 'admin'] });
+		});
+
+		it('sends [] only when the user cleared stored scopes', () => {
+			const body = buildUpdateBody(CredentialType.OAUTH2, oauth(''), 'O', 'read write');
+			expect(body).toMatchObject({ scopes: [] });
+		});
 	});
 });
 
@@ -625,5 +665,45 @@ describe('seedApiKeyFromScheme', () => {
 		);
 		expect(next.fieldName).toBe('My-Custom-Header');
 		expect(next.location).toBe('query');
+	});
+});
+
+describe('seedFormFromSelectedApi', () => {
+	const pick: SelectedApi = {
+		source: 'catalog',
+		vendor: 'stripe.com',
+		name: 'main',
+		version: '2.0.0',
+		label: 'Stripe',
+		apiId: 'stripe.com/main',
+	};
+
+	it('takes vendor, name and catalog slug from the pick', () => {
+		const next = seedFormFromSelectedApi({ ...EMPTY_FORM }, pick);
+		expect(next.apiVendor).toBe('stripe.com');
+		expect(next.apiName).toBe('main');
+		expect(next.catalogApiId).toBe('stripe.com/main');
+		expect(next.name).toBe('Stripe');
+	});
+
+	it('leaves the version unscoped so the credential spans spec revisions', () => {
+		// The broker treats a pinned version as pinned, so stamping the pick's
+		// version would scope the credential to one revision and strand it on the
+		// next re-ingest. Empty is the wildcard the backend stores.
+		const next = seedFormFromSelectedApi({ ...EMPTY_FORM }, pick);
+		expect(next.apiVersion).toBe('');
+		expect(
+			buildCreateBody(CredentialType.BEARER_TOKEN, { ...next, token: 'sk-123' }).api,
+		).toMatchObject({ vendor: 'stripe.com', name: 'main', version: undefined });
+	});
+
+	it('clears a version left over from a previous pick', () => {
+		const next = seedFormFromSelectedApi({ ...EMPTY_FORM, apiVersion: '1.0.0' }, pick);
+		expect(next.apiVersion).toBe('');
+	});
+
+	it('keeps a credential name the user already typed', () => {
+		const next = seedFormFromSelectedApi({ ...EMPTY_FORM, name: 'Mine' }, pick, true);
+		expect(next.name).toBe('Mine');
 	});
 });

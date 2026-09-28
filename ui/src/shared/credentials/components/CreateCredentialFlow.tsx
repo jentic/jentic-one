@@ -1,10 +1,20 @@
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { ArrowLeft, Download, Info, Loader2 } from 'lucide-react';
-import { Button, Dialog, ErrorAlert, Input, Label, Skeleton, toast } from '@/shared/ui';
+import { ArrowLeft, Download, Info, Loader2, Upload, X } from 'lucide-react';
+import {
+	Button,
+	Dialog,
+	ErrorAlert,
+	Input,
+	Label,
+	SheetPrimitive,
+	Skeleton,
+	toast,
+} from '@/shared/ui';
 import {
 	CREDENTIAL_TYPE_ORDER,
 	CredentialType,
+	useAllCredentials,
 	useApiSchemes,
 	useCreateCredential,
 	useImportCatalogEntry,
@@ -26,8 +36,11 @@ import {
 	validateCreate,
 	validateServerVars,
 } from '@/shared/credentials/lib/formBody';
+import { credentialNameClash } from '@/shared/credentials/lib/credentialIdentity';
+import { CredentialNameClashNote } from '@/shared/credentials/components/CredentialNameClashNote';
 import { managedProviderUnavailableMessage, providerOptions } from '@/shared/credentials/config';
 import { ApiPicker } from '@/shared/credentials/components/ApiPicker';
+import { ImportSpecDialog } from '@/shared/credentials/components/ImportSpecDialog';
 import { AuthTypeCards } from '@/shared/credentials/components/AuthTypeCards';
 import { ServerVariablesSection } from '@/shared/credentials/components/ServerVariablesSection';
 import {
@@ -49,6 +62,8 @@ import {
 
 export interface CreatedCredentialInfo {
 	credentialId: string;
+	/** The saved label, so a binding caller can name it rather than report an
+	 *  anonymous success. */
 	name: string;
 	type: CredentialType;
 	provider: string;
@@ -62,39 +77,66 @@ export interface CreatedCredentialInfo {
 	needsConnect: boolean;
 }
 
-interface CreateCredentialDialogProps {
+interface CreateCredentialFlowProps {
 	open: boolean;
 	onClose: () => void;
 	/** Called once the credential has been successfully created. */
 	onCreated: (info: CreatedCredentialInfo) => void;
 	/**
-	 * When provided, the dialog opens directly into the vendor flow in "approve"
-	 * mode — landing here from the `approval_url` an agent handed its owner.
-	 * The dialog fetches the session, skips the picker + agent selection, and
+	 * Which container the flow renders in. `'sheet'` (the default) is a side drawer,
+	 * keeping the surface it was opened from on screen. `'dialog'` is for a host that
+	 * is itself a native modal `<dialog>`: those render in the top layer above every
+	 * sheet, so a drawer opened from inside one would be invisible.
+	 */
+	surface?: 'sheet' | 'dialog';
+	/**
+	 * Pre-select this auth type when the dialog opens (the user can still change
+	 * it). Used by the provisioning wizard to honour the agent-declared
+	 * `--auth` type (read from the API spec's securitySchemes) so the human
+	 * doesn't re-pick what the agent already determined. A spec-driven selection
+	 * (picking an API) still overrides it — the spec is more authoritative than
+	 * the agent's guess.
+	 */
+	initialType?: CredentialType;
+	/**
+	 * Skip the pick step and create a credential for exactly this API — the setup
+	 * queue is working through a batch already chosen in the tray, so the API is not
+	 * this flow's question to re-ask. Hides the picker, Back and `Change`; everything
+	 * downstream behaves as for a picked API.
+	 */
+	pinnedApi?: SelectedApi;
+	/**
+	 * When provided, the flow opens directly into the vendor connect in
+	 * "approve" mode — landing here from the `approval_url` an agent handed its
+	 * owner. It fetches the session, skips the picker + agent selection, and
 	 * shows the agent-requested scopes for the human to review + confirm.
 	 */
 	approvalSession?: { sessionId: string; pollToken: string };
 	/**
-	 * When set, the vendor-connect flow opens with the given agent locked in
-	 * as the binding target — passed through to ``VendorConnectFlow``'s
-	 * ``preselectedAgentId`` prop, which greys out the picker so the user
-	 * can't re-target during binding. Used by the "Connect new integration"
-	 * entry on an agent's detail page.
+	 * When set, the vendor connect opens with this agent locked in as the
+	 * binding target (``VendorConnectFlow``'s ``preselectedAgentId`` greys the
+	 * picker out). Used when the flow is opened from one agent's surface.
 	 */
 	preselectedAgentId?: string;
 	/**
-	 * Render-prop threaded through to ``VendorConnectFlow`` — callers
-	 * supply the "bind to more agents" CTA (``PostConnectBindMore``);
-	 * the dialog stays agnostic of what the extra content is so it
-	 * doesn't have to import a component that some callers won't want.
+	 * Render-prop threaded through to ``VendorConnectFlow`` — callers supply the
+	 * "bind to more agents" CTA (``PostConnectBindMore``); the flow stays
+	 * agnostic of what the extra content is.
 	 */
 	renderPostConnect?: (info: PostConnectInfo) => ReactNode;
+	/**
+	 * A pinned flow's way back to where the host came from, shown as the form's
+	 * leading footer action (e.g. "Back to APIs" in the setup queue). Called with
+	 * whether the operator has typed anything, so the host can ask before
+	 * discarding a draft — the flow itself does not decide what "back" costs.
+	 */
+	back?: { label: string; onBack: (dirty: boolean) => void };
 }
 
 type Step = 'pick' | 'form' | 'vendor';
 
 /**
- * Centered dialog that guides the user through creating a credential.
+ * The guided flow for creating a credential.
  *
  * Two-step flow:
  *  1. **Pick** — search workspace + public catalog, or fall back to manual
@@ -109,27 +151,37 @@ type Step = 'pick' | 'form' | 'vendor';
  *  - Otherwise → create directly. Pipedream provider work composes under the
  *    oauth2 branch unchanged.
  *
- * Why a dialog (not the sheet pattern we use for edit): the create flow is a
- * focused, modal task with a wizard shape that benefits from a centred,
- * resizable container. The edit flow stays a sheet because it sits inline
- * with the list and supports quick back-and-forth.
+ * The shell is the only thing `surface` switches: a drawer (default) or a centred
+ * dialog for a host in the top layer. Everything between the header and the action
+ * row is one implementation, so the two surfaces cannot drift.
+ *
+ * Neither surface dismisses on a backdrop click — a stray click would discard a
+ * half-typed secret.
  */
-export function CreateCredentialDialog({
+export function CreateCredentialFlow({
 	open,
 	onClose,
 	onCreated,
+	initialType,
+	pinnedApi,
+	surface = 'sheet',
 	approvalSession,
 	preselectedAgentId,
 	renderPostConnect,
-}: CreateCredentialDialogProps) {
-	const [step, setStep] = useState<Step>('pick');
-	const [selectedApi, setSelectedApi] = useState<SelectedApi | null>(null);
+	back,
+}: CreateCredentialFlowProps) {
+	const [step, setStep] = useState<Step>(pinnedApi ? 'form' : 'pick');
+	const [selectedApi, setSelectedApi] = useState<SelectedApi | null>(pinnedApi ?? null);
 	const [selectedVendor, setSelectedVendor] = useState<VendorSummary | null>(null);
 	const [manualMode, setManualMode] = useState(false);
-	const [type, setType] = useState<CredentialType>(CredentialType.BEARER_TOKEN);
+	/** Spec upload from the pick step — "the API isn't listed" is otherwise a dead end. */
+	const [uploadOpen, setUploadOpen] = useState(false);
+	const [type, setType] = useState<CredentialType>(initialType ?? CredentialType.BEARER_TOKEN);
 	/** When non-null, the spec drove the type (UI hides the manual toggle). */
 	const [activeScheme, setActiveScheme] = useState<SchemeOption | null>(null);
-	const [state, setState] = useState<CredentialFormState>(EMPTY_FORM);
+	const [state, setState] = useState<CredentialFormState>(() =>
+		pinnedApi ? seedFormFromSelectedApi(EMPTY_FORM, pinnedApi, false) : EMPTY_FORM,
+	);
 	const [errors, setErrors] = useState<Partial<Record<keyof CredentialFormState, string>>>({});
 	const [serverVarErrors, setServerVarErrors] = useState<Record<string, string>>({});
 	const [oauth2Flows, setOAuth2Flows] = useState<OAuth2FlowDef[]>([]);
@@ -151,16 +203,45 @@ export function CreateCredentialDialog({
 	 * switching the picked API refreshes the name to the new API's label.
 	 */
 	const nameDirty = useRef(false);
+	/**
+	 * Whether the operator has typed into the form. Set from the form's `input`
+	 * events only, so spec seeding and scope auto-selection never count as edits.
+	 */
+	const formTouched = useRef(false);
 
 	// Stable id prefix for wiring <Label htmlFor> to the manual-entry + name
 	// controls (the shared Input/Select auto-generate ids, but a label can't
 	// see those, so we own the ids here).
 	const fieldId = useId();
+	/** Names the drawer; the dialog surface derives its own from `title`. */
+	const headingId = `${fieldId}-title`;
 
 	const schemesResult = useApiSchemes(selectedApi);
 	const createMutation = useCreateCredential();
 	const importMutation = useImportCatalogEntry();
 	const providersQuery = useProviders();
+	const credentialsSource = useAllCredentials({ enabled: open });
+
+	// A name another credential for this API already holds. Once saved, the new
+	// credential is in the list itself and would clash with its own name while the
+	// flow closes.
+	const nameClash = useMemo(
+		() =>
+			createMutation.isSuccess
+				? null
+				: credentialNameClash(
+						credentialsSource.items,
+						{ vendor: state.apiVendor, name: state.apiName },
+						state.name,
+					),
+		[
+			createMutation.isSuccess,
+			credentialsSource.items,
+			state.apiVendor,
+			state.apiName,
+			state.name,
+		],
+	);
 
 	const callbackUrl = useMemo(() => {
 		const entry = providersQuery.data?.providers?.find((p) => p.id === state.provider);
@@ -243,19 +324,23 @@ export function CreateCredentialDialog({
 	};
 
 	const reset = (): void => {
-		setStep('pick');
-		setSelectedApi(null);
+		// A pinned API is the caller's premise, not a user choice, so a reset returns
+		// to that API's empty form rather than to the picker.
+		setStep(pinnedApi ? 'form' : 'pick');
+		setSelectedApi(pinnedApi ?? null);
 		setSelectedVendor(null);
 		setManualMode(false);
+		setUploadOpen(false);
 		setActiveScheme(null);
-		setState(EMPTY_FORM);
+		setState(pinnedApi ? seedFormFromSelectedApi(EMPTY_FORM, pinnedApi, false) : EMPTY_FORM);
 		setErrors({});
 		setServerVarErrors({});
 		setOAuth2Flows([]);
 		setActiveFlowId(null);
 		hasUserInteractedWithScopes.current = false;
 		nameDirty.current = false;
-		setType(CredentialType.BEARER_TOKEN);
+		formTouched.current = false;
+		setType(initialType ?? CredentialType.BEARER_TOKEN);
 		createMutation.reset();
 		importMutation.reset();
 	};
@@ -277,6 +362,7 @@ export function CreateCredentialDialog({
 		setStep('form');
 	};
 
+	/** A verified vendor is the one-click path: hand off to the vendor connect. */
 	const handlePickVendor = (vendor: VendorSummary): void => {
 		setSelectedVendor(vendor);
 		setSelectedApi(null);
@@ -431,6 +517,8 @@ export function CreateCredentialDialog({
 				});
 				onCreated({
 					credentialId: data.credential.credential_id,
+					// The server's stored label, not the draft field: an empty Name is
+					// filled in by the backend's default.
 					name: data.credential.name,
 					type,
 					provider: state.provider,
@@ -449,13 +537,17 @@ export function CreateCredentialDialog({
 	};
 
 	// The picked-API summary banner shown atop the form step (label + the
-	// vendor/name@version triple + whether saving will trigger a catalog import).
+	// vendor/name triple + whether saving will trigger a catalog import). The
+	// version shown is the one the credential is saved with: a catalog pick is
+	// unpinned (`apiVersion: ''`, see `seedFormFromSelectedApi`), so it reads
+	// "any version" rather than the catalog's version string.
+	const pinnedVersion = state.apiVersion.trim();
 	const apiSummary = useMemo(() => {
 		if (!selectedApi) return null;
-		const triple = `${selectedApi.vendor}/${selectedApi.name}@${selectedApi.version}`;
+		const triple = `${selectedApi.vendor}/${selectedApi.name}${pinnedVersion ? `@${pinnedVersion}` : ' · any version'}`;
 		const willImport = selectedApi.source === 'catalog' && !selectedApi.registered;
 		return { label: selectedApi.label, triple, willImport };
-	}, [selectedApi]);
+	}, [selectedApi, pinnedVersion]);
 
 	const showManualType = manualMode || activeScheme == null || activeScheme.type === 'unknown';
 	const usingPipedream = isOAuth2 && state.provider === 'pipedream';
@@ -492,14 +584,24 @@ export function CreateCredentialDialog({
 			: step === 'vendor' && selectedVendor
 				? `Connect ${selectedVendor.display_name}`
 				: `Add credential${titleSuffix}`;
+	// A pinned API removes the pick step, so the step counter would be lying. The
+	// vendor path is its own two-step flow, so it drops the counter too.
 	const subtitle = approvalSession ? (
 		<span>An agent is asking to connect on your behalf.</span>
-	) : step === 'pick' ? (
-		<span>Choose a one-click sign-in, or pick an API to authenticate against.</span>
 	) : step === 'vendor' ? (
 		<span>Pick an agent and the access it needs.</span>
+	) : pinnedApi ? (
+		<span>Fill in the credential details for {pinnedApi.label}</span>
+	) : step === 'pick' ? (
+		<span>
+			<span className="font-mono text-[10px] tracking-widest uppercase">Step 1 of 2</span> ·
+			Choose a one-click sign-in, or pick an API to authenticate against
+		</span>
 	) : (
-		<span>Fill in the credential details.</span>
+		<span>
+			<span className="font-mono text-[10px] tracking-widest uppercase">Step 2 of 2</span> ·
+			Fill in the credential details
+		</span>
 	);
 
 	const goBackToPick = (): void => {
@@ -507,21 +609,57 @@ export function CreateCredentialDialog({
 		setErrors({});
 	};
 
-	// Approve-mode short-circuits everything: no picker / form / footer — the
-	// VendorConnectFlow renders its own inline action bar.
+	const openUpload = (): void => setUploadOpen(true);
+
+	// A successful upload is a pick: straight on to the form for that API. A
+	// result that couldn't be read leaves the picker, whose list the import
+	// refreshed, so the API is one search away.
+	const handleImported = (apis: SelectedApi[]): void => {
+		if (apis[0]) handlePickApi(apis[0]);
+	};
+
+	// Approve mode and the vendor step render VendorConnectFlow's own inline
+	// action bar, so the flow's footer stands down for both.
 	const footer =
-		!approvalSession && step === 'form' ? (
+		approvalSession || step === 'vendor' ? undefined : step === 'pick' ? (
+			// Always reachable, not only from no-results: an operator who knows the
+			// API isn't catalogued shouldn't have to search first.
+			<Button
+				variant="ghost"
+				size="sm"
+				onClick={openUpload}
+				type="button"
+				className="text-muted-foreground hover:text-foreground mr-auto"
+			>
+				<Upload className="h-3.5 w-3.5" />
+				Upload an API
+			</Button>
+		) : step === 'form' ? (
 			<>
-				<Button
-					variant="secondary"
-					onClick={goBackToPick}
-					disabled={createMutation.isPending || importMutation.isPending}
-					type="button"
-					className="mr-auto"
-				>
-					<ArrowLeft className="h-4 w-4" />
-					Back
-				</Button>
+				{pinnedApi && back && (
+					<Button
+						variant="secondary"
+						onClick={(): void => back.onBack(formTouched.current)}
+						disabled={createMutation.isPending || importMutation.isPending}
+						type="button"
+						className="mr-auto"
+					>
+						<ArrowLeft className="h-4 w-4" />
+						{back.label}
+					</Button>
+				)}
+				{!pinnedApi && (
+					<Button
+						variant="secondary"
+						onClick={goBackToPick}
+						disabled={createMutation.isPending || importMutation.isPending}
+						type="button"
+						className="mr-auto"
+					>
+						<ArrowLeft className="h-4 w-4" />
+						Back
+					</Button>
+				)}
 				<Button
 					variant="ghost"
 					onClick={onClose}
@@ -542,304 +680,357 @@ export function CreateCredentialDialog({
 			</>
 		) : undefined;
 
-	const dialogSize = approvalSession
-		? 'lg'
-		: step === 'pick'
-			? 'lg'
-			: step === 'vendor'
-				? 'lg'
-				: 'xl';
+	const body = approvalSession ? (
+		<VendorConnectFlow
+			mode="approve"
+			sessionId={approvalSession.sessionId}
+			pollToken={approvalSession.pollToken}
+			renderPostConnect={renderPostConnect}
+			onBack={onClose}
+			onDone={onClose}
+		/>
+	) : (
+		<>
+			{step === 'pick' && (
+				<ApiPicker
+					onSelect={handlePickApi}
+					onVendorSelect={handlePickVendor}
+					onManualEntry={handleManualEntry}
+					emptyAction={
+						<Button variant="secondary" size="sm" onClick={openUpload} type="button">
+							<Upload className="h-4 w-4" />
+							Upload an API
+						</Button>
+					}
+				/>
+			)}
 
-	return (
-		<Dialog
-			open={open}
-			onClose={onClose}
-			title={title}
-			subtitle={subtitle}
-			size={dialogSize}
-			footer={footer}
-			dismissOnBackdrop={false}
-		>
-			{approvalSession ? (
+			{step === 'vendor' && selectedVendor && (
 				<VendorConnectFlow
-					mode="approve"
-					sessionId={approvalSession.sessionId}
-					pollToken={approvalSession.pollToken}
+					mode="self"
+					vendor={selectedVendor}
+					preselectedAgentId={preselectedAgentId}
 					renderPostConnect={renderPostConnect}
-					onBack={onClose}
+					onBack={goBackToPick}
 					onDone={onClose}
 				/>
-			) : (
-				<>
-					{step === 'pick' && (
-						<ApiPicker
-							onSelect={handlePickApi}
-							onVendorSelect={handlePickVendor}
-							onManualEntry={handleManualEntry}
-						/>
-					)}
+			)}
 
-					{step === 'vendor' && selectedVendor && (
-						<VendorConnectFlow
-							mode="self"
-							vendor={selectedVendor}
-							preselectedAgentId={preselectedAgentId}
-							renderPostConnect={renderPostConnect}
-							onBack={goBackToPick}
-							onDone={onClose}
-						/>
-					)}
+			{/* Mounted across steps so its close survives the jump to the form. A
+			    native `<dialog>` renders in the top layer, over this flow. */}
+			<ImportSpecDialog
+				open={uploadOpen}
+				onClose={(): void => setUploadOpen(false)}
+				onImported={handleImported}
+			/>
 
-					{step === 'form' && (
-						<form
-							id="create-credential-form"
-							onSubmit={handleSubmit}
-							className="space-y-5"
+			{step === 'form' && (
+				<form
+					id="create-credential-form"
+					onSubmit={handleSubmit}
+					onInput={(): void => {
+						formTouched.current = true;
+					}}
+					className="space-y-5"
+				>
+					{apiSummary && (
+						<div
+							className="bg-muted/40 border-border flex items-center gap-3 rounded-xl border px-3 py-2.5"
+							data-testid="selected-api-summary"
 						>
-							{apiSummary && (
-								<div
-									className="bg-muted/40 border-border flex items-center gap-3 rounded-xl border px-3 py-2.5"
-									data-testid="selected-api-summary"
-								>
-									<div className="min-w-0 flex-1">
-										<div className="flex items-center gap-2">
-											<p className="text-foreground truncate text-sm font-medium">
-												{apiSummary.label}
-											</p>
-											{specPending && (
-												<span className="text-muted-foreground inline-flex shrink-0 items-center gap-1 text-[11px]">
-													<Loader2 className="h-3 w-3 animate-spin" />
-													reading spec…
-												</span>
-											)}
-										</div>
-										<p className="text-muted-foreground mt-0.5 flex items-center gap-1.5 truncate font-mono text-xs">
-											{apiSummary.triple}
-											{apiSummary.willImport && (
-												<span className="text-muted-foreground/80 inline-flex items-center gap-1">
-													<span aria-hidden>·</span>
-													<Download className="h-3 w-3" />
-													imports on save
-												</span>
-											)}
-										</p>
-									</div>
-									<Button
-										type="button"
-										variant="ghost"
-										size="sm"
-										onClick={goBackToPick}
-										className="text-muted-foreground hover:text-foreground shrink-0 text-xs"
-									>
-										Change
-									</Button>
-								</div>
-							)}
-
-							{manualMode && (
-								<fieldset className="border-border space-y-3 rounded-lg border p-3">
-									<legend className="text-muted-foreground px-1 text-xs font-medium">
-										API reference
-									</legend>
-									<div className="space-y-1.5">
-										<Label htmlFor={`${fieldId}-vendor`} required>
-											Vendor
-										</Label>
-										<Input
-											id={`${fieldId}-vendor`}
-											value={state.apiVendor}
-											onChange={(e): void =>
-												patch({ apiVendor: e.target.value })
-											}
-											placeholder="acme"
-											error={errors.apiVendor}
-										/>
-									</div>
-									<div className="grid grid-cols-2 gap-3">
-										<div className="space-y-1.5">
-											<Label htmlFor={`${fieldId}-apiname`}>API name</Label>
-											<Input
-												id={`${fieldId}-apiname`}
-												value={state.apiName}
-												onChange={(e): void =>
-													patch({ apiName: e.target.value })
-												}
-												placeholder="default"
-											/>
-										</div>
-										<div className="space-y-1.5">
-											<Label htmlFor={`${fieldId}-version`}>Version</Label>
-											<Input
-												id={`${fieldId}-version`}
-												value={state.apiVersion}
-												onChange={(e): void =>
-													patch({ apiVersion: e.target.value })
-												}
-												placeholder="1.0.0"
-											/>
-										</div>
-									</div>
-								</fieldset>
-							)}
-
-							<div className="space-y-2">
-								<FormSectionLabel>Credential details</FormSectionLabel>
-								<div className="space-y-1.5">
-									<Label htmlFor={`${fieldId}-name`} required>
-										Name
-									</Label>
-									<Input
-										id={`${fieldId}-name`}
-										value={state.name}
-										onChange={(e): void => {
-											nameDirty.current = true;
-											patch({ name: e.target.value });
-										}}
-										placeholder="Production API key"
-										error={errors.name}
-									/>
-									<p className="text-muted-foreground text-xs">
-										A label to recognise this credential later.
+							<div className="min-w-0 flex-1">
+								<div className="flex items-center gap-2">
+									<p className="text-foreground truncate text-sm font-medium">
+										{apiSummary.label}
 									</p>
+									{specPending && (
+										<span className="text-muted-foreground inline-flex shrink-0 items-center gap-1 text-[11px]">
+											<Loader2 className="h-3 w-3 animate-spin" />
+											reading spec…
+										</span>
+									)}
+								</div>
+								<p className="text-muted-foreground mt-0.5 flex items-center gap-1.5 truncate font-mono text-xs">
+									{apiSummary.triple}
+									{apiSummary.willImport && (
+										<span className="text-muted-foreground/80 inline-flex items-center gap-1">
+											<span aria-hidden>·</span>
+											<Download className="h-3 w-3" />
+											imports on save
+										</span>
+									)}
+								</p>
+							</div>
+							{!pinnedApi && (
+								<Button
+									type="button"
+									variant="ghost"
+									size="sm"
+									onClick={goBackToPick}
+									className="text-muted-foreground hover:text-foreground shrink-0 text-xs"
+								>
+									Change
+								</Button>
+							)}
+						</div>
+					)}
+
+					{manualMode && (
+						<fieldset className="border-border space-y-3 rounded-lg border p-3">
+							<legend className="text-muted-foreground px-1 text-xs font-medium">
+								API reference
+							</legend>
+							<div className="space-y-1.5">
+								<Label htmlFor={`${fieldId}-vendor`} required>
+									Vendor
+								</Label>
+								<Input
+									id={`${fieldId}-vendor`}
+									value={state.apiVendor}
+									onChange={(e): void => patch({ apiVendor: e.target.value })}
+									placeholder="acme"
+									error={errors.apiVendor}
+								/>
+							</div>
+							<div className="grid grid-cols-2 gap-3">
+								<div className="space-y-1.5">
+									<Label htmlFor={`${fieldId}-apiname`}>API name</Label>
+									<Input
+										id={`${fieldId}-apiname`}
+										value={state.apiName}
+										onChange={(e): void => patch({ apiName: e.target.value })}
+										placeholder="default"
+									/>
+								</div>
+								<div className="space-y-1.5">
+									<Label htmlFor={`${fieldId}-version`}>Version</Label>
+									<Input
+										id={`${fieldId}-version`}
+										value={state.apiVersion}
+										onChange={(e): void =>
+											patch({ apiVersion: e.target.value })
+										}
+										placeholder="Any version"
+									/>
 								</div>
 							</div>
-
-							{/*
-							 * Auth section. Three mutually-exclusive states, cross-faded
-							 * so the dialog never janks:
-							 *  - pending  → skeleton (we don't know the auth type yet)
-							 *  - error    → "couldn't read spec" note + manual type fallback
-							 *  - ready    → scheme pills / single-scheme chip + fields
-							 */}
-							<AnimatePresence mode="wait" initial={false}>
-								{specPending ? (
-									<motion.div
-										key="auth-skeleton"
-										initial={{ opacity: 0 }}
-										animate={{ opacity: 1 }}
-										exit={{ opacity: 0 }}
-										transition={{ duration: 0.15 }}
-										className="border-border border-t pt-5"
-									>
-										<AuthSectionSkeleton />
-									</motion.div>
-								) : (
-									<motion.div
-										key="auth-ready"
-										initial={{ opacity: 0, y: 8 }}
-										animate={{ opacity: 1, y: 0 }}
-										exit={{ opacity: 0 }}
-										transition={{ duration: 0.2, ease: 'easeOut' }}
-										className="border-border space-y-5 border-t pt-5"
-									>
-										{!manualMode && schemesResult.error && (
-											<p
-												className="border-border bg-muted/40 text-muted-foreground rounded-lg border p-3 text-xs leading-snug"
-												role="note"
-											>
-												We couldn&apos;t read the API spec — pick the type
-												manually below.
-											</p>
-										)}
-
-										<AuthTypeCards
-											options={typeOptions}
-											value={type}
-											onChange={handleTypeChange}
-											detected={detectedSingle}
-										/>
-
-										{serverVars.length > 0 && (
-											<ServerVariablesSection
-												variables={serverVars}
-												values={state.serverVars}
-												errors={serverVarErrors}
-												onChange={(name, value): void => {
-													setState((s) => ({
-														...s,
-														serverVars: {
-															...s.serverVars,
-															[name]: value,
-														},
-													}));
-													setServerVarErrors((e) => {
-														if (!e[name]) return e;
-														const next = { ...e };
-														delete next[name];
-														return next;
-													});
-												}}
-											/>
-										)}
-
-										<div className="space-y-4">
-											<CredentialTypeFields
-												type={type}
-												state={state}
-												onChange={patch}
-												errors={errors}
-												mode="create"
-												scope={
-													isOAuth2 && availableScopes.length > 0
-														? {
-																available: availableScopes,
-																selected: selectedScopeList,
-																onToggle: handleScopeToggle,
-																onSelectAll: handleScopeSelectAll,
-																onDeselectAll:
-																	handleScopeDeselectAll,
-															}
-														: undefined
-												}
-												flows={isOAuth2 ? oauth2Flows : undefined}
-												activeFlowId={isOAuth2 ? activeFlowId : undefined}
-												onFlowChange={
-													isOAuth2 ? handleFlowChange : undefined
-												}
-												callbackUrl={isOAuth2 ? callbackUrl : undefined}
-												providers={providersQuery.data?.providers}
-												fieldNameWarning={fieldNameWarning}
-											/>
-										</div>
-
-										{usingPipedream && (
-											<div
-												className="border-primary/20 bg-primary/5 text-primary/90 flex items-start gap-2 rounded-lg border p-3 text-xs leading-snug"
-												role="note"
-											>
-												<Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-												<span>
-													Pipedream handles the OAuth handshake. After
-													creating, use <strong>Connect</strong> from the
-													credentials list to sign in.
-												</span>
-											</div>
-										)}
-									</motion.div>
-								)}
-							</AnimatePresence>
-
-							{importMutation.isError && (
-								<ErrorAlert message={importMutation.error} />
-							)}
-
-							{createMutation.isError &&
-								(() => {
-									const friendly = managedProviderUnavailableMessage(
-										state.provider,
-										createMutation.error,
-									);
-									return friendly ? (
-										<ErrorAlert message={friendly} />
-									) : (
-										<ErrorAlert message={createMutation.error} />
-									);
-								})()}
-						</form>
+						</fieldset>
 					)}
-				</>
+
+					<div className="space-y-2">
+						<FormSectionLabel>Credential details</FormSectionLabel>
+						<div className="space-y-1.5">
+							<Label htmlFor={`${fieldId}-name`} required>
+								Name
+							</Label>
+							<Input
+								id={`${fieldId}-name`}
+								value={state.name}
+								onChange={(e): void => {
+									nameDirty.current = true;
+									patch({ name: e.target.value });
+								}}
+								placeholder="Production API key"
+								error={errors.name}
+								aria-describedby={nameClash ? `${fieldId}-name-clash` : undefined}
+							/>
+							{nameClash ? (
+								<CredentialNameClashNote
+									id={`${fieldId}-name-clash`}
+									{...nameClash}
+									onUseSuggestion={(name): void => {
+										nameDirty.current = true;
+										patch({ name });
+									}}
+								/>
+							) : (
+								<p className="text-muted-foreground text-xs">
+									A label to recognise this credential later.
+								</p>
+							)}
+						</div>
+					</div>
+
+					{/*
+					 * Auth section. Three mutually-exclusive states, cross-faded
+					 * so the dialog never janks:
+					 *  - pending  → skeleton (we don't know the auth type yet)
+					 *  - error    → "couldn't read spec" note + manual type fallback
+					 *  - ready    → scheme pills / single-scheme chip + fields
+					 */}
+					<AnimatePresence mode="wait" initial={false}>
+						{specPending ? (
+							<motion.div
+								key="auth-skeleton"
+								initial={{ opacity: 0 }}
+								animate={{ opacity: 1 }}
+								exit={{ opacity: 0 }}
+								transition={{ duration: 0.15 }}
+								className="border-border border-t pt-5"
+							>
+								<AuthSectionSkeleton />
+							</motion.div>
+						) : (
+							<motion.div
+								key="auth-ready"
+								initial={{ opacity: 0, y: 8 }}
+								animate={{ opacity: 1, y: 0 }}
+								exit={{ opacity: 0 }}
+								transition={{ duration: 0.2, ease: 'easeOut' }}
+								className="border-border space-y-5 border-t pt-5"
+							>
+								{!manualMode && schemesResult.error && (
+									<p
+										className="border-border bg-muted/40 text-muted-foreground rounded-lg border p-3 text-xs leading-snug"
+										role="note"
+									>
+										We couldn&apos;t read the API spec — pick the type manually
+										below.
+									</p>
+								)}
+
+								<AuthTypeCards
+									options={typeOptions}
+									value={type}
+									onChange={handleTypeChange}
+									detected={detectedSingle}
+								/>
+
+								{serverVars.length > 0 && (
+									<ServerVariablesSection
+										variables={serverVars}
+										values={state.serverVars}
+										errors={serverVarErrors}
+										onChange={(name, value): void => {
+											setState((s) => ({
+												...s,
+												serverVars: { ...s.serverVars, [name]: value },
+											}));
+											setServerVarErrors((e) => {
+												if (!e[name]) return e;
+												const next = { ...e };
+												delete next[name];
+												return next;
+											});
+										}}
+									/>
+								)}
+
+								<div className="space-y-4">
+									<CredentialTypeFields
+										type={type}
+										state={state}
+										onChange={patch}
+										errors={errors}
+										mode="create"
+										scope={
+											isOAuth2 && availableScopes.length > 0
+												? {
+														available: availableScopes,
+														selected: selectedScopeList,
+														onToggle: handleScopeToggle,
+														onSelectAll: handleScopeSelectAll,
+														onDeselectAll: handleScopeDeselectAll,
+													}
+												: undefined
+										}
+										flows={isOAuth2 ? oauth2Flows : undefined}
+										activeFlowId={isOAuth2 ? activeFlowId : undefined}
+										onFlowChange={isOAuth2 ? handleFlowChange : undefined}
+										callbackUrl={isOAuth2 ? callbackUrl : undefined}
+										providers={providersQuery.data?.providers}
+										fieldNameWarning={fieldNameWarning}
+									/>
+								</div>
+
+								{usingPipedream && (
+									<div
+										className="border-primary/20 bg-primary/5 text-primary/90 flex items-start gap-2 rounded-lg border p-3 text-xs leading-snug"
+										role="note"
+									>
+										<Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+										<span>
+											Pipedream handles the OAuth handshake. After creating,
+											use <strong>Connect</strong> from the credentials list
+											to sign in.
+										</span>
+									</div>
+								)}
+							</motion.div>
+						)}
+					</AnimatePresence>
+
+					{importMutation.isError && <ErrorAlert message={importMutation.error} />}
+
+					{createMutation.isError &&
+						(() => {
+							const friendly = managedProviderUnavailableMessage(
+								state.provider,
+								createMutation.error,
+							);
+							return friendly ? (
+								<ErrorAlert message={friendly} />
+							) : (
+								<ErrorAlert message={createMutation.error} />
+							);
+						})()}
+				</form>
 			)}
-		</Dialog>
+		</>
+	);
+
+	if (surface === 'dialog') {
+		return (
+			<Dialog
+				open={open}
+				onClose={onClose}
+				title={title}
+				subtitle={subtitle}
+				size={approvalSession || step !== 'form' ? 'lg' : 'xl'}
+				footer={footer}
+				dismissOnBackdrop={false}
+			>
+				{body}
+			</Dialog>
+		);
+	}
+
+	return (
+		<SheetPrimitive
+			open={open}
+			onClose={onClose}
+			ariaLabelledBy={headingId}
+			dismissOnBackdrop={false}
+			className="sm:w-[640px] xl:w-[760px]"
+		>
+			<div className="flex h-full flex-col">
+				<header className="border-border flex shrink-0 items-start justify-between gap-3 border-b px-5 py-4">
+					<div className="min-w-0">
+						<h2 id={headingId} className="text-foreground text-base font-semibold">
+							{title}
+						</h2>
+						<div className="text-muted-foreground text-xs">{subtitle}</div>
+					</div>
+					<Button
+						variant="ghost"
+						size="sm"
+						aria-label="Close"
+						onClick={onClose}
+						className="text-muted-foreground hover:text-foreground shrink-0"
+					>
+						<X className="h-4 w-4" />
+					</Button>
+				</header>
+
+				<div className="flex-1 overflow-y-auto px-5 py-4">{body}</div>
+
+				{footer && (
+					<footer className="border-border flex shrink-0 flex-wrap items-center justify-end gap-2 border-t px-5 py-3">
+						{footer}
+					</footer>
+				)}
+			</div>
+		</SheetPrimitive>
 	);
 }
 

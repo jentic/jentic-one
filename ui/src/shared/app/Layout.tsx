@@ -1,11 +1,12 @@
+import { useRef } from 'react';
 import { useLocation, Outlet } from 'react-router';
 import { BottomNavbar } from '@/shared/app/BottomNavbar';
 import { TopNavbar } from '@/shared/app/TopNavbar';
 import { UpdateBanner } from '@/shared/app/UpdateBanner';
 import { AgentRail } from '@/shared/app/rail/AgentRail';
-import { ToastHost } from '@/shared/app/rail/ToastHost';
+import { ToastRegion } from '@/shared/app/ToastRegion';
 import { ErrorBoundary } from '@/shared/ui/ErrorBoundary';
-import { Toaster } from '@/shared/ui/Toaster';
+import { useCoversRightEdge } from '@/shared/ui/rightEdge';
 import { AgentStreamProvider } from '@/shared/lib/agentStream';
 
 /**
@@ -14,8 +15,9 @@ import { AgentStreamProvider } from '@/shared/lib/agentStream';
  *  - a fixed `h-12` `TopNavbar` (logo + desktop nav tabs + user menu),
  *  - a fixed mobile `BottomNavbar` (`md:hidden`),
  *  - a full-bleed `<main>` that owns NO horizontal padding,
- *  - a persistent, collapsible **Agent Rail** + `ToastHost` mounted on the
- *    right at `xl+` (the live platform event feed — see `shared/lib/agentStream`).
+ *  - a persistent, collapsible **Agent Rail** mounted on the right at `xl+`
+ *    (the live platform event feed — see `shared/lib/agentStream`),
+ *  - the `ToastRegion`, bottom-right beside the rail or an open sheet.
  *
  * The body below the fixed navbar is a flex row: `<main>` takes the remaining
  * width (`flex-1 min-w-0`, still full-bleed — no horizontal padding here; pages
@@ -32,6 +34,9 @@ import { AgentStreamProvider } from '@/shared/lib/agentStream';
  */
 export function Layout() {
 	const location = useLocation();
+	const railRef = useRef<HTMLDivElement>(null);
+	// The rail's column is `hidden` below `xl`, where it measures 0 and takes no room.
+	useCoversRightEdge(railRef, true);
 
 	return (
 		<AgentStreamProvider>
@@ -54,14 +59,16 @@ export function Layout() {
 					 * pages and push the RailFooter (toast scope + audio toggle) below
 					 * the fold. `self-start` pins it to the top instead of stretching.
 					 */}
-					<div className="sticky top-12 hidden h-[calc(100dvh-3rem)] shrink-0 self-start xl:flex">
+					<div
+						ref={railRef}
+						className="sticky top-12 hidden h-[calc(100dvh-3rem)] shrink-0 self-start xl:flex"
+					>
 						<AgentRail />
 					</div>
 				</div>
 
 				<BottomNavbar />
-				<Toaster />
-				<ToastHost />
+				<ToastRegion />
 			</div>
 		</AgentStreamProvider>
 	);
