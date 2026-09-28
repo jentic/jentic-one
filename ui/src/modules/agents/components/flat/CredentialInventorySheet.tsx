@@ -363,12 +363,16 @@ export function CredentialInventorySheet({
 							</p>
 						</div>
 						<div className="flex shrink-0 items-center gap-2">
-							{/* The help the retired Credentials page carried. No `⌘ /`: the
-							    Agents page behind the sheet already binds it. */}
+							<Button size="sm" onClick={(): void => setCreateOpen(true)}>
+								<Plus className="h-4 w-4" />
+								Add credential
+							</Button>
+							{/* The help the retired Credentials page carried. It takes `⌘ /`
+							    over from the Agents page while the sheet is open. */}
 							<PageHelp
 								title="About Credentials"
 								triggerAriaLabel="About credentials"
-								bindShortcut={false}
+								bindShortcut={open}
 								intro="Credentials hold the secrets (tokens, API keys, OAuth grants) that let agents call external APIs on your behalf."
 								sections={[
 									{
@@ -385,10 +389,6 @@ export function CredentialInventorySheet({
 									},
 								]}
 							/>
-							<Button size="sm" onClick={(): void => setCreateOpen(true)}>
-								<Plus className="h-4 w-4" />
-								Add credential
-							</Button>
 							<Button
 								variant="ghost"
 								size="sm"

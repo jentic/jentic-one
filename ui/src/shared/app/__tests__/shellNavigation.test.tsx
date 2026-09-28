@@ -70,6 +70,23 @@ describe('useShellNavigation', () => {
 		expect(main().scrollTop).toBe(700);
 	});
 
+	it('restores an entry created by a query-only change', async () => {
+		await page.viewport(1024, 800);
+		renderWithProviders(<Shell />, { route: '/a' });
+		const user = userEvent.setup();
+		await scrollMainTo(700);
+
+		await user.click(screen.getByRole('button', { name: 'Filter A' }));
+		await screen.findByRole('heading', { name: '/a?filter=x' });
+		await user.click(screen.getByRole('button', { name: 'Go to B' }));
+		await screen.findByRole('heading', { name: '/b' });
+		expect(main().scrollTop).toBe(0);
+
+		await user.click(screen.getByRole('button', { name: 'Back' }));
+		await screen.findByRole('heading', { name: '/a?filter=x' });
+		await waitFor(() => expect(main().scrollTop).toBe(700));
+	});
+
 	it('hands keyboard focus to the scroller on navigation', async () => {
 		renderWithProviders(<Shell />, { route: '/a' });
 		const user = userEvent.setup();

@@ -29,11 +29,22 @@ export function useShellNavigation(mainRef: RefObject<HTMLElement | null>): void
 	const positions = useRef(new Map<string, number>());
 	const keyRef = useRef(key);
 	const navigationTypeRef = useRef(navigationType);
+	const pathnameRef = useRef(pathname);
+	// Set while a restore is in flight, so its clamped attempts aren't recorded
+	// over the position it is restoring.
+	const restoringRef = useRef(false);
 
 	useLayoutEffect(() => {
+		// A query-only navigation (a filter, a selected agent) is a new history
+		// entry that doesn't scroll, so no scroll event ever records it.
+		const main = mainRef.current;
+		if (main && pathname === pathnameRef.current && !positions.current.has(key)) {
+			positions.current.set(key, main.scrollTop);
+		}
+		pathnameRef.current = pathname;
 		keyRef.current = key;
 		navigationTypeRef.current = navigationType;
-	}, [key, navigationType]);
+	}, [mainRef, key, navigationType, pathname]);
 
 	// Recorded as the page scrolls. By the time a navigation commits, the old
 	// page is gone and `<main>` may already have clamped to the new, shorter one.
@@ -41,6 +52,7 @@ export function useShellNavigation(mainRef: RefObject<HTMLElement | null>): void
 		const main = mainRef.current;
 		if (!main) return;
 		const onScroll = (): void => {
+			if (restoringRef.current) return;
 			positions.current.set(keyRef.current, main.scrollTop);
 		};
 		main.addEventListener('scroll', onScroll, { passive: true });
@@ -68,6 +80,7 @@ export function useShellNavigation(mainRef: RefObject<HTMLElement | null>): void
 		let frame = 0;
 		const deadline = performance.now() + RESTORE_TIMEOUT_MS;
 		const stop = (): void => {
+			restoringRef.current = false;
 			cancelAnimationFrame(frame);
 			for (const type of USER_SCROLL_EVENTS) main.removeEventListener(type, stop);
 		};
@@ -82,6 +95,7 @@ export function useShellNavigation(mainRef: RefObject<HTMLElement | null>): void
 		for (const type of USER_SCROLL_EVENTS) {
 			main.addEventListener(type, stop, { passive: true });
 		}
+		restoringRef.current = true;
 		attempt();
 		return stop;
 	}, [mainRef, pathname]);

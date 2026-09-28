@@ -63,7 +63,7 @@ import type {
 /**
  * Two modes:
  *
- *  * `self` — the current user is opening the flow from the credentials page,
+ *  * `self` — the current user is opening the flow from the credential inventory,
  *    picks an agent + scopes, then runs start-and-confirm in one shot.
  *  * `approve` — an agent already started the session; the current user is the
  *    human owner following the emitted approval URL. Session (with the agent's

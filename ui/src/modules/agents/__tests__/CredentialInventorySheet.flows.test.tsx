@@ -130,6 +130,15 @@ describe('CredentialInventorySheet — credential flows', () => {
 		expect(screen.getByRole('heading', { name: 'Credentials' })).toBeInTheDocument();
 	});
 
+	it('opens its own help from the shortcut while the sheet is open', async () => {
+		renderInventory();
+		await inventory().findByRole('button', { name: 'About credentials' });
+
+		await browserUser.keyboard('{Control>}/{/Control}');
+		expect(await screen.findByRole('dialog', { name: 'About Credentials' })).toBeVisible();
+		expect(screen.queryByRole('dialog', { name: 'About Agents' })).not.toBeInTheDocument();
+	});
+
 	it('filters the list by credential type', async () => {
 		resetCredentialsStore([
 			makeMockCredential({
@@ -479,6 +488,13 @@ describe('CredentialInventorySheet — credential flows', () => {
 			});
 			// Backing out of the approval leaves the operator in the inventory.
 			expect(screen.getByRole('heading', { name: 'Credentials' })).toBeInTheDocument();
+		});
+
+		it('opens from the link exactly as the backend mints it (no agent selected)', async () => {
+			renderInventory('/?approve=sess_1&poll_token=tok_1');
+			expect(
+				await screen.findByRole('dialog', { name: /^Approve integration$/ }),
+			).toBeVisible();
 		});
 
 		it('ignores a link missing its poll token', async () => {
