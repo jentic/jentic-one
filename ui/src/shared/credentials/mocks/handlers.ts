@@ -519,9 +519,9 @@ export const connectSessionsHandlers = [
 			{
 				session_id: sessionId,
 				// The real backend emits an absolute URL to the SPA's
-				// credentials page; an absolute mock URL keeps the shape
+				// Agents page; an absolute mock URL keeps the shape
 				// without hardcoding the client's basename here.
-				approval_url: `https://jentic.example.test/credentials?approve=${sessionId}&poll_token=${pollToken}`,
+				approval_url: `https://jentic.example.test/app/agents?approve=${sessionId}&poll_token=${pollToken}`,
 				poll_token: pollToken,
 				resolved_flow: confirmChallengeKind,
 			},

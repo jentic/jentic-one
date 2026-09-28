@@ -129,6 +129,8 @@ export default function AgentsPage() {
 						</Button>
 						<PageHelp
 							title="About Agents"
+							// The inventory sheet binds its own help while it's open.
+							bindShortcut={!inventoryOpen}
 							intro={
 								<p>
 									Agents register themselves via dynamic client registration and

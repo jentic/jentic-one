@@ -227,8 +227,9 @@ async def test_create_session_device_authorization_seeds_credential_and_aux_row(
     assert created.resolved_flow == "device_authorization"
     assert created.session_id
     assert created.poll_token
-    # Approval URL points at the SPA's credentials page with the session
-    # id + token so the human can pick it up.
+    # Approval URL points at the SPA's Agents page (where the credential
+    # inventory lives) with the session id + token so the human can pick it up.
+    assert "/app/agents?" in created.approval_url
     assert f"approve={created.session_id}" in created.approval_url
     assert f"poll_token={created.poll_token}" in created.approval_url
 
