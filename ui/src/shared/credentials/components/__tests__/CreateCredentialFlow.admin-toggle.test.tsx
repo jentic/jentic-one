@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderWithProviders, screen, userEvent } from '@/__tests__/test-utils';
-import { CreateCredentialDialog } from '@/shared/credentials/components/CreateCredentialDialog';
+import { CreateCredentialFlow } from '@/shared/credentials/components/CreateCredentialFlow';
 import { resetCredentialsStore } from '@/shared/credentials/mocks/handlers';
 
 /**
@@ -29,7 +29,7 @@ vi.mock('@/shared/auth/usePermission', async () => {
 	};
 });
 
-describe('CreateCredentialDialog — admin-only registration toggle', () => {
+describe('CreateCredentialFlow — admin-only registration toggle', () => {
 	beforeEach(() => {
 		resetCredentialsStore();
 		usePermissionMock.mockReturnValue(false);
@@ -42,7 +42,7 @@ describe('CreateCredentialDialog — admin-only registration toggle', () => {
 	it('hides the "Available to everyone in the organization" toggle for non-admins', async () => {
 		usePermissionMock.mockReturnValue(false);
 		renderWithProviders(
-			<CreateCredentialDialog open={true} onClose={vi.fn()} onCreated={vi.fn()} />,
+			<CreateCredentialFlow open={true} onClose={vi.fn()} onCreated={vi.fn()} />,
 		);
 		// Drive from the picker into the form step so the toggle *would* have
 		// a chance to render if the gate let it through.
@@ -62,7 +62,7 @@ describe('CreateCredentialDialog — admin-only registration toggle', () => {
 		// other form-state predicate is consulted.
 		usePermissionMock.mockReturnValue(false);
 		renderWithProviders(
-			<CreateCredentialDialog open={true} onClose={vi.fn()} onCreated={vi.fn()} />,
+			<CreateCredentialFlow open={true} onClose={vi.fn()} onCreated={vi.fn()} />,
 		);
 		const user = userEvent.setup();
 		await user.click(await screen.findByRole('button', { name: /enter manually/i }));
