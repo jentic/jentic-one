@@ -231,6 +231,37 @@ def test_exchange_rejects_non_user_actors(ctx: MagicMock) -> None:
     assert resp.status_code == 403
 
 
+@pytest.mark.parametrize(
+    ("oauth_client_id", "oauth_grant_id"),
+    [
+        (THIRD_PARTY_CLIENT_ID, None),
+        (None, "ocg_1"),
+        (THIRD_PARTY_CLIENT_ID, "ocg_1"),
+    ],
+)
+def test_exchange_rejects_client_bound_user_tokens(
+    ctx: MagicMock, oauth_client_id: str | None, oauth_grant_id: str | None
+) -> None:
+    """A user token issued to an OAuth client is not a platform session: the
+    same generic 400, and no user lookup or continuation is attempted."""
+    identity = Identity(
+        sub=USER_ID,
+        email=USER_EMAIL,
+        actor_type=ActorType.USER,
+        oauth_client_id=oauth_client_id,
+        oauth_grant_id=oauth_grant_id,
+    )
+    app = _make_app(ctx, identity=identity)
+    client = TestClient(app)
+    with patch.object(local_login, "UserService") as svc_cls:
+        svc_cls.return_value.get_by_id = AsyncMock(return_value=_user_view())
+        resp = _continue_call(client, _login_state(ctx))
+        svc_cls.return_value.get_by_id.assert_not_awaited()
+    assert resp.status_code == 400
+    assert "session continuation rejected" in resp.text
+    assert "redirect_url" not in resp.text
+
+
 def test_exchange_gated_404_when_local_login_off() -> None:
     """Gate off → the framework's plain route-not-found 404, same as /login."""
     disabled = _make_ctx(local_login_enabled=False)

@@ -344,3 +344,107 @@ async def test_mismatch_escape_restarts_flow_without_session(
         )
         assert done.status_code == 302, done.text
         assert done.headers["location"].startswith("/oauth/consent?ch=")
+
+
+async def _third_party_access_token(client: AsyncClient, ctx: Context, email: str) -> str:
+    """Walk a third-party client flow to a real client-bound ``at_`` token."""
+    platform_token = await _platform_login(ctx, email)
+    ls, _ = await _walk_to_login_form(
+        client,
+        client_id=_THIRD_PARTY_CLIENT_ID,
+        redirect_uri=_THIRD_PARTY_REDIRECT,
+    )
+    resumed = await client.get(await _exchange_session(client, platform_token, ls))
+    handle = parse_qs(urlsplit(resumed.headers["location"]).query)["ch"][0]
+    approve = await client.post(
+        "/oauth/consent", data={"consent_token": handle, "action": "approve"}
+    )
+    assert approve.status_code == 302, approve.text
+    code = parse_qs(urlsplit(approve.headers["location"]).query)["code"][0]
+    token_resp = await client.post(
+        "/oauth/token",
+        json={
+            "grant_type": "authorization_code",
+            "code": code,
+            "code_verifier": CODE_VERIFIER,
+            "redirect_uri": _THIRD_PARTY_REDIRECT,
+            "client_id": _THIRD_PARTY_CLIENT_ID,
+        },
+    )
+    assert token_resp.status_code == 200, token_resp.text
+    return str(token_resp.json()["access_token"])
+
+
+async def test_exchange_rejects_third_party_client_token(
+    local_login_ctx: Context, clean_grants: None, clean_user_secrets: None
+) -> None:
+    """An access token issued to a third-party OAuth client cannot be exchanged
+    for a platform-client continuation: generic 400, no resume URL."""
+    ctx = local_login_ctx
+    _user_id, email = await seed_password_user(ctx, "usr_session_client_bound")
+    await _seed_third_party_client(ctx)
+
+    app = _make_app(ctx)
+    async with _web_client(app) as client:
+        client_token = await _third_party_access_token(client, ctx, email)
+
+        # The token authenticates as the user, but it is bound to the client.
+        identity = await app.state.verify_token(client_token, None)
+        assert identity.oauth_client_id == _THIRD_PARTY_CLIENT_ID
+
+        for target_client, target_redirect in (
+            (LOCAL_LOGIN_PLATFORM_CLIENT_ID, LOCAL_LOGIN_PLATFORM_REDIRECT),
+            (_THIRD_PARTY_CLIENT_ID, _THIRD_PARTY_REDIRECT),
+        ):
+            ls, _ = await _walk_to_login_form(
+                client, client_id=target_client, redirect_uri=target_redirect
+            )
+            resp = await client.post(
+                "/oauth/session/continue",
+                json={"state": ls},
+                headers={"Authorization": f"Bearer {client_token}"},
+            )
+            assert resp.status_code == 400, resp.text
+            assert "session continuation rejected" in resp.text
+            assert "redirect_url" not in resp.text
+
+
+async def test_exchange_accepts_platform_client_access_token(
+    local_login_ctx: Context, clean_grants: None, clean_user_secrets: None
+) -> None:
+    """An access token the platform client obtained for itself (no client
+    binding) is still a first-party session and continues as before."""
+    ctx = local_login_ctx
+    _user_id, email = await seed_password_user(ctx, "usr_session_platform_at")
+
+    app = _make_app(ctx)
+    async with _web_client(app) as client:
+        token = await _platform_login(ctx, email)
+        ls, _ = await _walk_to_login_form(
+            client,
+            client_id=LOCAL_LOGIN_PLATFORM_CLIENT_ID,
+            redirect_uri=LOCAL_LOGIN_PLATFORM_REDIRECT,
+        )
+        resumed = await client.get(await _exchange_session(client, token, ls))
+        code = parse_qs(urlsplit(resumed.headers["location"]).query)["code"][0]
+        token_resp = await client.post(
+            "/oauth/token",
+            json={
+                "grant_type": "authorization_code",
+                "code": code,
+                "code_verifier": CODE_VERIFIER,
+                "redirect_uri": LOCAL_LOGIN_PLATFORM_REDIRECT,
+                "client_id": LOCAL_LOGIN_PLATFORM_CLIENT_ID,
+            },
+        )
+        assert token_resp.status_code == 200, token_resp.text
+        platform_at = str(token_resp.json()["access_token"])
+        identity = await app.state.verify_token(platform_at, None)
+        assert identity.oauth_client_id is None
+
+        ls2, _ = await _walk_to_login_form(
+            client,
+            client_id=LOCAL_LOGIN_PLATFORM_CLIENT_ID,
+            redirect_uri=LOCAL_LOGIN_PLATFORM_REDIRECT,
+        )
+        await _exchange_session(client, platform_at, ls2)
