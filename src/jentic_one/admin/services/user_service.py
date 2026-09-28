@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from jentic_one.admin.core.permissions import IMPLICATION_MAP, compute_effective
+from jentic_one.admin.core.permissions import IMPLICATION_MAP, ORG_ADMIN, compute_effective
 from jentic_one.admin.repos import (
     AuditRepository,
+    ExternalIdentityRepository,
     InviteTokenRepository,
     UserPermissionGrantRepository,
     UserRepository,
@@ -14,6 +15,8 @@ from jentic_one.admin.services._support.pagination import Page, decode_cursor, e
 from jentic_one.admin.services.errors import (
     ConflictError,
     EmailAlreadyExistsError,
+    LastActiveAdminError,
+    UserManagementForbiddenError,
     UserNotFoundError,
 )
 from jentic_one.admin.services.invite_service import InviteService
@@ -31,6 +34,7 @@ from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import InviteState
 from jentic_one.shared.models.audit import AuditAction, AuditTargetType
+from jentic_one.shared.scopes import RETIRED_SCOPES
 
 
 def _derive_invite_state(stored: str, user_id: str, active_invite_user_ids: set[str]) -> str:
@@ -79,6 +83,37 @@ def _expand_one(permission_name: str) -> set[str]:
                 result.add(p)
                 frontier.append(p)
     return result
+
+
+def _ensure_can_manage(
+    target_user_id: str, identity: Identity, permission_sets: dict[str, set[str]]
+) -> None:
+    """Check the caller may change the target's email or account status.
+
+    A caller may manage their own account, and an ``org:admin`` caller may
+    manage anyone. Otherwise the caller must already hold every permission the
+    target holds — the same ceiling ``PermissionService.validate_grants``
+    applies to granting — so a ``users:write`` holder cannot take over or lock
+    out a more privileged user. Like ``validate_grants``, the caller's
+    authority is their live stored grants, not the claims on the presented
+    token.
+
+    ``permission_sets`` maps user id -> directly-granted permissions and must
+    contain both the target and the caller.
+    """
+    if target_user_id == identity.sub:
+        return
+    caller_effective = compute_effective(permission_sets.get(identity.sub, set()))
+    if ORG_ADMIN in caller_effective:
+        return
+    target_assigned = permission_sets.get(target_user_id, set())
+    if not compute_effective(target_assigned - RETIRED_SCOPES) <= caller_effective:
+        raise UserManagementForbiddenError(target_user_id)
+
+
+def _is_last_active_admin(active: bool, target_assigned: set[str], other_admins: int) -> bool:
+    """Whether deactivating this user would leave no active ``org:admin``."""
+    return active and ORG_ADMIN in target_assigned and other_admins == 0
 
 
 class UserService:
@@ -256,6 +291,15 @@ class UserService:
                 "last_name": user.last_name,
             }
 
+            email_changed = (
+                payload.email is not None and payload.email.lower() != user.email.lower()
+            )
+            if email_changed:
+                permission_sets = await UserPermissionGrantRepository.get_permission_sets(
+                    session, [user_id, identity.sub]
+                )
+                _ensure_can_manage(user_id, identity, permission_sets)
+
             if payload.email is not None:
                 existing = await UserRepository.get_by_email(session, payload.email)
                 if existing is not None and existing.id != user_id:
@@ -268,6 +312,12 @@ class UserService:
                 first_name=payload.first_name,
                 last_name=payload.last_name,
             )
+
+            # External IdP links were established against the previous email;
+            # drop them so the account is only reachable via the new address.
+            links_removed = 0
+            if email_changed:
+                links_removed = await ExternalIdentityRepository.delete_for_user(session, user_id)
 
             after = {
                 "email": payload.email if payload.email is not None else user.email,
@@ -288,6 +338,9 @@ class UserService:
                 actor_id=identity.sub,
                 before=before,
                 after=after,
+                reason=(
+                    f"removed {links_removed} external identity link(s)" if links_removed else None
+                ),
             )
             audit_events_counter.add(
                 1, {"action": AuditAction.UPDATE, "target_type": AuditTargetType.USER}
@@ -300,12 +353,22 @@ class UserService:
             user = await UserRepository.get_by_id(session, user_id)
             if user is None:
                 raise UserNotFoundError(user_id)
+            permission_sets = await UserPermissionGrantRepository.get_permission_sets(
+                session, [user_id, identity.sub]
+            )
+            _ensure_can_manage(user_id, identity, permission_sets)
+            other_admins = await UserRepository.count_active_with_permission(
+                session, ORG_ADMIN, exclude_user_id=user_id
+            )
+            if _is_last_active_admin(user.active, permission_sets[user_id], other_admins):
+                raise LastActiveAdminError(user_id)
             await UserRepository.update(
                 session,
                 user_id,
                 email=f"deleted-{user_id}@local",
                 active=False,
             )
+            await ExternalIdentityRepository.delete_for_user(session, user_id)
             await AuditRepository.record(
                 session,
                 action=AuditAction.DELETE,
@@ -320,6 +383,18 @@ class UserService:
 
     async def disable(self, user_id: str, *, identity: Identity) -> bool:
         async with self._ctx.admin_db.transaction() as session:
+            user = await UserRepository.get_by_id(session, user_id)
+            if user is None:
+                raise UserNotFoundError(user_id)
+            permission_sets = await UserPermissionGrantRepository.get_permission_sets(
+                session, [user_id, identity.sub]
+            )
+            _ensure_can_manage(user_id, identity, permission_sets)
+            other_admins = await UserRepository.count_active_with_permission(
+                session, ORG_ADMIN, exclude_user_id=user_id
+            )
+            if _is_last_active_admin(user.active, permission_sets[user_id], other_admins):
+                raise LastActiveAdminError(user_id)
             await UserRepository.disable(session, user_id)
             await AuditRepository.record(
                 session,
@@ -336,6 +411,12 @@ class UserService:
 
     async def enable(self, user_id: str, *, identity: Identity) -> bool:
         async with self._ctx.admin_db.transaction() as session:
+            if await UserRepository.get_by_id(session, user_id) is None:
+                raise UserNotFoundError(user_id)
+            permission_sets = await UserPermissionGrantRepository.get_permission_sets(
+                session, [user_id, identity.sub]
+            )
+            _ensure_can_manage(user_id, identity, permission_sets)
             await UserRepository.enable(session, user_id)
             await AuditRepository.record(
                 session,
@@ -353,8 +434,12 @@ class UserService:
     async def reissue_invite(self, user_id: str, *, identity: Identity) -> InviteIssued:
         async with self._ctx.admin_db.session() as session:
             user = await UserRepository.get_by_id(session, user_id)
-        if user is None:
-            raise UserNotFoundError(user_id)
+            if user is None:
+                raise UserNotFoundError(user_id)
+            permission_sets = await UserPermissionGrantRepository.get_permission_sets(
+                session, [user_id, identity.sub]
+            )
+            _ensure_can_manage(user_id, identity, permission_sets)
         if user.invite_state == InviteState.REDEEMED:
             raise ConflictError("Cannot reissue invite for a user who has already redeemed")
 

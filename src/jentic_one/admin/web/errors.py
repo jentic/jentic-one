@@ -19,12 +19,14 @@ from jentic_one.admin.services.errors import (
     JobNotCompletedError,
     JobNotFoundError,
     JobResultExpiredError,
+    LastActiveAdminError,
     NotFoundError,
     OrgAdminGrantForbiddenError,
     PermissionNotGrantableError,
     SessionExpiredError,
     SetupAlreadyCompleteError,
     UnknownPermissionError,
+    UserManagementForbiddenError,
     UserNotFoundError,
 )
 from jentic_one.shared.db.errors import DatabaseIntegrityError, DatabaseUnavailableError
@@ -47,6 +49,7 @@ _ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     InviteTokenAlreadyRedeemedError: (409, "invite_already_redeemed"),
     JobNotCancellableError: (409, "job_not_cancellable"),
     JobNotCompletedError: (409, "job_not_completed"),
+    LastActiveAdminError: (409, "last_active_admin"),
     ConflictError: (409, "conflict"),
     InviteTokenExpiredError: (410, "invite_token_expired"),
     JobResultExpiredError: (410, "job_result_expired"),
@@ -54,6 +57,7 @@ _ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     UnknownPermissionError: (422, "unknown_permission"),
     PermissionNotGrantableError: (422, "permission_not_grantable"),
     OrgAdminGrantForbiddenError: (422, "org_admin_grant_forbidden"),
+    UserManagementForbiddenError: (403, "user_management_forbidden"),
     InvalidInputError: (400, "invalid_input"),
     InvalidCursorError: (400, "invalid_cursor"),
 }

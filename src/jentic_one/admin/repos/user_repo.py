@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
+from jentic_one.admin.core.schema.user_permission_grants import UserPermissionGrant
 from jentic_one.admin.core.schema.users import User
 from jentic_one.admin.services.errors import UserNotFoundError
 from jentic_one.shared.models import AuthProvider, InviteState
@@ -54,6 +55,26 @@ class UserRepository:
     async def count(session: AsyncSession) -> int:
         """Return the total number of users — used to detect first-run setup."""
         result = await session.execute(select(sa_func.count()).select_from(User))
+        return int(result.scalar_one())
+
+    @staticmethod
+    async def count_active_with_permission(
+        session: AsyncSession, permission: str, *, exclude_user_id: str | None = None
+    ) -> int:
+        """Count active users holding a directly-granted permission.
+
+        ``exclude_user_id`` leaves one user out of the count — used to ask
+        "would anyone else still hold it?" before disabling or deleting a user.
+        """
+        stmt = (
+            select(sa_func.count(sa_func.distinct(User.id)))
+            .select_from(User)
+            .join(UserPermissionGrant, UserPermissionGrant.user_id == User.id)
+            .where(UserPermissionGrant.permission == permission, User.active.is_(True))
+        )
+        if exclude_user_id is not None:
+            stmt = stmt.where(User.id != exclude_user_id)
+        result = await session.execute(stmt)
         return int(result.scalar_one())
 
     @staticmethod

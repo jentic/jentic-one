@@ -71,7 +71,7 @@ from jentic_one.admin.services.errors import UserNotFoundError
 from jentic_one.admin.services.oauth_client_service import OAuthClientService
 from jentic_one.admin.services.schemas.oauth_clients import OAuthClientView
 from jentic_one.admin.services.user_service import UserService
-from jentic_one.auth.core.idp import IdpClaims
+from jentic_one.auth.core.idp import IdpClaims, parse_email_verified
 from jentic_one.auth.services.agent_service import AgentService
 from jentic_one.auth.services.authorize_service import AgentConsentOption, AuthorizeService
 from jentic_one.auth.services.errors import (
@@ -1660,7 +1660,7 @@ def _claims_from_params(params: dict[str, object]) -> IdpClaims | None:
     return IdpClaims(
         external_subject=str(claims_data.get("external_subject") or ""),
         email=str(claims_data.get("email") or ""),
-        email_verified=bool(claims_data.get("email_verified") or False),
+        email_verified=parse_email_verified(claims_data.get("email_verified")),
         first_name=str(claims_data.get("first_name") or ""),
         last_name=str(claims_data.get("last_name") or ""),
     )
@@ -2210,7 +2210,7 @@ async def consent_submit(
         idp_claims = IdpClaims(
             external_subject=str(claims_data.get("external_subject") or ""),
             email=str(claims_data.get("email") or ""),
-            email_verified=bool(claims_data.get("email_verified") or False),
+            email_verified=parse_email_verified(claims_data.get("email_verified")),
             first_name=str(claims_data.get("first_name") or ""),
             last_name=str(claims_data.get("last_name") or ""),
         )
