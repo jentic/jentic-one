@@ -53,6 +53,7 @@ import structlog
 from jentic_one import __version__
 from jentic_one.control.repos.agent_permission_rule_repo import AgentPermissionRuleRepository
 from jentic_one.control.repos.service_account_migration_repo import (
+    ADMIN_LEVEL_SCOPES,
     SKIPPED_STAMP,
     SYSTEM_ACTOR,
     ServiceAccountMigrationRepository,
@@ -97,6 +98,23 @@ def _log_fields(fields: dict[str, Any]) -> dict[str, Any]:
 
 
 _VERIFY_SUMMARY_CATEGORY = "verify_summary"
+#: Informational ``verify`` finding: an admin-level grant the migration
+#: carried onto a successor agent. Never fails the verification.
+_SUCCESSOR_ADMIN_SCOPE_CATEGORY = "successor_admin_scope"
+
+_ADMIN_SCOPE_REVIEW_STEP = (
+    "Review whether the successor agent should keep this scope; if not, remove it "
+    "with `PUT /agents/{agent_id}/scopes` (see the upgrade notes for the audit queries)."
+)
+
+
+def _admin_level_grants(grants: list[tuple[str, str | None]]) -> tuple[dict[str, Any], ...]:
+    """The admin-level subset of copied ``(scope, original granted_by)`` pairs."""
+    return tuple(
+        {"scope": scope, "original_granted_by": granted_by}
+        for scope, granted_by in grants
+        if scope in ADMIN_LEVEL_SCOPES
+    )
 
 
 class _ConcurrentWinnerError(Exception):
@@ -144,6 +162,14 @@ class ServiceAccountMigrationOutcome:
     #: cannot be confirmed by the agent itself (``_forbid_self_confirm``).
     owner_visibility_note: str | None = None
     reason: str | None = None
+    #: The scope names copied onto the successor (or, under ``--diff-only``,
+    #: that WOULD be) — ``None`` when not computed (see the count fields).
+    copied_scopes: tuple[str, ...] | None = ()
+    #: The admin-level subset of ``copied_scopes`` (``ADMIN_LEVEL_SCOPES``),
+    #: each with the SA grant's ORIGINAL ``granted_by`` (the successor's twin
+    #: is stamped with the job's system actor). Informational: the grants are
+    #: carried over unchanged; the operator reviews them.
+    admin_level_scopes: tuple[dict[str, Any], ...] | None = ()
 
 
 @dataclass(frozen=True)
@@ -156,6 +182,8 @@ class _PreviewCounts:
     permission_rules: int = 0
     access_tokens: int = 0
     refresh_tokens: int = 0
+    copied_scopes: tuple[str, ...] = ()
+    admin_level_scopes: tuple[dict[str, Any], ...] = ()
 
 
 @dataclass
@@ -205,6 +233,10 @@ class VerificationResult:
     #: twin holds a different rule count. Not persisted on the ack row (the
     #: sentinel is only written when every count is zero).
     inline_rule_mismatch_count: int = 0
+    #: Informational (never gates ``passed``): admin-level grants the
+    #: migration carried onto successor agents, one ``successor_admin_scope``
+    #: report line each.
+    successor_admin_scope_count: int = 0
     #: JSONL report lines. The first is always the ``verify_summary`` line
     #: (the run's counts + tool version) — report context, not a finding.
     findings: list[dict[str, Any]] = field(default_factory=list)
@@ -284,6 +316,7 @@ class ServiceAccountMigrationService:
         """
         _label, successor_status = self._disposition(row.status)
         scopes = toolkit_bindings = credential_bindings = rules = 0
+        grants: list[tuple[str, str | None]] = []
         async with self._ctx.admin_db.session() as session:
             access, refresh = await ServiceAccountMigrationRepository.count_revocable_tokens(
                 session, service_account_id=row.id
@@ -294,6 +327,9 @@ class ServiceAccountMigrationService:
                     toolkit_bindings,
                     credential_bindings,
                 ) = await ServiceAccountMigrationRepository.count_copy_candidates(
+                    session, service_account_id=row.id
+                )
+                grants = await ServiceAccountMigrationRepository.list_copyable_grants(
                     session, service_account_id=row.id
                 )
         if successor_status is not None and self._ctx.has_db("control"):
@@ -311,6 +347,8 @@ class ServiceAccountMigrationService:
             permission_rules=rules,
             access_tokens=access,
             refresh_tokens=refresh,
+            copied_scopes=tuple(scope for scope, _ in grants),
+            admin_level_scopes=_admin_level_grants(grants),
         )
 
     def _preview(self, row: Any, counts: _PreviewCounts | None) -> ServiceAccountMigrationOutcome:
@@ -334,6 +372,8 @@ class ServiceAccountMigrationService:
                 access_tokens_revoked=None,
                 refresh_tokens_revoked=None,
                 had_client_secret=row.client_secret_hash is not None,
+                copied_scopes=None,
+                admin_level_scopes=None,
             )
         label, _successor_status = self._disposition(row.status)
         c = counts
@@ -351,6 +391,8 @@ class ServiceAccountMigrationService:
             owner_visibility_note=(
                 self._visibility_note(row) if label != "skipped-non-active" else None
             ),
+            copied_scopes=None if c is None else c.copied_scopes,
+            admin_level_scopes=None if c is None else c.admin_level_scopes,
         )
 
     @staticmethod
@@ -446,6 +488,7 @@ class ServiceAccountMigrationService:
         successor_status: str | None = None
         agent_id: str | None = None
         stored_scopes = toolkit_bindings = credential_bindings = 0
+        copied: list[tuple[str, str | None]] = []
         access_revoked = refresh_revoked = 0
 
         try:
@@ -480,9 +523,10 @@ class ServiceAccountMigrationService:
                         status=successor_status,
                         api_key_hash=current.api_key_hash,
                     )
-                    stored_scopes = await ServiceAccountMigrationRepository.copy_scope_grants(
+                    copied = await ServiceAccountMigrationRepository.copy_scope_grants(
                         session, service_account_id=row.id, agent_id=agent_id
                     )
+                    stored_scopes = len(copied)
                     (
                         toolkit_bindings,
                         credential_bindings,
@@ -533,7 +577,13 @@ class ServiceAccountMigrationService:
                         target_id=agent_id,
                         actor_type=_AUDIT_ACTOR_TYPE,
                         actor_id=_AUDIT_ACTOR_ID,
-                        after={"copied_scope_count": stored_scopes},
+                        after={
+                            "copied_scope_count": stored_scopes,
+                            "copied_scopes": [scope for scope, _ in copied],
+                            "admin_level_scopes": sorted(
+                                scope for scope, _ in copied if scope in ADMIN_LEVEL_SCOPES
+                            ),
+                        },
                         reason="theme8_sa_migration_grant_copy",
                         origin=Origin.SYSTEM.value,
                     )
@@ -605,6 +655,20 @@ class ServiceAccountMigrationService:
         # and copy the per-binding inline rules (H2). A failure here is a row
         # outcome (L1); a crash between the admin commit and this call is
         # healed by the M1 re-run on the already_migrated path.
+        admin_level = _admin_level_grants(copied)
+        for grant in admin_level:
+            # Committed above: one WARNING per admin-level grant the successor
+            # now holds, so the operator reviews it (the grant is kept).
+            logger.warning(
+                "service_account_migration_admin_scope_copied",
+                service_account_id=current.id,
+                successor_agent_id=agent_id,
+                owner_id=current.owner_id,
+                scope=grant["scope"],
+                original_granted_by=grant["original_granted_by"],
+                actionable_step=_ADMIN_SCOPE_REVIEW_STEP,
+            )
+
         rules_copied = 0
         sync_error = None
         if agent_id is not None:
@@ -630,6 +694,8 @@ class ServiceAccountMigrationService:
                 self._visibility_note(current) if agent_id is not None else None
             ),
             reason=reason,
+            copied_scopes=tuple(scope for scope, _ in copied),
+            admin_level_scopes=admin_level,
         )
 
     # ------------------------------------------------------------------ sweep
@@ -813,6 +879,9 @@ class ServiceAccountMigrationService:
             )
             post_stamp = await ServiceAccountMigrationRepository.count_post_stamp_mutations(session)
             migrated_pairs = await ServiceAccountMigrationRepository.list_migrated_pairs(session)
+            admin_grants = await ServiceAccountMigrationRepository.list_successor_admin_grants(
+                session
+            )
         rule_mismatch = await self._count_inline_rule_mismatches(migrated_pairs)
 
         result = VerificationResult(
@@ -830,6 +899,7 @@ class ServiceAccountMigrationService:
             digest_mismatch_count=digest_mismatch,
             post_stamp_mutation_count=post_stamp,
             inline_rule_mismatch_count=rule_mismatch,
+            successor_admin_scope_count=len(admin_grants),
         )
         result.findings.append(
             {
@@ -841,9 +911,23 @@ class ServiceAccountMigrationService:
                 "digest_mismatch_count": digest_mismatch,
                 "post_stamp_mutation_count": post_stamp,
                 "inline_rule_mismatch_count": rule_mismatch,
+                "successor_admin_scope_count": len(admin_grants),
                 "tool_version": __version__,
             }
         )
+        for grant in admin_grants:
+            result.findings.append(
+                {
+                    "category": _SUCCESSOR_ADMIN_SCOPE_CATEGORY,
+                    "agent_id": grant.agent_id,
+                    "agent_name": grant.agent_name,
+                    "owner_id": grant.owner_id,
+                    "status": grant.status,
+                    "scope": grant.scope,
+                    "informational": True,
+                    "actionable_step": _ADMIN_SCOPE_REVIEW_STEP,
+                }
+            )
         logger.info(
             "service_account_migration_verify",
             passed=result.passed,
@@ -853,7 +937,17 @@ class ServiceAccountMigrationService:
             digest_mismatch_count=digest_mismatch,
             post_stamp_mutation_count=post_stamp,
             inline_rule_mismatch_count=rule_mismatch,
+            successor_admin_scope_count=len(admin_grants),
         )
+        if admin_grants:
+            logger.warning(
+                "service_account_migration_verify_admin_scopes",
+                successor_admin_scope_count=len(admin_grants),
+                actionable_step=(
+                    "Informational — does not fail verify. Review the "
+                    f"{_SUCCESSOR_ADMIN_SCOPE_CATEGORY} report lines."
+                ),
+            )
 
         if acknowledge and result.passed:
             async with self._ctx.admin_db.transaction() as session:

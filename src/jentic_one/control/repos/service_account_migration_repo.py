@@ -28,6 +28,14 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.control.core.schema.agent_permission_rules import AgentPermissionRule
+from jentic_one.shared.auth.permission_catalog import (
+    AGENTS_WRITE,
+    CONFIG_WRITE,
+    CREDENTIALS_WRITE,
+    OAUTH_CLIENTS_WRITE,
+    ORG_ADMIN,
+    USERS_WRITE,
+)
 from jentic_one.shared.db.ids import generate_ksuid
 
 # The job's system actor — stamped as created_by/registered_by/granted_by so
@@ -48,6 +56,15 @@ THEME8_RETIRED_SCOPES: frozenset[str] = frozenset(
         "service-accounts:write",
         "owner:service-accounts:read",
     }
+)
+
+#: Admin-level scopes: the ones that let a holder manage other principals,
+#: their grants or credentials, or platform configuration. A successor agent
+#: that inherits one of these from its service account is reported to the
+#: operator (report line + WARNING log + ``verify`` finding) — never stripped,
+#: because a legitimate automation SA may well have held it.
+ADMIN_LEVEL_SCOPES: frozenset[str] = frozenset(
+    {ORG_ADMIN, USERS_WRITE, AGENTS_WRITE, CREDENTIALS_WRITE, CONFIG_WRITE, OAUTH_CLIENTS_WRITE}
 )
 
 _LIST_SERVICE_ACCOUNTS = text(
@@ -85,7 +102,7 @@ _INSERT_AGENT_CREDENTIAL = text(
 )
 
 _SELECT_GRANTS = text(
-    "SELECT scope FROM actor_scope_grants"
+    "SELECT scope, granted_by FROM actor_scope_grants"
     " WHERE actor_id = :actor_id AND actor_type = 'service_account'"
     " ORDER BY scope"
 )
@@ -251,32 +268,49 @@ class ServiceAccountMigrationRepository:
         return agent_id
 
     @staticmethod
+    async def list_copyable_grants(
+        session: AsyncSession, *, service_account_id: str
+    ) -> list[tuple[str, str | None]]:
+        """The SA's stored grants a migration copies: ``(scope, granted_by)``.
+
+        Stored rows only, theme-8-retired ``service-accounts:*`` scopes
+        excluded (left for the sweep). ``granted_by`` is the ORIGINAL grantor
+        — the twin is re-stamped with the job's system actor, so this is the
+        only place the report can recover it from.
+        """
+        rows = (await session.execute(_SELECT_GRANTS, {"actor_id": service_account_id})).all()
+        return [
+            (str(row.scope), row.granted_by)
+            for row in rows
+            if row.scope not in THEME8_RETIRED_SCOPES
+        ]
+
+    @staticmethod
     async def copy_scope_grants(
         session: AsyncSession, *, service_account_id: str, agent_id: str
-    ) -> int:
+    ) -> list[tuple[str, str | None]]:
         """COPY stored grant rows onto the successor; keep the originals (N1).
 
         Stored rows only — the resolve-time closure stays resolve-time; an
         empty set stays empty (F1). Theme-8-retired ``service-accounts:*``
-        scopes get no twin (left for the sweep).
+        scopes get no twin (left for the sweep). Returns the copied
+        ``(scope, original granted_by)`` pairs, in scope order.
         """
-        rows = (await session.execute(_SELECT_GRANTS, {"actor_id": service_account_id})).all()
-        copied = 0
-        for row in rows:
-            if row.scope in THEME8_RETIRED_SCOPES:
-                continue
+        grants = await ServiceAccountMigrationRepository.list_copyable_grants(
+            session, service_account_id=service_account_id
+        )
+        for scope, _granted_by in grants:
             await session.execute(
                 _INSERT_GRANT_TWIN,
                 {
                     "id": generate_ksuid("asg"),
                     "actor_id": agent_id,
-                    "scope": row.scope,
+                    "scope": scope,
                     "granted_by": SYSTEM_ACTOR,
                     "created_by": SYSTEM_ACTOR,
                 },
             )
-            copied += 1
-        return copied
+        return grants
 
     @staticmethod
     async def copy_bindings(
@@ -551,6 +585,35 @@ class ServiceAccountMigrationRepository:
             )
         )
         return [(r.id, r.migrated_to_actor_id) for r in rows.all()]
+
+    @staticmethod
+    async def list_successor_admin_grants(session: AsyncSession) -> list[Any]:
+        """Admin-level grants the migration carried onto successor agents.
+
+        Informational ``verify`` read (never a failing criterion): every
+        :data:`ADMIN_LEVEL_SCOPES` grant still held by a migration-created
+        successor (``registered_by`` = the job's system actor, name
+        ``service-account:<sva_ id>``) with the job as its grantor — a scope an
+        operator has since re-granted themselves is no longer "carried over".
+        Rows: ``agent_id, agent_name, owner_id, status, scope``.
+        """
+        scope_params = {f"scope_{i}": s for i, s in enumerate(sorted(ADMIN_LEVEL_SCOPES))}
+        placeholders = ", ".join(f":{name}" for name in scope_params)
+        rows = await session.execute(
+            text(
+                "SELECT a.id AS agent_id, a.name AS agent_name, a.owner_id, a.status, g.scope"
+                " FROM actor_scope_grants g"
+                " JOIN agents a ON a.id = g.actor_id"
+                " WHERE g.actor_type = 'agent'"
+                " AND a.registered_by = :system_actor"
+                " AND a.name LIKE 'service-account:%'"
+                " AND g.granted_by = :system_actor"
+                f" AND g.scope IN ({placeholders})"
+                " ORDER BY a.id, g.scope"
+            ),
+            {"system_actor": SYSTEM_ACTOR, **scope_params},
+        )
+        return list(rows.all())
 
     @staticmethod
     async def sweep_service_account(session: AsyncSession, *, service_account_id: str) -> bool:

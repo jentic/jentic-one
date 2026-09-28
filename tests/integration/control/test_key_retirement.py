@@ -16,6 +16,7 @@ from collections.abc import AsyncGenerator
 from typing import Any
 
 import pytest
+import structlog
 from sqlalchemy import delete, select, text
 
 from jentic_one.control.core.schema.credentials import Credential
@@ -155,6 +156,7 @@ async def _bind_credential(
     toolkit_id: str,
     suffix: str,
     rules: list[tuple[str, str]] | None = None,
+    created_by: str = _OWNER,
 ) -> str:
     """Bind a fresh credential to the toolkit with the given (effect, path) rules."""
     credential_id = f"cred_krtest{suffix}"
@@ -165,7 +167,7 @@ async def _bind_credential(
                 type="token_value",
                 name=f"kr-cred-{suffix}",
                 api_vendor="krtest.local",
-                created_by=_OWNER,
+                created_by=created_by,
             )
         )
         await session.flush()
@@ -230,6 +232,7 @@ async def test_happy_path_creates_all_successor_artifacts(
     assert successor_id is not None and successor_id.startswith("agnt_")
     assert set(outcome.bound_credential_ids) == {ruled_cred, rule_less_cred}
     assert outcome.rule_less_credential_ids == (rule_less_cred,)
+    assert outcome.cross_owner_credential_ids == ()
 
     # 1) The agent, named for the key, active, owned by the key's creator
     #    (theme-8 Phase 1: the job mints agents, never service accounts).
@@ -484,3 +487,48 @@ async def test_a_failing_key_does_not_strand_the_rest(
     assert by_key[good_key].action == "migrated"
     assert await _migrated_actor_id(control_db, bad_key) is None
     assert await _migrated_actor_id(control_db, good_key) == by_key[good_key].successor_actor_id
+
+
+async def test_cross_owner_credential_is_bound_and_reported(
+    integration_context: Context,
+    control_db: DatabaseSession,
+    admin_db: DatabaseSession,
+    seed_owner: None,
+) -> None:
+    """A key's toolkit that reached a credential its owner did not create:
+    the successor is still bound to it (access parity, nothing dropped), and
+    the pair is reported — outcome field + one WARNING line, no secrets."""
+    toolkit_id, key_id, lookup = await _seed_toolkit_with_key(control_db, suffix="xo")
+    own_cred = await _bind_credential(control_db, toolkit_id=toolkit_id, suffix="xoown")
+    foreign_cred = await _bind_credential(
+        control_db, toolkit_id=toolkit_id, suffix="xoforeign", created_by=_FALLBACK_OWNER
+    )
+
+    with structlog.testing.capture_logs() as logs:
+        outcomes = await KeyRetirementService(integration_context).run()
+
+    outcome = {o.key_id: o for o in outcomes}[key_id]
+    assert outcome.action == "migrated"
+    successor_id = outcome.successor_actor_id
+    assert set(outcome.bound_credential_ids) == {own_cred, foreign_cred}
+    assert outcome.cross_owner_credential_ids == (foreign_cred,)
+
+    bound = await _admin_rows(
+        admin_db,
+        "SELECT credential_id FROM agent_credential_bindings WHERE agent_id = :a",
+        {"a": successor_id},
+    )
+    assert {r.credential_id for r in bound} == {own_cred, foreign_cred}
+
+    (warning,) = [e for e in logs if e["event"] == "toolkit_key_retirement_cross_owner_binding"]
+    assert warning["log_level"] == "warning"
+    assert warning["successor_actor_id"] == successor_id
+    assert warning["owner_id"] == _OWNER
+    assert warning["cred_id"] == foreign_cred
+    assert warning["cred_created_by"] == _FALLBACK_OWNER
+    assert not any(v == lookup for e in logs for v in e.values())
+
+    # Reported once: a re-run short-circuits on the stamp.
+    rerun = {o.key_id: o for o in await KeyRetirementService(integration_context).run()}
+    assert rerun[key_id].action == "already_migrated"
+    assert rerun[key_id].cross_owner_credential_ids == ()

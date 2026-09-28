@@ -47,6 +47,7 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
+from jentic_one.control.repos.credential_repo import CredentialRepository
 from jentic_one.control.repos.key_retirement_repo import SYSTEM_ACTOR, KeyRetirementRepository
 from jentic_one.control.repos.permission_rule_set_repo import PermissionRuleSetRepository
 from jentic_one.control.repos.toolkit_binding_repo import ToolkitBindingRepository
@@ -79,6 +80,10 @@ class KeyRetirementOutcome:
     successor_actor_id: str | None = None
     bound_credential_ids: tuple[str, ...] = ()
     rule_less_credential_ids: tuple[str, ...] = ()
+    #: Bound credentials whose creator is not the successor's owner — the
+    #: toolkit path never compared the two. Informational: the bindings are
+    #: kept (legitimate toolkit sharing produces them too); one WARNING each.
+    cross_owner_credential_ids: tuple[str, ...] = ()
 
 
 #: Report-field → log-key renames: ``credential`` is a redactor key substring
@@ -87,6 +92,7 @@ class KeyRetirementOutcome:
 _LOG_KEY_RENAMES: dict[str, str] = {
     "bound_credential_ids": "bound_cred_ids",
     "rule_less_credential_ids": "rule_less_cred_ids",
+    "cross_owner_credential_ids": "cross_owner_cred_ids",
 }
 
 
@@ -208,6 +214,9 @@ class KeyRetirementService:
         # re-runnable state, never a bound actor whose rules are missing.
         async with self._ctx.control_db.transaction() as control_session:
             pairs = await self._load_credential_pairs(control_session, toolkit.id)
+            creators = await CredentialRepository.get_creators_by_ids(
+                control_session, [credential_id for credential_id, _ in pairs]
+            )
             rule_sets: dict[str, str | None] = {}
             rule_less: list[str] = []
             for credential_id, rules in pairs:
@@ -250,6 +259,28 @@ class KeyRetirementService:
         async with self._ctx.control_db.transaction() as control_session:
             await ToolkitKeyRepository.stamp_migrated_actor(control_session, key.id, successor_id)
 
+        cross_owner = tuple(
+            credential_id
+            for credential_id in rule_sets
+            if creators.get(credential_id) is None
+            or creators[credential_id] not in (owner_id, successor_id)
+        )
+        for credential_id in cross_owner:
+            # ``credential`` is a redactor key substring — renamed for the log line.
+            logger.warning(
+                "toolkit_key_retirement_cross_owner_binding",
+                key_id=key.id,
+                toolkit_id=toolkit.id,
+                successor_actor_id=successor_id,
+                owner_id=owner_id,
+                cred_id=credential_id,
+                cred_created_by=creators.get(credential_id),
+                actionable_step=(
+                    "Review the binding; if unexpected, remove it with "
+                    "`DELETE /agents/{agent_id}/credentials/{credential_id}`."
+                ),
+            )
+
         return KeyRetirementOutcome(
             key_id=key.id,
             toolkit_id=toolkit.id,
@@ -258,6 +289,7 @@ class KeyRetirementService:
             successor_actor_id=successor_id,
             bound_credential_ids=tuple(rule_sets),
             rule_less_credential_ids=tuple(rule_less),
+            cross_owner_credential_ids=cross_owner,
         )
 
     @staticmethod

@@ -31,6 +31,11 @@ The contract is the same on every install shape; only the commands differ.
    them split across releases.
 5. **Keep the CLIs on the same release** as the server:
    `jenticctl update` updates the binaries and checks the stack.
+6. **Review what the upgrade carried over.** The upgrade steps keep
+   existing access intact and report, rather than remove, admin-level grants
+   copied onto successor agents and cross-owner credential bindings — see
+   [Reviewing grants and bindings carried over by the upgrade](../development/releasing.md#reviewing-grants-and-bindings-carried-over-by-the-upgrade)
+   for the read-only audit queries.
 
 Rolling *back* the app version is supported only together with restoring the
 matching pre-upgrade snapshot — old code on a newer schema is not a supported

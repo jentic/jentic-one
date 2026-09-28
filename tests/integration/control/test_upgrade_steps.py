@@ -15,6 +15,7 @@ import datetime as dt
 from collections.abc import AsyncGenerator
 
 import pytest
+import structlog
 from sqlalchemy import delete, text
 
 from jentic_one.control.core.schema.credentials import Credential
@@ -23,6 +24,7 @@ from jentic_one.control.core.schema.toolkit_flattening_acks import ToolkitFlatte
 from jentic_one.control.core.schema.toolkit_permission_rules import ToolkitPermissionRule
 from jentic_one.control.core.schema.toolkits import Toolkit
 from jentic_one.control.core.schema.upgrade_steps import UpgradeStep
+from jentic_one.control.services.toolkit_flattening import ToolkitFlatteningService
 from jentic_one.control.services.upgrade_steps import (
     STEP_FLATTEN_TOOLKITS,
     STEP_RETIRE_TOOLKIT_KEYS,
@@ -37,6 +39,8 @@ _OWNER = "usr_ustest_owner"
 _AGENT = "agnt_ustest_a"
 _TOOLKIT = "tk_ustest_a"
 _CRED = "cred_ustest_a"
+_FOREIGN_CRED = "cred_ustest_foreign"
+_OTHER_USER = "usr_ustest_other"
 
 
 @pytest.fixture()
@@ -116,8 +120,8 @@ async def toolkit_bound_agent(
         )
         await session.execute(
             text(
-                "INSERT INTO agents (id, name, registered_by, status)"
-                " VALUES (:id, 'us-agent', :owner, 'approved')"
+                "INSERT INTO agents (id, name, owner_id, registered_by, status)"
+                " VALUES (:id, 'us-agent', :owner, :owner, 'approved')"
             ),
             {"id": _AGENT, "owner": _OWNER},
         )
@@ -161,9 +165,68 @@ async def test_run_flattens_and_ledgers_the_step(
     assert flatten.action == "performed"
     assert flatten.summary["created"] == 1
     assert flatten.summary["created_default_deny"] == 0
+    # The owner created the credential: nothing to review.
+    assert flatten.summary["findings"] == {}
+    assert flatten.warnings == ()
     assert await _direct_binding_count(admin_db) == 1
     # Key retirement is re-run every time (idempotent per key), never ledgered.
     assert await _ledger(control_db) == [STEP_FLATTEN_TOOLKITS]
+
+
+async def test_cross_owner_pair_is_bound_and_reported_for_review(
+    integration_context: Context,
+    control_db: DatabaseSession,
+    admin_db: DatabaseSession,
+    toolkit_bound_agent: None,
+) -> None:
+    """A toolkit that reached a credential the agent's owner did not create
+    still flattens to a direct binding (nothing dropped), and the upgrade
+    step reports it: a ``cross_owner_binding`` finding, a WARNING log line,
+    an operator warning on the step outcome, and the same line on verify."""
+    async with control_db.session() as session:
+        session.add(
+            Credential(
+                id=_FOREIGN_CRED,
+                type="token_value",
+                name="us-foreign-cred",
+                # Another vendor, so the pair adds no pooled-rule drift line.
+                api_vendor="ustest-foreign.local",
+                created_by=_OTHER_USER,
+            )
+        )
+        await session.flush()
+        session.add(
+            ToolkitCredentialBinding(
+                toolkit_id=_TOOLKIT, credential_id=_FOREIGN_CRED, created_by=_OTHER_USER
+            )
+        )
+        await session.commit()
+
+    with structlog.testing.capture_logs() as logs:
+        outcomes = {o.name: o for o in await UpgradeStepService(integration_context).run()}
+
+    flatten = outcomes[STEP_FLATTEN_TOOLKITS]
+    assert flatten.action == "performed"
+    assert flatten.failed is False
+    assert flatten.summary["created"] == 2
+    assert await _direct_binding_count(admin_db) == 2  # nothing stripped
+    assert flatten.summary["findings"] == {"cross_owner_binding": 1}
+    assert any("did not create" in w for w in flatten.warnings)
+
+    (warning,) = [e for e in logs if e["event"] == "toolkit_flattening_cross_owner_binding"]
+    assert warning["log_level"] == "warning"
+    assert warning["agent_id"] == _AGENT
+    assert warning["agent_owner_id"] == _OWNER
+    assert warning["cred_id"] == _FOREIGN_CRED
+    assert warning["cred_created_by"] == _OTHER_USER
+
+    verify = await ToolkitFlatteningService(integration_context).verify()
+    assert verify.passed  # informational — never a verify failure
+    (finding,) = [f for f in verify.findings if f.category == "cross_owner_binding"]
+    assert finding.detail["credential_id"] == _FOREIGN_CRED
+    assert finding.detail["credential_created_by"] == _OTHER_USER
+    assert finding.detail["agent_owner_id"] == _OWNER
+    assert finding.detail["via_toolkit_ids"] == [_TOOLKIT]
 
 
 async def test_acknowledged_flatten_is_not_redone(

@@ -46,6 +46,7 @@ _KEY_OUTCOME = KeyRetirementOutcome(
     successor_actor_id="agnt_1",
     bound_credential_ids=("cred_a", "cred_b"),
     rule_less_credential_ids=("cred_b",),
+    cross_owner_credential_ids=("cred_a",),
 )
 
 
@@ -64,6 +65,7 @@ def test_raw_report_fields_would_be_redacted() -> None:
     assert set(_redacted_keys(asdict(_KEY_OUTCOME))) == {
         "bound_credential_ids",
         "rule_less_credential_ids",
+        "cross_owner_credential_ids",
     }
 
 
@@ -85,6 +87,7 @@ def test_key_retirement_log_fields_survive_redaction() -> None:
     assert REDACTED not in out.values()
     assert out["bound_cred_ids"] == ("cred_a", "cred_b")
     assert out["rule_less_cred_ids"] == ("cred_b",)
+    assert out["cross_owner_cred_ids"] == ("cred_a",)
 
 
 @pytest.mark.parametrize(

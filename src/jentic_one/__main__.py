@@ -468,6 +468,14 @@ async def _migrate_service_accounts(
                 file=sys.stderr,
                 flush=True,
             )
+            if result.successor_admin_scope_count:
+                print(
+                    f"==> REVIEW (informational, does not fail verify): "
+                    f"{result.successor_admin_scope_count} admin-level grant(s) carried onto "
+                    "successor agents — see the successor_admin_scope report lines.",
+                    file=sys.stderr,
+                    flush=True,
+                )
             if acknowledge:
                 print(
                     _sa_acknowledge_message(result),
@@ -503,6 +511,15 @@ async def _migrate_service_accounts(
         file=sys.stderr,
         flush=True,
     )
+    admin_scoped = sum(1 for o in outcomes if o.admin_level_scopes)
+    if admin_scoped:
+        print(
+            f"==> REVIEW: {admin_scoped} successor agent(s) "
+            f"{'would receive' if diff_only else 'received'} admin-level scope(s) from "
+            "their service account — see admin_level_scopes in the report.",
+            file=sys.stderr,
+            flush=True,
+        )
     return 1 if failed else 0
 
 

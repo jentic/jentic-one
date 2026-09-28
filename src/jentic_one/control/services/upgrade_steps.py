@@ -47,7 +47,10 @@ from jentic_one import __version__
 from jentic_one.control.repos.upgrade_step_repo import UpgradeStepRepository
 from jentic_one.control.services.key_retirement import KeyRetirementService
 from jentic_one.control.services.run_lock import UPGRADE_STEPS_LOCK_KEY, hold_run_lock
-from jentic_one.control.services.toolkit_flattening import ToolkitFlatteningService
+from jentic_one.control.services.toolkit_flattening import (
+    CROSS_OWNER_BINDING_CATEGORY,
+    ToolkitFlatteningService,
+)
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.errors import DatabaseIntegrityError
 
@@ -134,13 +137,22 @@ class UpgradeStepService:
             )
         by_action = Counter(o.action for o in outcomes)
         skipped = Counter(o.reason for o in outcomes if o.action == "skipped")
+        cross_owner = sum(len(o.cross_owner_credential_ids) for o in outcomes)
         summary: dict[str, Any] = {
             "migrated": by_action["migrated"],
             "already_migrated": by_action["already_migrated"],
             "skipped": dict(sorted(skipped.items())),
             "failed": by_action["failed"],
+            "cross_owner_bindings": cross_owner,
         }
         warnings: list[str] = []
+        if cross_owner:
+            warnings.append(
+                f"{cross_owner} binding(s) were created from a toolkit key to a credential its "
+                "new agent's owner did not create (kept; see the "
+                "toolkit_key_retirement_cross_owner_binding log lines) — review them and unbind "
+                "any you do not expect"
+            )
         if by_action["failed"]:
             warnings.append(
                 f"{by_action['failed']} toolkit key(s) failed to migrate (see the "
@@ -203,17 +215,26 @@ class UpgradeStepService:
         }
         await self._record(STEP_FLATTEN_TOOLKITS, summary)
         logger.info("upgrade_step", step=STEP_FLATTEN_TOOLKITS, **summary)
-        warnings = (
-            (
+        warnings: list[str] = []
+        if default_deny:
+            warnings.append(
                 f"{default_deny} agent-credential pair(s) were bound default-deny (conflicting "
                 "or missing toolkit rules); review them with "
-                "`jentic_one flatten-toolkits --diff-only --report report.jsonl`",
+                "`jentic_one flatten-toolkits --diff-only --report report.jsonl`"
             )
-            if default_deny
-            else ()
-        )
+        if review[CROSS_OWNER_BINDING_CATEGORY]:
+            warnings.append(
+                f"{review[CROSS_OWNER_BINDING_CATEGORY]} agent-credential pair(s) bind a "
+                "credential the agent's owner did not create (kept); review the "
+                f"{CROSS_OWNER_BINDING_CATEGORY} lines of "
+                "`jentic_one flatten-toolkits --verify --report report.jsonl` and unbind any "
+                "you do not expect"
+            )
         return UpgradeStepOutcome(
-            name=STEP_FLATTEN_TOOLKITS, action="performed", summary=summary, warnings=warnings
+            name=STEP_FLATTEN_TOOLKITS,
+            action="performed",
+            summary=summary,
+            warnings=tuple(warnings),
         )
 
     async def _record(self, name: str, summary: dict[str, Any]) -> None:

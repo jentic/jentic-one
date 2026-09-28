@@ -369,6 +369,91 @@ run the Phase-1 migration (above) first — the boot job still does it.
   matches any endpoint (agents are the only machine actor — filter with
   `--actor agent`).
 
+## Reviewing grants and bindings carried over by the upgrade
+
+The theme-5 and theme-8 upgrade steps preserve access exactly: nothing is
+stripped. Two kinds of carried-over access are worth a deliberate review
+after the upgrade:
+
+- **Admin-level scopes on successor agents.** A migrated service account's
+  grants are copied verbatim onto its `service-account:<sva_ id>` successor
+  agent, including admin-level scopes (`org:admin`, `users:write`,
+  `agents:write`, `credentials:write`, `config:write`,
+  `oauth-clients:write`).
+- **Cross-owner credential bindings.** A binding created by flattening or
+  key retirement where the credential's creator is neither the agent's owner
+  nor the agent itself (or where either side is unrecorded).
+
+Where the upgrade reports them (all informational — none fails a step,
+`--verify`, or `--acknowledge`; no secret material is logged):
+
+| Source | What it emits |
+| ------ | ------------- |
+| `migrate-service-accounts` (boot job or CLI) | `copied_scopes` and `admin_level_scopes` per SA in the `--report` JSONL (also on `--diff-only`), a `==> REVIEW` line, one `service_account_migration_admin_scope_copied` WARNING per admin-level grant, and the copied scope names in the migration's grant audit row. |
+| `migrate-service-accounts --verify` | One `successor_admin_scope` report line per admin-level grant still held from the migration, `successor_admin_scope_count` in the summary, and a `==> REVIEW` line. |
+| Toolkit flattening (upgrade step or `flatten-toolkits`) | `cross_owner_binding` findings in the report (run and `--verify`), a `toolkit_flattening_cross_owner_binding` WARNING per binding, and an `==> WARNING` line from the upgrade step. |
+| Toolkit key retirement (upgrade step or boot) | `cross_owner_credential_ids` in the step outcome, a `toolkit_key_retirement_cross_owner_binding` WARNING per binding, and an `==> WARNING` line from the upgrade step. |
+
+The same state can be listed at any time with read-only queries.
+
+**Successor agents holding admin-level grants** (admin DB; on Postgres
+prefix the tables with the `admin.` schema):
+
+```sql
+SELECT a.id, a.name, a.owner_id, a.status, g.scope, g.granted_by
+FROM actor_scope_grants g
+JOIN agents a ON a.id = g.actor_id
+WHERE g.actor_type = 'agent'
+  AND a.name LIKE 'service-account:%'
+  AND g.scope IN ('org:admin', 'users:write', 'agents:write',
+                  'credentials:write', 'config:write', 'oauth-clients:write')
+ORDER BY a.id, g.scope;
+```
+
+`granted_by = 'system:theme8-sa-migration'` marks a grant the migration
+copied; any other grantor means someone has granted it since.
+
+**Bindings whose credential creator differs from the agent owner.** The
+bindings live in the admin DB and the credential creators in the control
+DB, so on SQLite this is two queries; on Postgres (both schemas in one
+database) it is one join.
+
+```sql
+-- Postgres: one query across the admin and control schemas
+SELECT b.agent_id, a.name, a.owner_id, b.credential_id, c.created_by
+FROM admin.agent_credential_bindings b
+JOIN admin.agents a ON a.id = b.agent_id
+LEFT JOIN control.credentials c ON c.id = b.credential_id
+WHERE c.created_by IS NULL
+   OR a.owner_id IS NULL
+   OR c.created_by NOT IN (a.owner_id, a.id)
+ORDER BY b.agent_id, b.credential_id;
+```
+
+```sql
+-- SQLite step 1 (admin DB): every binding with its agent's owner
+SELECT b.agent_id, a.name, a.owner_id, b.credential_id
+FROM agent_credential_bindings b
+JOIN agents a ON a.id = b.agent_id
+ORDER BY b.agent_id;
+
+-- SQLite step 2 (control DB): the creators of those credentials
+SELECT id, created_by FROM credentials WHERE id IN ('cred_…', …);
+```
+
+Flag a step-1 row when its credential's `created_by` (step 2) is missing or
+is neither the row's `owner_id` nor its `agent_id`.
+
+**What to do.** Expected rows need no action — the upgrade kept the access
+the old model already allowed. For an unexpected one:
+
+- narrow the agent's scopes with `PUT /agents/{agent_id}/scopes` (the body
+  is the full scope set to keep), or disable the agent while you decide;
+- remove a binding with
+  `DELETE /agents/{agent_id}/credentials/{credential_id}`.
+
+Both are ordinary, audited mutations.
+
 ## Deprecations
 
 Active deprecation windows are registered here (the named channel) and
