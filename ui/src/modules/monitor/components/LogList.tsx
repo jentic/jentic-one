@@ -25,12 +25,49 @@ import {
 	type ReactNode,
 	type RefObject,
 } from 'react';
+import { AlertTriangle, Loader2, XCircle } from 'lucide-react';
 import { formatStreamDayLabel, formatStreamTime, streamDayKey } from '@/shared/lib';
 import { cn } from '@/shared/lib/utils';
-import { StatusGlyph } from '@/shared/ui';
 import type { LogTone } from '@/modules/monitor/lib/logVocabulary';
 
 export type { LogTone };
+
+/* ------------------------------------------------------------------ */
+/* Status glyph — the one status vocabulary                            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * ok       it worked (a completed call, a finished job)
+ * fail     it didn't (failed call/job, error event, failed sign-in)
+ * warn     worth a look (warnings, cancellations, destructive admin actions)
+ * running  still going (queued / running jobs)
+ * neutral  a plain record (most audit entries, informational events)
+ *
+ * Weight follows importance: the everyday outcomes are quiet dots, the ones
+ * that need a reader's eye are glyphs.
+ */
+export function StatusGlyph({ tone, label }: { tone: LogTone; label: string }) {
+	return (
+		<span className="flex h-5 w-4 shrink-0 items-center justify-center">
+			{tone === 'fail' ? (
+				<XCircle className="text-danger h-4 w-4" aria-hidden="true" />
+			) : tone === 'warn' ? (
+				<AlertTriangle className="text-warning h-3.5 w-3.5" aria-hidden="true" />
+			) : tone === 'running' ? (
+				<Loader2 className="text-primary h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+			) : (
+				<span
+					aria-hidden="true"
+					className={cn(
+						'h-2 w-2 rounded-full',
+						tone === 'ok' ? 'bg-success' : 'bg-muted-foreground/40',
+					)}
+				/>
+			)}
+			<span className="sr-only">{label}</span>
+		</span>
+	);
+}
 
 /* ------------------------------------------------------------------ */
 /* Row                                                                 */

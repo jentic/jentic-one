@@ -7,9 +7,8 @@
  */
 import type { ExecutionStatusUi, JobStatusUi } from '@/modules/monitor/api';
 import { ORIGIN_OPTIONS } from '@/modules/monitor/lib/useMonitorFilters';
-import type { StatusGlyphTone } from '@/shared/ui';
 
-export type LogTone = StatusGlyphTone;
+export type LogTone = 'ok' | 'fail' | 'warn' | 'running' | 'neutral';
 
 export const EXECUTION_TONE: Record<ExecutionStatusUi, LogTone> = {
 	running: 'running',

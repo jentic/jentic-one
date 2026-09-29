@@ -175,9 +175,6 @@ export type { AgentMarkSlug, VendorMarkSlug, VendorMarkData } from '@/shared/ui/
 export { AgentMark } from '@/shared/ui/AgentMark';
 export type { AgentMarkProps, AgentMarkSize } from '@/shared/ui/AgentMark';
 
-export { StatusGlyph } from '@/shared/ui/StatusGlyph';
-export type { StatusGlyphProps, StatusGlyphTone } from '@/shared/ui/StatusGlyph';
-
 export {
 	ActorStatusBadge,
 	ACTOR_STATUSES,
