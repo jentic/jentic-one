@@ -23,6 +23,14 @@ export type {
 
 export { DiscoverApiError } from '@/modules/discover/api/client';
 
+export { useWorkspaceDigest } from '@/modules/discover/api/workspaceDigest';
+export type {
+	WorkspaceDigest,
+	WorkspaceDigestRow,
+	AttentionEntry,
+	AttentionId,
+} from '@/modules/discover/api/workspaceDigest';
+
 export type { DiscoveryEntity, CatalogFilter } from '@/modules/discover/api/types';
 
 // Re-export the generated preview types the views render, so view components
