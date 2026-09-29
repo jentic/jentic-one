@@ -367,20 +367,34 @@
 	transform: translateY(-2px);
 }
 
-/* Dialog entrance — small scale + fade, layered over the native top-layer. */
+/* Dialog entrance — a small rise + scale over the native top layer, with the
+   backdrop fading in behind it. The panel itself is NOT faded, like
+   `j1-rise`: starting at opacity:0 would fail visibility/contrast assertions
+   on the first frame. */
 @keyframes j1-dialog-in {
 	from {
-		opacity: 0;
 		transform: translateY(8px) scale(0.98);
 	}
 	to {
-		opacity: 1;
 		transform: translateY(0) scale(1);
+	}
+}
+
+@keyframes j1-backdrop-in {
+	from {
+		opacity: 0;
+	}
+	to {
+		opacity: 1;
 	}
 }
 
 .animate-dialog-in {
 	animation: j1-dialog-in 0.2s var(--ease-out-soft);
+}
+
+.animate-dialog-in::backdrop {
+	animation: j1-backdrop-in 0.2s var(--ease-out-soft);
 }
 
 /* Arriving stream row — a new live event pushes the feed down (the row's
@@ -602,7 +616,8 @@
 @media (prefers-reduced-motion: reduce) {
 	*,
 	*::before,
-	*::after {
+	*::after,
+	*::backdrop {
 		animation-duration: 0.01ms !important;
 		animation-iteration-count: 1 !important;
 		transition-duration: 0.01ms !important;
