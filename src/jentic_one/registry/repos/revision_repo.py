@@ -53,11 +53,13 @@ class ApiRevisionRepository:
         source_filename: str | None = None,
         source_content_id: uuid.UUID | None = None,
         submitted_by: str | None = None,
+        origin: str | None = None,
         created_by: str,
     ) -> ApiRevision:
         revision = ApiRevision(
             api_id=api_id,
             state=ApiRevisionState.DRAFT,
+            origin=origin,
             spec_digest=spec_digest,
             source_type=source_type,
             source_url=source_url,

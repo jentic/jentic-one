@@ -332,6 +332,10 @@ export class ApIsService {
     /**
      * Promote Revision
      * Promote a draft revision to published, archiving the current one.
+     *
+     * If the draft declares different server hosts than the current revision and the
+     * API has credentials bound to agents, the caller also needs ``credentials:write``;
+     * otherwise the promote is refused with 403 ``host_change_requires_operator``.
      * @returns any Successful Response
      * @throws ApiError
      */

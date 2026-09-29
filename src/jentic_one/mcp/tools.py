@@ -744,6 +744,14 @@ async def _promote_revisions(env: CallEnv, revisions: list[Any]) -> dict[str, st
             promoted[f"revision[{idx}]"] = "promote failed: malformed revision entry"
             continue
         state = str(rev.get("state") or "")
+        if rev.get("held_for_review"):
+            # Server-host change guard: the revision changes where the API's bound
+            # credentials are sent, so it stays a draft until an operator promotes it.
+            promoted[revision_id] = (
+                "held for operator review: the new revision changes the API's server "
+                "hosts (promoting it requires credentials:write)"
+            )
+            continue
         if state != "draft":
             promoted[revision_id] = state
             continue

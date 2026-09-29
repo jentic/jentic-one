@@ -12,6 +12,7 @@ from jentic_one.registry.services.errors import (
     CatalogEntryNotFoundError,
     CatalogUnavailableError,
     GovernedHostsUnavailableError,
+    HostChangeRequiresOperatorError,
     InvalidApiFilterError,
     InvalidNoteResourceError,
     InvalidOverlayDocumentError,
@@ -51,6 +52,7 @@ _ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     # lacks overlays:confirm. 403 (not 409) — it's an authorization decision, and an
     # operator-facing conflict event was re-emitted for someone who can resolve it.
     OverlaySupersedeForbiddenError: (403, "overlay_supersede_forbidden"),
+    HostChangeRequiresOperatorError: (403, "host_change_requires_operator"),
     # Editing a materialized overlay re-materializes it onto the served spec (D1), which
     # is an operator action requiring overlays:confirm. A caller with only apis:write is
     # refused with 403 rather than silently rewriting what the platform serves.

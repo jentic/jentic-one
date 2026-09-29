@@ -18922,7 +18922,7 @@
     },
     "/apis/{vendor}/{name}/{version}/revisions/{revision_id}:promote": {
       "post": {
-        "description": "Promote a draft revision to published, archiving the current one.",
+        "description": "Promote a draft revision to published, archiving the current one.\n\nIf the draft declares different server hosts than the current revision and the\nAPI has credentials bound to agents, the caller also needs ``credentials:write``;\notherwise the promote is refused with 403 ``host_change_requires_operator``.",
         "operationId": "promoteRevision",
         "parameters": [
           {

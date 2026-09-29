@@ -62,6 +62,7 @@ def _make_revision(*, state: str = "draft", api_id: uuid.UUID | None = None) -> 
     rev.submitted_by = "bot"
     rev.operation_count = 3
     rev.servers = []
+    rev.origin = None
     rev.promoted_at = None
     rev.archived_at = None
     rev.created_at = datetime(2024, 1, 1, tzinfo=UTC)
@@ -94,6 +95,12 @@ async def test_promote_draft_succeeds() -> None:
         patch(
             "jentic_one.registry.services.revision_service.ApiRepository.set_current_revision",
             new_callable=AsyncMock,
+        ),
+        patch(
+            # Same (empty) server set on both revisions: no host change to guard.
+            "jentic_one.registry.services.revision_service.ServerRepository.list_url_specs",
+            new_callable=AsyncMock,
+            return_value=[],
         ),
         patch(
             "jentic_one.registry.services.revision_service.ApiService._fetch_api_view",

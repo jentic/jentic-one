@@ -55,5 +55,7 @@ class FinalizeStage(BasePipelineStage):
             operation_count=operation_count,
         )
 
-        if ctx.specification.origin is not None:
+        # A revision held by the server-host change guard stays a draft: the API
+        # keeps serving its current revision until an operator promotes it.
+        if ctx.specification.origin is not None and ctx.get("held_host_change") is None:
             await ApiRepository.set_current_revision(ctx.session, api_id, revision_id)

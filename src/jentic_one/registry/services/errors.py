@@ -276,6 +276,28 @@ class OverlaySupersedeForbiddenError(RegistryServiceError):
         self.overlay_id = overlay_id
 
 
+class HostChangeRequiresOperatorError(RegistryServiceError):
+    """Raised when a promote would change the server hosts of a credential-bound API.
+
+    Making a revision current that declares different server hosts changes where the
+    API's bound credentials are sent. That needs an operator holding
+    ``credentials:write``; the caller sees a 403 naming the hosts involved.
+    """
+
+    def __init__(self, revision_id: str, *, current_hosts: list[str], new_hosts: list[str]) -> None:
+        current = ", ".join(current_hosts) or "(none)"
+        new = ", ".join(new_hosts) or "(none)"
+        super().__init__(
+            f"Revision '{revision_id}' changes the API's server hosts from [{current}] to "
+            f"[{new}], and the API has credentials bound to agents. Making it current "
+            "requires the 'credentials:write' permission; ask an operator to review and "
+            "promote it."
+        )
+        self.revision_id = revision_id
+        self.current_hosts = current_hosts
+        self.new_hosts = new_hosts
+
+
 class OverlayRematerializeForbiddenError(RegistryServiceError):
     """Raised when editing a *materialized* overlay would re-materialize it, but the caller can't.
 

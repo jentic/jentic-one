@@ -131,6 +131,11 @@ class ImportHandler:
                             "state": result.state,
                         }
                     )
+                    held = result.held_host_change
+                    if held is not None:
+                        # Server-host change guard: kept as a draft for operator review.
+                        revisions[-1]["held_for_review"] = True
+                        revisions[-1]["host_change"] = held.model_dump()
                     await record_audit_best_effort(
                         self._ctx,
                         action=AuditAction.CREATE,
@@ -144,7 +149,9 @@ class ImportHandler:
                             "name": result.api_name,
                             "version": result.api_version,
                             "state": result.state,
+                            **({"host_change": held.model_dump()} if held is not None else {}),
                         },
+                        reason="server_host_change_held" if held is not None else None,
                         origin=None,
                     )
                 except Exception as exc:
@@ -167,7 +174,10 @@ class ImportHandler:
             # resolved — settle it best-effort so the action-inbox item clears. Keyed on
             # the event payload's ``api_id``; a manual import that was never catalog-
             # tracked simply has no matching event. Never fails the import.
-            for rev in revisions:
+            # A revision held for review did not adopt the upstream spec, so its prompt
+            # stays open until an operator promotes the draft.
+            adopted = [rev for rev in revisions if not rev.get("held_for_review")]
+            for rev in adopted:
                 await self._settle_update_available(job_id, created_by, rev["api"], session)
 
             # A4b worker step: an authorized catalog re-import that supersedes a live
@@ -185,7 +195,15 @@ class ImportHandler:
             #     as success and (idempotently, CAS on CONFIRMED) deprecate + settle.
             recovered_supersede = False
             if supersede_overlay_id:
-                if revisions and not failures:
+                if any(rev.get("held_for_review") for rev in revisions):
+                    # The upstream revision was held for review, so nothing was archived
+                    # and the overlay is still served: leave it confirmed.
+                    logger.info(
+                        "overlay_supersede_skipped_host_change_held",
+                        job_id=job_id,
+                        overlay_id=supersede_overlay_id,
+                    )
+                elif revisions and not failures:
                     await self._deprecate_superseded_overlay(
                         job_id,
                         str(supersede_overlay_id),

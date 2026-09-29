@@ -25,6 +25,7 @@ from typing import Any
 
 import structlog
 
+from jentic_one.registry.ingest.host_change_guard import may_approve_host_change
 from jentic_one.registry.repos.catalog_repo import CatalogRepository
 from jentic_one.registry.repos.catalog_update_check_repo import CatalogUpdateCheckRepository
 from jentic_one.registry.repos.overlay_repo import OverlayRepository
@@ -913,6 +914,11 @@ class CatalogService:
         on the job so the worker auto-deprecates the overlay in the re-ingest transaction.
         An unauthorized caller is refused (``OverlaySupersedeForbiddenError``) rather than
         silently reverting the operator's fix.
+
+        If the re-import would change the server hosts of an API with bound credentials,
+        only a caller holding ``credentials:write`` makes it current; otherwise the worker
+        keeps the new revision as a draft for operator review (see
+        ``registry/ingest/host_change_guard.py``).
         """
         entry = await self.get(api_id)
         supersede_overlay_id = await self._authorize_overlay_supersede(entry, identity)
@@ -921,6 +927,12 @@ class CatalogService:
         )
         if supersede_overlay_id is not None:
             source["supersede_active"] = "true"
+        if may_approve_host_change(identity.permissions):
+            # Server-host change guard: an operator (``credentials:write``) may let a
+            # re-import that changes the API's server hosts become current even when
+            # the API has bound credentials. Everyone else gets such a revision held
+            # as a draft for review. Server-set only; client schemas cannot carry it.
+            source["host_change_approved"] = "true"
         payload: dict[str, Any] = {"sources": [source]}
         if supersede_overlay_id is not None:
             payload["supersede_overlay_id"] = supersede_overlay_id
