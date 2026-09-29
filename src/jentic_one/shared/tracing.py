@@ -26,6 +26,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
+import httpx
 from opentelemetry import context as otel_context
 from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
@@ -39,7 +40,6 @@ from jentic_one.shared.config import TracingConfig
 from jentic_one.shared.redaction import redact_url_query
 
 if TYPE_CHECKING:
-    import httpx
     from opentelemetry.instrumentation.httpx import RequestInfo, ResponseInfo
     from opentelemetry.trace import Span
 
@@ -200,7 +200,7 @@ def current_trace_id() -> str | None:
 # ---------------------------------------------------------------------------
 
 
-def instrument_outbound_client(client: httpx.AsyncClient) -> None:
+def instrument_outbound_client(client: httpx.AsyncClient | httpx.Client) -> None:
     """Instrument the shared outbound ``httpx`` client for W3C propagation.
 
     Distributed tracing must continue *into* the upstream: the outbound request
@@ -213,11 +213,22 @@ def instrument_outbound_client(client: httpx.AsyncClient) -> None:
     OTel home, so no instrumentation site can forget it: no bodies are captured
     and headers are recorded only via the ``_SAFE_SPAN_HEADERS`` safe-list.
     Per-client (not global) so it binds to the one shared pool the lifespan owns.
+
+    The hook flavour must match the client: the instrumentor silently drops a
+    coroutine hook on a sync ``httpx.Client`` (and a plain hook on an
+    ``AsyncClient``), which would leave the recorded URL unmasked.
     """
+    if isinstance(client, httpx.AsyncClient):
+        HTTPXClientInstrumentor().instrument_client(
+            client,
+            request_hook=_redact_request_span_async,
+            response_hook=_redact_response_span_async,
+        )
+        return
     HTTPXClientInstrumentor().instrument_client(
         client,
-        request_hook=_redact_request_span_async,
-        response_hook=_redact_response_span_async,
+        request_hook=_redact_request_span,
+        response_hook=_redact_response_span,
     )
 
 

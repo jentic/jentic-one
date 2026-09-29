@@ -171,6 +171,17 @@ def test_secret_never_reaches_emitted_log(capsys: pytest.CaptureFixture[str]) ->
         (f"https://api.example.com/p#{_SECRET}", f"https://api.example.com/p#{REDACTED}"),
         ("https://api.example.com:8443/v1/x", "https://api.example.com:8443/v1/x"),
         ("http://[::1/broken?k=v", REDACTED),
+        # Repeated keys, empty values and stray separators: every value masked.
+        (
+            f"https://h.example/p?k={_SECRET}&k=2&e=&&",
+            f"https://h.example/p?k={REDACTED}&k={REDACTED}&e={REDACTED}&&",
+        ),
+        # ``;`` is not split on, so everything after the first ``=`` is masked.
+        (f"https://h.example/p?a=1;key={_SECRET}", f"https://h.example/p?a={REDACTED}"),
+        # Percent-encoded names kept verbatim; encoded values masked.
+        (f"https://h.example/p?a%3Db={_SECRET}%26x", f"https://h.example/p?a%3Db={REDACTED}"),
+        (f"http://[::1]:8080/p?k={_SECRET}", f"http://[::1]:8080/p?k={REDACTED}"),
+        (f"https://h.example/p?={_SECRET}", f"https://h.example/p?={REDACTED}"),
     ],
 )
 def test_redact_url_query_masks_values_keeps_host_and_path(url: str, expected: str) -> None:

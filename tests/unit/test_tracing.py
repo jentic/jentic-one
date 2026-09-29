@@ -237,6 +237,28 @@ async def test_outbound_span_url_masks_query_param_api_key():
         assert value.startswith("https://upstream.example/v1/search?api_key=")
 
 
+def test_sync_outbound_client_span_url_masks_query_param_api_key():
+    """A sync ``httpx.Client`` gets the plain (non-coroutine) hooks — the
+    instrumentor drops coroutine hooks there, which would record the raw URL."""
+    exporter = InMemorySpanExporter()
+    provider = configure_tracing("test-service", _NONE_CONFIG)
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+
+    client = httpx.Client(transport=httpx.MockTransport(lambda _r: httpx.Response(200)))
+    instrument_outbound_client(client)
+    try:
+        client.get("https://upstream.example/v1/search?api_key=qk_live_secret")
+    finally:
+        client.close()
+
+    spans = exporter.get_finished_spans()
+    assert spans, "expected at least one outbound span"
+    attrs = {k: v for span in spans for k, v in (span.attributes or {}).items()}
+    assert "qk_live_secret" not in "\n".join(f"{k}={v}" for k, v in attrs.items())
+    url_values = [str(attrs[k]) for k in ("http.url", "url.full") if k in attrs]
+    assert url_values, "the instrumentor records the request URL"
+
+
 @pytest.mark.asyncio
 async def test_outbound_request_carries_w3c_and_jentic_tracestate():
     """Propagation: the outbound request gets traceparent + the jentic member."""
