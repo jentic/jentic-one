@@ -1643,6 +1643,11 @@ components:
           default: false
           title: Suspended
           type: boolean
+        suspended_reason:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Suspended Reason
       required:
       - credential_id
       - bound_at
@@ -1695,6 +1700,11 @@ components:
         suspended:
           title: Suspended
           type: boolean
+        suspended_reason:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Suspended Reason
       required:
       - id
       - agent_id
