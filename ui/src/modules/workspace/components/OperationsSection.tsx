@@ -33,7 +33,15 @@ import {
 	OperationDetail,
 	type OperationDetailData,
 } from '@/shared/ui';
-import { ChevronDown, ChevronLeft, ChevronRight, Filter, ListTree, Loader2 } from 'lucide-react';
+import {
+	ChevronDown,
+	ChevronLeft,
+	ChevronRight,
+	Filter,
+	GitBranch,
+	ListTree,
+	Loader2,
+} from 'lucide-react';
 import { cn } from '@/shared/lib/utils';
 import {
 	useApiOperations,
@@ -123,8 +131,14 @@ function OperationRow({ operation, spec }: { operation: ApiOperation; spec: Pars
 export function OperationsSection({
 	apiKey,
 	totalCount,
+	onShowVersions,
 }: {
 	apiKey: ApiKey;
+	/**
+	 * Switch the hub to its Versions tab (where a draft revision is promoted) —
+	 * the "no live revision" empty state's action.
+	 */
+	onShowVersions: () => void;
 	/**
 	 * The API's known `operation_count`, shown as the total. The operations
 	 * endpoint's page envelope carries no total, so this comes from the API
@@ -226,7 +240,18 @@ export function OperationsSection({
 					<EmptyState
 						icon={<ListTree size={28} aria-hidden="true" />}
 						title="No live revision yet"
-						description="This API has a draft revision but nothing promoted. Promote a revision below to publish its operations."
+						description="This API has a draft revision but nothing promoted. Promote a revision to publish its operations."
+						action={
+							<Button
+								variant="secondary"
+								size="sm"
+								onClick={onShowVersions}
+								data-testid="operations-go-to-versions"
+							>
+								<GitBranch size={14} aria-hidden="true" />
+								Go to Versions
+							</Button>
+						}
 					/>
 				) : query.isError && operations.length === 0 ? (
 					<ErrorAlert

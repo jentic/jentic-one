@@ -1078,9 +1078,10 @@ describe('AgentsPage — flat agents surface', () => {
 
 		// Agents is the app's home, so an empty fleet is a fresh workspace.
 		const setup = await screen.findByRole('region', { name: 'Set up your workspace' });
+		// The discover CTA opens the Library's catalog view.
 		expect(within(setup).getByRole('link', { name: /Discover an API/ })).toHaveAttribute(
 			'href',
-			'/discover',
+			'/library',
 		);
 		expect(within(setup).getByRole('link', { name: /Add a credential/ })).toHaveAttribute(
 			'href',

@@ -1,13 +1,8 @@
 /**
  * WorkspaceStatsStrip — compact dashboard ribbon below the page header.
  *
- * A low-noise,
- * labelled, never-clickable strip, scoped to what the Workspace module
- * owns here: APIs are the only domain on this surface, so the numbers are
- * derived from the already-loaded API list rather than fanning out to the
- * credentials / agents / traces endpoints other modules own. That keeps the
- * module boundary clean (no cross-module service calls) while preserving the
- * at-a-glance ribbon.
+ * A low-noise, labelled, never-clickable strip. Every number is derived from
+ * the API list the page already loaded — the strip issues no reads of its own.
  */
 import { Boxes, GitBranch, ShieldCheck, Zap, FileClock } from 'lucide-react';
 import { cn } from '@/shared/lib/utils';

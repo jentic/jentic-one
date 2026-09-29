@@ -1,51 +1,82 @@
 /**
  * ApiCard — one workspace API as a clickable tile.
  *
- * A larger vendor icon, a
- * single content column with a hover ChevronRight, a description, and a bottom
- * meta row of icon-led stats (operations · revisions · security schemes). The
- * whole card is a router link to the API's detail page, with a subtle hover
- * lift (`-translate-y-0.5` + shadow) instead of a coloured rail. A draft-only
- * API (no live revision) carries a "Draft" pill — the most common state for a
- * freshly imported API.
+ * The whole card is a router link to the API's hub, with a subtle hover lift.
+ * Hierarchy, top to bottom:
+ *
+ *   title row     name + Live/Draft (`current_revision_id`) + Update available
+ *                 (`update_available`) via the shared `ApiStateBadge`, chevron
+ *   identity row  vendor/name/version (mono)
+ *   description   (when the spec has one)
+ *   metrics row   operations · revisions · security schemes · agents with access
+ *   usage row     7-day calls, failed count, sparkline (org:admin only)
+ *   warning row   "Credential missing" when the API needs auth and — with every
+ *                 credential page loaded — no credential targets it
+ *
+ * The health rows come from `healthIndex` (`useApiHealthIndex`, mounted once by
+ * the grid over already-shared queries — no per-card fetch) and `agents` (the
+ * grid's agent reads for the cards on screen). Values still
+ * loading render same-size skeletons so tiles don't jump; the usage row is
+ * absent for users who can't read usage. Without an index (e.g. isolated
+ * renders) the card shows only its own registry fields.
  */
-import { ChevronRight, GitBranch, ShieldCheck, Zap } from 'lucide-react';
-import { AppLink, Badge, VendorIcon } from '@/shared/ui';
-import { apiRefDisplayName } from '@/shared/lib';
-import { encodeApiId } from '@/modules/workspace/api';
-import type { WorkspaceApi } from '@/modules/workspace/api';
+import { AlertTriangle, Bot, ChevronRight, GitBranch, ShieldCheck, Zap } from 'lucide-react';
+import { ApiStateBadges, ApiUsageSummary, AppLink, Skeleton, VendorIcon } from '@/shared/ui';
+import {
+	callsInWeek,
+	isCredentialMissing,
+	workspaceApiDisplayTitle,
+	type AgentFigure,
+	type ApiHealthIndex,
+	type WorkspaceApi,
+} from '@/modules/workspace/api';
 import { ROUTE_PATHS } from '@/shared/app/routes';
 
-/**
- * The card's heading. `apiRefDisplayName` can return `''` when a workspace API
- * has no display name and only generic/empty identity fields (e.g. `vendor:''`,
- * `name:'main'`) — which would render a blank `<h3>` and an empty aria-label /
- * VendorIcon name. Chain a guaranteed non-empty fallback off the API's own
- * identity so the card is always titled.
- */
-function titleFor(api: WorkspaceApi): string {
+function plural(n: number, noun: string): string {
+	return `${n.toLocaleString()} ${noun}${n === 1 ? '' : 's'}`;
+}
+
+function UsageRow({ api, healthIndex }: { api: WorkspaceApi; healthIndex: ApiHealthIndex }) {
+	if (healthIndex.usageLoading) {
+		return <Skeleton className="h-5 w-full" data-testid="workspace-api-card-usage-loading" />;
+	}
+	if (!healthIndex.usageAvailable) return null;
+	const { usage } = healthIndex.healthFor(api.api);
+	const calls = callsInWeek(usage, healthIndex.usageExhaustive);
+	// Outside a capped top-N list: unknown, not zero — say nothing.
+	if (calls == null) return null;
 	return (
-		apiRefDisplayName({
-			displayName: api.displayName,
-			catalogApiId: api.catalogApiId,
-			vendor: api.api.vendor,
-			name: api.api.name,
-		}) ||
-		api.api.vendor ||
-		api.api.name ||
-		encodeApiId(api.api) ||
-		'Untitled API'
+		<ApiUsageSummary
+			size="row"
+			calls={calls}
+			failed={usage?.failed}
+			trend={usage?.trend}
+			testId="workspace-api-card-usage"
+			failuresTestId="workspace-api-card-failures"
+		/>
 	);
 }
 
-export function ApiCard({ api }: { api: WorkspaceApi }) {
-	const apiId = encodeApiId(api.api);
-	const title = titleFor(api);
-	const isDraftOnly = api.currentRevisionId === null;
+export function ApiCard({
+	api,
+	healthIndex,
+	agents,
+}: {
+	api: WorkspaceApi;
+	/** Shared per-API health (usage, credentials); omitted ⇒ registry fields only. */
+	healthIndex?: ApiHealthIndex;
+	/** Agents with access (read for the cards on screen); omitted ⇒ not shown. */
+	agents?: AgentFigure;
+}) {
+	const title = workspaceApiDisplayTitle(api);
+	const health = healthIndex?.healthFor(api.api) ?? null;
+	const credentialMissing =
+		health != null &&
+		isCredentialMissing(api.securitySchemes.length > 0, health.credentialCount);
 
 	return (
 		<AppLink
-			href={ROUTE_PATHS.workspaceApi(apiId)}
+			href={ROUTE_PATHS.workspaceApiHub(api.api)}
 			data-testid="workspace-api-card"
 			aria-label={`Open ${title}`}
 			className="group border-border/60 bg-card hover:border-border hover:bg-muted/30 focus-visible:ring-primary/40 flex h-full w-full min-w-0 flex-col gap-3 overflow-hidden rounded-xl border p-4 text-left transition-all hover:-translate-y-0.5 hover:shadow-sm focus-visible:ring-2 focus-visible:outline-none"
@@ -63,13 +94,11 @@ export function ApiCard({ api }: { api: WorkspaceApi }) {
 							{title}
 						</h3>
 						<div className="flex shrink-0 items-center gap-1.5">
-							{api.updateAvailable ? (
-								// C2: snooze affordance could also attach here (#926)
-								<Badge variant="warning" data-testid="update-available-badge">
-									Update available
-								</Badge>
-							) : null}
-							{isDraftOnly ? <Badge variant="pending">Draft</Badge> : null}
+							<ApiStateBadges
+								currentRevisionId={api.currentRevisionId}
+								updateAvailable={api.updateAvailable}
+								className="px-1.5 py-0 text-[10px]"
+							/>
 							<ChevronRight
 								size={16}
 								aria-hidden="true"
@@ -88,21 +117,60 @@ export function ApiCard({ api }: { api: WorkspaceApi }) {
 				</div>
 			</div>
 
-			<div className="text-muted-foreground mt-auto flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
-				<span className="inline-flex items-center gap-1">
-					<Zap size={11} aria-hidden="true" />
-					{api.operationCount} op{api.operationCount === 1 ? '' : 's'}
-				</span>
-				<span className="inline-flex items-center gap-1">
-					<GitBranch size={11} aria-hidden="true" />
-					{api.revisionCount} revision{api.revisionCount === 1 ? '' : 's'}
-				</span>
-				{api.securitySchemes.length > 0 ? (
+			<div className="mt-auto flex flex-col gap-2">
+				<div
+					className="text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]"
+					data-testid="workspace-api-card-metrics"
+				>
 					<span className="inline-flex items-center gap-1">
-						<ShieldCheck size={11} aria-hidden="true" />
-						{api.securitySchemes.length} scheme
-						{api.securitySchemes.length === 1 ? '' : 's'}
+						<Zap size={11} aria-hidden="true" />
+						{plural(api.operationCount, 'op')}
 					</span>
+					<span className="inline-flex items-center gap-1">
+						<GitBranch size={11} aria-hidden="true" />
+						{plural(api.revisionCount, 'revision')}
+					</span>
+					{api.securitySchemes.length > 0 ? (
+						<span className="inline-flex items-center gap-1">
+							<ShieldCheck size={11} aria-hidden="true" />
+							{plural(api.securitySchemes.length, 'scheme')}
+						</span>
+					) : null}
+					{agents ? (
+						agents.agentsLoading ? (
+							<Skeleton
+								className="h-3 w-14"
+								data-testid="workspace-api-card-agents-loading"
+							/>
+						) : (
+							<span
+								className="inline-flex items-center gap-1"
+								title={
+									agents.agentCount == null
+										? 'Couldn’t read every credential’s bound agents'
+										: 'Agents bound to a credential for this API'
+								}
+								data-testid="workspace-api-card-agents"
+							>
+								<Bot size={11} aria-hidden="true" />
+								{agents.agentCount == null
+									? '— agents'
+									: plural(agents.agentCount, 'agent')}
+							</span>
+						)
+					) : null}
+				</div>
+
+				{healthIndex ? <UsageRow api={api} healthIndex={healthIndex} /> : null}
+
+				{credentialMissing ? (
+					<p
+						className="border-warning/30 bg-warning/10 text-warning flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs"
+						data-testid="workspace-api-card-credential-missing"
+					>
+						<AlertTriangle size={12} className="shrink-0" aria-hidden="true" />
+						Credential missing — agents can’t call it
+					</p>
 				) : null}
 			</div>
 		</AppLink>

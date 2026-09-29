@@ -4,7 +4,7 @@
  * jentic-one addresses an API by the `(vendor, name, version)` triple — there
  * is no single opaque `apiId`. The registry routes embed
  * the three as path segments (`/apis/{vendor}/{name}/{version}`), and the UI
- * route mirrors them (`/app/workspace/:vendor/:name/:version`).
+ * route mirrors them (`/app/library/workspace/:vendor/:name/:version`).
  *
  * `encodeApiId` builds the URL path from a triple by percent-encoding each
  * segment and joining with `/`, so a slash *inside* a segment (rare, but legal

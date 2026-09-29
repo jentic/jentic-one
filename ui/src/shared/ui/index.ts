@@ -202,6 +202,9 @@ export { ActorLabel } from '@/shared/ui/ActorLabel';
 export type { ActorLabelProps } from '@/shared/ui/ActorLabel';
 
 export { SparklineChart } from '@/shared/ui/charts/SparklineChart';
+export { ApiUsageSummary } from '@/shared/ui/ApiUsageSummary';
+export { StreamEventRow } from '@/shared/ui/StreamEventRow';
+export type { ApiUsageSummaryProps } from '@/shared/ui/ApiUsageSummary';
 export { TrendLineChart } from '@/shared/ui/charts/TrendLineChart';
 export type { TrendPoint } from '@/shared/ui/charts/TrendLineChart';
 export { StackedBarChart } from '@/shared/ui/charts/StackedBarChart';

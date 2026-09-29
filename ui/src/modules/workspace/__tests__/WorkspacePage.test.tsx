@@ -8,7 +8,7 @@ import {
 	createErrorHandler,
 } from '@/__tests__/test-utils';
 import { worker } from '@/mocks/browser';
-import { workspaceHandlers } from '@/modules/workspace/mocks/handlers';
+import { patchMockApi, workspaceHandlers } from '@/modules/workspace/mocks/handlers';
 import { setToken } from '@/shared/api';
 import WorkspacePage from '@/modules/workspace/pages/WorkspacePage';
 
@@ -52,6 +52,22 @@ describe('WorkspacePage', () => {
 		expect(await screen.findByText('Pos Terminal Management Api')).toBeInTheDocument();
 		expect(screen.getByText('adyen/pos-terminal-management-api/1')).toBeInTheDocument();
 		expect(screen.getByText('Draft')).toBeInTheDocument();
+	});
+
+	it('seeds the text filter from ?q= and matches on catalog_api_id', async () => {
+		// A token that appears ONLY in Stripe's catalog_api_id (not its title,
+		// vendor/name/version, host or description).
+		patchMockApi('stripe/stripe-api/2024-01-01', { catalog_api_id: 'zz-catalog-only.example' });
+		try {
+			renderWithProviders(<WorkspacePage />, {
+				route: '/library/workspace?q=zz-catalog-only',
+			});
+			expect(await screen.findByText('Stripe')).toBeInTheDocument();
+			expect(screen.getByDisplayValue('zz-catalog-only')).toBeInTheDocument();
+			expect(screen.queryByText('Pos Terminal Management Api')).not.toBeInTheDocument();
+		} finally {
+			patchMockApi('stripe/stripe-api/2024-01-01', { catalog_api_id: null });
+		}
 	});
 
 	it('has no critical a11y violations', async () => {

@@ -1,8 +1,8 @@
 /**
  * WorkspaceCatalogFooter — quiet, single-line catalog CTA at the very bottom of
- * the Workspace page. The user came here
- * for *their* APIs; if they didn't find one, the public catalog is one click
- * away in Discover — but we deliberately don't shove a second feed at them.
+ * the Workspace view. The user came here for *their* APIs; if they didn't find
+ * one, the public catalog is one click away in the Library — but we
+ * deliberately don't shove a second feed at them.
  */
 import { Compass } from 'lucide-react';
 import { AppLink } from '@/shared/ui';
@@ -17,11 +17,11 @@ export function WorkspaceCatalogFooter() {
 			<Compass size={14} aria-hidden="true" className="text-muted-foreground/70" />
 			<span>Looking for something else?</span>
 			<AppLink
-				href={ROUTES.discover}
+				href={ROUTES.library}
 				className="text-primary hover:text-primary/80 inline-flex items-center gap-1 font-medium"
 				data-testid="workspace-browse-catalog"
 			>
-				Browse the catalog in Discover →
+				Browse the public catalog →
 			</AppLink>
 		</div>
 	);

@@ -26,6 +26,14 @@ export const ACTIVITY_STREAM_VT = 'activity-stream';
 /** Spread onto the element that currently hosts the stream. */
 export const activityStreamVtStyle = { viewTransitionName: ACTIVITY_STREAM_VT } as const;
 
+/**
+ * The Library's "your workspace" surface docks in two places: the panel beside
+ * the Catalog (`/library`) and the full Workspace view (`/library/workspace`).
+ * Both carry this name, so Expand / "← Catalog" (ordinary link navigations,
+ * animated by {@link useLinkViewTransitions}) morph one into the other.
+ */
+export const libraryWorkspaceVtStyle = { viewTransitionName: 'library-workspace' } as const;
+
 const ROUTER_BASENAME = import.meta.env.BASE_URL.replace(/\/$/, '');
 
 function canAnimate(): boolean {

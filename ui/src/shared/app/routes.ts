@@ -39,8 +39,13 @@ export const ROUTES = {
 	// a single shared constant instead of a scattered literal. These MUST stay
 	// in lockstep with `nav.ts` and each module's `routes.tsx`. New surfaces
 	// append here.
-	discover: '/discover',
-	workspace: '/workspace',
+	// The Library is ONE nav area with two views: the public Catalog (default,
+	// `/library`, owned by the discover module) and your Workspace (`/library/
+	// workspace`, owned by the workspace module), plus each workspace API's hub
+	// under it. The retired `/discover` and `/workspace` URLs redirect here
+	// (see each module's routes.tsx).
+	library: '/library',
+	workspace: '/library/workspace',
 	agents: '/agents',
 	monitor: '/monitor',
 	docs: '/docs',
@@ -49,11 +54,28 @@ export const ROUTES = {
 /**
  * Detail-route path builders for surfaces addressed by an id/sub-path. Kept as
  * functions (not literals) so callers can't forget to encode a segment; mirrors
- * each module's own encoder (e.g. workspace's `encodeApiId`). The `apiPath`
- * arg is already the encoded `:vendor/:name/:version` triple.
+ * each module's own encoder (e.g. workspace's `encodeApiId`).
  */
 export const ROUTE_PATHS = {
-	workspaceApi: (apiPath: string) => `${ROUTES.workspace}/${apiPath}`,
+	/**
+	 * A workspace API's hub from its raw identity triple (each segment
+	 * percent-encoded here), optionally opened on a tab. `tab` is the hub's URL
+	 * vocabulary (`?tab=`).
+	 */
+	workspaceApiHub: (
+		ref: { vendor: string; name: string; version: string },
+		tab?: 'overview' | 'operations' | 'versions' | 'spec',
+		opts?: { addCredential?: boolean },
+	) => {
+		const path = [ref.vendor, ref.name, ref.version].map(encodeURIComponent).join('/');
+		const q = new URLSearchParams();
+		if (tab && tab !== 'overview') q.set('tab', tab);
+		// `credential=new` opens the hub's Add credential flow on this API's
+		// form (read by the workspace module's `ApiHubOverview`).
+		if (opts?.addCredential === true) q.set('credential', 'new');
+		const qs = q.toString();
+		return `${ROUTES.workspace}/${path}${qs ? `?${qs}` : ''}`;
+	},
 	agent: (agentId: string) => `${ROUTES.agents}/${encodeURIComponent(agentId)}`,
 	/**
 	 * Monitor's Activity view on API calls, optionally pre-filtered. The `show` /
@@ -97,8 +119,8 @@ export const ROUTE_PATHS = {
  * Nothing else in this file should change, so parallel PRs never collide here.
  *
  * Route `path`s here are RELATIVE to the `/app` shell (no leading slash), e.g.
- * `{ path: 'discover', element: <DiscoverPage/> }` mounts at `/app/discover`.
- * The matching nav entry in `nav.ts` uses the absolute `/app/discover`.
+ * `{ path: 'library', element: <LibraryPage/> }` mounts at `/app/library`.
+ * The matching nav entry in `nav.ts` uses the absolute `/app/library`.
  */
 // <-- feature route imports go here (one import line per module) -->
 import { agentsRoutes } from '@/modules/agents/routes';
