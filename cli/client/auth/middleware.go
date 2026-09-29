@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	"golang.org/x/sync/singleflight"
@@ -49,6 +51,11 @@ func RequestEditor(creds Credentials) func(ctx context.Context, req *http.Reques
 // response-side 401 retry (transport.go), so the two can never disagree on which
 // credential to present. Order: transport guard -> injected token -> API-key
 // credential -> disk token (exchanged if missing/expired).
+//
+// When creds.BaseURL is set, the bearer is only attached to a request whose
+// origin (scheme, host, port) matches it: a request that ended up elsewhere
+// (e.g. the retry policy re-stamping auth after a redirect) never receives
+// the credential.
 func AttachAuth(creds Credentials, req *http.Request) error {
 	// 0. TRANSPORT GUARD (ref F3). Before attaching ANY bearer — injected or
 	// minted — refuse a non-HTTPS, non-loopback target. req.URL is the actual
@@ -58,12 +65,54 @@ func AttachAuth(creds Credentials, req *http.Request) error {
 	if err := requireSecureHost(req.URL); err != nil {
 		return fmt.Errorf("refusing to attach credentials: %w", err)
 	}
+	if !MatchesBaseOrigin(creds, req.URL) {
+		return fmt.Errorf("refusing to attach credentials: %q is not on the credential's origin", req.URL.Redacted())
+	}
 	token, err := BearerToken(creds)
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	return nil
+}
+
+// MatchesBaseOrigin reports whether u is on the same origin (scheme, host,
+// port — default ports made explicit) as creds.BaseURL. An empty BaseURL
+// places no origin restriction (callers that build Credentials without one
+// have nothing to compare against); an unparseable one matches nothing.
+func MatchesBaseOrigin(creds Credentials, u *url.URL) bool {
+	if creds.BaseURL == "" {
+		return true
+	}
+	base, err := url.Parse(creds.BaseURL)
+	if err != nil || u == nil {
+		return false
+	}
+	return SameOrigin(base, u)
+}
+
+// SameOrigin reports whether a and b share scheme, host, and port. Scheme and
+// host compare case-insensitively; an absent port is the scheme's default.
+func SameOrigin(a, b *url.URL) bool {
+	if a == nil || b == nil || a.Host == "" || b.Host == "" {
+		return false
+	}
+	return strings.EqualFold(a.Scheme, b.Scheme) &&
+		strings.EqualFold(a.Hostname(), b.Hostname()) &&
+		originPort(a) == originPort(b)
+}
+
+func originPort(u *url.URL) string {
+	if p := u.Port(); p != "" {
+		return p
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "https":
+		return "443"
+	case "http":
+		return "80"
+	}
+	return ""
 }
 
 // BearerToken resolves the Authorization bearer value for creds: the injected
