@@ -58,24 +58,25 @@ class UserRepository:
         return int(result.scalar_one())
 
     @staticmethod
-    async def count_active_with_permission(
-        session: AsyncSession, permission: str, *, exclude_user_id: str | None = None
-    ) -> int:
-        """Count active users holding a directly-granted permission.
+    async def lock_active_holders_of(session: AsyncSession, permission: str) -> set[str]:
+        """Return the ids of active users directly granted ``permission``, row-locked.
 
-        ``exclude_user_id`` leaves one user out of the count — used to ask
-        "would anyone else still hold it?" before disabling or deleting a user.
+        Takes ``FOR UPDATE`` on the matching user and grant rows (ordered by user
+        id so concurrent callers lock in the same order), so two transactions
+        each removing a different holder serialise: the second waits for the
+        first to commit and then no longer sees the holder it disabled or
+        stripped. SQLite has no row locks and ignores the clause; its
+        single-writer model already serialises the writes.
         """
         stmt = (
-            select(sa_func.count(sa_func.distinct(User.id)))
-            .select_from(User)
+            select(User.id)
             .join(UserPermissionGrant, UserPermissionGrant.user_id == User.id)
             .where(UserPermissionGrant.permission == permission, User.active.is_(True))
+            .order_by(User.id)
+            .with_for_update()
         )
-        if exclude_user_id is not None:
-            stmt = stmt.where(User.id != exclude_user_id)
         result = await session.execute(stmt)
-        return int(result.scalar_one())
+        return set(result.scalars().all())
 
     @staticmethod
     async def get_by_id(session: AsyncSession, user_id: str) -> User | None:

@@ -70,11 +70,11 @@ class ConflictError(AdminServiceError):
 
 
 class UserManagementForbiddenError(AdminServiceError):
-    """Raised when a caller may not change another user's email or account status.
+    """Raised when a caller may not change another user's email, status or permissions.
 
-    Changing another user's email, or disabling, enabling, deleting or
-    re-inviting them, requires that the caller already holds every permission
-    the target user holds (``org:admin`` holders may manage anyone).
+    Changing another user's email or permissions, or disabling, enabling,
+    deleting or re-inviting them, requires that the caller already holds every
+    permission the target user holds (``org:admin`` holders may manage anyone).
     """
 
     def __init__(self, user_id: str) -> None:

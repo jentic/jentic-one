@@ -18148,6 +18148,20 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Forbidden
+        '404':
+          content:
+            application/problem+json:
+              example: *id007
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Not Found
+        '409':
+          content:
+            application/problem+json:
+              example: *id008
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: The user is the last active org:admin
         '422':
           content:
             application/problem+json:
@@ -18353,6 +18367,20 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Forbidden
+        '404':
+          content:
+            application/problem+json:
+              example: *id007
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Not Found
+        '409':
+          content:
+            application/problem+json:
+              example: *id008
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Would remove org:admin from the last active org:admin
         '422':
           content:
             application/problem+json:
@@ -18414,6 +18442,20 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Forbidden
+        '404':
+          content:
+            application/problem+json:
+              example: *id007
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Not Found
+        '409':
+          content:
+            application/problem+json:
+              example: *id008
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: The user is the last active org:admin
         '422':
           content:
             application/problem+json:

@@ -9,11 +9,16 @@ from jentic_one.admin.core.permissions import (
     ORG_ADMIN,
     compute_effective,
 )
-from jentic_one.admin.repos import UserPermissionGrantRepository
+from jentic_one.admin.repos import UserPermissionGrantRepository, UserRepository
+from jentic_one.admin.services._support.user_management import (
+    ensure_can_manage,
+    ensure_not_last_active_admin,
+)
 from jentic_one.admin.services.errors import (
     OrgAdminGrantForbiddenError,
     PermissionNotGrantableError,
     UnknownPermissionError,
+    UserNotFoundError,
 )
 from jentic_one.admin.services.schemas.permissions import (
     PermissionCatalogueEntry,
@@ -86,13 +91,27 @@ class PermissionService:
         *,
         identity: Identity,
     ) -> list[str]:
-        """Validate and set permissions for a user."""
+        """Validate and set permissions for a user.
+
+        The caller may only grant permissions they hold (``validate_grants``),
+        and may only change the permissions of a user whose current
+        permissions they already hold (``org:admin`` and self exempt).
+        Removing ``org:admin`` from the last active holder is refused.
+        """
         granted_by = identity.sub
         await self.validate_grants(granted_by, permissions)
 
-        previous = await self.get_assigned_for_user(user_id)
-
         async with self._ctx.admin_db.transaction() as session:
+            if await UserRepository.get_by_id(session, user_id) is None:
+                raise UserNotFoundError(user_id)
+            permission_sets = await UserPermissionGrantRepository.get_permission_sets(
+                session, [user_id, granted_by]
+            )
+            ensure_can_manage(user_id, identity, permission_sets)
+            previous = sorted(permission_sets[user_id])
+            if ORG_ADMIN in permission_sets[user_id] and ORG_ADMIN not in permissions:
+                await ensure_not_last_active_admin(session, user_id)
+
             grants = await UserPermissionGrantRepository.set_permissions(
                 session,
                 user_id,

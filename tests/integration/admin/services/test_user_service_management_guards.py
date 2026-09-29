@@ -1,12 +1,15 @@
 """Integration tests for UserService guards on managing other users.
 
-Covers the privilege ceiling on changing another user's email or account
-status, the last-active-``org:admin`` guard, and the removal of external IdP
+Covers the privilege ceiling on changing another user's email, account
+status or permissions, the last-active-``org:admin`` guard (including its
+row locking under concurrent removals on Postgres), and the removal of external IdP
 identity links when an account's email changes. Real database, no mocking.
 """
 
 from __future__ import annotations
 
+import asyncio
+import os
 from collections.abc import AsyncGenerator, Awaitable, Callable
 
 import pytest
@@ -23,10 +26,13 @@ from jentic_one.admin.repos import (
     UserPermissionGrantRepository,
     UserRepository,
 )
+from jentic_one.admin.services._support.user_management import ensure_not_last_active_admin
 from jentic_one.admin.services.errors import (
     LastActiveAdminError,
     UserManagementForbiddenError,
+    UserNotFoundError,
 )
+from jentic_one.admin.services.permission_service import PermissionService
 from jentic_one.admin.services.schemas.users import UserUpdatePayload
 from jentic_one.admin.services.user_service import UserService
 from jentic_one.shared.auth.identity import Identity
@@ -34,6 +40,8 @@ from jentic_one.shared.context import Context
 from jentic_one.shared.models import InviteState
 
 pytestmark = pytest.mark.integration
+
+_SQLITE = os.environ.get("JENTIC_TEST_BACKEND", "postgres").lower() == "sqlite"
 
 MakeUser = Callable[..., Awaitable[str]]
 
@@ -296,3 +304,125 @@ async def test_last_active_admin_cannot_be_deactivated(
     # The remaining admin is now the last one.
     with pytest.raises(LastActiveAdminError):
         await service.disable(second_id, identity=_identity(second_id))
+
+
+async def _assigned(ctx: Context, user_id: str) -> set[str]:
+    async with ctx.admin_db.session() as session:
+        sets = await UserPermissionGrantRepository.get_permission_sets(session, [user_id])
+    return sets[user_id]
+
+
+async def test_users_write_holder_cannot_change_admin_permissions(
+    integration_context: Context, make_user: MakeUser
+) -> None:
+    ctx = integration_context
+    admin_id = await make_user("guard-admin-perms@test.local", {"org:admin"})
+    manager_id = await make_user("guard-manager-perms@test.local", {"users:write"})
+
+    with pytest.raises(UserManagementForbiddenError):
+        await PermissionService(ctx).set_assigned(
+            admin_id, ["users:read"], identity=_identity(manager_id)
+        )
+    assert await _assigned(ctx, admin_id) == {"org:admin"}
+
+
+async def test_permission_change_requires_holding_all_target_permissions(
+    integration_context: Context, make_user: MakeUser
+) -> None:
+    """Even a strip-only change is refused when the target holds something the caller lacks."""
+    ctx = integration_context
+    target_id = await make_user("guard-target-perms@test.local", {"agents:write", "users:read"})
+    manager_id = await make_user("guard-manager-perms2@test.local", {"users:write"})
+
+    with pytest.raises(UserManagementForbiddenError):
+        await PermissionService(ctx).set_assigned(target_id, [], identity=_identity(manager_id))
+    assert await _assigned(ctx, target_id) == {"agents:write", "users:read"}
+
+
+async def test_users_write_holder_can_change_less_privileged_permissions(
+    integration_context: Context, make_user: MakeUser
+) -> None:
+    ctx = integration_context
+    target_id = await make_user("guard-target-perms-ok@test.local", {"users:read"})
+    manager_id = await make_user("guard-manager-perms-ok@test.local", {"users:write"})
+
+    await PermissionService(ctx).set_assigned(
+        target_id, ["users:write"], identity=_identity(manager_id)
+    )
+    assert await _assigned(ctx, target_id) == {"users:write"}
+
+
+async def test_set_permissions_unknown_user(
+    integration_context: Context, make_user: MakeUser
+) -> None:
+    ctx = integration_context
+    admin_id = await make_user("guard-admin-perms-404@test.local", {"org:admin"})
+
+    with pytest.raises(UserNotFoundError):
+        await PermissionService(ctx).set_assigned(
+            "usr_does_not_exist", ["users:read"], identity=_identity(admin_id)
+        )
+
+
+async def test_last_active_admin_cannot_lose_org_admin(
+    integration_context: Context, make_user: MakeUser, no_other_active_admins: None
+) -> None:
+    ctx = integration_context
+    service = PermissionService(ctx)
+    admin_id = await make_user("guard-sole-admin-perms@test.local", {"org:admin"})
+
+    with pytest.raises(LastActiveAdminError):
+        await service.set_assigned(admin_id, ["users:write"], identity=_identity(admin_id))
+    assert await _assigned(ctx, admin_id) == {"org:admin"}
+
+    # Keeping org:admin while changing other grants is fine.
+    await service.set_assigned(admin_id, ["org:admin", "users:read"], identity=_identity(admin_id))
+
+    # With a second active admin, org:admin can be removed.
+    second_id = await make_user("guard-second-admin-perms@test.local", {"org:admin"})
+    await service.set_assigned(admin_id, ["users:write"], identity=_identity(second_id))
+    assert await _assigned(ctx, admin_id) == {"users:write"}
+
+    # An inactive org:admin does not count as a remaining admin.
+    inactive_id = await make_user("guard-inactive-admin-perms@test.local", {"org:admin"})
+    async with ctx.admin_db.transaction() as session:
+        await UserRepository.disable(session, inactive_id)
+    with pytest.raises(LastActiveAdminError):
+        await service.set_assigned(second_id, [], identity=_identity(second_id))
+
+
+@pytest.mark.skipif(_SQLITE, reason="row locks require Postgres")
+@pytest.mark.parametrize("second_operation", ["disable", "strip_org_admin"])
+async def test_concurrent_admin_removal_is_serialised(
+    integration_context: Context,
+    make_user: MakeUser,
+    no_other_active_admins: None,
+    second_operation: str,
+) -> None:
+    """Removing two different admins concurrently cannot leave no active org:admin.
+
+    The first transaction takes the admin row locks and disables its target
+    without committing; the second must wait, then see that its own target is
+    now the last active admin.
+    """
+    ctx = integration_context
+    first_id = await make_user(f"guard-race-a-{second_operation}@test.local", {"org:admin"})
+    second_id = await make_user(f"guard-race-b-{second_operation}@test.local", {"org:admin"})
+
+    async def _second() -> None:
+        if second_operation == "disable":
+            await UserService(ctx).disable(second_id, identity=_identity(first_id))
+        else:
+            await PermissionService(ctx).set_assigned(second_id, [], identity=_identity(first_id))
+
+    async with ctx.admin_db.transaction() as session:
+        await ensure_not_last_active_admin(session, first_id)
+        await UserRepository.disable(session, first_id)
+        task = asyncio.create_task(_second())
+        await asyncio.sleep(0.5)
+        assert not task.done(), "second removal should wait on the admin row locks"
+
+    with pytest.raises(LastActiveAdminError):
+        await task
+    assert (await _get_user(ctx, second_id)).active is True
+    assert await _assigned(ctx, second_id) == {"org:admin"}
