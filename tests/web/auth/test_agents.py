@@ -467,6 +467,95 @@ def test_resume_requires_bind_rights_on_credential(
     assert resp.json()["suspended"] is False
 
 
+@pytest.fixture()
+def self_agent_client(
+    web_context: Context, binding_agent_id: str, owner_user_id: str
+) -> Iterator[TestClient]:
+    """The binding agent calling as itself, delegated to its owner's credentials."""
+    config = web_context.config.admin.auth
+    claims = {
+        "sub": binding_agent_id,
+        "email": "",
+        "actor_type": "agent",
+        "parent_actor_id": owner_user_id,
+        "permissions": [
+            "agents:read",
+            "agents:write",
+            "owner:agents:read",
+            "owner:credentials:read",
+        ],
+        "must_change_password": False,
+    }
+    token = issue_jwt(claims, config.jwt_secret.get_secret_value(), config.jwt_ttl_seconds)
+    app = _build_app(web_context)
+    with TestClient(app, headers={"Authorization": f"Bearer {token}"}) as tc:
+        yield tc
+
+
+def _suspended_rows(client: TestClient, agent_id: str) -> dict[str, bool]:
+    return {
+        b["credential_id"]: b["suspended"]
+        for b in client.get(f"/agents/{agent_id}/credentials").json()["data"]
+    }
+
+
+def test_agent_cannot_resume_its_own_suspended_binding(
+    owner_client: TestClient,
+    self_agent_client: TestClient,
+    binding_agent_id: str,
+    control_credential_id: str,
+) -> None:
+    """A suspension on an agent's binding is lifted by its owner, not by the agent.
+
+    The agent could bind its owner's credential, but resuming its own
+    suspended binding returns the uniform 404 and the binding stays suspended.
+    """
+    agent_id = binding_agent_id
+    url = f"/agents/{agent_id}/credentials"
+    assert owner_client.post(url, json={"credential_id": control_credential_id}).status_code == 201
+    assert owner_client.delete(f"{url}/{control_credential_id}").status_code == 204
+
+    resp = self_agent_client.post(f"{url}/{control_credential_id}:resume")
+    assert resp.status_code == 404
+    assert resp.json()["type"] == "credential_not_found"
+    assert _suspended_rows(owner_client, agent_id)[control_credential_id] is True
+
+    resp = owner_client.post(f"{url}/{control_credential_id}:resume")
+    assert resp.status_code == 200
+    assert resp.json()["suspended"] is False
+
+
+def test_agent_cannot_purge_its_own_binding(
+    owner_client: TestClient,
+    self_agent_client: TestClient,
+    binding_agent_id: str,
+    control_credential_id: str,
+) -> None:
+    """An agent may suspend its own binding but not purge it.
+
+    Purging and re-binding would otherwise drop a suspension the owner set:
+    the purge returns the uniform 404, the suspended row survives, and a
+    re-bind conflicts with it.
+    """
+    agent_id = binding_agent_id
+    url = f"/agents/{agent_id}/credentials"
+    assert owner_client.post(url, json={"credential_id": control_credential_id}).status_code == 201
+    # Suspending (narrowing) its own binding stays open to the agent.
+    assert self_agent_client.delete(f"{url}/{control_credential_id}").status_code == 204
+
+    resp = self_agent_client.delete(f"{url}/{control_credential_id}", params={"purge": "true"})
+    assert resp.status_code == 404
+    assert resp.json()["type"] == "credential_binding_not_found"
+    assert _suspended_rows(owner_client, agent_id)[control_credential_id] is True
+
+    resp = self_agent_client.post(url, json={"credential_id": control_credential_id})
+    assert resp.status_code == 409
+    assert _suspended_rows(owner_client, agent_id)[control_credential_id] is True
+
+    resp = owner_client.delete(f"{url}/{control_credential_id}", params={"purge": "true"})
+    assert resp.status_code == 204
+
+
 @pytest.mark.asyncio
 async def test_purge_drops_inline_rules_so_rebind_starts_default_deny(
     owner_client: TestClient,

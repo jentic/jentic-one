@@ -553,6 +553,15 @@ class AgentService:
             and created_by == identity.parent_actor_id
         )
 
+    @staticmethod
+    def _is_own_binding(agent_id: str, identity: Identity) -> bool:
+        """True when a non-admin caller is the bound agent itself.
+
+        Suspension is the owner's cut-off, so the agent may not undo it on its
+        own binding — neither by resuming nor by purging and re-binding.
+        """
+        return ORG_ADMIN not in identity.permissions and agent_id == identity.sub
+
     async def list_credentials(
         self, agent_id: str, *, identity: Identity
     ) -> list[CredentialBindingView]:
@@ -651,6 +660,10 @@ class AgentService:
         rules and denies (fail-closed) rather than the other way round.
         """
         await self.get_agent(agent_id, identity=identity)
+        if purge and self._is_own_binding(agent_id, identity):
+            # A purge followed by a re-bind would drop a suspension the owner
+            # set, so an agent may suspend its own binding but not purge it.
+            raise CredentialBindingNotFoundError(agent_id, credential_id)
         if purge and self._ctx.is_db_allowed("control"):
             async with self._ctx.admin_db.session() as session:
                 existing = await AgentCredentialBindingRepository.get(
@@ -704,9 +717,12 @@ class AgentService:
         so it takes the same credential-ownership check as
         :meth:`bind_credential` on top of agent visibility: a suspension set
         by the credential's owner cannot be lifted by an agent owner who
-        could not bind that credential themselves.
+        could not bind that credential themselves. The agent itself never
+        lifts a suspension on its own binding (``org:admin`` aside).
         """
         await self.get_agent(agent_id, identity=identity)
+        if self._is_own_binding(agent_id, identity):
+            raise CredentialNotVisibleError(credential_id)
         ref = None
         if self._ctx.is_db_allowed("control"):
             async with self._ctx.control_db.session() as session:
