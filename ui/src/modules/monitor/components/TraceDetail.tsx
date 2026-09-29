@@ -16,6 +16,7 @@ import {
 	LoadingState,
 	StatusBadge,
 	VendorIcon,
+	StatusGlyph,
 } from '@/shared/ui';
 import {
 	useActorForTrace,
@@ -30,7 +31,6 @@ import {
 	IdRow,
 	type DetailFrameContext,
 } from '@/modules/monitor/components/LogDetailPane';
-import { StatusGlyph } from '@/modules/monitor/components/LogList';
 import { ExecutionStatusPill } from '@/modules/monitor/components/StatusPill';
 import { formatDuration, formatTimestamp } from '@/modules/monitor/lib/format';
 import { hasTrace, monitorHref } from '@/modules/monitor/lib/links';

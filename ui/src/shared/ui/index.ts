@@ -169,6 +169,9 @@ export type {
 export { VendorIcon } from '@/shared/ui/VendorIcon';
 export type { VendorIconProps } from '@/shared/ui/VendorIcon';
 
+export { StatusGlyph } from '@/shared/ui/StatusGlyph';
+export type { StatusGlyphProps, StatusGlyphTone } from '@/shared/ui/StatusGlyph';
+
 export {
 	ActorStatusBadge,
 	ACTOR_STATUSES,
