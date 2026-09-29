@@ -15,7 +15,14 @@ import { worker } from '@/mocks/browser';
 import { setToken } from '@/shared/api';
 import { Toaster } from '@/shared/ui';
 import { AuthProvider } from '@/shared/auth';
-import { resetAgentsStore, seedCredentialBindings } from '@/modules/agents/mocks/handlers';
+import {
+	clearAgentsStore,
+	resetAgentsStore,
+	seedCredentialBindings,
+	seedExtraAgents,
+	selfRegisterAgent,
+} from '@/modules/agents/mocks/handlers';
+import { dismissFirstRun } from '@/modules/agents/lib/firstRun';
 import {
 	makeMockCredential,
 	resetApisStore,
@@ -159,6 +166,7 @@ describe('AgentsPage — flat agents surface', () => {
 		// The strip wraps from `sm` up; these specs assert the desktop grammar.
 		await page.viewport(1280, 900);
 		setToken('test-token');
+		window.localStorage.clear();
 		resetAgentsStore();
 		seedComposedStores();
 		resetOrphanPurgeAttemptsForTest();
@@ -245,6 +253,9 @@ describe('AgentsPage — flat agents surface', () => {
 			),
 			http.get('/agents/:id/credentials', () => HttpResponse.json({ data: [] })),
 		);
+		// A lone active agent with no APIs would resume the first-run landing;
+		// this spec is about the fleet view, so that suggestion was dismissed.
+		dismissFirstRun('agnt_active_only');
 		renderPage();
 		await screen.findByRole('tab', { name: /solo-active-bot/ });
 
@@ -959,6 +970,9 @@ describe('AgentsPage — flat agents surface', () => {
 							approved_at: null,
 							has_api_key: false,
 						},
+						// A fleet beside it: an org of history alone is a fresh workspace
+						// (the zero-agents landing), not a fleet.
+						{ ...agentRow('agnt_disabled_x', 'paused-bot'), status: 'disabled' },
 					],
 					has_more: false,
 					next_cursor: null,
@@ -966,7 +980,7 @@ describe('AgentsPage — flat agents surface', () => {
 			),
 			http.get('/agents/:id/credentials', () => HttpResponse.json({ data: [] })),
 		);
-		renderPage();
+		renderPage('/?agent=agnt_archived_1');
 		await screen.findByRole('tab', { name: /retired-bot/ });
 
 		expect(
@@ -1067,7 +1081,7 @@ describe('AgentsPage — flat agents surface', () => {
 		expect(stripTab('support-agent')).toBeInTheDocument();
 	});
 
-	it('shows the setup checklist and DCR quickstart when no agents are registered', async () => {
+	it('shows the zero-agents landing when no agents are registered', async () => {
 		worker.use(
 			http.get('/agents', () =>
 				HttpResponse.json({ data: [], has_more: false, next_cursor: null }),
@@ -1077,23 +1091,13 @@ describe('AgentsPage — flat agents surface', () => {
 		renderPage();
 
 		// Agents is the app's home, so an empty fleet is a fresh workspace.
-		const setup = await screen.findByRole('region', { name: 'Set up your workspace' });
-		expect(within(setup).getByRole('link', { name: /Discover an API/ })).toHaveAttribute(
-			'href',
-			'/discover',
-		);
-		expect(within(setup).getByRole('link', { name: /Add a credential/ })).toHaveAttribute(
-			'href',
-			'/agents?credentials=new',
-		);
-		// Both routes in: self-registration below, manual creation here — manual is
-		// primary, because it ends with a working agent rather than a pending one.
-		await user.click(within(setup).getByRole('button', { name: /Create an agent/ }));
+		expect(await screen.findByTestId('agents-empty-landing')).toBeInTheDocument();
+		expect(screen.queryByTestId('agents-landing')).toBeNull();
+		expect(screen.queryByTestId('agent-dock')).not.toBeInTheDocument();
+
+		// The header's create button is relabelled for a fresh org.
+		await user.click(screen.getByRole('button', { name: 'Create your first agent' }));
 		expect(await screen.findByRole('dialog', { name: 'Create agent' })).toBeInTheDocument();
-		expect(screen.getByText('Register an agent from the command line')).toBeInTheDocument();
-		// Pin the real CLI flag: `jentic register` takes --url, not --base-url (#1204).
-		expect(screen.getByText(/jentic register --url /)).toBeInTheDocument();
-		expect(screen.queryByText(/--base-url/)).not.toBeInTheDocument();
 	});
 
 	// --- Pagination honesty: guarded drain + fully-drained join sources ------
@@ -1606,6 +1610,7 @@ describe('AgentsPage — Add APIs: Back from the setup queue to the tray', () =>
 	beforeEach(async () => {
 		await page.viewport(1280, 900);
 		setToken('test-token');
+		window.localStorage.clear();
 		resetAgentsStore();
 		// Stripe is covered by an existing credential, so it can be added in one
 		// confirm; the rest need a new credential.
@@ -1768,5 +1773,47 @@ describe('AgentsPage — Add APIs: Back from the setup queue to the tray', () =>
 		await user.click(screen.getByRole('button', { name: 'Finish adding 1 API' }));
 		expect(await screen.findByText('Set up 1 API')).toBeInTheDocument();
 		expect(queueRows()).toEqual(['Notion:active']);
+	});
+});
+
+describe('AgentsPage — the header follows the zero-agents landing', () => {
+	beforeEach(async () => {
+		await page.viewport(1280, 900);
+		setToken('test-token');
+		window.localStorage.clear();
+		resetAgentsStore();
+		clearAgentsStore();
+	});
+
+	it('reads first-run while an arrival shows, and steps back once the fleet takes over', async () => {
+		const user = userEvent.setup();
+		selfRegisterAgent('my-first-agent');
+		renderPage();
+
+		await screen.findByTestId('arrival-card');
+		expect(screen.getByRole('button', { name: 'Create your first agent' })).toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: 'New agent' })).toBeNull();
+
+		await user.click(screen.getByRole('button', { name: 'Approve my-first-agent' }));
+		await user.click(await screen.findByRole('button', { name: 'Skip for now' }));
+		await screen.findByTestId('agent-dock');
+		expect(screen.getByRole('button', { name: 'New agent' })).toBeInTheDocument();
+	});
+
+	it('reads first-run for an org whose only agents were denied or archived', async () => {
+		seedExtraAgents([{ id: 'agnt_old', name: 'stray', status: 'rejected' }]);
+		renderPage();
+
+		await screen.findByTestId('agents-empty-landing');
+		expect(screen.getByRole('button', { name: 'Create your first agent' })).toBeInTheDocument();
+	});
+
+	it('never reads first-run over the fleet, even while it loads', async () => {
+		resetAgentsStore();
+		renderPage();
+		expect(screen.getByRole('button', { name: 'New agent' })).toBeInTheDocument();
+		await screen.findByTestId('agent-dock');
+		expect(screen.getByRole('button', { name: 'New agent' })).toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: 'Create your first agent' })).toBeNull();
 	});
 });

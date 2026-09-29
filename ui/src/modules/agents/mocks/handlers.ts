@@ -331,6 +331,30 @@ export function seedExtraAgents(
 	agents.push(...rows.map(seedAgent));
 }
 
+/** Mocked dev / e2e: a fresh org with no agents (the Agents page's first run). */
+export function clearAgentsStore(): void {
+	agents = [];
+}
+
+/**
+ * Mocked dev / e2e: what a `jentic register` leaves behind — a pending,
+ * self-registered agent, registered just now.
+ */
+export function selfRegisterAgent(
+	name: string,
+	over: Partial<Omit<AgentRow, 'id' | 'name' | 'status'>> = {},
+): string {
+	const id = genId('agnt');
+	agents.push(seedAgent({ id, name, status: 'pending', created_at: now(0), ...over }));
+	return id;
+}
+
+/** Mocked e2e/dev hooks for the agents store (aggregated in `mocks/handlers`). */
+export const agentsE2eHooks = {
+	clearAgentsStore,
+	selfRegisterAgent,
+};
+
 export function resetAgentsStore(): void {
 	agents = [
 		// Distinct registration times so the pending-approval banner's

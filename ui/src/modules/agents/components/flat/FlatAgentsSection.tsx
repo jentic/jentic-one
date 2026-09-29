@@ -3,12 +3,25 @@
  * selected agent's APIs band and its tile grid. Selection lives in `?agent=<id>`
  * so it is linkable. Tiles are composed client-side from reads the app already
  * makes — no new endpoints.
+ *
+ * With no fleet in the org it shows `FirstAgentLanding`, where the first
+ * self-registered agent is approved and given its first API before the fleet
+ * view takes over. The landing's state (resume on load, the roster poll, the
+ * exits) is `useFirstAgentLanding`; its rules are `lib/firstRun.ts`.
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router';
-import { motion, useReducedMotion } from 'framer-motion';
+import { motion, useReducedMotionConfig } from 'framer-motion';
 import { Plus } from 'lucide-react';
-import { Button, Card, ErrorAlert, ExpandableText, Skeleton, STATUS_ICON } from '@/shared/ui';
+import {
+	Button,
+	Card,
+	ErrorAlert,
+	ExpandableText,
+	Skeleton,
+	STATUS_ICON,
+	toast,
+} from '@/shared/ui';
 import { cn } from '@/shared/lib/utils';
 import { useEagerCursorDrain, useHotkey } from '@/shared/hooks';
 import {
@@ -17,9 +30,9 @@ import {
 	type ApiResponse,
 	type Credential,
 	type DrainedList,
+	type SelectedApi,
 } from '@/shared/credentials/api';
 import {
-	useAgents,
 	useAgentCredentialBindings,
 	useAgentsCredentialBindings,
 	useAgentBindingRuleSummaries,
@@ -55,12 +68,17 @@ import {
 	type PendingConfirm,
 } from '@/modules/agents/components/LifecycleDialogs';
 import { AgentCreateSheet } from '@/modules/agents/components/AgentCreateSheet';
-import { DcrQuickstart } from '@/modules/agents/components/DcrQuickstart';
-import { FirstRunChecklist } from '@/modules/agents/components/flat/FirstRunChecklist';
+import { FirstAgentLanding } from '@/modules/agents/components/flat/FirstAgentLanding';
 import { AddApisTray } from '@/modules/agents/components/flat/AddApisTray';
 import { ApiSetupQueue } from '@/modules/agents/components/flat/ApiSetupQueue';
-import { stillOwedItems, type PreflightItem } from '@/modules/agents/lib/apiPreflight';
+import {
+	preflightApis,
+	stillOwedItems,
+	type PreflightItem,
+} from '@/modules/agents/lib/apiPreflight';
 import type { QueueBackSeed } from '@/modules/agents/lib/setupQueue';
+import { useFirstAgentLanding } from '@/modules/agents/lib/useFirstAgentLanding';
+import { usePreflightInputs } from '@/modules/agents/lib/usePreflightInputs';
 import { AgentDock, type AgentDockSurface } from '@/modules/agents/components/flat/AgentDock';
 import {
 	AgentActivitySheet,
@@ -84,57 +102,71 @@ interface FlatAgentsSectionProps {
 	setCreateOpen: (open: boolean) => void;
 	/** The page header's fleet filter — applied by the strip. */
 	filter: string;
+	/** Whether the zero-agents landing is on screen — the header labels itself by it. */
+	onLandingChange: (showing: boolean) => void;
 }
 
-export function FlatAgentsSection({ createOpen, setCreateOpen, filter }: FlatAgentsSectionProps) {
-	const query = useAgents({ status: 'all' });
+export function FlatAgentsSection({
+	createOpen,
+	setCreateOpen,
+	filter,
+	onLandingChange,
+}: FlatAgentsSectionProps) {
+	// An ABSENT `?agent=` is written back; an UNKNOWN one is left alone — just
+	// after a create it names an agent the roster hasn't refetched yet.
+	const [searchParams, setSearchParams] = useSearchParams();
+	const selectAgent = useCallback(
+		(id: string, { replace = false }: { replace?: boolean } = {}) =>
+			setSearchParams(
+				(prev) => {
+					const next = new URLSearchParams(prev);
+					next.set('agent', id);
+					return next;
+				},
+				{ replace },
+			),
+		[setSearchParams],
+	);
+
+	// The signal names the agent, not a boolean: a boolean would open the tray
+	// over whichever agent was on screen before. `queue` holds APIs the operator
+	// already chose (the landing's GitHub), which skip the tray for the queue.
+	const [addApisFor, setAddApisFor] = useState<{
+		agentId: string;
+		queue: SelectedApi[];
+	} | null>(null);
+	const clearAddApisFor = useCallback(() => setAddApisFor(null), []);
+
+	const approve = useApproveAgent();
+	const deny = useDenyAgent();
+	const landing = useFirstAgentLanding({
+		approve,
+		deny,
+		selectAgent,
+		openAddApis: setAddApisFor,
+	});
+	const { query } = landing;
 
 	// The strip is the fleet, with no "Load more", so drain the cursor eagerly.
 	const { fetchNextPage, hasNextPage, isFetchingNextPage, isError } = query;
 	useEagerCursorDrain({ hasNextPage, isFetchingNextPage, isError, fetchNextPage });
 
-	const agents = useMemo(() => {
-		const entities = query.data?.pages.flatMap((p) => p.entities) ?? [];
-		return [...entities].sort(
-			(a, b) =>
-				STATUS_ORDER[a.status] - STATUS_ORDER[b.status] ||
-				b.createdAt.localeCompare(a.createdAt),
-		);
-	}, [query.data]);
+	const agents = useMemo(
+		() =>
+			[...landing.agents].sort(
+				(a, b) =>
+					STATUS_ORDER[a.status] - STATUS_ORDER[b.status] ||
+					b.createdAt.localeCompare(a.createdAt),
+			),
+		[landing.agents],
+	);
 
-	// An ABSENT `?agent=` is written back; an UNKNOWN one is left alone — just
-	// after a create it names an agent the roster hasn't refetched yet.
-	const [searchParams, setSearchParams] = useSearchParams();
 	const agentParam = searchParams.get('agent');
 	const selected = agents.find((a) => a.id === agentParam) ?? agents[0] ?? null;
 	const fallbackId = agentParam == null ? (selected?.id ?? null) : null;
 	useEffect(() => {
-		if (fallbackId == null) return;
-		setSearchParams(
-			(prev) => {
-				const next = new URLSearchParams(prev);
-				next.set('agent', fallbackId);
-				return next;
-			},
-			{ replace: true },
-		);
-	}, [fallbackId, setSearchParams]);
-
-	function selectAgent(id: string) {
-		setSearchParams(
-			(prev) => {
-				const next = new URLSearchParams(prev);
-				next.set('agent', id);
-				return next;
-			},
-			{ replace: false },
-		);
-	}
-
-	// The signal is the new agent's id, not a boolean: a boolean would open the
-	// tray over whichever agent was on screen before.
-	const [addApisFor, setAddApisFor] = useState<string | null>(null);
-	const clearAddApisFor = useCallback(() => setAddApisFor(null), []);
+		if (fallbackId != null) selectAgent(fallbackId, { replace: true });
+	}, [fallbackId, selectAgent]);
 
 	/** The unfinished Add-APIs batch per agent. Held here, not in
 	 *  `SelectedAgentPanel`, which unmounts on a tab switch. */
@@ -151,16 +183,16 @@ export function FlatAgentsSection({ createOpen, setCreateOpen, filter }: FlatAge
 	}, []);
 
 	function handleAgentCreated(agent: AgentEntity, opts: { addApis: boolean }) {
-		// Selected either way: the operator just named this agent.
+		// Selected either way: the operator just named this agent. The fleet view
+		// shows once the roster has it.
 		selectAgent(agent.id);
-		setAddApisFor(opts.addApis ? agent.id : null);
+		setAddApisFor(opts.addApis ? { agentId: agent.id, queue: [] } : null);
+		landing.createdManually(agent.id);
 	}
 
 	// Same cache slice the nav badge polls; `atLeast` hedges an incomplete drain.
 	const { agents: pendingAgents, atLeast: pendingAtLeast } = usePendingAgents();
 
-	const approve = useApproveAgent();
-	const deny = useDenyAgent();
 	const disable = useDisableAgent();
 	const archive = useArchiveAgent();
 	const [confirm, setConfirm] = useState<PendingConfirm>(null);
@@ -211,28 +243,44 @@ export function FlatAgentsSection({ createOpen, setCreateOpen, filter }: FlatAge
 		return map;
 	}, [agentIds, bindingsByAgent, apisSource.complete, apisSource.items]);
 
+	const firstPageFailed = Boolean(query.error && !query.data);
+	const loading = query.isPending || !landing.ready;
+	const landingShown = !firstPageFailed && !loading && landing.visible;
+	// Before paint, so the header's label never disagrees with the body.
+	useLayoutEffect(() => onLandingChange(landingShown), [landingShown, onLandingChange]);
+
 	// Rendered by every branch below: the header's "New agent" flips `createOpen`
-	// from outside, and a loading roster would otherwise swallow the click.
-	const createSheet = (
-		<AgentCreateSheet
-			open={createOpen}
-			onClose={() => setCreateOpen(false)}
-			onCreated={handleAgentCreated}
-		/>
+	// from outside, and a loading roster would otherwise swallow the click. The
+	// lifecycle confirms serve the landing and the fleet.
+	const overlays = (
+		<>
+			<AgentCreateSheet
+				open={createOpen}
+				onClose={() => setCreateOpen(false)}
+				onCreated={handleAgentCreated}
+			/>
+			<LifecycleDialogs
+				confirm={confirm}
+				onClose={() => setConfirm(null)}
+				disableBody="Disabling immediately revokes this agent's ability to authenticate. You can re-enable it later."
+				mutations={{ deny, disable, archive }}
+			/>
+		</>
 	);
 
 	// A failed FIRST page is a dead surface; a failed LATER page keeps the loaded
 	// fleet on screen, with the inline notice below offering the retry.
-	if (query.error && !query.data) {
+	if (firstPageFailed) {
 		return (
 			<>
 				<ErrorAlert message={query.error as Error} />
-				{createSheet}
+				{overlays}
 			</>
 		);
 	}
 
-	if (query.isPending) {
+	// Until the resume decision is known, neither the fleet nor the landing.
+	if (loading) {
 		return (
 			<>
 				<div role="status" aria-live="polite" aria-busy="true" className="space-y-6">
@@ -245,21 +293,37 @@ export function FlatAgentsSection({ createOpen, setCreateOpen, filter }: FlatAge
 						))}
 					</div>
 				</div>
-				{createSheet}
+				{overlays}
 			</>
 		);
 	}
 
-	if (agents.length === 0) {
+	if (landingShown) {
+		const landingAgent = landing.agent;
 		return (
 			<>
-				{/* Agents is the app's home, so an empty fleet is a fresh workspace:
-				    the setup steps, then the self-registration route. */}
-				<div className="space-y-4">
-					<FirstRunChecklist onCreateAgent={() => setCreateOpen(true)} />
-					<DcrQuickstart />
-				</div>
-				{createSheet}
+				{/* Agents is the app's home, so an empty fleet is a fresh workspace. */}
+				<FirstAgentLanding
+					onCreateAgent={() => setCreateOpen(true)}
+					agent={landingAgent}
+					onApprove={() => {
+						if (landingAgent) approve.mutate(landingAgent.id);
+					}}
+					approvePending={landing.approving}
+					onDeny={() => {
+						if (landingAgent)
+							setConfirm({
+								kind: 'deny',
+								id: landingAgent.id,
+								name: landingAgent.name,
+							});
+					}}
+					onExit={landing.exit}
+					morePending={landing.morePending}
+					onShowFleet={landing.showFleet}
+					slotRef={landing.slotRef}
+				/>
+				{overlays}
 			</>
 		);
 	}
@@ -307,7 +371,10 @@ export function FlatAgentsSection({ createOpen, setCreateOpen, filter }: FlatAge
 					onCloseTile={() => setOpenTileKey(null)}
 					onApprove={() => approve.mutate(selected.id)}
 					approvePending={approve.isPending && approve.variables === selected.id}
-					autoOpenAddApis={addApisFor === selected.id}
+					autoOpenAddApis={addApisFor?.agentId === selected.id}
+					autoQueueApis={
+						addApisFor?.agentId === selected.id ? addApisFor.queue : EMPTY_PICKS
+					}
 					onAutoOpenAddApisConsumed={clearAddApisFor}
 					queueBatch={queueBatches[selected.id] ?? EMPTY_BATCH}
 					onQueueBatchChange={setQueueBatchFor}
@@ -358,13 +425,7 @@ export function FlatAgentsSection({ createOpen, setCreateOpen, filter }: FlatAge
 				</>
 			)}
 
-			<LifecycleDialogs
-				confirm={confirm}
-				onClose={() => setConfirm(null)}
-				disableBody="Disabling immediately revokes this agent's ability to authenticate. You can re-enable it later."
-				mutations={{ deny, disable, archive }}
-			/>
-			{createSheet}
+			{overlays}
 		</>
 	);
 }
@@ -488,6 +549,8 @@ interface SelectedAgentPanelProps {
 	autoOpenAddApis: boolean;
 	/** Spend the signal, so re-selecting this agent later does not reopen the tray. */
 	onAutoOpenAddApisConsumed: () => void;
+	/** APIs already chosen: the auto-open skips the tray and queues these. */
+	autoQueueApis: SelectedApi[];
 	/** Owned by the parent, because this panel remounts on every agent switch. */
 	queueBatch: PreflightItem[];
 	onQueueBatchChange: (agentId: string, items: PreflightItem[]) => void;
@@ -495,6 +558,7 @@ interface SelectedAgentPanelProps {
 
 /** Stable empty batch, so an agent with nothing pending doesn't re-render. */
 const EMPTY_BATCH: PreflightItem[] = [];
+const EMPTY_PICKS: SelectedApi[] = [];
 
 /** DOM id of the API access sidebar panel (the tiles' aria-controls target). */
 const API_ACCESS_SIDEBAR_ID = 'api-access-sidebar';
@@ -510,10 +574,11 @@ function SelectedAgentPanel({
 	approvePending,
 	autoOpenAddApis,
 	onAutoOpenAddApisConsumed,
+	autoQueueApis,
 	queueBatch,
 	onQueueBatchChange,
 }: SelectedAgentPanelProps) {
-	const reducedMotion = useReducedMotion();
+	const reducedMotion = useReducedMotionConfig();
 	/** Which step of the Add-APIs flow is on screen. */
 	const [addStep, setAddStep] = useState<'closed' | 'tray' | 'queue'>('closed');
 	/** Set while the tray is editing the queue's batch (the queue's Back). The queue
@@ -541,7 +606,8 @@ function SelectedAgentPanel({
 	// purged quietly — but only once proven: an `org:admin` viewer, a complete
 	// credentials list, and the credential missing from it. For anyone else every
 	// binding stays live (see `isOrphanBinding` for why the weaker signals fail).
-	const viewerIsAdmin = viewerIsOrgAdmin(useOptionalCurrentUser());
+	const viewer = useOptionalCurrentUser();
+	const viewerIsAdmin = viewerIsOrgAdmin(viewer);
 	const credentialsProven = credentialsSource.complete && !credentialsSource.error;
 	const { live: liveBindings, orphans: orphanBindings } = useMemo(
 		() =>
@@ -667,11 +733,50 @@ function SelectedAgentPanel({
 	// Hold the signal until the agent can actually bind, then spend it opening the
 	// tray. Consuming before the `canBind` gate would drop a live intent for a
 	// not-yet-approved agent; once it's approvable the same signal still fires.
+	// APIs already chosen skip the tray: they are preflighted exactly as the
+	// tray's Continue would, then handed to the queue. A preflight that can't run
+	// (a failed read) falls back to the tray; picks the agent already reaches
+	// leave nothing to set up, which a toast says, and the fleet stays.
+	const preflight = usePreflightInputs(bindings);
+	const bindingsFailedToLoad = bindingsQuery.isError;
 	useEffect(() => {
 		if (!autoOpenAddApis || !canBind) return;
+		if (
+			autoQueueApis.length === 0 ||
+			preflight.credentialsSource.error ||
+			bindingsFailedToLoad
+		) {
+			onAutoOpenAddApisConsumed();
+			setAddStep('tray');
+			return;
+		}
+		if (!preflight.ready) return;
 		onAutoOpenAddApisConsumed();
-		setAddStep('tray');
-	}, [autoOpenAddApis, canBind, onAutoOpenAddApisConsumed]);
+		const items = preflightApis(autoQueueApis, preflight.inputs).filter(
+			(item) => item.outcome !== 'attached',
+		);
+		if (items.length === 0) {
+			const labels = autoQueueApis.map((a) => a.label).join(', ');
+			toast({
+				title: `${labels} ${autoQueueApis.length === 1 ? 'is' : 'are'} already available to ${agent.name}`,
+			});
+			return;
+		}
+		onQueueBatchChange(agent.id, items);
+		setAddStep('queue');
+	}, [
+		autoOpenAddApis,
+		canBind,
+		onAutoOpenAddApisConsumed,
+		autoQueueApis,
+		bindingsFailedToLoad,
+		preflight.credentialsSource.error,
+		preflight.ready,
+		preflight.inputs,
+		onQueueBatchChange,
+		agent.id,
+		agent.name,
+	]);
 
 	const addApisButton = !isArchived && (
 		<span className="flex items-center gap-2">
@@ -793,11 +898,15 @@ function SelectedAgentPanel({
 
 			{/* The tray keeps its draft across a dismissal so it stays mounted; the queue
 			    mounts only while it owns a batch. The tray opens once bindings load —
-			    before that, every bound API would look new and invite a duplicate bind. */}
+			    before that, every bound API would look new and invite a duplicate bind —
+			    or once their read has failed (the error above says so), rather than not
+			    at all. */}
 			{canBind && (
 				<>
 					<AddApisTray
-						open={addStep === 'tray' && bindings !== undefined}
+						open={
+							addStep === 'tray' && (bindings !== undefined || bindingsFailedToLoad)
+						}
 						onClose={() => {
 							// Closing mid-edit is closing the flow: the batch waits, unedited.
 							if (batchEdit) onQueueBatchChange(agent.id, batchEdit.remaining);

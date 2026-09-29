@@ -34,6 +34,7 @@ import type { PreflightItem } from '@/modules/agents/lib/apiPreflight';
 import type { CredentialBindingEntity } from '@/modules/agents/api/types';
 import type { QueueBackSeed } from '@/modules/agents/lib/setupQueue';
 import type { SelectedApi } from '@/shared/credentials/api';
+import { liveGithubCatalog } from '@/modules/agents/mocks/githubCatalog';
 
 /** Three workspace APIs, one per preflight class the tray has to distinguish. */
 const WORKSPACE_APIS = [
@@ -340,6 +341,20 @@ describe('AddApisTray — multi-select picks and the preflight tally', () => {
 		expect(
 			await screen.findByText('1 API will be imported into your Workspace.'),
 		).toBeInTheDocument();
+	});
+
+	it('an empty search lists only workspace APIs; "github" finds GitHub in the live catalog', async () => {
+		worker.use(liveGithubCatalog);
+		const user = userEvent.setup();
+		renderWithProviders(<TrayHarness />);
+
+		// The picker never browses the catalog: blank search = workspace only.
+		expect(await row(/Stripe/)).toBeInTheDocument();
+		expect(screen.queryByRole('checkbox', { name: /github/i })).toBeNull();
+
+		await user.type(screen.getByRole('textbox', { name: 'Search APIs' }), 'github');
+		expect(await row(/github\.com\/api\.github\.com/)).toBeInTheDocument();
+		expect(await row(/github\.com\/ghec/)).toBeInTheDocument();
 	});
 
 	it('a search that finds nothing offers the spec upload instead of a dead end', async () => {

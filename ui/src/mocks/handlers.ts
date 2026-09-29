@@ -1,5 +1,5 @@
 import { http, HttpResponse } from 'msw';
-import { agentsHandlers } from '@/modules/agents/mocks/handlers';
+import { agentsHandlers, agentsE2eHooks } from '@/modules/agents/mocks/handlers';
 import { discoverHandlers } from '@/modules/discover/mocks/handlers';
 import { workspaceHandlers } from '@/modules/workspace/mocks/handlers';
 import { credentialsHandlers, credentialsE2eHooks } from '@/shared/credentials/mocks/handlers';
@@ -221,5 +221,6 @@ export const handlers = [
 export function installE2eTestHooks(target: Record<string, unknown>): void {
 	target.__mswTestHooks = {
 		...credentialsE2eHooks,
+		...agentsE2eHooks,
 	};
 }

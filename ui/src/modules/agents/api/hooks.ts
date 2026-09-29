@@ -160,7 +160,14 @@ function notifyError(error: unknown, fallback: string): void {
  * narrowing is client-side on the loaded pages (the page always fetches
  * `all`), so one cache entry serves every status segment.
  */
-export function useAgents(params: { status?: string; enabled?: boolean } = {}) {
+export function useAgents(
+	params: {
+		status?: string;
+		enabled?: boolean;
+		/** Poll the list — a surface waiting for an agent to register (the stream's fallback). */
+		refetchInterval?: number | false;
+	} = {},
+) {
 	const status = params.status ?? 'all';
 	return useInfiniteQuery<ListResult<AgentEntity>>({
 		// A disabled observer neither fetches nor re-triggers a drain another
@@ -175,6 +182,7 @@ export function useAgents(params: { status?: string; enabled?: boolean } = {}) {
 		initialPageParam: null,
 		getNextPageParam: (last) => (last.hasMore ? last.nextCursor : null),
 		placeholderData: keepPreviousData,
+		refetchInterval: params.refetchInterval,
 	});
 }
 

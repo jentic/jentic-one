@@ -43,6 +43,9 @@ export default function AgentsPage() {
 	const filterRef = useRef<HTMLInputElement | null>(null);
 	useHotkey('/', () => filterRef.current?.focus());
 	useHotkey('n', () => setAgentCreateOpen(true));
+	// Reported by the section below, so the header reads first-run exactly while
+	// the zero-agents landing is on screen.
+	const [firstRun, setFirstRun] = useState(false);
 
 	const [searchParams, setSearchParams] = useSearchParams();
 	const inventoryParam = searchParams.get('credentials');
@@ -119,7 +122,7 @@ export default function AgentsPage() {
 						</div>
 						<Button size="sm" onClick={() => setAgentCreateOpen(true)}>
 							<Plus className="h-4 w-4" />
-							New agent
+							{firstRun ? 'Create your first agent' : 'New agent'}
 						</Button>
 						{/* The org-wide inventory trigger — page level, not the dock, whose every
 						    verb is agent-scoped. */}
@@ -172,6 +175,7 @@ export default function AgentsPage() {
 				createOpen={agentCreateOpen}
 				setCreateOpen={setAgentCreateOpen}
 				filter={agentFilter}
+				onLandingChange={setFirstRun}
 			/>
 
 			{/* The org-wide credential inventory — a page-level surface, since it is

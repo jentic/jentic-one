@@ -10,6 +10,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Button, Input, Label, Textarea, SheetPrimitive } from '@/shared/ui';
 import { useCreateAgent, type AgentEntity } from '@/modules/agents/api';
 import { InitialScopesField } from '@/modules/agents/components/InitialScopesField';
+import { AGENT_NAME_MAX_LENGTH, agentNameError } from '@/modules/agents/lib/agentName';
 
 interface AgentCreateSheetProps {
 	open: boolean;
@@ -39,8 +40,9 @@ export function AgentCreateSheet({ open, onClose, onCreated }: AgentCreateSheetP
 
 	async function handleSubmit(next: Intent) {
 		const trimmed = name.trim();
-		if (!trimmed) {
-			setError('A name is required.');
+		const invalid = agentNameError(name);
+		if (invalid) {
+			setError(invalid);
 			return;
 		}
 		setIntent(next);
@@ -92,7 +94,7 @@ export function AgentCreateSheet({ open, onClose, onCreated }: AgentCreateSheetP
 						onChange={(e) => setName(e.target.value)}
 						placeholder="e.g. inbox-triage-bot"
 						error={error ?? undefined}
-						maxLength={255}
+						maxLength={AGENT_NAME_MAX_LENGTH}
 					/>
 				</div>
 				<div className="space-y-1.5">

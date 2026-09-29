@@ -435,6 +435,25 @@
 	animation: j1-live-ping 2.4s cubic-bezier(0, 0, 0.2, 1) infinite;
 }
 
+/* A calm "waiting" light: the dot dims and breathes a faint ring out, slower
+   than the stream's LiveDot so a page that is only listening never reads as
+   an alert. */
+@keyframes j1-soft-pulse {
+	0%,
+	100% {
+		opacity: 1;
+		box-shadow: 0 0 0 0 hsl(var(--primary) / 0.35);
+	}
+	50% {
+		opacity: 0.55;
+		box-shadow: 0 0 0 4px hsl(var(--primary) / 0);
+	}
+}
+
+.animate-soft-pulse {
+	animation: j1-soft-pulse 2.4s ease-in-out infinite;
+}
+
 /* A dot that pops in when a state first appears (a failure landing). */
 @keyframes j1-pop {
 	0% {
