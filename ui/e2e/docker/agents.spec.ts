@@ -22,8 +22,12 @@ test('the agents surface renders its shell without a service-accounts tab', asyn
 	// No emptiness assertion: the shared docker DB accumulates actors from
 	// other specs and reruns, so this pins the shell contract only — the
 	// page-level fleet controls and the org-wide credential inventory trigger.
+	// The create button reads "Create your first agent" while the fleet is
+	// empty and "New agent" once it isn't, so either label satisfies it.
 	await expect(page.getByLabel('Filter agents')).toBeVisible();
-	await expect(page.getByRole('button', { name: 'New agent' })).toBeVisible();
+	await expect(
+		page.getByRole('button', { name: /^(New agent|Create your first agent)$/ }),
+	).toBeVisible();
 	await expect(page.getByRole('button', { name: 'Credentials' })).toBeVisible();
 	await expect(page.getByRole('button', { name: 'Service accounts' })).toHaveCount(0);
 
