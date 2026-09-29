@@ -11,6 +11,7 @@ import {
 	useMutation,
 	useQuery,
 	useQueryClient,
+	type QueryClient,
 	type UseQueryResult,
 } from '@tanstack/react-query';
 import { sharedQueryKeys } from '@/shared/api';
@@ -148,6 +149,18 @@ function importedRefToSelected(ref: ImportedApiRef): SelectedApi {
 		version: ref.version,
 		label: apiRefDisplayName({ vendor: ref.vendor, name: ref.name }),
 	};
+}
+
+/**
+ * Mark every cached `GET /apis` list stale — the picker lists and the drained
+ * {@link useAllApis} (all under `apisList()`), plus the cross-module
+ * `sharedQueryKeys.workspaceApis` slice. Any mutation that adds, removes or
+ * changes a workspace API's list-level fields (live revision, update flag)
+ * calls this, so no list view keeps a stale row.
+ */
+export function invalidateApiLists(queryClient: QueryClient): void {
+	void queryClient.invalidateQueries({ queryKey: sharedQueryKeys.workspaceApis });
+	void queryClient.invalidateQueries({ queryKey: apiPickerKeys.apisList() });
 }
 
 /** List workspace APIs (cursor pagination policy owned here). */
@@ -310,7 +323,7 @@ export function useImportCatalogEntry() {
 	return useMutation<ApiImportResponse, Error, string>({
 		mutationFn: (apiId) => importCatalogEntry(apiId),
 		onSuccess: () => {
-			void queryClient.invalidateQueries({ queryKey: apiPickerKeys.apisList() });
+			invalidateApiLists(queryClient);
 			void queryClient.invalidateQueries({ queryKey: apiPickerKeys.catalogList() });
 		},
 	});
@@ -439,8 +452,7 @@ export function useImportSpec(): UseImportSpec {
 				});
 				if (!jobSucceeded(status)) return { ...status, imported: [] };
 
-				void queryClient.invalidateQueries({ queryKey: sharedQueryKeys.workspaceApis });
-				void queryClient.invalidateQueries({ queryKey: apiPickerKeys.apisList() });
+				invalidateApiLists(queryClient);
 				void queryClient.invalidateQueries({ queryKey: apiPickerKeys.catalogList() });
 
 				const imported = await resolveImported(status.jobId);
