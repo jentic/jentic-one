@@ -30,6 +30,7 @@ from jentic_one.registry.core.schema.operations import Operation
 from jentic_one.registry.core.schema.security_schemes import SecurityScheme, SecuritySchemeFlow
 from jentic_one.registry.core.schema.servers import Server, ServerVariable
 from jentic_one.registry.core.schema.spec_files import SpecFile
+from jentic_one.registry.core.url_index import URL_INDEX_FORMAT_MARKER
 from jentic_one.registry.ingest.exc import IngestPipelineError
 from jentic_one.registry.ingest.ingestor import Ingestor
 from jentic_one.registry.ingest.models import ApiIdentifier, IngestSpecification, SpecType
@@ -405,15 +406,20 @@ async def test_widened_key_keeps_the_previous_constraint_name(
     )
 
 
-def _as_set(rows: Sequence[tuple[Any, ...]]) -> set[tuple[Any, ...]]:
-    """Hashable row set (``param_names`` is a list column)."""
-    return {(*row[:7], tuple(row[7]), row[8]) for row in rows}
+def _as_legacy_set(rows: Sequence[tuple[Any, ...]]) -> set[tuple[Any, ...]]:
+    """Hashable row set (``param_names`` is a list column), with ``path_regex`` in
+    the format rows had before the format marker."""
+    return {
+        (*row[:6], row[6].removeprefix(URL_INDEX_FORMAT_MARKER), tuple(row[7]), row[8])
+        for row in rows
+    }
 
 
 async def test_rebuild_migration_restores_displaced_rows(
     integration_context: Context, registry_db: DatabaseSession, clean_registry: None
 ) -> None:
-    """The e8f9a0b1c2d3 rebuild re-creates exactly the rows ingest writes."""
+    """The e8f9a0b1c2d3 rebuild re-creates the rows ingest writes, in the legacy
+    (pre-format-marker) row format that the lookup re-derives server variables for."""
     v1, v2 = await _live_with_draft(integration_context)
     columns = (
         OperationURLIndex.revision_id,
@@ -427,7 +433,7 @@ async def test_rebuild_migration_restores_displaced_rows(
         OperationURLIndex.segment_count,
     )
     async with registry_db.session() as session:
-        ingested = _as_set((await session.execute(select(*columns))).tuples().all())
+        ingested = _as_legacy_set((await session.execute(select(*columns))).tuples().all())
         # Simulate the pre-change displacement: the live revision lost its rows.
         await session.execute(delete(OperationURLIndex).where(OperationURLIndex.revision_id == v1))
         await session.commit()
@@ -441,7 +447,7 @@ async def test_rebuild_migration_restores_displaced_rows(
     assert inserted == 1
 
     async with registry_db.session() as session:
-        rebuilt = _as_set((await session.execute(select(*columns))).tuples().all())
+        rebuilt = _as_legacy_set((await session.execute(select(*columns))).tuples().all())
         again = await session.run_sync(
             lambda sync: rebuild_migration.rebuild_url_index(sync.connection())
         )
