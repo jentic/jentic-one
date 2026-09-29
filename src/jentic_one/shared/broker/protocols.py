@@ -15,11 +15,21 @@ from jentic_one.shared.schemas import APIReference
 
 @dataclass(frozen=True, slots=True)
 class ResolveResult:
-    """A resolved operation with its API identity and extracted path parameters."""
+    """A resolved operation with its API identity and extracted path parameters.
+
+    ``server_variables`` are the concrete OpenAPI server-variable values of the
+    matched request URL (e.g. ``{"region": "eu"}`` for ``/eu/widgets``); the
+    broker only injects a credential whose ``server_variables`` agree with them.
+    ``server_variable_defaults`` are the declared defaults of variables the URL
+    left as a literal ``{name}`` placeholder, substituted when no credential
+    supplies a value.
+    """
 
     operation_id: str
     api: APIReference
     path_params: dict[str, str]
+    server_variables: dict[str, str] = field(default_factory=dict)
+    server_variable_defaults: dict[str, str] = field(default_factory=dict)
 
 
 class RevisionPinOutcome(StrEnum):

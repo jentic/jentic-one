@@ -5,14 +5,21 @@ from types import SimpleNamespace
 import pytest
 
 from jentic_one.registry.core.url_index import (
+    MAX_SERVER_VARIABLE_EXPANSIONS,
+    ServerVariableMatch,
+    ServerVariableSpec,
+    URLIndexEntry,
     build_index_entry,
     build_path_regex,
+    build_server_index_entries,
     count_segments,
     expand_server_variables,
     extract_param_names,
     normalise_host,
     normalize_path,
     normalize_path_template,
+    resolve_server_variable_groups,
+    server_variable_specs,
     structural_regex,
 )
 
@@ -244,3 +251,145 @@ def test_extract_param_names_strips_all_rfc6570_operators() -> None:
         "form",
         "cont",
     ]
+
+
+# ---------------------------------------------------------------------------
+# build_server_index_entries — server-variable expansion
+# ---------------------------------------------------------------------------
+
+_REGION_VARS = {"region": {"default": "us", "enum": ["us", "eu"]}}
+
+
+def _match(entry: URLIndexEntry, host: str, path: str) -> ServerVariableMatch | None:
+    host_m = entry.host_regex.match(host)
+    path_m = entry.path_regex.match(path)
+    if host_m is None or path_m is None:
+        return None
+    return resolve_server_variable_groups(host_m.groupdict(), path_m.groupdict())
+
+
+def test_enum_path_variable_indexes_every_value_and_template() -> None:
+    expansion = build_server_index_entries(
+        "https://api.example.com/{region}", _REGION_VARS, "/widgets"
+    )
+    assert not expansion.capped
+    assert sorted(e.path_pattern for e in expansion.entries) == [
+        "/eu/widgets",
+        "/us/widgets",
+        "/{region}/widgets",
+    ]
+    assert all(e.host_pattern == "api.example.com" for e in expansion.entries)
+
+
+@pytest.mark.parametrize(
+    ("path", "values", "defaults"),
+    [
+        ("/us/widgets", {"region": "us"}, {}),
+        ("/eu/widgets", {"region": "eu"}, {}),
+        ("/{region}/widgets", {}, {"region": "us"}),
+    ],
+)
+def test_enum_path_variable_resolves_request_values(
+    path: str, values: dict[str, str], defaults: dict[str, str]
+) -> None:
+    expansion = build_server_index_entries(
+        "https://api.example.com/{region}", _REGION_VARS, "/widgets"
+    )
+    matches = [m for e in expansion.entries if (m := _match(e, "api.example.com", path))]
+    assert len(matches) == 1
+    assert matches[0].values == values
+    assert matches[0].defaults == defaults
+    assert matches[0].path_params == {}
+
+
+def test_enum_variable_does_not_match_undeclared_value() -> None:
+    expansion = build_server_index_entries(
+        "https://api.example.com/{region}", _REGION_VARS, "/widgets"
+    )
+    assert not [e for e in expansion.entries if _match(e, "api.example.com", "/ap/widgets")]
+
+
+def test_enum_default_outside_enum_is_indexed() -> None:
+    variables = {"region": {"default": "global", "enum": ["us", "eu"]}}
+    expansion = build_server_index_entries("https://{region}.example.com", variables, "/x")
+    assert sorted(str(e.host_pattern) for e in expansion.entries) == [
+        "eu.example.com",
+        "global.example.com",
+        "us.example.com",
+        "{region}.example.com",
+    ]
+
+
+def test_enum_host_variable_resolves_values_and_keeps_path_params() -> None:
+    expansion = build_server_index_entries(
+        "https://{region}.example.com/v1", _REGION_VARS, "/items/{itemId}"
+    )
+    matches = [m for e in expansion.entries if (m := _match(e, "eu.example.com", "/v1/items/42"))]
+    assert len(matches) == 1
+    assert matches[0].values == {"region": "eu"}
+    assert matches[0].path_params == {"itemId": "42"}
+
+
+def test_free_host_variable_matches_as_pattern() -> None:
+    variables = {"tenant": {"default": "demo"}}
+    expansion = build_server_index_entries("https://{tenant}.example.com", variables, "/data")
+    patterns = [e.host_pattern for e in expansion.entries]
+    # The default gets a concrete row; any other tenant matches the regex row.
+    assert "demo.example.com" in patterns
+    assert None in patterns
+    free = next(e for e in expansion.entries if e.host_pattern is None)
+    match = _match(free, "acme.example.com", "/data")
+    assert match is not None
+    assert match.values == {"tenant": "acme"}
+    assert _match(free, "acme.other.com", "/data") is None
+    assert _match(free, "a.b.example.com", "/data") is None
+
+
+def test_free_host_variable_with_short_suffix_stays_template_only() -> None:
+    variables = {"sub": {"default": "api"}}
+    expansion = build_server_index_entries("https://{sub}.com", variables, "/data")
+    assert None not in [e.host_pattern for e in expansion.entries]
+    assert sorted(str(e.host_pattern) for e in expansion.entries) == ["api.com", "{sub}.com"]
+
+
+def test_free_path_variable_matches_any_segment() -> None:
+    variables = {"version": {"default": "v1"}}
+    expansion = build_server_index_entries(
+        "https://api.example.com/{version}", variables, "/things"
+    )
+    matches = [m for e in expansion.entries if (m := _match(e, "api.example.com", "/v7/things"))]
+    assert [m.values for m in matches] == [{"version": "v7"}]
+
+
+def test_repeated_variable_must_agree_between_host_and_path() -> None:
+    variables = {"region": {"default": "us", "enum": ["us", "eu"]}}
+    expansion = build_server_index_entries("https://{region}.example.com/{region}", variables, "/w")
+    assert [e for e in expansion.entries if _match(e, "eu.example.com", "/eu/w")]
+    assert not [e for e in expansion.entries if _match(e, "eu.example.com", "/us/w")]
+
+
+def test_resolve_server_variable_groups_rejects_conflicting_values() -> None:
+    group = "sv__" + b"region".hex()
+    assert resolve_server_variable_groups({group: "us"}, {group: "eu"}) is None
+
+
+def test_expansion_is_capped() -> None:
+    variables = {name: {"default": "a", "enum": ["a", "b", "c", "d"]} for name in ("x", "y", "z")}
+    expansion = build_server_index_entries("https://api.example.com/{x}/{y}/{z}", variables, "/o")
+    assert expansion.capped
+    assert sorted(e.path_pattern for e in expansion.entries) == ["/a/a/a/o", "/{x}/{y}/{z}/o"]
+    assert len(expansion.entries) <= MAX_SERVER_VARIABLE_EXPANSIONS
+
+
+def test_server_without_variables_yields_single_entry() -> None:
+    expansion = build_server_index_entries("https://api.example.com/v1", {}, "/users/{id}")
+    assert len(expansion.entries) == 1
+    assert expansion.entries[0].path_pattern == "/v1/users/{id}"
+    assert expansion.entries[0].param_names == ["id"]
+
+
+def test_server_variable_specs_accepts_list_of_objects() -> None:
+    specs = server_variable_specs(
+        [SimpleNamespace(name="region", default_value="us", enum=["us", "eu", {"x": 1}])]
+    )
+    assert specs == [ServerVariableSpec(name="region", default="us", enum=("us", "eu"))]

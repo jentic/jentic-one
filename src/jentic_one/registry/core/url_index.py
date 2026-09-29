@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import itertools
+import math
 import re
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Any
 from urllib.parse import unquote, urlparse
 
@@ -38,9 +42,14 @@ class ParsedServerURL:
 
 @dataclass
 class URLIndexEntry:
-    """An entry in the URL index for matching requests to operations."""
+    """An entry in the URL index for matching requests to operations.
 
-    host_pattern: str
+    ``host_pattern`` is ``None`` when the host is only matchable by
+    ``host_regex`` (a free-form server variable in the host); the lookup's
+    regex branch serves exactly those rows.
+    """
+
+    host_pattern: str | None
     host_regex: re.Pattern[str]
     path_pattern: str
     path_regex: re.Pattern[str]
@@ -361,3 +370,388 @@ def build_index_entry(
         segment_count=segment_count,
         param_names=param_names,
     )
+
+
+# ---------------------------------------------------------------------------
+# Server-variable expansion
+# ---------------------------------------------------------------------------
+
+MAX_SERVER_VARIABLE_EXPANSIONS = 32
+"""Upper bound on URL-index entries generated per (server URL, operation) pair.
+
+Every declared enum value (and the default of a free-form variable) gets its
+own concrete index entry, so the per-server entry count is the cross-product
+of each variable's options. When that product exceeds this cap the builder
+falls back to two entries — the all-defaults URL and the templated URL (free
+-form variables still match as a pattern) — so a spec with many large enums
+cannot blow up the index. The fallback is logged by the ingest stage.
+"""
+
+# Regex group prefix for a server-variable capture in ``host_regex`` /
+# ``path_regex``. The group name carries the variable name (and its default,
+# when declared) hex-encoded, so a matched index row alone is enough to recover
+# the concrete variable values of the request URL — no extra lookup.
+_SV_GROUP_PREFIX = "sv__"
+# Internal placeholder token for a declared server variable while the server
+# URL goes through parsing/normalization (``{~sv0}``). ``~`` never starts an
+# OpenAPI variable or path-parameter name in practice, and the braces keep the
+# token shielded by ``normalize_path_template``.
+_SV_TOKEN_PREFIX = "~sv"
+# A free-form server variable in the host matches exactly one DNS label.
+_FREE_HOST_VALUE = r"[^.:/]+"
+_FREE_PATH_VALUE = r"[^/]+"
+
+
+@dataclass(frozen=True)
+class ServerVariableSpec:
+    """A declared OpenAPI server variable (``servers[].variables.<name>``)."""
+
+    name: str
+    default: str | None = None
+    enum: tuple[str, ...] = ()
+
+
+class _BindingKind(StrEnum):
+    VALUE = "value"  # a concrete declared value (enum member or default)
+    FREE = "free"  # any value — free-form variable matched as a pattern
+    TEMPLATE = "template"  # the literal ``{name}`` placeholder, left for substitution
+
+
+@dataclass(frozen=True)
+class _Binding:
+    kind: _BindingKind
+    value: str | None = None
+
+
+@dataclass
+class ServerIndexExpansion:
+    """URL-index entries for one server URL + operation path."""
+
+    entries: list[URLIndexEntry]
+    capped: bool = False
+
+
+@dataclass
+class ServerVariableMatch:
+    """Server-variable groups split out of a matched index row.
+
+    ``values`` are the concrete values present in the request URL;
+    ``defaults`` are the declared defaults of variables the request left as a
+    literal ``{name}`` placeholder (for substitution when no credential
+    supplies a value).
+    """
+
+    path_params: dict[str, str]
+    values: dict[str, str]
+    defaults: dict[str, str]
+
+
+def _scalar_str(value: Any) -> str | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, (str, int, float)):
+        return str(value)
+    return None
+
+
+def server_variable_specs(variables: Any) -> list[ServerVariableSpec]:
+    """Normalize declared server variables into :class:`ServerVariableSpec`.
+
+    Accepts the OpenAPI mapping form (``{name: {default, enum}}``) and a list
+    of objects/dicts carrying ``name`` + ``default_value``/``default`` + ``enum``
+    (the ORM ``ServerVariable`` shape). Non-scalar enum members are skipped.
+    """
+    items: list[tuple[str, Any, Any]] = []
+    if isinstance(variables, Mapping):
+        for name, spec in variables.items():
+            spec_map = spec if isinstance(spec, Mapping) else {}
+            items.append((str(name), spec_map.get("default"), spec_map.get("enum")))
+    elif isinstance(variables, Sequence) and not isinstance(variables, str):
+        for var in variables:
+            if isinstance(var, Mapping):
+                name = var.get("name")
+                default = var.get("default_value", var.get("default"))
+                enum = var.get("enum")
+            else:
+                name = getattr(var, "name", None)
+                default = getattr(var, "default_value", getattr(var, "default", None))
+                enum = getattr(var, "enum", None)
+            if name:
+                items.append((str(name), default, enum))
+
+    specs: list[ServerVariableSpec] = []
+    seen: set[str] = set()
+    for name, default, enum in items:
+        if name in seen:
+            continue
+        seen.add(name)
+        members: list[str] = []
+        if isinstance(enum, Sequence) and not isinstance(enum, str):
+            for member in enum:
+                text = _scalar_str(member)
+                if text is not None and text not in members:
+                    members.append(text)
+        specs.append(
+            ServerVariableSpec(name=name, default=_scalar_str(default), enum=tuple(members))
+        )
+    return specs
+
+
+def _sv_group_name(spec: ServerVariableSpec) -> str:
+    name_hex = spec.name.encode().hex()
+    if spec.default is None:
+        return f"{_SV_GROUP_PREFIX}{name_hex}"
+    return f"{_SV_GROUP_PREFIX}{name_hex}_{spec.default.encode().hex()}"
+
+
+def _decode_sv_group_name(group: str) -> tuple[str, str | None] | None:
+    if not group.startswith(_SV_GROUP_PREFIX):
+        return None
+    encoded = group[len(_SV_GROUP_PREFIX) :]
+    name_hex, _, default_hex = encoded.partition("_")
+    try:
+        name = bytes.fromhex(name_hex).decode()
+        default = bytes.fromhex(default_hex).decode() if default_hex else None
+    except ValueError:
+        return None
+    return name, default
+
+
+def resolve_server_variable_groups(
+    *group_dicts: Mapping[str, str | None],
+) -> ServerVariableMatch | None:
+    """Split regex groups into path params and server-variable values/defaults.
+
+    Accepts the host groups then the path groups of one matched row. Returns
+    ``None`` when the same variable resolves to different values in the host
+    and the path — such a URL is not a consistent instance of the server.
+    """
+    path_params: dict[str, str] = {}
+    values: dict[str, str] = {}
+    defaults: dict[str, str] = {}
+    for groups in group_dicts:
+        for group, captured in groups.items():
+            if captured is None:
+                continue
+            decoded = _decode_sv_group_name(group)
+            if decoded is None:
+                path_params[group] = captured
+                continue
+            name, default = decoded
+            if captured == "{" + name + "}":
+                if default is not None:
+                    defaults[name] = default
+                continue
+            existing = values.get(name)
+            if existing is not None and existing.casefold() != captured.casefold():
+                return None
+            values[name] = captured
+    for name in values:
+        defaults.pop(name, None)
+    return ServerVariableMatch(path_params=path_params, values=values, defaults=defaults)
+
+
+def _raw_host(server_url: str) -> str:
+    if "://" not in server_url:
+        return ""
+    return server_url.split("://", 1)[1].split("/", 1)[0]
+
+
+def _free_host_allowed(host_template: str) -> bool:
+    """Whether a free-form host variable may be indexed as a host pattern.
+
+    The literal suffix after the last placeholder must pin at least two DNS
+    labels (``{tenant}.example.com``): a bare ``{host}`` or ``{sub}.com`` would
+    match hosts that are not the API's, so those stay template-only.
+    """
+    placeholders = list(PATH_PARAM_RE.finditer(host_template))
+    if not placeholders:
+        return True
+    suffix = host_template[placeholders[-1].end() :].split(":", 1)[0]
+    if not suffix.startswith((".", "-")):
+        return False
+    labels = [label for label in suffix.lstrip("-").split(".") if label]
+    return len(labels) >= 2
+
+
+def _variable_options(
+    spec: ServerVariableSpec, *, in_host: bool, free_host_ok: bool
+) -> list[_Binding]:
+    options: list[_Binding] = []
+    if spec.enum:
+        members = list(spec.enum)
+        if spec.default is not None and spec.default not in members:
+            members.append(spec.default)
+        options.extend(_Binding(_BindingKind.VALUE, m) for m in members)
+        options.append(_Binding(_BindingKind.TEMPLATE))
+        return options
+    if spec.default is not None:
+        options.append(_Binding(_BindingKind.VALUE, spec.default))
+    if in_host and not free_host_ok:
+        options.append(_Binding(_BindingKind.TEMPLATE))
+    else:
+        options.append(_Binding(_BindingKind.FREE))
+    return options
+
+
+def _fallback_bindings(
+    used: list[ServerVariableSpec], host_template: str, free_host_ok: bool
+) -> list[dict[str, _Binding]]:
+    """The capped expansion: the all-defaults combination + the templated one."""
+
+    def _pattern(spec: ServerVariableSpec) -> _Binding:
+        in_host = "{" + spec.name + "}" in host_template
+        if spec.enum or (in_host and not free_host_ok):
+            return _Binding(_BindingKind.TEMPLATE)
+        return _Binding(_BindingKind.FREE)
+
+    defaults = {
+        s.name: _Binding(_BindingKind.VALUE, s.default) if s.default is not None else _pattern(s)
+        for s in used
+    }
+    templated = {s.name: _pattern(s) for s in used}
+    return [defaults, templated] if defaults != templated else [defaults]
+
+
+def _render_server_template(
+    template: str,
+    used: list[ServerVariableSpec],
+    bindings: Mapping[str, _Binding],
+    *,
+    in_host: bool,
+) -> tuple[str, str, bool]:
+    """Render a tokenized host/path into ``(stored pattern, regex body, is_pattern)``.
+
+    ``is_pattern`` is True when a free-form server variable makes the result
+    matchable only by regex (host → ``host`` column left ``NULL``).
+    """
+    display: list[str] = []
+    regex: list[str] = []
+    is_pattern = False
+    seen_groups: set[str] = set()
+    for i, part in enumerate(PATH_PARAM_RE.split(template)):
+        if i % 2 == 0:
+            display.append(part)
+            regex.append(re.escape(part))
+            continue
+        idx_text = part[len(_SV_TOKEN_PREFIX) :]
+        if part.startswith(_SV_TOKEN_PREFIX) and idx_text.isdigit() and int(idx_text) < len(used):
+            spec = used[int(idx_text)]
+            binding = bindings[spec.name]
+            group = _sv_group_name(spec)
+            if binding.kind is _BindingKind.VALUE:
+                value = binding.value or ""
+                shown = value.lower() if in_host else value
+                matcher = re.escape(shown)
+            elif binding.kind is _BindingKind.TEMPLATE:
+                shown = "{" + spec.name + "}"
+                matcher = re.escape(shown)
+            else:
+                shown = "{" + spec.name + "}"
+                matcher = _FREE_HOST_VALUE if in_host else _FREE_PATH_VALUE
+                is_pattern = True
+            display.append(shown)
+            if group in seen_groups:
+                regex.append(f"(?P={group})")
+            else:
+                seen_groups.add(group)
+                regex.append(f"(?P<{group}>{matcher})")
+            continue
+        # An undeclared placeholder: legacy handling (host → any label run,
+        # path → an operation path parameter).
+        display.append("{" + part + "}")
+        if in_host:
+            regex.append(r"[^:/]+")
+        else:
+            name, is_catch_all = _split_param_token(part)
+            regex.append(f"(?P<{_safe_param_name(name)}>{'.+' if is_catch_all else '[^/]+'})")
+    return "".join(display), "".join(regex), is_pattern
+
+
+def _entry_for_bindings(
+    server_url: str,
+    used: list[ServerVariableSpec],
+    bindings: Mapping[str, _Binding],
+    operation_path: str,
+) -> URLIndexEntry:
+    tokenized = server_url
+    captured: list[ServerVariableSpec] = []
+    for spec in used:
+        placeholder = "{" + spec.name + "}"
+        binding = bindings[spec.name]
+        if binding.kind is _BindingKind.VALUE and not binding.value:
+            # An empty value cannot be captured (normalization collapses it).
+            tokenized = tokenized.replace(placeholder, "")
+            continue
+        tokenized = tokenized.replace(placeholder, "{" + f"{_SV_TOKEN_PREFIX}{len(captured)}" + "}")
+        captured.append(spec)
+
+    parsed = parse_server_url(tokenized)
+    full_path = normalize_path_template(merge_paths(parsed.path, operation_path))
+    host_display, host_regex, host_is_pattern = _render_server_template(
+        parsed.host, captured, bindings, in_host=True
+    )
+    path_display, path_regex, _ = _render_server_template(
+        full_path, captured, bindings, in_host=False
+    )
+    return URLIndexEntry(
+        host_pattern=None if host_is_pattern else host_display,
+        host_regex=re.compile("^" + host_regex + "$", re.IGNORECASE),
+        path_pattern=path_display,
+        path_regex=re.compile("^" + path_regex + "$"),
+        segment_count=count_segments(path_display),
+        param_names=extract_param_names(path_display),
+    )
+
+
+def build_server_index_entries(
+    server_url: str, variables: Any, operation_path: str
+) -> ServerIndexExpansion:
+    """Build every URL-index entry for one server URL + operation path.
+
+    Each declared server variable contributes its options — every enum value
+    plus the literal ``{name}`` template for an enum variable; the default plus
+    a free-form pattern for a variable without an enum — and one entry is built
+    per combination (bounded by :data:`MAX_SERVER_VARIABLE_EXPANSIONS`). Every
+    server-variable position is a named regex group, so a matched row yields the
+    request's concrete variable values (:func:`resolve_server_variable_groups`).
+    """
+    specs = server_variable_specs(variables)
+    used = [s for s in specs if "{" + s.name + "}" in server_url]
+    host_template = _raw_host(server_url)
+    free_host_ok = _free_host_allowed(host_template)
+
+    capped = False
+    combos: list[dict[str, _Binding]]
+    if not used:
+        combos = [{}]
+    else:
+        option_lists = [
+            _variable_options(
+                s, in_host="{" + s.name + "}" in host_template, free_host_ok=free_host_ok
+            )
+            for s in used
+        ]
+        if math.prod(len(o) for o in option_lists) > MAX_SERVER_VARIABLE_EXPANSIONS:
+            capped = True
+            combos = _fallback_bindings(used, host_template, free_host_ok)
+        else:
+            combos = [
+                {s.name: b for s, b in zip(used, combo, strict=True)}
+                for combo in itertools.product(*option_lists)
+            ]
+
+    try:
+        entries = [_entry_for_bindings(server_url, used, c, operation_path) for c in combos]
+    except ValueError:
+        # A variable in an unparseable position (e.g. the port): fall back to
+        # the default-expanded URL, as before server variables were expanded.
+        expanded = server_url
+        for spec in specs:
+            if spec.default is not None:
+                expanded = expanded.replace("{" + spec.name + "}", spec.default)
+        parsed = parse_server_url(expanded)
+        entries = [
+            build_index_entry(parsed.host, merge_paths(parsed.path, operation_path), parsed.scheme)
+        ]
+    return ServerIndexExpansion(entries=entries, capped=capped)

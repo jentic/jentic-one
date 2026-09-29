@@ -41,6 +41,12 @@ class ExecuteRequestContext(BaseModel):
     # broker attaches to an upstream 401/403 (#638) so a valid key hitting the
     # wrong host is not a dead-end "Invalid Key".
     has_server_variable: bool = False
+    # OpenAPI server-variable values resolved from the request URL by discovery
+    # (credential selection is scoped on them), and the declared defaults of
+    # variables the URL left as a ``{name}`` placeholder (substituted when the
+    # credential supplies no value).
+    server_variables: dict[str, str] | None = None
+    server_variable_defaults: dict[str, str] | None = None
     # Attribution for the stored credential the resolver picked, once injection
     # has run (#740). ``None`` before injection, when no credential path exists,
     # or when the request used inline auth. Carried on the context so both the

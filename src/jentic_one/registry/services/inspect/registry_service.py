@@ -63,6 +63,8 @@ class RegistryService:
             operation_id=hit.operation_id,
             api=api,
             path_params=hit.path_params,
+            server_variables=hit.server_variables,
+            server_variable_defaults=hit.server_variable_defaults,
         )
 
     async def resolve_revision_pin(

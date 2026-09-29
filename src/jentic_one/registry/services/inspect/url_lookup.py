@@ -4,12 +4,17 @@ from __future__ import annotations
 
 import re
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from jentic_one.registry.core.schema.operation_url_index import OperationURLIndex
-from jentic_one.registry.core.url_index import count_segments, normalise_host, normalize_path
+from jentic_one.registry.core.url_index import (
+    count_segments,
+    normalise_host,
+    normalize_path,
+    resolve_server_variable_groups,
+)
 from jentic_one.registry.repos.url_index_repo import UrlIndexRepository
 from jentic_one.registry.services.errors import (
     AmbiguousMatchError,
@@ -30,6 +35,10 @@ class URLLookupResult:
     operation_id: str
     path_params: dict[str, str]
     query_params: dict[str, Any]
+    # Concrete server-variable values present in the request URL, and the
+    # declared defaults of variables the URL left as a ``{name}`` placeholder.
+    server_variables: dict[str, str] = field(default_factory=dict)
+    server_variable_defaults: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -37,6 +46,8 @@ class _RankedMatch:
     operation_id: str
     path_params: dict[str, str]
     specificity_key: tuple[bool, int, int, int]
+    server_variables: dict[str, str] = field(default_factory=dict)
+    server_variable_defaults: dict[str, str] = field(default_factory=dict)
 
 
 class URLLookupService:
@@ -80,6 +91,8 @@ class URLLookupService:
                     operation_id=result.operation_id,
                     path_params=result.path_params,
                     query_params=query_params,
+                    server_variables=result.server_variables,
+                    server_variable_defaults=result.server_variable_defaults,
                 )
 
         if revision_id is not None:
@@ -146,7 +159,7 @@ class URLLookupService:
         if len(candidates) > MAX_CANDIDATES:
             raise TooManyCandidatesError()
 
-        return self._match_and_rank(candidates, path)
+        return self._match_and_rank(candidates, path, host)
 
     async def _check_method_not_allowed(
         self,
@@ -188,13 +201,25 @@ class URLLookupService:
             raise MethodNotAllowedError(sorted(matching_methods))
 
     @staticmethod
-    def _match_and_rank(candidates: list[OperationURLIndex], path: str) -> _RankedMatch | None:
+    def _match_and_rank(
+        candidates: list[OperationURLIndex], path: str, host: str = ""
+    ) -> _RankedMatch | None:
         matches: list[_RankedMatch] = []
         for candidate in candidates:
             match = re.fullmatch(candidate.path_regex, path)
             if not match:
                 continue
-            path_params = match.groupdict()
+            host_groups: dict[str, str | None] = {}
+            if candidate.host_regex and host:
+                host_match = re.fullmatch(candidate.host_regex, host, re.IGNORECASE)
+                if host_match is not None:
+                    host_groups = host_match.groupdict()
+            # Server-variable groups carry the request's concrete values; they
+            # are split out so they never surface as operation path params.
+            resolved = resolve_server_variable_groups(host_groups, match.groupdict())
+            if resolved is None:
+                continue
+            path_params = resolved.path_params
             is_parameterized = bool(candidate.param_names)
             template_parts = candidate.path_template.strip("/").split("/")
             literal_count = sum(1 for p in template_parts if not p.startswith("{"))
@@ -217,6 +242,8 @@ class URLLookupService:
                     operation_id=candidate.operation_id,
                     path_params=path_params,
                     specificity_key=specificity_key,
+                    server_variables=resolved.values,
+                    server_variable_defaults=resolved.defaults,
                 )
             )
 
