@@ -37,7 +37,7 @@ export interface DiscoveryEntity {
 	 * (i.e. the entry is an umbrella sub-API); omitted otherwise.
 	 */
 	subtitle?: string;
-	/** Whether the API is already imported locally. Drives the Imported/Available pill. */
+	/** Whether the API is already imported locally. Drives the In your workspace / Available pill. */
 	registered: boolean;
 	/**
 	 * Whether this (registered) entry has an upstream spec update the local
@@ -47,6 +47,11 @@ export interface DiscoveryEntity {
 	updateAvailable: boolean;
 	/** Vendor / domain key (e.g. `stripe.com`) used for the vendor icon. */
 	vendor?: string;
+	/**
+	 * Spec version read off `spec_url` — only when it follows the
+	 * jentic-public-apis layout (`parseCatalogSpecUrl`); absent otherwise.
+	 */
+	version?: string;
 	/** GitHub source URL for the catalog spec, when the manifest has one. */
 	githubUrl?: string;
 	raw: unknown;

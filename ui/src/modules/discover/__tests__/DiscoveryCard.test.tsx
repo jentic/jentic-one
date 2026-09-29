@@ -1,0 +1,146 @@
+import { describe, it, expect, vi } from 'vitest';
+import { renderWithProviders, screen, userEvent, checkA11y } from '@/__tests__/test-utils';
+import { DiscoveryCard } from '@/modules/discover/components/DiscoveryCard';
+import type { DiscoveryEntity, WorkspaceDigestRow } from '@/modules/discover/api';
+import type { Credential } from '@/shared/credentials/api';
+import { makeDigestRow } from '@/modules/discover/__tests__/digestFixtures';
+
+function entity(extra: Partial<DiscoveryEntity> = {}): DiscoveryEntity {
+	return {
+		id: 'nytimes.com/article_search',
+		apiId: 'nytimes.com/article_search',
+		summary: 'Article Search',
+		subtitle: 'nytimes.com',
+		registered: false,
+		updateAvailable: false,
+		vendor: 'nytimes.com',
+		version: '1.0.0',
+		githubUrl:
+			'https://github.com/jentic/jentic-public-apis/tree/main/apis/openapi/nytimes.com/article_search',
+		raw: {},
+		...extra,
+	};
+}
+
+function wsRow(catalogApiId: string, title: string): WorkspaceDigestRow {
+	return makeDigestRow(title, {
+		ref: { vendor: 'nytimes.com', name: title.toLowerCase(), version: '1.0.0' },
+		catalogApiId,
+		needsAuth: true,
+	});
+}
+
+const CRED = { credential_id: 'cred_nyt_1', name: 'NYT key', active: true } as Credential;
+
+function renderCard(props: Partial<React.ComponentProps<typeof DiscoveryCard>> = {}) {
+	return renderWithProviders(
+		<DiscoveryCard
+			entity={entity()}
+			active={false}
+			onOpen={() => {}}
+			onImport={() => {}}
+			importPending={false}
+			{...props}
+		/>,
+	);
+}
+
+describe('DiscoveryCard', () => {
+	it('shows vendor · version and no sub-API chip for an umbrella sub-API', () => {
+		renderCard();
+		expect(screen.getByTestId('discovery-card-subtitle')).toHaveTextContent(
+			/^nytimes\.com·v1\.0\.0$/,
+		);
+		expect(screen.queryByText(/Sub-API/)).not.toBeInTheDocument();
+	});
+
+	it('shows no notes for a bare-domain entry', () => {
+		renderCard({
+			entity: entity({
+				id: 'stripe.com',
+				apiId: 'stripe.com',
+				summary: 'stripe.com',
+				subtitle: 'stripe',
+			}),
+		});
+		expect(screen.queryByTestId('discovery-card-notes')).not.toBeInTheDocument();
+	});
+
+	it('available tile: credential-ready note links to the credential inventory', async () => {
+		const { container } = renderCard({ readyCredentials: [CRED] });
+		const note = screen.getByTestId('discovery-card-credential-ready');
+		expect(note).toHaveTextContent('Credential ready — add to use it');
+		expect(
+			screen.getByRole('link', { name: 'Credential ready — add to use it' }),
+		).toHaveAttribute('href', expect.stringContaining('/agents?credentials=1'));
+		await checkA11y(container);
+	});
+
+	it('shows no credential note while loading (null) or with no match ([])', () => {
+		const { unmount } = renderCard({ readyCredentials: null });
+		expect(screen.queryByTestId('discovery-card-credential-ready')).not.toBeInTheDocument();
+		unmount();
+		renderCard({ readyCredentials: [] });
+		expect(screen.queryByTestId('discovery-card-credential-ready')).not.toBeInTheDocument();
+	});
+
+	it('imported tile never shows the credential-ready note', () => {
+		renderCard({
+			entity: entity({ registered: true }),
+			readyCredentials: [CRED],
+		});
+		expect(screen.queryByTestId('discovery-card-credential-ready')).not.toBeInTheDocument();
+		expect(screen.getByTestId('card-status-imported')).toBeInTheDocument();
+	});
+
+	it('imported tile with one workspace match restores the Live · ops · agents line + update badge', () => {
+		const books = { ...wsRow('nytimes.com/books', 'Books'), operationCount: 7 };
+		renderCard({
+			entity: entity({
+				id: 'nytimes.com/books',
+				apiId: 'nytimes.com/books',
+				summary: 'Books',
+				registered: true,
+				updateAvailable: true,
+			}),
+			workspaceMatches: [books],
+			matchAgentCount: 2,
+		});
+		expect(screen.getByTestId('discovery-card-workspace-state')).toHaveTextContent(
+			'Live·7 ops·2 agents',
+		);
+		expect(screen.getByTestId('api-state-update')).toBeInTheDocument();
+		expect(screen.getByTestId('card-status-imported')).toBeInTheDocument();
+		expect(screen.getByTestId('discovery-card-review-update')).toHaveAttribute(
+			'href',
+			expect.stringContaining(books.href),
+		);
+		expect(
+			screen.getByRole('link', { name: 'Open Books in your workspace' }),
+		).toBeInTheDocument();
+	});
+
+	it('primary action reads "Add to workspace", and "Adding…" while pending', () => {
+		const { unmount } = renderCard();
+		expect(screen.getByTestId('discovery-card-import')).toHaveTextContent('Add to workspace');
+		unmount();
+		renderCard({ importPending: true });
+		expect(screen.getByTestId('discovery-card-import')).toHaveTextContent('Adding…');
+		expect(screen.getByTestId('card-status-pending')).toHaveTextContent('Adding…');
+	});
+
+	it('keeps behaviour: surface opens the preview, Import imports, GitHub is a secondary link', async () => {
+		const user = userEvent.setup();
+		const onOpen = vi.fn();
+		const onImport = vi.fn();
+		renderCard({ onOpen, onImport });
+		await user.click(screen.getByRole('button', { name: 'View Article Search' }));
+		expect(onOpen).toHaveBeenCalledTimes(1);
+		await user.click(screen.getByTestId('discovery-card-import'));
+		expect(onImport).toHaveBeenCalledTimes(1);
+		expect(onOpen).toHaveBeenCalledTimes(1);
+		expect(
+			screen.getByRole('link', { name: 'View Article Search on GitHub' }),
+		).toBeInTheDocument();
+	});
+});

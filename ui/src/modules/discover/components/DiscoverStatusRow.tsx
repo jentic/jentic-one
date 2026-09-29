@@ -18,6 +18,12 @@ interface DiscoverStatusRowProps {
 	outdatedCount: number;
 	manifestAgeSeconds: number | null;
 	loading: boolean;
+	/**
+	 * Your workspace at a glance, from `GET /apis` (not the catalog): every API
+	 * registered here — catalog imports AND your own specs — split by whether a
+	 * revision is live. Omitted until the registry list has fully loaded.
+	 */
+	workspace?: { apis: number; live: number; draft: number } | null;
 }
 
 function formatAge(seconds: number | null): string {
@@ -37,6 +43,7 @@ export function DiscoverStatusRow({
 	outdatedCount,
 	manifestAgeSeconds,
 	loading,
+	workspace,
 }: DiscoverStatusRowProps) {
 	if (loading) {
 		return <Skeleton className="h-4 w-64" data-testid="discover-status-loading" />;
@@ -59,8 +66,29 @@ export function DiscoverStatusRow({
 				<strong className="text-foreground font-medium">
 					{registeredCount.toLocaleString()}
 				</strong>{' '}
-				imported
+				imported from it
 			</span>
+			{workspace && (
+				<>
+					<span aria-hidden="true">·</span>
+					<span data-testid="discover-status-workspace">
+						<strong className="text-foreground font-medium">
+							{workspace.apis.toLocaleString()}
+						</strong>{' '}
+						in your workspace
+						{workspace.apis > 0 && (
+							<span className="text-muted-foreground">
+								{' '}
+								({workspace.live.toLocaleString()} live
+								{workspace.draft > 0
+									? `, ${workspace.draft.toLocaleString()} draft`
+									: ''}
+								)
+							</span>
+						)}
+					</span>
+				</>
+			)}
 			{outdatedCount > 0 && (
 				<>
 					<span aria-hidden="true">·</span>

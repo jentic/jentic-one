@@ -14,9 +14,9 @@ import { worker } from '@/mocks/browser';
 import { setToken, sharedQueryKeys } from '@/shared/api';
 import { Toaster } from '@/shared/ui';
 import { setImportPollIntervalForTests } from '@/modules/discover/api';
-import DiscoverPage from '@/modules/discover/pages/DiscoverPage';
+import LibraryPage from '@/modules/discover/pages/LibraryPage';
 
-describe('DiscoverPage', () => {
+describe('LibraryPage', () => {
 	let restorePollInterval: (() => void) | null = null;
 
 	beforeEach(() => {
@@ -32,7 +32,7 @@ describe('DiscoverPage', () => {
 	});
 
 	it('renders the public catalog with imported/available badges', async () => {
-		renderWithProviders(<DiscoverPage />);
+		renderWithProviders(<LibraryPage />);
 
 		expect(await screen.findByText('stripe.com')).toBeInTheDocument();
 		expect(await screen.findByText('github.com')).toBeInTheDocument();
@@ -43,13 +43,15 @@ describe('DiscoverPage', () => {
 		expect(screen.getAllByTestId('card-status-available').length).toBeGreaterThanOrEqual(2);
 	});
 
-	it('offers "Open Workspace" on imported cards and not on available ones', async () => {
-		renderWithProviders(<DiscoverPage />);
+	it('offers "Open" on imported cards and not on available ones', async () => {
+		renderWithProviders(<LibraryPage />);
 		await screen.findByText('stripe.com');
 
-		// The single registered card (stripe.com) links to the Workspace list.
+		// The single registered card (stripe.com) links to the Workspace view:
+		// the default registry has no row whose `catalog_api_id` is `stripe.com`,
+		// so there's no unambiguous hub to deep-link to.
 		const link = screen.getByTestId('discovery-card-open-workspace');
-		expect(link).toHaveAttribute('href', '/workspace');
+		expect(link).toHaveAttribute('href', '/library/workspace');
 
 		// Available cards expose Import, never the workspace link — there's exactly
 		// one imported entry in the default catalog, so exactly one such link.
@@ -57,7 +59,7 @@ describe('DiscoverPage', () => {
 	});
 
 	it('shows the whole-manifest status row', async () => {
-		renderWithProviders(<DiscoverPage />);
+		renderWithProviders(<LibraryPage />);
 		const status = await screen.findByTestId('discover-status');
 		expect(within(status).getByText(/APIs in the catalog/)).toBeInTheDocument();
 		expect(within(status).getByText(/imported/)).toBeInTheDocument();
@@ -65,7 +67,7 @@ describe('DiscoverPage', () => {
 
 	it('disambiguates umbrella sub-APIs by title (nytimes.com)', async () => {
 		const user = userEvent.setup();
-		renderWithProviders(<DiscoverPage />);
+		renderWithProviders(<LibraryPage />);
 		await screen.findByText('stripe.com');
 
 		// Three nytimes.com sub-APIs share one vendor; searching "nyt" must show
@@ -79,15 +81,35 @@ describe('DiscoverPage', () => {
 		expect(screen.getAllByText('nytimes.com').length).toBe(3);
 	});
 
+	it('shows the spec version parsed from a jentic-public-apis spec_url on catalog tiles', async () => {
+		renderWithProviders(<LibraryPage />);
+		await screen.findByText('stripe.com');
+		const versions = screen
+			.getAllByTestId('discovery-card-version')
+			.map((el) => el.textContent);
+		// Every mock entry uses the real layout: `…/{domain}/{sub}/{version}/openapi.json`.
+		expect(versions).toEqual(
+			expect.arrayContaining(['v2024-01-01', 'v1.1.4', 'v1.0.0', 'v2.0.0', 'v3.0.0']),
+		);
+		const books = screen
+			.getByRole('button', { name: 'View Books' })
+			.closest('[data-testid="discovery-card-api"]') as HTMLElement;
+		expect(within(books).getByTestId('discovery-card-subtitle')).toHaveTextContent(
+			'nytimes.com·v3.0.0',
+		);
+		// List data only: catalog tiles never show usage / credential health.
+		expect(screen.queryByTestId('discovery-card-usage')).not.toBeInTheDocument();
+	});
+
 	it('has no critical a11y violations', async () => {
-		const { container } = renderWithProviders(<DiscoverPage />);
+		const { container } = renderWithProviders(<LibraryPage />);
 		await screen.findByText('stripe.com');
 		await checkA11y(container);
 	});
 
 	it('filters by search query', async () => {
 		const user = userEvent.setup();
-		renderWithProviders(<DiscoverPage />);
+		renderWithProviders(<LibraryPage />);
 		await screen.findByText('stripe.com');
 
 		await user.type(screen.getByLabelText('Search APIs'), 'github');
@@ -103,7 +125,7 @@ describe('DiscoverPage', () => {
 		// Restored by the describe-level afterEach (vi.restoreAllMocks).
 		const scrollSpy = vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
 
-		renderWithProviders(<DiscoverPage />);
+		renderWithProviders(<LibraryPage />);
 		await screen.findByText('stripe.com');
 
 		// Initial mount must not yank the viewport.
@@ -123,7 +145,7 @@ describe('DiscoverPage', () => {
 		const user = userEvent.setup();
 		const scrollSpy = vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
 
-		renderWithProviders(<DiscoverPage />);
+		renderWithProviders(<LibraryPage />);
 		await screen.findByText('stripe.com');
 		expect(scrollSpy).not.toHaveBeenCalled();
 
@@ -141,7 +163,7 @@ describe('DiscoverPage', () => {
 
 	it('filters by registration state (Available hides imported rows)', async () => {
 		const user = userEvent.setup();
-		renderWithProviders(<DiscoverPage />);
+		renderWithProviders(<LibraryPage />);
 		await screen.findByText('stripe.com');
 
 		await user.click(screen.getByRole('button', { name: 'Available' }));
@@ -154,7 +176,7 @@ describe('DiscoverPage', () => {
 
 	it('opens the detail sheet and previews operations', async () => {
 		const user = userEvent.setup();
-		renderWithProviders(<DiscoverPage />);
+		renderWithProviders(<LibraryPage />);
 		await screen.findByText('github.com');
 
 		await user.click(screen.getByRole('button', { name: 'View github.com' }));
@@ -166,7 +188,7 @@ describe('DiscoverPage', () => {
 
 	it('drills into an operation and back', async () => {
 		const user = userEvent.setup();
-		renderWithProviders(<DiscoverPage />);
+		renderWithProviders(<LibraryPage />);
 		await screen.findByText('github.com');
 		await user.click(screen.getByRole('button', { name: 'View github.com' }));
 
@@ -189,7 +211,7 @@ describe('DiscoverPage', () => {
 
 	it('filters operations by search and tag', async () => {
 		const user = userEvent.setup();
-		renderWithProviders(<DiscoverPage />);
+		renderWithProviders(<LibraryPage />);
 		await screen.findByText('github.com');
 		await user.click(screen.getByRole('button', { name: 'View github.com' }));
 
@@ -247,7 +269,7 @@ describe('DiscoverPage', () => {
 		);
 
 		const user = userEvent.setup();
-		renderWithProviders(<DiscoverPage />);
+		renderWithProviders(<LibraryPage />);
 		await screen.findByText('github.com');
 		await user.click(screen.getByRole('button', { name: 'View github.com' }));
 		const dialog = await screen.findByRole('dialog');
@@ -297,7 +319,7 @@ describe('DiscoverPage', () => {
 		);
 
 		const user = userEvent.setup();
-		renderWithProviders(<DiscoverPage />);
+		renderWithProviders(<LibraryPage />);
 		await screen.findByText('github.com');
 		await user.click(screen.getByRole('button', { name: 'View github.com' }));
 		const dialog = await screen.findByRole('dialog');
@@ -315,7 +337,7 @@ describe('DiscoverPage', () => {
 
 	it('renders the API description as markdown with show more/less', async () => {
 		const user = userEvent.setup();
-		renderWithProviders(<DiscoverPage />);
+		renderWithProviders(<LibraryPage />);
 		await screen.findByText('github.com');
 		await user.click(screen.getByRole('button', { name: 'View github.com' }));
 
@@ -352,7 +374,7 @@ describe('DiscoverPage', () => {
 
 		renderWithProviders(
 			<>
-				<DiscoverPage />
+				<LibraryPage />
 				<Toaster />
 			</>,
 		);
@@ -363,15 +385,16 @@ describe('DiscoverPage', () => {
 		await user.click(importBtn);
 
 		await waitFor(() => expect(importHit).toBe(true));
-		expect(await screen.findByText('Import started')).toBeInTheDocument();
+		expect(await screen.findByText('Adding to workspace')).toBeInTheDocument();
 	});
 
 	it('flips a card to Imported when the polled catalog reports it registered', async () => {
 		const user = userEvent.setup();
 		let imported = false;
+		// Catalog reads that answered `registered: true` — the poll's own signal.
+		let pollsAfterImport = 0;
 
-		// Poll fast & deterministically instead of racing the real 3s tick against
-		// the assertion budget (the prior source of browser-mode flakiness).
+		// Poll fast & deterministically instead of racing the real 3s tick.
 		restorePollInterval = setImportPollIntervalForTests(100);
 
 		// Stateful catalog: github.com starts Available, flips to registered once
@@ -380,6 +403,7 @@ describe('DiscoverPage', () => {
 		// resolve on its own without a manual refresh.
 		worker.use(
 			http.get('/catalog', () => {
+				if (imported) pollsAfterImport += 1;
 				const data = [
 					{
 						api_id: 'github.com',
@@ -419,7 +443,7 @@ describe('DiscoverPage', () => {
 
 		renderWithProviders(
 			<>
-				<DiscoverPage />
+				<LibraryPage />
 				<Toaster />
 			</>,
 		);
@@ -429,16 +453,14 @@ describe('DiscoverPage', () => {
 		await user.click(within(githubCard as HTMLElement).getByTestId('discovery-card-import'));
 
 		// Immediately enters the pending state.
-		expect(await screen.findByText('Import started')).toBeInTheDocument();
+		expect(await screen.findByText('Adding to workspace')).toBeInTheDocument();
 		expect(await screen.findByTestId('card-status-pending')).toBeInTheDocument();
 
-		// The poll picks up registered: true and resolves the card on its own.
-		expect(
-			await screen.findByText('Import complete', {}, { timeout: 2000 }),
-		).toBeInTheDocument();
-		expect(
-			await screen.findByTestId('card-status-imported', {}, { timeout: 2000 }),
-		).toBeInTheDocument();
+		// The poll picks up registered: true and resolves the card on its own —
+		// wait on the poll itself, then on the (default-budget) UI flip.
+		await waitFor(() => expect(pollsAfterImport).toBeGreaterThan(0));
+		expect(await screen.findByText('Added to workspace')).toBeInTheDocument();
+		expect(await screen.findByTestId('card-status-imported')).toBeInTheDocument();
 		expect(screen.queryByTestId('card-status-pending')).not.toBeInTheDocument();
 	});
 
@@ -446,10 +468,12 @@ describe('DiscoverPage', () => {
 		const user = userEvent.setup();
 		let imported = false;
 
+		let pollsAfterImport = 0;
 		restorePollInterval = setImportPollIntervalForTests(100);
 
 		worker.use(
 			http.get('/catalog', () => {
+				if (imported) pollsAfterImport += 1;
 				const data = [
 					{
 						api_id: 'github.com',
@@ -489,7 +513,7 @@ describe('DiscoverPage', () => {
 
 		const { queryClient } = renderWithProviders(
 			<>
-				<DiscoverPage />
+				<LibraryPage />
 				<Toaster />
 			</>,
 		);
@@ -510,7 +534,8 @@ describe('DiscoverPage', () => {
 		// Once the poll observes registered: true, the workspace list must be
 		// invalidated — otherwise the 30s global staleTime serves a pre-import
 		// snapshot when the user navigates over to Workspace.
-		await screen.findByText('Import complete', {}, { timeout: 2000 });
+		await waitFor(() => expect(pollsAfterImport).toBeGreaterThan(0));
+		await screen.findByText('Added to workspace');
 		await waitFor(() =>
 			expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: sharedQueryKeys.workspaceApis }),
 		);
@@ -528,7 +553,7 @@ describe('DiscoverPage', () => {
 
 		renderWithProviders(
 			<>
-				<DiscoverPage />
+				<LibraryPage />
 				<Toaster />
 			</>,
 		);
@@ -542,7 +567,7 @@ describe('DiscoverPage', () => {
 
 	it('surfaces an error when the catalog fails', async () => {
 		worker.use(createErrorHandler('get', '/catalog', { status: 500 }));
-		renderWithProviders(<DiscoverPage />);
+		renderWithProviders(<LibraryPage />);
 		expect(await screen.findByRole('alert')).toBeInTheDocument();
 	});
 });

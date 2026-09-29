@@ -2,7 +2,9 @@ import { test, expect } from '@playwright/test';
 import { captureConsoleErrors, importInlineApi, sampleOpenApiSpec, uniqueSuffix } from './helpers';
 
 /**
- * Workspace (real backend). The Workspace surface lists the APIs registered in
+ * Workspace (real backend) — the Library's full Workspace view
+ * (`/app/library/workspace`), reached from the Library nav item by expanding
+ * the docked "Your workspace" panel. It lists the APIs registered in
  * this instance and owns the import dialog. Import is ASYNC on the real backend
  * (POST /apis -> 202 + job id, the UI polls /jobs/{id}), unlike the synchronous
  * MSW mock — so the paste-import spec asserts the dialog INITIATED the import
@@ -18,10 +20,14 @@ test('workspace renders its empty state on a clean backend', async ({ page }) =>
 	await page.goto('/app');
 	await page
 		.getByRole('navigation', { name: 'Primary' })
-		.getByRole('link', { name: 'Workspace' })
+		.getByRole('link', { name: 'Library' })
 		.click();
+	await expect(page).toHaveURL(/\/app\/library$/);
+	// The docked panel's expand control opens the full Workspace view.
+	await page.getByTestId('workspace-panel-expand').click();
 
-	await expect(page.getByRole('heading', { name: 'Workspace' })).toBeVisible();
+	await expect(page).toHaveURL(/\/app\/library\/workspace$/);
+	await expect(page.getByRole('heading', { name: 'Your workspace', exact: true })).toBeVisible();
 
 	expect(errors, `unexpected console errors:\n${errors.join('\n')}`).toEqual([]);
 });
@@ -31,8 +37,8 @@ test('import an API by pasting a spec drives the async import', async ({ page })
 
 	const title = `E2E Paste ${uniqueSuffix()}`;
 
-	await page.goto('/app/workspace');
-	await expect(page.getByRole('heading', { name: 'Workspace' })).toBeVisible();
+	await page.goto('/app/library/workspace');
+	await expect(page.getByRole('heading', { name: 'Your workspace', exact: true })).toBeVisible();
 
 	await page.getByTestId('workspace-import-open').first().click();
 	await expect(page.getByRole('heading', { name: 'Choose import method' })).toBeVisible();
@@ -68,7 +74,7 @@ test('an imported API renders as a card in the grid', async ({ page, request }) 
 		title: `E2E Grid ${apiName}`,
 	});
 
-	await page.goto('/app/workspace');
+	await page.goto('/app/library/workspace');
 	// The card heading is humanized (#631: apiRefDisplayName title-cases the
 	// slug), so match on the mono `vendor/name/version` subtitle, which still
 	// renders the raw api_name verbatim, and scope to the enclosing card.
@@ -89,8 +95,8 @@ test('open an API detail page for an imported spec', async ({ page, request }) =
 		title: `E2E Detail ${apiName}`,
 	});
 
-	await page.goto('/app/workspace');
-	await expect(page.getByRole('heading', { name: 'Workspace' })).toBeVisible();
+	await page.goto('/app/library/workspace');
+	await expect(page.getByRole('heading', { name: 'Your workspace', exact: true })).toBeVisible();
 
 	// Match the mono `vendor/name/version` subtitle (raw api_name) rather than
 	// the humanized heading/aria-label (#631), then click the enclosing card.
@@ -98,7 +104,13 @@ test('open an API detail page for an imported spec', async ({ page, request }) =
 	await expect(card).toBeVisible({ timeout: 30_000 });
 	await card.click();
 
-	// Detail page shows the operations the spec declared (sampleGet -> 1 op).
-	await expect(page).toHaveURL(/\/app\/workspace\//);
-	await expect(page.getByText(/operation/i).first()).toBeVisible();
+	// The API hub (Overview tab by default); its Operations tab lists the
+	// operations the spec declared (sampleGet -> 1 op).
+	await expect(page).toHaveURL(/\/app\/library\/workspace\//);
+	await page.getByRole('tab', { name: /Operations/ }).click();
+	// Scope to the operations section: visited tabs stay mounted (hidden), so an
+	// unscoped text match could land on the hidden Overview panel.
+	const operations = page.getByTestId('operations-section');
+	await expect(operations).toBeVisible();
+	await expect(operations.getByText('/get').first()).toBeVisible();
 });

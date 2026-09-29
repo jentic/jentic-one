@@ -176,18 +176,15 @@ describe('isNavItemActive', () => {
 	});
 
 	it('leads with Agents, the home surface, and ends with Monitor', () => {
-		expect(sortedNavItems().map((item) => item.id)).toEqual([
-			'agents',
-			'discover',
-			'workspace',
-			'monitor',
-		]);
+		expect(sortedNavItems().map((item) => item.id)).toEqual(['agents', 'library', 'monitor']);
 	});
 
 	it('matches feature items by prefix so nested routes stay highlighted', () => {
-		const discover = navItems.find((i) => i.to === '/discover')!;
-		expect(isNavItemActive(discover, '/discover')).toBe(true);
-		expect(isNavItemActive(discover, '/discover/abc')).toBe(true);
-		expect(isNavItemActive(discover, '/discoverable')).toBe(false);
+		// One Library entry covers the catalog, the workspace view and API hubs.
+		const library = navItems.find((i) => i.to === '/library')!;
+		expect(isNavItemActive(library, '/library')).toBe(true);
+		expect(isNavItemActive(library, '/library/workspace')).toBe(true);
+		expect(isNavItemActive(library, '/library/workspace/stripe/stripe-api/1')).toBe(true);
+		expect(isNavItemActive(library, '/libraryish')).toBe(false);
 	});
 });

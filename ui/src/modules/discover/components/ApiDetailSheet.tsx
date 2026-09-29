@@ -9,15 +9,22 @@
  *     dismissed with a Back button.
  *
  * For directory (un-imported) entities the summary view offers a primary
- * "Import to workspace" action. This is a read/peek surface, not a form —
+ * "Add to workspace" action. This is a read/peek surface, not a form —
  * there's no draft to preserve. The operations query is
  * keyed by the open entity's catalog id and disabled when the sheet is closed
  * (apiId = null), so closing and reopening a different API refetches cleanly.
  * The selected operation resets whenever the open entity changes.
  */
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
-import { ChevronLeft, ExternalLink, Plus } from 'lucide-react';
-import { AppLink, Button, CopyButton, SheetPrimitive, VendorIcon } from '@/shared/ui';
+import { ArrowRight, ChevronLeft, ExternalLink, Plus } from 'lucide-react';
+import {
+	ApiStateBadge,
+	AppLink,
+	Button,
+	CopyButton,
+	SheetPrimitive,
+	VendorIcon,
+} from '@/shared/ui';
 import { ApiSummary } from '@/modules/discover/components/ApiSummary';
 import { CardStatusPill } from '@/modules/discover/components/CardStatusPill';
 import { OperationPreviewList, opKey } from '@/modules/discover/components/OperationPreviewList';
@@ -32,6 +39,12 @@ interface ApiDetailSheetProps {
 	onClose: () => void;
 	onImport: (entity: DiscoveryEntity) => void;
 	importPending: boolean;
+	/**
+	 * Where "Open in your workspace" goes for an imported entry: the matched
+	 * API's hub when the registry maps its `catalog_api_id` to exactly one API,
+	 * else the workspace view. Omitted ⇒ no link.
+	 */
+	workspaceHref?: string | null;
 }
 
 export function ApiDetailSheet({
@@ -40,6 +53,7 @@ export function ApiDetailSheet({
 	onClose,
 	onImport,
 	importPending,
+	workspaceHref,
 }: ApiDetailSheetProps) {
 	const titleId = useId();
 	const [selectedOp, setSelectedOp] = useState<string | null>(null);
@@ -138,6 +152,10 @@ export function ApiDetailSheet({
 									registered={entity.registered}
 									pending={importPending}
 								/>
+								{/* Mid-import the pending spinner is the honest state. */}
+								{entity.registered && entity.updateAvailable && !importPending && (
+									<ApiStateBadge state="update" />
+								)}
 								<span className="text-muted-foreground inline-flex items-center gap-1 font-mono text-xs">
 									{entity.apiId}
 									<CopyButton value={entity.apiId} />
@@ -199,6 +217,17 @@ export function ApiDetailSheet({
 								GitHub
 							</AppLink>
 						)}
+						{entity.registered && workspaceHref && (
+							<AppLink
+								href={workspaceHref}
+								variant="primary"
+								size="sm"
+								data-testid="sheet-open-workspace"
+							>
+								Open in your workspace
+								<ArrowRight size={14} aria-hidden="true" />
+							</AppLink>
+						)}
 						{!entity.registered && (
 							<Button
 								variant="primary"
@@ -207,7 +236,7 @@ export function ApiDetailSheet({
 								data-testid="sheet-import"
 							>
 								{!importPending && <Plus size={16} aria-hidden="true" />}
-								{importPending ? 'Importing…' : 'Import to workspace'}
+								{importPending ? 'Adding…' : 'Add to workspace'}
 							</Button>
 						)}
 					</footer>

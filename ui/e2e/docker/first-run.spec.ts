@@ -40,6 +40,6 @@ test('first-run checklist links navigate to their surfaces', async ({ page }) =>
 
 	// Checklist links route into the module surfaces (real router, real guard).
 	await page.getByRole('link', { name: /Discover an API/ }).click();
-	await expect(page).toHaveURL(/\/app\/discover\b/);
-	await expect(page.getByRole('heading', { name: 'Discover APIs', exact: true })).toBeVisible();
+	await expect(page).toHaveURL(/\/app\/library\b/);
+	await expect(page.getByRole('heading', { name: 'Library', exact: true })).toBeVisible();
 });

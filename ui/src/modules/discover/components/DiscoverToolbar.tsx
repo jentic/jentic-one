@@ -6,9 +6,10 @@
  * All (no flag) / Imported (`registered_only`) / Available (`unregistered_only`) /
  * Updates (`outdated_only`, registered entries with an upstream update).
  *
- * Sticky-on-scroll: the bar pins below the fixed `h-12`
- * TopNavbar (`sticky top-0` of the shell's scroller) and bleeds to the page gutter edges
- * (`-mx-page-gutter px-page-gutter`) so its backdrop-blur covers the full width.
+ * Sticky-on-scroll: the bar pins below the fixed `h-12` TopNavbar
+ * (`sticky top-0` of the shell's scroller). It stays inside its column (no
+ * gutter bleed) because it sits beside the Library's docked workspace panel,
+ * and a full-width backdrop would spill across that neighbouring column.
  * A zero-height sentinel + IntersectionObserver flips `data-scrolled` so we can
  * drop a hairline shadow only once the bar has actually stuck.
  */
@@ -29,7 +30,8 @@ interface DiscoverToolbarProps {
 
 const FILTER_OPTIONS: { value: CatalogFilter; label: string }[] = [
 	{ value: 'all', label: 'All' },
-	{ value: 'registered', label: 'Imported' },
+	// Same words as the card / sheet pill (CardStatusPill).
+	{ value: 'registered', label: 'In your workspace' },
 	{ value: 'unregistered', label: 'Available' },
 	{ value: 'outdated', label: 'Updates' },
 ];
@@ -64,7 +66,7 @@ export function DiscoverToolbar({
 		<div
 			ref={toolbarRef}
 			data-scrolled="false"
-			className="-mx-page-gutter px-page-gutter border-border/40 bg-background/85 sticky top-0 z-20 border-b py-3 backdrop-blur transition-shadow data-[scrolled=true]:shadow-[0_1px_0_0_rgb(0_0_0_/0.04)]"
+			className="border-border/40 bg-background/85 sticky top-0 z-20 -mx-1 border-b px-1 py-3 backdrop-blur transition-shadow data-[scrolled=true]:shadow-[0_1px_0_0_rgb(0_0_0_/0.04)]"
 			data-testid="discover-toolbar"
 		>
 			<div ref={sentinelRef} aria-hidden="true" className="absolute top-0 h-px w-full" />
