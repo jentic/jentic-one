@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import contextvars
 import hashlib
 import ipaddress
 import os
@@ -56,6 +57,45 @@ _EPHEMERAL_DEV_SECRETS: dict[str, SecretStr] = {}
 _PLACEHOLDER_SECRET_RE = re.compile(r"change.?me", re.IGNORECASE)
 
 
+# Which surfaces read each scalar secret the production guard below enforces.
+# Verified against the code that consumes them: ``admin.auth.jwt_secret`` signs
+# admin/session JWTs (admin, auth) and verifies them on every surface that
+# installs the superset verifier (control, registry — see ``SURFACES_NEEDING_AUTH``
+# in ``__main__``; the broker verifies with its own ``broker.jwt_secret`` /
+# trusted issuers instead); ``admin.invite.pepper`` hashes invite tokens (admin
+# only); ``credentials.connect.state_secret`` signs the OAuth connect ``state``
+# (control only). Keep in sync with the Helm chart's per-surface secret mounts
+# (``deploy/helm/jentic-one/charts/common/templates/_app-secrets.tpl``).
+GUARDED_FIELD_SURFACES: dict[str, frozenset[str]] = {
+    "admin.auth.jwt_secret": frozenset({"admin", "auth", "control", "registry"}),
+    "admin.invite.pepper": frozenset({"admin"}),
+    "credentials.connect.state_secret": frozenset({"control"}),
+}
+
+# Surfaces GUARDED_FIELD_SURFACES has an opinion about. An enabled surface outside
+# this set (e.g. one registered by an extension) is assumed to read every
+# secret, so the guard never relaxes for code it has not been audited against.
+_KNOWN_SURFACES: frozenset[str] = frozenset({"admin", "auth", "broker", "control", "registry"})
+
+# The surfaces the config being validated will run, set by load_config() for
+# the duration of validation. None (direct model construction, tests, tools)
+# means "unknown", which keeps the guard strict for every secret.
+_ENABLED_APPS: contextvars.ContextVar[frozenset[str] | None] = contextvars.ContextVar(
+    "jentic_one_config_enabled_apps", default=None
+)
+
+
+def _secret_required_by_enabled_apps(field_path: str) -> bool:
+    """True unless the surfaces being loaded provably never read ``field_path``."""
+    apps = _ENABLED_APPS.get()
+    if apps is None:
+        return True
+    consumers = GUARDED_FIELD_SURFACES.get(field_path)
+    if consumers is None or not apps <= _KNOWN_SURFACES:
+        return True
+    return bool(apps & consumers)
+
+
 def _require_or_generate_secret(value: SecretStr, *, field_path: str) -> SecretStr:
     """Return the configured secret, or mint a per-process one for dev.
 
@@ -74,11 +114,26 @@ def _require_or_generate_secret(value: SecretStr, *, field_path: str) -> SecretS
       Per-process means multi-process dev setups (standalone surfaces,
       ``--workers > 1``) each mint their own value; each secret is consumed
       only by its own surface, so a shared value is never assumed.
+
+    Production requires a value only when a surface this process runs reads
+    the secret (``GUARDED_FIELD_SURFACES``, keyed off the ``apps`` being loaded): a
+    standalone broker or registry is not handed secrets it never reads (the
+    Helm chart mounts each surface only its own). Such a process gets a
+    per-process random value instead of the empty one, so nothing can ever sign
+    or verify with a known key.
     """
     secret = value.get_secret_value()
     if secret.strip() and not _PLACEHOLDER_SECRET_RE.search(secret):
         return value
     if os.environ.get("JENTIC_ENV", "development") == "production":
+        if not _secret_required_by_enabled_apps(field_path):
+            if field_path not in _EPHEMERAL_DEV_SECRETS:
+                _EPHEMERAL_DEV_SECRETS[field_path] = SecretStr(secrets.token_urlsafe(32))
+                _logger.info(
+                    "secret not read by enabled surfaces; using per-process value",
+                    field_path=field_path,
+                )
+            return _EPHEMERAL_DEV_SECRETS[field_path]
         raise ConfigError(
             f"{field_path} must be explicitly configured in production — "
             "empty and placeholder values are rejected "
@@ -2160,7 +2215,27 @@ def load_config(path: Path | None = None) -> AppConfig:
     if extensions:
         merged["extensions"] = extensions
 
+    # Let the production secret guard see which surfaces this config runs, so a
+    # standalone surface is only required to carry the secrets it reads. Nested
+    # sections built by default_factory validate inside this call too, so a
+    # contextvar (not pydantic's validation context) reaches all of them.
+    token = _ENABLED_APPS.set(_apps_for_secret_guard(merged.get("apps")))
     try:
         return AppConfig.model_validate(merged)
     except Exception as e:
         raise ConfigError(f"Configuration validation failed: {e}") from e
+    finally:
+        _ENABLED_APPS.reset(token)
+
+
+def _apps_for_secret_guard(raw: Any) -> frozenset[str] | None:
+    """The surface set the secret guard should assume for a raw ``apps`` value.
+
+    Absent means the ``AppConfig.apps`` default; an empty list or anything that
+    is not a list of strings returns None (strict guard).
+    """
+    if raw is None:
+        raw = AppConfig.model_fields["apps"].get_default(call_default_factory=True)
+    if not isinstance(raw, list) or not raw or not all(isinstance(item, str) for item in raw):
+        return None
+    return frozenset(raw)
