@@ -8,7 +8,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import delete
+from sqlalchemy import delete, update
 
 from jentic_one.admin.core.schema.actor_scope_grants import ActorScopeGrant
 from jentic_one.admin.core.schema.agent_credential_bindings import AgentCredentialBinding
@@ -25,6 +25,7 @@ from jentic_one.admin.repos import (
 from jentic_one.admin.repos.agent_toolkit_binding_repo import AgentToolkitBindingRepository
 from jentic_one.admin.services._support.tokens import issue_jwt
 from jentic_one.control.core.schema.credentials import Credential
+from jentic_one.control.repos import AgentPermissionRuleRepository
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import InviteState, StoredCredentialType
 from jentic_one.shared.models.events import EventType
@@ -464,6 +465,74 @@ def test_resume_requires_bind_rights_on_credential(
     resp = owner_client.post(f"/agents/{agent_id}/credentials/{control_credential_id}:resume")
     assert resp.status_code == 200
     assert resp.json()["suspended"] is False
+
+
+@pytest.mark.asyncio
+async def test_purge_drops_inline_rules_so_rebind_starts_default_deny(
+    owner_client: TestClient,
+    web_context: Context,
+    binding_agent_id: str,
+    test_agent_id: str,
+    control_credential_id: str,
+) -> None:
+    """Purging a binding deletes the pair's inline rules along with the row.
+
+    A re-bind of the same pair therefore starts with no rule set and no
+    inline rules (default deny) — it cannot pick up rules that were dormant
+    under a rule set attached to the purged binding. Another agent's rules on
+    the same credential are untouched.
+    """
+    agent_id = binding_agent_id
+    bind_url = f"/agents/{agent_id}/credentials"
+    assert (
+        owner_client.post(bind_url, json={"credential_id": control_credential_id}).status_code
+        == 201
+    )
+    wide: list[dict[str, object]] = [{"effect": "allow", "methods": ["GET", "POST"], "path": ".*"}]
+    async with web_context.control_db.transaction() as session:
+        for aid in (agent_id, test_agent_id):
+            await AgentPermissionRuleRepository.replace_user_rules(
+                session, aid, control_credential_id, wide, created_by="usr_test"
+            )
+    async with web_context.admin_db.transaction() as session:
+        await session.execute(
+            update(AgentCredentialBinding)
+            .where(AgentCredentialBinding.agent_id == agent_id)
+            .where(AgentCredentialBinding.credential_id == control_credential_id)
+            .values(rule_set_id="prs_attached_set")
+        )
+
+    try:
+        resp = owner_client.delete(f"{bind_url}/{control_credential_id}", params={"purge": "true"})
+        assert resp.status_code == 204
+
+        async with web_context.control_db.session() as session:
+            assert (
+                await AgentPermissionRuleRepository.list_rules(
+                    session, agent_id, control_credential_id
+                )
+                == []
+            )
+            others = await AgentPermissionRuleRepository.list_rules(
+                session, test_agent_id, control_credential_id
+            )
+            assert len(others) == 1
+
+        resp = owner_client.post(bind_url, json={"credential_id": control_credential_id})
+        assert resp.status_code == 201
+        assert resp.json()["rule_set_id"] is None
+        async with web_context.control_db.session() as session:
+            assert (
+                await AgentPermissionRuleRepository.list_rules(
+                    session, agent_id, control_credential_id
+                )
+                == []
+            )
+    finally:
+        async with web_context.control_db.transaction() as session:
+            await AgentPermissionRuleRepository.replace_user_rules(
+                session, test_agent_id, control_credential_id, [], created_by="usr_test"
+            )
 
 
 @pytest.fixture()

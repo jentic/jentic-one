@@ -300,7 +300,7 @@ export class AgentsService {
         agentId: string,
         credentialId: string,
         /**
-         * Default false: the binding is suspended (reversible; its permission rules survive and :resume restores access). true deletes the binding row outright.
+         * Default false: the binding is suspended (reversible; its permission rules survive and :resume restores access). true deletes the binding row outright, together with its inline permission rules.
          */
         purge?: boolean,
     }): CancelablePromise<void> {

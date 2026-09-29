@@ -8236,13 +8236,13 @@ paths:
         schema:
           title: Credential Id
           type: string
-      - description: 'Default false: the binding is suspended (reversible; its permission rules survive and :resume restores access). true deletes the binding row outright.'
+      - description: 'Default false: the binding is suspended (reversible; its permission rules survive and :resume restores access). true deletes the binding row outright, together with its inline permission rules.'
         in: query
         name: purge
         required: false
         schema:
           default: false
-          description: 'Default false: the binding is suspended (reversible; its permission rules survive and :resume restores access). true deletes the binding row outright.'
+          description: 'Default false: the binding is suspended (reversible; its permission rules survive and :resume restores access). true deletes the binding row outright, together with its inline permission rules.'
           title: Purge
           type: boolean
       responses:

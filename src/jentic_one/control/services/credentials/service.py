@@ -446,7 +446,7 @@ class CredentialService:
     # --- Per-binding permission rules (theme 5 phase 1) ---
 
     @staticmethod
-    def _may_write_binding_rules(credential: Credential, identity: Identity) -> bool:
+    def _may_write_binding_rules(credential: Credential, agent_id: str, identity: Identity) -> bool:
         """Owner-or-admin write gate for a binding's permission rules.
 
         The rules bound what an agent may do with the credential, so changing
@@ -454,9 +454,18 @@ class CredentialService:
         that created the credential. Read visibility is deliberately not
         enough — neither being the bound agent itself, nor an owner-delegation
         read scope, nor an extension's shared-read grant widens this gate.
+
+        The bound agent never edits its own binding's rules, even when it is
+        the credential's ``created_by`` (an agent-initiated connect records
+        the agent as creator): the rules exist to constrain that agent, and
+        the human-approved set is what it runs under.
         """
-        return ORG_ADMIN in identity.permissions or (
-            credential.created_by is not None and credential.created_by == identity.sub
+        if ORG_ADMIN in identity.permissions:
+            return True
+        return (
+            credential.created_by is not None
+            and credential.created_by == identity.sub
+            and agent_id != identity.sub
         )
 
     async def _require_visible_binding(
@@ -490,7 +499,7 @@ class CredentialService:
                 session, credential_id, filters=access_filters
             )
             if credential is None or (
-                for_write and not self._may_write_binding_rules(credential, identity)
+                for_write and not self._may_write_binding_rules(credential, agent_id, identity)
             ):
                 raise CredentialNotFoundError(credential_id)
         async with self._ctx.admin_db.session() as session:

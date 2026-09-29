@@ -291,7 +291,7 @@ async def unbind_credential(
         description=(
             "Default false: the binding is suspended (reversible; its permission"
             " rules survive and :resume restores access). true deletes the"
-            " binding row outright."
+            " binding row outright, together with its inline permission rules."
         ),
     ),
     identity: Identity = get_current_identity(required_permissions=["agents:write"]),

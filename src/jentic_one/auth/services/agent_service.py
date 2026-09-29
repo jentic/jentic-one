@@ -19,7 +19,11 @@ from jentic_one.admin.repos import (
     AgentToolkitBindingRepository,
 )
 from jentic_one.admin.scoping.filters import build_access_filters
-from jentic_one.auth.repos import CredentialRefRepository, ToolkitNameRepository
+from jentic_one.auth.repos import (
+    BindingRuleRepository,
+    CredentialRefRepository,
+    ToolkitNameRepository,
+)
 from jentic_one.auth.services.agent_scope_ceiling import check_agent_scope_grant
 from jentic_one.auth.services.errors import (
     ActorNotFoundError,
@@ -640,9 +644,24 @@ class AgentService:
         Default is a reversible suspend (the binding row and its authored
         permission rules survive; the broker derivation will exclude it).
         ``purge=True`` deletes the row outright — the explicit destructive
-        path.
+        path — together with the pair's inline permission rules, so a later
+        re-bind starts from default deny instead of resurrecting rules that
+        were dormant under an attached rule set. The rules go first: if the
+        admin-side delete then fails, the surviving binding has no inline
+        rules and denies (fail-closed) rather than the other way round.
         """
         await self.get_agent(agent_id, identity=identity)
+        if purge and self._ctx.is_db_allowed("control"):
+            async with self._ctx.admin_db.session() as session:
+                existing = await AgentCredentialBindingRepository.get(
+                    session, agent_id=agent_id, credential_id=credential_id
+                )
+            if existing is None:
+                raise CredentialBindingNotFoundError(agent_id, credential_id)
+            async with self._ctx.control_db.transaction() as session:
+                await BindingRuleRepository.delete_for_binding(
+                    session, agent_id=agent_id, credential_id=credential_id
+                )
         async with self._ctx.admin_db.transaction() as session:
             if purge:
                 removed = await AgentCredentialBindingRepository.purge(
