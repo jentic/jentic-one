@@ -113,6 +113,9 @@ class ExecutionHandler:
         api_name = payload.get("api_name")
         api_version = payload.get("api_version")
         origin = payload.get("origin")
+        server_variables = _str_map(payload.get("server_variables"))
+        server_variable_defaults = _str_map(payload.get("server_variable_defaults"))
+        server_variables_unresolved = payload.get("server_variables_unresolved") is True
 
         body: bytes | None = None
         body_b64 = payload.get("body_b64")
@@ -139,6 +142,8 @@ class ExecutionHandler:
                     operation_id=payload.get("operation_id"),
                     toolkit_id=payload.get("toolkit_id"),
                     credential_id=payload.get("credential_id"),
+                    server_variables=server_variables,
+                    server_variables_unresolved=server_variables_unresolved,
                 )
             )
             if not verdict.allowed:
@@ -173,13 +178,15 @@ class ExecutionHandler:
                 credential_id=pinned_credential_id,
                 allowed_credential_ids=list(allowed),
                 trace_id=trace_id,
+                request_server_variables=server_variables,
+                server_variables_unresolved=server_variables_unresolved,
             )
-            applied = _apply_injection(upstream_url, injection)
+            applied = _apply_injection(upstream_url, injection, server_variable_defaults)
             upstream_url, headers = applied.url, applied.headers
             credential_id = injection.credential_id
             credential_name = injection.credential_name
             signing = injection.signing
-            if injection.server_variables:
+            if injection.server_variables or server_variable_defaults:
                 upstream_url = validate_upstream_url(upstream_url, self._egress)
 
         status = ExecutionStatus.COMPLETED
@@ -413,7 +420,18 @@ class AppliedAuth:
     headers: dict[str, str]
 
 
-def _apply_injection(upstream_url: str, injection: InjectedAuth) -> AppliedAuth:
+def _str_map(value: Any) -> dict[str, str] | None:
+    """A payload ``{str: str}`` mapping, or ``None`` when absent/malformed."""
+    if not isinstance(value, dict):
+        return None
+    return {str(k): str(v) for k, v in value.items()} or None
+
+
+def _apply_injection(
+    upstream_url: str,
+    injection: InjectedAuth,
+    server_variable_defaults: dict[str, str] | None = None,
+) -> AppliedAuth:
     """Apply injected auth to the outbound URL + headers (worker side).
 
     Mirrors the sync router's ``_apply_injection``: server-variable credentials
@@ -422,8 +440,10 @@ def _apply_injection(upstream_url: str, injection: InjectedAuth) -> AppliedAuth:
     ``apiKey in: query`` / ``apiKey in: cookie`` credential is applied rather
     than silently dropped.
     """
-    if injection.server_variables:
-        upstream_url = apply_server_variables(upstream_url, injection.server_variables)
+    if injection.server_variables or server_variable_defaults:
+        upstream_url = apply_server_variables(
+            upstream_url, injection.server_variables, server_variable_defaults
+        )
 
     if injection.query_params:
         parsed = urlparse(upstream_url)

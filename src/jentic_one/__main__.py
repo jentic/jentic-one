@@ -74,6 +74,15 @@ SURFACE_DB_DEPS: dict[str, set[str]] = {
 
 SURFACES_NEEDING_AUTH: set[str] = {"admin", "control", "registry", "broker"}
 
+# Surfaces that resolve credential providers through ``Context.providers``
+# (control's connect flows, the broker's token refresh), so their process must
+# merge the DB-backed provider configs at boot. Admin writes those configs and
+# refreshes explicitly after each write; registry and auth never resolve a
+# provider. Booting the refresh anywhere else is wasted work at best, and on a
+# surface that is not handed the credential keyset (standalone registry) it
+# cannot decrypt the stored client secrets at all.
+PROVIDER_REGISTRY_SURFACES: frozenset[str] = frozenset({"control", "broker"})
+
 
 def _expand_allowed_dbs(apps: list[str], config: AppConfig) -> set[str]:
     """Expand surface list into the full set of required DB names."""
@@ -87,6 +96,15 @@ def _expand_allowed_dbs(apps: list[str], config: AppConfig) -> set[str]:
     if "control" in apps and config.server.mcp.enabled:
         allowed.add("registry")
     return allowed
+
+
+def _build_context(config: AppConfig, apps: list[str]) -> Context:
+    """The serving process's Context: DB access and boot work scoped to ``apps``."""
+    return Context(
+        config,
+        allowed_dbs=_expand_allowed_dbs(apps, config),
+        refresh_providers_on_boot=not PROVIDER_REGISTRY_SURFACES.isdisjoint(apps),
+    )
 
 
 def _build_app(ctx: Context, apps: list[str]) -> FastAPI:
@@ -142,7 +160,7 @@ def create_app() -> FastAPI:
     configure_tracing(_service_name(), config.observability.tracing)
     configure_metrics(_service_name(), config.observability.metrics)
     apps = config.apps
-    ctx = Context(config, allowed_dbs=_expand_allowed_dbs(apps, config))
+    ctx = _build_context(config, apps)
     return _build_app(ctx, apps)
 
 
@@ -252,7 +270,7 @@ def _serve() -> None:
     configure_tracing(_service_name(), config.observability.tracing)
     configure_metrics(_service_name(), config.observability.metrics)
     apps = config.apps
-    ctx = Context(config, allowed_dbs=_expand_allowed_dbs(apps, config))
+    ctx = _build_context(config, apps)
     app = _build_app(ctx, apps)
     uvicorn.run(
         app,

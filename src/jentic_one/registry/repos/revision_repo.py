@@ -239,6 +239,27 @@ class ApiRevisionRepository:
         return (row[0], row[1])
 
     @staticmethod
+    async def registered_vendor_for_source_url(
+        session: AsyncSession, source_url: str
+    ) -> str | None:
+        """The stored ``vendor`` of the local API already registered from ``source_url``.
+
+        Uses the same coverage key as ``CatalogRepository.registered_spec_urls``: any
+        non-archived revision whose ``source_url`` matches, not just the current one.
+        When several APIs match, the oldest wins so the answer is deterministic.
+        Returns ``None`` when nothing is registered from that URL.
+        """
+        result = await session.execute(
+            select(Api.vendor)
+            .join(ApiRevision, ApiRevision.api_id == Api.id)
+            .where(ApiRevision.source_url == source_url)
+            .where(ApiRevision.state != ApiRevisionState.ARCHIVED)
+            .order_by(Api.created_at, Api.id)
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
     async def origin_of(session: AsyncSession, revision_id: uuid.UUID) -> str | None:
         """The ``origin`` of a revision by id, or ``None`` if it doesn't exist.
 

@@ -77,3 +77,23 @@ def test_same_vendor_different_api_returns_none() -> None:
 
 def test_empty_registry_returns_none() -> None:
     assert connect_vendor_key(VendorRegistryConfig(), vendor="github.com", name="x") is None
+
+
+def test_registry_entry_vendor_uses_registrable_domain() -> None:
+    """The entry's vendor axis is the registrable domain of its host (the same
+    derivation the catalog import applies), so a multi-label public suffix like
+    ``co.uk`` keeps the company label and a sibling company does not match."""
+    registry = VendorRegistryConfig(
+        entries={
+            "finage": VendorAuthConfig(
+                vendor="api.finage.co.uk/main",
+                display_name="Finage",
+                flows=[_FLOW],
+                identity_probe=_PROBE,
+            )
+        }
+    )
+    name = "api.finage.co.uk/main"
+    assert connect_vendor_key(registry, vendor="finage.co.uk", name=name) == "finage"
+    assert connect_vendor_key(registry, vendor="co.uk", name=name) is None
+    assert connect_vendor_key(registry, vendor="apex27.co.uk", name=name) is None

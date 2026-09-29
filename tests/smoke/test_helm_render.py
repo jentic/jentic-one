@@ -16,6 +16,8 @@ from typing import Any
 import pytest
 import yaml
 
+from jentic_one.shared.config import GUARDED_FIELD_SURFACES
+
 CHART_DIR = Path(__file__).resolve().parents[2] / "deploy" / "helm" / "jentic-one"
 VALUES_DIR = CHART_DIR.parent / "values"
 
@@ -50,6 +52,56 @@ def _env(container: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _env_names(container: dict[str, Any]) -> list[str]:
     return [entry["name"] for entry in _env(container)]
+
+
+def _manifests_from(stdout: str) -> list[dict[str, Any]]:
+    return [doc for doc in yaml.safe_load_all(stdout) if doc]
+
+
+def _app_secrets_data(docs: list[dict[str, Any]]) -> dict[str, str]:
+    """Decoded data of the chart-generated app-secrets Secret."""
+    secret = next(
+        doc
+        for doc in docs
+        if doc.get("kind") == "Secret" and doc["metadata"]["name"].endswith("-app-secrets")
+    )
+    return {k: base64.b64decode(v).decode() for k, v in secret["data"].items()}
+
+
+def _deployments(docs: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Deployments keyed by their app.kubernetes.io/name (the subchart name)."""
+    return {
+        doc["metadata"]["labels"]["app.kubernetes.io/name"]: doc
+        for doc in docs
+        if doc.get("kind") == "Deployment"
+    }
+
+
+def _app_secret_refs(deployment: dict[str, Any]) -> dict[str, str]:
+    """What a Deployment takes from the app-secrets Secret: env name -> key.
+
+    The mounted file shows up under its JENTIC_CONFIG_FILE path's key.
+    """
+    spec = deployment["spec"]["template"]["spec"]
+    container = spec["containers"][0]
+    refs: dict[str, str] = {}
+    for entry in _env(container):
+        ref = (entry.get("valueFrom") or {}).get("secretKeyRef")
+        if ref and not ref["key"].startswith("db-password-"):
+            refs[entry["name"]] = ref["key"]
+    for volume in spec.get("volumes") or []:
+        if volume["name"] == "jentic-app-secrets":
+            for item in volume["secret"]["items"]:
+                refs["JENTIC_CONFIG_FILE"] = item["key"]
+    config_file = [e for e in _env(container) if e["name"] == "JENTIC_CONFIG_FILE"]
+    if "JENTIC_CONFIG_FILE" in refs:
+        assert config_file == [
+            {
+                "name": "JENTIC_CONFIG_FILE",
+                "value": f"/etc/jentic/app-secrets/{refs['JENTIC_CONFIG_FILE']}",
+            }
+        ]
+    return refs
 
 
 @pytest.mark.smoke
@@ -263,10 +315,10 @@ def test_render_marketplace_app_secrets() -> None:
     assert '"helm.sh/resource-policy": keep' in out
     # Zero-touch: no password placeholder anywhere in the render.
     assert "REQUIRED-AT-INSTALL" not in out
-    # App and broker both mount the config file, point the loader at it, and
+    # App and broker both mount the keyset file, point the loader at it, and
     # run in production mode so the placeholder guards actually enforce.
     assert out.count("secretName: jentic-app-secrets") == 2
-    assert out.count("value: /etc/jentic/app-secrets/config.yaml") == 2
+    assert out.count("value: /etc/jentic/app-secrets/credentials-encryption.yaml") == 2
     assert out.count("name: JENTIC_ENV") == 2
     # Service-pod DB passwords ride secretKeyRef (3 surfaces x app+broker),
     # never plain env values.
@@ -280,27 +332,27 @@ def test_render_marketplace_app_secrets() -> None:
     # passwords in a (non-secret) ConfigMap.
     assert "init-schemas.sh" in out
     assert "PASSWORD %L" in out  # psql format()-quoted, not Helm-interpolated
-    # The generated config carries all four secrets, and the encryption
-    # material decodes to exactly 32 bytes (AES-256).
-    docs = out.split("---")
-    secret_doc = next(d for d in docs if "name: jentic-app-secrets" in d)
-    b64 = next(
-        line.split(":", 1)[1].strip()
-        for line in secret_doc.splitlines()
-        if line.strip().startswith("config.yaml:")
-    )
-    config = base64.b64decode(b64).decode()
-    for key in ("active_id: v1", "jwt_secret:", "pepper:", "state_secret:"):
-        assert key in config, f"generated config.yaml missing {key}"
-    material = next(
-        line.split(":", 1)[1].strip()
-        for line in config.splitlines()
-        if line.strip().startswith("material:")
-    )
-    assert len(base64.b64decode(material)) == 32
+    # One key per concern, and the encryption material decodes to exactly 32
+    # bytes (AES-256).
+    data = _app_secrets_data(_manifests_from(out))
+    keyset = yaml.safe_load(data["credentials-encryption.yaml"])
+    assert set(keyset) == {"credentials"}
+    assert set(keyset["credentials"]) == {"encryption"}
+    encryption = keyset["credentials"]["encryption"]
+    assert encryption["active_id"] == "v1"
+    assert len(base64.b64decode(encryption["entries"][0]["material"])) == 32
+    for key in ("admin-jwt-secret", "admin-invite-pepper", "connect-state-secret"):
+        assert data[key].strip(), key
+    # The legacy single-document key carries the SAME values (layout=single and
+    # a rollback to an older chart read it), never a second set.
+    legacy = yaml.safe_load(data["config.yaml"])
+    assert legacy["credentials"]["encryption"] == encryption
+    assert legacy["admin"]["auth"]["jwt_secret"] == data["admin-jwt-secret"]
+    assert legacy["admin"]["invite"]["pepper"] == data["admin-invite-pepper"]
+    assert legacy["credentials"]["connect"]["state_secret"] == data["connect-state-secret"]
     # All four DB password keys present in the Secret itself.
     for key in ("registry", "control", "admin", "postgres"):
-        assert f"db-password-{key}:" in secret_doc
+        assert f"db-password-{key}" in data
 
 
 @pytest.mark.smoke
@@ -369,42 +421,410 @@ def test_render_app_secrets_conflict_with_config_file() -> None:
     assert "mutually exclusive" in result.stderr
 
 
-@pytest.mark.smoke
-def test_render_app_secrets_reach_every_python_surface() -> None:
-    """generate=true mounts the release Secret on ALL Python surfaces.
+_ALL_SURFACES_ON = (
+    "--set",
+    "admin.enabled=true",
+    "--set",
+    "registry.enabled=true",
+    "--set",
+    "control.enabled=true",
+    "--set",
+    "broker.enabled=true",
+    "--set",
+    "global.databases.registry.password=x",
+    "--set",
+    "global.databases.control.password=x",
+    "--set",
+    "global.databases.admin.password=x",
+    "--set",
+    "postgresql.auth.password=x",
+)
 
-    Found live: admin and registry never had the app-secrets wiring, which the
-    old CHANGE-ME jwt_secret code default masked — every pod silently agreed on
-    the placeholder. Once the default became generate-per-process (the AWS
-    Marketplace static-password fix), parts-mode pods disagreed on jwt_secret
-    and cross-surface JWT verification 401'd. The issuer (admin) and every
-    verifier must mount the SAME Secret.
+# The app surfaces each subchart runs (deploy/docker/*.Dockerfile JENTIC__APPS).
+_SUBCHART_APPS = {
+    "app": {"registry", "admin", "control", "auth"},
+    "admin": {"admin", "auth"},
+    "control": {"control"},
+    "registry": {"registry"},
+    "broker": {"broker"},
+}
+
+_SCALAR_KEYS = {
+    "admin.auth.jwt_secret": ("JENTIC__ADMIN__AUTH__JWT_SECRET", "admin-jwt-secret"),
+    "admin.invite.pepper": ("JENTIC__ADMIN__INVITE__PEPPER", "admin-invite-pepper"),
+    "credentials.connect.state_secret": (
+        "JENTIC__CREDENTIALS__CONNECT__STATE_SECRET",
+        "connect-state-secret",
+    ),
+}
+
+# Which subcharts read the credential-encryption keyset (not a production-guarded
+# scalar, so it has no GUARDED_FIELD_SURFACES entry): control (credential writes),
+# broker (injection + token refresh), admin (provider-config client secrets),
+# and app, which bundles all three.
+_KEYSET_SUBCHARTS = {"app", "admin", "control", "broker"}
+
+
+def _expected_split_refs(subchart: str) -> dict[str, str]:
+    apps = _SUBCHART_APPS[subchart]
+    expected = {
+        env: key
+        for field, (env, key) in _SCALAR_KEYS.items()
+        if apps & GUARDED_FIELD_SURFACES[field]
+    }
+    if subchart in _KEYSET_SUBCHARTS:
+        expected["JENTIC_CONFIG_FILE"] = "credentials-encryption.yaml"
+    return expected
+
+
+@pytest.mark.smoke
+def test_render_app_secrets_split_mounts_only_what_each_surface_reads() -> None:
+    """generate=true hands each Python surface exactly the secrets its code reads.
+
+    The expectation is derived from shared/config.py GUARDED_FIELD_SURFACES (the same
+    table that relaxes the production guard for a standalone surface), so the
+    chart and the loader cannot drift apart: a surface the chart starves of a
+    secret it reads would fail its production boot; a surface handed one it
+    never reads is what this layout exists to stop. Covers the parts shape
+    (admin/control/registry/broker) and the combined app.
     """
-    result = _helm_template(
+    for app_enabled in ("true", "false"):
+        docs = _manifests(
+            *_ALL_SURFACES_ON,
+            "--set",
+            f"app.enabled={app_enabled}",
+            "--set",
+            "global.appSecrets.generate=true",
+        )
+        deployments = _deployments(docs)
+        for subchart in _SUBCHART_APPS:
+            if subchart == "app" and app_enabled == "false":
+                assert subchart not in deployments
+                continue
+            assert _app_secret_refs(deployments[subchart]) == _expected_split_refs(subchart), (
+                subchart
+            )
+
+
+@pytest.mark.smoke
+def test_render_app_secrets_split_expected_matrix() -> None:
+    """Pin the per-surface matrix itself, independent of GUARDED_FIELD_SURFACES."""
+    assert {name: set(_expected_split_refs(name).values()) for name in _SUBCHART_APPS} == {
+        "app": {
+            "credentials-encryption.yaml",
+            "admin-jwt-secret",
+            "admin-invite-pepper",
+            "connect-state-secret",
+        },
+        "admin": {"credentials-encryption.yaml", "admin-jwt-secret", "admin-invite-pepper"},
+        "control": {"credentials-encryption.yaml", "admin-jwt-secret", "connect-state-secret"},
+        "registry": {"admin-jwt-secret"},
+        "broker": {"credentials-encryption.yaml"},
+    }
+
+
+@pytest.mark.smoke
+def test_render_app_secrets_existing_secret_defaults_to_single_layout() -> None:
+    """An existingSecret keeps the legacy single config.yaml on every surface.
+
+    Existing Secrets written for older chart versions hold only config.yaml;
+    switching them to per-concern keys must be an explicit opt-in.
+    """
+    docs = _manifests(
+        *_ALL_SURFACES_ON,
         "--set",
-        "app.enabled=false",
+        "global.appSecrets.existingSecret=buyer-secrets",
+    )
+    for name, deployment in _deployments(docs).items():
+        assert _app_secret_refs(deployment) == {"JENTIC_CONFIG_FILE": "config.yaml"}, name
+        volume = next(
+            v
+            for v in deployment["spec"]["template"]["spec"]["volumes"]
+            if v["name"] == "jentic-app-secrets"
+        )
+        assert volume["secret"]["secretName"] == "buyer-secrets"
+    assert not [d for d in docs if d.get("kind") == "Secret"]
+
+
+@pytest.mark.smoke
+def test_render_app_secrets_existing_secret_split_layout() -> None:
+    """existingSecret + layout=split references the per-concern keys by name."""
+    docs = _manifests(
+        *_ALL_SURFACES_ON,
         "--set",
-        "admin.enabled=true",
+        "global.appSecrets.existingSecret=buyer-secrets",
         "--set",
-        "registry.enabled=true",
-        "--set",
-        "control.enabled=true",
+        "global.appSecrets.layout=split",
+    )
+    for name, deployment in _deployments(docs).items():
+        assert _app_secret_refs(deployment) == _expected_split_refs(name), name
+        container = deployment["spec"]["template"]["spec"]["containers"][0]
+        for entry in _env(container):
+            ref = (entry.get("valueFrom") or {}).get("secretKeyRef")
+            if ref:
+                assert ref["name"] == "buyer-secrets"
+
+
+@pytest.mark.smoke
+def test_render_app_secrets_generate_single_layout() -> None:
+    """generate + layout=single restores the old everything-everywhere mount."""
+    docs = _manifests(
+        *_ALL_SURFACES_ON,
         "--set",
         "global.appSecrets.generate=true",
         "--set",
-        "global.databases.registry.password=x",
-        "--set",
-        "global.databases.control.password=x",
-        "--set",
-        "global.databases.admin.password=x",
-        "--set",
-        "postgresql.auth.password=x",
+        "global.appSecrets.layout=single",
     )
+    for name, deployment in _deployments(docs).items():
+        assert _app_secret_refs(deployment) == {"JENTIC_CONFIG_FILE": "config.yaml"}, name
+
+
+@pytest.mark.smoke
+def test_render_app_secrets_rejects_unknown_layout() -> None:
+    result = _helm_template(
+        *_ALL_SURFACES_ON,
+        "--set",
+        "global.appSecrets.generate=true",
+        "--set",
+        "global.appSecrets.layout=per-pod",
+    )
+    assert result.returncode != 0
+    assert "global.appSecrets.layout" in result.stderr
+
+
+@pytest.mark.smoke
+def test_render_app_secrets_split_extra_env_wins() -> None:
+    """An operator-set secret env var replaces the chart's secretKeyRef entry."""
+    docs = _manifests(
+        *_ALL_SURFACES_ON,
+        "--set",
+        "global.appSecrets.generate=true",
+        "--set",
+        "registry.extraEnv.JENTIC__ADMIN__AUTH__JWT_SECRET=from-operator",
+    )
+    container = _deployments(docs)["registry"]["spec"]["template"]["spec"]["containers"][0]
+    entries = [e for e in _env(container) if e["name"] == "JENTIC__ADMIN__AUTH__JWT_SECRET"]
+    assert entries == [{"name": "JENTIC__ADMIN__AUTH__JWT_SECRET", "value": "from-operator"}]
+
+
+@pytest.mark.smoke
+def test_render_app_secrets_split_registry_may_use_config_file() -> None:
+    """In split mode the registry mounts no app-secrets file, so configFile is free.
+
+    Surfaces that do mount the keyset file still refuse the combination.
+    """
+    ok = _helm_template(
+        *_ALL_SURFACES_ON,
+        "--set",
+        "global.appSecrets.generate=true",
+        "--set",
+        "registry.configFile.contents.runtime.log_level=DEBUG",
+    )
+    assert ok.returncode == 0, ok.stderr
+    clash = _helm_template(
+        *_ALL_SURFACES_ON,
+        "--set",
+        "global.appSecrets.generate=true",
+        "--set",
+        "broker.configFile.contents.runtime.log_level=DEBUG",
+    )
+    assert clash.returncode != 0
+    assert "mutually exclusive" in clash.stderr
+
+
+@pytest.mark.smoke
+@pytest.mark.parametrize(
+    ("subchart", "apps", "expected"),
+    [
+        # The AWS Marketplace shape: the combined app image re-roled as broker.
+        ("app", "broker", {"JENTIC_CONFIG_FILE": "credentials-encryption.yaml"}),
+        # A widened standalone surface gets the union of what its apps read.
+        (
+            "registry",
+            "registry, control",
+            {
+                "JENTIC_CONFIG_FILE": "credentials-encryption.yaml",
+                "JENTIC__ADMIN__AUTH__JWT_SECRET": "admin-jwt-secret",
+                "JENTIC__CREDENTIALS__CONNECT__STATE_SECRET": "connect-state-secret",
+            },
+        ),
+        # A surface the chart has no entry for gets everything (fail-safe).
+        (
+            "broker",
+            "broker,enterprise-thing",
+            {
+                "JENTIC_CONFIG_FILE": "credentials-encryption.yaml",
+                "JENTIC__ADMIN__AUTH__JWT_SECRET": "admin-jwt-secret",
+                "JENTIC__ADMIN__INVITE__PEPPER": "admin-invite-pepper",
+                "JENTIC__CREDENTIALS__CONNECT__STATE_SECRET": "connect-state-secret",
+            },
+        ),
+    ],
+)
+def test_render_app_secrets_split_follows_extra_env_apps(
+    subchart: str, apps: str, expected: dict[str, str]
+) -> None:
+    """An extraEnv JENTIC__APPS override decides what the pod is handed.
+
+    The loader's production guard keys off the apps the process runs, so the
+    chart must too: keying off the subchart name alone would starve a re-roled
+    pod of a secret it reads (or hand it ones it never reads).
+    """
+    docs = _manifests(
+        *_ALL_SURFACES_ON,
+        "--set",
+        "global.appSecrets.generate=true",
+        "--set",
+        f"{subchart}.extraEnv.JENTIC__APPS={apps.replace(',', chr(92) + ',')}",
+    )
+    assert _app_secret_refs(_deployments(docs)[subchart]) == expected
+
+
+# What chart versions before the per-concern split wrote: one config.yaml.
+_OLD_CHART_CONFIG = (
+    "credentials:\n  encryption:\n    active_id: v1\n    entries:\n"
+    "      - id: v1\n        material: b2xkLWtleS1tYXRlcmlhbC0zMi1ieXRlcy1sb25nISE=\n"
+    "  connect:\n    state_secret: old-state\n"
+    "admin:\n  auth:\n    jwt_secret: old-jwt\n  invite:\n    pepper: old-pepper\n"
+)
+
+
+def _render_over_existing_secret(
+    tmp_path: Path, existing: dict[str, str], *args: str
+) -> subprocess.CompletedProcess[str]:
+    """Render generate mode as an upgrade over an existing app-secrets Secret.
+
+    ``helm template`` has no cluster, so ``lookup`` returns nothing. A throwaway
+    copy of the chart swaps that one call for a values-supplied object, so the
+    reuse/derive logic runs exactly as it would against a live Secret.
+    """
+    if shutil.which("helm") is None:
+        pytest.skip("helm not installed")
+    chart = tmp_path / "chart"
+    shutil.copytree(CHART_DIR, chart)
+    template = chart / "templates" / "app-secrets.yaml"
+    source = template.read_text()
+    needle = 'lookup "v1" "Secret" .Release.Namespace $name'
+    assert source.count(needle) == 1
+    template.write_text(source.replace(needle, "(.Values.testExistingAppSecret | default dict)"))
+    values = tmp_path / "existing.yaml"
+    encoded = {k: base64.b64encode(v.encode()).decode() for k, v in existing.items()}
+    values.write_text(yaml.safe_dump({"testExistingAppSecret": {"data": encoded}}))
+    return subprocess.run(
+        [
+            "helm",
+            "template",
+            "jentic",
+            str(chart),
+            "-f",
+            str(values),
+            "--set",
+            "global.appSecrets.generate=true",
+            "--show-only",
+            "templates/app-secrets.yaml",
+            *args,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+
+
+def _secret_data_over(tmp_path: Path, existing: dict[str, str], *args: str) -> dict[str, str]:
+    result = _render_over_existing_secret(tmp_path, existing, *args)
     assert result.returncode == 0, result.stderr
-    # admin + registry + control each mount the generated Secret and point
-    # the loader at it (app disabled here; broker is off by default).
-    assert result.stdout.count("mountPath: /etc/jentic/app-secrets") == 3
-    assert result.stdout.count("name: JENTIC_CONFIG_FILE") == 3
+    return _app_secrets_data(_manifests_from(result.stdout))
+
+
+def _assert_legacy_matches_keys(data: dict[str, str]) -> None:
+    legacy = yaml.safe_load(data["config.yaml"])
+    keyset = yaml.safe_load(data["credentials-encryption.yaml"])
+    assert legacy["credentials"]["encryption"] == keyset["credentials"]["encryption"]
+    assert legacy["admin"]["auth"]["jwt_secret"] == data["admin-jwt-secret"]
+    assert legacy["admin"]["invite"]["pepper"] == data["admin-invite-pepper"]
+    assert legacy["credentials"]["connect"]["state_secret"] == data["connect-state-secret"]
+
+
+@pytest.mark.smoke
+@pytest.mark.parametrize("layout", ["split", "single"])
+def test_render_app_secrets_upgrade_from_old_chart_keeps_values(
+    tmp_path: Path, layout: str
+) -> None:
+    """Upgrading a pre-split release derives every key from its config.yaml.
+
+    Nothing rotates, the legacy key keeps the same values (so a rollback to
+    the old chart reads what the pods were using), and a second upgrade over
+    the result is a no-op.
+    """
+    old = {"config.yaml": _OLD_CHART_CONFIG, "db-password-admin": "old-db"}
+    data = _secret_data_over(tmp_path / "1", old, "--set", f"global.appSecrets.layout={layout}")
+    assert data["admin-jwt-secret"] == "old-jwt"
+    assert data["admin-invite-pepper"] == "old-pepper"
+    assert data["connect-state-secret"] == "old-state"
+    old_encryption = yaml.safe_load(_OLD_CHART_CONFIG)["credentials"]["encryption"]
+    assert yaml.safe_load(data["credentials-encryption.yaml"]) == {
+        "credentials": {"encryption": old_encryption}
+    }
+    assert data["db-password-admin"] == "old-db"
+    assert yaml.safe_load(data["config.yaml"]) == yaml.safe_load(_OLD_CHART_CONFIG)
+    _assert_legacy_matches_keys(data)
+    again = _secret_data_over(tmp_path / "2", data, "--set", f"global.appSecrets.layout={layout}")
+    assert again == data
+
+
+@pytest.mark.smoke
+def test_render_app_secrets_split_rejects_hand_added_legacy_settings(tmp_path: Path) -> None:
+    """A config.yaml carrying extra settings blocks split, even after a single run.
+
+    layout=single writes the per-concern keys too, so the check cannot rely on
+    their absence: dropping back to split (say, an upgrade without the
+    layout value) would otherwise silently stop mounting those settings.
+    """
+    edited = _OLD_CHART_CONFIG + "runtime:\n  log_level: DEBUG\n"
+    first = _render_over_existing_secret(tmp_path / "1", {"config.yaml": edited})
+    assert first.returncode != 0
+    assert "runtime" in first.stderr
+    assert "global.appSecrets.layout=single" in first.stderr
+    data = _secret_data_over(
+        tmp_path / "2", {"config.yaml": edited}, "--set", "global.appSecrets.layout=single"
+    )
+    # single keeps the hand-edited document verbatim.
+    assert data["config.yaml"] == edited
+    back_to_split = _render_over_existing_secret(tmp_path / "3", data)
+    assert back_to_split.returncode != 0
+    assert "runtime" in back_to_split.stderr
+
+
+@pytest.mark.smoke
+def test_render_app_secrets_legacy_follows_the_layout_pods_read(tmp_path: Path) -> None:
+    """Whichever side the pods read is authoritative; the other follows it.
+
+    split: a keyset rotated in place in credentials-encryption.yaml (new
+    entry, new active_id) is written back into config.yaml, so a rollback
+    can still decrypt what was written under the new key. single: a value
+    changed in config.yaml flows into the per-concern key, so a later switch
+    to split carries it rather than a stale copy.
+    """
+    base = _secret_data_over(tmp_path / "0", {"config.yaml": _OLD_CHART_CONFIG})
+    rotated_keyset = yaml.safe_load(base["credentials-encryption.yaml"])
+    encryption = rotated_keyset["credentials"]["encryption"]
+    encryption["entries"].append(
+        {"id": "v2", "material": "bmV3LWtleS1tYXRlcmlhbC0zMi1ieXRlcy1sb25nISE="}
+    )
+    encryption["active_id"] = "v2"
+    split = _secret_data_over(
+        tmp_path / "1", base | {"credentials-encryption.yaml": yaml.safe_dump(rotated_keyset)}
+    )
+    assert yaml.safe_load(split["config.yaml"])["credentials"]["encryption"] == encryption
+    _assert_legacy_matches_keys(split)
+
+    legacy = yaml.safe_load(base["config.yaml"])
+    legacy["admin"]["auth"]["jwt_secret"] = "rotated-in-config-yaml"
+    edited = base | {"config.yaml": yaml.safe_dump(legacy)}
+    single = _secret_data_over(tmp_path / "2", edited, "--set", "global.appSecrets.layout=single")
+    assert single["admin-jwt-secret"] == "rotated-in-config-yaml"
+    assert single["config.yaml"] == edited["config.yaml"]
+    _assert_legacy_matches_keys(single)
 
 
 @pytest.mark.smoke

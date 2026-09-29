@@ -160,7 +160,12 @@ def _run_check(order: list[str]) -> int:
 
 async def _run_upgrade_steps_async(skip: Collection[str]) -> int:
     config = load_config()
-    async with Context(config, allowed_dbs=set(_UPGRADE_STEP_DBS)) as ctx:
+    # The upgrade steps never resolve a credential provider, and the migrate
+    # Job is not handed the credential keyset, so skip the boot-time provider
+    # refresh rather than have it fail to decrypt stored client secrets.
+    async with Context(
+        config, allowed_dbs=set(_UPGRADE_STEP_DBS), refresh_providers_on_boot=False
+    ) as ctx:
         outcomes = await UpgradeStepService(ctx).run(skip=skip)
     failed = False
     for outcome in outcomes:

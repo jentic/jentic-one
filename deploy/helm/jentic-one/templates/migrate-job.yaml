@@ -139,7 +139,7 @@ spec:
           Deliberately no common.runtime-env here. The runner resolves database
           URLs through load_config() (migrations/env.py), so it validates the
           whole AppConfig — but it is handed only the DB env, never the
-          appSecrets config.yaml the service pods mount. Setting
+          appSecrets the service pods get. Setting
           JENTIC_ENV=production would therefore arm the placeholder-secret guard
           against secrets this pod has no way to see and fail every install.
           Schema migrations do not touch those secrets, so the application's

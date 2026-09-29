@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Protocol
@@ -65,6 +65,8 @@ class CredentialInjector(Protocol):
         credential_id: str | None = None,
         allowed_credential_ids: Collection[str] | None = None,
         trace_id: str | None = None,
+        request_server_variables: Mapping[str, str] | None = None,
+        server_variables_unresolved: bool = False,
     ) -> InjectedAuth:
         """Return the auth to apply; empty ``InjectedAuth`` when there is no credential path.
 
@@ -72,7 +74,9 @@ class CredentialInjector(Protocol):
         (theme-5 Q-02): when not ``None``, only these credential ids may
         resolve (an empty set denies all). ``credential_id`` pins the exact
         credential selected at the web edge so the async worker replays the
-        same selection.
+        same selection. ``request_server_variables`` are the concrete
+        server-variable values of the request URL; a credential scoped to other
+        values is not a match.
         """
         ...
 
@@ -97,6 +101,12 @@ class QueuedExecutionRequest:
     operation_id: str | None = None
     toolkit_id: str | None = None
     credential_id: str | None = None
+    # Concrete server-variable values of the request URL (from discovery at
+    # enqueue time) — the re-check selects under the same scoping.
+    server_variables: Mapping[str, str] | None = None
+    # Discovery could not determine those values at enqueue time — a credential
+    # scoped by ``server_variables`` is then not selected (fail closed).
+    server_variables_unresolved: bool = False
 
 
 @dataclass(frozen=True, slots=True)
