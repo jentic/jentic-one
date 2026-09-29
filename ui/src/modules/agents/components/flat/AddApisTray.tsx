@@ -27,8 +27,7 @@ import {
 } from 'lucide-react';
 import { Button, ErrorAlert, LoadingState, SheetPrimitive } from '@/shared/ui';
 import { cn } from '@/shared/lib/utils';
-import { useAllCredentials, useProviders, type SelectedApi } from '@/shared/credentials/api';
-import { useOptionalCurrentUser } from '@/shared/auth';
+import type { SelectedApi } from '@/shared/credentials/api';
 import { apiRefKey } from '@/shared/credentials/lib/apiIdentity';
 import { ApiPicker } from '@/shared/credentials/components/ApiPicker';
 import { ImportSpecDialog } from '@/shared/credentials/components/ImportSpecDialog';
@@ -44,6 +43,7 @@ import {
 } from '@/modules/agents/lib/apiPreflight';
 import type { CredentialBindingEntity } from '@/modules/agents/api/types';
 import type { QueueBackSeed } from '@/modules/agents/lib/setupQueue';
+import { usePreflightInputs } from '@/modules/agents/lib/usePreflightInputs';
 
 /** Glyph and colour per outcome — a choice still to make reads as amber, a
  * sign-in as orange, and a new credential as plain work still to do. */
@@ -128,27 +128,8 @@ export function AddApisTray({
 	}, [seed]);
 	const editingBatch = seed != null;
 
-	// Preflight reads the WHOLE credential list: a first-page-only list would call
-	// an existing credential "needs a new credential" and hide it from the choice.
-	const credentialsSource = useAllCredentials();
-	// Narrows the choice to credentials this user may bind; unknown → no filter.
-	const viewer = useOptionalCurrentUser();
-	const providersQuery = useProviders();
-	const managedOAuthAvailable = useMemo(
-		() => (providersQuery.data?.providers ?? []).some((p) => p.managed && p.configured),
-		[providersQuery.data],
-	);
-
-	const items = useMemo(
-		() =>
-			preflightApis(picks, {
-				credentials: credentialsSource.items,
-				viewer,
-				bindings,
-				managedOAuthAvailable,
-			}),
-		[picks, credentialsSource.items, viewer, bindings, managedOAuthAvailable],
-	);
+	const { inputs: preflightInputs, credentialsSource } = usePreflightInputs(bindings);
+	const items = useMemo(() => preflightApis(picks, preflightInputs), [picks, preflightInputs]);
 	const tally = useMemo(() => preflightTally(items), [items]);
 
 	const lockedKeys = useMemo(() => new Set(locked.map(apiRefKey)), [locked]);
