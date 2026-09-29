@@ -13,6 +13,7 @@ from jentic_one.admin.repos import (
 )
 from jentic_one.admin.services._support.pagination import Page, decode_cursor, encode_cursor
 from jentic_one.admin.services._support.user_management import (
+    ensure_can_change_email,
     ensure_can_manage,
     ensure_not_last_active_admin,
 )
@@ -268,7 +269,7 @@ class UserService:
                 permission_sets = await UserPermissionGrantRepository.get_permission_sets(
                     session, [user_id, identity.sub]
                 )
-                ensure_can_manage(user_id, identity, permission_sets)
+                ensure_can_change_email(user_id, identity, permission_sets)
 
             if payload.email is not None:
                 existing = await UserRepository.get_by_email(session, payload.email)

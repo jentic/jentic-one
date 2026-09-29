@@ -1,9 +1,10 @@
 """Integration tests for UserService guards on managing other users.
 
-Covers the privilege ceiling on changing another user's email, account
-status or permissions, the last-active-``org:admin`` guard (including its
-row locking under concurrent removals on Postgres), and the removal of external IdP
-identity links when an account's email changes. Real database, no mocking.
+Covers the org:admin requirement on changing another user's email, the
+privilege ceiling on changing another user's account status or permissions,
+the last-active-``org:admin`` guard (including its row locking under
+concurrent removals on Postgres), and the removal of external IdP identity
+links when an account's email changes. Real database, no mocking.
 """
 
 from __future__ import annotations
@@ -222,10 +223,8 @@ async def test_users_write_holder_can_manage_less_privileged_user(
     manager_id = await make_user("guard-manager-ok@test.local", {"users:write"})
     identity = _identity(manager_id)
 
-    view = await service.update(
-        target_id, UserUpdatePayload(email="guard-target-ok2@test.local"), identity=identity
-    )
-    assert view.email == "guard-target-ok2@test.local"
+    view = await service.update(target_id, UserUpdatePayload(last_name="Ok"), identity=identity)
+    assert view.last_name == "Ok"
 
     await service.disable(target_id, identity=identity)
     assert (await _get_user(ctx, target_id)).active is False
@@ -233,6 +232,52 @@ async def test_users_write_holder_can_manage_less_privileged_user(
     assert (await _get_user(ctx, target_id)).active is True
     await service.delete(target_id, identity=identity)
     assert (await _get_user(ctx, target_id)).active is False
+
+
+async def test_users_write_holder_cannot_change_permissionless_user_email(
+    integration_context: Context, make_user: MakeUser
+) -> None:
+    """Only org:admin may change another user's email, whatever the target holds."""
+    ctx = integration_context
+    target_id = await make_user("guard-target-noperm@test.local", set())
+    manager_id = await make_user("guard-manager-noperm@test.local", {"users:read", "users:write"})
+
+    with pytest.raises(UserManagementForbiddenError):
+        await UserService(ctx).update(
+            target_id,
+            UserUpdatePayload(email="guard-target-noperm-new@test.local"),
+            identity=_identity(manager_id),
+        )
+    assert (await _get_user(ctx, target_id)).email == "guard-target-noperm@test.local"
+
+
+async def test_org_admin_can_change_another_user_email(
+    integration_context: Context, make_user: MakeUser
+) -> None:
+    ctx = integration_context
+    target_id = await make_user("guard-target-admin-email@test.local", {"users:read"})
+    admin_id = await make_user("guard-admin-changes-email@test.local", {"org:admin"})
+
+    view = await UserService(ctx).update(
+        target_id,
+        UserUpdatePayload(email="guard-target-admin-email-new@test.local"),
+        identity=_identity(admin_id),
+    )
+    assert view.email == "guard-target-admin-email-new@test.local"
+
+
+async def test_users_write_holder_can_change_own_email(
+    integration_context: Context, make_user: MakeUser
+) -> None:
+    ctx = integration_context
+    manager_id = await make_user("guard-manager-self-email@test.local", {"users:write"})
+
+    view = await UserService(ctx).update(
+        manager_id,
+        UserUpdatePayload(email="guard-manager-self-email-new@test.local"),
+        identity=_identity(manager_id),
+    )
+    assert view.email == "guard-manager-self-email-new@test.local"
 
 
 async def test_email_change_removes_external_identity_links(
