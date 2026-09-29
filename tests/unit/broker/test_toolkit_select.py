@@ -15,13 +15,13 @@ from jentic_one.broker.core.exceptions import (
     CredentialIdentityMismatchError,
     no_toolkit_binding_directive,
 )
-from jentic_one.broker.web.errors import install_broker_error_handlers
-from jentic_one.broker.web.routers.execute import (
+from jentic_one.broker.services.execution.authorization import (
     ToolkitSelection,
     _emit_toolkit_binding_unserved,
     _is_unserved_no_toolkit_binding,
     select_toolkit,
 )
+from jentic_one.broker.web.errors import install_broker_error_handlers
 from jentic_one.shared.access_guidance import no_credential_serves_api_reason
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.broker.protocols import IdentityMismatch, ToolkitDerivation
@@ -387,7 +387,7 @@ async def test_emit_toolkit_binding_unserved_writes_event() -> None:
     identity = Identity(sub="agnt_001", actor_type=ActorType.AGENT, permissions=[])
 
     with patch(
-        "jentic_one.broker.web.routers.execute.emit_event_best_effort",
+        "jentic_one.broker.services.execution.authorization.emit_event_best_effort",
         new_callable=AsyncMock,
     ) as mock_emit:
         await _emit_toolkit_binding_unserved(ctx, api=_API, identity=identity)

@@ -21,6 +21,8 @@ import pytest
 from jentic_one.shared.jobs.execution_handler import ExecutionHandler
 from jentic_one.shared.jobs.protocols import (
     InjectedAuth,
+    QueuedExecutionRequest,
+    QueuedExecutionVerdict,
     UpstreamExecRequest,
     UpstreamExecResult,
 )
@@ -79,6 +81,18 @@ class _FakeInjector:
         self.last_allowed_credential_ids = allowed_credential_ids
         self.last_credential_id = credential_id
         return self._injection
+
+
+class _FakeAuthorizer:
+    """Stands in for the broker's run-time re-authorizer (``ExecutionAuthorizer``)."""
+
+    def __init__(self, verdict: QueuedExecutionVerdict | None = None) -> None:
+        self._verdict = verdict or QueuedExecutionVerdict(allowed=True)
+        self.last_request: QueuedExecutionRequest | None = None
+
+    async def authorize(self, request: QueuedExecutionRequest) -> QueuedExecutionVerdict:
+        self.last_request = request
+        return self._verdict
 
 
 def _payload(**overrides: Any) -> dict[str, Any]:
@@ -167,6 +181,7 @@ async def test_handler_applies_header_query_and_cookie_credentials() -> None:
     handler = ExecutionHandler(
         executor=executor,
         credential_injector=injector,  # pragma: allowlist secret
+        execution_authorizer=_FakeAuthorizer(),
     )
 
     await handler.execute(
@@ -199,35 +214,151 @@ async def test_handler_no_injector_sends_no_auth() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("payload_extra", "expected_allowed", "expected_id"),
+    ("verdict", "expected_allowed", "expected_id"),
     [
-        # The edge's boundary (direct or toolkit path) and credential id replay verbatim.
-        ({"allowed_credential_ids": ["cred_b"], "credential_id": "cred_b"}, ["cred_b"], "cred_b"),
-        # An empty boundary stays deny-all.
-        ({"allowed_credential_ids": []}, [], None),
-        # No boundary at all fails closed — never the unfiltered tenant-wide set.
-        ({}, [], None),
+        # The re-derived boundary and pinned credential are what injection uses.
+        (
+            QueuedExecutionVerdict(
+                allowed=True, allowed_credential_ids=("cred_b",), credential_id="cred_b"
+            ),
+            ["cred_b"],
+            "cred_b",
+        ),
+        # An empty re-derived boundary stays deny-all.
+        (QueuedExecutionVerdict(allowed=True), [], None),
     ],
 )
-async def test_handler_bounds_injection_to_the_payload_boundary(
-    payload_extra: dict[str, Any], expected_allowed: list[str], expected_id: str | None
+async def test_handler_bounds_injection_to_the_run_time_boundary(
+    verdict: QueuedExecutionVerdict, expected_allowed: list[str], expected_id: str | None
 ) -> None:
+    """Injection uses the boundary re-derived at run time — never the enqueue-time
+    snapshot in the payload (which here names a credential no longer bound)."""
     executor = _RecordingExecutor(
         UpstreamExecResult(status_code=200, body=b"", content_type=None, duration_ms=1)
     )
     injector = _FakeInjector(InjectedAuth(headers={}, query_params={}, cookies={}))
-    handler = ExecutionHandler(executor=executor, credential_injector=injector)
+    handler = ExecutionHandler(
+        executor=executor,
+        credential_injector=injector,
+        execution_authorizer=_FakeAuthorizer(verdict),
+    )
 
     await handler.execute(
         "job_bound",
         _FakeSession(),
-        payload=_payload(**payload_extra),
+        payload=_payload(allowed_credential_ids=["cred_stale"], credential_id="cred_stale"),
         created_by="usr_test",
         actor_type="user",
     )
 
     assert injector.last_allowed_credential_ids == expected_allowed
     assert injector.last_credential_id == expected_id
+
+
+@pytest.mark.asyncio
+async def test_handler_passes_the_enqueue_selection_to_the_authorizer() -> None:
+    """The re-check sees the actor, operation and enqueue-time selection."""
+    executor = _RecordingExecutor(
+        UpstreamExecResult(status_code=200, body=b"", content_type=None, duration_ms=1)
+    )
+    authorizer = _FakeAuthorizer()
+    handler = ExecutionHandler(
+        executor=executor,
+        credential_injector=_FakeInjector(InjectedAuth(headers={}, query_params={}, cookies={})),
+        execution_authorizer=authorizer,
+    )
+
+    await handler.execute(
+        "job_req",
+        _FakeSession(),
+        payload=_payload(operation_id="listThings", credential_id="cred_a", toolkit_id=None),
+        created_by="agt_abc123",
+        actor_type="agent",
+    )
+
+    assert authorizer.last_request == QueuedExecutionRequest(
+        actor_id="agt_abc123",
+        actor_type="agent",
+        method="GET",
+        upstream_url="https://api.example.com/v1/things",
+        api_vendor="example",
+        api_name="api",
+        api_version="1.0.0",
+        operation_id="listThings",
+        toolkit_id=None,
+        credential_id="cred_a",
+    )
+
+
+@pytest.mark.asyncio
+async def test_handler_denied_job_fails_without_injecting_or_dispatching() -> None:
+    """A run-time denial records a failed result carrying the sync route's problem
+    body, emits EXECUTION_FAILED, and never touches the credential or upstream."""
+    executor = _RecordingExecutor(
+        UpstreamExecResult(status_code=200, body=b"ok", content_type=None, duration_ms=1)
+    )
+    injector = _FakeInjector(
+        InjectedAuth(headers={"Authorization": "Bearer tok"}, query_params={}, cookies={})
+    )
+    problem = {
+        "type": "no_credential_binding",
+        "title": "No credential binding for this API",
+        "status": 403,
+        "error_origin": "broker",
+    }
+    handler = ExecutionHandler(
+        executor=executor,
+        credential_injector=injector,
+        execution_authorizer=_FakeAuthorizer(
+            QueuedExecutionVerdict(allowed=False, problem=problem)
+        ),
+    )
+
+    with (
+        patch(
+            "jentic_one.shared.jobs.execution_handler.emit_event", new_callable=AsyncMock
+        ) as mock_emit,
+        patch(
+            "jentic_one.shared.jobs.execution_handler.maybe_emit_repeated_failure",
+            new_callable=AsyncMock,
+        ) as mock_repeated,
+    ):
+        result = await handler.execute(
+            "job_denied",
+            _FakeSession(),
+            payload=_payload(credential_id="cred_a", allowed_credential_ids=["cred_a"]),
+            created_by="agt_abc123",
+            actor_type="agent",
+        )
+
+    assert executor.last_request is None
+    assert injector.last_trace_id is None  # inject() never called
+    assert result.body == {
+        "execution_id": "exec_123",
+        "status": "failed",
+        "http_status": 403,
+        "duration_ms": 0,
+        "problem": problem,
+    }
+    assert result.content_type is None
+    mock_emit.assert_awaited_once()
+    assert mock_emit.call_args.kwargs["type"] == EventType.EXECUTION_FAILED
+    assert "no_credential_binding" in mock_emit.call_args.kwargs["summary"]
+    mock_repeated.assert_awaited_once()
+
+
+def test_handler_refuses_an_injector_without_an_authorizer() -> None:
+    """Wiring a credential injector without the run-time re-check fails closed."""
+    executor = _RecordingExecutor(
+        UpstreamExecResult(status_code=200, body=b"", content_type=None, duration_ms=1)
+    )
+    with pytest.raises(ValueError, match="requires an execution_authorizer"):
+        ExecutionHandler(
+            executor=executor,
+            credential_injector=_FakeInjector(
+                InjectedAuth(headers={}, query_params={}, cookies={})
+            ),
+        )
 
 
 @pytest.mark.asyncio
@@ -271,7 +402,9 @@ async def test_handler_carries_credential_attribution_and_trace_id() -> None:
             credential_name="stripe-live",
         )
     )
-    handler = ExecutionHandler(executor=executor, credential_injector=injector)
+    handler = ExecutionHandler(
+        executor=executor, credential_injector=injector, execution_authorizer=_FakeAuthorizer()
+    )
 
     await handler.execute(
         "job8",
@@ -302,7 +435,9 @@ async def test_handler_mints_a_valid_trace_id_for_garbage_payloads(
         UpstreamExecResult(status_code=200, body=b"", content_type=None, duration_ms=1)
     )
     injector = _FakeInjector(InjectedAuth(headers={}, query_params={}, cookies={}))
-    handler = ExecutionHandler(executor=executor, credential_injector=injector)
+    handler = ExecutionHandler(
+        executor=executor, credential_injector=injector, execution_authorizer=_FakeAuthorizer()
+    )
 
     payload = _payload()
     payload.pop("trace_id")
@@ -333,7 +468,9 @@ async def test_handler_no_credential_leaves_attribution_none() -> None:
         UpstreamExecResult(status_code=200, body=b"", content_type=None, duration_ms=1)
     )
     injector = _FakeInjector(InjectedAuth(headers={}, query_params={}, cookies={}))
-    handler = ExecutionHandler(executor=executor, credential_injector=injector)
+    handler = ExecutionHandler(
+        executor=executor, credential_injector=injector, execution_authorizer=_FakeAuthorizer()
+    )
 
     await handler.execute(
         "job9", _FakeSession(), payload=_payload(), created_by="usr_test", actor_type="user"

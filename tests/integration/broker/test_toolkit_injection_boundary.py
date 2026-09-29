@@ -20,7 +20,7 @@ from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.broker.core.exceptions import ActionDeniedError, InvalidCredentialNameError
 from jentic_one.broker.repos.toolkit_binding_resolver import ToolkitBindingResolver
 from jentic_one.broker.services.credentials.orchestrator import CredentialService
-from jentic_one.broker.web.routers.execute import select_toolkit
+from jentic_one.broker.services.execution.authorization import select_toolkit
 from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.core.schema.customer_api_keys import CustomerAPIKey
 from jentic_one.control.core.schema.toolkit_credential_bindings import ToolkitCredentialBinding

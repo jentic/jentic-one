@@ -25,6 +25,8 @@ from jentic_one.shared.jobs.execution_handler import ExecutionHandler
 from jentic_one.shared.jobs.handlers import JobHandlerRegistry
 from jentic_one.shared.jobs.protocols import (
     InjectedAuth,
+    QueuedExecutionRequest,
+    QueuedExecutionVerdict,
     UpstreamExecRequest,
     UpstreamExecResult,
 )
@@ -63,6 +65,16 @@ class _StaticInjector:
         trace_id: str | None = None,
     ) -> InjectedAuth:
         return self._injection
+
+
+class _StaticAuthorizer:
+    """Stands in for the broker's run-time re-authorizer with a fixed verdict."""
+
+    def __init__(self, verdict: QueuedExecutionVerdict) -> None:
+        self._verdict = verdict
+
+    async def authorize(self, request: QueuedExecutionRequest) -> QueuedExecutionVerdict:
+        return self._verdict
 
 
 def _registry(handler: Any) -> JobHandlerRegistry:
@@ -126,6 +138,7 @@ async def test_async_job_dispatches_through_executor(
     handler = ExecutionHandler(
         executor=executor,
         credential_injector=injector,  # pragma: allowlist secret
+        execution_authorizer=_StaticAuthorizer(QueuedExecutionVerdict(allowed=True)),
     )
     job_id = await _insert_execution_job(admin_db, _payload())
 
@@ -181,3 +194,38 @@ async def test_async_job_records_failed_on_pipeline_error(
     assert job.status == JobStatus.COMPLETED
     assert result.body["status"] == "failed"
     assert result.body["http_status"] is None
+
+
+async def test_async_job_denied_at_run_time_records_failed_result(
+    admin_db: DatabaseSession, clean_jobs: None
+) -> None:
+    """A run-time authorization denial completes the job with a failed result
+    carrying the problem body; nothing is injected or dispatched upstream."""
+    executor = _RecordingExecutor(
+        UpstreamExecResult(status_code=200, body=b"hello", content_type=None, duration_ms=1)
+    )
+    problem = {"type": "unauthorized", "title": "Unauthorized", "status": 401}
+    handler = ExecutionHandler(
+        executor=executor,
+        credential_injector=_StaticInjector(
+            InjectedAuth(headers={"Authorization": "Bearer tok"}, query_params={}, cookies={})
+        ),
+        execution_authorizer=_StaticAuthorizer(
+            QueuedExecutionVerdict(allowed=False, problem=problem)
+        ),
+    )
+    job_id = await _insert_execution_job(admin_db, _payload())
+
+    worker = WorkerLoop(admin_db, _registry(handler), worker_config=WorkerConfig())
+    await worker._tick()
+
+    assert executor.last_request is None
+    async with admin_db.session() as session:
+        job = (await session.execute(select(Job).where(Job.id == job_id))).scalar_one()
+        result = (
+            await session.execute(select(JobResult).where(JobResult.job_id == job_id))
+        ).scalar_one()
+    assert job.status == JobStatus.COMPLETED
+    assert result.body["status"] == "failed"
+    assert result.body["http_status"] == 401
+    assert result.body["problem"] == problem

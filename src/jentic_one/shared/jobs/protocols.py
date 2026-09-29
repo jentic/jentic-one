@@ -78,6 +78,60 @@ class CredentialInjector(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
+class QueuedExecutionRequest:
+    """What the worker knows about a queued execution when it re-authorizes it.
+
+    Built from the job row (``actor_id`` / ``actor_type`` are the enqueuing
+    actor) and the enqueue payload. ``credential_id`` / ``toolkit_id`` are the
+    enqueue-time selection, replayed as the disambiguation inputs so the
+    re-check picks the same credential/toolkit — never as a grant.
+    """
+
+    actor_id: str
+    actor_type: str
+    method: str
+    upstream_url: str
+    api_vendor: str
+    api_name: str
+    api_version: str
+    operation_id: str | None = None
+    toolkit_id: str | None = None
+    credential_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class QueuedExecutionVerdict:
+    """The worker-time authorization verdict for a queued execution.
+
+    Allowed → ``allowed_credential_ids`` is the **current** injection boundary
+    (an empty tuple resolves nothing) and ``credential_id`` the credential to
+    pin at injection (``None`` lets injection resolve within the boundary).
+    Denied → ``problem`` is the RFC 9457 body the sync execute route would
+    have returned for the same request; the worker records it on the job
+    result and never injects a credential.
+    """
+
+    allowed: bool
+    allowed_credential_ids: tuple[str, ...] = ()
+    credential_id: str | None = None
+    problem: dict[str, Any] | None = None
+
+
+class ExecutionAuthorizer(Protocol):
+    """Re-authorizes a queued execution at run time with the sync path's policy.
+
+    A queued job can sit in the queue for a while; the actor may be suspended,
+    a binding suspended or removed, or a permission rule changed in the
+    meantime. The worker calls this before resolving any credential so the
+    job is held to the authorization state *at execution time*, exactly like
+    a sync request would be. Implemented broker-side and injected at worker
+    startup so ``shared/jobs/`` never imports ``broker/``.
+    """
+
+    async def authorize(self, request: QueuedExecutionRequest) -> QueuedExecutionVerdict: ...
+
+
+@dataclass(frozen=True, slots=True)
 class UpstreamExecRequest:
     """The upstream call the worker hands to the shared execution pipeline.
 

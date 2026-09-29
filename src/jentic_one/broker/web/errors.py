@@ -21,70 +21,15 @@ from fastapi.responses import JSONResponse
 from starlette import exceptions as starlette_exceptions
 
 from jentic_one.broker.core.exceptions import (
-    ActionDeniedError,
     AgentDirective,
-    AmbiguousMatchError,
     BrokerError,
-    CircuitOpenError,
-    CredentialIdentityMismatchError,
-    CredentialNeedsReconnectError,
-    CredentialNotProvisionedError,
-    CredentialRefreshTransientError,
-    CredentialUndecryptableError,
-    DeadlineExceededError,
     ErrorOrigin,
-    IdempotencyConflictError,
-    IdempotencyInProgressError,
-    InvalidCredentialNameError,
-    InvalidRevisionPinError,
-    MethodNotAllowedError,
-    MutationRequiresIdempotencyKeyError,
-    OperationNotFoundError,
-    PayloadTooLargeError,
-    RateLimitExceededError,
-    RunnerSchemeUnsupportedError,
-    RunnerUnavailableError,
-    TooManyCandidatesError,
-    UnauthorizedRevisionPinError,
-    UpgradeNotSupportedError,
-    UpstreamResponseTooLargeError,
-    UpstreamTimeoutError,
-    UpstreamUrlNotAllowedError,
 )
 from jentic_one.broker.core.headers import JenticHeader
+from jentic_one.broker.core.problem import problem_body, status_for_broker_error
 from jentic_one.shared.web.errors import sanitize_validation_errors
 
 _PROBLEM_JSON = "application/problem+json"
-
-# Domain exception → HTTP status error map.
-STATUS_BY_ERROR: dict[type[BrokerError], int] = {
-    ActionDeniedError: 403,
-    CredentialIdentityMismatchError: 403,
-    OperationNotFoundError: 404,
-    AmbiguousMatchError: 409,
-    MethodNotAllowedError: 405,
-    TooManyCandidatesError: 503,
-    InvalidCredentialNameError: 400,
-    UpstreamUrlNotAllowedError: 400,
-    UpgradeNotSupportedError: 426,
-    PayloadTooLargeError: 413,
-    MutationRequiresIdempotencyKeyError: 428,
-    IdempotencyConflictError: 409,
-    IdempotencyInProgressError: 409,
-    InvalidRevisionPinError: 422,
-    UnauthorizedRevisionPinError: 403,
-    CircuitOpenError: 503,
-    RateLimitExceededError: 429,
-    CredentialNotProvisionedError: 424,
-    CredentialUndecryptableError: 424,
-    CredentialNeedsReconnectError: 401,
-    CredentialRefreshTransientError: 502,
-    UpstreamTimeoutError: 504,
-    DeadlineExceededError: 504,
-    UpstreamResponseTooLargeError: 502,
-    RunnerSchemeUnsupportedError: 501,
-    RunnerUnavailableError: 503,
-}
 
 
 def problem_response(
@@ -99,24 +44,22 @@ def problem_response(
     instance: str | None = None,
 ) -> JSONResponse:
     """Build an RFC 9457 problem+json response carrying the agent-recovery contract."""
-    body: dict[str, Any] = {
-        "type": type,
-        "title": detail,
-        "status": status,
-        "error_origin": origin.value,
-        **(extra or {}),
-    }
-    if instance is not None:
-        body["instance"] = instance
-    if directive is not None:
-        body["agent_directive"] = directive.model_dump()
+    body = problem_body(
+        status,
+        detail,
+        type=type,
+        extra=extra,
+        origin=origin,
+        directive=directive,
+        instance=instance,
+    )
     hdrs = {**(headers or {}), JenticHeader.ERROR_ORIGIN.value: origin.value}
     return JSONResponse(body, status_code=status, media_type=_PROBLEM_JSON, headers=hdrs)
 
 
 async def handle_broker_error(_request: Request, exc: BrokerError) -> JSONResponse:
     """Map any ``BrokerError`` to problem+json via the status table."""
-    status = STATUS_BY_ERROR.get(type(exc), 500)
+    status = status_for_broker_error(exc)
     return problem_response(
         status,
         exc.detail,

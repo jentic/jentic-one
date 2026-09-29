@@ -11,9 +11,16 @@ per-host bulkhead + response-size cap + error-origin enrichment), with the
 ``executions`` row persisted by the pipeline. The handler keeps only the
 job-result body + the execution lifecycle event.
 
-``shared/jobs/`` must not import ``broker/`` (arch boundary): both the
-``CredentialInjector`` and the ``UpstreamExecutor`` are protocols satisfied by
-broker-side implementations injected at worker startup.
+Before any credential is resolved the job is **re-authorized** through the
+injected ``ExecutionAuthorizer`` — the sync route's policy (actor still active,
+binding still present and not suspended, permission rules still allow),
+evaluated at run time rather than trusted from enqueue time. A denied job
+completes with a ``failed`` result carrying the problem body the sync route
+would have returned; no credential is injected and no upstream call is made.
+
+``shared/jobs/`` must not import ``broker/`` (arch boundary): the
+``ExecutionAuthorizer``, ``CredentialInjector`` and ``UpstreamExecutor`` are
+protocols satisfied by broker-side implementations injected at worker startup.
 """
 
 from __future__ import annotations
@@ -32,7 +39,9 @@ from jentic_one.shared.events.repeated_failure import maybe_emit_repeated_failur
 from jentic_one.shared.jobs.handlers import JobResultPayload
 from jentic_one.shared.jobs.protocols import (
     CredentialInjector,
+    ExecutionAuthorizer,
     InjectedAuth,
+    QueuedExecutionRequest,
     UpstreamExecRequest,
     UpstreamExecutor,
 )
@@ -46,9 +55,9 @@ from jentic_one.shared.url_validation import validate_upstream_url
 logger = structlog.get_logger(__name__)
 
 _MAX_EVENT_SUMMARY_LEN = 128
-# A far-future expiry so the resolved-identity dataclass is well-formed; the
-# worker only runs an already-authorized, enqueued job — the inbound token was
-# validated at enqueue time, so credential resolution here is by actor identity.
+# The resolved-identity dataclass needs an ``active`` flag; the worker only
+# injects after the job passed the run-time ``ExecutionAuthorizer`` re-check
+# (which includes the actor-still-active check), so it is always True here.
 _WORKER_IDENTITY_ACTIVE = True
 
 
@@ -63,8 +72,15 @@ class ExecutionHandler:
         credential_injector: CredentialInjector | None = None,
         egress: Any | None = None,
         security_config: SecurityConfig | None = None,
+        execution_authorizer: ExecutionAuthorizer | None = None,
     ) -> None:
+        if credential_injector is not None and execution_authorizer is None:
+            # Fail closed at wiring time: injecting credentials for a queued
+            # job without re-checking its authorization would honour an
+            # enqueue-time decision the actor/binding/rules may have revoked.
+            raise ValueError("credential_injector requires an execution_authorizer")
         self._executor = executor
+        self._authorizer = execution_authorizer
         self._timeout = upstream_timeout_s
         self._credential_injector = credential_injector
         self._egress = egress
@@ -104,25 +120,57 @@ class ExecutionHandler:
 
         upstream_url = validate_upstream_url(upstream_url, self._egress)
 
+        # Run-time re-authorization (before any credential is touched). The
+        # enqueue-time selection rides along only as the disambiguation input;
+        # the boundary injection uses is the one re-derived *now*.
+        allowed: tuple[str, ...] = ()
+        pinned_credential_id: str | None = None
+        if self._authorizer is not None:
+            verdict = await self._authorizer.authorize(
+                QueuedExecutionRequest(
+                    actor_id=created_by,
+                    actor_type=actor_type,
+                    method=method,
+                    upstream_url=upstream_url,
+                    api_vendor=api_vendor or "",
+                    api_name=api_name or "",
+                    api_version=api_version or "",
+                    operation_id=payload.get("operation_id"),
+                    toolkit_id=payload.get("toolkit_id"),
+                    credential_id=payload.get("credential_id"),
+                )
+            )
+            if not verdict.allowed:
+                return await self._deny(
+                    session,
+                    job_id=job_id,
+                    execution_id=execution_id,
+                    trace_id=trace_id,
+                    problem=verdict.problem or {},
+                    created_by=created_by,
+                    actor_type=actor_type,
+                    payload=payload,
+                )
+            allowed = verdict.allowed_credential_ids
+            pinned_credential_id = verdict.credential_id
+
         headers: dict[str, str] = {}
         credential_id: str | None = None
         credential_name: str | None = None
         signing = None
         if self._credential_injector is not None and api_vendor:
-            # The web edge derived the injection boundary before enqueueing (the
-            # caller's bound credentials on the direct path, the selected
-            # toolkit's on the toolkit path) and, when known, the credential id;
-            # replay both so the worker honours the same boundary (Q-02) and
-            # picks the same credential. A payload without a boundary resolves
-            # nothing (fail closed) — never the unfiltered tenant-wide set.
-            allowed = payload.get("allowed_credential_ids")
+            # The injection boundary is the one the run-time re-authorization
+            # just derived (the caller's currently bound credentials on the
+            # direct path, the selected toolkit's on the toolkit path) — never
+            # the enqueue-time snapshot in the payload. An empty boundary
+            # resolves nothing (fail closed), never the tenant-wide set.
             injection = await self._credential_injector.inject(
                 api_vendor=api_vendor,
                 api_name=api_name or "",
                 api_version=api_version or "",
                 identity=_worker_identity(created_by, actor_type),
-                credential_id=payload.get("credential_id"),
-                allowed_credential_ids=list(allowed) if allowed is not None else [],
+                credential_id=pinned_credential_id,
+                allowed_credential_ids=list(allowed),
                 trace_id=trace_id,
             )
             applied = _apply_injection(upstream_url, injection)
@@ -220,6 +268,52 @@ class ExecutionHandler:
             result_body["body_b64"] = base64.b64encode(response_body).decode()
 
         return JobResultPayload(body=result_body, content_type=content_type)
+
+    async def _deny(
+        self,
+        session: Any,
+        *,
+        job_id: str,
+        execution_id: str,
+        trace_id: str,
+        problem: dict[str, Any],
+        created_by: str,
+        actor_type: str,
+        payload: dict[str, Any],
+    ) -> JobResultPayload:
+        """Record a run-time authorization denial like any other failed execution.
+
+        Same outcome shape as an upstream/pipeline failure — ``EXECUTION_FAILED``
+        lifecycle event (+ the repeated-failure check) and a ``failed`` job
+        result — plus the ``problem`` body the sync route would have returned,
+        so a polling caller gets the same ``type``/``status``/directive.
+        """
+        problem_type = str(problem.get("type") or "about:blank")
+        logger.info("queued_execution_denied", job_id=job_id, problem_type=problem_type)
+        await self._emit_lifecycle(
+            session,
+            job_id=job_id,
+            execution_id=execution_id,
+            trace_id=trace_id,
+            status=ExecutionStatus.FAILED,
+            error_msg=f"Authorization denied ({problem_type})",
+            created_by=created_by,
+            actor_type=actor_type,
+            toolkit_id=payload.get("toolkit_id"),
+            credential_id=payload.get("credential_id"),
+            operation_id=payload.get("operation_id"),
+            origin=payload.get("origin"),
+        )
+        status = problem.get("status")
+        return JobResultPayload(
+            body={
+                "execution_id": execution_id,
+                "status": ExecutionStatus.FAILED,
+                "http_status": status if isinstance(status, int) else None,
+                "duration_ms": 0,
+                "problem": problem,
+            }
+        )
 
     async def _emit_lifecycle(
         self,
