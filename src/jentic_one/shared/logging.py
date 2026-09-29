@@ -56,6 +56,11 @@ class _OutboundUrlQueryFilter(logging.Filter):
         return True
 
 
+# Third-party loggers whose DEBUG output is raw outbound wire detail (see
+# ``configure_logging``). Gated together by ``logging.http_wire_trace``.
+_WIRE_TRACE_LOGGERS: tuple[str, ...] = ("httpcore", "hpack")
+
+
 def _install_httpx_url_filter() -> None:
     httpx_logger = logging.getLogger("httpx")
     if not any(isinstance(f, _OutboundUrlQueryFilter) for f in httpx_logger.filters):
@@ -139,13 +144,16 @@ def configure_logging(config: AppConfig) -> None:
     # Clamp it to INFO so our own DEBUG logs stay readable.
     logging.getLogger("aiosqlite").setLevel(logging.INFO)
 
-    # httpcore's DEBUG trace lines ("send_request_headers.failed exception=…")
-    # repr the raw transport exception, which can quote an outbound header value
-    # (i.e. an injected credential). Clamp it to INFO so those never reach a sink,
-    # unless an operator explicitly opts into wire tracing for local debugging.
-    logging.getLogger("httpcore").setLevel(
-        logging.NOTSET if config.logging.http_wire_trace else logging.INFO
-    )
+    # Outbound wire-level DEBUG loggers can quote injected credentials: httpcore's
+    # trace lines ("send_request_headers.failed exception=…") repr the raw
+    # transport exception (which can include an outbound header value), and
+    # hpack (HTTP/2 header compression, on by default via ``broker.http2``) logs
+    # every encoded header name/value, including ``:path`` with its query string.
+    # Clamp them to INFO so those never reach a sink, unless an operator
+    # explicitly opts into wire tracing for local debugging.
+    wire_level = logging.NOTSET if config.logging.http_wire_trace else logging.INFO
+    for name in _WIRE_TRACE_LOGGERS:
+        logging.getLogger(name).setLevel(wire_level)
 
     # httpx's INFO request line carries the full outbound URL — mask its query
     # values (query-located API keys) before any handler formats it.

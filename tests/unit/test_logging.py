@@ -6,10 +6,13 @@ import asyncio
 import contextlib
 import json
 import logging
+import logging.config
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock, patch
 
+import h2.config
+import h2.connection
 import httpx
 import pytest
 import structlog
@@ -18,6 +21,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import AsyncAdaptedQueuePool
 from starlette.testclient import TestClient
 from starlette.types import Message, Receive, Scope, Send
+from uvicorn.config import LOGGING_CONFIG
 
 from jentic_one.shared.config import AppConfig
 from jentic_one.shared.logging import (
@@ -108,8 +112,37 @@ def test_http_wire_trace_toggle_lifts_the_httpcore_clamp() -> None:
     try:
         configure_logging(config)
         assert logging.getLogger("httpcore.http11").isEnabledFor(logging.DEBUG)
+        assert logging.getLogger("hpack.hpack").isEnabledFor(logging.DEBUG)
     finally:
         logging.getLogger("httpcore").setLevel(logging.INFO)
+        logging.getLogger("hpack").setLevel(logging.INFO)
+
+
+def test_http2_header_encoding_never_logs_header_values_at_debug(
+    debug_config: AppConfig, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """hpack logs every HTTP/2 header it encodes at DEBUG (``:path`` with its
+    query string, and injected header credentials); it stays clamped at DEBUG."""
+    configure_logging(debug_config)
+    conn = h2.connection.H2Connection(h2.config.H2Configuration(client_side=True))
+    conn.initiate_connection()
+    conn.send_headers(
+        1,
+        [
+            (b":method", b"GET"),
+            (b":authority", b"upstream.example"),
+            (b":scheme", b"https"),
+            (b":path", b"/v1/search?api_key=qk_live_query_secret"),
+            (b"x-api-key", b"hk_live_header_secret"),
+        ],
+        end_stream=True,
+    )
+    for handler in logging.getLogger().handlers:
+        handler.flush()
+
+    out = capsys.readouterr().out
+    assert "qk_live_query_secret" not in out
+    assert "hk_live_header_secret" not in out
 
 
 async def test_httpx_request_log_masks_query_param_api_key(
@@ -133,6 +166,29 @@ async def test_httpx_request_log_masks_query_param_api_key(
     assert "HTTP Request: GET https://upstream.example/v1/search?api_key=" in out
     assert "qk_live_secret" not in out
     assert "q=term" not in out
+
+
+async def test_httpx_request_log_stays_masked_after_uvicorn_dictconfig(
+    minimal_config: AppConfig, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """uvicorn applies its own ``dictConfig`` after our logging setup; the mask is a
+    logger filter, so it must survive that re-configuration."""
+    config = minimal_config.model_copy(
+        update={"runtime": minimal_config.runtime.model_copy(update={"log_level": "INFO"})}
+    )
+    configure_logging(config)
+    logging.config.dictConfig(LOGGING_CONFIG)
+    client = httpx.AsyncClient(transport=httpx.MockTransport(lambda _r: httpx.Response(200)))
+    try:
+        await client.get("https://upstream.example/v1/search?api_key=qk_live_secret")
+    finally:
+        await client.aclose()
+        for handler in logging.getLogger().handlers:
+            handler.flush()
+
+    out = capsys.readouterr().out
+    assert "HTTP Request: GET https://upstream.example/v1/search?api_key=" in out
+    assert "qk_live_secret" not in out
 
 
 def test_configure_logging_installs_the_httpx_url_filter_once(minimal_config: AppConfig) -> None:
