@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 from urllib.parse import urlparse
@@ -101,6 +101,15 @@ class ApiView:
     origin: str | None = None
     source_url: str | None = None
     update_available: bool = False
+
+
+@dataclass(frozen=True)
+class _ControlCleanup:
+    """What the control-DB step of an API delete retired."""
+
+    credential_ids: list[str] = field(default_factory=list)
+    deactivated: int = 0
+    removed_toolkit_bindings: list[tuple[str, str]] = field(default_factory=list)
 
 
 class ApiService:
@@ -225,14 +234,16 @@ class ApiService:
         """Delete an API and retire the credential access tied to it.
 
         After the registry delete commits, the control credentials stored for
-        the exact API identity are deactivated (#643) and every agent binding
-        to them is suspended with reason ``api_deleted`` (#1168). Re-importing
+        the exact API identity are deactivated (#643), the legacy toolkit
+        bindings to them are removed, and every agent binding to them is
+        suspended with reason ``api_deleted`` (#1168). Re-importing
         a spec under the same ``(vendor, name, version)`` therefore never
         silently re-adopts the old bindings and permission rules: an owner
         restores each one deliberately with the binding ``:resume`` action
         (and re-activates the credential). Both cross-database steps are
         best-effort; the registry and control/admin databases cannot share
-        a transaction.
+        a transaction. Vendor-wide credentials (``NULL`` name/version) are
+        left alone because they also serve the vendor's other APIs.
         """
         async with self._ctx.registry_db.transaction() as session:
             api = await ApiRepository.get_by_identifier(session, vendor, name, version)
@@ -240,11 +251,9 @@ class ApiService:
                 raise ApiNotFoundError(vendor, name, version)
             await ApiRepository.delete(session, api.id)
 
-        credential_ids, deactivated = await self._deactivate_control_credentials(
-            vendor, name, version
-        )
+        control = await self._retire_control_credentials(vendor, name, version)
         suspended = await self._suspend_agent_bindings(
-            credential_ids, api_id=str(api.id), identity=identity
+            control.credential_ids, api_id=str(api.id), identity=identity
         )
 
         await record_audit_best_effort(
@@ -255,29 +264,45 @@ class ApiService:
             actor_type=identity.actor_type,
             actor_id=identity.sub,
             before={"vendor": vendor, "name": name, "version": version},
-            after={"deactivated_credentials": deactivated, "suspended_bindings": suspended},
+            after={
+                "deactivated_credentials": control.deactivated,
+                "removed_toolkit_bindings": [
+                    {"toolkit_id": toolkit_id, "credential_id": credential_id}
+                    for toolkit_id, credential_id in control.removed_toolkit_bindings
+                ],
+                "suspended_bindings": suspended,
+            },
             origin=identity.origin.value,
         )
 
-    async def _deactivate_control_credentials(
+    async def _retire_control_credentials(
         self, vendor: str, name: str, version: str
-    ) -> tuple[list[str], int]:
+    ) -> _ControlCleanup:
         """Deactivate control credentials stranded by this API delete.
 
-        Returns ``(credential_ids, deactivated)``: the ids of every credential
-        stored for the exact API identity (active or not, so their agent
-        bindings can be suspended) and the number newly deactivated.
+        Collects the ids of every credential stored for the exact API identity
+        (active or not, so their agent bindings can be suspended), deactivates
+        the active ones, and removes the legacy toolkit bindings to all of
+        them, in one control transaction.
 
         Cross-DB and best-effort: the registry delete has already committed, and
         the two databases cannot share a transaction (no 2PC). Deactivating (not
         deleting) removes the credential from the broker resolver's active-match
         set so a re-import can't collide with it (issue #643), while preserving
-        the row for the operator to see/rotate. When the deployment topology
-        denies this process control-DB access (registry-only parts mode), there
-        is nothing to reconcile here — skip quietly.
+        the row for the operator to see/rotate. Every deployed topology that
+        serves the registry has control-DB access (``SURFACE_DB_DEPS``), so a
+        missing grant only happens in a narrowed ad-hoc context; it is logged
+        rather than failing the (already committed) delete.
         """
         if not self._ctx.is_db_allowed("control"):
-            return [], 0
+            logger.warning(
+                "api_delete_credential_cleanup_skipped",
+                reason="control_db_not_allowed",
+                api_vendor=vendor,
+                api_name=name,
+                api_version=version,
+            )
+            return _ControlCleanup()
         try:
             async with self._ctx.control_db.transaction() as session:
                 credential_ids = await ControlCredentialBoundaryRepository.credential_ids_for_api(
@@ -288,7 +313,16 @@ class ApiService:
                         session, api_vendor=vendor, api_name=name, api_version=version
                     )
                 )
-                return credential_ids, deactivated
+                removed = await (
+                    ControlCredentialBoundaryRepository.remove_toolkit_bindings_for_credentials(
+                        session, credential_ids=credential_ids
+                    )
+                )
+                return _ControlCleanup(
+                    credential_ids=credential_ids,
+                    deactivated=deactivated,
+                    removed_toolkit_bindings=removed,
+                )
         except Exception:
             logger.warning(
                 "control_credential_deactivation_failed",
@@ -297,7 +331,7 @@ class ApiService:
                 api_version=version,
                 exc_info=True,
             )
-            return [], 0
+            return _ControlCleanup()
 
     async def _suspend_agent_bindings(
         self, credential_ids: list[str], *, api_id: str, identity: Identity
@@ -311,7 +345,15 @@ class ApiService:
         as it was. Best-effort like the credential deactivation: skipped when
         this process has no admin-DB access, logged on failure.
         """
-        if not credential_ids or not self._ctx.is_db_allowed("admin"):
+        if not credential_ids:
+            return 0
+        if not self._ctx.is_db_allowed("admin"):
+            logger.warning(
+                "agent_binding_suspension_skipped",
+                reason="admin_db_not_allowed",
+                api_id=api_id,
+                credential_count=len(credential_ids),
+            )
             return 0
         try:
             async with self._ctx.admin_db.transaction() as session:

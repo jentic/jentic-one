@@ -44,14 +44,20 @@ class AgentCredentialBindingRepository:
     ) -> bool:
         """Flip the reversible cut-off flag; returns False when no binding exists.
 
-        Clears ``suspended_reason`` either way: a manual suspension carries no
-        reason, and resuming lifts whatever suspension was in place.
+        Resuming clears ``suspended_reason`` (it lifts whatever suspension was
+        in place). Suspending leaves it alone: an active binding never carries
+        a reason, so a manual suspension stays ``NULL``, and re-suspending a
+        binding the registry already suspended keeps its ``api_deleted``
+        reason instead of erasing why it stopped working.
         """
+        values: dict[str, object] = {"suspended": suspended}
+        if not suspended:
+            values["suspended_reason"] = None
         stmt = (
             update(AgentCredentialBinding)
             .where(AgentCredentialBinding.agent_id == agent_id)
             .where(AgentCredentialBinding.credential_id == credential_id)
-            .values(suspended=suspended, suspended_reason=None)
+            .values(**values)
         )
         result = await session.execute(stmt)
         await session.flush()

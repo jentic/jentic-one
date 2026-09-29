@@ -183,6 +183,7 @@ function bindingToEntity(r: CredentialBindingResponse): CredentialBindingEntity 
 		credentialId: r.credential_id,
 		name: r.name ?? null,
 		suspended: r.suspended,
+		suspendedReason: r.suspended_reason ?? null,
 		ruleSetId: r.rule_set_id ?? null,
 		boundAt: r.bound_at,
 		serves: (r.serves ?? []).map((s) => ({
