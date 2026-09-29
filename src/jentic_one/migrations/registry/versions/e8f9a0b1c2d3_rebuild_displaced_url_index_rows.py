@@ -11,18 +11,39 @@ whose URLs were later indexed by a draft (or by another API) lost those rows.
 Now that unpinned lookups only consult each API's live revision, those missing
 rows would leave the live revision's URLs unroutable.
 
-For every revision that has a stored spec file, this migration recomputes the
-rows ``BuildURLIndexStage`` writes (effective servers operation > path > root,
-server-variable defaults, host/path canonicalization, per-revision structural
-dedup) from ``spec_files.content`` and the revision's ``operations``, and
+For every revision that can still serve and has a stored spec file, this
+migration recomputes the rows ``BuildURLIndexStage`` writes (effective servers
+operation > path > root, server-variable defaults, host/path canonicalization,
+per-revision structural dedup) from ``spec_files.content`` and the revision's ``operations``, and
 **inserts only the rows that are missing**. Existing rows are never updated or
 deleted: every surviving row was written by its own revision's ingest, so it is
-already correct for that revision. That makes the migration idempotent and a
-no-op on a database that never had a displacement.
+already correct for that revision. A row counts as present when the revision
+already has one with the same ``(method, host, structural path)`` — the key
+ingest itself dedups on — so a row written by a newer ingest whose template
+text differs cosmetically is never duplicated. That makes the migration
+idempotent and a no-op on a database that never had a displacement.
 
-Revisions are rebuilt regardless of state — drafts and archived revisions keep
-their own rows for ``Jentic-Revision`` pins and the governed-host set; only
-live rows serve unpinned lookups.
+Which revisions are rebuilt
+---------------------------
+Only revisions that can serve a request again:
+
+- each API's live revision (``apis.current_revision_id``) — unpinned lookups;
+- drafts — ``Jentic-Revision`` pins and a later promote;
+- archived revisions recorded as an overlay's ``superseded_revision_id`` — the
+  only way an archived revision becomes live again is an overlay rollback.
+
+Every other archived revision is skipped: it can never be promoted, and a pin
+on it is refused, so rows for it would be dead weight. Skipping them also keeps
+the rolling-deploy window narrow: the previous release's unpinned lookup reads
+every revision's rows and reports an ambiguous match when two revisions index
+one URL, so only URLs that one of the above revisions actually shares with
+another revision are affected on not-yet-rolled pods, and only until they roll.
+
+Revisions are read in keyset-paginated batches, one spec at a time, so memory
+stays bounded however many revisions exist. A revision whose stored spec the
+frozen helpers cannot process (malformed ``paths`` / ``servers``) is logged and
+skipped rather than aborting the upgrade — ingest could not have indexed it
+either.
 
 The URL helpers below are **frozen copies** of the pure functions in
 ``jentic_one.registry.core.url_index`` (and the orchestration of
@@ -47,6 +68,7 @@ from typing import Any
 from urllib.parse import unquote, urlparse
 
 import sqlalchemy as sa
+import structlog
 from alembic import op
 
 from jentic_one.shared.db.types import GUID, json_variant, text_array_variant
@@ -55,6 +77,11 @@ revision: str = "e8f9a0b1c2d3"  # pragma: allowlist secret
 down_revision: str | None = "e7f8a9b0c1d2"  # pragma: allowlist secret
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
+
+_logger = structlog.get_logger(__name__)
+
+#: Revisions fetched per keyset page.
+_BATCH_SIZE = 500
 
 
 # --- Frozen copies of jentic_one.registry.core.url_index helpers (see module
@@ -310,8 +337,11 @@ _URL_INDEX = sa.table(
 _REVISIONS = sa.table(
     "api_revisions",
     sa.column("id", GUID()),
+    sa.column("state", sa.String()),
     sa.column("created_by", sa.String()),
 )
+_APIS = sa.table("apis", sa.column("current_revision_id", GUID()))
+_OVERLAYS = sa.table("overlays", sa.column("superseded_revision_id", GUID()))
 _SPEC_FILES = sa.table(
     "spec_files",
     sa.column("revision_id", GUID()),
@@ -328,73 +358,104 @@ _OPERATIONS = sa.table(
 
 
 def _row_key(row: Any) -> tuple[Any, ...]:
-    """The per-revision natural key (``uq_operation_url_index_revision_lookup``)."""
-    return (row["host"], row["method"], row["host_regex"], row["path_template"])
+    """Ingest's per-revision dedup key: ``(method, host, structural path)``."""
+    return (row["method"], row["host"], _structural_regex(row["path_template"]))
+
+
+def _servable_revisions(bind: sa.engine.Connection, after: Any) -> list[Any]:
+    """One keyset page of revisions that can still serve (see module docstring)."""
+    live = sa.select(_APIS.c.current_revision_id).where(_APIS.c.current_revision_id.is_not(None))
+    rollback_targets = sa.select(_OVERLAYS.c.superseded_revision_id).where(
+        _OVERLAYS.c.superseded_revision_id.is_not(None)
+    )
+    stmt = sa.select(_REVISIONS.c.id, _REVISIONS.c.created_by).where(
+        sa.or_(
+            _REVISIONS.c.state == "draft",
+            _REVISIONS.c.id.in_(live),
+            _REVISIONS.c.id.in_(rollback_targets),
+        )
+    )
+    if after is not None:
+        stmt = stmt.where(_REVISIONS.c.id > after)
+    return list(bind.execute(stmt.order_by(_REVISIONS.c.id).limit(_BATCH_SIZE)).all())
 
 
 def rebuild_url_index(bind: sa.engine.Connection) -> int:
-    """Insert every missing URL-index row for revisions with a stored spec.
+    """Insert every missing URL-index row for servable revisions with a stored spec.
 
     Returns the number of rows inserted. Idempotent; never touches existing rows.
     """
-    revisions = bind.execute(
-        sa.select(_REVISIONS.c.id, _REVISIONS.c.created_by).order_by(_REVISIONS.c.id)
-    ).all()
     inserted = 0
-    for revision_row in revisions:
-        # Ingest stores one primary spec file per revision; mirror
-        # SpecFileRepository.get_for_revision's deterministic pick.
-        content = bind.execute(
-            sa.select(_SPEC_FILES.c.content)
-            .where(_SPEC_FILES.c.revision_id == revision_row.id)
-            .order_by(_SPEC_FILES.c.filename)
-            .limit(1)
-        ).scalar_one_or_none()
-        if not isinstance(content, dict):
-            continue
-
-        operations = [
-            (row.id, row.path, row.method)
-            for row in bind.execute(
-                sa.select(_OPERATIONS.c.id, _OPERATIONS.c.path, _OPERATIONS.c.method)
-                .where(_OPERATIONS.c.revision_id == revision_row.id)
-                .order_by(_OPERATIONS.c.id)
-            )
-        ]
-        if not operations:
-            continue
-
-        existing = {
-            _row_key(row._mapping)
-            for row in bind.execute(
-                sa.select(
-                    _URL_INDEX.c.host,
-                    _URL_INDEX.c.method,
-                    _URL_INDEX.c.host_regex,
-                    _URL_INDEX.c.path_template,
-                ).where(_URL_INDEX.c.revision_id == revision_row.id)
-            )
-        }
-        missing = [
-            row for row in expected_rows(content, operations) if _row_key(row) not in existing
-        ]
-        if not missing:
-            continue
-
-        bind.execute(
-            sa.insert(_URL_INDEX),
-            [
-                {
-                    **row,
-                    "id": uuid.uuid4(),
-                    "revision_id": revision_row.id,
-                    "created_by": revision_row.created_by,
-                }
-                for row in missing
-            ],
-        )
-        inserted += len(missing)
+    after: Any = None
+    while batch := _servable_revisions(bind, after):
+        after = batch[-1].id
+        for revision_row in batch:
+            inserted += _rebuild_revision(bind, revision_row)
     return inserted
+
+
+def _rebuild_revision(bind: sa.engine.Connection, revision_row: Any) -> int:
+    """Insert the missing rows of one revision; returns how many were inserted."""
+    # Ingest stores one primary spec file per revision; mirror
+    # SpecFileRepository.get_for_revision's deterministic pick.
+    content = bind.execute(
+        sa.select(_SPEC_FILES.c.content)
+        .where(_SPEC_FILES.c.revision_id == revision_row.id)
+        .order_by(_SPEC_FILES.c.filename)
+        .limit(1)
+    ).scalar_one_or_none()
+    if not isinstance(content, dict):
+        return 0
+
+    operations = [
+        (row.id, row.path, row.method)
+        for row in bind.execute(
+            sa.select(_OPERATIONS.c.id, _OPERATIONS.c.path, _OPERATIONS.c.method)
+            .where(_OPERATIONS.c.revision_id == revision_row.id)
+            .order_by(_OPERATIONS.c.id)
+        )
+    ]
+    if not operations:
+        return 0
+
+    try:
+        wanted = expected_rows(content, operations)
+    except Exception:  # one malformed stored spec must not abort the upgrade
+        _logger.warning(
+            "url_index_rebuild_skipped_revision",
+            revision_id=str(revision_row.id),
+            reason="stored spec could not be processed",
+            exc_info=True,
+        )
+        return 0
+
+    existing = {
+        _row_key(row._mapping)
+        for row in bind.execute(
+            sa.select(
+                _URL_INDEX.c.method,
+                _URL_INDEX.c.host,
+                _URL_INDEX.c.path_template,
+            ).where(_URL_INDEX.c.revision_id == revision_row.id)
+        )
+    }
+    missing = [row for row in wanted if _row_key(row) not in existing]
+    if not missing:
+        return 0
+
+    bind.execute(
+        sa.insert(_URL_INDEX),
+        [
+            {
+                **row,
+                "id": uuid.uuid4(),
+                "revision_id": revision_row.id,
+                "created_by": revision_row.created_by,
+            }
+            for row in missing
+        ],
+    )
+    return len(missing)
 
 
 def upgrade() -> None:

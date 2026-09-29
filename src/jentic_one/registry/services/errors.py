@@ -119,11 +119,12 @@ class HostOwnedByOtherVendorError(RegistryServiceError):
 
     A host is served by one vendor at a time: the first vendor whose revision
     goes live on it keeps it until that API stops serving it. Drafts never own a
-    host, so this is checked when a revision goes live (promote), not on import.
+    host, so this is checked when a revision goes live (promote, overlay
+    rollback), not on import.
     """
 
     def __init__(self, revision_id: str, detail: str) -> None:
-        super().__init__(f"Cannot promote revision '{revision_id}': {detail}")
+        super().__init__(f"Revision '{revision_id}' cannot go live: {detail}")
         self.revision_id = revision_id
 
 

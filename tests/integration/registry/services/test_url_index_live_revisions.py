@@ -8,13 +8,14 @@ vendor's live API cannot go live under another vendor.
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import uuid
 from collections.abc import AsyncGenerator, Sequence
 from typing import Any
 
 import pytest
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, func, select, text, update
 
 from jentic_one.migrations.registry.versions import (
     e7f8a9b0c1d2_scope_url_index_key_to_revision as scope_migration,
@@ -32,6 +33,7 @@ from jentic_one.registry.core.schema.spec_files import SpecFile
 from jentic_one.registry.ingest.exc import IngestPipelineError
 from jentic_one.registry.ingest.ingestor import Ingestor
 from jentic_one.registry.ingest.models import ApiIdentifier, IngestSpecification, SpecType
+from jentic_one.registry.repos import ApiRepository, UrlIndexRepository
 from jentic_one.registry.services.errors import HostOwnedByOtherVendorError
 from jentic_one.registry.services.inspect.url_lookup import URLLookupService
 from jentic_one.registry.services.revision_service import RevisionService
@@ -48,6 +50,7 @@ URL = f"https://{HOST}/widgets"
 VENDOR = "widgets.example.com"
 NAME = "widgets"
 VERSION = "1.0.0"
+OTHER_VENDOR = "other.example.net"
 
 
 @pytest.fixture()
@@ -330,6 +333,78 @@ async def test_templated_hosts_do_not_claim_ownership(
     await _promote(integration_context, draft, vendor=other_vendor)
 
 
+async def test_trailing_dot_spelling_is_the_same_host(
+    integration_context: Context, registry_db: DatabaseSession, clean_registry: None
+) -> None:
+    owner = await _ingest(integration_context, _spec(_content("List widgets"), sha="sha-owner"))
+    await _promote(integration_context, owner)
+
+    draft = await _ingest(
+        integration_context,
+        _spec(_content("Other widgets", host=f"{HOST}."), sha="sha-other", vendor=OTHER_VENDOR),
+    )
+    # ``api.example.com.`` names the same host as ``api.example.com``.
+    with pytest.raises(HostOwnedByOtherVendorError):
+        await _promote(integration_context, draft, vendor=OTHER_VENDOR)
+
+
+async def test_concurrent_go_live_onto_one_host_is_serialized(
+    integration_context: Context, registry_db: DatabaseSession, clean_registry: None
+) -> None:
+    """Two vendors going live on one host at once: the second waits, then is refused.
+
+    Holds vendor A's go-live transaction open right after its ownership check
+    (which takes the host lock) and starts vendor B's promote. Without the lock
+    B would pass its check against A's uncommitted state and both would go live.
+    """
+    if registry_db.backend.dialect_name == "sqlite":
+        pytest.skip("advisory locks are Postgres-only; SQLite serializes writers itself")
+
+    first = await _ingest(integration_context, _spec(_content("List widgets"), sha="sha-a"))
+    second = await _ingest(
+        integration_context,
+        _spec(_content("Other widgets"), sha="sha-b", vendor=OTHER_VENDOR),
+    )
+
+    async with registry_db.transaction() as session:
+        owners = await UrlIndexRepository.find_live_hosts_of_other_vendors(
+            session, revision_id=first, vendor=VENDOR
+        )
+        assert owners == []
+        api_id = (await session.execute(select(Api.id).where(Api.vendor == VENDOR))).scalar_one()
+        await ApiRepository.set_current_revision(session, api_id, first)
+
+        racing = asyncio.create_task(_promote(integration_context, second, vendor=OTHER_VENDOR))
+        done, _pending = await asyncio.wait({racing}, timeout=1.0)
+        assert not done, "the second go-live must wait for the host lock"
+
+    with pytest.raises(HostOwnedByOtherVendorError):
+        await racing
+    assert await _resolved_revision(registry_db) == first
+
+
+async def test_widened_key_keeps_the_previous_constraint_name(
+    registry_db: DatabaseSession, clean_registry: None
+) -> None:
+    """Previous-release pods upsert with ``ON CONFLICT ON CONSTRAINT <this name>``."""
+    if registry_db.backend.dialect_name == "sqlite":
+        pytest.skip("inspects the Postgres catalog")
+    async with registry_db.session() as session:
+        definition = (
+            await session.execute(
+                text(
+                    "SELECT pg_get_constraintdef(c.oid) FROM pg_constraint c "
+                    "JOIN pg_class t ON t.oid = c.conrelid "
+                    "WHERE c.conname = 'uq_operation_url_index_lookup' "
+                    "AND t.relname = 'operation_url_indexes'"
+                )
+            )
+        ).scalar_one()
+    assert definition == (
+        "UNIQUE NULLS NOT DISTINCT (host, method, host_regex, path_template, revision_id)"
+    )
+
+
 def _as_set(rows: Sequence[tuple[Any, ...]]) -> set[tuple[Any, ...]]:
     """Hashable row set (``param_names`` is a list column)."""
     return {(*row[:7], tuple(row[7]), row[8]) for row in rows}
@@ -390,3 +465,72 @@ async def test_scope_migration_downgrade_keeps_the_live_row_per_url(
 
     assert await _row_count(registry_db, v1) == 1
     assert await _row_count(registry_db, v2) == 0
+
+
+async def _delete_rows(registry_db: DatabaseSession, *revision_ids: uuid.UUID) -> None:
+    async with registry_db.session() as session:
+        await session.execute(
+            delete(OperationURLIndex).where(OperationURLIndex.revision_id.in_(revision_ids))
+        )
+        await session.commit()
+
+
+async def _run_rebuild(registry_db: DatabaseSession) -> int:
+    async with registry_db.session() as session:
+        inserted = await session.run_sync(
+            lambda sync: rebuild_migration.rebuild_url_index(sync.connection())
+        )
+        await session.commit()
+    return inserted
+
+
+async def test_rebuild_migration_skips_revisions_that_can_never_serve(
+    integration_context: Context, registry_db: DatabaseSession, clean_registry: None
+) -> None:
+    """A superseded (archived, not an overlay rollback target) revision is not rebuilt."""
+    v1, v2 = await _live_with_draft(integration_context)
+    await _promote(integration_context, v2)
+    await _delete_rows(registry_db, v1, v2)
+
+    assert await _run_rebuild(registry_db) == 1
+    assert await _row_count(registry_db, v1) == 0
+    assert await _row_count(registry_db, v2) == 1
+
+
+async def test_rebuild_migration_skips_a_malformed_stored_spec(
+    integration_context: Context, registry_db: DatabaseSession, clean_registry: None
+) -> None:
+    v1, v2 = await _live_with_draft(integration_context)
+    await _delete_rows(registry_db, v1, v2)
+    broken = _content("List widgets (v2)")
+    broken["paths"] = ["not", "a", "map"]
+    async with registry_db.session() as session:
+        await session.execute(
+            update(SpecFile).where(SpecFile.revision_id == v2).values(content=broken)
+        )
+        await session.commit()
+
+    # The healthy live revision is still rebuilt; the broken draft is skipped.
+    assert await _run_rebuild(registry_db) == 1
+    assert await _row_count(registry_db, v1) == 1
+    assert await _row_count(registry_db, v2) == 0
+
+
+async def test_rebuild_migration_matches_existing_rows_structurally(
+    integration_context: Context, registry_db: DatabaseSession, clean_registry: None
+) -> None:
+    """A present row whose template differs only in parameter names is not duplicated."""
+    content = _content("Get widget")
+    content["paths"] = {"/widgets/{id}": content["paths"]["/widgets"]}
+    live = await _ingest(integration_context, _spec(content, sha="sha-param"))
+    await _promote(integration_context, live)
+    async with registry_db.session() as session:
+        await session.execute(
+            update(OperationURLIndex)
+            .where(OperationURLIndex.revision_id == live)
+            .values(path_template="/widgets/{widget_id}")
+        )
+        await session.commit()
+
+    assert await _run_rebuild(registry_db) == 0
+    assert await _row_count(registry_db, live) == 1

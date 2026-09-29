@@ -57,7 +57,7 @@ VERSION = "v1"
 HOST = "api.acme.com"
 # Each revision indexes a *distinct* path so each test can tell which revision
 # answered. Identical URLs across revisions are also supported — the URL-index
-# key is scoped to the revision (``uq_operation_url_index_revision_lookup``) —
+# key is scoped to the revision (``uq_operation_url_index_lookup``) —
 # and are covered by ``test_pin_and_live_share_one_url``.
 PUBLISHED_PATH = "/v1/pets"
 OWNED_DRAFT_PATH = "/v1/pets-owned-draft"

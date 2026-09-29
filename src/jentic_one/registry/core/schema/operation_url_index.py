@@ -27,7 +27,10 @@ class OperationURLIndex(AuditableMixin, RegistryBase):
     the rows of each API's live revision (``apis.current_revision_id``), while a
     ``Jentic-Revision`` pin reads the pinned revision's rows directly. The key is
     host-leading so the unpinned ``(host, method)`` lookup and the promote-time
-    host-ownership check are both index-backed.
+    host-ownership check are both index-backed. The constraint keeps its
+    original name (it predates ``revision_id`` joining the key) so pods of the
+    previous release, whose upsert names it in ``ON CONFLICT ON CONSTRAINT``,
+    keep working during a rolling deploy (see migration ``e7f8a9b0c1d2``).
     """
 
     __tablename__ = "operation_url_indexes"
@@ -38,7 +41,7 @@ class OperationURLIndex(AuditableMixin, RegistryBase):
             "host_regex",
             "path_template",
             "revision_id",
-            name="uq_operation_url_index_revision_lookup",
+            name="uq_operation_url_index_lookup",
             postgresql_nulls_not_distinct=True,
         ),
         Index(
