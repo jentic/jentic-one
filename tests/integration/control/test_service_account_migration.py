@@ -1809,6 +1809,25 @@ async def test_admin_level_grant_is_carried_over_and_reported_not_stripped(
     assert finding["informational"] is True
     assert result.findings[0]["successor_admin_scope_count"] == 1
 
-    # Informational only: acknowledgement is still granted on a passing verify.
+    # Informational only: acknowledgement is still granted on a passing verify,
+    # and the review lines do not count as findings on the gate row.
     acked = await svc.verify(acknowledge=True)
     assert acked.acknowledged
+    (ack,) = await _rows(
+        admin_db, "SELECT report_finding_count FROM service_account_migration_acks", {}
+    )
+    assert ack.report_finding_count == 0
+
+    # A scope an operator re-grants themselves is no longer "carried over".
+    async with admin_db.session() as session:
+        await session.execute(
+            text(
+                "UPDATE actor_scope_grants SET granted_by = :by"
+                " WHERE actor_id = :id AND scope = 'org:admin'"
+            ),
+            {"by": _OWNER, "id": agent_id},
+        )
+        await session.commit()
+    regranted = await svc.verify()
+    assert regranted.successor_admin_scope_count == 0
+    assert not [f for f in regranted.findings if f["category"] == "successor_admin_scope"]

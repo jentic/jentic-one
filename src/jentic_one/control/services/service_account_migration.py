@@ -244,9 +244,14 @@ class VerificationResult:
 
     @property
     def finding_count(self) -> int:
-        """Report lines that are actual findings — the summary excluded, so a
+        """Report lines that are actual findings — the summary and the
+        informational review lines (``successor_admin_scope``) excluded, so a
         clean verify records 0 on the acknowledgement row."""
-        return sum(1 for f in self.findings if f.get("category") != _VERIFY_SUMMARY_CATEGORY)
+        return sum(
+            1
+            for f in self.findings
+            if f.get("category") != _VERIFY_SUMMARY_CATEGORY and not f.get("informational")
+        )
 
     @property
     def only_sweep_healable_failures(self) -> bool:

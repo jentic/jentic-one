@@ -397,7 +397,8 @@ Where the upgrade reports them (all informational — none fails a step,
 The same state can be listed at any time with read-only queries.
 
 **Successor agents holding admin-level grants** (admin DB; on Postgres
-prefix the tables with the `admin.` schema):
+run it with the admin connection's `schema_name` — `admin` in the shipped
+configs — on the `search_path`, or prefix the tables with it):
 
 ```sql
 SELECT a.id, a.name, a.owner_id, a.status, g.scope, g.granted_by
@@ -415,11 +416,14 @@ copied; any other grantor means someone has granted it since.
 
 **Bindings whose credential creator differs from the agent owner.** The
 bindings live in the admin DB and the credential creators in the control
-DB, so on SQLite this is two queries; on Postgres (both schemas in one
-database) it is one join.
+DB, so on SQLite (one file per surface) this is two queries. On Postgres,
+when the admin and control connections share one database (the shipped
+configs, schemas `admin` and `control` — substitute your `schema_name`
+values), it is one join; if they point at separate databases, use the
+two-query form.
 
 ```sql
--- Postgres: one query across the admin and control schemas
+-- Postgres, shared database: one query across the admin and control schemas
 SELECT b.agent_id, a.name, a.owner_id, b.credential_id, c.created_by
 FROM admin.agent_credential_bindings b
 JOIN admin.agents a ON a.id = b.agent_id
@@ -431,13 +435,13 @@ ORDER BY b.agent_id, b.credential_id;
 ```
 
 ```sql
--- SQLite step 1 (admin DB): every binding with its agent's owner
+-- step 1 (admin DB): every binding with its agent's owner
 SELECT b.agent_id, a.name, a.owner_id, b.credential_id
 FROM agent_credential_bindings b
 JOIN agents a ON a.id = b.agent_id
 ORDER BY b.agent_id;
 
--- SQLite step 2 (control DB): the creators of those credentials
+-- step 2 (control DB): the creators of those credentials
 SELECT id, created_by FROM credentials WHERE id IN ('cred_…', …);
 ```
 
