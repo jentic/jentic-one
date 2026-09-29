@@ -104,13 +104,17 @@ test('open an API detail page for an imported spec', async ({ page, request }) =
 	await expect(card).toBeVisible({ timeout: 30_000 });
 	await card.click();
 
-	// The API hub (Overview tab by default); its Operations tab lists the
-	// operations the spec declared (sampleGet -> 1 op).
+	// The API hub (Overview tab by default). An inline import lands as a draft
+	// revision with nothing promoted, so the Operations tab shows its
+	// no-live-revision state with a shortcut to the Versions tab.
 	await expect(page).toHaveURL(/\/app\/library\/workspace\//);
 	await page.getByRole('tab', { name: /Operations/ }).click();
 	// Scope to the operations section: visited tabs stay mounted (hidden), so an
 	// unscoped text match could land on the hidden Overview panel.
 	const operations = page.getByTestId('operations-section');
 	await expect(operations).toBeVisible();
-	await expect(operations.getByText('/get').first()).toBeVisible();
+	await expect(operations.getByText('No live revision yet')).toBeVisible();
+	await operations.getByTestId('operations-go-to-versions').click();
+	await expect(page).toHaveURL(/[?&]tab=versions\b/);
+	await expect(page.getByTestId('revisions-section')).toBeVisible();
 });
