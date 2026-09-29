@@ -22,6 +22,7 @@ from jentic_one.shared.models.api_identity import (
     canonical_credential_scope,
     credential_covers,
 )
+from jentic_one.shared.vendor_domain import vendor_from_api_id
 
 
 def no_credential_serves_api_reason(api: str) -> str:
@@ -67,7 +68,7 @@ def connect_vendor_key(
     # registry's insertion (config) order, so overlapping entries resolve
     # to the earliest-declared key.
     for key, entry in vendors.entries.items():
-        raw_vendor = entry.vendor.split("/", 1)[0]
+        raw_vendor = vendor_from_api_id(entry.vendor) or entry.vendor
         scope = canonical_credential_scope(vendor=raw_vendor, name=entry.vendor, version=None)
         if credential_covers(scope, vendor=vendor, name=name, version=version):
             return key

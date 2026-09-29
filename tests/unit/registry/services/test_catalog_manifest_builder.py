@@ -69,23 +69,30 @@ def test_parse_missing_include_key() -> None:
     assert mb.parse_apis_json({}) == []
 
 
-# ── extract_vendor ───────────────────────────────────────────────────────────
+# ── vendor derivation ────────────────────────────────────────────────────────
+# The derivation itself is covered in tests/unit/shared/test_vendor_domain.py;
+# these pin that the manifest routes through it.
 
 
-def test_extract_vendor_host_with_path() -> None:
-    assert mb.extract_vendor("api.stripe.com/v1") == "stripe.com"
+@pytest.mark.parametrize(
+    ("domain", "vendor"),
+    [
+        ("api.stripe.com", "stripe.com"),
+        ("finage.co.uk", "finage.co.uk"),
+        ("apex27.co.uk", "apex27.co.uk"),
+        ("acme.github.io", "acme.github.io"),
+    ],
+)
+def test_parse_derives_vendor_from_registrable_domain(domain: str, vendor: str) -> None:
+    [entry] = mb.parse_apis_json({"include": [_include(_manifest_url(domain, "main"))]})
+    assert entry.vendor == vendor
 
 
-def test_extract_vendor_two_label_host() -> None:
-    assert mb.extract_vendor("slack.com") == "slack.com"
-
-
-def test_extract_vendor_bare_label() -> None:
-    assert mb.extract_vendor("stripe") == "stripe"
-
-
-def test_extract_vendor_empty() -> None:
-    assert mb.extract_vendor("") is None
+def test_from_dict_rederives_vendor_from_api_id() -> None:
+    """A snapshot persisted by the old last-two-labels derivation is served with
+    the current vendor, without waiting for a manifest refresh."""
+    stale = {"api_id": "finage.co.uk", "path": "p", "github_url": "g", "vendor": "co.uk"}
+    assert mb.ManifestEntry.from_dict(stale).vendor == "finage.co.uk"
 
 
 # ── search ───────────────────────────────────────────────────────────────────

@@ -773,7 +773,7 @@ class CatalogService:
         """Build a plain url IngestSource payload — never a catalog-shaped one.
 
         The catalog already knows the vendor and api_name from the manifest folder
-        structure (``apis/openapi/{domain}/{sub}/…`` → ``extract_vendor(api_id)``),
+        structure (``apis/openapi/{domain}/{sub}/…`` → ``vendor_from_api_id(api_id)``),
         so we pass them through as overrides. Many catalog specs (e.g. coincap)
         omit ``x-vendor``/``contact.name`` in their ``info`` block, which would
         otherwise fail api_identifier resolution with "missing vendor" or "missing

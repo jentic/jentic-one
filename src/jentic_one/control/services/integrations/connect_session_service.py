@@ -62,6 +62,7 @@ from jentic_one.shared.models import ActorType
 from jentic_one.shared.models.actors import Origin, actor_type_from_id
 from jentic_one.shared.models.api_identity import canonical_credential_scope
 from jentic_one.shared.pagination import decode_cursor_str, encode_cursor
+from jentic_one.shared.vendor_domain import vendor_from_api_id
 
 _logger = structlog.get_logger(__name__)
 
@@ -325,13 +326,15 @@ class ConnectSessionService:
         # Decompose the vendor's catalog api_id (e.g. ``github.com/api.github.com``)
         # into the same identity axes a normal catalog import puts on the
         # registered Api row and the credential: ``api_vendor`` slugged from the
-        # host portion, ``api_name`` slugged from the *whole* api_id (mirrors
-        # registry ``_to_import_source`` which passes ``entry.api_id`` verbatim as
-        # ``api_name`` and lets the import pipeline slugify it), and
+        # registrable domain of the host portion (``vendor_from_api_id``, the
+        # same helper the catalog manifest uses), ``api_name`` slugged from the
+        # *whole* api_id (mirrors registry ``_to_import_source`` which passes
+        # ``entry.api_id`` verbatim as ``api_name`` and lets the import pipeline
+        # slugify it), and
         # ``catalog_api_id`` verbatim as display-only provenance. That way the
         # credential's identity matches ``list_by_vendor`` **and** the broker's
         # per-operation identity check.
-        raw_vendor = entry.vendor.split("/", 1)[0]
+        raw_vendor = vendor_from_api_id(entry.vendor) or entry.vendor
         api_scope = canonical_credential_scope(
             vendor=raw_vendor,
             name=entry.vendor,
