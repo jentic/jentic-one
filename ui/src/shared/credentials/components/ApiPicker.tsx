@@ -25,6 +25,7 @@ import { cn } from '@/shared/lib/utils';
 import { apiRefKey } from '@/shared/credentials/lib/apiIdentity';
 import {
 	apiRowToSelected,
+	catalogToSelected,
 	useApis,
 	useCatalog,
 	useVendors,
@@ -88,33 +89,6 @@ const ROW_VARIANTS: Variants = {
 	hidden: { opacity: 0, y: 6 },
 	show: { opacity: 1, y: 0, transition: { duration: 0.18, ease: 'easeOut' } },
 };
-
-function catalogToSelected(entry: CatalogEntryResponse): SelectedApi {
-	// The identity a catalog import registers: vendor is the entry's `vendor`, and
-	// name is the WHOLE `api_id` (`abstractapi.com/ip-geolocation-api`), which the
-	// backend slugs to `abstractapi-com-ip-geolocation-api`. A credential saved
-	// from this pick must carry that same identity — the broker only finds a
-	// credential whose name matches the registered API's — so this mirrors the
-	// import rather than splitting the slug itself.
-	//
-	// The label reads from `api_id` through the shared helper the workspace rows
-	// use, so one API never titles two ways in this picker. Version isn't on the
-	// catalog entry; a credential leaves it unpinned anyway.
-	const slug = entry.api_id;
-	const vendor = entry.vendor ?? slug.split('/')[0] ?? slug;
-	const name = slug;
-	const version = '1.0.0';
-	return {
-		source: 'catalog',
-		vendor,
-		name,
-		version,
-		apiId: slug,
-		specUrl: entry.spec_url ?? undefined,
-		registered: entry.registered,
-		label: apiRefDisplayName({ catalogApiId: slug, vendor, name }),
-	};
-}
 
 export function ApiPicker({
 	onSelect,
