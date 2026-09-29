@@ -1,4 +1,4 @@
-"""Upstream URL validation — guards against SSRF attacks.
+"""Upstream URL validation — keeps outbound requests off private and metadata targets.
 
 The default policy is strict: every private/loopback range, the cloud-metadata
 hosts, and non-HTTP schemes are rejected. A caller may pass an :class:`EgressConfig`
@@ -47,6 +47,7 @@ _BLOCKED_NETWORKS = [
     ipaddress.ip_network("64:ff9b:1::/48"),  # NAT64 local-use (RFC 8215)
     ipaddress.ip_network("fc00::/7"),
     ipaddress.ip_network("fe80::/10"),
+    ipaddress.ip_network("fec0::/10"),  # deprecated site-local (RFC 3879)
     ipaddress.ip_network("ff00::/8"),  # multicast
 ]
 
@@ -66,13 +67,19 @@ _BLOCKED_HOSTNAMES = frozenset(
     }
 )
 
-# Cloud instance-metadata service IPs. Never exemptable by an allowlist — a
-# covering CIDR (e.g. 169.254.0.0/16) must NOT open these, or a credential-
-# stealing SSRF could be allowlisted by accident.
+# Cloud instance-metadata and platform-credential endpoints. Never exemptable by
+# an allowlist — a covering CIDR (e.g. 169.254.0.0/16 or fd00::/8) must NOT open
+# these, so instance or workload credentials can't be allowlisted by accident.
 _METADATA_IPS = frozenset(
     {
-        ipaddress.ip_address("169.254.169.254"),  # AWS/GCP/Azure IMDS
+        ipaddress.ip_address("169.254.169.254"),  # AWS/GCP/Azure/OCI/DigitalOcean IMDS
         ipaddress.ip_address("fd00:ec2::254"),  # AWS IMDS over IPv6
+        ipaddress.ip_address("169.254.170.2"),  # AWS ECS task metadata + credentials
+        ipaddress.ip_address("169.254.170.23"),  # AWS EKS Pod Identity agent
+        ipaddress.ip_address("fd00:ec2::23"),  # AWS EKS Pod Identity agent over IPv6
+        ipaddress.ip_address("100.100.100.200"),  # Alibaba Cloud metadata
+        ipaddress.ip_address("192.0.0.192"),  # Oracle Cloud (legacy) metadata
+        ipaddress.ip_address("168.63.129.16"),  # Azure WireServer / host agent
     }
 )
 
@@ -102,7 +109,7 @@ def validate_upstream_url(raw_url: str, egress: EgressConfig | None = None) -> s
     if not hostname:
         raise ValueError("upstream URL has no hostname")
 
-    if hostname.lower() in _BLOCKED_HOSTNAMES:
+    if _normalise_hostname(hostname) in _BLOCKED_HOSTNAMES:
         raise ValueError("upstream URL targets a blocked hostname")
 
     try:
@@ -118,6 +125,23 @@ def validate_upstream_url(raw_url: str, egress: EgressConfig | None = None) -> s
         _check_ip(addr, egress, hostname=None)
 
     return url
+
+
+def _normalise_hostname(hostname: str) -> str:
+    """Lower-case *hostname* and drop a trailing root dot (``host.`` == ``host``)."""
+    return hostname.lower().rstrip(".")
+
+
+def _strip_scope(addr: _IpAddress) -> _IpAddress:
+    """Drop an IPv6 zone id (``fe80::1%eth0``) so set/range checks see the bare address.
+
+    ``IPv6Address`` equality includes the scope id, so ``fd00:ec2::254%eth0`` would
+    otherwise miss the metadata hard-deny set while still matching an allowlisted
+    covering CIDR (network containment ignores the scope).
+    """
+    if isinstance(addr, ipaddress.IPv6Address) and addr.scope_id is not None:
+        return ipaddress.IPv6Address(int(addr))
+    return addr
 
 
 def embedded_ipv4(addr: _IpAddress) -> ipaddress.IPv4Address | None:
@@ -166,6 +190,7 @@ def assert_ip_allowed(
     against ``allowed_private_subnets``) by the embedded IPv4. The cloud-metadata
     hard-deny applies to both the literal and the unwrapped address.
     """
+    addr = _strip_scope(addr)
     embedded = embedded_ipv4(addr)
     target: _IpAddress = embedded if embedded is not None else addr
 
@@ -204,12 +229,12 @@ def _is_exempted(addr: _IpAddress, hostname: str | None, egress: EgressConfig | 
     if hostname is None:
         return True
 
-    lower_hostname = hostname.lower()
-    return any(
-        lower_hostname == suffix.lower().lstrip(".")
-        or lower_hostname.endswith("." + suffix.lower().lstrip("."))
-        for suffix in egress.allowed_internal_domains
-    )
+    lower_hostname = _normalise_hostname(hostname)
+    for suffix in egress.allowed_internal_domains:
+        bare = _normalise_hostname(suffix).lstrip(".")
+        if lower_hostname == bare or lower_hostname.endswith("." + bare):
+            return True
+    return False
 
 
 def _resolve_and_check(hostname: str, egress: EgressConfig | None) -> None:

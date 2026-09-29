@@ -257,7 +257,7 @@ Broker surface configuration.
 | `broker.idempotency.ttl_s` | number | `86400.0` | `JENTIC__BROKER__IDEMPOTENCY__TTL_S` |  |
 | `broker.idempotency.pending_ttl_s` | number | `35.0` | `JENTIC__BROKER__IDEMPOTENCY__PENDING_TTL_S` |  |
 | `broker.idempotency.max_response_bytes` | integer | `262144` | `JENTIC__BROKER__IDEMPOTENCY__MAX_RESPONSE_BYTES` |  |
-| `broker.egress.allowed_private_subnets` | list of string | — | `JENTIC__BROKER__EGRESS__ALLOWED_PRIVATE_SUBNETS` | CIDRs exempted from the private-IP egress block (e.g. `["10.50.0.0/16"]`). The cloud-metadata IPs (169.254.169.254 / fd00:ec2::254) are never exempted, even when a listed range covers them. Accepts a YAML list or a comma-separated string. |
+| `broker.egress.allowed_private_subnets` | list of string | — | `JENTIC__BROKER__EGRESS__ALLOWED_PRIVATE_SUBNETS` | CIDRs exempted from the private-IP egress block (e.g. `["10.50.0.0/16"]`). The cloud-metadata and platform-credential IPs (e.g. 169.254.169.254, 169.254.170.2, fd00:ec2::254, 100.100.100.200) are never exempted, even when a listed range covers them. Accepts a YAML list or a comma-separated string. |
 | `broker.egress.allowed_internal_domains` | list of string | — | `JENTIC__BROKER__EGRESS__ALLOWED_INTERNAL_DOMAINS` | Domain suffixes (e.g. `[".svc.cluster.local"]`) whose resolved private IP is permitted. The resolved IP must still fall in an allowed subnet. Accepts a YAML list or a comma-separated string. |
 | `broker.egress.dns_pinning_enabled` | boolean | `true` | `JENTIC__BROKER__EGRESS__DNS_PINNING_ENABLED` | Pin the outbound connection to the IP validated at connect time, closing the DNS-rebinding TOCTOU between pre-request validation and the runner's own resolution. Disable only to debug egress issues. |
 
@@ -277,7 +277,7 @@ Spec ingestion settings (fetch limits, timeouts, egress policy).
 | `ingest.max_spec_bytes` | integer | `26214400` | `JENTIC__INGEST__MAX_SPEC_BYTES` |  |
 | `ingest.fetch_timeout_s` | number | `30.0` | `JENTIC__INGEST__FETCH_TIMEOUT_S` |  |
 | `ingest.max_redirects` | integer | `5` | `JENTIC__INGEST__MAX_REDIRECTS` |  |
-| `ingest.egress.allowed_private_subnets` | list of string | — | `JENTIC__INGEST__EGRESS__ALLOWED_PRIVATE_SUBNETS` | CIDRs exempted from the private-IP egress block (e.g. `["10.50.0.0/16"]`). The cloud-metadata IPs (169.254.169.254 / fd00:ec2::254) are never exempted, even when a listed range covers them. Accepts a YAML list or a comma-separated string. |
+| `ingest.egress.allowed_private_subnets` | list of string | — | `JENTIC__INGEST__EGRESS__ALLOWED_PRIVATE_SUBNETS` | CIDRs exempted from the private-IP egress block (e.g. `["10.50.0.0/16"]`). The cloud-metadata and platform-credential IPs (e.g. 169.254.169.254, 169.254.170.2, fd00:ec2::254, 100.100.100.200) are never exempted, even when a listed range covers them. Accepts a YAML list or a comma-separated string. |
 | `ingest.egress.allowed_internal_domains` | list of string | — | `JENTIC__INGEST__EGRESS__ALLOWED_INTERNAL_DOMAINS` | Domain suffixes (e.g. `[".svc.cluster.local"]`) whose resolved private IP is permitted. The resolved IP must still fall in an allowed subnet. Accepts a YAML list or a comma-separated string. |
 | `ingest.egress.dns_pinning_enabled` | boolean | `true` | `JENTIC__INGEST__EGRESS__DNS_PINNING_ENABLED` | Pin the outbound connection to the IP validated at connect time, closing the DNS-rebinding TOCTOU between pre-request validation and the runner's own resolution. Disable only to debug egress issues. |
 

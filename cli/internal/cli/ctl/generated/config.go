@@ -898,9 +898,9 @@ type EgressConfig struct {
 	AllowedInternalDomains []string `json:"allowed_internal_domains,omitempty,omitzero" yaml:"allowed_internal_domains,omitempty" mapstructure:"allowed_internal_domains,omitempty"`
 
 	// CIDRs exempted from the private-IP egress block (e.g. ``["10.50.0.0/16"]``).
-	// The cloud-metadata IPs (169.254.169.254 / fd00:ec2::254) are never exempted,
-	// even when a listed range covers them. Accepts a YAML list or a comma-separated
-	// string.
+	// The cloud-metadata and platform-credential IPs (e.g. 169.254.169.254,
+	// 169.254.170.2, fd00:ec2::254, 100.100.100.200) are never exempted, even when a
+	// listed range covers them. Accepts a YAML list or a comma-separated string.
 	AllowedPrivateSubnets []string `json:"allowed_private_subnets,omitempty,omitzero" yaml:"allowed_private_subnets,omitempty" mapstructure:"allowed_private_subnets,omitempty"`
 
 	// Pin the outbound connection to the IP validated at connect time, closing the

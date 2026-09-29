@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import socket
+import threading
 
 import httpx
 import pytest
@@ -195,3 +196,46 @@ async def test_transport_fails_closed_on_unresolvable_host(
         with pytest.raises(ValueError, match="did not resolve"):
             await client.get("https://ghost.example.com/")
     assert inner.seen is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("host", ["[fe80::1%25eth0]", "[fd00:ec2::254%25eth0]"])
+async def test_transport_blocks_zone_id_literal_even_when_allowlisted(host: str) -> None:
+    inner = _RecordingTransport()
+    transport = DnsPinningTransport(inner, EgressConfig(allowed_private_subnets=["fd00:ec2::/32"]))
+    async with httpx.AsyncClient(transport=transport) as client:
+        with pytest.raises(ValueError, match="blocked address range"):
+            await client.get(f"http://{host}/x")
+    assert inner.seen is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("host", ["2130706433", "0x7f.1", "017700000001"])
+async def test_transport_resolves_numeric_ipv4_spelling_and_blocks(
+    monkeypatch: pytest.MonkeyPatch, host: str
+) -> None:
+    monkeypatch.setattr(socket, "getaddrinfo", _fake_getaddrinfo("127.0.0.1"))
+    inner = _RecordingTransport()
+    transport = DnsPinningTransport(inner, None)
+    async with httpx.AsyncClient(transport=transport) as client:
+        with pytest.raises(ValueError, match="blocked address range"):
+            await client.get(f"http://{host}/x")
+    assert inner.seen is None
+
+
+@pytest.mark.asyncio
+async def test_transport_resolves_off_the_event_loop(monkeypatch: pytest.MonkeyPatch) -> None:
+    # getaddrinfo blocks; the transport must not call it on the event-loop thread.
+    loop_thread = threading.get_ident()
+    calls: list[int] = []
+
+    def _resolver(*_a, **_k):
+        calls.append(threading.get_ident())
+        return _fake_getaddrinfo("93.184.216.34")("api.example.com")
+
+    monkeypatch.setattr(socket, "getaddrinfo", _resolver)
+    inner = _RecordingTransport()
+    async with httpx.AsyncClient(transport=DnsPinningTransport(inner, None)) as client:
+        await client.get("https://api.example.com/x")
+    assert calls and calls[0] != loop_thread
+    assert inner.seen is not None

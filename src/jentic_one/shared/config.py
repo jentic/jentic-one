@@ -1189,9 +1189,10 @@ class EgressConfig(BaseModel):
         default_factory=list,
         description=(
             "CIDRs exempted from the private-IP egress block (e.g. "
-            '``["10.50.0.0/16"]``). The cloud-metadata IPs (169.254.169.254 / '
-            "fd00:ec2::254) are never exempted, even when a listed range covers "
-            "them. Accepts a YAML list or a comma-separated string."
+            '``["10.50.0.0/16"]``). The cloud-metadata and platform-credential '
+            "IPs (e.g. 169.254.169.254, 169.254.170.2, fd00:ec2::254, "
+            "100.100.100.200) are never exempted, even when a listed range "
+            "covers them. Accepts a YAML list or a comma-separated string."
         ),
     )
     allowed_internal_domains: Annotated[list[str], BeforeValidator(_csv_to_list)] = Field(

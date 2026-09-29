@@ -254,6 +254,11 @@ _NON_PUBLIC_ADDRESSES = [
     # IPv6 non-global ranges
     "::1",
     "fe80::1",
+    "fe80::1%eth0",  # link-local with a zone id
+    "fec0::1",  # deprecated site-local
+    "feff::1",
+    "2001::1",  # Teredo (2001::/32): denied outright, not unwrapped
+    "2001:0:4136:e378:8000:63bf:3fff:fdd2",
     "fd12:3456::1",
     "ff02::1",
     "ff0e::1",
@@ -345,3 +350,116 @@ def test_embedded_ipv4_outside_allowlist_blocked() -> None:
     egress = EgressConfig(allowed_private_subnets=["10.50.0.0/16"])
     with pytest.raises(ValueError, match="blocked address range"):
         validate_upstream_url(_url_for("::ffff:10.60.0.1"), egress)
+
+
+# --- cloud-metadata hard-deny ----------------------------------------------------
+
+_METADATA_ADDRESSES = [
+    "169.254.169.254",
+    "fd00:ec2::254",
+    "169.254.170.2",
+    "169.254.170.23",
+    "fd00:ec2::23",
+    "100.100.100.200",
+    "192.0.0.192",
+    "168.63.129.16",
+]
+
+#: Allowlists that each cover one or more metadata addresses.
+_COVERING_SUBNETS = [
+    "169.254.0.0/16",
+    "100.64.0.0/10",
+    "192.0.0.0/24",
+    "168.63.0.0/16",
+    "fd00::/8",
+    "::/0",
+    "0.0.0.0/0",
+]
+
+
+@pytest.mark.parametrize("ip", _METADATA_ADDRESSES)
+def test_metadata_ip_blocked_by_default(ip: str) -> None:
+    with pytest.raises(ValueError, match="blocked address range"):
+        validate_upstream_url(_url_for(ip))
+
+
+@pytest.mark.parametrize("ip", _METADATA_ADDRESSES)
+def test_metadata_ip_blocked_even_when_covering_range_allowlisted(ip: str) -> None:
+    egress = EgressConfig(allowed_private_subnets=_COVERING_SUBNETS)
+    with pytest.raises(ValueError, match="blocked address range"):
+        validate_upstream_url(_url_for(ip), egress)
+
+
+@pytest.mark.parametrize("ip", _METADATA_ADDRESSES)
+def test_hostname_resolving_to_metadata_ip_blocked_even_when_allowlisted(ip: str) -> None:
+    egress = EgressConfig(
+        allowed_private_subnets=_COVERING_SUBNETS, allowed_internal_domains=["corp.internal"]
+    )
+    with (
+        patch(
+            "jentic_one.shared.url_validation.socket.getaddrinfo",
+            return_value=_resolving_to(ip),
+        ),
+        pytest.raises(ValueError, match="blocked address range"),
+    ):
+        validate_upstream_url("https://svc.corp.internal/x", egress)
+
+
+@pytest.mark.parametrize(
+    "ip", ["::ffff:169.254.170.2", "::ffff:100.100.100.200", "64:ff9b::a9fe:aa02"]
+)
+def test_embedded_metadata_ip_blocked_when_allowlisted(ip: str) -> None:
+    egress = EgressConfig(allowed_private_subnets=_COVERING_SUBNETS)
+    with pytest.raises(ValueError, match="blocked address range"):
+        validate_upstream_url(_url_for(ip), egress)
+
+
+@pytest.mark.parametrize("ip", ["fd00:ec2::254%eth0", "fd00:ec2::254%251", "fd00:ec2::23%eth0"])
+def test_metadata_ip_with_zone_id_blocked_when_allowlisted(ip: str) -> None:
+    # A zone id must not take the address out of the hard-deny set.
+    egress = EgressConfig(allowed_private_subnets=["fd00:ec2::/32"])
+    with pytest.raises(ValueError, match="blocked address range"):
+        validate_upstream_url(_url_for(ip), egress)
+
+
+def test_neighbouring_address_still_allowlistable() -> None:
+    # Only the exact metadata addresses are hard-denied, not the covering range.
+    egress = EgressConfig(allowed_private_subnets=["169.254.0.0/16", "100.64.0.0/10"])
+    assert validate_upstream_url("http://169.254.10.1/x", egress) == "http://169.254.10.1/x"
+    assert validate_upstream_url("http://100.100.1.1/x", egress) == "http://100.100.1.1/x"
+
+
+# --- host spelling ----------------------------------------------------------------
+
+
+def test_blocked_hostname_with_trailing_dot_rejected() -> None:
+    with pytest.raises(ValueError, match="blocked hostname"):
+        validate_upstream_url("http://metadata.google.internal./computeMetadata/v1/")
+
+
+def test_allowed_internal_domain_matches_trailing_dot_host() -> None:
+    egress = EgressConfig(
+        allowed_private_subnets=["10.50.0.0/16"], allowed_internal_domains=["corp.internal."]
+    )
+    with patch(
+        "jentic_one.shared.url_validation.socket.getaddrinfo",
+        return_value=_resolving_to("10.50.2.10"),
+    ):
+        assert validate_upstream_url("https://svc.corp.internal./x", egress)
+        assert validate_upstream_url("https://svc.corp.internal/x", egress)
+
+
+@pytest.mark.parametrize("host", ["2130706433", "0x7f.1", "017700000001", "127.1", "0x7f000001"])
+def test_numeric_ipv4_spellings_are_resolved_then_classified(host: str) -> None:
+    # Non-dotted-quad IPv4 spellings are not IP literals to ``ipaddress``; they go
+    # through the resolver (which expands them, as the OS connect path would) and
+    # the resolved address is classified.
+    with (
+        patch(
+            "jentic_one.shared.url_validation.socket.getaddrinfo",
+            return_value=_resolving_to("127.0.0.1"),
+        ) as resolver,
+        pytest.raises(ValueError, match="blocked address range"),
+    ):
+        validate_upstream_url(f"http://{host}/x")
+    assert resolver.call_args.args[0] == host

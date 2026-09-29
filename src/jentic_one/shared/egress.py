@@ -22,6 +22,7 @@ on server-initiated schedules and are equally exposed to a rebind. ``build_clien
 
 from __future__ import annotations
 
+import asyncio
 import ipaddress
 import socket
 
@@ -76,8 +77,9 @@ class DnsPinningTransport(httpx.AsyncBaseTransport):
         try:
             literal = ipaddress.ip_address(host)
         except ValueError:
-            # A DNS name: resolve, validate (rebind guard), and pin.
-            pinned = resolve_and_validate(host, self._egress)
+            # A DNS name: resolve, validate (rebind guard), and pin. getaddrinfo
+            # blocks, so run it off the event loop.
+            pinned = await asyncio.to_thread(resolve_and_validate, host, self._egress)
             request = self._pin(request, host, pinned)
         else:
             # An IP literal: nothing to resolve, but still apply the policy so a
