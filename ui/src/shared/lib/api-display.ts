@@ -142,13 +142,25 @@ export function humanizeName(segment: string): string {
  *   `stripe.com`                 → `stripe.com`       (no sub-API; bare-domain
  *                                                     fallback — the input is
  *                                                     returned unchanged)
+ *   `github.com/api.github.com`  → `github.com`       (the sub-API is just a
+ *                                                     host of the same domain,
+ *                                                     so it adds nothing — read
+ *                                                     as the bare domain rather
+ *                                                     than title-casing a
+ *                                                     hostname)
  */
 export function titleFromApiId(apiId: string): string {
 	const slash = apiId.indexOf('/');
 	if (slash === -1) {
 		return apiId;
 	}
+	const domain = apiId.slice(0, slash);
 	const sub = apiId.slice(slash + 1);
+	const subLower = sub.toLowerCase();
+	const domainLower = domain.toLowerCase();
+	if (domain && (subLower === domainLower || subLower.endsWith(`.${domainLower}`))) {
+		return domain;
+	}
 	// A sub-API segment is an endpoint/product name, not a domain slug, so it
 	// uses the conservative name humaniser: `bar-io` → `Bar Io`, not `Bar.Io`.
 	// Only a genuinely-dotted sub-segment keeps its dot.
@@ -272,4 +284,28 @@ export function apiIdentityTuple(input: {
 	}
 	if (vendor && name) return `${vendor}/${name}`;
 	return vendor || name;
+}
+
+/**
+ * The title of one workspace API — the SAME rule on every surface that names
+ * it (Library panel rows, workspace tiles, the hub heading, its dialogs):
+ * {@link apiRefDisplayName} (display name → catalog slug → humanised
+ * vendor/name), then the raw vendor, name, and `vendor/name/version`, and
+ * finally `Untitled API`. Never empty, so a heading, aria-label or dialog
+ * sentence ("…access to X.") can always interpolate it.
+ */
+export function workspaceApiTitle(input: {
+	displayName?: string | null;
+	catalogApiId?: string | null;
+	vendor: string;
+	name: string;
+	version: string;
+}): string {
+	return (
+		apiRefDisplayName(input) ||
+		input.vendor ||
+		input.name ||
+		[input.vendor, input.name, input.version].filter(Boolean).join('/') ||
+		'Untitled API'
+	);
 }

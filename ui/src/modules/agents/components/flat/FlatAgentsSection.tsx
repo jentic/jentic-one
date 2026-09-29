@@ -43,7 +43,7 @@ import {
 	partitionBindings,
 	tileStats,
 } from '@/modules/agents/lib/apiTiles';
-import { viewerIsOrgAdmin } from '@/modules/agents/lib/bindAuthority';
+import { viewerIsOrgAdmin } from '@/shared/credentials/lib/bindAuthority';
 import { useOptionalCurrentUser } from '@/shared/auth';
 import { AgentStrip } from '@/modules/agents/components/flat/AgentStrip';
 import { AgentStatStrip } from '@/modules/agents/components/flat/AgentStatStrip';

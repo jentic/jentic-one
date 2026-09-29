@@ -181,6 +181,15 @@ export {
 } from '@/shared/ui/ActorStatusBadge';
 export type { ActorStatus } from '@/shared/ui/ActorStatusBadge';
 
+export {
+	ApiStateBadge,
+	ApiStateBadges,
+	apiServingState,
+	API_STATE_LABELS,
+	API_STATE_BADGE_VARIANT,
+} from '@/shared/ui/ApiStateBadge';
+export type { ApiServingState } from '@/shared/ui/ApiStateBadge';
+
 export { GrantAgentStatusChip } from '@/shared/ui/GrantAgentStatusChip';
 export type { GrantAgentStatusChipProps } from '@/shared/ui/GrantAgentStatusChip';
 

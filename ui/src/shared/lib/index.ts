@@ -83,6 +83,7 @@ export {
 	humanizeName,
 	titleFromApiId,
 	apiRefDisplayName,
+	workspaceApiTitle,
 	apiIdentityTuple,
 	formatApiVersion,
 } from '@/shared/lib/api-display';

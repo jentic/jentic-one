@@ -3,9 +3,15 @@
  * rule (a non-admin binding a credential they did not create gets a 404); the UI
  * only avoids offering a bind that cannot succeed, and avoids reading "missing
  * from my credential list" as "deleted" when the list is owner-scoped.
+ *
+ * Shared because two modules offer a bind — the agents surfaces and the API
+ * hub's "Bind to an agent" — and must agree on who may do it.
  */
-import { ORG_ADMIN } from '@/shared/auth';
+import { ORG_ADMIN, useOptionalCurrentUser } from '@/shared/auth';
 import type { Credential } from '@/shared/credentials/api';
+
+/** The bind endpoint's permission (`POST /agents/{id}/credentials`). */
+export const AGENTS_WRITE = 'agents:write';
 
 /** The slice of the signed-in user these rules read. `null` = not known yet
  * (still loading, or rendered outside an `AuthProvider`). */
@@ -32,4 +38,16 @@ export function credentialsBindableBy(
 ): Credential[] {
 	if (!viewer || viewerIsOrgAdmin(viewer)) return credentials;
 	return credentials.filter((c) => c.created_by === viewer.id);
+}
+
+/**
+ * Whether to offer a bind at all: the viewer holds `agents:write` (or is an
+ * `org:admin`). An unknown viewer (still loading / no `AuthProvider`) is
+ * offered it — a UX-only gate, the server stays the source of truth.
+ */
+export function useCanBindAgents(): boolean {
+	const viewer = useOptionalCurrentUser();
+	if (!viewer) return true;
+	const perms = viewer.permissions ?? [];
+	return perms.includes(AGENTS_WRITE) || perms.includes(ORG_ADMIN);
 }

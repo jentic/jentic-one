@@ -13,6 +13,8 @@ interface BackButtonProps {
 	 * Default: true.
 	 */
 	useHistory?: boolean;
+	/** Override the default `back-button` test id. */
+	testId?: string;
 }
 
 /**
@@ -22,7 +24,13 @@ interface BackButtonProps {
  * to wherever they came from. Falls back to the static `to` path when
  * opened via direct URL.
  */
-export function BackButton({ to, label, className, useHistory = true }: BackButtonProps) {
+export function BackButton({
+	to,
+	label,
+	className,
+	useHistory = true,
+	testId = 'back-button',
+}: BackButtonProps) {
 	const navigate = useNavigate();
 
 	const cls = cn(
@@ -42,7 +50,7 @@ export function BackButton({ to, label, className, useHistory = true }: BackButt
 					}
 				}}
 				className={cls}
-				data-testid="back-button"
+				data-testid={testId}
 			>
 				<ChevronLeft className="h-3.5 w-3.5" aria-hidden="true" />
 				{label}
@@ -51,7 +59,7 @@ export function BackButton({ to, label, className, useHistory = true }: BackButt
 	}
 
 	return (
-		<Link to={to} className={cls} data-testid="back-button">
+		<Link to={to} className={cls} data-testid={testId}>
 			<ChevronLeft className="h-3.5 w-3.5" aria-hidden="true" />
 			{label}
 		</Link>
