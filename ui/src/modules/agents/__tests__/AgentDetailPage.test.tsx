@@ -548,7 +548,7 @@ describe('AgentDetailPage', () => {
 		// machine (the stdio config encodes no base URL), or `jentic setup`.
 		// The instance URL resolves async from GET /instance, so wait for it.
 		expect(
-			await screen.findByText('jentic register --url "https://jentic.example.test"'),
+			await screen.findByText('jentic register --url https://jentic.example.test'),
 		).toBeInTheDocument();
 		expect(screen.getByText('agent machine')).toBeInTheDocument();
 		expect(screen.getByText('jentic setup')).toBeInTheDocument();
@@ -580,7 +580,7 @@ describe('AgentDetailPage', () => {
 		// The operator is looking at a working address of this instance, so the
 		// register command targets the browser's origin.
 		expect(
-			await screen.findByText(`jentic register --url "${window.location.origin}"`),
+			await screen.findByText(`jentic register --url ${window.location.origin}`),
 		).toBeInTheDocument();
 	});
 
@@ -746,7 +746,7 @@ describe('AgentDetailPage', () => {
 		// The identity read failing is not fatal: the operator is looking at a
 		// working address of this instance, so the browser origin stands in.
 		expect(
-			await screen.findByText(`jentic register --url "${window.location.origin}"`),
+			await screen.findByText(`jentic register --url ${window.location.origin}`),
 		).toBeInTheDocument();
 	});
 
@@ -773,7 +773,7 @@ describe('AgentDetailPage', () => {
 		// so the snippet must carry the flag.
 		expect(
 			await screen.findByText(
-				'jentic register --url "https://jentic.example.test" --broker-url <broker-url>',
+				'jentic register --url https://jentic.example.test --broker-url <broker-url>',
 			),
 		).toBeInTheDocument();
 		expect(screen.getByText(/fail-closes/)).toBeInTheDocument();
@@ -806,7 +806,7 @@ describe('AgentDetailPage', () => {
 		// operator" dead end.
 		expect(
 			await screen.findByText(
-				'jentic register --url "https://jentic.example.test" --broker-url "https://broker.jentic.example.test"',
+				'jentic register --url https://jentic.example.test --broker-url https://broker.jentic.example.test',
 			),
 		).toBeInTheDocument();
 		expect(screen.queryByText(/Ask your operator/)).not.toBeInTheDocument();

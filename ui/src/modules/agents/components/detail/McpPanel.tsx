@@ -42,6 +42,7 @@ import {
 	type McpSessionEntity,
 } from '@/modules/agents/api';
 import { MetaItem } from '@/modules/agents/components/detail/shared';
+import { registerCommand, shellArg } from '@/modules/agents/lib/registerCommand';
 
 /**
  * The streamable-HTTP variant renders only when the instance reports
@@ -56,11 +57,6 @@ export function showHttpVariant(mcpEnabled: boolean | undefined): boolean {
 interface McpPanelProps {
 	agentName: string;
 	agentId: string;
-}
-
-/** Quote a shell argument when it needs it (agent names may contain spaces). */
-function shellArg(value: string): string {
-	return /^[A-Za-z0-9._-]+$/.test(value) ? value : `"${value.replace(/"/g, '\\"')}"`;
 }
 
 /**
@@ -106,9 +102,10 @@ export function McpConfigCard({ agentName }: { agentName: string }) {
 	// suggested (and `jentic setup`-default) convention, so pre-fill it.
 	const context = shellArg(agentName);
 	const command = `jentic mcp --context ${context}`;
-	const registerCommand = `jentic register --url ${shellArg(instanceUrl)}${
-		isRemote ? ` --broker-url ${brokerUrl ? shellArg(brokerUrl) : '<broker-url>'}` : ''
-	}`;
+	const registerSnippet = registerCommand({
+		url: instanceUrl,
+		...(isRemote ? { brokerUrl } : {}),
+	});
 	const jsonConfig = JSON.stringify(
 		{ mcpServers: { jentic: { command: 'jentic', args: ['mcp', '--context', agentName] } } },
 		null,
@@ -136,7 +133,7 @@ export function McpConfigCard({ agentName }: { agentName: string }) {
 			<p className="text-muted-foreground text-sm">
 				Wire an MCP client to this instance as <strong>{agentName}</strong>. Prerequisites:{' '}
 				<code className="font-mono text-xs">jentic</code> CLI installed +{' '}
-				<code className="font-mono text-xs">{registerCommand}</code> on the{' '}
+				<code className="font-mono text-xs">{registerSnippet}</code> on the{' '}
 				<strong>agent machine</strong> — or{' '}
 				<code className="font-mono text-xs">jentic setup</code> for the guided path.
 				{isRemote && !brokerUrl && (

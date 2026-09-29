@@ -1,22 +1,16 @@
 /**
- * DcrQuickstart — first-run helper shown under the agents tab's empty state.
+ * DcrQuickstart — a self-registration card.
  *
  * Most agents should arrive via dynamic client registration (POST /register →
- * pending → approve), not manual creation, so the empty fleet teaches exactly
- * that. Raw POST /register requires an Ed25519 JWKS, which no one can type by
- * hand — the CLI generates the keypair and performs DCR, so the snippet points
- * at `jentic register` targeting THIS instance.
+ * pending → approve), not manual creation, so the card teaches exactly that
+ * with the same `jentic register` command the zero-agents landing offers.
  */
 import { Terminal } from 'lucide-react';
 import { Card, CardBody, CodeSnippet } from '@/shared/ui';
-
-/** The command the operator can paste — targets the current origin's API. */
-function snippet(): string {
-	return `jentic register --url "${window.location.origin}" --name my-first-agent`;
-}
+import { DEFAULT_REGISTER_NAME, registerCommand } from '@/modules/agents/lib/registerCommand';
 
 export function DcrQuickstart() {
-	const code = snippet();
+	const code = registerCommand({ url: window.location.origin, name: DEFAULT_REGISTER_NAME });
 	return (
 		<Card>
 			<CardBody className="space-y-3">

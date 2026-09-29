@@ -6,6 +6,8 @@
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { page, userEvent as browserUser } from 'vitest/browser';
+import { http, HttpResponse } from 'msw';
+import { worker } from '@/mocks/browser';
 import {
 	renderWithProviders,
 	screen,
@@ -115,6 +117,34 @@ describe('AgentMcpSheet — the dock MCP surface', () => {
 		// The session history stays — it is the read affordance.
 		expect(await sheet.findByText('MCP sessions')).toBeInTheDocument();
 		expect(await sheet.findByText(/No MCP sessions recorded/)).toBeInTheDocument();
+	});
+
+	it('quotes a hostile agent name and server-reported URL, so a paste runs nothing', async () => {
+		const hostile = "bot'; $(touch /tmp/x) `id` \\";
+		seedExtraAgents([{ id: 'agnt_hostile_1', name: hostile, status: 'active' }]);
+		worker.use(
+			http.get('/instance', () =>
+				HttpResponse.json({
+					backend: 'remote',
+					canonical_base_url: 'https://jentic.example.test/$(id)',
+					host: 'jentic.example.test',
+					instance_id: null,
+					broker_url: 'https://broker.example.test/`id`',
+				}),
+			),
+		);
+		const user = userEvent.setup();
+		renderPage('/?agent=agnt_hostile_1');
+		const sheet = await openSheet(user);
+
+		expect(
+			await sheet.findByText(`jentic mcp --context 'bot'\\''; $(touch /tmp/x) \`id\` \\'`),
+		).toBeInTheDocument();
+		expect(
+			await sheet.findByText(
+				"jentic register --url 'https://jentic.example.test/$(id)' --broker-url 'https://broker.example.test/`id`'",
+			),
+		).toBeInTheDocument();
 	});
 
 	// Real (CDP-driven) Escape — same pattern as the other dock-sheet specs.
