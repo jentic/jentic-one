@@ -1,6 +1,9 @@
 package localagent
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -111,7 +114,7 @@ func TestMcpSudoersRuleIsArgvPinned(t *testing.T) {
 func TestInstallSudoersRuleCmdSharesValidatedPlumbing(t *testing.T) {
 	rule := McpSudoersRule("alice", "_jentic-cursor", ServiceBinaryPath(), "cursor")
 	joined := strings.Join(InstallSudoersRuleCmd(rule).Args, " ")
-	for _, needle := range []string{"visudo -cf", "install -m 0440", "grep -qxF", "/etc/sudoers.d/jentic-agent"} {
+	for _, needle := range []string{"visudo -cf", "install -m 0440", "grep -qxF", "/etc/sudoers.d/jentic-agent", "awk "} {
 		if !strings.Contains(joined, needle) {
 			t.Errorf("install cmd missing %q: %s", needle, joined)
 		}
@@ -127,6 +130,60 @@ func TestInstallSudoersRuleCmdSharesValidatedPlumbing(t *testing.T) {
 	remove := strings.Join(RemoveSudoersCmd("_jentic-cursor").Args, " ")
 	if !strings.Contains(remove, "'(_jentic-cursor)'") {
 		t.Errorf("RemoveSudoersCmd must anchor on the service user's runas spec: %s", remove)
+	}
+}
+
+// TestMcpSudoersRuleScriptReplacesStaleLines runs the real drop-in edit
+// unprivileged (validator stubbed): an earlier MCP line for the same
+// operator → service-user pair — e.g. one pinning the operator's own binary
+// — is replaced, while every other line survives and a re-run is idempotent.
+func TestMcpSudoersRuleScriptReplacesStaleLines(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX sh script; the sudo shim is macOS/Linux only")
+	}
+	f := filepath.Join(t.TempDir(), "jentic-agent")
+	keep := []string{
+		"alice ALL=(alice-local-agent) NOPASSWD: /bin/bash",
+		"alice ALL=(_jentic-codex) NOPASSWD: /opt/homebrew/bin/jentic mcp --context codex",
+		"jimalice ALL=(_jentic-cursor) NOPASSWD: /opt/homebrew/bin/jentic mcp --context cursor",
+	}
+	stale := []string{
+		"alice ALL=(_jentic-cursor) NOPASSWD: /opt/homebrew/bin/jentic mcp --context cursor",
+		"alice ALL=(_jentic-cursor) NOPASSWD: /usr/local/libexec/jentic/jentic mcp --context old",
+	}
+	if err := os.WriteFile(f, []byte(strings.Join(append(append([]string{}, keep...), stale...), "\n")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rule := McpSudoersRule("alice", "_jentic-cursor", ServiceBinaryPath(), "cursor")
+	for range 2 {
+		if out, err := exec.Command("sh", "-c", mcpSudoersRuleScript(f, rule, "true")).CombinedOutput(); err != nil {
+			t.Fatalf("edit failed: %v\n%s", err, out)
+		}
+	}
+	data, err := os.ReadFile(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := strings.Join(append(append([]string{}, keep...), rule), "\n") + "\n"
+	if string(data) != want {
+		t.Fatalf("drop-in:\n got %q\nwant %q", data, want)
+	}
+
+	// A drop-in that fails validation is left alone and the step fails.
+	if out, err := exec.Command("sh", "-c", mcpSudoersRuleScript(f, rule+"x", "false")).CombinedOutput(); err == nil {
+		t.Fatalf("a failed validation must fail the step:\n%s", out)
+	}
+	if after, _ := os.ReadFile(f); string(after) != want {
+		t.Fatalf("a failed validation must leave the drop-in unchanged, got %q", after)
+	}
+
+	// No drop-in yet: created with just the rule.
+	fresh := filepath.Join(t.TempDir(), "jentic-agent")
+	if out, err := exec.Command("sh", "-c", mcpSudoersRuleScript(fresh, rule, "true")).CombinedOutput(); err != nil {
+		t.Fatalf("edit failed: %v\n%s", err, out)
+	}
+	if data, _ := os.ReadFile(fresh); string(data) != rule+"\n" {
+		t.Fatalf("fresh drop-in = %q", data)
 	}
 }
 

@@ -44,8 +44,8 @@ func TestSudoShimPrivilegedStepsOrder(t *testing.T) {
 		case strings.Contains(joined, "/etc/sudoers.d/"):
 			kinds = append(kinds, "sudoers")
 		case strings.Contains(joined, localagent.ServiceBinaryDir()):
-			if !strings.Contains(joined, "'"+src+"'") {
-				t.Errorf("binary step must copy from the running binary %q: %s", src, joined)
+			if s.Cmd.Stdin == nil || strings.Contains(joined, src) {
+				t.Errorf("binary step must stream the running binary %q on stdin, never name it root-side: %s", src, joined)
 			}
 			kinds = append(kinds, "binary")
 		case strings.Contains(joined, "sysadminctl") || strings.Contains(joined, "useradd") ||

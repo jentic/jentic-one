@@ -57,9 +57,18 @@ func TestInstallServiceBinaryCmdShape(t *testing.T) {
 	if cmd.Dir != "/" {
 		t.Errorf("install must run from /, got %q", cmd.Dir)
 	}
+	// The source is streamed from this process, never named on the root side.
+	if r, ok := cmd.Stdin.(*sourceReader); !ok || r.path != src {
+		t.Fatalf("install must read the source on stdin via sourceReader(%q), got %#v", src, cmd.Stdin)
+	}
 	script := cmd.Args[3]
+	if strings.Contains(script, src) {
+		t.Errorf("the root-side script must never name the operator's source path:\n%s", script)
+	}
 	for _, needle := range []string{
-		"src='" + src + "'",
+		`cat > "$t"`,
+		`[ -s "$t" ]`,
+		`trap 'exit 1' HUP INT TERM`,
 		"for p in '/' '/usr' '/usr/local' '/usr/local/libexec' '/usr/local/libexec/jentic'; do",
 		"-user 0 ! -perm -020 ! -perm -002",
 		`mktemp "$d/.jentic.XXXXXX"`,
@@ -114,11 +123,14 @@ func serviceBinTree(t *testing.T) (top, dir, src string) {
 }
 
 // runServiceBinInstall runs the real install script as the current user,
-// with that user standing in for root.
+// with that user standing in for root, feeding src through the same
+// sourceReader production uses.
 func runServiceBinInstall(t *testing.T, src, top, dir string) (string, error) {
 	t.Helper()
 	uid, gid := strconv.Itoa(os.Getuid()), strconv.Itoa(os.Getgid())
-	out, err := exec.Command("sh", "-c", serviceBinaryInstallScript(src, top, dir, uid+":"+gid, uid)).CombinedOutput()
+	cmd := exec.Command("sh", "-c", serviceBinaryInstallScript(top, dir, uid+":"+gid, uid))
+	cmd.Stdin = &sourceReader{path: src}
+	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
 
@@ -272,15 +284,51 @@ func TestServiceBinaryInstallScriptRefusesUnsafeTree(t *testing.T) {
 			t.Fatalf("install must refuse a directory at the destination:\n%s", out)
 		}
 	})
-	t.Run("missing source", func(t *testing.T) {
-		top, dir, _ := serviceBinTree(t)
-		if out, err := runServiceBinInstall(t, filepath.Join(top, "missing"), top, dir); err == nil {
-			t.Fatalf("install must fail on a missing source:\n%s", out)
-		}
-		if _, err := os.Lstat(dir); !os.IsNotExist(err) {
-			t.Errorf("a failed install must not create the managed dir (%v)", err)
-		}
-	})
+	for name, src := range map[string]func(t *testing.T, top string) string{
+		"missing source": func(_ *testing.T, top string) string { return filepath.Join(top, "missing") },
+		"empty source": func(t *testing.T, _ string) string {
+			p := filepath.Join(t.TempDir(), "empty")
+			if err := os.WriteFile(p, nil, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			return p
+		},
+		"directory source": func(t *testing.T, _ string) string { return t.TempDir() },
+	} {
+		t.Run(name, func(t *testing.T) {
+			top, dir, _ := serviceBinTree(t)
+			if out, err := runServiceBinInstall(t, src(t, top), top, dir); err == nil {
+				t.Fatalf("install must fail:\n%s", out)
+			}
+			if _, err := os.Lstat(filepath.Join(dir, "jentic")); !os.IsNotExist(err) {
+				t.Errorf("a failed install must not leave a copy (%v)", err)
+			}
+			if entries, _ := os.ReadDir(dir); len(entries) != 0 {
+				t.Errorf("a failed install must not leave temp files, found %v", entries)
+			}
+		})
+	}
+}
+
+// TestServiceBinaryInstallScriptOddSourcePath: a source path with spaces,
+// quotes and shell metacharacters installs verbatim — it never reaches a
+// shell.
+func TestServiceBinaryInstallScriptOddSourcePath(t *testing.T) {
+	top, dir, _ := serviceBinTree(t)
+	odd := filepath.Join(t.TempDir(), `it's a "$(dir)"; x`)
+	if err := os.MkdirAll(odd, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	src := filepath.Join(odd, "jentic")
+	if err := os.WriteFile(src, []byte("odd-binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := runServiceBinInstall(t, src, top, dir); err != nil {
+		t.Fatalf("install failed: %v\n%s", err, out)
+	}
+	if data, _ := os.ReadFile(filepath.Join(dir, "jentic")); string(data) != "odd-binary" {
+		t.Fatalf("installed copy content = %q", data)
+	}
 }
 
 func TestServiceBinaryRemoveScript(t *testing.T) {
@@ -334,8 +382,9 @@ func TestValidateServiceBinarySource(t *testing.T) {
 	if err := ValidateServiceBinarySource("/opt/homebrew/Cellar/jentic/1.0.0/bin/jentic"); err != nil {
 		t.Fatalf("valid source rejected: %v", err)
 	}
-	// Spaces are fine here: the source is only ever read, shell-quoted.
-	if err := ValidateServiceBinarySource("/Users/a b/.local/bin/jentic"); err != nil {
+	// Spaces and quotes are fine here: the source is only ever opened by this
+	// process, never handed to a shell.
+	if err := ValidateServiceBinarySource("/Users/a b/it's/.local/bin/jentic"); err != nil {
 		t.Fatalf("a quoted-only source with a space must be accepted: %v", err)
 	}
 	for _, bad := range []string{"", "jentic", "./jentic", "/bin/jentic\n/etc"} {

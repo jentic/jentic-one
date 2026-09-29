@@ -46,14 +46,60 @@ func ServiceBinaryPath() string { return serviceBinDir + "/" + serviceBinName }
 
 // InstallServiceBinaryCmd returns the root-side command that installs src (the
 // operator's running jentic binary) as the root-owned pinned copy. See
-// serviceBinaryInstallScript for the guarantees. Runs as root; src is
-// shell-quoted and only ever read. Callers validate src with
+// serviceBinaryInstallScript for the guarantees. src never reaches the root
+// side as a path: this process opens it with the operator's own permissions
+// and streams the content on the command's stdin (sudo reads any password
+// from the terminal, not stdin), so root never opens an operator-controlled
+// path — a file swapped for a link to a root-only file after validation can
+// only yield what the operator could already read. Callers validate src with
 // ValidateServiceBinarySource first.
 func InstallServiceBinaryCmd(src string) *exec.Cmd {
-	script := serviceBinaryInstallScript(src, "/", serviceBinDir, rootOwner, rootUID)
-	cmd := exec.Command("sudo", "sh", "-c", script) //nolint:gosec // src is an absolute, validated path, shell-quoted; the destination is a fixed root-owned path.
+	script := serviceBinaryInstallScript("/", serviceBinDir, rootOwner, rootUID)
+	cmd := exec.Command("sudo", "sh", "-c", script) //nolint:gosec // fixed script over fixed root-owned paths; the source content arrives on stdin.
 	cmd.Dir = "/"
+	cmd.Stdin = &sourceReader{path: src}
 	return cmd
+}
+
+// sourceReader opens path on the first Read (so building the privileged plan
+// never touches the file, and nothing is held open unless the step runs) and
+// closes it at EOF. A non-regular file is an error. exec copies it into the
+// child's stdin pipe; a failed open or read surfaces from Cmd.Run, and the
+// script refuses empty input, so a failure never installs a partial copy
+// silently.
+type sourceReader struct {
+	path string
+	f    *os.File
+	err  error
+}
+
+func (r *sourceReader) Read(p []byte) (int, error) {
+	if r.err != nil {
+		return 0, r.err
+	}
+	if r.f == nil {
+		f, err := os.Open(r.path)
+		if err != nil {
+			r.err = err
+			return 0, err
+		}
+		info, err := f.Stat()
+		if err == nil && !info.Mode().IsRegular() {
+			err = fmt.Errorf("%s: not a regular file", r.path)
+		}
+		if err != nil {
+			_ = f.Close()
+			r.err = err
+			return 0, err
+		}
+		r.f = f
+	}
+	n, err := r.f.Read(p)
+	if err != nil {
+		_ = r.f.Close()
+		r.err = err
+	}
+	return n, err
 }
 
 // RemoveServiceBinaryCmd returns the root-side command that removes the pinned
@@ -91,50 +137,55 @@ func pathChain(top, dir string) []string {
 	return chain
 }
 
-// serviceBinaryInstallScript is InstallServiceBinaryCmd's script. top, owner
-// and uid are parameters only so tests can run the real script unprivileged
-// against a temp tree; production always passes "/", rootOwner and rootUID.
-// In order:
+// serviceBinaryInstallScript is InstallServiceBinaryCmd's script; the new
+// binary's content arrives on stdin. top, owner and uid are parameters only so
+// tests can run the real script unprivileged against a temp tree; production
+// always passes "/", rootOwner and rootUID. In order:
 //
-//   - src must be a regular file;
 //   - every directory from top down to dir must be a real directory (not a
-//     symlink) owned by uid and not group- or world-writable. A missing one is
-//     created 0755 under owner — safe because its parent already passed the
-//     check, so no other uid can race the creation. Anything else fails the
-//     install before a byte is written;
+//     symlink — find(1) without -H/-L never follows its operand) owned by uid
+//     and not group- or world-writable. A missing one is created 0755 under
+//     owner — safe because its parent already passed the check, so no other
+//     uid can race the creation, and once checked no other uid can alter it
+//     before the write. Anything else fails the install before a byte is
+//     written;
+//   - stdin is written to a fresh mktemp file inside dir (exclusive create, so
+//     never an existing path); empty input is an error. The temp file is
+//     removed on any failure or signal;
 //   - an existing destination that is already a regular file owned by uid,
 //     not group/world-writable, with identical content is left alone (a
 //     re-run with an unchanged binary is a no-op);
-//   - otherwise src is copied into a fresh mktemp file inside dir (exclusive
-//     create, so never an existing path), chowned to owner, chmod 0755, and
-//     renamed onto the destination. A symlink at the destination is removed
-//     first (mv(1) resolves a link to a directory and would move into it),
-//     and a directory there is an error.
-func serviceBinaryInstallScript(src, top, dir, owner, uid string) string {
+//   - otherwise the temp file is chowned to owner, chmod 0755, and renamed
+//     onto the destination (atomic within dir). A symlink at the destination
+//     is removed first (mv(1) resolves a link to a directory and would move
+//     into it), and a directory there is an error.
+func serviceBinaryInstallScript(top, dir, owner, uid string) string {
 	var chain strings.Builder
 	for _, p := range pathChain(top, dir) {
 		chain.WriteString(" " + shellQuote(p))
 	}
 	return fixedPATHPrefix + `set -e; umask 022; ` +
-		`src=` + shellQuote(src) + `; d=` + shellQuote(dir) + `; dest=` + shellQuote(dir+"/"+serviceBinName) + `; ` +
+		`d=` + shellQuote(dir) + `; dest=` + shellQuote(dir+"/"+serviceBinName) + `; ` +
 		`owned() { [ -n "$(find "$1" -prune -type "$2" -user ` + uid + ` ! -perm -020 ! -perm -002 2>/dev/null)" ]; }; ` +
-		`[ -f "$src" ] || { echo "$src: not a regular file" >&2; exit 1; }; ` +
 		`for p in` + chain.String() + `; do ` +
 		`if [ ! -e "$p" ] && [ ! -L "$p" ]; then mkdir -m 0755 "$p"; chown ` + owner + ` "$p"; fi; ` +
-		`owned "$p" d || { echo "$p: must be a directory owned by root and not writable by group or others" >&2; exit 1; }; ` +
+		`owned "$p" d || { echo "$p: must be a real directory owned by root and not writable by group or others (see docs/security/same-host/mcp-same-host-hardening.md)" >&2; exit 1; }; ` +
 		`done; ` +
-		`if [ -L "$dest" ]; then rm -f "$dest"; ` +
-		`elif [ -d "$dest" ]; then echo "$dest: is a directory" >&2; exit 1; ` +
-		`elif owned "$dest" f && cmp -s "$src" "$dest"; then exit 0; fi; ` +
+		`if [ -d "$dest" ] && [ ! -L "$dest" ]; then echo "$dest: is a directory" >&2; exit 1; fi; ` +
 		`t="$(mktemp "$d/.` + serviceBinName + `.XXXXXX")"; ` +
-		`trap 'rm -f "$t"' EXIT; ` +
-		`cat < "$src" > "$t"; chown ` + owner + ` "$t"; chmod 0755 "$t"; mv -f "$t" "$dest"; trap - EXIT`
+		`trap 'rm -f "$t"' EXIT; trap 'exit 1' HUP INT TERM; ` +
+		`cat > "$t"; ` +
+		`[ -s "$t" ] || { echo "no jentic binary content received" >&2; exit 1; }; ` +
+		`if [ ! -L "$dest" ] && owned "$dest" f && cmp -s "$t" "$dest"; then exit 0; fi; ` +
+		`chown ` + owner + ` "$t"; chmod 0755 "$t"; ` +
+		`if [ -L "$dest" ]; then rm -f "$dest"; fi; ` +
+		`mv -f "$t" "$dest"; trap - EXIT`
 }
 
 // ValidateServiceBinarySource guards the source path handed to
 // InstallServiceBinaryCmd: absolute and free of control characters. It is
-// only ever read (shell-quoted), never placed on a sudoers line, so no
-// further charset constraint applies.
+// only ever opened by this process (never passed to a shell or placed on a
+// sudoers line), so no further charset constraint applies.
 func ValidateServiceBinarySource(src string) error {
 	if err := rejectControlChars("jentic binary path", src); err != nil {
 		return err
