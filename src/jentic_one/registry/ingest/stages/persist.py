@@ -5,9 +5,16 @@ from __future__ import annotations
 import uuid
 from typing import ClassVar
 
+from jentic_one.registry.ingest.exc import HostOwnedByOtherVendorIngestError
 from jentic_one.registry.ingest.pipeline.ctx import PipelineContext
 from jentic_one.registry.ingest.stages.base import BasePipelineStage
-from jentic_one.registry.repos import ApiRepository, ApiRevisionRepository, SpecFileRepository
+from jentic_one.registry.repos import (
+    ApiRepository,
+    ApiRevisionRepository,
+    SpecFileRepository,
+    UrlIndexRepository,
+)
+from jentic_one.registry.repos.url_index_repo import describe_live_host_owners
 
 
 class StoreSpecFileStage(BasePipelineStage):
@@ -56,4 +63,13 @@ class FinalizeStage(BasePipelineStage):
         )
 
         if ctx.specification.origin is not None:
+            # An origin-bearing import goes live right here, so it is held to the
+            # same one-vendor-per-host rule as promotion (RevisionService.promote).
+            owners = await UrlIndexRepository.find_live_hosts_of_other_vendors(
+                ctx.session,
+                revision_id=revision_id,
+                vendor=ctx.specification.api_identifier.vendor,
+            )
+            if owners:
+                raise HostOwnedByOtherVendorIngestError(describe_live_host_owners(owners))
             await ApiRepository.set_current_revision(ctx.session, api_id, revision_id)

@@ -11,6 +11,9 @@ from sqlalchemy import MetaData
 from jentic_one.migrations.registry.versions import (
     e6f7a8b9c0d1_normalize_url_index_path_templates as url_index_repair_migration,
 )
+from jentic_one.migrations.registry.versions import (
+    e8f9a0b1c2d3_rebuild_displaced_url_index_rows as url_index_rebuild_migration,
+)
 from jentic_one.migrations.targets import (
     DB_METADATA,
     DB_TARGETS,
@@ -209,3 +212,44 @@ def test_url_index_repair_migration_matches_live_normalization(template: str) ->
     assert mig._normalize_path_template(template) == canonical
     assert mig._build_path_regex_pattern(canonical) == live.build_path_regex(canonical).pattern
     assert mig._count_segments(canonical) == live.count_segments(canonical)
+
+
+_URL_INDEX_REBUILD_CANARY_SERVERS = [
+    "https://api.example.com",
+    "https://API.Example.com:443/v1/",
+    "http://api.example.com:80/base",
+    "https://api.example.com:8443/v2",
+    "https://{region}.example.com/v1",
+    "/relative/base",
+]
+
+
+@pytest.mark.parametrize("server_url", _URL_INDEX_REBUILD_CANARY_SERVERS)
+@pytest.mark.parametrize("template", _URL_INDEX_CANARY_TEMPLATES)
+def test_url_index_rebuild_migration_matches_live_index_entry(
+    server_url: str, template: str
+) -> None:
+    """The e8f9a0b1c2d3 data migration's frozen helpers must agree with the
+    live ``registry.core.url_index`` functions (same contract as the repair
+    migration canary above: on failure write a NEW data migration, never edit
+    the frozen copies).
+    """
+    mig = url_index_rebuild_migration
+    live = live_url_index
+
+    parsed = live.parse_server_url(server_url)
+    assert mig._parse_server_url(server_url) == (parsed.scheme, parsed.host, parsed.path)
+
+    merged = live.merge_paths(parsed.path, template)
+    assert mig._merge_paths(parsed.path, template) == merged
+
+    entry = live.build_index_entry(parsed.host, merged, parsed.scheme)
+    assert mig.build_entry(parsed.host, merged, parsed.scheme) == {
+        "host": entry.host_pattern,
+        "host_regex": entry.host_regex.pattern,
+        "path_template": entry.path_pattern,
+        "path_regex": entry.path_regex.pattern,
+        "param_names": entry.param_names,
+        "segment_count": entry.segment_count,
+    }
+    assert mig._structural_regex(entry.path_pattern) == live.structural_regex(entry.path_pattern)

@@ -63,6 +63,8 @@ async def _seed_operation(
         revision = ApiRevision(api_id=api.id, state="published", source_type="url")
         session.add(revision)
         await session.flush()
+        # Unpinned resolution only serves the API's live revision.
+        api.current_revision_id = revision.id
         rev_id = revision.id
         await session.commit()
 
@@ -130,6 +132,8 @@ async def test_resolve_operation_ignores_display_name(
         revision = ApiRevision(api_id=api.id, state="published", source_type="url")
         session.add(revision)
         await session.flush()
+        # Unpinned resolution only serves the API's live revision.
+        api.current_revision_id = revision.id
         rev_id = revision.id
         await session.commit()
 
@@ -192,6 +196,8 @@ async def test_resolve_operation_ambiguous_match_raises(
         revision = ApiRevision(api_id=api.id, state="published", source_type="url")
         session.add(revision)
         await session.flush()
+        # Unpinned resolution only serves the API's live revision.
+        api.current_revision_id = revision.id
         rev_id = revision.id
         await session.commit()
 

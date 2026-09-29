@@ -87,6 +87,11 @@ async def test_promote_draft_succeeds() -> None:
             return_value=revision,
         ),
         patch(
+            "jentic_one.registry.services.revision_service.UrlIndexRepository.find_live_hosts_of_other_vendors",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+        patch(
             "jentic_one.registry.services.revision_service.ApiRevisionRepository.set_state",
             new_callable=AsyncMock,
             return_value=1,
@@ -136,6 +141,11 @@ async def test_promote_archives_imported_revisions() -> None:
             "jentic_one.registry.services.revision_service.ApiRevisionRepository.get_for_api",
             new_callable=AsyncMock,
             return_value=revision,
+        ),
+        patch(
+            "jentic_one.registry.services.revision_service.UrlIndexRepository.find_live_hosts_of_other_vendors",
+            new_callable=AsyncMock,
+            return_value=[],
         ),
         patch(
             "jentic_one.registry.services.revision_service.ApiRevisionRepository.set_state",

@@ -11,9 +11,14 @@ from pydantic import BaseModel
 
 from jentic_one.registry.repos.api_repo import ApiRepository
 from jentic_one.registry.repos.revision_repo import ApiRevisionRepository
+from jentic_one.registry.repos.url_index_repo import (
+    UrlIndexRepository,
+    describe_live_host_owners,
+)
 from jentic_one.registry.services.api_service import ApiService, ApiView
 from jentic_one.registry.services.errors import (
     ApiNotFoundError,
+    HostOwnedByOtherVendorError,
     RevisionNotFoundError,
     RevisionStateConflictError,
 )
@@ -222,6 +227,15 @@ class RevisionService:
                     [ApiRevisionState.DRAFT],
                     "promote",
                 )
+
+            # One vendor per host: the revision's URL-index rows exist from import
+            # (every revision is indexed), but they only start serving once it is
+            # live — refuse to go live on a host another vendor's live API serves.
+            owners = await UrlIndexRepository.find_live_hosts_of_other_vendors(
+                session, revision_id=revision_uuid, vendor=api.vendor
+            )
+            if owners:
+                raise HostOwnedByOtherVendorError(revision_id, describe_live_host_owners(owners))
 
             now = datetime.now(UTC)
             if api.current_revision_id is not None:

@@ -19,16 +19,26 @@ if TYPE_CHECKING:
 
 
 class OperationURLIndex(AuditableMixin, RegistryBase):
-    """Pre-computed URL matching index for reverse-lookup of operations."""
+    """Pre-computed URL matching index for reverse-lookup of operations.
+
+    Every revision keeps its own rows: the natural key includes ``revision_id``,
+    so importing a draft can never displace another revision's entries. Which
+    rows *serve* is decided at lookup time — an unpinned lookup only considers
+    the rows of each API's live revision (``apis.current_revision_id``), while a
+    ``Jentic-Revision`` pin reads the pinned revision's rows directly. The key is
+    host-leading so the unpinned ``(host, method)`` lookup and the promote-time
+    host-ownership check are both index-backed.
+    """
 
     __tablename__ = "operation_url_indexes"
     __table_args__ = (
         UniqueConstraint(
-            "method",
             "host",
+            "method",
             "host_regex",
             "path_template",
-            name="uq_operation_url_index_lookup",
+            "revision_id",
+            name="uq_operation_url_index_revision_lookup",
             postgresql_nulls_not_distinct=True,
         ),
         Index(
