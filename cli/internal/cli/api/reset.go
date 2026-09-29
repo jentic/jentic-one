@@ -82,17 +82,18 @@ func (a *app) resetE(ctx context.Context, opts *resetOptions) error {
 
 // resetAll is the full clean slate: it tears down the shared agent account (Unix
 // user, ACLs, sudoers, home disposition), removes any MCP-isolation service
-// accounts (their sudoers lines and exported key material), and then wipes the
+// accounts (their sudoers lines, exported key material, and the root-owned
+// jentic copy they run), and then wipes the
 // operator's OWN jentic identity state — the XDG store and any legacy V1 tree.
 // Everything is previewed first, then a single "reset" confirmation authorises
 // the lot.
 func (a *app) resetAll(ctx context.Context, st *config.AgentState, opts *resetOptions, interactive bool, operator, operatorHome string) error {
 	acct, hasAcct := st.AgentAccount()
 	hasPlan := hasAcct && acct.User != ""
-	mcpPlans := surveyMcpServiceAccounts(ctx)
+	mcpPlan := surveyMcpIsolation(ctx)
 
 	var plan resetPlan
-	if hasPlan || len(mcpPlans) > 0 {
+	if hasPlan || mcpPlan.any() {
 		fmt.Fprintln(a.Out, theme.Dim.Render(
 			"Removing the agent account and ACLs is privileged (requires sudo) — you'll be "+
 				"prompted for your password when reset reaches those steps."))
@@ -101,8 +102,8 @@ func (a *app) resetAll(ctx context.Context, st *config.AgentState, opts *resetOp
 		plan = surveyReset(ctx, operator, operatorHome, acct)
 		a.printResetPlan(plan)
 	}
-	if len(mcpPlans) > 0 {
-		a.printMcpServicePlan(mcpPlans)
+	if mcpPlan.any() {
+		a.printMcpServicePlan(mcpPlan)
 	}
 
 	// Preview the operator's own identity-state wipe alongside the account plan.
@@ -113,7 +114,7 @@ func (a *app) resetAll(ctx context.Context, st *config.AgentState, opts *resetOp
 
 	// Nothing to do at all — no account, no MCP service accounts, and no
 	// identity state — is a friendly no-op.
-	if !hasPlan && len(mcpPlans) == 0 && !wipe.any() {
+	if !hasPlan && !mcpPlan.any() && !wipe.any() {
 		fmt.Fprintln(a.Out, theme.Dim.Render("Nothing to reset (no agent account, no jentic identity state)."))
 		return nil
 	}
@@ -152,11 +153,12 @@ func (a *app) resetAll(ctx context.Context, st *config.AgentState, opts *resetOp
 			return err
 		}
 	}
-	// MCP-isolation service accounts next: per-account fail-closed validation
-	// and best-effort continuation live in execMcpServiceReset (a skipped
-	// account resurfaces on the next run's survey).
-	if len(mcpPlans) > 0 {
-		a.execMcpServiceReset(mcpPlans)
+	// MCP-isolation service accounts next, then the root-owned jentic copy
+	// they ran: per-account fail-closed validation and best-effort
+	// continuation live in execMcpServiceReset (a skipped account — and the
+	// copy it still needs — resurfaces on the next run's survey).
+	if mcpPlan.any() {
+		a.execMcpServiceReset(mcpPlan)
 	}
 	if wipe.any() {
 		if err := a.execIdentityWipe(wipe); err != nil {

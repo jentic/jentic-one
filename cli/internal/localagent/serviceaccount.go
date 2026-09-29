@@ -176,6 +176,9 @@ func McpServiceTeardownCmds(serviceUser, homeDir string, accountExists bool) []A
 // name. Both land verbatim on a sudoers line, where a space, comma, colon,
 // backslash, or control character could open a second alias/command — so the
 // shape is constrained at the source, mirroring ValidateAccount's posture.
+// The binary path must additionally be the root-owned pinned copy
+// (ServiceBinaryPath): the rule lets the operator run that file as the
+// service uid, so it must never name a file the operator uid can replace.
 func ValidateMcpSudoersInputs(binPath, contextName string) error {
 	if err := rejectControlChars("jentic binary path", binPath); err != nil {
 		return err
@@ -185,6 +188,9 @@ func ValidateMcpSudoersInputs(binPath, contextName string) error {
 	}
 	if strings.ContainsAny(binPath, " \t,:=\\") {
 		return fmt.Errorf("jentic binary path %q contains characters unsafe in a sudoers rule", binPath)
+	}
+	if binPath != ServiceBinaryPath() {
+		return fmt.Errorf("jentic binary path %q must be the root-owned copy %s for the sudoers rule", binPath, ServiceBinaryPath())
 	}
 	if contextName == "" {
 		return errors.New("context name is empty")
@@ -203,7 +209,8 @@ func ValidateMcpSudoersInputs(binPath, contextName string) error {
 // `jentic mcp --context <name>` argv. sudo matches the full command line, so
 // the entry cannot be replayed with a different context or subcommand. There
 // is no root capability here — the runas spec names only the unprivileged
-// service account.
+// service account. binPath is the root-owned copy (ServiceBinaryPath);
+// ValidateMcpSudoersInputs enforces that before the rule is built.
 func McpSudoersRule(operator, serviceUser, binPath, contextName string) string {
 	return operator + " ALL=(" + serviceUser + ") NOPASSWD: " +
 		binPath + " mcp --context " + contextName

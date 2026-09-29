@@ -91,6 +91,14 @@ release automates it as an optional `jentic setup` isolation step.
    One source user → one target user → the exact `jentic mcp --context
    <name>` argv. `sudo` matches the full argv, so the entry cannot be
    replayed with a different context or subcommand.
+
+   The pinned binary must be a root-owned file (`root:wheel` / `root:root`,
+   `0755`) whose every parent directory is root-owned and not group- or
+   world-writable — never a path your desktop user can write, such as a
+   Homebrew prefix or `~/.local/bin`. The automated `jentic setup` isolation
+   step installs such a copy at `/usr/local/libexec/jentic/jentic` (refreshed
+   whenever a re-run finds your `jentic` has changed) and pins that path;
+   `jentic reset` removes it.
 5. **Point the MCP entry at the shim** (`-n` because GUI spawns cannot answer
    prompts):
 
