@@ -207,7 +207,11 @@ class Sigv4CreateRequest(BaseModel):
     aws_service: str = Field(description="Signing service, e.g. 'aoss', 'execute-api', 's3'.")
 
     _check_server_variables = field_validator("server_variables")(_validate_server_variables)
-    _check_control_chars = field_validator("access_key_id", "session_token")(_reject_control_chars)
+    # Region/service ride the ``Authorization`` credential scope, so they are
+    # header material too.
+    _check_control_chars = field_validator(
+        "access_key_id", "session_token", "aws_region", "aws_service"
+    )(_reject_control_chars)
 
 
 CredentialCreateRequest = Annotated[
@@ -313,7 +317,11 @@ class Sigv4UpdateRequest(BaseModel):
     aws_service: str | None = None
 
     _check_server_variables = field_validator("server_variables")(_validate_server_variables)
-    _check_control_chars = field_validator("access_key_id", "session_token")(_reject_control_chars)
+    # Region/service ride the ``Authorization`` credential scope, so they are
+    # header material too.
+    _check_control_chars = field_validator(
+        "access_key_id", "session_token", "aws_region", "aws_service"
+    )(_reject_control_chars)
 
 
 CredentialUpdateRequest = Annotated[

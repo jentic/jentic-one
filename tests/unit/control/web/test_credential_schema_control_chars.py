@@ -56,8 +56,8 @@ _CASES = [
         (BearerTokenUpdateRequest, ("token",)),
         (ApiKeyCreateRequest, ("key", "field_name")),
         (ApiKeyUpdateRequest, ("key", "field_name")),
-        (Sigv4CreateRequest, ("access_key_id", "session_token")),
-        (Sigv4UpdateRequest, ("access_key_id", "session_token")),
+        (Sigv4CreateRequest, ("access_key_id", "session_token", "aws_region", "aws_service")),
+        (Sigv4UpdateRequest, ("access_key_id", "session_token", "aws_region", "aws_service")),
     )
     for field in fields
 ]
