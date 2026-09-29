@@ -160,6 +160,24 @@ async def test_other_actor_cannot_cancel(integration_context: Context, seed: _Se
     assert cancelled.status == JobStatus.CANCELLED
 
 
+async def test_owner_can_cancel_their_agents_job(integration_context: Context, seed: _Seed) -> None:
+    ctx = integration_context
+    async with ctx.admin_db.session() as session:
+        queued = await JobRepository.create(
+            session, kind=JobKind.EXECUTION, status=JobStatus.QUEUED, created_by=seed.agent_id
+        )
+        await session.commit()
+
+    # A sibling identity under the same owner is still an outsider.
+    with pytest.raises(JobNotFoundError):
+        await JobService(ctx).cancel(
+            queued.id, identity=_agent(_OTHER_AGENT_SUB, parent=seed.owner_id)
+        )
+
+    cancelled = await JobService(ctx).cancel(queued.id, identity=_user(seed.owner_id))
+    assert cancelled.status == JobStatus.CANCELLED
+
+
 async def test_creator_owner_and_admin_visibility(
     integration_context: Context, seed: _Seed
 ) -> None:

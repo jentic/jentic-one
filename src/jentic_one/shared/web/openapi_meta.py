@@ -456,7 +456,10 @@ OPENAPI_TAGS: list[dict[str, str]] = [
             "type-specific result payloads (the imported revisions for `import`, upstream "
             "response body for `execution`) live under `/jobs/{job_id}/result`. Result "
             "availability follows the organisation-level retention policy (one-shot or TTL); "
-            "once that expires, both `/jobs/{job_id}` and `/jobs/{job_id}/result` `404`."
+            "once that expires, both `/jobs/{job_id}` and `/jobs/{job_id}/result` `404`. "
+            "A job is visible only to the actor that created it, the owner of the agent "
+            "that created it, and `org:admin`; to any other caller it is indistinguishable "
+            "from a missing job (`404`), including on `:cancel`."
         ),
     },
     {
