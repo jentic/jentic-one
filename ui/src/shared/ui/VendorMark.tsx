@@ -1,11 +1,11 @@
 /**
- * VendorMark — a brand mark for one of the few APIs the Agents landing uses in
- * its story (see `vendorMarks.ts` for the source, licence and trademark note).
+ * VendorMark — the brand mark of an API the Agents landing names (see
+ * `vendorMarks.ts` for the set, its source, licence and trademark note).
  *
- * The mark is drawn in the brand's own colour on a light tile: several brand
- * colours are near-black (GitHub, Notion), so on the app's dark surfaces the
- * tile is what keeps each mark legible and true to its brand. An unknown slug
- * falls back to a neutral initial tile, so a caller never renders nothing.
+ * The mark is drawn in the brand's own colour on a light tile: brand colours
+ * can be near-black (GitHub's is), so on the app's dark surfaces the tile is
+ * what keeps the mark legible and true to its brand. An unknown slug falls back
+ * to a neutral initial tile, so a caller never renders nothing.
  *
  * Decorative by default (the API's name sits beside it); pass `label` when the
  * mark stands alone.
@@ -13,31 +13,25 @@
 import { cn } from '@/shared/lib/utils';
 import { VENDOR_MARKS, isVendorMarkSlug } from '@/shared/ui/vendorMarks';
 
-export type VendorMarkSize = 'xs' | 'sm' | 'md' | 'lg';
+export type VendorMarkSize = 'sm' | 'md';
 
 const TILE: Record<VendorMarkSize, string> = {
-	xs: 'h-4 w-4 rounded-[4px]',
 	sm: 'h-5 w-5 rounded-md',
 	md: 'h-7 w-7 rounded-md',
-	lg: 'h-9 w-9 rounded-lg',
 };
 
 const GLYPH: Record<VendorMarkSize, string> = {
-	xs: 'h-2.5 w-2.5',
 	sm: 'h-3 w-3',
 	md: 'h-4 w-4',
-	lg: 'h-5 w-5',
 };
 
 const INITIAL_TEXT: Record<VendorMarkSize, string> = {
-	xs: 'text-[8px]',
 	sm: 'text-[9px]',
 	md: 'text-[11px]',
-	lg: 'text-xs',
 };
 
 export interface VendorMarkProps {
-	/** A `vendorMarks` slug (`github`, `gmail`, …); anything else renders an initial. */
+	/** A `vendorMarks` slug (`github`, …); anything else renders an initial. */
 	slug: string;
 	size?: VendorMarkSize;
 	/** Accessible name when the mark stands alone; omitted → decorative. */

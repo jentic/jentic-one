@@ -6,12 +6,12 @@ import { AgentMark } from '@/shared/ui/AgentMark';
 
 describe('VendorMark', () => {
 	it('renders a known slug as a decorative brand-coloured SVG', () => {
-		const { container } = render(<VendorMark slug="stripe" />);
-		const tile = container.querySelector('[data-vendor-mark="stripe"]');
+		const { container } = render(<VendorMark slug="github" />);
+		const tile = container.querySelector('[data-vendor-mark="github"]');
 		expect(tile).toHaveAttribute('aria-hidden', 'true');
 		const svg = tile?.querySelector('svg');
-		expect(svg).toHaveAttribute('fill', VENDOR_MARKS.stripe.hex);
-		expect(svg?.querySelector('path')).toHaveAttribute('d', VENDOR_MARKS.stripe.path);
+		expect(svg).toHaveAttribute('fill', VENDOR_MARKS.github.hex);
+		expect(svg?.querySelector('path')).toHaveAttribute('d', VENDOR_MARKS.github.path);
 	});
 
 	it('names the mark when it stands alone', () => {
@@ -26,28 +26,16 @@ describe('VendorMark', () => {
 		expect(tile?.querySelector('svg')).toBeNull();
 	});
 
-	it('ships exactly the curated demo set, each a single path with a hex colour', () => {
+	it('ships exactly GitHub and the AI agent marks, each a single path with a hex colour', () => {
 		expect(Object.keys(VENDOR_MARKS).sort()).toEqual(
-			[
-				'github',
-				'gmail',
-				'googledrive',
-				'linear',
-				'notion',
-				'slack',
-				'stripe',
-				'claude',
-				'openai',
-				'cursor',
-				'googlegemini',
-			].sort(),
+			['github', 'claude', 'openai', 'cursor', 'googlegemini'].sort(),
 		);
 		for (const mark of Object.values(VENDOR_MARKS)) {
 			expect(mark.hex).toMatch(/^#[0-9A-F]{6}$/);
 			// An absolute or relative moveto, as simple-icons ships it.
 			expect(mark.path).toMatch(/^[Mm]/);
 		}
-		expect(isVendorMarkSlug('slack')).toBe(true);
+		expect(isVendorMarkSlug('github')).toBe(true);
 		expect(isVendorMarkSlug('toString')).toBe(false);
 	});
 });
