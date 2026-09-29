@@ -42,12 +42,16 @@ class AgentCredentialBindingRepository:
     async def set_suspended(
         session: AsyncSession, *, agent_id: str, credential_id: str, suspended: bool
     ) -> bool:
-        """Flip the reversible cut-off flag; returns False when no binding exists."""
+        """Flip the reversible cut-off flag; returns False when no binding exists.
+
+        Clears ``suspended_reason`` either way: a manual suspension carries no
+        reason, and resuming lifts whatever suspension was in place.
+        """
         stmt = (
             update(AgentCredentialBinding)
             .where(AgentCredentialBinding.agent_id == agent_id)
             .where(AgentCredentialBinding.credential_id == credential_id)
-            .values(suspended=suspended)
+            .values(suspended=suspended, suspended_reason=None)
         )
         result = await session.execute(stmt)
         await session.flush()

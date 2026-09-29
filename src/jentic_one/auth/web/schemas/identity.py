@@ -37,6 +37,9 @@ class CredentialBindingEntry(BaseModel):
     # rules but is excluded from broker derivation, so the agent should not
     # expect to execute through it until an operator resumes it.
     suspended: bool = False
+    # Why the binding is suspended (null = manual; ``api_deleted`` = the API
+    # its credential serves was deleted).
+    suspended_reason: str | None = None
     # Shared permission rule set this binding points at (None = inline rules)
     # — tells the agent which policy object governs it (theme 5, Q-04).
     rule_set_id: str | None = None

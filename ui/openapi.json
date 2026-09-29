@@ -2540,6 +2540,17 @@
             "default": false,
             "title": "Suspended",
             "type": "boolean"
+          },
+          "suspended_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Suspended Reason"
           }
         },
         "required": [
@@ -2619,6 +2630,17 @@
           "suspended": {
             "title": "Suspended",
             "type": "boolean"
+          },
+          "suspended_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Suspended Reason"
           }
         },
         "required": [

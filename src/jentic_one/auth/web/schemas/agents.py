@@ -63,6 +63,10 @@ class CredentialBindingResponse(BaseModel):
     name: str | None = None
     bound_at: datetime
     suspended: bool
+    # Why the binding is suspended: null for a manual suspension (the default
+    # unbind), ``api_deleted`` when the API the credential serves was deleted.
+    # Cleared when the binding is resumed.
+    suspended_reason: str | None = None
     # Shared permission rule set the binding points at (None = inline rules).
     rule_set_id: str | None = None
     serves: list[ServedApiRef] = []

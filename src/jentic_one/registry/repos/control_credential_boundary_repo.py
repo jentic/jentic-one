@@ -19,6 +19,16 @@ from __future__ import annotations
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+# Every credential stored for an exact ``(vendor, name, version)`` identity,
+# active or not. Deliberately NOT filtered on ``active``: an already-inactive
+# credential can be re-activated later, and its agent bindings must not come
+# back with it when the API it served has been deleted.
+_CREDENTIAL_IDS_FOR_API = text(
+    "SELECT id FROM credentials "
+    "WHERE api_vendor = :api_vendor AND api_name = :api_name AND api_version = :api_version "
+    "ORDER BY id"
+)
+
 
 class ControlCredentialBoundaryRepository:
     """Deactivates control credentials stranded by a registry API delete.
@@ -27,6 +37,24 @@ class ControlCredentialBoundaryRepository:
     ``api_version`` are matched exactly when given; a ``None`` component matches
     any value, mirroring the broker resolver's identity matching.
     """
+
+    @staticmethod
+    async def credential_ids_for_api(
+        session: AsyncSession, *, api_vendor: str, api_name: str, api_version: str
+    ) -> list[str]:
+        """Ids of every credential stored for the exact API identity (any ``active``).
+
+        Wildcard-scoped credentials (a ``NULL`` name or version) are not
+        returned: they cover other APIs of the vendor as well, so deleting one
+        API does not retire them.
+        """
+        rows = (
+            await session.execute(
+                _CREDENTIAL_IDS_FOR_API,
+                {"api_vendor": api_vendor, "api_name": api_name, "api_version": api_version},
+            )
+        ).all()
+        return [row[0] for row in rows]
 
     @staticmethod
     async def deactivate_credentials_for_api(
