@@ -493,6 +493,81 @@ describe('ApiSetupQueue — finishing a batch one API at a time', () => {
 		expect(screen.getByText('1 API added')).toBeInTheDocument();
 	});
 
+	it('saves a credential for an umbrella catalog pick while its import is still running', async () => {
+		// The live GitHub pick: name is the whole `api_id`, which the backend
+		// rejects in `api.name` (`/` reads as a spec path). The import answers 202
+		// and the API only lands later, so the credential must not depend on it.
+		const SPEC_URL =
+			'https://raw.githubusercontent.com/jentic/jentic-public-apis/refs/heads/main/apis/openapi/github.com/api.github.com/1.1.4/openapi.json';
+		const imports: string[] = [];
+		const creates: { api?: Record<string, unknown> }[] = [];
+		worker.use(
+			http.get(SPEC_URL, () =>
+				HttpResponse.json({
+					openapi: '3.0.0',
+					info: { title: 'GitHub v3 REST API', version: '1.1.4' },
+					components: {
+						securitySchemes: { bearerAuth: { type: 'http', scheme: 'bearer' } },
+					},
+				}),
+			),
+			http.post('/catalog/*', ({ request }) => {
+				imports.push(new URL(request.url).pathname);
+				return HttpResponse.json(
+					{ job_id: 'job_gh', status: 'queued', _links: { self: '/jobs/job_gh' } },
+					{ status: 202 },
+				);
+			}),
+			http.post('/credentials', async ({ request }) => {
+				creates.push((await request.clone().json()) as { api?: Record<string, unknown> });
+				return undefined;
+			}),
+		);
+		const api: SelectedApi = {
+			source: 'catalog',
+			vendor: 'github.com',
+			name: 'github.com/api.github.com',
+			version: '1.0.0',
+			apiId: 'github.com/api.github.com',
+			specUrl: SPEC_URL,
+			registered: false,
+			label: 'GitHub',
+		};
+		const { calls } = watchBinds();
+		const user = userEvent.setup();
+		renderWithProviders(
+			<QueueHarness
+				items={[
+					{
+						key: 'github-com/github-com-api-github-com',
+						api,
+						outcome: 'form',
+						covering: [],
+						importsApi: true,
+					},
+				]}
+			/>,
+		);
+
+		await user.click(await screen.findByRole('button', { name: 'Add credential' }));
+		expect(await screen.findByText(/imports on save/)).toBeInTheDocument();
+		const token = (await screen.findByPlaceholderText('sk_live_…')) as HTMLInputElement;
+		await user.type(token, 'ghp_live_token');
+		await user.click(screen.getByRole('button', { name: 'Create credential' }));
+
+		await waitFor(() => expect(creates).toHaveLength(1));
+		expect(imports).toEqual(['/catalog/github.com/api.github.com:import']);
+		// The identity the import registers (slug), with the verbatim id as provenance.
+		expect(creates[0]!.api).toMatchObject({
+			vendor: 'github.com',
+			name: 'github-com-api-github-com',
+			catalog_api_id: 'github.com/api.github.com',
+		});
+		await waitFor(() => expect(calls).toHaveLength(1));
+		await waitFor(() => expect(rowFor('GitHub')).toHaveAttribute('data-status', 'added'));
+		expect(screen.queryByRole('alert')).toBeNull();
+	});
+
 	it('dismissing the stacked credential drawer keeps the queue and its batch', async () => {
 		const closed = vi.fn();
 		const user = userEvent.setup();
