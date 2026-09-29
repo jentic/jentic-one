@@ -106,6 +106,14 @@ interface CreateCredentialFlowProps {
 	 */
 	pinnedApi?: SelectedApi;
 	/**
+	 * Open on the form (step 2) for this API — a host that is already about one
+	 * API (its hub) shouldn't make the operator find it again. Unlike
+	 * `pinnedApi` it is only a starting point: Back and `Change` still reach the
+	 * picker. Each (re)open starts from it; a different API re-seeds the flow.
+	 * `pinnedApi` wins when both are set.
+	 */
+	initialApi?: SelectedApi;
+	/**
 	 * When provided, the flow opens directly into the vendor connect in
 	 * "approve" mode — landing here from the `approval_url` an agent handed its
 	 * owner. It fetches the session, skips the picker + agent selection, and
@@ -164,14 +172,18 @@ export function CreateCredentialFlow({
 	onCreated,
 	initialType,
 	pinnedApi,
+	initialApi,
 	surface = 'sheet',
 	approvalSession,
 	preselectedAgentId,
 	renderPostConnect,
 	back,
 }: CreateCredentialFlowProps) {
-	const [step, setStep] = useState<Step>(pinnedApi ? 'form' : 'pick');
-	const [selectedApi, setSelectedApi] = useState<SelectedApi | null>(pinnedApi ?? null);
+	// The API the flow starts on: fixed (`pinnedApi`) or just preselected
+	// (`initialApi`). Only `pinnedApi` hides the way back to the picker.
+	const seedApi = pinnedApi ?? initialApi;
+	const [step, setStep] = useState<Step>(seedApi ? 'form' : 'pick');
+	const [selectedApi, setSelectedApi] = useState<SelectedApi | null>(seedApi ?? null);
 	const [selectedVendor, setSelectedVendor] = useState<VendorSummary | null>(null);
 	const [manualMode, setManualMode] = useState(false);
 	/** Spec upload from the pick step — "the API isn't listed" is otherwise a dead end. */
@@ -180,7 +192,7 @@ export function CreateCredentialFlow({
 	/** When non-null, the spec drove the type (UI hides the manual toggle). */
 	const [activeScheme, setActiveScheme] = useState<SchemeOption | null>(null);
 	const [state, setState] = useState<CredentialFormState>(() =>
-		pinnedApi ? seedFormFromSelectedApi(EMPTY_FORM, pinnedApi, false) : EMPTY_FORM,
+		seedApi ? seedFormFromSelectedApi(EMPTY_FORM, seedApi, false) : EMPTY_FORM,
 	);
 	const [errors, setErrors] = useState<Partial<Record<keyof CredentialFormState, string>>>({});
 	const [serverVarErrors, setServerVarErrors] = useState<Record<string, string>>({});
@@ -324,15 +336,15 @@ export function CreateCredentialFlow({
 	};
 
 	const reset = (): void => {
-		// A pinned API is the caller's premise, not a user choice, so a reset returns
-		// to that API's empty form rather than to the picker.
-		setStep(pinnedApi ? 'form' : 'pick');
-		setSelectedApi(pinnedApi ?? null);
+		// A pinned or preselected API is the caller's premise, not a user choice, so
+		// a reset returns to that API's empty form rather than to the picker.
+		setStep(seedApi ? 'form' : 'pick');
+		setSelectedApi(seedApi ?? null);
 		setSelectedVendor(null);
 		setManualMode(false);
 		setUploadOpen(false);
 		setActiveScheme(null);
-		setState(pinnedApi ? seedFormFromSelectedApi(EMPTY_FORM, pinnedApi, false) : EMPTY_FORM);
+		setState(seedApi ? seedFormFromSelectedApi(EMPTY_FORM, seedApi, false) : EMPTY_FORM);
 		setErrors({});
 		setServerVarErrors({});
 		setOAuth2Flows([]);
@@ -353,6 +365,18 @@ export function CreateCredentialFlow({
 		if (!open) reset();
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [open]);
+
+	// Seed-from-props: a host that stays mounted while its API changes (one hub
+	// to another) re-seeds only when the preselected API itself changes — never
+	// on an `open` flip, which the effect above already covers.
+	const seedKey = seedApi ? `${seedApi.vendor}\u0000${seedApi.name}\u0000${seedApi.version}` : '';
+	const lastSeedKey = useRef(seedKey);
+	useEffect(() => {
+		if (lastSeedKey.current === seedKey) return;
+		lastSeedKey.current = seedKey;
+		reset();
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [seedKey]);
 
 	const handlePickApi = (api: SelectedApi): void => {
 		setSelectedApi(api);

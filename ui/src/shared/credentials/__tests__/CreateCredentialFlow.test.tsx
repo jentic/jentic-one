@@ -196,4 +196,71 @@ describe('CreateCredentialFlow', () => {
 			expect(screen.queryByTestId('credential-name-clash')).not.toBeInTheDocument();
 		});
 	});
+
+	describe('a preselected API (initialApi)', () => {
+		beforeEach(() => resetApisStore([ACME]));
+
+		it('opens on the form for that API, not the picker', async () => {
+			renderWithProviders(
+				<CreateCredentialFlow
+					open
+					onClose={vi.fn()}
+					onCreated={vi.fn()}
+					initialApi={PINNED_ACME}
+				/>,
+			);
+
+			// Step 2 straight away: the host already knows the API.
+			expect(
+				await screen.findByRole('dialog', { name: 'Add credential — Acme' }),
+			).toBeVisible();
+			expect(screen.getByText(/Step 2 of 2/)).toBeVisible();
+			expect(await screen.findByTestId('selected-api-summary')).toHaveTextContent(
+				'acme.io/main',
+			);
+			expect(screen.getByLabelText(/^Name/)).toHaveValue('Acme');
+			expect(screen.queryByPlaceholderText(/Search APIs/)).not.toBeInTheDocument();
+		});
+
+		it('still lets the operator change the API — Change returns to the picker', async () => {
+			const user = userEvent.setup();
+			renderWithProviders(
+				<CreateCredentialFlow
+					open
+					onClose={vi.fn()}
+					onCreated={vi.fn()}
+					initialApi={PINNED_ACME}
+				/>,
+			);
+			await screen.findByTestId('selected-api-summary');
+			// Unlike a pinned API, both ways back to step 1 are offered.
+			expect(screen.getByRole('button', { name: 'Back' })).toBeVisible();
+
+			await user.click(screen.getByRole('button', { name: 'Change' }));
+			expect(await screen.findByRole('dialog', { name: /^Add credential$/ })).toBeVisible();
+			expect(screen.getByText(/Step 1 of 2/)).toBeVisible();
+		});
+
+		it('starts from the preselected API again on each reopen', async () => {
+			const user = userEvent.setup();
+			const props = { onClose: vi.fn(), onCreated: vi.fn(), initialApi: PINNED_ACME };
+			const { rerender } = renderWithProviders(<CreateCredentialFlow open {...props} />);
+			await screen.findByTestId('selected-api-summary');
+			await user.click(screen.getByRole('button', { name: 'Change' }));
+			await screen.findByRole('dialog', { name: /^Add credential$/ });
+
+			rerender(<CreateCredentialFlow open={false} {...props} />);
+			rerender(<CreateCredentialFlow open {...props} />);
+			expect(
+				await screen.findByRole('dialog', { name: 'Add credential — Acme' }),
+			).toBeVisible();
+		});
+	});
+
+	it('starts on the picker when the host names no API', async () => {
+		renderWithProviders(<CreateCredentialFlow open onClose={vi.fn()} onCreated={vi.fn()} />);
+		await screen.findByRole('dialog', { name: /^Add credential$/ });
+		expect(screen.getByText(/Step 1 of 2/)).toBeVisible();
+		expect(screen.queryByTestId('selected-api-summary')).not.toBeInTheDocument();
+	});
 });

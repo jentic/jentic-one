@@ -30,12 +30,12 @@ import {
 import {
 	CREDENTIAL_TYPE_LABELS,
 	CREDENTIAL_TYPE_ORDER,
-	CredentialType,
+	type CredentialType,
 	useAllCredentials,
 	useDeleteCredential,
 	type Credential,
 } from '@/shared/credentials/api';
-import { useDeviceAwareConnect } from '@/shared/credentials/components/useDeviceAwareConnect';
+import { useConnectAfterCreate } from '@/shared/credentials/components/useConnectAfterCreate';
 import { CredentialsList } from '@/shared/credentials/components/CredentialsList';
 import {
 	CreateCredentialFlow,
@@ -110,8 +110,9 @@ export function CredentialInventorySheet({
 	// is the `'credential'` scope, which is agent-agnostic by construction.
 	const invalidateBindingSurfaces = useInvalidateCredentialBindingSurfaces(null);
 	// A successful sign-in invalidates the whole credentials slice, so the flat
-	// surface's tiles and strip hints refresh along with this sheet's list.
-	const { connect: runConnect, deviceDialog } = useDeviceAwareConnect();
+	// surface's tiles and strip hints refresh along with this sheet's list. A
+	// just-created credential whose sign-in is abandoned is discarded.
+	const { afterCreate, connectExisting, deviceDialog } = useConnectAfterCreate();
 
 	// Which credentials the fleet uses, by inverting every agent's binding list — the
 	// same reads the agents surface already made. Archived agents are outside the
@@ -223,111 +224,6 @@ export function CredentialInventorySheet({
 	const openEdit = (cred: Credential): void => {
 		setStickyEditId(cred.credential_id);
 		setEditId(cred.credential_id);
-	};
-
-	// Connect right after create: an abandoned OAuth handshake discards the
-	// credential, which was never usable. `redirected` must NOT clean up — the
-	// user is mid-flow.
-	const handleConnectAfterCreate = async (
-		credentialId: string,
-		credentialName: string,
-	): Promise<void> => {
-		toast({ title: 'Opening sign-in…' });
-		const discard = async (): Promise<void> => {
-			try {
-				await deleteMutation.mutateAsync(credentialId);
-			} catch {
-				// Best-effort cleanup; the row stays listed if the delete fails.
-			}
-		};
-		try {
-			const outcome = await runConnect(credentialId, credentialName);
-			switch (outcome.status) {
-				case 'connected':
-					// The connect hook invalidated the credentials slice, which
-					// refetches this sheet's list along with every other join.
-					toast({ title: 'Connected', variant: 'success' });
-					break;
-				case 'redirected':
-					break;
-				case 'cancelled':
-					await discard();
-					toast({
-						title: 'Sign-in cancelled',
-						description: 'The unconnected credential was discarded.',
-					});
-					break;
-				case 'timeout':
-					await discard();
-					toast({
-						title: 'Sign-in timed out',
-						description: 'The unconnected credential was discarded. Try again.',
-						variant: 'error',
-					});
-					break;
-				case 'unsupported_challenge':
-					await discard();
-					toast({
-						title: 'Unsupported sign-in challenge',
-						description: 'The unconnected credential was discarded.',
-						variant: 'error',
-					});
-					break;
-				case 'unsafe_challenge_url':
-					await discard();
-					toast({
-						title: 'Sign-in link refused',
-						description:
-							'The provider returned an unsafe sign-in URL. The unconnected credential was discarded.',
-						variant: 'error',
-					});
-					break;
-			}
-		} catch {
-			await discard();
-			toast({
-				title: 'Could not complete sign-in',
-				description: 'The unconnected credential was discarded.',
-				variant: 'error',
-			});
-		}
-	};
-
-	// Standalone connect keeps the row whatever the outcome.
-	const handleConnect = async (cred: Credential): Promise<void> => {
-		toast({ title: `Opening sign-in for ${cred.name}…` });
-		try {
-			const outcome = await runConnect(cred.credential_id, cred.name);
-			switch (outcome.status) {
-				case 'connected':
-					toast({ title: 'Connected', variant: 'success' });
-					break;
-				case 'redirected':
-					break;
-				case 'cancelled':
-					toast({ title: 'Connection cancelled' });
-					break;
-				case 'timeout':
-					toast({
-						title: 'Connection timed out',
-						description: 'Finish the sign-in and refresh to see the result.',
-						variant: 'error',
-					});
-					break;
-				case 'unsupported_challenge':
-					toast({ title: 'Unsupported sign-in challenge', variant: 'error' });
-					break;
-				case 'unsafe_challenge_url':
-					toast({
-						title: 'Sign-in link refused',
-						description: 'The provider returned an unsafe sign-in URL.',
-						variant: 'error',
-					});
-					break;
-			}
-		} catch {
-			toast({ title: 'Could not start the OAuth flow', variant: 'error' });
-		}
 	};
 
 	const confirmDelete = (): void => {
@@ -470,7 +366,9 @@ export function CredentialInventorySheet({
 								onAdd={(): void => setCreateOpen(true)}
 								onEdit={openEdit}
 								onDelete={setDeleteTarget}
-								onConnect={(cred): void => void handleConnect(cred)}
+								onConnect={(cred): void =>
+									void connectExisting(cred.credential_id, cred.name)
+								}
 								// A drawer is not a page: three columns inside it are
 								// what clip a credential's name mid-word.
 								columns={2}
@@ -516,13 +414,7 @@ export function CredentialInventorySheet({
 					)}
 					onCreated={(info: CreatedCredentialInfo): void => {
 						setCreateOpen(false);
-						if (
-							info.type === CredentialType.OAUTH2 &&
-							info.provider !== 'static' &&
-							info.needsConnect
-						) {
-							void handleConnectAfterCreate(info.credentialId, info.name);
-						}
+						afterCreate(info);
 					}}
 				/>
 			)}
