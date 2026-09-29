@@ -324,6 +324,25 @@ with its own `broker.jwt_secret` / trusted issuers, never the admin JWT
 secret. The config loader's production guard follows the same table: a
 standalone surface only fails its boot when a secret *it reads* is missing.
 
+The columns are the app surfaces each subchart's image runs (its baked
+`JENTIC__APPS`). A `<svc>.extraEnv.JENTIC__APPS` override changes that, and
+the chart follows it: the pod gets the union of what the listed surfaces
+read, and every secret if the list names a surface the chart does not know.
+So the published app image re-roled with `broker.extraEnv.JENTIC__APPS=broker`
+gets only the keyset.
+
+The secret env vars the chart sets on each pod:
+
+| Env var | Secret key |
+| ------- | ---------- |
+| `JENTIC_CONFIG_FILE` | `/etc/jentic/app-secrets/credentials-encryption.yaml` (the mounted `credentials-encryption.yaml` key) |
+| `JENTIC__ADMIN__AUTH__JWT_SECRET` | `admin-jwt-secret` |
+| `JENTIC__ADMIN__INVITE__PEPPER` | `admin-invite-pepper` |
+| `JENTIC__CREDENTIALS__CONNECT__STATE_SECRET` | `connect-state-secret` |
+
+In the `single` layout only `JENTIC_CONFIG_FILE` is set, pointing at
+`/etc/jentic/app-secrets/config.yaml`.
+
 The legacy layout (`global.appSecrets.layout: single`) mounts one
 `config.yaml` key holding everything on every surface — the only layout
 chart versions before this one supported, and still the default for an
@@ -370,9 +389,14 @@ The chart offers three sources, in order of preference:
    silently preferring one). In the split layout the registry mounts no
    file, so it may still use `configFile`.
 
-An operator-set `extraEnv` entry for one of the secret env vars
-(`JENTIC__ADMIN__AUTH__JWT_SECRET`, …) replaces the chart's `secretKeyRef`
-for it on that surface.
+**`extraEnv` wins over the chart's own env.** `<svc>.extraEnv` renders after
+every env var the chart sets, and Kubernetes resolves a duplicate name to the
+last entry, so an operator value always takes effect. For the secret env vars
+above (and `JENTIC_ENV`) the chart goes further and drops its own entry when
+`extraEnv` sets the same name, so the pod spec holds a single, unambiguous
+entry: `--set registry.extraEnv.JENTIC__ADMIN__AUTH__JWT_SECRET=…` replaces
+the `secretKeyRef` on that surface. An `extraEnv` value is a plain string in
+your values, though, so use it for secrets only in dev.
 
 ### Upgrading to the per-surface layout
 
@@ -381,10 +405,16 @@ for it on that surface.
   keys from it (same values — nothing rotates, stored credentials stay
   decryptable, sessions stay valid), then each pod rolls onto only its own
   keys. If that `config.yaml` was hand-edited to carry settings beyond the
-  four generated secrets, the upgrade stops with an error naming them — set
-  `global.appSecrets.layout: single` to keep the old mount, or move those
-  settings elsewhere first. Rolling back to an older chart keeps working:
-  the legacy `config.yaml` key is left in place and unchanged.
+  four generated secrets, the upgrade stops with an error naming them. Either
+  set `global.appSecrets.layout: single` to keep the old mount, or move those
+  settings to `extraEnv` and delete them from the Secret's `config.yaml`. The
+  check runs on every split render, so a release kept on `single` for that
+  reason cannot later fall back to `split` and silently lose them; keep
+  `layout: single` in the values you upgrade with (`--reuse-values` does).
+  Rolling back to an older chart keeps working: the legacy `config.yaml` key
+  stays in the Secret with the values the pods use. In `split` the chart
+  rewrites it from the per-concern keys on every upgrade; in `single` it is
+  left verbatim and the per-concern keys follow it.
 - **`existingSecret`** — nothing changes until you opt in. To switch, add the
   four per-concern keys to your Secret (copy the values out of its
   `config.yaml` — **the same values**, or stored credentials become
@@ -396,8 +426,9 @@ for it on that surface.
 
 For external-database passwords there is no per-variable `secretKeyRef`
 passthrough: `extraEnv` renders name/value scalars only (a nested
-`valueFrom` map renders as a stringified value), and on duplicate names the
-chart's own env wins. Keep passwords out of values files by carrying them as
+`valueFrom` map renders as a stringified value). A plain `extraEnv` value for
+`JENTIC__DATABASES__<DB>__PASSWORD` does override the chart's (extraEnv wins,
+see above), but it puts the password in your values. Keep passwords out of values files by carrying them as
 the `db-password-*` keys of the `existingSecret` above; anything fancier
 (ExternalSecrets per variable, CSI volumes) means patching the subchart
 templates. Host/port/name/schema are not secrets — plain values are fine
@@ -407,8 +438,9 @@ Encryption-key **rotation** is a config-level operation in every mode: add a
 new keyset entry and flip `active_id`. Stored secrets re-encrypt under the
 new key only when they are rewritten — there is no bulk re-encrypt and no
 completion check — so keep retired keys in the keyset (in the split layout
-the keyset lives in the `credentials-encryption.yaml` key; edit it there, and
-in `config.yaml` too if you may roll back)
+the keyset lives in the `credentials-encryption.yaml` key: edit it there,
+then run a `helm upgrade`, which copies it into the legacy `config.yaml` so a
+later rollback still decrypts what was written under the new key)
 ([upgrades.md](../operations/upgrades.md#what-an-upgrade-never-does)).
 
 ## Scaling and HA

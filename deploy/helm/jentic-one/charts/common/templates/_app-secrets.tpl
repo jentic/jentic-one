@@ -60,29 +60,49 @@ split
 {{- end -}}
 
 {{- /*
-common.app-secrets.concerns: space-separated secrets this surface reads, keyed
-by the subchart name. Verified against src/jentic_one (and mirrored by
-shared/config.py GUARDED_FIELD_SURFACES, which relaxes the production guard for
-secrets a standalone surface never reads):
+common.app-secrets.concerns: space-separated secrets this pod reads. Built
+from the app surfaces the pod runs, which is the image's baked JENTIC__APPS
+for its subchart (deploy/docker/*.Dockerfile) unless the operator overrides
+it with extraEnv.JENTIC__APPS (the AWS Marketplace broker runs the app image
+that way). Per surface, verified against src/jentic_one and mirrored by
+shared/config.py GUARDED_FIELD_SURFACES, which relaxes the production guard
+for secrets a process never reads:
 
-  app      (registry+admin+control+auth)  everything
-  admin    (admin+auth)   keyset (provider-config client secrets), JWT
-                          secret (issues + verifies), invite pepper
-  control                 keyset (credential writes), JWT secret (verifies),
-                          connect state secret (signs OAuth state)
-  registry                JWT secret (verifies)
-  broker                  keyset (decrypts / re-encrypts credentials); it
-                          verifies with broker.jwt_secret / trusted issuers,
-                          not the admin JWT secret
+  registry   JWT secret (verifies)
+  admin      keyset (provider-config client secrets), JWT secret (issues +
+             verifies), invite pepper
+  auth       JWT secret (issues session JWTs, derives its flow keys)
+  control    keyset (credential writes), JWT secret (verifies), connect
+             state secret (signs OAuth state)
+  broker     keyset (decrypts / re-encrypts credentials); it verifies with
+             broker.jwt_secret / trusted issuers, not the admin JWT secret
+
+A surface not in this table (or an empty apps list) gets every secret, the
+same fail-safe default the loader's guard uses.
 */ -}}
 {{- define "common.app-secrets.concerns" -}}
-{{- $map := dict
-  "app" "encryption jwt pepper state"
-  "admin" "encryption jwt pepper"
-  "control" "encryption jwt state"
-  "registry" "jwt"
-  "broker" "encryption" -}}
-{{- index $map .Chart.Name | default "encryption jwt pepper state" -}}
+{{- $all := list "encryption" "jwt" "pepper" "state" -}}
+{{- $bySurface := dict
+  "registry" (list "jwt")
+  "admin" (list "encryption" "jwt" "pepper")
+  "auth" (list "jwt")
+  "control" (list "encryption" "jwt" "state")
+  "broker" (list "encryption") -}}
+{{- $imageApps := dict
+  "app" "registry,admin,control,auth"
+  "admin" "admin,auth"
+  "control" "control"
+  "registry" "registry"
+  "broker" "broker" -}}
+{{- $apps := get (.Values.extraEnv | default dict) "JENTIC__APPS" | default (get $imageApps .Chart.Name) | toString -}}
+{{- $out := list -}}
+{{- range $raw := splitList "," $apps -}}
+{{- $surface := trim $raw -}}
+{{- if $surface -}}
+{{- $out = concat $out (get $bySurface $surface | default $all) -}}
+{{- end -}}
+{{- end -}}
+{{- $out | default $all | uniq | join " " -}}
 {{- end -}}
 
 {{- /* True when this pod mounts an app-secrets file as JENTIC_CONFIG_FILE. */ -}}

@@ -31,6 +31,7 @@ from jentic_one.shared.config import (
     RuntimeConfig,
     SigningKeyConfig,
     TelemetryConfig,
+    _apps_for_secret_guard,
     _csv_to_list,
     _deep_merge,
     _env_overrides,
@@ -387,6 +388,8 @@ _ALL_GUARDED = {
             {"JENTIC__ADMIN__AUTH__JWT_SECRET", "JENTIC__CREDENTIALS__CONNECT__STATE_SECRET"},
         ),
         ("admin,auth", {"JENTIC__ADMIN__AUTH__JWT_SECRET", "JENTIC__ADMIN__INVITE__PEPPER"}),
+        # Auth issues session JWTs and derives its flow keys from the JWT secret.
+        ("auth", {"JENTIC__ADMIN__AUTH__JWT_SECRET"}),
         ("registry,admin,control,auth", set(_ALL_GUARDED)),
         # An unaudited (e.g. extension) surface keeps the guard strict.
         ("broker,enterprise-thing", set(_ALL_GUARDED)),
@@ -426,6 +429,12 @@ def test_production_guard_requires_only_secrets_enabled_surfaces_read(
         else:
             assert secret.strip()
             assert secret != "a-real-generated-secret"
+
+
+@pytest.mark.parametrize("raw", [[], "registry", ["registry", 1], {"registry": True}])
+def test_production_guard_stays_strict_for_unreadable_apps(raw: object):
+    """An apps value the guard cannot read as surface names keeps it strict."""
+    assert _apps_for_secret_guard(raw) is None
 
 
 def test_production_guard_default_apps_require_every_secret(config_file: Path):
