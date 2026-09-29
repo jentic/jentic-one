@@ -43,3 +43,19 @@ test('first-run checklist links navigate to their surfaces', async ({ page }) =>
 	await expect(page).toHaveURL(/\/app\/discover\b/);
 	await expect(page.getByRole('heading', { name: 'Discover APIs', exact: true })).toBeVisible();
 });
+
+test('the tour overlay links into the real surfaces', async ({ page }) => {
+	await page.goto('/app');
+	await page.getByRole('button', { name: /^Show the tour/ }).click();
+	const tour = page.getByRole('dialog', { name: 'The Jentic One tour' });
+	await tour.getByRole('tab', { name: 'Set it up' }).click();
+	await tour
+		.getByRole('list', { name: 'Setup steps' })
+		.getByRole('button', { name: /Choose its APIs/ })
+		.click();
+
+	// The step's CTA routes into the module surface (real router, real guard).
+	await tour.getByTestId('setup-cta').getByRole('link', { name: 'Browse the catalog' }).click();
+	await expect(page).toHaveURL(/\/app\/discover\b/);
+	await expect(page.getByRole('heading', { name: 'Discover APIs', exact: true })).toBeVisible();
+});
