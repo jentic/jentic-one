@@ -3,13 +3,15 @@
  *
  * The header carries what the agent-scoped dock cannot: the org-wide credential
  * inventory (a sheet reached through `?credentials`, `=new` for the wizard, and
- * `?approve=&poll_token=` for an agent's connect approval link), the
- * fleet filter and `New agent`. It owns the keyboard map documented in `PageHelp`;
- * everything else is `FlatAgentsSection`, which keeps its selection in `?agent=`.
+ * `?approve=&poll_token=` for an agent's connect approval link), the fleet
+ * filter, `New agent` and `Show the tour` (the product tour, in a full-screen
+ * overlay whose CTAs reach the real sheets below). It owns the keyboard map
+ * documented in `PageHelp`; everything else is `FlatAgentsSection`, which keeps
+ * its selection in `?agent=`.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router';
-import { Filter, Plus, Wallet } from 'lucide-react';
+import { Filter, Plus, Presentation, Wallet } from 'lucide-react';
 import {
 	Button,
 	FOOTER_ACTION_BAR_PAGE_PADDING,
@@ -18,11 +20,16 @@ import {
 	PageHeader,
 	PageHelp,
 	SearchInput,
+	Tooltip,
 	type KeyboardShortcut,
 } from '@/shared/ui';
-import { useHotkey } from '@/shared/hooks';
+import { useHotkey, useMediaQuery } from '@/shared/hooks';
+import { useAgents } from '@/modules/agents/api';
 import { FlatAgentsSection } from '@/modules/agents/components/flat/FlatAgentsSection';
 import { CredentialInventorySheet } from '@/modules/agents/components/flat/CredentialInventorySheet';
+
+/** The tour needs the desktop layout: Tailwind's `md` (the app's mobile cut-off). */
+const TOUR_MIN_WIDTH_QUERY = '(min-width: 768px)';
 
 /** The surface's whole keyboard map, listed on demand in `PageHelp`. */
 const SHORTCUTS: KeyboardShortcut[] = [
@@ -40,9 +47,19 @@ export default function AgentsPage() {
 	// The fleet filter and "New agent" are PAGE-level controls; the filter text
 	// lives here and the strip consumes it.
 	const [agentFilter, setAgentFilter] = useState('');
+	const [tourOpen, setTourOpen] = useState(false);
+	const wideEnoughForTour = useMediaQuery(TOUR_MIN_WIDTH_QUERY);
+	useEffect(() => {
+		if (!wideEnoughForTour) setTourOpen(false);
+	}, [wideEnoughForTour]);
 	const filterRef = useRef<HTMLInputElement | null>(null);
 	useHotkey('/', () => filterRef.current?.focus());
 	useHotkey('n', () => setAgentCreateOpen(true));
+	// A fresh org (no agents at all) gets the labelled tour button. The same
+	// cache entry the section below drains, so this adds no request.
+	const agentsQuery = useAgents({ status: 'all' });
+	const noAgents =
+		agentsQuery.data != null && agentsQuery.data.pages.every((p) => p.entities.length === 0);
 
 	const [searchParams, setSearchParams] = useSearchParams();
 	const inventoryParam = searchParams.get('credentials');
@@ -127,6 +144,35 @@ export default function AgentsPage() {
 							<Wallet className="h-4 w-4" />
 							Credentials
 						</Button>
+						{/* Desktop only (the tour is a wide, full-screen walkthrough). A fresh
+						    org gets the labelled button; once there is a fleet it steps back
+						    to an icon, styled like the help button beside it. */}
+						<Tooltip
+							content={noAgents ? 'See how Jentic One works' : 'Show the tour'}
+							interactiveChild
+							className="hidden md:inline-flex"
+						>
+							<Button
+								variant="ghost"
+								size={noAgents ? 'sm' : 'icon'}
+								onClick={() => setTourOpen(true)}
+								aria-label={
+									noAgents
+										? 'Show the tour: see how Jentic One works'
+										: 'Show the tour'
+								}
+								aria-haspopup="dialog"
+								className={
+									noAgents
+										? undefined
+										: 'text-muted-foreground hover:text-foreground'
+								}
+								data-testid="tour-trigger"
+							>
+								<Presentation className="h-4 w-4" aria-hidden="true" />
+								{noAgents && 'Show the tour'}
+							</Button>
+						</Tooltip>
 						<PageHelp
 							title="About Agents"
 							// The inventory sheet binds its own help while it's open.
@@ -172,6 +218,9 @@ export default function AgentsPage() {
 				createOpen={agentCreateOpen}
 				setCreateOpen={setAgentCreateOpen}
 				filter={agentFilter}
+				// Never on a small screen: a window narrowed past `md` closes it (above).
+				tourOpen={tourOpen}
+				onTourClose={() => setTourOpen(false)}
 			/>
 
 			{/* The org-wide credential inventory — a page-level surface, since it is

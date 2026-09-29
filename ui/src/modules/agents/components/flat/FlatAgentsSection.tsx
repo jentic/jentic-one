@@ -3,6 +3,9 @@
  * selected agent's APIs band and its tile grid. Selection lives in `?agent=<id>`
  * so it is linkable. Tiles are composed client-side from reads the app already
  * makes — no new endpoints.
+ *
+ * It also hosts the product tour overlay (opened from the page header): the
+ * tour's CTAs close it and then open the real sheets owned here.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router';
@@ -45,6 +48,7 @@ import {
 } from '@/modules/agents/lib/apiTiles';
 import { viewerIsOrgAdmin } from '@/modules/agents/lib/bindAuthority';
 import { useOptionalCurrentUser } from '@/shared/auth';
+import { ROUTE_PATHS } from '@/shared/app';
 import { AgentStrip } from '@/modules/agents/components/flat/AgentStrip';
 import { AgentStatStrip } from '@/modules/agents/components/flat/AgentStatStrip';
 import { ApiTile } from '@/modules/agents/components/flat/ApiTile';
@@ -57,6 +61,8 @@ import {
 import { AgentCreateSheet } from '@/modules/agents/components/AgentCreateSheet';
 import { DcrQuickstart } from '@/modules/agents/components/DcrQuickstart';
 import { FirstRunChecklist } from '@/modules/agents/components/flat/FirstRunChecklist';
+import { AgentsTour } from '@/modules/agents/components/landing/AgentsTour';
+import type { LandingActions } from '@/modules/agents/components/landing/actions';
 import { AddApisTray } from '@/modules/agents/components/flat/AddApisTray';
 import { ApiSetupQueue } from '@/modules/agents/components/flat/ApiSetupQueue';
 import { stillOwedItems, type PreflightItem } from '@/modules/agents/lib/apiPreflight';
@@ -84,9 +90,18 @@ interface FlatAgentsSectionProps {
 	setCreateOpen: (open: boolean) => void;
 	/** The page header's fleet filter — applied by the strip. */
 	filter: string;
+	/** The header's "Show the tour" overlay. */
+	tourOpen: boolean;
+	onTourClose: () => void;
 }
 
-export function FlatAgentsSection({ createOpen, setCreateOpen, filter }: FlatAgentsSectionProps) {
+export function FlatAgentsSection({
+	createOpen,
+	setCreateOpen,
+	filter,
+	tourOpen,
+	onTourClose,
+}: FlatAgentsSectionProps) {
 	const query = useAgents({ status: 'all' });
 
 	// The strip is the fleet, with no "Load more", so drain the cursor eagerly.
@@ -211,14 +226,31 @@ export function FlatAgentsSection({ createOpen, setCreateOpen, filter }: FlatAge
 		return map;
 	}, [agentIds, bindingsByAgent, apisSource.complete, apisSource.items]);
 
-	// Rendered by every branch below: the header's "New agent" flips `createOpen`
-	// from outside, and a loading roster would otherwise swallow the click.
-	const createSheet = (
-		<AgentCreateSheet
-			open={createOpen}
-			onClose={() => setCreateOpen(false)}
-			onCreated={handleAgentCreated}
-		/>
+	// The tour's CTAs open the real surfaces (the tour closes itself first). The
+	// dock sheets and the Add-APIs tray belong to an agent, so with none they are
+	// `null` and the CTA says why.
+	const tourActions: LandingActions = {
+		onCreateAgent: () => setCreateOpen(true),
+		onAddApis: selected ? () => setAddApisFor(selected.id) : null,
+		onOpenSurface: selected ? (surface) => setDockSurface(surface) : null,
+		agentName: selected?.name ?? null,
+		activityHref: ROUTE_PATHS.monitorExecutions(
+			selected ? { actorId: selected.id, actorType: 'agent' } : undefined,
+		),
+	};
+
+	// Rendered by every branch below: the header's "New agent" and "Show the
+	// tour" flip state from outside, and a loading roster would otherwise
+	// swallow the click.
+	const overlays = (
+		<>
+			<AgentCreateSheet
+				open={createOpen}
+				onClose={() => setCreateOpen(false)}
+				onCreated={handleAgentCreated}
+			/>
+			<AgentsTour open={tourOpen} onClose={onTourClose} actions={tourActions} />
+		</>
 	);
 
 	// A failed FIRST page is a dead surface; a failed LATER page keeps the loaded
@@ -227,7 +259,7 @@ export function FlatAgentsSection({ createOpen, setCreateOpen, filter }: FlatAge
 		return (
 			<>
 				<ErrorAlert message={query.error as Error} />
-				{createSheet}
+				{overlays}
 			</>
 		);
 	}
@@ -245,7 +277,7 @@ export function FlatAgentsSection({ createOpen, setCreateOpen, filter }: FlatAge
 						))}
 					</div>
 				</div>
-				{createSheet}
+				{overlays}
 			</>
 		);
 	}
@@ -259,7 +291,7 @@ export function FlatAgentsSection({ createOpen, setCreateOpen, filter }: FlatAge
 					<FirstRunChecklist onCreateAgent={() => setCreateOpen(true)} />
 					<DcrQuickstart />
 				</div>
-				{createSheet}
+				{overlays}
 			</>
 		);
 	}
@@ -364,7 +396,7 @@ export function FlatAgentsSection({ createOpen, setCreateOpen, filter }: FlatAge
 				disableBody="Disabling immediately revokes this agent's ability to authenticate. You can re-enable it later."
 				mutations={{ deny, disable, archive }}
 			/>
-			{createSheet}
+			{overlays}
 		</>
 	);
 }
