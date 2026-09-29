@@ -76,8 +76,11 @@ func TestCreateServiceAccountCmds(t *testing.T) {
 	if !strings.Contains(joined, "chmod 700 "+home) {
 		t.Errorf("state dir must be pinned 0700:\n%s", joined)
 	}
-	if !strings.Contains(joined, "chown -R "+user+": "+home) {
-		t.Errorf("state dir must be owned by the service uid:\n%s", joined)
+	if !strings.Contains(joined, "find "+home+" "+strings.Join(chownWalkFilter, " ")+" -exec chown -h "+user+": {} +") {
+		t.Errorf("state dir must be owned by the service uid via the no-dereference walk:\n%s", joined)
+	}
+	if strings.Contains(joined, "chown -R") {
+		t.Errorf("state dir chown must not be a dereferencing chown -R:\n%s", joined)
 	}
 	// The whole point of the profile: the DESKTOP USER gets nothing. The
 	// login-capable recipe grants the operator an inherited ACL into the home

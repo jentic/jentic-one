@@ -94,7 +94,9 @@ func CreateServiceAccountCmds(serviceUser, homeDir string) []AccountStep {
 		},
 		AccountStep{
 			What: "own the state dir to the service account",
-			Cmd:  exec.Command("sudo", "chown", "-R", serviceUser+":", homeDir), //nolint:gosec // validated inputs.
+			// Same no-dereference, hard-link-skipping walk as the agent-home
+			// chowns: on a re-run the dir already holds service-owned content.
+			Cmd: recursiveChownCmd(serviceUser+":", homeDir, false),
 		},
 		AccountStep{
 			What: "pin the state dir to 0700",

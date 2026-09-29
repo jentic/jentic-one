@@ -18,6 +18,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 
@@ -65,6 +66,11 @@ func (a *Cmd) exportContextMaterial(ctx context.Context, user, homeDir string) e
 
 	for _, rel := range mat.relDirs {
 		d := filepath.Join(homeDir, rel)
+		// The home is agent-writable: never let MkdirAll (or the writes
+		// below) resolve through a symlink the agent placed on the way.
+		if err := refuseSymlinkedPath(homeDir, d); err != nil {
+			return err
+		}
 		if err := os.MkdirAll(d, 0o700); err != nil {
 			return fmt.Errorf("create agent config dir %s: %w", d, err)
 		}
@@ -134,13 +140,54 @@ func (m *exportMaterial) relFiles() []string {
 
 // renderInto writes the material under root (an agent home or a staging
 // dir), assuming root's relDirs already exist.
+//
+// Every destination's parent chain under root is checked for symlinks first
+// (refuseSymlinkedPath): root may be an agent-writable home, where a linked
+// .config or .local/state would steer the operator's writes out of it.
 func (m *exportMaterial) renderInto(root string) error {
-	if err := writeFile0600(filepath.Join(root, ".config", "jentic", "config.yaml"), m.configYAML); err != nil {
+	cfg := filepath.Join(root, ".config", "jentic", "config.yaml")
+	if err := refuseSymlinkedPath(root, filepath.Dir(cfg)); err != nil {
+		return err
+	}
+	if err := writeFile0600(cfg, m.configYAML); err != nil {
 		return err
 	}
 	for _, c := range m.copies {
-		if err := copyCredFile(c[0], filepath.Join(root, c[1])); err != nil {
+		dst := filepath.Join(root, c[1])
+		if err := refuseSymlinkedPath(root, filepath.Dir(dst)); err != nil {
 			return err
+		}
+		if err := copyCredFile(c[0], dst); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// refuseSymlinkedPath errors if any existing component of p strictly below
+// root is a symlink, or if p is not under root. Components that do not exist
+// yet end the check (they will be created as real directories). root itself
+// is trusted — it is the Go-resolved, validated account home.
+func refuseSymlinkedPath(root, p string) error {
+	rel, err := filepath.Rel(root, p)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("refusing to export to %s: not under %s", p, root)
+	}
+	if rel == "." {
+		return nil
+	}
+	cur := root
+	for _, part := range strings.Split(rel, string(filepath.Separator)) {
+		cur = filepath.Join(cur, part)
+		info, err := os.Lstat(cur)
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("refusing to export through %s: it is a symlink", cur)
 		}
 	}
 	return nil
@@ -308,19 +355,34 @@ func pinDirMode0700(d string) error {
 // pinDirMode0700, the pin skips an already-0600 file: a previous export
 // chowned it to the agent uid, so the operator can still write it through the
 // inherited ACL but can no longer chmod it — and doesn't need to.
+//
+// The target lives in an agent-writable home, so the open never follows a
+// symlink (exportOpenFlags) and the file is only truncated after it is known
+// to be a regular file with a single link: a hard link the agent made to some
+// other file of the operator's would otherwise have that file overwritten.
 func writeFile0600(path string, data []byte) error {
-	out, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600) //nolint:gosec // path is a constructed agent-home XDG path, not user input.
+	out, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|exportOpenFlags, 0o600) //nolint:gosec // path is a constructed agent-home XDG path, not user input.
 	if err != nil {
-		return err
+		return fmt.Errorf("open %s for export: %w", path, err)
 	}
-	if info, err := out.Stat(); err != nil {
+	info, err := out.Stat()
+	if err != nil {
 		_ = out.Close()
 		return err
-	} else if info.Mode().Perm() != 0o600 {
+	}
+	if !info.Mode().IsRegular() || multiplyLinked(info) {
+		_ = out.Close()
+		return fmt.Errorf("refusing to export into %s: not a plain file", path)
+	}
+	if info.Mode().Perm() != 0o600 {
 		if err := out.Chmod(0o600); err != nil {
 			_ = out.Close()
 			return err
 		}
+	}
+	if err := out.Truncate(0); err != nil {
+		_ = out.Close()
+		return err
 	}
 	if _, err := out.Write(data); err != nil {
 		_ = out.Close()
