@@ -8,11 +8,16 @@ from pathlib import Path
 
 import httpx
 import pytest
+import structlog
 import yaml
+from fastapi import FastAPI
 from opentelemetry import context as otel_context
 from opentelemetry import trace
+from opentelemetry.exporter.otlp.proto.common.trace_encoder import encode_spans
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
-from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor, SpanExportResult
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import (
     NonRecordingSpan,
@@ -29,10 +34,12 @@ from jentic_one.shared.tracing import (
     ScrubbingSpanExporter,
     configure_tracing,
     current_trace_id,
+    instrument_inbound_app,
     instrument_outbound_client,
     jentic_tracestate,
     pack_jentic_tracestate,
     reset_tracing,
+    scrub_span,
     scrubbing_exporter,
 )
 
@@ -515,3 +522,221 @@ def test_scrubbing_exporter_wrap_is_idempotent():
     assert isinstance(wrapped, ScrubbingSpanExporter)
     assert scrubbing_exporter(wrapped) is wrapped
     assert wrapped.delegate is inner
+
+
+# --------------------------------------------------------------------------- #
+# Traceback frames, OTLP encoding, inbound URLs, exporter contract
+# --------------------------------------------------------------------------- #
+
+
+def _stacktrace_of(provider: TracerProvider, exporter: InMemorySpanExporter) -> str:
+    (span,) = _exported(provider, exporter)
+    return str(_exception_events(span)[-1]["exception.stacktrace"])
+
+
+def _real_frame_file() -> str:
+    return str(Path(asyncio.__file__).with_name("base_events.py"))
+
+
+@pytest.mark.parametrize(
+    "forged_frame",
+    [
+        pytest.param(f'  File "/srv/{_HEADER_SECRET}.py", line 1, in handler', id="unknown-path"),
+        pytest.param(
+            f'  File "{_real_frame_file()}", line 1, in {_HEADER_SECRET}', id="unknown-func"
+        ),
+        pytest.param(f'  File "{_real_frame_file()}", line 9999999, in run_forever', id="bad-line"),
+    ],
+)
+def test_frame_shaped_message_lines_are_not_exported(forged_frame):
+    """An exception message whose lines merely look like traceback frames is
+    dropped with the rest of the message; the real frames survive."""
+    provider, exporter = _exporting_provider()
+    tracer = provider.get_tracer("test")
+    with (
+        pytest.raises(ValueError, match="rejected"),
+        tracer.start_as_current_span("ingest.stage parse"),
+    ):
+        raise ValueError(f"rejected\n{forged_frame}")
+
+    stacktrace = _stacktrace_of(provider, exporter)
+    assert forged_frame not in stacktrace
+    assert _HEADER_SECRET not in stacktrace
+    assert "9999999" not in stacktrace
+    assert f"in {test_frame_shaped_message_lines_are_not_exported.__name__}" in stacktrace
+
+
+def test_scrubbed_span_encodes_with_otlp_keeping_structure(monkeypatch):
+    """The rebuilt span serialises through the real OTLP protobuf encoder with
+    context, parent, kind, resource, scope, links, times and dropped counts
+    intact — and no exception text in the encoded bytes."""
+    monkeypatch.setenv("OTEL_SPAN_ATTRIBUTE_COUNT_LIMIT", "2")
+    monkeypatch.setenv("OTEL_SPAN_EVENT_COUNT_LIMIT", "2")
+    monkeypatch.setenv("OTEL_SPAN_LINK_COUNT_LIMIT", "1")
+    provider, exporter = _exporting_provider()
+    tracer = provider.get_tracer("test.scope", "1.2.3")
+    link_ctx = SpanContext(
+        trace_id=0x1234, span_id=0x5678, is_remote=True, trace_flags=TraceFlags(1)
+    )
+    with tracer.start_as_current_span("broker.execute") as parent:
+        parent_ctx = parent.get_span_context()
+        with (
+            pytest.raises(RuntimeError),
+            tracer.start_as_current_span(
+                "broker.upstream_request",
+                kind=trace.SpanKind.CLIENT,
+                attributes={"a": 1, "b": 2, "url.full": _SECRET_URL},
+                links=[
+                    trace.Link(link_ctx, {"link.kind": "dropped"}),
+                    trace.Link(link_ctx, {"link.kind": "kept"}),
+                ],
+            ) as span,
+        ):
+            span.add_event("first")
+            span.add_event("second")
+            raise RuntimeError(f"upstream said {_HEADER_SECRET}")
+
+    child = next(s for s in _exported(provider, exporter) if s.name == "broker.upstream_request")
+    request = encode_spans([child])
+    assert _HEADER_SECRET.encode() not in request.SerializeToString()
+    (resource_spans,) = request.resource_spans
+    assert {kv.key: kv.value.string_value for kv in resource_spans.resource.attributes}[
+        "service.name"
+    ] == "test-service"
+    (scope_spans,) = resource_spans.scope_spans
+    assert (scope_spans.scope.name, scope_spans.scope.version) == ("test.scope", "1.2.3")
+    (pb,) = scope_spans.spans
+    assert pb.trace_id == parent_ctx.trace_id.to_bytes(16, "big")
+    assert pb.span_id == child.context.span_id.to_bytes(8, "big")
+    assert pb.parent_span_id == parent_ctx.span_id.to_bytes(8, "big")
+    assert pb.kind == pb.SpanKind.SPAN_KIND_CLIENT
+    assert 0 < pb.start_time_unix_nano <= pb.end_time_unix_nano
+    assert (pb.dropped_attributes_count, pb.dropped_events_count, pb.dropped_links_count) == (
+        1,
+        1,
+        1,
+    )
+    assert [e.name for e in pb.events] == ["second", "exception"]
+    (link,) = pb.links
+    assert link.span_id == (0x5678).to_bytes(8, "big")
+    assert [(kv.key, kv.value.string_value) for kv in link.attributes] == [("link.kind", "kept")]
+    assert pb.status.code == pb.status.STATUS_CODE_ERROR
+    assert pb.status.message == "RuntimeError"
+
+
+@pytest.mark.asyncio
+async def test_inbound_server_span_masks_query_values():
+    """An inbound callback's query values (OAuth ``code``/``state``) are masked
+    on the exported server span; parameter names, path and route survive."""
+    provider, exporter = _exporting_provider()
+    app = FastAPI()
+
+    @app.get("/oauth/callback")
+    async def _callback() -> dict[str, str]:
+        return {}
+
+    instrument_inbound_app(app)
+    try:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://svc"
+        ) as client:
+            response = await client.get(
+                f"/oauth/callback?code={_QUERY_SECRET}&state={_HEADER_SECRET}"
+            )
+        assert response.status_code == 200
+    finally:
+        FastAPIInstrumentor.uninstrument_app(app)
+
+    spans = _exported(provider, exporter)
+    _assert_no_request_data(spans)
+    server = next(s for s in spans if s.kind is trace.SpanKind.SERVER)
+    attrs = server.attributes or {}
+    assert attrs["http.url"] == "http://svc/oauth/callback?code=***REDACTED***&state=***REDACTED***"
+    assert attrs["http.target"] == "/oauth/callback"
+    assert attrs["http.route"] == "/oauth/callback"
+
+
+def _finished_span(attributes: dict[str, str]) -> ReadableSpan:
+    return ReadableSpan(
+        name="GET /device",
+        context=SpanContext(trace_id=1, span_id=2, is_remote=False),
+        resource=Resource.create({}),
+        attributes=attributes,
+        kind=trace.SpanKind.SERVER,
+        start_time=1,
+        end_time=2,
+    )
+
+
+def test_scrub_masks_stable_semconv_url_and_query_attributes():
+    """The stable-semconv inbound attributes (``url.query``/``url.full``) and a
+    target carrying a query are masked too; unrelated attributes are untouched."""
+    span = scrub_span(
+        _finished_span(
+            {
+                "url.query": f"user_code={_QUERY_SECRET}&{_HEADER_SECRET}",
+                "url.full": f"https://svc/device?user_code={_QUERY_SECRET}",
+                "http.target": f"/device?user_code={_QUERY_SECRET}",
+                "url.path": "/device",
+                "http.request.header.x_jentic_api_key": _HEADER_SECRET,
+                "http.request.header.content_type": "application/json",
+            }
+        )
+    )
+    assert dict(span.attributes or {}) == {
+        "url.query": "user_code=***REDACTED***&***REDACTED***",
+        "url.full": "https://svc/device?user_code=***REDACTED***",
+        "http.target": "/device?user_code=***REDACTED***",
+        "url.path": "/device",
+        "http.request.header.content_type": "application/json",
+    }
+
+
+def test_scrub_failure_drops_only_that_span_and_logs(monkeypatch):
+    """A span the scrub cannot process is never exported unscrubbed; the rest
+    of the batch still goes out and the drop is logged."""
+    provider, exporter = _exporting_provider()
+    real_scrub = scrub_span
+
+    def _flaky_scrub(span: ReadableSpan) -> ReadableSpan:
+        if span.name == "bad":
+            raise TypeError("unexpected attribute shape")
+        return real_scrub(span)
+
+    monkeypatch.setattr("jentic_one.shared.tracing.scrub_span", _flaky_scrub)
+    tracer = provider.get_tracer("test")
+    for name in ("good", "bad", "also-good"):
+        with tracer.start_as_current_span(name):
+            pass
+
+    with structlog.testing.capture_logs() as logs:
+        spans = _exported(provider, exporter)
+    assert [s.name for s in spans] == ["good", "also-good"]
+    assert {
+        "event": "span_scrub_failed_span_dropped",
+        "span_name": "bad",
+        "error_type": "TypeError",
+        "log_level": "warning",
+    } in logs
+
+
+def test_scrubbing_exporter_forwards_result_flush_and_shutdown():
+    calls: list[str] = []
+
+    class _Recorder(InMemorySpanExporter):
+        def export(self, spans):
+            calls.append(f"export:{len(spans)}")
+            return SpanExportResult.FAILURE
+
+        def force_flush(self, timeout_millis: int = 30000) -> bool:
+            calls.append(f"flush:{timeout_millis}")
+            return False
+
+        def shutdown(self) -> None:
+            calls.append("shutdown")
+
+    wrapped = scrubbing_exporter(_Recorder())
+    assert wrapped.export([_finished_span({})]) is SpanExportResult.FAILURE
+    assert wrapped.force_flush(123) is False
+    wrapped.shutdown()
+    assert calls == ["export:1", "flush:123", "shutdown"]

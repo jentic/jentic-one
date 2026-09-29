@@ -130,22 +130,32 @@ def redact_url_query(url: str) -> str:
     try:
         parts = urlsplit(url)
         netloc = parts.netloc.rsplit("@", 1)[-1]
-        if parts.query:
-            # A bare ``?<token>`` pair (no ``=``) may itself be the secret, so it
-            # is masked whole.
-            masked = "&".join(
-                (f"{pair.split('=', 1)[0]}={REDACTED}" if "=" in pair else REDACTED)
-                if pair
-                else pair
-                for pair in parts.query.split("&")
-            )
-        else:
-            masked = parts.query
         return urlunsplit(
-            SplitResult(parts.scheme, netloc, parts.path, masked, parts.fragment and REDACTED)
+            SplitResult(
+                parts.scheme,
+                netloc,
+                parts.path,
+                redact_query_string(parts.query),
+                parts.fragment and REDACTED,
+            )
         )
     except ValueError:
         return REDACTED
+
+
+def redact_query_string(query: str) -> str:
+    """Mask every value in a bare query string (``a=1&b`` -> ``a=***&***``).
+
+    The names are kept; a bare pair without ``=`` may itself be the secret, so
+    it is masked whole. Shared by :func:`redact_url_query` and callers that hold
+    only the query component (e.g. a span's ``url.query`` attribute).
+    """
+    if not query:
+        return query
+    return "&".join(
+        (f"{pair.split('=', 1)[0]}={REDACTED}" if "=" in pair else REDACTED) if pair else pair
+        for pair in query.split("&")
+    )
 
 
 def redact_mapping(data: Mapping[str, Any]) -> dict[str, Any]:

@@ -12,8 +12,8 @@ It owns four concerns:
 
 1. ``configure_tracing`` — the global ``TracerProvider`` (OTLP gRPC or no-op).
    Every exporter it wires is wrapped in :class:`ScrubbingSpanExporter`, which
-   removes free-text exception detail (and, on outbound client spans, unsafe
-   header/URL attributes) from every span before it leaves the process.
+   removes free-text exception detail, query-string values and non-safe-listed
+   captured headers from every span before it leaves the process.
 2. ``instrument_outbound_client`` — W3C ``traceparent``/``tracestate`` propagation
    *into* the upstream over the shared ``httpx`` client, with span-attribute
    redaction (no bodies; headers via a safe-list only).
@@ -24,6 +24,8 @@ It owns four concerns:
 
 from __future__ import annotations
 
+import functools
+import linecache
 import os
 import re
 from collections.abc import Iterator, Mapping, Sequence
@@ -31,6 +33,7 @@ from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
 import httpx
+import structlog
 from opentelemetry import context as otel_context
 from opentelemetry import trace
 from opentelemetry.attributes import BoundedAttributes
@@ -41,10 +44,10 @@ from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import Event, ReadableSpan, TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanExporter, SpanExportResult
 from opentelemetry.sdk.util import BoundedList
-from opentelemetry.trace import SpanKind, Status, StatusCode
+from opentelemetry.trace import Status
 
 from jentic_one.shared.config import TracingConfig
-from jentic_one.shared.redaction import redact_url_query
+from jentic_one.shared.redaction import redact_query_string, redact_url_query
 
 if TYPE_CHECKING:
     from opentelemetry.instrumentation.httpx import RequestInfo, ResponseInfo
@@ -181,18 +184,61 @@ _TRACEBACK_FIXED_LINES: frozenset[str] = frozenset(
         "During handling of the above exception, another exception occurred:",
     }
 )
-_TRACEBACK_FRAME_LINE = re.compile(r'^  File "[^"\r\n]*", line \d+, in [\w<>.]+$')
+_TRACEBACK_FRAME_LINE = re.compile(
+    r'^  File "(?P<path>[^"\r\n]+\.py)", line (?P<lineno>[1-9]\d{0,6}), '
+    r"in (?P<func>[A-Za-z_<][\w<>.]*)$"
+)
+# Code-object names CPython gives code that has no ``def``/``class`` statement.
+_SYNTHETIC_FRAME_NAMES: frozenset[str] = frozenset(
+    {"<module>", "<lambda>", "<genexpr>", "<listcomp>", "<dictcomp>", "<setcomp>"}
+)
 
-_CLIENT_HEADER_PREFIXES: tuple[str, ...] = ("http.request.header.", "http.response.header.")
+# Attributes whose value is a URL / query string: recorded by the outbound
+# httpx instrumentor (``http.url``/``url.full``) and by the inbound ASGI one
+# (``http.url`` with the *decoded* query string, ``http.target``,
+# ``url.query``). Query values are masked on every span; names, host and path
+# are kept (``http.route`` holds the route template and is left alone).
+_QUERY_STRING_ATTRIBUTES: frozenset[str] = frozenset({"url.query"})
+_URL_BEARING_ATTRIBUTES: frozenset[str] = frozenset({*_URL_SPAN_ATTRIBUTES, "http.target"})
+
+_HEADER_PREFIXES: tuple[str, ...] = ("http.request.header.", "http.response.header.")
+
+_logger = structlog.get_logger(__name__)
+
+
+@functools.lru_cache(maxsize=4096)
+def _is_source_frame(path: str, lineno: int, func: str) -> bool:
+    """Whether ``File "<path>", line <lineno>, in <func>`` names real source.
+
+    A frame line is only trusted if it points at an existing ``.py`` file, the
+    line is inside it, and the function name is defined there. Anything else is
+    text that merely has the frame shape — e.g. a multi-line exception message
+    — and could carry arbitrary data in the path or the name.
+    """
+    if not os.path.isfile(path):
+        return False
+    lines = linecache.getlines(path)
+    if lineno > len(lines):
+        return False
+    name = func.rsplit(".", 1)[-1]
+    if name.startswith("<"):
+        return name in _SYNTHETIC_FRAME_NAMES
+    if not name.isidentifier():
+        return False
+    pattern = re.compile(rf"\b(?:def|class)\s+{re.escape(name)}\b")
+    return any(pattern.search(line) for line in lines)
 
 
 def _frames_only(stacktrace: str) -> str:
-    """Reduce a formatted traceback to its frame locations (no message text)."""
-    kept = [
-        line
-        for line in stacktrace.splitlines()
-        if line in _TRACEBACK_FIXED_LINES or _TRACEBACK_FRAME_LINE.match(line)
-    ]
+    """Reduce a formatted traceback to verified frame locations (no message text)."""
+    kept: list[str] = []
+    for line in stacktrace.splitlines():
+        if line in _TRACEBACK_FIXED_LINES:
+            kept.append(line)
+            continue
+        match = _TRACEBACK_FRAME_LINE.match(line)
+        if match and _is_source_frame(match["path"], int(match["lineno"]), match["func"]):
+            kept.append(line)
     return "\n".join(kept)
 
 
@@ -216,38 +262,58 @@ def _scrub_exception_attributes(
     return out
 
 
-def _safe_client_attribute(key: str, value: AttributeValue) -> AttributeValue | None:
-    """Filter one outbound-client span attribute; ``None`` means drop it.
+def _scrub_attribute(key: str, value: AttributeValue) -> AttributeValue | None:
+    """Filter one span attribute; ``None`` means drop it.
 
-    Backstops the request/response hooks for spans they never saw (a client
-    instrumented outside :func:`instrument_outbound_client`) and for header
-    capture switched on via ``OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_CLIENT_*``,
-    which the instrumentor records under ``http.{request,response}.header.<name>``
-    with only its own (operator-configured) sanitize list applied.
+    Masks query-string values in URL-bearing attributes (outbound *and* inbound
+    spans — an inbound OAuth callback or device-verification URL carries
+    ``code``/``state`` in its query) and limits captured headers to
+    ``_SAFE_SPAN_HEADERS``. Backstops the outbound request/response hooks for
+    spans they never saw and for header capture switched on via
+    ``OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_{CLIENT,SERVER}_*``, which the
+    instrumentors record under ``http.{request,response}.header.<name>`` with
+    only their own (operator-configured) sanitize list applied.
     """
-    if key in _URL_SPAN_ATTRIBUTES and isinstance(value, str):
-        return redact_url_query(value)
-    for prefix in _CLIENT_HEADER_PREFIXES:
+    if key in _URL_BEARING_ATTRIBUTES:
+        return redact_url_query(value) if isinstance(value, str) else None
+    if key in _QUERY_STRING_ATTRIBUTES:
+        return redact_query_string(value) if isinstance(value, str) else None
+    for prefix in _HEADER_PREFIXES:
         if key.startswith(prefix):
             header = key[len(prefix) :].replace("_", "-").lower()
             return value if header in _SAFE_SPAN_HEADERS else None
     return value
 
 
-def _bounded(attributes: dict[str, AttributeValue], dropped: int) -> BoundedAttributes:
+def _needs_attribute_scrub(key: str) -> bool:
+    return (
+        key in _URL_BEARING_ATTRIBUTES
+        or key in _QUERY_STRING_ATTRIBUTES
+        or key.startswith(_HEADER_PREFIXES)
+    )
+
+
+def _bounded(attributes: Mapping[str, AttributeValue], dropped: int) -> BoundedAttributes:
     """Immutable attribute mapping that keeps the original dropped-count."""
     bounded = BoundedAttributes(maxlen=None, attributes=attributes, immutable=True)
     bounded.dropped = dropped
     return bounded
 
 
-def _scrub_events(span: ReadableSpan) -> tuple[Sequence[Event], str | None]:
+def _bounded_list[T](items: Sequence[T], dropped: int) -> BoundedList[T]:
+    """Sequence that keeps the original dropped-count (read by exporters)."""
+    bounded: BoundedList[T] = BoundedList.from_seq(None, items)
+    bounded.dropped = dropped
+    return bounded
+
+
+def _scrub_events(span: ReadableSpan) -> tuple[list[Event], str | None]:
     """Rebuild the span's events with exception detail removed.
 
-    Returns the new event sequence and the type of the last exception event
-    (used to rebuild the status description).
+    Returns the new events and the type of the last exception event (used to
+    rebuild the status description).
     """
-    events: BoundedList[Event] = BoundedList(maxlen=None)
+    events: list[Event] = []
     last_type: str | None = None
     for event in span.events:
         if event.name != _EXCEPTION_EVENT:
@@ -264,12 +330,11 @@ def _scrub_events(span: ReadableSpan) -> tuple[Sequence[Event], str | None]:
                 timestamp=event.timestamp,
             )
         )
-    events.dropped = span.dropped_events
     return events, last_type
 
 
 def scrub_span(span: ReadableSpan) -> ReadableSpan:
-    """Return ``span`` with free-text error detail and unsafe client attributes removed.
+    """Return ``span`` with free-text error detail and request data removed.
 
     Applied to **every** span, not only outbound client spans: the SDK re-records
     a propagating exception on each parent it unwinds through, so an outbound
@@ -279,12 +344,16 @@ def scrub_span(span: ReadableSpan) -> ReadableSpan:
     frame locations; the message itself stays in the (redacted) logs, which
     correlate by ``trace_id``.
 
-    Spans with nothing to scrub are returned as-is (no copy).
+    The rebuilt span keeps everything an exporter serialises — context, parent,
+    kind, resource, instrumentation scope, links, timestamps, status code and
+    the dropped attribute/event/link counts. Spans with nothing to scrub are
+    returned as-is (no copy).
     """
     has_exception = any(event.name == _EXCEPTION_EVENT for event in span.events)
     has_description = bool(span.status.description)
-    is_client = span.kind is SpanKind.CLIENT
-    if not (has_exception or has_description or is_client):
+    source_attributes = span.attributes or {}
+    scrub_attributes = any(_needs_attribute_scrub(key) for key in source_attributes)
+    if not (has_exception or has_description or scrub_attributes):
         return span
 
     events: Sequence[Event] = span.events
@@ -295,27 +364,27 @@ def scrub_span(span: ReadableSpan) -> ReadableSpan:
     status = span.status
     if has_description:
         status = Status(
-            StatusCode.ERROR,
+            span.status.status_code,
             description=last_type if last_type else EXCEPTION_MESSAGE_PLACEHOLDER,
         )
 
-    attributes = span.attributes
-    if is_client and attributes:
+    attributes: Mapping[str, AttributeValue] = source_attributes
+    if scrub_attributes:
         filtered: dict[str, AttributeValue] = {}
-        for key, value in attributes.items():
-            safe = _safe_client_attribute(key, value)
+        for key, value in source_attributes.items():
+            safe = _scrub_attribute(key, value)
             if safe is not None:
                 filtered[key] = safe
-        attributes = _bounded(filtered, span.dropped_attributes)
+        attributes = filtered
 
     return ReadableSpan(
         name=span.name,
         context=span.context,
         parent=span.parent,
         resource=span.resource,
-        attributes=attributes,
-        events=events,
-        links=span.links,
+        attributes=_bounded(attributes, span.dropped_attributes),
+        events=_bounded_list(events, span.dropped_events),
+        links=_bounded_list(span.links, span.dropped_links),
         kind=span.kind,
         status=status,
         start_time=span.start_time,
@@ -332,6 +401,10 @@ class ScrubbingSpanExporter(SpanExporter):
     ``ReadableSpan`` snapshot, and ``on_start`` runs before any exception is
     recorded. Rebuilding the snapshot mirrors how the SDK itself produces one
     (``Span._readable_span``), so it relies only on the public constructor.
+
+    A span whose scrub raises is dropped (never exported unscrubbed) and logged
+    by name and error type; the rest of the batch is still exported. The
+    wrapper holds no mutable state, so concurrent ``export`` calls are safe.
     """
 
     def __init__(self, delegate: SpanExporter) -> None:
@@ -342,7 +415,19 @@ class ScrubbingSpanExporter(SpanExporter):
         return self._delegate
 
     def export(self, spans: Sequence[ReadableSpan]) -> SpanExportResult:
-        return self._delegate.export([scrub_span(span) for span in spans])
+        scrubbed: list[ReadableSpan] = []
+        for span in spans:
+            try:
+                scrubbed.append(scrub_span(span))
+            except Exception as exc:  # one bad span must not sink the batch
+                _logger.warning(
+                    "span_scrub_failed_span_dropped",
+                    span_name=span.name,
+                    error_type=type(exc).__qualname__,
+                )
+        if not scrubbed:
+            return SpanExportResult.SUCCESS
+        return self._delegate.export(scrubbed)
 
     def shutdown(self) -> None:
         self._delegate.shutdown()
