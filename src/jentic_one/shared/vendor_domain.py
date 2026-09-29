@@ -7,6 +7,12 @@ the full Public Suffix List, **including its PRIVATE section** (``github.io``,
 ``herokuapp.com``, ``azurewebsites.net``, …), so distinct tenants of a shared
 hosting suffix never collapse into one vendor.
 
+A few PRIVATE-section entries are not shared hosting but one operator's own API
+namespace (``googleapis.com``: every ``*.googleapis.com`` API host is Google's).
+Those are listed in :data:`_SINGLE_OPERATOR_SUFFIXES` and resolve to the suffix
+itself, so ``blogger.googleapis.com`` and ``googleapis.com/blogger`` share the
+``googleapis.com`` vendor instead of splitting Google across per-product vendors.
+
 The list is the snapshot bundled with the ``publicsuffixlist`` package — it is
 read from the installed wheel and never fetched over the network. Refreshing it
 is a dependency bump.
@@ -23,6 +29,13 @@ import ipaddress
 from functools import cache
 
 from publicsuffixlist import PublicSuffixList
+
+# PRIVATE-section suffixes owned and operated by a single API vendor. A host under
+# one of these resolves to the suffix itself rather than to a per-subdomain vendor.
+# Keep this list short and limited to operator-owned API namespaces; genuinely
+# multi-tenant hosting suffixes (``github.io``, ``herokuapp.com``, ...) must never
+# be added here, since that would merge unrelated tenants into one vendor.
+_SINGLE_OPERATOR_SUFFIXES: frozenset[str] = frozenset({"googleapis.com"})
 
 
 @cache
@@ -65,6 +78,8 @@ def registrable_domain(host: str) -> str | None:
     - single-label hosts are returned as-is (``localhost``, ``stripe``)
     - a host that is itself a public suffix (``co.uk``, ``github.io``) has no
       registrable part and is returned as-is rather than being widened further
+    - hosts under a single-operator suffix resolve to that suffix:
+      ``blogger.googleapis.com`` → ``googleapis.com``
     """
     value = _normalise_host(host)
     if not value:
@@ -77,6 +92,9 @@ def registrable_domain(host: str) -> str | None:
     normalised = ".".join(labels)
     if len(labels) == 1:
         return normalised
+    for suffix in _SINGLE_OPERATOR_SUFFIXES:
+        if normalised == suffix or normalised.endswith(f".{suffix}"):
+            return suffix
     # ``privatesuffix`` is ``None`` when the host is itself a public suffix.
     private: str | None = _psl().privatesuffix(normalised)
     return private or normalised

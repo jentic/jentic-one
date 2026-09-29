@@ -30,6 +30,14 @@ from jentic_one.shared.vendor_domain import registrable_domain, vendor_from_api_
         ("api.acme.herokuapp.com", "acme.herokuapp.com"),
         ("acme.azurewebsites.net", "acme.azurewebsites.net"),
         ("api.acme.azurewebsites.net", "acme.azurewebsites.net"),
+        # single-operator PRIVATE-section suffixes resolve to the operator's
+        # own namespace instead of splitting it per product subdomain
+        ("googleapis.com", "googleapis.com"),
+        ("blogger.googleapis.com", "googleapis.com"),
+        ("generativelanguage.googleapis.com", "googleapis.com"),
+        ("a.b.googleapis.com", "googleapis.com"),
+        # ... but only on a label boundary
+        ("evilgoogleapis.com", "evilgoogleapis.com"),
         # a host that is itself a public suffix is not widened
         ("co.uk", "co.uk"),
         ("github.io", "github.io"),
@@ -76,6 +84,8 @@ def test_distinct_companies_under_shared_suffix_get_distinct_vendors() -> None:
         ("slack.com/api", "slack.com"),
         ("github.com/api.github.com", "github.com"),
         ("googleapis.com/admin", "googleapis.com"),
+        ("blogger.googleapis.com", "googleapis.com"),
+        ("generativelanguage.googleapis.com/gemini-api", "googleapis.com"),
         ("finage.co.uk/main", "finage.co.uk"),
         ("stripe", "stripe"),
         ("", None),
