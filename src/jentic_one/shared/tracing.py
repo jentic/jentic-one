@@ -8,9 +8,12 @@ the instrumentation here means the **redaction hooks can't be forgotten** by a
 new call site (a compliance requirement — the broker proxies ``Authorization``,
 injected API keys, cookies, and arbitrary tenant bodies that may carry PII).
 
-It owns three concerns:
+It owns four concerns:
 
 1. ``configure_tracing`` — the global ``TracerProvider`` (OTLP gRPC or no-op).
+   Every exporter it wires is wrapped in :class:`ScrubbingSpanExporter`, which
+   removes free-text exception detail (and, on outbound client spans, unsafe
+   header/URL attributes) from every span before it leaves the process.
 2. ``instrument_outbound_client`` — W3C ``traceparent``/``tracestate`` propagation
    *into* the upstream over the shared ``httpx`` client, with span-attribute
    redaction (no bodies; headers via a safe-list only).
@@ -22,19 +25,23 @@ It owns three concerns:
 from __future__ import annotations
 
 import os
-from collections.abc import Iterator
+import re
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
 import httpx
 from opentelemetry import context as otel_context
 from opentelemetry import trace
+from opentelemetry.attributes import BoundedAttributes
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
 from opentelemetry.sdk.resources import Resource
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.sdk.trace import Event, ReadableSpan, TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanExporter, SpanExportResult
+from opentelemetry.sdk.util import BoundedList
+from opentelemetry.trace import SpanKind, Status, StatusCode
 
 from jentic_one.shared.config import TracingConfig
 from jentic_one.shared.redaction import redact_url_query
@@ -42,6 +49,7 @@ from jentic_one.shared.redaction import redact_url_query
 if TYPE_CHECKING:
     from opentelemetry.instrumentation.httpx import RequestInfo, ResponseInfo
     from opentelemetry.trace import Span
+    from opentelemetry.util.types import AttributeValue
 
 # ---------------------------------------------------------------------------
 # Span-attribute redaction
@@ -137,6 +145,220 @@ async def _redact_response_span_async(span: Span, request: RequestInfo, info: Re
 
 
 # ---------------------------------------------------------------------------
+# Export-time span scrubbing
+# ---------------------------------------------------------------------------
+
+# When a request fails, the SDK records the exception on every span it unwinds
+# through (``use_span`` / ``Span.__exit__``): an ``exception`` event carrying
+# ``str(exc)`` and a full formatted traceback, plus an ERROR status whose
+# description is ``"<Type>: <str(exc)>"``. The outbound httpx instrumentor
+# re-raises inside its client span, so the same text lands on that span *and*
+# on every parent (broker runner/execute spans, the inbound server span).
+# httpx/httpcore/h11/ssl/proxy/auth-flow exception text can quote request
+# material — ``Illegal header value b'<header value>'``, ``HTTPStatusError``'s
+# ``for url '<full url with query>'``, ``InvalidURL`` — and a chained
+# ``raise ... from exc`` repeats it inside the traceback. None of that may reach
+# an exporter, so every exported span is rebuilt with that text removed.
+
+_EXCEPTION_EVENT = "exception"
+_EXCEPTION_TYPE = "exception.type"
+_EXCEPTION_MESSAGE = "exception.message"
+_EXCEPTION_STACKTRACE = "exception.stacktrace"
+_EXCEPTION_ESCAPED = "exception.escaped"
+
+# Fixed replacement for any exception message / status description: it carries
+# no request data. The exception *type* is kept alongside it for diagnostics.
+EXCEPTION_MESSAGE_PLACEHOLDER = "exception message omitted from exported telemetry"
+
+# The only traceback lines kept: the fixed CPython framing lines and the
+# ``File "<path>", line <n>, in <func>`` frame locations. Source-code lines,
+# exception-message lines, ``__notes__`` and exception-group rendering are all
+# dropped — any of them can carry the message text.
+_TRACEBACK_FIXED_LINES: frozenset[str] = frozenset(
+    {
+        "Traceback (most recent call last):",
+        "The above exception was the direct cause of the following exception:",
+        "During handling of the above exception, another exception occurred:",
+    }
+)
+_TRACEBACK_FRAME_LINE = re.compile(r'^  File "[^"\r\n]*", line \d+, in [\w<>.]+$')
+
+_CLIENT_HEADER_PREFIXES: tuple[str, ...] = ("http.request.header.", "http.response.header.")
+
+
+def _frames_only(stacktrace: str) -> str:
+    """Reduce a formatted traceback to its frame locations (no message text)."""
+    kept = [
+        line
+        for line in stacktrace.splitlines()
+        if line in _TRACEBACK_FIXED_LINES or _TRACEBACK_FRAME_LINE.match(line)
+    ]
+    return "\n".join(kept)
+
+
+def _scrub_exception_attributes(
+    attributes: Mapping[str, AttributeValue],
+) -> dict[str, AttributeValue]:
+    """Keep ``exception.type``/``escaped``; replace the message; frames-only trace.
+
+    Any other attribute a caller attached via ``record_exception(attributes=…)``
+    is dropped — it is free-form and cannot be vetted here.
+    """
+    out: dict[str, AttributeValue] = {}
+    if _EXCEPTION_TYPE in attributes:
+        out[_EXCEPTION_TYPE] = attributes[_EXCEPTION_TYPE]
+    out[_EXCEPTION_MESSAGE] = EXCEPTION_MESSAGE_PLACEHOLDER
+    stacktrace = attributes.get(_EXCEPTION_STACKTRACE)
+    if isinstance(stacktrace, str):
+        out[_EXCEPTION_STACKTRACE] = _frames_only(stacktrace)
+    if _EXCEPTION_ESCAPED in attributes:
+        out[_EXCEPTION_ESCAPED] = attributes[_EXCEPTION_ESCAPED]
+    return out
+
+
+def _safe_client_attribute(key: str, value: AttributeValue) -> AttributeValue | None:
+    """Filter one outbound-client span attribute; ``None`` means drop it.
+
+    Backstops the request/response hooks for spans they never saw (a client
+    instrumented outside :func:`instrument_outbound_client`) and for header
+    capture switched on via ``OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_CLIENT_*``,
+    which the instrumentor records under ``http.{request,response}.header.<name>``
+    with only its own (operator-configured) sanitize list applied.
+    """
+    if key in _URL_SPAN_ATTRIBUTES and isinstance(value, str):
+        return redact_url_query(value)
+    for prefix in _CLIENT_HEADER_PREFIXES:
+        if key.startswith(prefix):
+            header = key[len(prefix) :].replace("_", "-").lower()
+            return value if header in _SAFE_SPAN_HEADERS else None
+    return value
+
+
+def _bounded(attributes: dict[str, AttributeValue], dropped: int) -> BoundedAttributes:
+    """Immutable attribute mapping that keeps the original dropped-count."""
+    bounded = BoundedAttributes(maxlen=None, attributes=attributes, immutable=True)
+    bounded.dropped = dropped
+    return bounded
+
+
+def _scrub_events(span: ReadableSpan) -> tuple[Sequence[Event], str | None]:
+    """Rebuild the span's events with exception detail removed.
+
+    Returns the new event sequence and the type of the last exception event
+    (used to rebuild the status description).
+    """
+    events: BoundedList[Event] = BoundedList(maxlen=None)
+    last_type: str | None = None
+    for event in span.events:
+        if event.name != _EXCEPTION_EVENT:
+            events.append(event)
+            continue
+        attrs = _scrub_exception_attributes(event.attributes or {})
+        exc_type = attrs.get(_EXCEPTION_TYPE)
+        if isinstance(exc_type, str):
+            last_type = exc_type
+        events.append(
+            Event(
+                event.name,
+                attributes=_bounded(attrs, event.dropped_attributes),
+                timestamp=event.timestamp,
+            )
+        )
+    events.dropped = span.dropped_events
+    return events, last_type
+
+
+def scrub_span(span: ReadableSpan) -> ReadableSpan:
+    """Return ``span`` with free-text error detail and unsafe client attributes removed.
+
+    Applied to **every** span, not only outbound client spans: the SDK re-records
+    a propagating exception on each parent it unwinds through, so an outbound
+    failure's text would otherwise reach the broker and inbound server spans
+    too. Structural diagnostics survive everywhere — ``exception.type``,
+    ``error.type``, status code, ``http.*`` status attributes and the traceback's
+    frame locations; the message itself stays in the (redacted) logs, which
+    correlate by ``trace_id``.
+
+    Spans with nothing to scrub are returned as-is (no copy).
+    """
+    has_exception = any(event.name == _EXCEPTION_EVENT for event in span.events)
+    has_description = bool(span.status.description)
+    is_client = span.kind is SpanKind.CLIENT
+    if not (has_exception or has_description or is_client):
+        return span
+
+    events: Sequence[Event] = span.events
+    last_type: str | None = None
+    if has_exception:
+        events, last_type = _scrub_events(span)
+
+    status = span.status
+    if has_description:
+        status = Status(
+            StatusCode.ERROR,
+            description=last_type if last_type else EXCEPTION_MESSAGE_PLACEHOLDER,
+        )
+
+    attributes = span.attributes
+    if is_client and attributes:
+        filtered: dict[str, AttributeValue] = {}
+        for key, value in attributes.items():
+            safe = _safe_client_attribute(key, value)
+            if safe is not None:
+                filtered[key] = safe
+        attributes = _bounded(filtered, span.dropped_attributes)
+
+    return ReadableSpan(
+        name=span.name,
+        context=span.context,
+        parent=span.parent,
+        resource=span.resource,
+        attributes=attributes,
+        events=events,
+        links=span.links,
+        kind=span.kind,
+        status=status,
+        start_time=span.start_time,
+        end_time=span.end_time,
+        instrumentation_scope=span.instrumentation_scope,
+    )
+
+
+class ScrubbingSpanExporter(SpanExporter):
+    """Exporter wrapper that hands the delegate only scrubbed spans.
+
+    Scrubbing happens here — at the single point every span passes on its way
+    out — rather than in a ``SpanProcessor``: ``on_end`` receives an immutable
+    ``ReadableSpan`` snapshot, and ``on_start`` runs before any exception is
+    recorded. Rebuilding the snapshot mirrors how the SDK itself produces one
+    (``Span._readable_span``), so it relies only on the public constructor.
+    """
+
+    def __init__(self, delegate: SpanExporter) -> None:
+        self._delegate = delegate
+
+    @property
+    def delegate(self) -> SpanExporter:
+        return self._delegate
+
+    def export(self, spans: Sequence[ReadableSpan]) -> SpanExportResult:
+        return self._delegate.export([scrub_span(span) for span in spans])
+
+    def shutdown(self) -> None:
+        self._delegate.shutdown()
+
+    def force_flush(self, timeout_millis: int = 30000) -> bool:
+        return self._delegate.force_flush(timeout_millis)
+
+
+def scrubbing_exporter(exporter: SpanExporter) -> ScrubbingSpanExporter:
+    """Wrap ``exporter`` in :class:`ScrubbingSpanExporter` (idempotent)."""
+    if isinstance(exporter, ScrubbingSpanExporter):
+        return exporter
+    return ScrubbingSpanExporter(exporter)
+
+
+# ---------------------------------------------------------------------------
 # Provider lifecycle
 # ---------------------------------------------------------------------------
 
@@ -155,6 +377,8 @@ def reset_tracing() -> None:
 def configure_tracing(
     service_name: str | None = None,
     config: TracingConfig | None = None,
+    *,
+    exporter: SpanExporter | None = None,
 ) -> TracerProvider:
     """Set up the OTel TracerProvider.
 
@@ -163,6 +387,13 @@ def configure_tracing(
     processors so application code that obtains tracers/spans still works,
     but nothing tries to dial out — useful for local dev where the
     collector isn't running. Idempotent.
+
+    ``exporter`` replaces the OTLP exporter (tests pass an in-memory one so
+    they exercise the production chain). Whatever exporter is used, it is
+    wrapped in :class:`ScrubbingSpanExporter` behind a ``BatchSpanProcessor``,
+    so no span leaves the process with exception text or unsafe client
+    attributes — for every surface and deploy mode, since they all build
+    their provider here.
     """
     current = trace.get_tracer_provider()
     if isinstance(current, TracerProvider):
@@ -172,8 +403,10 @@ def configure_tracing(
     resolved_name = service_name if service_name else os.getenv("OTEL_SERVICE_NAME", "jentic-one")
     resource = Resource.create({"service.name": resolved_name})
     provider = TracerProvider(resource=resource)
-    if cfg.exporter == "otlp":
-        provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
+    if exporter is None and cfg.exporter == "otlp":
+        exporter = OTLPSpanExporter()
+    if exporter is not None:
+        provider.add_span_processor(BatchSpanProcessor(scrubbing_exporter(exporter)))
     trace.set_tracer_provider(provider)
     return provider
 

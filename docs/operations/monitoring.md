@@ -120,6 +120,16 @@ to `otlp` targeting a local collector; without one, nothing is delivered
 anywhere — set `observability.metrics.exporter: none` to silence the export
 attempts.
 
+Exported spans never carry request material. Outbound HTTP spans record
+only a safe-listed set of structural headers and mask query-string values in
+the recorded URL, even when header capture is switched on through the
+`OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_CLIENT_*` variables. When a span
+records a failure, the export keeps the exception type (`exception.type`,
+`error.type`), the status code and the traceback's frame locations. The
+exception message, status description text and source lines are replaced
+before export. To see the full message, use the structured logs, which
+correlate with traces by `trace_id`.
+
 A few instruments are worth alerting on by name:
 `broker.streaming_execution.persist_failures` (an execution completed but
 its record was silently dropped — the only signal that happened),

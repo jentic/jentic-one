@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Callable
 from pathlib import Path
 
 import httpx
@@ -9,7 +11,7 @@ import pytest
 import yaml
 from opentelemetry import context as otel_context
 from opentelemetry import trace
-from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import (
@@ -22,13 +24,16 @@ from opentelemetry.trace.span import TraceState
 
 from jentic_one.shared.config import TracingConfig
 from jentic_one.shared.tracing import (
+    EXCEPTION_MESSAGE_PLACEHOLDER,
     JENTIC_TRACESTATE_KEY,
+    ScrubbingSpanExporter,
     configure_tracing,
     current_trace_id,
     instrument_outbound_client,
     jentic_tracestate,
     pack_jentic_tracestate,
     reset_tracing,
+    scrubbing_exporter,
 )
 
 _NONE_CONFIG = TracingConfig(exporter="none")
@@ -284,3 +289,229 @@ async def test_outbound_request_carries_w3c_and_jentic_tracestate():
     assert "traceparent" in captured
     assert JENTIC_TRACESTATE_KEY in captured.get("tracestate", "")
     assert "exec_9:tk_9:stripe:payments:v3" in captured["tracestate"]
+
+
+# --------------------------------------------------------------------------- #
+# Export-time scrubbing of failed outbound requests
+# --------------------------------------------------------------------------- #
+
+_HEADER_SECRET = "hv_live_7Qx9secret"
+_QUERY_SECRET = "qv_live_4Kp2secret"
+_SECRET_URL = f"https://upstream.example/v1/charges?api_key={_QUERY_SECRET}&q=term"
+_SECRETS = (_HEADER_SECRET, _QUERY_SECRET)
+
+
+def _exporting_provider() -> tuple[TracerProvider, InMemorySpanExporter]:
+    """Provider built by the production ``configure_tracing`` chain
+    (``BatchSpanProcessor`` → ``ScrubbingSpanExporter``) over an in-memory sink."""
+    exporter = InMemorySpanExporter()
+    provider = configure_tracing("test-service", exporter=exporter)
+    return provider, exporter
+
+
+def _exported(provider: TracerProvider, exporter: InMemorySpanExporter) -> list[ReadableSpan]:
+    assert provider.force_flush()
+    spans = list(exporter.get_finished_spans())
+    assert spans, "expected exported spans"
+    return spans
+
+
+def _span_text(span: ReadableSpan) -> str:
+    """Every string an exporter would ship for ``span``, flattened."""
+    parts = [span.name, str(span.status.description or "")]
+    parts.extend(f"{k}={v}" for k, v in (span.attributes or {}).items())
+    for event in span.events:
+        parts.append(event.name)
+        parts.extend(f"{k}={v}" for k, v in (event.attributes or {}).items())
+    for link in span.links:
+        parts.extend(f"{k}={v}" for k, v in (link.attributes or {}).items())
+    return "\n".join(parts)
+
+
+def _assert_no_request_data(spans: list[ReadableSpan]) -> None:
+    for span in spans:
+        text = _span_text(span)
+        for secret in _SECRETS:
+            assert secret not in text, f"{secret!r} exported on span {span.name!r}:\n{text}"
+
+
+def _exception_events(span: ReadableSpan) -> list[dict[str, object]]:
+    return [dict(e.attributes or {}) for e in span.events if e.name == "exception"]
+
+
+def _failing_handler(
+    exc_factory: Callable[[httpx.Request], Exception],
+) -> Callable[[httpx.Request], httpx.Response]:
+    def _handler(request: httpx.Request) -> httpx.Response:
+        raise exc_factory(request)
+
+    return _handler
+
+
+class _UpstreamAuthFlowError(Exception):
+    """Stand-in for a custom transport/auth-flow error that chains request material."""
+
+
+def _chained_error(request: httpx.Request) -> Exception:
+    try:
+        raise httpx.ReadError(f"read failed for {request.url} ({request.headers['x-api-key']})")
+    except httpx.ReadError as inner:
+        outer = _UpstreamAuthFlowError(f"auth flow aborted: {inner}")
+        outer.__cause__ = inner
+        return outer
+
+
+_TRANSPORT_FAILURES = [
+    pytest.param(
+        lambda r: httpx.LocalProtocolError(f"Illegal header value b'{r.headers['x-api-key']}'"),
+        "httpx.LocalProtocolError",
+        id="illegal-header-value",
+    ),
+    pytest.param(
+        lambda r: httpx.ProxyError(f"proxy refused {r.url} with {r.headers['x-api-key']}"),
+        "httpx.ProxyError",
+        id="proxy-error",
+    ),
+    pytest.param(_chained_error, f"{__name__}._UpstreamAuthFlowError", id="chained-cause"),
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("exc_factory", "exc_type"), _TRANSPORT_FAILURES)
+async def test_failed_async_outbound_request_exports_no_request_data(exc_factory, exc_type):
+    """Exception text quoting a header value / query string never reaches an
+    exported span — neither the client span nor the parent it propagates to —
+    while the exception type and frame locations survive."""
+    provider, exporter = _exporting_provider()
+    client = httpx.AsyncClient(transport=httpx.MockTransport(_failing_handler(exc_factory)))
+    instrument_outbound_client(client)
+    tracer = provider.get_tracer("test")
+    try:
+        with (
+            pytest.raises((httpx.HTTPError, _UpstreamAuthFlowError)),
+            tracer.start_as_current_span("broker.upstream_request"),
+        ):
+            await client.get(_SECRET_URL, headers={"x-api-key": _HEADER_SECRET})
+    finally:
+        await client.aclose()
+
+    spans = _exported(provider, exporter)
+    _assert_no_request_data(spans)
+    assert {s.kind for s in spans} >= {trace.SpanKind.CLIENT, trace.SpanKind.INTERNAL}
+    for span in spans:
+        events = _exception_events(span)
+        assert events, f"span {span.name!r} lost its exception event"
+        assert events[-1]["exception.type"] == exc_type
+        assert events[-1]["exception.message"] == EXCEPTION_MESSAGE_PLACEHOLDER
+        assert 'File "' in str(events[-1]["exception.stacktrace"])
+        assert span.status.status_code is trace.StatusCode.ERROR
+        assert span.status.description == exc_type
+
+
+@pytest.mark.parametrize(("exc_factory", "exc_type"), _TRANSPORT_FAILURES)
+def test_failed_sync_outbound_request_exports_no_request_data(exc_factory, exc_type):
+    """Same guarantee for a sync ``httpx.Client`` (plain hooks, sync transport)."""
+    provider, exporter = _exporting_provider()
+    client = httpx.Client(transport=httpx.MockTransport(_failing_handler(exc_factory)))
+    instrument_outbound_client(client)
+    try:
+        with pytest.raises((httpx.HTTPError, _UpstreamAuthFlowError)):
+            client.get(_SECRET_URL, headers={"x-api-key": _HEADER_SECRET})
+    finally:
+        client.close()
+
+    spans = _exported(provider, exporter)
+    _assert_no_request_data(spans)
+    (client_span,) = [s for s in spans if s.kind is trace.SpanKind.CLIENT]
+    assert _exception_events(client_span)[-1]["exception.type"] == exc_type
+
+
+@pytest.mark.asyncio
+async def test_real_transport_header_value_error_exports_no_header_value():
+    """The real h11 transport rejects an illegal header value with a message that
+    quotes it (``Illegal header value b'…'``); the exported spans must not."""
+    provider, exporter = _exporting_provider()
+
+    async def _accept(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        writer.close()
+
+    server = await asyncio.start_server(_accept, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    client = httpx.AsyncClient()
+    instrument_outbound_client(client)
+    tracer = provider.get_tracer("test")
+    try:
+        with (
+            pytest.raises(httpx.LocalProtocolError, match=_HEADER_SECRET),
+            tracer.start_as_current_span("broker.upstream_request"),
+        ):
+            await client.get(
+                f"http://127.0.0.1:{port}/v1?api_key={_QUERY_SECRET}",
+                headers={"x-api-key": f"{_HEADER_SECRET}\x00"},
+            )
+    finally:
+        await client.aclose()
+        server.close()
+        await server.wait_closed()
+
+    spans = _exported(provider, exporter)
+    _assert_no_request_data(spans)
+    client_span = next(s for s in spans if s.kind is trace.SpanKind.CLIENT)
+    assert _exception_events(client_span)[-1]["exception.type"] == "httpx.LocalProtocolError"
+
+
+@pytest.mark.asyncio
+async def test_http_status_error_on_parent_span_exports_no_url():
+    """``raise_for_status`` quotes the full URL (query included); recorded on
+    the enclosing span it must not carry the query value."""
+    provider, exporter = _exporting_provider()
+    client = httpx.AsyncClient(transport=httpx.MockTransport(lambda _r: httpx.Response(401)))
+    instrument_outbound_client(client)
+    tracer = provider.get_tracer("test")
+    try:
+        with (
+            pytest.raises(httpx.HTTPStatusError, match=_QUERY_SECRET),
+            tracer.start_as_current_span("oauth.token_request"),
+        ):
+            response = await client.get(_SECRET_URL, headers={"x-api-key": _HEADER_SECRET})
+            response.raise_for_status()
+    finally:
+        await client.aclose()
+
+    spans = _exported(provider, exporter)
+    _assert_no_request_data(spans)
+    parent = next(s for s in spans if s.name == "oauth.token_request")
+    assert _exception_events(parent)[-1]["exception.type"] == "httpx.HTTPStatusError"
+    assert parent.status.description == "httpx.HTTPStatusError"
+
+
+@pytest.mark.asyncio
+async def test_captured_client_headers_are_limited_to_safe_list(monkeypatch):
+    """Header capture switched on via the instrumentor's env var never exports a
+    non-safe-listed header value on an outbound span."""
+    monkeypatch.setenv("OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_CLIENT_REQUEST", ".*")
+    monkeypatch.setenv("OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_CLIENT_RESPONSE", ".*")
+    provider, exporter = _exporting_provider()
+
+    def _handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, headers={"x-echo-key": _HEADER_SECRET})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(_handler))
+    instrument_outbound_client(client)
+    try:
+        await client.get(_SECRET_URL, headers={"x-api-key": _HEADER_SECRET})
+    finally:
+        await client.aclose()
+
+    spans = _exported(provider, exporter)
+    _assert_no_request_data(spans)
+    attrs = next(s for s in spans if s.kind is trace.SpanKind.CLIENT).attributes or {}
+    assert "http.request.header.user-agent" in attrs
+
+
+def test_scrubbing_exporter_wrap_is_idempotent():
+    inner = InMemorySpanExporter()
+    wrapped = scrubbing_exporter(inner)
+    assert isinstance(wrapped, ScrubbingSpanExporter)
+    assert scrubbing_exporter(wrapped) is wrapped
+    assert wrapped.delegate is inner
