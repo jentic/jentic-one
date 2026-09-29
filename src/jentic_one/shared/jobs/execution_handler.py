@@ -12,8 +12,9 @@ per-host bulkhead + response-size cap + error-origin enrichment), with the
 job-result body + the execution lifecycle event.
 
 Before any credential is resolved the job is **re-authorized** through the
-injected ``ExecutionAuthorizer`` — the sync route's policy (actor still active,
-binding still present and not suspended, permission rules still allow),
+injected ``ExecutionAuthorizer`` — the sync route's policy (actor still active
+and holding the execute scope, binding still present and not suspended,
+permission rules still allow),
 evaluated at run time rather than trusted from enqueue time. A denied job
 completes with a ``failed`` result carrying the problem body the sync route
 would have returned; no credential is injected and no upstream call is made.

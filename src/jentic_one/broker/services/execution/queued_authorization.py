@@ -7,9 +7,12 @@ before any credential is resolved:
 
 1. the enqueuing actor must still be active (the sync path's token-resolution
    check, answered from the actor row since the worker holds no token);
-2. the actor's bindings for the API are re-derived, so a removed or
+2. an agent or service account must still hold the execute scope (the sync
+   path's ``require_execute_scope``, answered from the live grant rows those
+   actors' credentials resolve their scopes from);
+3. the actor's bindings for the API are re-derived, so a removed or
    suspended binding (or a disabled credential) no longer resolves;
-3. the binding's permission rules are re-evaluated for the operation.
+4. the binding's permission rules are re-evaluated for the operation.
 
 A denial becomes a :class:`QueuedExecutionVerdict` carrying the problem body
 the sync route would have returned; the worker records it and never injects.
@@ -37,6 +40,7 @@ from jentic_one.shared.context import Context
 from jentic_one.shared.jobs.protocols import QueuedExecutionRequest, QueuedExecutionVerdict
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.schemas import APIReference
+from jentic_one.shared.scopes import BROKER_EXECUTE_SCOPE
 
 logger = structlog.get_logger(__name__)
 
@@ -51,6 +55,17 @@ def _inactive_actor_problem(instance: str) -> dict[str, object]:
         "title": "Unauthorized",
         "status": 401,
         "detail": _INACTIVE_ACTOR_DETAIL,
+        "instance": instance,
+    }
+
+
+def _insufficient_scope_problem(instance: str) -> dict[str, object]:
+    """Mirrors the sync edge's 403 from ``require_execute_scope``."""
+    return {
+        "type": "insufficient_scope",
+        "title": "Forbidden",
+        "status": 403,
+        "detail": f"Insufficient scope: '{BROKER_EXECUTE_SCOPE}' required",
         "instance": instance,
     }
 
@@ -99,6 +114,19 @@ class QueuedExecutionAuthorizer:
                 actor_type=request.actor_type,
             )
             return QueuedExecutionVerdict(allowed=False, problem=_inactive_actor_problem(instance))
+
+        if not await self._actor_status.holds_scope(
+            actor_id=request.actor_id, actor_type=request.actor_type, scope=BROKER_EXECUTE_SCOPE
+        ):
+            logger.info(
+                "queued_execution_denied",
+                reason="insufficient_scope",
+                actor_id=request.actor_id,
+                actor_type=request.actor_type,
+            )
+            return QueuedExecutionVerdict(
+                allowed=False, problem=_insufficient_scope_problem(instance)
+            )
 
         if not (request.api_vendor and request.api_name and request.api_version):
             # Every enqueue carries the discovered (always concrete) API

@@ -3,7 +3,8 @@
 Seeds a direct agent→credential binding with an allow rule in the real admin
 and control DBs, builds the worker's ``QueuedExecutionAuthorizer`` exactly as
 the broker lifespan does, and asserts that a change made *after* enqueue —
-agent suspended, binding suspended or removed, rule changed — is honoured when
+agent suspended, execute scope revoked, binding suspended or removed,
+credential deactivated, rule changed — is honoured when
 the job runs, with the same problem type the sync execute route returns.
 """
 
@@ -14,8 +15,10 @@ from collections.abc import AsyncGenerator
 import pytest
 from sqlalchemy import delete, update
 
+from jentic_one.admin.core.schema.actor_scope_grants import ActorScopeGrant
 from jentic_one.admin.core.schema.agent_credential_bindings import AgentCredentialBinding
 from jentic_one.admin.core.schema.agents import Agent
+from jentic_one.admin.core.schema.service_accounts import ServiceAccount
 from jentic_one.admin.core.schema.users import User
 from jentic_one.broker.core.setup import build_queued_execution_authorizer
 from jentic_one.broker.repos.actor_status import ActorStatusResolver
@@ -26,6 +29,7 @@ from jentic_one.shared.context import Context
 from jentic_one.shared.db.ids import generate_ksuid
 from jentic_one.shared.jobs.protocols import QueuedExecutionRequest
 from jentic_one.shared.models import StoredCredentialType
+from jentic_one.shared.scopes import BROKER_EXECUTE_SCOPE
 
 pytestmark = pytest.mark.integration
 
@@ -42,6 +46,8 @@ async def clean_tables(integration_context: Context) -> AsyncGenerator[None, Non
     async def _truncate() -> None:
         async with ctx.admin_db.session() as session:
             await session.execute(delete(AgentCredentialBinding))
+            await session.execute(delete(ActorScopeGrant))
+            await session.execute(delete(ServiceAccount))
             await session.execute(delete(Agent))
             await session.commit()
         async with ctx.control_db.session() as session:
@@ -56,7 +62,8 @@ async def clean_tables(integration_context: Context) -> AsyncGenerator[None, Non
 
 
 async def _seed_bound_agent(ctx: Context) -> tuple[str, str]:
-    """An active agent bound to one API-key credential with an allow-GET rule."""
+    """An active agent holding the execute scope, bound to one API-key
+    credential with an allow-GET rule."""
     agent = Agent(name="queued-agent", registered_by="usr_owner", status="active")
     credential = Credential(
         type=StoredCredentialType.API_KEY,
@@ -86,6 +93,9 @@ async def _seed_bound_agent(ctx: Context) -> tuple[str, str]:
             AgentCredentialBinding(
                 id=generate_ksuid("acb"), agent_id=agent.id, credential_id=credential_id
             )
+        )
+        session.add(
+            ActorScopeGrant(actor_id=agent.id, actor_type="agent", scope=BROKER_EXECUTE_SCOPE)
         )
         await session.commit()
         agent_id = agent.id
@@ -147,6 +157,45 @@ async def test_agent_suspended_after_enqueue_is_denied(
     assert verdict.problem is not None
     assert verdict.problem["type"] == "unauthorized"
     assert verdict.problem["status"] == 401
+
+
+async def test_execute_scope_revoked_after_enqueue_is_denied(
+    integration_context: Context, clean_tables: None
+) -> None:
+    agent_id, credential_id = await _seed_bound_agent(integration_context)
+    async with integration_context.admin_db.session() as session:
+        await session.execute(delete(ActorScopeGrant).where(ActorScopeGrant.actor_id == agent_id))
+        await session.commit()
+
+    verdict = await build_queued_execution_authorizer(integration_context).authorize(
+        _request(agent_id, credential_id)
+    )
+
+    assert verdict.allowed is False
+    assert verdict.problem is not None
+    assert verdict.problem["type"] == "insufficient_scope"
+    assert verdict.problem["status"] == 403
+    assert verdict.allowed_credential_ids == ()
+
+
+async def test_credential_deactivated_after_enqueue_is_denied(
+    integration_context: Context, clean_tables: None
+) -> None:
+    agent_id, credential_id = await _seed_bound_agent(integration_context)
+    async with integration_context.control_db.session() as session:
+        await session.execute(
+            update(Credential).where(Credential.id == credential_id).values(active=False)
+        )
+        await session.commit()
+
+    verdict = await build_queued_execution_authorizer(integration_context).authorize(
+        _request(agent_id, credential_id)
+    )
+
+    assert verdict.allowed is False
+    assert verdict.problem is not None
+    assert verdict.problem["status"] == 403
+    assert verdict.allowed_credential_ids == ()
 
 
 async def test_binding_suspended_after_enqueue_is_denied(
@@ -232,4 +281,61 @@ async def test_actor_status_resolver_reads_user_and_agent_rows(
     finally:
         async with ctx.admin_db.session() as session:
             await session.execute(delete(User).where(User.id == user_id))
+            await session.commit()
+
+
+async def test_actor_status_resolver_serves_unmigrated_service_accounts_only(
+    integration_context: Context, clean_tables: None
+) -> None:
+    """An unmigrated service account still executes through the ``sak_`` /
+    ``jntc_live_`` fallback on the sync path, so its queued jobs must too; a
+    migrated (stamped) or inactive one must not."""
+    ctx = integration_context
+    owner = User(email="sa-owner@example.com", first_name="S", last_name="Owner", active=True)
+    async with ctx.admin_db.session() as session:
+        session.add(owner)
+        await session.flush()
+        live = ServiceAccount(
+            name="live-sa", owner_id=owner.id, registered_by=owner.id, status="active"
+        )
+        stamped = ServiceAccount(
+            name="stamped-sa",
+            owner_id=owner.id,
+            registered_by=owner.id,
+            status="active",
+            migrated_to_actor_id="agnt_successor",
+        )
+        suspended = ServiceAccount(
+            name="suspended-sa", owner_id=owner.id, registered_by=owner.id, status="suspended"
+        )
+        session.add_all([live, stamped, suspended])
+        await session.flush()
+        session.add(
+            ActorScopeGrant(
+                actor_id=live.id, actor_type="service_account", scope=BROKER_EXECUTE_SCOPE
+            )
+        )
+        await session.commit()
+        owner_id, live_id, stamped_id, suspended_id = owner.id, live.id, stamped.id, suspended.id
+    resolver = ActorStatusResolver(ctx.admin_db)
+    try:
+        assert await resolver.is_active(actor_id=live_id, actor_type="service_account") is True
+        assert await resolver.is_active(actor_id=stamped_id, actor_type="service_account") is False
+        assert (
+            await resolver.is_active(actor_id=suspended_id, actor_type="service_account") is False
+        )
+        assert await resolver.holds_scope(
+            actor_id=live_id, actor_type="service_account", scope=BROKER_EXECUTE_SCOPE
+        )
+        assert not await resolver.holds_scope(
+            actor_id=stamped_id, actor_type="service_account", scope=BROKER_EXECUTE_SCOPE
+        )
+        # User scopes ride on the user's own token; there is no grant row to re-read.
+        assert await resolver.holds_scope(
+            actor_id=owner_id, actor_type="user", scope=BROKER_EXECUTE_SCOPE
+        )
+    finally:
+        async with ctx.admin_db.session() as session:
+            await session.execute(delete(ServiceAccount).where(ServiceAccount.owner_id == owner_id))
+            await session.execute(delete(User).where(User.id == owner_id))
             await session.commit()

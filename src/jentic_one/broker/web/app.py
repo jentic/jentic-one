@@ -186,8 +186,9 @@ def create_app(ctx: Context, container: AppContainer | None = None) -> FastAPI:
         )
         app.state.broker_credential_injector = CredentialService(ctx)
         # Queued executions are re-authorized when the worker runs them (actor
-        # still active, binding still present, rules still allow) with the
-        # sync route's policy — injection never trusts the enqueue-time verdict.
+        # still active and holding the execute scope, binding still present,
+        # rules still allow) with the sync route's policy — injection never
+        # trusts the enqueue-time verdict.
         app.state.broker_execution_authorizer = build_queued_execution_authorizer(ctx)
         try:
             yield
