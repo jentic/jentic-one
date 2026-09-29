@@ -3241,7 +3241,7 @@ type ListAgentsParams struct {
 
 // UnbindAgentCredentialParams defines parameters for UnbindAgentCredential.
 type UnbindAgentCredentialParams struct {
-	// Purge Default false: the binding is suspended (reversible; its permission rules survive and :resume restores access). true deletes the binding row outright.
+	// Purge Default false: the binding is suspended (reversible; its permission rules survive and :resume restores access). true deletes the binding row outright, together with its inline permission rules.
 	Purge *bool `form:"purge,omitempty" json:"purge,omitempty"`
 }
 
