@@ -14,9 +14,9 @@
  *
  * Also serves the platform permission catalogue (`GET /permissions`) and the
  * per-actor scope grants (`GET/PUT .../scopes`, #615). The catalogue mirrors the
- * backend's `ALL_PERMISSIONS` verbatim. Like the real actor-scope PUTs, saving
- * does NOT validate scopes against the catalogue or enforce
- * `grantable_by_caller` — only a malformed scope is rejected (422). See
+ * backend's `ALL_PERMISSIONS`. Saving rejects a malformed scope (422) and, like
+ * the backend's agent scope ceiling, a *newly added* scope the catalogue marks
+ * `grantable_by_caller: false` (403 `scope_not_grantable`). See
  * {@link validateScopes}.
  *
  * Registered additively in src/mocks/handlers.ts.
@@ -174,11 +174,13 @@ function bindingJson(row: CredentialBindingRow) {
  * permissions.py) verbatim — same scope strings, descriptions, and `implies`
  * edges — so dev/tests exercise the real vocabulary, not invented scopes.
  *
- * `org:admin` is marked `grantable_by_caller: false` to reproduce the common
- * real case (a non-admin operator) and exercise the editor's disabled-row
- * gating; the backend additionally *hides* `org:admin` from non-admins, but we
- * keep it visible-but-disabled here so the gating path is observable in dev.
- * Every other entry is grantable, matching an operator who holds those scopes.
+ * `org:admin` and `agents:write` are marked `grantable_by_caller: false` to
+ * reproduce the common real case (a non-admin operator: the agent scope ceiling
+ * never lets a non-admin grant either, even when held) and exercise the
+ * editor's disabled-row gating; the backend additionally *hides* `org:admin`
+ * from non-admins, but we keep it visible-but-disabled here so the gating path
+ * is observable in dev. Every other entry is grantable, matching an operator
+ * who holds those scopes.
  */
 const PERMISSION_CATALOGUE: ReadonlyArray<{
 	name: string;
@@ -290,7 +292,7 @@ const PERMISSION_CATALOGUE: ReadonlyArray<{
 		name: 'agents:write',
 		description: 'Create, update, and delete agents',
 		implies: ['agents:read'],
-		grantable_by_caller: true,
+		grantable_by_caller: false,
 	},
 	{
 		name: 'agents:read',
@@ -549,29 +551,44 @@ const DEFAULT_AGENT_SCOPES_MOCK = [
 	'owner:credentials:read',
 ] as const;
 
+/** Catalogue entries a (mock, non-admin) caller may not grant to an agent. */
+const NON_GRANTABLE_SCOPES = new Set(
+	PERMISSION_CATALOGUE.filter((p) => !p.grantable_by_caller).map((p) => p.name),
+);
+
 /**
- * Validate a replacement scope set the way the real backend actually does.
+ * Validate a requested scope set the way the real backend does.
  *
- * IMPORTANT: `PUT /agents/{id}/scopes` does NOT validate scopes against the catalogue and do NOT enforce
- * `grantable_by_caller`. `AgentService.replace_scopes` simply dedupes and writes
- * any string that passes the `ScopeStr` regex. (Catalogue/grantability checks
- * live only on `PUT /users/{id}/permissions`, a different endpoint.) So the only
- * rejection we reproduce here is a malformed scope → 422, matching FastAPI's
- * request-validation response. `grantable_by_caller` is purely a UI hint used to
- * disable rows in the picker, never a server-side gate for actors.
+ * - A malformed scope → 422 (the `ScopeStr` regex, via Pydantic), and more
+ *   than 100 entries → 422 (`Field(max_length=100)`).
+ * - A newly added scope the catalogue marks `grantable_by_caller: false` →
+ *   403 `scope_not_grantable` (the agent scope ceiling in
+ *   `AgentService.create` / `replace_scopes`). Scopes in `alreadyHeld` are
+ *   not re-checked, so an operator may keep or drop what an admin granted.
  *
- * The backend also caps the list at 100 entries (`list[ScopeStr] = Field(max_length=100)`),
- * which we mirror so a test that over-grants gets the same 422 the real API would.
+ * The backend additionally 422s (`unknown_scope`) a scope outside its
+ * catalogue; this mock's catalogue is a subset, so that check is not mirrored.
  */
 function validateScopes(
 	requested: string[],
-): { ok: true } | { ok: false; status: number; detail: string } {
+	alreadyHeld: readonly string[] = [],
+): { ok: true } | { ok: false; status: number; detail: string; type?: string } {
 	if (requested.length > 100) {
 		return { ok: false, status: 422, detail: 'Too many scopes (max 100).' };
 	}
 	for (const s of requested) {
 		if (!SCOPE_PATTERN.test(s)) {
 			return { ok: false, status: 422, detail: `Invalid scope: ${s}` };
+		}
+	}
+	for (const s of requested) {
+		if (NON_GRANTABLE_SCOPES.has(s) && !alreadyHeld.includes(s)) {
+			return {
+				ok: false,
+				status: 403,
+				type: 'scope_not_grantable',
+				detail: `Scope '${s}' cannot be granted by the caller`,
+			};
 		}
 	}
 	return { ok: true };
@@ -1007,7 +1024,10 @@ export const agentsHandlers = [
 		if (Array.isArray(body.scopes) && body.scopes.length > 0) {
 			const check = validateScopes(body.scopes);
 			if (!check.ok) {
-				return HttpResponse.json({ detail: check.detail }, { status: check.status });
+				return HttpResponse.json(
+					{ type: check.type, detail: check.detail },
+					{ status: check.status },
+				);
 			}
 		}
 		const row = seedAgent({
@@ -1121,9 +1141,12 @@ export const agentsHandlers = [
 		if (!row) return new HttpResponse(null, { status: 404 });
 		const body = (await request.json().catch(() => ({}))) as { scopes?: string[] };
 		const requested = Array.isArray(body.scopes) ? body.scopes : [];
-		const check = validateScopes(requested);
+		const check = validateScopes(requested, actorScopes[row.id] ?? []);
 		if (!check.ok) {
-			return HttpResponse.json({ detail: check.detail }, { status: check.status });
+			return HttpResponse.json(
+				{ type: check.type, detail: check.detail },
+				{ status: check.status },
+			);
 		}
 		actorScopes[row.id] = [...new Set(requested)];
 		return HttpResponse.json({ scopes: actorScopes[row.id] });

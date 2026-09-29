@@ -46,6 +46,7 @@ from jentic_one.auth.services.schemas.agents import (
 )
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.auth.permission_catalog import ALL_PERMISSIONS
 from jentic_one.shared.context import Context
 from jentic_one.shared.db import DatabaseIntegrityError
 from jentic_one.shared.events import emit_event_best_effort, settle_actionable_events
@@ -255,10 +256,18 @@ class AgentService:
     async def approve(self, agent_id: str, *, identity: Identity) -> AgentView:
         async with self._ctx.admin_db.transaction() as session:
             await self._check_transition(session, agent_id, ActorVerb.APPROVE, identity=identity)
-            agent = await AgentRepository.set_approval(session, agent_id, approved_by=identity.sub)
             existing_grants = await ActorScopeGrantRepository.list_for_actor(
                 session, agent_id, actor_type=ActorType.AGENT
             )
+            # Scopes a self-registration requested become live on approval, so
+            # the approver's ceiling applies to them. Requested strings outside
+            # the catalogue grant nothing and are left as-is (not a 422: the
+            # registrant, not the approver, chose them).
+            check_agent_scope_grant(
+                [g.scope for g in existing_grants if g.scope in ALL_PERMISSIONS],
+                identity=identity,
+            )
+            agent = await AgentRepository.set_approval(session, agent_id, approved_by=identity.sub)
             if not existing_grants:
                 for scope in DEFAULT_AGENT_SCOPES:
                     await ActorScopeGrantRepository.grant(
@@ -287,7 +296,10 @@ class AgentService:
                 target_id=agent_id,
                 actor_type=identity.actor_type,
                 actor_id=identity.sub,
-                after={"owner_id": agent.owner_id},
+                after={
+                    "owner_id": agent.owner_id,
+                    "scopes": [g.scope for g in existing_grants] or list(DEFAULT_AGENT_SCOPES),
+                },
                 origin=identity.origin.value,
             )
             await emit_event_best_effort(

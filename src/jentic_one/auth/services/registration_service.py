@@ -133,16 +133,16 @@ class RegistrationService:
                 agent.claim_token_hash = _hash_rat(claim_plain)
                 agent.claim_expires_at = datetime.now(UTC) + timedelta(seconds=claim_ttl)
                 await session.flush()
-            if scope:
-                for scope_value in list(dict.fromkeys(scope.split())):
-                    await ActorScopeGrantRepository.grant(
-                        session,
-                        actor_id=agent.id,
-                        actor_type=ActorType.AGENT,
-                        scope=scope_value,
-                        granted_by=None,
-                        created_by="dcr",
-                    )
+            requested_scopes = list(dict.fromkeys(scope.split())) if scope else []
+            for scope_value in requested_scopes:
+                await ActorScopeGrantRepository.grant(
+                    session,
+                    actor_id=agent.id,
+                    actor_type=ActorType.AGENT,
+                    scope=scope_value,
+                    granted_by=None,
+                    created_by="dcr",
+                )
             await record_audit(
                 session,
                 action=AuditAction.REGISTER,
@@ -150,7 +150,11 @@ class RegistrationService:
                 target_id=agent.id,
                 actor_type=ActorType.AGENT,
                 actor_id=agent.id,
-                after={"name": client_name, "status": agent.status},
+                after={
+                    "name": client_name,
+                    "status": agent.status,
+                    "scopes": requested_scopes,
+                },
                 reason="dynamic client registration",
                 origin=None,
             )

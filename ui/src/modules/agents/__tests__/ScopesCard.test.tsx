@@ -139,27 +139,29 @@ describe('ScopesCard', () => {
 		expect(save).toBeDisabled();
 	});
 
-	it('disables scopes the caller cannot grant', async () => {
-		const user = userEvent.setup();
-		renderCard({ actorId: 'agnt_active_1', actorName: 'support-agent' });
-		await screen.findByRole('list', { name: 'Granted scopes' });
+	it.each(['org:admin', 'agents:write'])(
+		'disables scopes the caller cannot grant (%s)',
+		async (scope) => {
+			const user = userEvent.setup();
+			renderCard({ actorId: 'agnt_active_1', actorName: 'support-agent' });
+			await screen.findByRole('list', { name: 'Granted scopes' });
 
-		await user.click(screen.getByRole('button', { name: 'Edit scopes for support-agent' }));
-		const dialog = await screen.findByRole('dialog');
-		// `org:admin` is the real catalogue's non-grantable entry for a non-admin
-		// operator (grantable_by_caller: false) → its row must be disabled.
-		await user.type(within(dialog).getByLabelText('Search scopes'), 'org:admin');
+			await user.click(screen.getByRole('button', { name: 'Edit scopes for support-agent' }));
+			const dialog = await screen.findByRole('dialog');
+			// `org:admin` and `agents:write` are never grantable to an agent by a
+			// non-admin operator (agent scope ceiling; grantable_by_caller: false)
+			// → their rows must be disabled.
+			await user.type(within(dialog).getByLabelText('Search scopes'), scope);
 
-		const orgAdmin = await within(dialog).findByRole('checkbox', {
-			name: 'org:admin',
-		});
-		expect(orgAdmin).toBeDisabled();
-	});
+			const row = await within(dialog).findByRole('checkbox', { name: scope });
+			expect(row).toBeDisabled();
+		},
+	);
 
 	it('surfaces a clear message if the backend rejects a grant with 403', async () => {
-		// The real actor-scope PUT does not 403 on grantability today, but the
-		// component handles a 403 defensively (e.g. future enforcement / a perms
-		// change mid-session). Inject one to cover that path.
+		// The actor-scope PUT 403s (`scope_not_grantable`) a scope above the
+		// caller's ceiling — normally pre-empted by the disabled rows, but it can
+		// still happen (e.g. a perms change mid-session). Inject one to cover it.
 		const user = userEvent.setup();
 		worker.use(
 			createErrorHandler('put', '/agents/:id/scopes', {

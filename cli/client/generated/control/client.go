@@ -2555,7 +2555,9 @@ type PermissionListResponse struct {
 
 // PermissionResponse A single permission entry from the catalogue.
 type PermissionResponse struct {
-	Description       string   `json:"description"`
+	Description string `json:"description"`
+
+	// GrantableByCaller Whether the caller may grant this scope to an agent. `org:admin` callers may grant any scope; anyone else only scopes they hold or the default agent scopes, and never `org:admin` or `agents:write`.
 	GrantableByCaller bool     `json:"grantable_by_caller"`
 	Implies           []string `json:"implies"`
 	Name              string   `json:"name"`

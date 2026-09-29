@@ -4330,6 +4330,7 @@ components:
           title: Description
           type: string
         grantable_by_caller:
+          description: Whether the caller may grant this scope to an agent. `org:admin` callers may grant any scope; anyone else only scopes they hold or the default agent scopes, and never `org:admin` or `agents:write`.
           title: Grantable By Caller
           type: boolean
         implies:

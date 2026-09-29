@@ -7,7 +7,9 @@
 - ``PUT …/scopes``, ``PATCH``, ``:disable``, ``:enable`` and ``DELETE`` are
   owner-or-``org:admin`` with a uniform 404; an ``owner_id`` change is
   ``org:admin``-only.
-- ``:approve`` / ``:deny`` stay open to any approver holding ``agents:write``.
+- ``:approve`` / ``:deny`` stay open to any approver holding ``agents:write``,
+  but approving applies the approver's ceiling to the scopes a
+  self-registration requested (they become live on approval).
 
 Router, service, repositories and DB are real; the only shim is the identity
 dependency override (the same pattern as ``test_oauth_grant_transfer.py``).
@@ -15,8 +17,9 @@ dependency override (the same pattern as ``test_oauth_grant_transfer.py``).
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator, AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from typing import Any
 
 import pytest
 from fastapi import FastAPI
@@ -26,6 +29,7 @@ from sqlalchemy import delete
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.repos import ActorScopeGrantRepository, AgentRepository, AuditRepository
 from jentic_one.auth.services.errors import AuthServiceError
+from jentic_one.auth.services.registration_service import RegistrationService
 from jentic_one.auth.web.errors import service_error_handler
 from jentic_one.auth.web.routers import agents
 from jentic_one.shared.audit import AuditAction, AuditTargetType
@@ -42,6 +46,9 @@ OWNER = "usr_authz_owner"
 OTHER = "usr_authz_other"
 ADMIN = "usr_authz_admin"
 _WRITER_PERMS = ["agents:read", "agents:write"]
+_DCR_JWKS: dict[str, Any] = {
+    "keys": [{"kty": "OKP", "crv": "Ed25519", "x": "dGVzdC1wdWJsaWMta2V5LWJhc2U2NA", "kid": "k1"}]
+}
 
 
 @pytest.fixture()
@@ -57,6 +64,26 @@ async def users(integration_context: Context, clean_grants: None) -> AsyncGenera
     yield
     async with integration_context.admin_db.session() as session:
         await session.execute(delete(Agent).where(Agent.owner_id.in_([OWNER, OTHER, ADMIN])))
+        await session.commit()
+
+
+@pytest.fixture()
+async def self_register(
+    integration_context: Context, users: None
+) -> AsyncGenerator[Callable[[str], Awaitable[str]], None]:
+    """Self-register a pending agent through the real DCR service; delete it after."""
+    created: list[str] = []
+
+    async def _register(scope: str) -> str:
+        result = await RegistrationService(integration_context).register(
+            "self-registered", _DCR_JWKS, scope=scope
+        )
+        created.append(result.client_id)
+        return result.client_id
+
+    yield _register
+    async with integration_context.admin_db.session() as session:
+        await session.execute(delete(Agent).where(Agent.id.in_(created)))
         await session.commit()
 
 
@@ -100,13 +127,17 @@ async def _agent(ctx: Context, agent_id: str) -> Agent:
     return agent
 
 
-async def _register_audit_scopes(ctx: Context, agent_id: str) -> object:
+async def _audit_scopes(ctx: Context, agent_id: str, action: AuditAction) -> object:
     async with ctx.admin_db.session() as session:
         entries = await AuditRepository.list_by_target(session, AuditTargetType.AGENT, agent_id)
-    register = [e for e in entries if e.action == AuditAction.REGISTER]
-    assert len(register) == 1
-    assert register[0].after is not None
-    return register[0].after.get("scopes")
+    matching = [e for e in entries if e.action == action]
+    assert len(matching) == 1
+    assert matching[0].after is not None
+    return matching[0].after.get("scopes")
+
+
+async def _register_audit_scopes(ctx: Context, agent_id: str) -> object:
+    return await _audit_scopes(ctx, agent_id, AuditAction.REGISTER)
 
 
 # ---------------------------------------------------------------------------
@@ -350,3 +381,55 @@ async def test_any_approver_can_deny_pending_agent(
         resp = await client.post(f"/agents/{agent_id}:deny", json={"reason": "no"})
     assert resp.status_code == 200, resp.text
     assert resp.json()["status"] == "rejected"
+
+
+@pytest.mark.parametrize("requested", ["org:admin", "agents:write", "users:write"])
+async def test_non_admin_approver_cannot_activate_requested_scope_above_ceiling(
+    integration_context: Context,
+    self_register: Callable[[str], Awaitable[str]],
+    requested: str,
+) -> None:
+    agent_id = await self_register(f"capabilities:read {requested}")
+    assert await _register_audit_scopes(integration_context, agent_id) == [
+        "capabilities:read",
+        requested,
+    ]
+    async with _client(integration_context, _writer(OTHER)) as client:
+        resp = await client.post(f"/agents/{agent_id}:approve")
+    assert resp.status_code == 403
+    assert resp.json()["type"] == "scope_not_grantable"
+    assert (await _agent(integration_context, agent_id)).status == ActorStatus.PENDING
+
+    async with _client(integration_context, _admin()) as client:
+        resp = await client.post(f"/agents/{agent_id}:approve")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["status"] == "active"
+    assert await _scopes(integration_context, agent_id) == {"capabilities:read", requested}
+
+
+async def test_non_admin_approver_can_activate_requested_default_scopes(
+    integration_context: Context, self_register: Callable[[str], Awaitable[str]]
+) -> None:
+    # Unknown requested strings grant nothing and do not block the decision.
+    agent_id = await self_register("capabilities:execute agents:read not-a:scope")
+    async with _client(integration_context, _writer(OTHER)) as client:
+        resp = await client.post(f"/agents/{agent_id}:approve")
+    assert resp.status_code == 200, resp.text
+    expected = ["agents:read", "capabilities:execute", "not-a:scope"]
+    assert await _scopes(integration_context, agent_id) == set(expected)
+    approve_scopes = await _audit_scopes(integration_context, agent_id, AuditAction.APPROVE)
+    assert isinstance(approve_scopes, list)
+    assert sorted(approve_scopes) == expected
+
+
+async def test_approve_without_requested_scopes_grants_and_audits_defaults(
+    integration_context: Context, self_register: Callable[[str], Awaitable[str]]
+) -> None:
+    agent_id = await self_register("")
+    async with _client(integration_context, _writer(OTHER)) as client:
+        resp = await client.post(f"/agents/{agent_id}:approve")
+    assert resp.status_code == 200, resp.text
+    assert await _scopes(integration_context, agent_id) == set(DEFAULT_AGENT_SCOPES)
+    assert await _audit_scopes(integration_context, agent_id, AuditAction.APPROVE) == list(
+        DEFAULT_AGENT_SCOPES
+    )
