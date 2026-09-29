@@ -148,6 +148,9 @@ export interface CredentialBindingEntity {
 	/** True when the binding is soft-suspended (reversible cut-off): the row
 	 * and its rules survive, but the broker excludes it until resumed. */
 	suspended: boolean;
+	/** Why the binding is suspended: null for a manual pause, `api_deleted`
+	 * when the API its credential serves was deleted. */
+	suspendedReason: string | null;
 	/** Shared rule set this binding points at; null = inline rules apply.
 	 * Read-only here — rule-set management is out of scope for this phase. */
 	ruleSetId: string | null;

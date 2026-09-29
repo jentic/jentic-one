@@ -124,14 +124,15 @@ _INSERT_TOOLKIT_BINDING_TWIN = text(
 )
 
 _SELECT_CREDENTIAL_BINDINGS = text(
-    "SELECT credential_id, rule_set_id, suspended"
+    "SELECT credential_id, rule_set_id, suspended, suspended_reason"
     " FROM agent_credential_bindings WHERE agent_id = :actor_id"
 )
 
 _INSERT_CREDENTIAL_BINDING_TWIN = text(
     "INSERT INTO agent_credential_bindings"
-    " (id, agent_id, credential_id, rule_set_id, suspended, created_by)"
-    " VALUES (:id, :agent_id, :credential_id, :rule_set_id, :suspended, :created_by)"
+    " (id, agent_id, credential_id, rule_set_id, suspended, suspended_reason, created_by)"
+    " VALUES (:id, :agent_id, :credential_id, :rule_set_id, :suspended, :suspended_reason,"
+    " :created_by)"
     " ON CONFLICT (agent_id, credential_id) DO NOTHING"
 )
 
@@ -346,6 +347,7 @@ class ServiceAccountMigrationRepository:
                     "credential_id": row.credential_id,
                     "rule_set_id": row.rule_set_id,
                     "suspended": row.suspended,
+                    "suspended_reason": row.suspended_reason,
                     "created_by": SYSTEM_ACTOR,
                 },
             )

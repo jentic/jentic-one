@@ -313,6 +313,9 @@ def _context_from_discovery(
         api_version=resolved.api.version,
         prefer=headers.get("prefer"),
         pinned_revisions=None,
+        server_variables=dict(resolved.server_variables) or None,
+        server_variable_defaults=dict(resolved.server_variable_defaults) or None,
+        server_variables_unresolved=resolved.server_variables_unresolved,
     )
 
 
@@ -377,20 +380,28 @@ async def _resolve_credentials(
         allowed_credential_ids=allowed_credential_ids,
         trace_id=ctx_req.trace_id,
         preresolved=preresolved,
+        request_server_variables=ctx_req.server_variables,
+        server_variables_unresolved=ctx_req.server_variables_unresolved,
     )
 
 
 def _apply_injection(
-    upstream_url: str, injection: InjectedAuth, request: Request
+    upstream_url: str,
+    injection: InjectedAuth,
+    request: Request,
+    server_variable_defaults: dict[str, str] | None = None,
 ) -> tuple[str, dict[str, str]]:
     """Apply injected auth to the outbound URL + headers.
 
-    Server-variable creds are substituted into the URL template; query-param
+    Server-variable creds are substituted into the URL template (remaining
+    declared placeholders fall back to their spec defaults); query-param
     creds are merged into the URL query; cookie creds are **appended** to the
     inbound ``Cookie`` header (never overwriting forwarded cookies).
     """
-    if injection.server_variables:
-        upstream_url = apply_server_variables(upstream_url, injection.server_variables)
+    if injection.server_variables or server_variable_defaults:
+        upstream_url = apply_server_variables(
+            upstream_url, injection.server_variables, server_variable_defaults
+        )
 
     if injection.query_params:
         parsed = urlparse(upstream_url)
@@ -560,6 +571,8 @@ async def _handle(
         credential_name=request.headers.get("jentic-credential-name"),
         credential_id=request.headers.get("jentic-credential-id"),
         toolkit_id=request.headers.get("jentic-toolkit-id"),
+        request_server_variables=ctx_req.server_variables,
+        server_variables_unresolved=ctx_req.server_variables_unresolved,
     )
     selected_credential = authorization.selected_credential
     allowed_credential_ids = authorization.allowed_credential_ids
@@ -651,10 +664,12 @@ async def _handle(
         allowed_credential_ids=allowed_credential_ids,
         credential_id=request.headers.get("jentic-credential-id"),
     )
-    ctx_req.upstream_url, auth_headers = _apply_injection(ctx_req.upstream_url, injection, request)
+    ctx_req.upstream_url, auth_headers = _apply_injection(
+        ctx_req.upstream_url, injection, request, ctx_req.server_variable_defaults
+    )
     ctx_req.credential_id = injection.credential_id
     ctx_req.credential_name = injection.credential_name
-    if injection.server_variables:
+    if injection.server_variables or ctx_req.server_variable_defaults:
         try:
             validate_upstream_url(ctx_req.upstream_url, ctx.config.broker.egress)
         except ValueError as exc:
@@ -723,10 +738,12 @@ async def _handle_streaming(
         allowed_credential_ids=allowed_credential_ids,
         credential_id=request.headers.get("jentic-credential-id"),
     )
-    ctx_req.upstream_url, auth_headers = _apply_injection(ctx_req.upstream_url, injection, request)
+    ctx_req.upstream_url, auth_headers = _apply_injection(
+        ctx_req.upstream_url, injection, request, ctx_req.server_variable_defaults
+    )
     ctx_req.credential_id = injection.credential_id
     ctx_req.credential_name = injection.credential_name
-    if injection.server_variables:
+    if injection.server_variables or ctx_req.server_variable_defaults:
         try:
             validate_upstream_url(ctx_req.upstream_url, ctx.config.broker.egress)
         except ValueError as exc:
@@ -858,6 +875,12 @@ async def _handle_async(
         payload["allowed_credential_ids"] = allowed_credential_ids
     if ctx_req.pinned_revisions:
         payload["pinned_revisions"] = ctx_req.pinned_revisions
+    if ctx_req.server_variables:
+        payload["server_variables"] = ctx_req.server_variables
+    if ctx_req.server_variable_defaults:
+        payload["server_variable_defaults"] = ctx_req.server_variable_defaults
+    if ctx_req.server_variables_unresolved:
+        payload["server_variables_unresolved"] = True
     if body:
         payload["body_b64"] = base64.b64encode(body).decode()
 

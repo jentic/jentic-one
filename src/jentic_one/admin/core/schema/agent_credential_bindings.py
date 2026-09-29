@@ -72,3 +72,8 @@ class AgentCredentialBinding(AuditableMixin, AdminBase):
     suspended: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=text("false")
     )
+    # Why the binding is suspended. NULL is a manual suspension (the default
+    # unbind); ``api_deleted`` is set by the registry when the API the
+    # credential serves is deleted, so a later re-import under the same
+    # identity does not silently re-adopt the binding. Cleared on resume.
+    suspended_reason: Mapped[str | None] = mapped_column(String(50), nullable=True)

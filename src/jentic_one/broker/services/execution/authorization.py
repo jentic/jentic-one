@@ -13,6 +13,7 @@ worker records it on the job result (see :mod:`.queued_authorization`).
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 import structlog
@@ -454,13 +455,17 @@ async def authorize_execution(
     credential_name: str | None = None,
     credential_id: str | None = None,
     toolkit_id: str | None = None,
+    request_server_variables: Mapping[str, str] | None = None,
+    server_variables_unresolved: bool = False,
 ) -> ExecutionAuthorization:
     """Authorize one execution for ``identity`` against the discovered ``api``.
 
     ``credential_name`` / ``credential_id`` / ``toolkit_id`` are the caller's
     disambiguation inputs (``Jentic-Credential-Name`` / ``Jentic-Credential-Id``
     / ``Jentic-Toolkit-Id`` on the sync path; the enqueue-time selection on the
-    worker). ``path`` is the upstream URL path the rules match against and
+    worker). ``request_server_variables`` are the request URL's concrete
+    server-variable values; credential selection skips credentials scoped to
+    other values. ``path`` is the upstream URL path the rules match against and
     ``instance`` the RFC 9457 ``instance`` a denial carries.
 
     Raises a :class:`BrokerError` (``ActionDeniedError`` /
@@ -494,6 +499,8 @@ async def authorize_execution(
             credential_name=credential_name,
             credential_id=credential_id,
             allowed_credential_ids=allowed_credential_ids,
+            request_server_variables=request_server_variables,
+            server_variables_unresolved=server_variables_unresolved,
         )
         assert selected_credential is not None  # api.vendor is concrete (asserted above)
         evaluation = await agent_rule_evaluator.evaluate(

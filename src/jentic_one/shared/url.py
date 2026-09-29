@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ipaddress
 import re
+from collections.abc import Mapping
 from urllib.parse import quote, urlsplit
 
 _DEFAULT_PORTS = {"http": 80, "https": 443}
@@ -20,18 +21,62 @@ _EQUIVALENT_HOSTS = frozenset({"0.0.0.0", "127.0.0.1", "localhost", "::1"})
 _SERVER_VAR_PLACEHOLDER = re.compile(r"\{[A-Za-z0-9_.-]+\}")
 
 
-def apply_server_variables(url: str, variables: dict[str, str]) -> str:
+def _server_var_placeholder(name: str) -> re.Pattern[str]:
+    """Match ``{name}`` in its literal or percent-encoded (``%7Bname%7D``) form."""
+    return re.compile(r"(?:\{|%7[Bb])" + re.escape(name) + r"(?:\}|%7[Dd])")
+
+
+def apply_server_variables(
+    url: str,
+    variables: Mapping[str, str] | None,
+    defaults: Mapping[str, str] | None = None,
+) -> str:
     """Substitute OpenAPI server-variable values into a URL template.
 
-    Each ``{name}`` placeholder in the URL is replaced with the URL-encoded
-    value from *variables*. Unmatched placeholders (e.g. path parameters
-    resolved elsewhere) are left intact.
+    Each ``{name}`` placeholder (literal or percent-encoded) is replaced with
+    the URL-encoded value from *variables*; placeholders still left afterwards
+    fall back to the declared *defaults*. Only placeholders are rewritten — a
+    concrete URL is never changed — and unknown placeholders (e.g. path
+    parameters resolved elsewhere) are left intact.
     """
     result = url
-    for name, value in variables.items():
-        placeholder = "{" + name + "}"
-        result = result.replace(placeholder, quote(value, safe=""))
+    for source in (variables or {}, defaults or {}):
+        for name, value in source.items():
+            encoded = quote(value, safe="")
+            # ``quote(safe="")`` percent-encodes ``\``, so the value is a safe
+            # literal ``re.sub`` replacement (no backreference escapes).
+            result = _server_var_placeholder(name).sub(encoded, result)
     return result
+
+
+def server_variables_compatible(
+    scope: Mapping[str, str] | None,
+    resolved: Mapping[str, str] | None,
+    *,
+    unresolved: bool = False,
+) -> bool:
+    """Whether a credential's ``server_variables`` agree with a request URL's values.
+
+    *scope* is the credential's stored ``server_variables``; *resolved* the
+    concrete variable values of the request URL. Each scoped variable the URL
+    resolves must carry exactly the same value (server variables may sit in a
+    case-sensitive path; values resolved from the host arrive lowercased, as
+    the request host is normalised). A variable the URL leaves as a
+    placeholder, or does not declare, imposes no constraint; an unscoped
+    credential matches. *unresolved* means the URL's values could not be
+    determined: a scoped credential then never matches (fail closed).
+    """
+    if not scope:
+        return True
+    if unresolved:
+        return False
+    if not resolved:
+        return True
+    for name, value in scope.items():
+        actual = resolved.get(name)
+        if actual is not None and actual != value:
+            return False
+    return True
 
 
 def has_host_server_variable(url: str) -> bool:

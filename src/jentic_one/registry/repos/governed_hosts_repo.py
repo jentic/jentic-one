@@ -27,11 +27,13 @@ asymmetries with the raw index, both matching runtime interception:
   server-host review; its hosts are still listed here on purpose, so a gate
   keeps sending that traffic to the broker (which refuses it) rather than
   direct to the upstream.
-- **Variable-bearing hosts (``{var}`` labels from defaultless server
-  variables) are excluded.** The index's regex-match branch requires
-  ``host IS NULL``, which the ingest never writes, so a templated host never
-  matches a real request — publishing it would tell an integrator's gate to
-  divert traffic the broker cannot serve.
+- **Variable-bearing hosts (``{var}`` labels) are excluded.** A host server
+  variable is indexed once per declared value (each a concrete host, listed
+  here) plus a literal ``{var}`` row that only matches a request still
+  carrying the placeholder, never a real host. The index's regex-match branch
+  requires ``host IS NULL``, which the ingest never writes — publishing the
+  templated host would tell an integrator's gate to divert traffic the broker
+  cannot serve.
 """
 
 from __future__ import annotations

@@ -37,6 +37,8 @@ export interface ApiTileModel {
 	boundAt: string;
 	/** Soft-suspended — the broker excludes the binding until resumed. */
 	suspended: boolean;
+	/** Why it is suspended (`api_deleted` = its API was deleted). */
+	suspendedReason: string | null;
 	/** OAuth sign-in not completed. Drives the dashed treatment. */
 	awaitingConsent: boolean;
 }
@@ -166,6 +168,7 @@ export function composeApiTiles(
 			credentialUpdatedAt: credential?.updated_at ?? null,
 			boundAt: binding.boundAt,
 			suspended: binding.suspended,
+			suspendedReason: binding.suspendedReason,
 			awaitingConsent: credentialAwaitsConsent(credential),
 			authLabel: credential ? (AUTH_TILE_LABEL[credential.type] ?? null) : null,
 		};

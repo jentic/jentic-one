@@ -43,6 +43,7 @@ function makeBinding(over: Partial<CredentialBindingEntity> = {}): CredentialBin
 		credentialId: 'cred_1',
 		name: 'Stripe — Production',
 		suspended: false,
+		suspendedReason: null,
 		ruleSetId: null,
 		boundAt: '2026-01-02T00:00:00Z',
 		serves: [{ vendor: 'stripe.com', name: 'main', version: null }],

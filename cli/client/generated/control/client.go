@@ -1493,12 +1493,13 @@ type CredentialBindRequest struct {
 
 // CredentialBindingEntry Direct agent↔credential binding summary for the /me response (theme 5 phase 1).
 type CredentialBindingEntry struct {
-	BoundAt      time.Time       `json:"bound_at"`
-	CredentialId string          `json:"credential_id"`
-	Name         *string         `json:"name,omitempty"`
-	RuleSetId    *string         `json:"rule_set_id,omitempty"`
-	Serves       *[]ServedApiRef `json:"serves,omitempty"`
-	Suspended    *bool           `json:"suspended,omitempty"`
+	BoundAt         time.Time       `json:"bound_at"`
+	CredentialId    string          `json:"credential_id"`
+	Name            *string         `json:"name,omitempty"`
+	RuleSetId       *string         `json:"rule_set_id,omitempty"`
+	Serves          *[]ServedApiRef `json:"serves,omitempty"`
+	Suspended       *bool           `json:"suspended,omitempty"`
+	SuspendedReason *string         `json:"suspended_reason,omitempty"`
 }
 
 // CredentialBindingListResponse List of direct credential bindings.
@@ -1508,14 +1509,15 @@ type CredentialBindingListResponse struct {
 
 // CredentialBindingResponse Direct agent↔credential binding representation in API responses.
 type CredentialBindingResponse struct {
-	AgentId      string          `json:"agent_id"`
-	BoundAt      time.Time       `json:"bound_at"`
-	CredentialId string          `json:"credential_id"`
-	Id           string          `json:"id"`
-	Name         *string         `json:"name,omitempty"`
-	RuleSetId    *string         `json:"rule_set_id,omitempty"`
-	Serves       *[]ServedApiRef `json:"serves,omitempty"`
-	Suspended    bool            `json:"suspended"`
+	AgentId         string          `json:"agent_id"`
+	BoundAt         time.Time       `json:"bound_at"`
+	CredentialId    string          `json:"credential_id"`
+	Id              string          `json:"id"`
+	Name            *string         `json:"name,omitempty"`
+	RuleSetId       *string         `json:"rule_set_id,omitempty"`
+	Serves          *[]ServedApiRef `json:"serves,omitempty"`
+	Suspended       bool            `json:"suspended"`
+	SuspendedReason *string         `json:"suspended_reason,omitempty"`
 }
 
 // CredentialCreateResponse Create response: redacted + secret shown once.

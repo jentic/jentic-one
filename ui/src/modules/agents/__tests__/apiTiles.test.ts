@@ -38,6 +38,7 @@ function makeBinding(over: Partial<CredentialBindingEntity> = {}): CredentialBin
 		credentialId: 'cred_1',
 		name: 'Test credential',
 		suspended: false,
+		suspendedReason: null,
 		ruleSetId: null,
 		boundAt: '2026-01-02T00:00:00Z',
 		serves: [{ vendor: 'slack.com', name: null, version: null }],
@@ -260,6 +261,14 @@ describe('tileStats / agentSetupGapCount', () => {
 			operations: 0,
 			operationsAtLeast: false,
 		});
+	});
+
+	it('carries the suspension reason onto the tile', () => {
+		const apis = [makeApi({ vendor: 'slack.com', display_name: 'Slack' })];
+		const binding = makeBinding({ suspended: true, suspendedReason: 'api_deleted' });
+		const [tile] = composeApiTiles([binding], [makeCredential()], apis);
+		expect(tile.suspended).toBe(true);
+		expect(tile.suspendedReason).toBe('api_deleted');
 	});
 
 	it('withholds the operations figure when no usable tile proves a count', () => {
