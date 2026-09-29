@@ -57,6 +57,8 @@ async function sheetSettled(): Promise<void> {
 	await waitFor(() => {
 		expect(getComputedStyle(screen.getByTestId('sheet-backdrop')).opacity).toBe('1');
 		const grid = within(screen.getByTestId('sheet-primitive')).getByTestId('credentials-grid');
+		// No cards would make the loop below pass vacuously.
+		expect(grid.children.length).toBeGreaterThan(0);
 		for (const item of Array.from(grid.children)) {
 			expect(getComputedStyle(item).opacity).toBe('1');
 		}
