@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { vi } from 'vitest';
+import { userEvent as browserUser } from 'vitest/browser';
 import { renderWithProviders, screen, userEvent, waitFor, checkA11y } from '@/__tests__/test-utils';
 import { Dialog } from '@/shared/ui/Dialog';
 import { Button } from '@/shared/ui/Button';
@@ -101,5 +102,39 @@ describe('Dialog', () => {
 		// `close` is dispatched asynchronously; give it a turn to land.
 		await new Promise((r) => setTimeout(r, 0));
 		expect(onClose).not.toHaveBeenCalled();
+	});
+
+	it('closes a size="full" dialog on a real Escape through the native cancel path', async () => {
+		function Owner() {
+			const [open, setOpen] = useState(true);
+			return (
+				<Dialog open={open} onClose={() => setOpen(false)} title="Tour" size="full">
+					<button type="button">Inside</button>
+				</Dialog>
+			);
+		}
+		renderWithProviders(<Owner />);
+		const dialog = screen.getByRole('dialog', { name: 'Tour' });
+		screen.getByRole('button', { name: 'Inside' }).focus();
+		await browserUser.keyboard('{Escape}');
+		await waitFor(() => expect(dialog).not.toHaveAttribute('open'));
+	});
+
+	it('keeps the dialog named by the visually hidden title when a header replaces it', () => {
+		renderWithProviders(
+			<Dialog
+				open
+				onClose={() => {}}
+				title="The tour"
+				header={<div role="tablist" aria-label="Sections" />}
+			>
+				<p className="text-foreground">Dialog body</p>
+			</Dialog>,
+		);
+		const dialog = screen.getByRole('dialog', { name: 'The tour' });
+		const title = screen.getByRole('heading', { name: 'The tour' });
+		expect(dialog).toHaveAttribute('aria-labelledby', title.id);
+		expect(title).toHaveClass('sr-only');
+		expect(screen.getByRole('tablist', { name: 'Sections' })).toBeInTheDocument();
 	});
 });

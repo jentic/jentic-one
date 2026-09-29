@@ -15,13 +15,15 @@ import { cn } from '@/shared/lib/utils';
  * flags (`submitting`, `error`) when reopening, and clear sensitive fields
  * (passwords, API keys, OTPs) on every dismissal.
  */
-type DialogSize = 'sm' | 'md' | 'lg' | 'xl';
+type DialogSize = 'sm' | 'md' | 'lg' | 'xl' | 'full';
 
 const sizeClasses: Record<DialogSize, string> = {
 	sm: 'max-w-sm',
 	md: 'max-w-lg',
 	lg: 'max-w-2xl',
 	xl: 'max-w-3xl',
+	// Near-full-screen: a 24px inset on every side, for a whole surface (a tour).
+	full: 'h-[calc(100dvh-3rem)] max-h-[calc(100dvh-3rem)] w-[calc(100vw-3rem)] max-w-none sm:w-[calc(100vw-3rem)]',
 };
 
 interface DialogProps {
@@ -48,6 +50,11 @@ interface DialogProps {
 	 * wired through to `aria-describedby`.
 	 */
 	describedById?: string;
+	/**
+	 * Replaces the title/subtitle in the header row (e.g. a tab strip). `title`
+	 * still names the dialog for assistive tech (visually hidden).
+	 */
+	header?: React.ReactNode;
 }
 
 export function Dialog({
@@ -61,7 +68,9 @@ export function Dialog({
 	className,
 	dismissOnBackdrop = true,
 	describedById,
+	header,
 }: DialogProps) {
+	const full = size === 'full';
 	const dialogRef = useRef<HTMLDialogElement>(null);
 	const titleId = `dialog-title-${React.useId()}`;
 	// Mirrors `open` for the native `close` listener; updated before the
@@ -126,21 +135,36 @@ export function Dialog({
 				// so the animation replays on every `showModal()`. Under reduced motion
 				// the global reset in index.css cuts it (and the `::backdrop` fade) to a
 				// near-instant frame.
-				'animate-dialog-in',
+				full ? 'animate-overlay-in' : 'animate-dialog-in',
 				// Smoothly grow/shrink when the size prop changes between steps
 				// (e.g. the credential wizard widening from lg → xl) instead of
 				// snapping; `motion-reduce:` switches it off.
-				'transition-[max-width] duration-300 ease-out motion-reduce:transition-none',
+				!full &&
+					'transition-[max-width] duration-300 ease-out motion-reduce:transition-none',
 				sizeClasses[size],
 				className,
 			)}
 		>
-			<div className="flex max-h-[calc(100dvh-2rem)] flex-col">
-				<div className="border-border flex shrink-0 items-start justify-between gap-3 border-b px-5 py-4">
+			<div
+				className={cn(
+					'flex flex-col',
+					full ? 'bg-background h-full' : 'max-h-[calc(100dvh-2rem)]',
+				)}
+			>
+				<div
+					className={cn(
+						'border-border flex shrink-0 justify-between gap-3 border-b',
+						header ? 'items-center px-5 py-1.5' : 'items-start px-5 py-4',
+					)}
+				>
 					<div className="min-w-0 flex-1">
-						<h2 id={titleId} className="text-foreground text-lg font-semibold">
+						<h2
+							id={titleId}
+							className={header ? 'sr-only' : 'text-foreground text-lg font-semibold'}
+						>
 							{title}
 						</h2>
+						{header}
 						{subtitle && (
 							<div className="text-muted-foreground mt-0.5 text-xs">{subtitle}</div>
 						)}
@@ -149,7 +173,14 @@ export function Dialog({
 						<X className="h-5 w-5" />
 					</Button>
 				</div>
-				<div className="overflow-y-auto px-5 py-4">{children}</div>
+				<div
+					className={cn(
+						'overflow-y-auto px-5 py-4',
+						full && 'min-h-0 flex-1 overscroll-contain',
+					)}
+				>
+					{children}
+				</div>
 				{footer && (
 					<div className="border-border flex shrink-0 items-center justify-end gap-2 border-t px-5 py-4">
 						{footer}

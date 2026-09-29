@@ -397,6 +397,26 @@
 	animation: j1-backdrop-in 0.2s var(--ease-out-soft);
 }
 
+/* A full-screen overlay's entrance — a touch more scale, a touch slower, with
+   its backdrop fading in alongside. Under reduced motion the global reset
+   (which covers `::backdrop`) cuts both to a near-instant frame. */
+@keyframes j1-overlay-in {
+	from {
+		transform: scale(0.97);
+	}
+	to {
+		transform: scale(1);
+	}
+}
+
+.animate-overlay-in {
+	animation: j1-overlay-in 0.32s var(--ease-out-soft);
+}
+
+.animate-overlay-in::backdrop {
+	animation: j1-backdrop-in 0.32s var(--ease-out-soft);
+}
+
 /* Arriving stream row — a new live event pushes the feed down (the row's
    height reveal is framer-motion, in RailEventRow) and glows briefly so the
    eye catches it, then settles to the row's own background. */
