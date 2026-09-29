@@ -144,3 +144,54 @@ def test_build_client_no_wrap_when_pinning_disabled() -> None:
     assert not isinstance(client._transport, DnsPinningTransport)
     client2 = build_client(cfg, None)
     assert not isinstance(client2._transport, DnsPinningTransport)
+
+
+@pytest.mark.parametrize(
+    "ip", ["::ffff:127.0.0.1", "64:ff9b::a9fe:a9fe", "2002:a00:1::", "100.64.0.1", "::"]
+)
+def test_resolve_and_validate_blocks_embedded_and_non_global(
+    monkeypatch: pytest.MonkeyPatch, ip: str
+) -> None:
+    monkeypatch.setattr(socket, "getaddrinfo", _fake_getaddrinfo(ip))
+    with pytest.raises(ValueError, match="blocked address range"):
+        resolve_and_validate("evil.example.com", None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("host", ["127.0.0.1", "[::ffff:169.254.169.254]", "[64:ff9b::a00:1]"])
+async def test_transport_blocks_non_public_ip_literal(
+    monkeypatch: pytest.MonkeyPatch, host: str
+) -> None:
+    # IP literals are not resolved, but the policy still applies at connect time.
+    monkeypatch.setattr(socket, "getaddrinfo", _fake_getaddrinfo("93.184.216.34"))
+    inner = _RecordingTransport()
+    transport = DnsPinningTransport(inner, None)
+    async with httpx.AsyncClient(transport=transport) as client:
+        with pytest.raises(ValueError, match="blocked address range"):
+            await client.get(f"http://{host}/x")
+    assert inner.seen is None
+
+
+@pytest.mark.asyncio
+async def test_transport_allows_allowlisted_ip_literal() -> None:
+    inner = _RecordingTransport()
+    transport = DnsPinningTransport(inner, EgressConfig(allowed_private_subnets=["10.50.0.0/16"]))
+    async with httpx.AsyncClient(transport=transport) as client:
+        await client.get("http://10.50.2.10/x")
+    assert inner.seen is not None
+
+
+@pytest.mark.asyncio
+async def test_transport_fails_closed_on_unresolvable_host(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _boom(*_a, **_k):
+        raise socket.gaierror("nope")
+
+    monkeypatch.setattr(socket, "getaddrinfo", _boom)
+    inner = _RecordingTransport()
+    transport = DnsPinningTransport(inner, None)
+    async with httpx.AsyncClient(transport=transport) as client:
+        with pytest.raises(ValueError, match="did not resolve"):
+            await client.get("https://ghost.example.com/")
+    assert inner.seen is None

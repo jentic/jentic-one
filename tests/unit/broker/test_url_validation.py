@@ -214,3 +214,134 @@ def test_domain_subdomain_match_without_leading_dot() -> None:
 def test_invalid_cidr_in_config_rejected() -> None:
     with pytest.raises(ValueError, match="invalid CIDR"):
         EgressConfig(allowed_private_subnets=["not-a-cidr"])
+
+
+# --- address classification: embedded IPv4 and non-global ranges ------------
+
+#: Addresses outside public unicast space, including IPv6 forms that embed a
+#: blocked IPv4 address. Every one must be refused under the default policy,
+#: whether it arrives as a URL literal or as a resolved address.
+_NON_PUBLIC_ADDRESSES = [
+    # IPv4-mapped IPv6
+    "::ffff:127.0.0.1",
+    "::ffff:10.0.0.1",
+    "::ffff:169.254.169.254",
+    # IPv4-compatible IPv6 (deprecated) and the unspecified address
+    "::127.0.0.1",
+    "::a9fe:a9fe",
+    "::",
+    # NAT64 well-known prefix and local-use prefix
+    "64:ff9b::7f00:1",
+    "64:ff9b::a9fe:a9fe",
+    "64:ff9b::a00:1",
+    "64:ff9b:1::a00:1",
+    # 6to4
+    "2002:7f00:1::",
+    "2002:a9fe:a9fe::1",
+    "2002:c0a8:101::",
+    # IPv4 non-global ranges
+    "0.0.0.0",
+    "100.64.0.1",
+    "100.127.255.254",
+    "198.18.0.1",
+    "198.19.255.254",
+    "192.0.0.1",
+    "192.0.2.1",
+    "224.0.0.1",
+    "239.255.255.250",
+    "240.0.0.1",
+    "255.255.255.255",
+    # IPv6 non-global ranges
+    "::1",
+    "fe80::1",
+    "fd12:3456::1",
+    "ff02::1",
+    "ff0e::1",
+    "2001:db8::1",
+]
+
+#: Public unicast addresses, including embedded forms of a public IPv4.
+_PUBLIC_ADDRESSES = [
+    "93.184.216.34",
+    "8.8.8.8",
+    "1.1.1.1",
+    "2606:4700:4700::1111",
+    "::ffff:93.184.216.34",
+    "64:ff9b::5db8:d822",
+    "2002:5db8:d822::1",
+]
+
+
+def _url_for(ip: str) -> str:
+    return f"http://[{ip}]/x" if ":" in ip else f"http://{ip}/x"
+
+
+def _resolving_to(ip: str) -> list[tuple[int, int, int, str, tuple[str, int]]]:
+    family = socket.AF_INET6 if ":" in ip else socket.AF_INET
+    return [(family, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", (ip, 0))]
+
+
+@pytest.mark.parametrize("ip", _NON_PUBLIC_ADDRESSES)
+def test_non_public_ip_literal_blocked(ip: str) -> None:
+    with pytest.raises(ValueError, match="blocked address range"):
+        validate_upstream_url(_url_for(ip))
+
+
+@pytest.mark.parametrize("ip", _NON_PUBLIC_ADDRESSES)
+def test_hostname_resolving_to_non_public_ip_blocked(ip: str) -> None:
+    with (
+        patch(
+            "jentic_one.shared.url_validation.socket.getaddrinfo",
+            return_value=_resolving_to(ip),
+        ),
+        pytest.raises(ValueError, match="blocked address range"),
+    ):
+        validate_upstream_url("https://api.example.com/v1")
+
+
+@pytest.mark.parametrize("ip", _PUBLIC_ADDRESSES)
+def test_public_ip_literal_allowed(ip: str) -> None:
+    assert validate_upstream_url(_url_for(ip)) == _url_for(ip)
+
+
+@pytest.mark.parametrize("ip", _PUBLIC_ADDRESSES)
+def test_hostname_resolving_to_public_ip_forms_allowed(ip: str) -> None:
+    with patch(
+        "jentic_one.shared.url_validation.socket.getaddrinfo",
+        return_value=_resolving_to(ip),
+    ):
+        assert validate_upstream_url("https://api.example.com/v1") == "https://api.example.com/v1"
+
+
+@pytest.mark.parametrize(
+    "ip",
+    ["::ffff:169.254.169.254", "64:ff9b::a9fe:a9fe", "2002:a9fe:a9fe::", "::a9fe:a9fe"],
+)
+def test_embedded_metadata_ip_blocked_even_when_range_allowlisted(ip: str) -> None:
+    # The metadata hard-deny applies to the unwrapped IPv4, not just the literal.
+    egress = EgressConfig(allowed_private_subnets=["169.254.0.0/16", "::/0"])
+    with pytest.raises(ValueError, match="blocked address range"):
+        validate_upstream_url(_url_for(ip), egress)
+
+
+@pytest.mark.parametrize(
+    ("subnet", "ip"),
+    [
+        ("10.50.0.0/16", "10.50.2.10"),
+        # An IPv4-mapped form is matched against the allowlist by its IPv4.
+        ("10.50.0.0/16", "::ffff:10.50.2.10"),
+        ("100.64.0.0/10", "100.100.1.1"),
+        ("127.0.0.0/8", "127.0.0.1"),
+        ("fd12:3456::/32", "fd12:3456::1"),
+    ],
+)
+def test_allowlisted_subnet_still_permits_configured_ranges(subnet: str, ip: str) -> None:
+    egress = EgressConfig(allowed_private_subnets=[subnet])
+    assert validate_upstream_url(_url_for(ip), egress) == _url_for(ip)
+
+
+def test_embedded_ipv4_outside_allowlist_blocked() -> None:
+    # The allowlist covers 10.50/16; a mapped address embedding 10.60.x is not covered.
+    egress = EgressConfig(allowed_private_subnets=["10.50.0.0/16"])
+    with pytest.raises(ValueError, match="blocked address range"):
+        validate_upstream_url(_url_for("::ffff:10.60.0.1"), egress)

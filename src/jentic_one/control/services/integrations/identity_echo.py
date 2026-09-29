@@ -19,6 +19,7 @@ import httpx
 import structlog
 
 from jentic_one.shared.config import VendorIdentityProbeConfig
+from jentic_one.shared.egress import build_strict_pinned_transport
 from jentic_one.shared.url_validation import validate_upstream_url
 
 _logger = structlog.get_logger(__name__)
@@ -59,15 +60,22 @@ async def echo_identity(
     except ValueError as exc:
         raise IdentityEchoError(f"unsafe upstream URL: {exc}") from exc
 
-    async with httpx.AsyncClient(timeout=timeout_seconds) as client:
-        response = await client.request(
-            probe.method,
-            safe_url,
-            headers={
-                "Authorization": f"Bearer {access_token}",
-                "Accept": "application/json",
-            },
-        )
+    try:
+        async with httpx.AsyncClient(
+            timeout=timeout_seconds, transport=build_strict_pinned_transport()
+        ) as client:
+            response = await client.request(
+                probe.method,
+                safe_url,
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "Accept": "application/json",
+                },
+            )
+    except ValueError as exc:
+        # Raised by the pinning transport: the host re-resolved to a blocked
+        # address or did not resolve at all.
+        raise IdentityEchoError(f"unsafe upstream URL: {exc}") from exc
     if response.status_code in (401, 403):
         raise IdentityEchoAuthError(
             f"identity probe rejected the token: HTTP {response.status_code}"

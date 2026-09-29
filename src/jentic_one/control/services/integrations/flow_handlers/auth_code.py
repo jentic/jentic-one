@@ -44,6 +44,7 @@ from jentic_one.shared.config import (
     bind_origin,
 )
 from jentic_one.shared.context import Context
+from jentic_one.shared.egress import build_strict_pinned_transport
 from jentic_one.shared.models.actors import actor_type_from_id
 from jentic_one.shared.models.credentials import StoredCredentialType
 from jentic_one.shared.url_validation import validate_upstream_url
@@ -185,12 +186,19 @@ class AuthCodeFlowHandler:
         except ValueError as exc:
             raise AuthCodeExchangeError(f"unsafe upstream URL: {exc}") from exc
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(
-                safe_url,
-                data=payload,
-                headers={"Accept": "application/json"},
-            )
+        try:
+            async with httpx.AsyncClient(
+                timeout=30.0, transport=build_strict_pinned_transport()
+            ) as client:
+                response = await client.post(
+                    safe_url,
+                    data=payload,
+                    headers={"Accept": "application/json"},
+                )
+        except ValueError as exc:
+            # Raised by the pinning transport: the host re-resolved to a blocked
+            # address or did not resolve at all.
+            raise AuthCodeExchangeError(f"unsafe upstream URL: {exc}") from exc
         if response.status_code != 200:
             # Keep the raw body out of ``str(exc)`` — this string lands
             # verbatim in ``terminal_detail`` on the session row (persisted)
