@@ -5,9 +5,18 @@ than in plaintext; verification hashes the presented token and compares it to
 the stored digest. This data migration rewrites the values already in the
 table in place so in-flight sessions keep working across the upgrade: the
 digest is deterministic, so a client still holding its plaintext token
-verifies against the rewritten row exactly as before. (The column rename that
-makes the stored shape explicit is the follow-up DDL revision f2b3c4d5e6a7 —
-DDL and DML stay in separate revisions.)
+verifies against the rewritten row exactly as before.
+
+No DDL: the column keeps its name (the ORM maps it to the ``poll_token_hash``
+attribute). Migrations run while the previous release is still serving
+(e.g. the Helm pre-upgrade hook), and a rename would make every
+connect-session query on those pods fail until they are replaced. With the
+name unchanged the previous release keeps loading rows; for the length of the
+rollout it can no longer verify poll tokens of sessions that already hold a
+digest, and a session it creates in that window stores a plaintext token the
+new release will not accept. Both outcomes are an ordinary poll-token
+mismatch on a short-lived session, which the caller recovers from by starting
+a new one.
 
 Idempotent: a value that is already a 64-character lowercase hex digest is
 left alone. Issued tokens are ``secrets.token_urlsafe(32)`` (43 characters),
