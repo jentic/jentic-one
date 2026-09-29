@@ -275,6 +275,12 @@ func TestSameOrigin(t *testing.T) {
 		{"http://127.0.0.1:8080", "http://127.0.0.1:8081", false},
 		{"http://h.example", "https://h.example", false},
 		{"https://h.example", "https://h.example.evil", false},
+		{"https://h.example", "https://H.EXAMPLE/", true},
+		{"https://[::1]", "https://[::1]:443/x", true},
+		{"http://[::1]:8080", "http://[::1]:8081", false},
+		{"http://[::1]", "http://[::2]", false},
+		{"https://h.example", "https://sub.h.example", false},
+		{"https://h.example", "/relative", false},
 	}
 	for _, c := range cases {
 		a, _ := url.Parse(c.a)

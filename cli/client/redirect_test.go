@@ -156,3 +156,28 @@ func TestRetry_401FromOtherOriginIsNotReExchanged(t *testing.T) {
 		t.Errorf("stored token should be untouched, ReadTokens: %v", err)
 	}
 }
+
+// TestPlaneClient_CapsSameOriginRedirects: with no caller policy, the
+// default cap of 10 still applies to redirects that stay on the origin.
+func TestPlaneClient_CapsSameOriginRedirects(t *testing.T) {
+	var hits atomic.Int32
+	loop := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		http.Redirect(w, r, "/loop", http.StatusFound)
+	}))
+	t.Cleanup(loop.Close)
+	hc := Config{ControlBaseURL: loop.URL, InjectedBearerToken: "at_home"}.httpClient()
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, loop.URL+"/loop", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := hc.Do(req)
+	if err == nil {
+		closeResp(r)
+		t.Fatal("Do: want a redirect-cap error, got none")
+	}
+	if n := hits.Load(); n != maxRedirects {
+		t.Errorf("server hit %d times, want %d", n, maxRedirects)
+	}
+}
