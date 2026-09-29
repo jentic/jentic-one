@@ -1179,7 +1179,7 @@ func accountHomes(ctx context.Context) map[string]string {
 
 // CopyBinaryCmd copies the operator's binary at src into the agent user's
 // ~/.local/bin. Only the READ of src is privileged (it usually sits under the
-// operator's 0700 home): root streams it into a shell running AS THE AGENT,
+// operator's 0700 home): root opens it as the stdin of a shell running AS THE AGENT,
 // which creates the destination and renames a fresh temp file over it. Every
 // path the write touches is agent-owned, so it runs with the agent's own
 // permissions — an existing symlink (or a symlinked ~/.local / ~/.local/bin)
@@ -1188,23 +1188,55 @@ func accountHomes(ctx context.Context) map[string]string {
 // chown is needed. agentHome is resolved by the caller in Go (LookupHomeDir)
 // — never via shell expansion of the account name — so the name can't reach a
 // shell as anything but a quoted literal.
+//
+// src is attached with a shell redirection rather than piped from cat: if root
+// cannot open it the agent side never runs and the command fails, instead of
+// the pipeline's status (the writer's) reporting success for an empty file.
 func CopyBinaryCmd(agentUser, agentHome, src, binary string) *exec.Cmd {
-	agentSide := shellQuote(agentLaunchShell) + " --noprofile --norc -c " +
-		shellQuote(agentInstallFromStdinScript(AgentLocalBinDir(agentHome), binary))
-	script := "cat " + shellQuote(src) + " | sudo -u " + shellQuote(agentUser) + " -H " + agentSide
-	return exec.Command("sudo", "sh", "-c", script) //nolint:gosec // agentUser/src/binary/agentHome are config/descriptor-derived and Go-resolved, shell-quoted.
+	script := copyBinaryScript(asAgentPrefix(agentUser), agentHome, src, binary)
+	cmd := exec.Command("sudo", "sh", "-c", script) //nolint:gosec // agentUser/src/binary/agentHome are config/descriptor-derived and Go-resolved, shell-quoted.
+	// The agent-side shell inherits the working directory; the operator's cwd
+	// is typically unreadable to the agent (see agentCmd), so pin it to "/".
+	cmd.Dir = "/"
+	return cmd
 }
+
+// copyBinaryScript is CopyBinaryCmd's root-side script; asAgent is the
+// command prefix that switches to the agent (asAgentPrefix), which tests
+// leave empty to run the real script unprivileged.
+func copyBinaryScript(asAgent, agentHome, src, binary string) string {
+	return fixedPATHPrefix + asAgent + shellQuote(agentLaunchShell) + " --noprofile --norc -c " +
+		shellQuote(agentInstallFromStdinScript(AgentLocalBinDir(agentHome), binary)) + " < " + shellQuote(src)
+}
+
+// asAgentPrefix is the root-side command prefix that runs the rest of the
+// command line as agentUser (root needs no password for it).
+func asAgentPrefix(agentUser string) string {
+	return "sudo -u " + shellQuote(agentUser) + " -H "
+}
+
+// fixedPATHPrefix pins PATH to the system dirs for both halves of the
+// privileged copy pipelines (CopyBinaryCmd / CopyConfigCmd), so the helpers
+// they call (sudo, mkdir, mktemp, tar, …) never resolve through whatever PATH
+// the invoking environment carried (sudo keeps the caller's PATH when sudoers
+// sets no secure_path, as on macOS).
+const fixedPATHPrefix = "PATH=" + agentSystemPATH + "; export PATH; "
 
 // agentInstallFromStdinScript is the agent-side half of CopyBinaryCmd: create
 // dir, write stdin to a new temp file in it, mark it executable, and rename it
 // onto dir/binary. mktemp creates the temp file exclusively (never an existing
-// path) and rename(2) replaces a destination symlink instead of following it.
+// path). A symlink already at the destination is removed first — mv(1)
+// resolves a destination link to a DIRECTORY and would move the file into it —
+// and a real directory there is an error rather than a silent move-into.
 func agentInstallFromStdinScript(dir, binary string) string {
 	d := shellQuote(dir)
-	return `set -e; umask 022; mkdir -p ` + d + `; ` +
+	dest := shellQuote(dir + "/" + binary)
+	return fixedPATHPrefix + `set -e; umask 022; mkdir -p ` + d + `; ` +
+		`if [ -L ` + dest + ` ]; then rm -f ` + dest + `; ` +
+		`elif [ -d ` + dest + ` ]; then echo ` + dest + `": is a directory" >&2; exit 1; fi; ` +
 		`t="$(mktemp ` + shellQuote(dir+"/."+binary+".XXXXXX") + `)"; ` +
 		`trap 'rm -f "$t"' EXIT; ` +
-		`cat > "$t"; chmod 0755 "$t"; mv -f "$t" ` + shellQuote(dir+"/"+binary) + `; trap - EXIT`
+		`cat > "$t"; chmod 0755 "$t"; mv -f "$t" ` + dest + `; trap - EXIT`
 }
 
 // InstallBinaryCmd runs an agent's documented fresh-install command as the
@@ -1290,16 +1322,30 @@ func SafeSeedSources(operatorHome string, srcs []string) (safe, skipped []string
 // CAUTION: these files may carry provider-specific secrets (e.g. an API key the
 // operator saved in the agent's own config). This deliberately hands the agent
 // a copy of those; it is the operator's settings the agent is meant to inherit.
+//
+// The root side is bash with pipefail, not sh: a pipeline's status is
+// otherwise the extracting side's, so a source root could not read (or any
+// tar -c error) would be reported as a successful, empty or partial copy.
 func CopyConfigCmd(agentUser, agentHome, operatorHome string, srcs []string) *exec.Cmd {
+	script := copyConfigScript(asAgentPrefix(agentUser), agentHome, operatorHome, srcs)
+	cmd := exec.Command("sudo", agentLaunchShell, "--noprofile", "--norc", "-c", script) //nolint:gosec // agentUser/paths are config/descriptor-derived and Go-resolved, shell-quoted.
+	// The agent-side tar inherits the working directory; pin it to "/" (the
+	// operator's cwd is typically unreadable to the agent, see agentCmd).
+	cmd.Dir = "/"
+	return cmd
+}
+
+// copyConfigScript is CopyConfigCmd's root-side (bash) script; asAgent is as
+// for copyBinaryScript.
+func copyConfigScript(asAgent, agentHome, operatorHome string, srcs []string) string {
 	steps := make([]string, 0, len(srcs))
 	for _, src := range srcs {
 		rel := strings.TrimPrefix(src, filepath.Clean(operatorHome)+string(filepath.Separator))
 		destParent := filepath.Dir(filepath.Join(agentHome, rel))
-		steps = append(steps, operatorArchiveCmdline(src)+" | sudo -u "+shellQuote(agentUser)+" -H "+
+		steps = append(steps, operatorArchiveCmdline(src)+" | "+asAgent+
 			shellQuote(agentLaunchShell)+" --noprofile --norc -c "+shellQuote(agentExtractScript(destParent)))
 	}
-	script := strings.Join(steps, " && ")
-	return exec.Command("sudo", "sh", "-c", script) //nolint:gosec // agentUser/paths are config/descriptor-derived and Go-resolved, shell-quoted.
+	return fixedPATHPrefix + "set -o pipefail; " + strings.Join(steps, " && ")
 }
 
 // operatorArchiveCmdline is the privileged half of CopyConfigCmd: a tar of src
@@ -1313,7 +1359,7 @@ func operatorArchiveCmdline(src string) string {
 // agentExtractScript is the agent-side half of CopyConfigCmd: create the
 // destination parent and extract the tar on stdin into it.
 func agentExtractScript(destParent string) string {
-	return "umask 022; mkdir -p " + shellQuote(destParent) + " && tar -C " + shellQuote(destParent) + " -xf -"
+	return fixedPATHPrefix + "umask 022; mkdir -p " + shellQuote(destParent) + " && tar -C " + shellQuote(destParent) + " -xf -"
 }
 
 // ExpandedSecretPaths returns the descriptor's SecretConfigPaths expanded against

@@ -26,11 +26,15 @@ func TestAgentBashArgsSkipStartupFiles(t *testing.T) {
 }
 
 func TestCopyBinaryCmdWritesAsTheAgent(t *testing.T) {
-	joined := strings.Join(CopyBinaryCmd("a-local-agent", "/home/a-local-agent", "/opt/claude", "claude").Args, " ")
-	if !strings.Contains(joined, "cat '/opt/claude' | sudo -u 'a-local-agent' -H ") {
-		t.Errorf("binary must be streamed into an agent-side writer: %s", joined)
+	cmd := CopyBinaryCmd("a-local-agent", "/home/a-local-agent", "/opt/claude", "claude")
+	joined := strings.Join(cmd.Args, " ")
+	if !strings.Contains(joined, "sudo -u 'a-local-agent' -H ") || !strings.HasSuffix(joined, " < '/opt/claude'") {
+		t.Errorf("binary must be redirected into an agent-side writer: %s", joined)
 	}
-	for _, forbidden := range []string{"cp ", "chown", "install "} {
+	if cmd.Dir != "/" {
+		t.Errorf("copy must run from / (the operator's cwd is unreadable to the agent), got %q", cmd.Dir)
+	}
+	for _, forbidden := range []string{"cp ", "chown", "install ", "cat '/opt/claude'"} {
 		if strings.Contains(joined, forbidden) {
 			t.Errorf("binary copy must not run a root %q into the agent home: %s", forbidden, joined)
 		}
@@ -94,6 +98,76 @@ func TestAgentInstallScriptCreatesMissingDir(t *testing.T) {
 	if got, _ := os.ReadFile(filepath.Join(dir, "codex")); string(got) != "x" {
 		t.Errorf("content = %q", got)
 	}
+}
+
+// TestCopyBinaryScriptFailsOnUnreadableSource runs the real root-side script
+// (minus the sudo hop) against a source that does not exist: it must fail and
+// must not install an empty file.
+func TestCopyBinaryScriptFailsOnUnreadableSource(t *testing.T) {
+	home := t.TempDir()
+	script := copyBinaryScript("", home, filepath.Join(home, "missing"), "claude")
+	if out, err := exec.Command("sh", "-c", script).CombinedOutput(); err == nil {
+		t.Fatalf("copy of a missing source must fail:\n%s", out)
+	}
+	if _, err := os.Lstat(filepath.Join(AgentLocalBinDir(home), "claude")); !os.IsNotExist(err) {
+		t.Errorf("no destination may be created for a failed copy (lstat err = %v)", err)
+	}
+}
+
+func TestCopyBinaryScriptCopiesContent(t *testing.T) {
+	home := t.TempDir()
+	src := filepath.Join(t.TempDir(), "claude")
+	if err := os.WriteFile(src, []byte("binary"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("sh", "-c", copyBinaryScript("", home, src, "claude")).CombinedOutput(); err != nil {
+		t.Fatalf("copy failed: %v\n%s", err, out)
+	}
+	if got, _ := os.ReadFile(filepath.Join(AgentLocalBinDir(home), "claude")); string(got) != "binary" {
+		t.Errorf("content = %q", got)
+	}
+}
+
+// TestAgentInstallScriptDestinationDirs: a symlink to a directory at the
+// destination is replaced (mv would otherwise move the binary INTO the link's
+// target), and a real directory there is an error, not a silent move-into.
+func TestAgentInstallScriptDestinationDirs(t *testing.T) {
+	run := func(dir string) ([]byte, error) {
+		cmd := exec.Command("bash", "--noprofile", "--norc", "-c", agentInstallFromStdinScript(dir, "claude"))
+		cmd.Stdin = strings.NewReader("new-binary")
+		return cmd.CombinedOutput()
+	}
+
+	t.Run("symlink to dir", func(t *testing.T) {
+		root := t.TempDir()
+		dir := filepath.Join(root, "bin")
+		target := filepath.Join(root, "elsewhere")
+		mustMkdir(t, dir)
+		mustMkdir(t, target)
+		if err := os.Symlink(target, filepath.Join(dir, "claude")); err != nil {
+			t.Fatal(err)
+		}
+		if out, err := run(dir); err != nil {
+			t.Fatalf("install failed: %v\n%s", err, out)
+		}
+		if fi, err := os.Lstat(filepath.Join(dir, "claude")); err != nil || !fi.Mode().IsRegular() {
+			t.Fatalf("destination should be a regular file (err %v)", err)
+		}
+		if entries, _ := os.ReadDir(target); len(entries) != 0 {
+			t.Errorf("the link's target dir must be untouched, has %v", entries)
+		}
+	})
+
+	t.Run("real dir", func(t *testing.T) {
+		dir := filepath.Join(t.TempDir(), "bin")
+		mustMkdir(t, filepath.Join(dir, "claude"))
+		if out, err := run(dir); err == nil {
+			t.Fatalf("install onto a directory must fail:\n%s", out)
+		}
+		if entries, _ := os.ReadDir(filepath.Join(dir, "claude")); len(entries) != 0 {
+			t.Errorf("nothing may be moved into the directory, found %v", entries)
+		}
+	})
 }
 
 // TestWalkFiltersSkipLinks runs the real find filters used by the recursive
@@ -172,14 +246,18 @@ func TestConfigCopyPipelinePreservesLinks(t *testing.T) {
 	}
 	mustMkdir(t, agentHome)
 
-	destParent := agentHome
-	script := operatorArchiveCmdline(src) + " | bash --noprofile --norc -c " + shellQuote(agentExtractScript(destParent))
-	if out, err := exec.Command("sh", "-c", script).CombinedOutput(); err != nil {
+	script := copyConfigScript("", agentHome, opHome, []string{src})
+	if out, err := exec.Command("bash", "--noprofile", "--norc", "-c", script).CombinedOutput(); err != nil {
 		t.Fatalf("pipeline failed: %v\n%s", err, out)
 	}
 
-	if got, _ := os.ReadFile(filepath.Join(agentHome, ".aws", "config")); string(got) != "[default]" {
+	cfg := filepath.Join(agentHome, ".aws", "config")
+	if got, _ := os.ReadFile(cfg); string(got) != "[default]" {
 		t.Errorf("config content = %q", got)
+	}
+	// Credential-bearing files must keep their owner-only mode.
+	if fi, err := os.Stat(cfg); err != nil || fi.Mode().Perm() != 0o600 {
+		t.Errorf("config mode = %v (err %v), want 0600", fi.Mode().Perm(), err)
 	}
 	fi, err := os.Lstat(filepath.Join(agentHome, ".aws", "sso", "link"))
 	if err != nil {
@@ -187,6 +265,28 @@ func TestConfigCopyPipelinePreservesLinks(t *testing.T) {
 	}
 	if fi.Mode()&os.ModeSymlink == 0 {
 		t.Errorf("nested symlink was dereferenced into a %v", fi.Mode())
+	}
+}
+
+// TestConfigCopyScriptFailsWhenArchiveFails: a source the archiving side
+// cannot read must fail the whole copy, not report success for an empty
+// extract (the pipeline's status would otherwise be the extractor's).
+func TestConfigCopyScriptFailsWhenArchiveFails(t *testing.T) {
+	root := t.TempDir()
+	opHome := filepath.Join(root, "op")
+	agentHome := filepath.Join(root, "agent")
+	mustMkdir(t, opHome)
+	mustMkdir(t, agentHome)
+	script := copyConfigScript("", agentHome, opHome, []string{filepath.Join(opHome, ".missing")})
+	if out, err := exec.Command("bash", "--noprofile", "--norc", "-c", script).CombinedOutput(); err == nil {
+		t.Fatalf("copy of an unreadable source must fail:\n%s", out)
+	}
+	cmd := CopyConfigCmd("agent", agentHome, opHome, []string{filepath.Join(opHome, ".x")})
+	if cmd.Args[1] != agentLaunchShell || !strings.Contains(cmd.Args[len(cmd.Args)-1], "set -o pipefail;") {
+		t.Errorf("config copy must run under bash with pipefail: %v", cmd.Args)
+	}
+	if cmd.Dir != "/" {
+		t.Errorf("config copy must run from /, got %q", cmd.Dir)
 	}
 }
 
