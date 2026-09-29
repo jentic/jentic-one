@@ -14,6 +14,7 @@ from jentic_one.shared.redaction import (
     REDACTED,
     redact_event,
     redact_mapping,
+    redact_url_query,
     redact_value,
 )
 
@@ -156,3 +157,21 @@ def test_secret_never_reaches_emitted_log(capsys: pytest.CaptureFixture[str]) ->
     assert _SECRET not in captured
     assert REDACTED in captured
     assert "api.example.com" in captured
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        (
+            f"https://api.example.com/v1/x?api_key={_SECRET}&page=2",
+            f"https://api.example.com/v1/x?api_key={REDACTED}&page={REDACTED}",
+        ),
+        (f"https://api.example.com/v1/x?{_SECRET}", f"https://api.example.com/v1/x?{REDACTED}"),
+        (f"https://user:{_SECRET}@api.example.com/p", "https://api.example.com/p"),
+        (f"https://api.example.com/p#{_SECRET}", f"https://api.example.com/p#{REDACTED}"),
+        ("https://api.example.com:8443/v1/x", "https://api.example.com:8443/v1/x"),
+        ("http://[::1/broken?k=v", REDACTED),
+    ],
+)
+def test_redact_url_query_masks_values_keeps_host_and_path(url: str, expected: str) -> None:
+    assert redact_url_query(url) == expected

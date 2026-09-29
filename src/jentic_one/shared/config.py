@@ -244,6 +244,15 @@ class LoggingConfig(BaseModel):
     file_name: str = "app.log"
     file_max_bytes: int = 10 * 1024 * 1024  # 10 MB
     file_backup_count: int = 5
+    http_wire_trace: bool = Field(
+        default=False,
+        description=(
+            "Let httpcore's DEBUG wire-trace lines through when the log level is DEBUG. "
+            "Off by default: those lines repr raw transport exceptions, which can quote "
+            "outbound header values (including injected credentials). Enable only for "
+            "short-lived local debugging."
+        ),
+    )
 
 
 class DatabasesConfig(BaseModel):

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 import structlog
 from fastapi import FastAPI
@@ -90,6 +91,55 @@ def test_configure_logging_clamps_httpcore_trace_logs_at_debug(debug_config: App
     configure_logging(debug_config)
     assert logging.getLogger().level == logging.DEBUG
     assert not logging.getLogger("httpcore.http11").isEnabledFor(logging.DEBUG)
+
+
+def test_http_wire_trace_toggle_lifts_the_httpcore_clamp() -> None:
+    config = AppConfig.model_validate(
+        {
+            "databases": {
+                "registry": {"name": "r"},
+                "admin": {"name": "a"},
+                "control": {"name": "c"},
+            },
+            "runtime": {"debug": True, "log_level": "DEBUG"},
+            "logging": {"http_wire_trace": True},
+        }
+    )
+    try:
+        configure_logging(config)
+        assert logging.getLogger("httpcore.http11").isEnabledFor(logging.DEBUG)
+    finally:
+        logging.getLogger("httpcore").setLevel(logging.INFO)
+
+
+async def test_httpx_request_log_masks_query_param_api_key(
+    minimal_config: AppConfig, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """httpx logs every request at INFO with the full URL; a query-located API
+    key must not reach the sink, while host and path stay readable."""
+    config = minimal_config.model_copy(
+        update={"runtime": minimal_config.runtime.model_copy(update={"log_level": "INFO"})}
+    )
+    configure_logging(config)
+    client = httpx.AsyncClient(transport=httpx.MockTransport(lambda _r: httpx.Response(200)))
+    try:
+        await client.get("https://upstream.example/v1/search?api_key=qk_live_secret&q=term")
+    finally:
+        await client.aclose()
+        for handler in logging.getLogger().handlers:
+            handler.flush()
+
+    out = capsys.readouterr().out
+    assert "HTTP Request: GET https://upstream.example/v1/search?api_key=" in out
+    assert "qk_live_secret" not in out
+    assert "q=term" not in out
+
+
+def test_configure_logging_installs_the_httpx_url_filter_once(minimal_config: AppConfig) -> None:
+    configure_logging(minimal_config)
+    configure_logging(minimal_config)
+    filters = logging.getLogger("httpx").filters
+    assert sum(type(f).__name__ == "_OutboundUrlQueryFilter" for f in filters) == 1
 
 
 def test_configure_logging_root_logger_has_single_handler(minimal_config: AppConfig):

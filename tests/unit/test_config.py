@@ -111,6 +111,13 @@ def test_env_coerces_int(config_file: Path):
     assert config.databases.registry.port == 9999
 
 
+def test_http_wire_trace_defaults_off_and_env_enables(config_file: Path):
+    assert load_config(config_file).logging.http_wire_trace is False
+    with patch.dict(os.environ, {"JENTIC__LOGGING__HTTP_WIRE_TRACE": "true"}, clear=False):
+        config = load_config(config_file)
+    assert config.logging.http_wire_trace is True
+
+
 def test_env_coerces_float(config_file: Path):
     env = {"JENTIC__SERVICES__REQUEST_TIMEOUT_S": "60.5"}
     with patch.dict(os.environ, env, clear=False):

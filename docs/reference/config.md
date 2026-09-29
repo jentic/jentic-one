@@ -116,6 +116,7 @@ File logging sink (in addition to stdout).
 | `logging.file_name` | string | `"app.log"` | `JENTIC__LOGGING__FILE_NAME` |  |
 | `logging.file_max_bytes` | integer | `10485760` | `JENTIC__LOGGING__FILE_MAX_BYTES` |  |
 | `logging.file_backup_count` | integer | `5` | `JENTIC__LOGGING__FILE_BACKUP_COUNT` |  |
+| `logging.http_wire_trace` | boolean | `false` | `JENTIC__LOGGING__HTTP_WIRE_TRACE` | Let httpcore's DEBUG wire-trace lines through when the log level is DEBUG. Off by default: those lines repr raw transport exceptions, which can quote outbound header values (including injected credentials). Enable only for short-lived local debugging. |
 
 ## `server`
 

@@ -26,6 +26,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping, MutableMapping
 from typing import Any, Final
+from urllib.parse import SplitResult, urlsplit, urlunsplit
 
 REDACTED: Final = "***REDACTED***"
 
@@ -114,6 +115,37 @@ def _redact_member(key: Any, value: Any, _depth: int = 0) -> Any:
     if isinstance(key, str) and _is_sensitive_key(key):
         return REDACTED
     return redact_value(value, _depth=_depth + 1)
+
+
+def redact_url_query(url: str) -> str:
+    """Mask every query-string value (and any userinfo) in ``url``.
+
+    Keeps scheme, host, port, path and the parameter *names*, so an outbound
+    request stays identifiable in a log line or span; the values are replaced
+    with :data:`REDACTED` because the broker injects ``location=query`` API keys
+    there. Names are kept verbatim (not re-encoded); a bare pair without ``=``
+    and any fragment are masked whole. A URL that cannot be parsed is replaced
+    wholesale rather than passed through.
+    """
+    try:
+        parts = urlsplit(url)
+        netloc = parts.netloc.rsplit("@", 1)[-1]
+        if parts.query:
+            # A bare ``?<token>`` pair (no ``=``) may itself be the secret, so it
+            # is masked whole.
+            masked = "&".join(
+                (f"{pair.split('=', 1)[0]}={REDACTED}" if "=" in pair else REDACTED)
+                if pair
+                else pair
+                for pair in parts.query.split("&")
+            )
+        else:
+            masked = parts.query
+        return urlunsplit(
+            SplitResult(parts.scheme, netloc, parts.path, masked, parts.fragment and REDACTED)
+        )
+    except ValueError:
+        return REDACTED
 
 
 def redact_mapping(data: Mapping[str, Any]) -> dict[str, Any]:

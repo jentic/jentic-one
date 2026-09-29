@@ -211,6 +211,33 @@ async def test_outbound_spans_redact_secrets_and_bodies():
 
 
 @pytest.mark.asyncio
+async def test_outbound_span_url_masks_query_param_api_key():
+    """A ``location=query`` API key rides the upstream query string; the span's
+    recorded URL keeps host and path but never the value."""
+    exporter = InMemorySpanExporter()
+    provider = configure_tracing("test-service", _NONE_CONFIG)
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(lambda _r: httpx.Response(200)))
+    instrument_outbound_client(client)
+    try:
+        await client.get("https://upstream.example/v1/search?api_key=qk_live_secret&q=term")
+    finally:
+        await client.aclose()
+
+    spans = exporter.get_finished_spans()
+    assert spans, "expected at least one outbound span"
+    attrs = {k: v for span in spans for k, v in (span.attributes or {}).items()}
+    blob = "\n".join(f"{k}={v}" for k, v in attrs.items())
+    assert "qk_live_secret" not in blob
+    assert "term" not in blob
+    url_values = [str(attrs[k]) for k in ("http.url", "url.full") if k in attrs]
+    assert url_values, "the instrumentor records the request URL"
+    for value in url_values:
+        assert value.startswith("https://upstream.example/v1/search?api_key=")
+
+
+@pytest.mark.asyncio
 async def test_outbound_request_carries_w3c_and_jentic_tracestate():
     """Propagation: the outbound request gets traceparent + the jentic member."""
     provider = configure_tracing("test-service", _NONE_CONFIG)

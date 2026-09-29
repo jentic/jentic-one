@@ -36,6 +36,7 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
 from jentic_one.shared.config import TracingConfig
+from jentic_one.shared.redaction import redact_url_query
 
 if TYPE_CHECKING:
     import httpx
@@ -80,13 +81,32 @@ def _redact_request_span(span: Span, info: RequestInfo) -> None:
     """Outbound request hook — record only safe-listed structural attributes.
 
     The instrumentor records method/url/host structurally already; this hook
-    never adds the request body and only mirrors safe-listed headers, so a
-    proxied ``Authorization`` / injected API key / cookie never lands on a span.
+    masks the query values in that recorded URL, never adds the request body,
+    and only mirrors safe-listed headers, so a proxied ``Authorization`` /
+    injected API key (header or query) / cookie never lands on a span.
     """
-    if not span.is_recording() or info.headers is None:
+    if not span.is_recording():
+        return
+    _mask_url_attributes(span, info)
+    if info.headers is None:
         return
     for key, value in _safe_header_attributes(info.headers, prefix="http.request.header").items():
         span.set_attribute(key, value)
+
+
+# The instrumentor's URL attributes (legacy ``http.url``, stable ``url.full``).
+# Its own ``redact_url`` only masks a few AWS/GCS signature parameters, so a
+# ``location=query`` API key would otherwise be recorded verbatim.
+_URL_SPAN_ATTRIBUTES: tuple[str, ...] = ("http.url", "url.full")
+
+
+def _mask_url_attributes(span: Span, info: RequestInfo) -> None:
+    """Overwrite the recorded request URL with its query values masked."""
+    recorded = getattr(span, "attributes", None) or {}
+    masked = redact_url_query(str(info.url))
+    for key in _URL_SPAN_ATTRIBUTES:
+        if key in recorded:
+            span.set_attribute(key, masked)
 
 
 def _redact_response_span(span: Span, _request: RequestInfo, info: ResponseInfo) -> None:
@@ -100,6 +120,20 @@ def _redact_response_span(span: Span, _request: RequestInfo, info: ResponseInfo)
         return
     for key, value in _safe_header_attributes(info.headers, prefix="http.response.header").items():
         span.set_attribute(key, value)
+
+
+async def _redact_request_span_async(span: Span, info: RequestInfo) -> None:
+    """Async twin of :func:`_redact_request_span` for ``httpx.AsyncClient``.
+
+    ``instrument_client`` only invokes a request hook on an async client when
+    the hook is a coroutine function — a plain function is silently ignored.
+    """
+    _redact_request_span(span, info)
+
+
+async def _redact_response_span_async(span: Span, request: RequestInfo, info: ResponseInfo) -> None:
+    """Async twin of :func:`_redact_response_span` (see above)."""
+    _redact_response_span(span, request, info)
 
 
 # ---------------------------------------------------------------------------
@@ -182,8 +216,8 @@ def instrument_outbound_client(client: httpx.AsyncClient) -> None:
     """
     HTTPXClientInstrumentor().instrument_client(
         client,
-        request_hook=_redact_request_span,
-        response_hook=_redact_response_span,
+        request_hook=_redact_request_span_async,
+        response_hook=_redact_response_span_async,
     )
 
 
