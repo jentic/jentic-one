@@ -19,6 +19,7 @@ import {
 	type CredentialFormState,
 } from '@/shared/credentials/components/CredentialTypeFields';
 import { buildUpdateBody, validateUpdate } from '@/shared/credentials/lib/formBody';
+import { assignVendorUrl, isHttpsVendorUrl } from '@/shared/credentials/lib/safe-navigation';
 import { BoundAgentsSection } from '@/shared/credentials/components/BoundAgentsSection';
 import { credentialNameClash } from '@/shared/credentials/lib/credentialIdentity';
 import { CredentialNameClashNote } from '@/shared/credentials/components/CredentialNameClashNote';
@@ -151,7 +152,16 @@ export function EditCredentialSheet({
 			{
 				onSuccess: (challenge) => {
 					if (challenge.kind === 'authorization_code') {
-						window.location.assign(challenge.authorize_url);
+						// ``authorize_url`` is vendor-supplied; only follow https
+						// (same guard as ``runConnectFlow``).
+						if (!isHttpsVendorUrl(challenge.authorize_url)) {
+							toast({
+								title: 'The provider returned an unsafe sign-in URL',
+								variant: 'error',
+							});
+							return;
+						}
+						assignVendorUrl(challenge.authorize_url);
 						return;
 					}
 					// device_code challenges are handled by the credential row's

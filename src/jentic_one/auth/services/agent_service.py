@@ -679,8 +679,21 @@ class AgentService:
     async def resume_credential(
         self, agent_id: str, *, credential_id: str, identity: Identity
     ) -> CredentialBindingView:
-        """Lift a suspended binding — the reverse of the default unbind."""
+        """Lift a suspended binding — the reverse of the default unbind.
+
+        Resuming re-grants the agent the credential's secret at the broker,
+        so it takes the same credential-ownership check as
+        :meth:`bind_credential` on top of agent visibility: a suspension set
+        by the credential's owner cannot be lifted by an agent owner who
+        could not bind that credential themselves.
+        """
         await self.get_agent(agent_id, identity=identity)
+        ref = None
+        if self._ctx.is_db_allowed("control"):
+            async with self._ctx.control_db.session() as session:
+                ref = await CredentialRefRepository.get_by_id(session, credential_id)
+        if ref is None or not self._can_bind_credential(identity, ref.created_by):
+            raise CredentialNotVisibleError(credential_id)
         async with self._ctx.admin_db.transaction() as session:
             updated = await AgentCredentialBindingRepository.set_suspended(
                 session, agent_id=agent_id, credential_id=credential_id, suspended=False

@@ -412,6 +412,60 @@ def test_admin_can_bind_any_credential(
     assert resp.status_code == 201
 
 
+def test_resume_requires_bind_rights_on_credential(
+    owner_client: TestClient,
+    admin_client: TestClient,
+    binding_agent_id: str,
+    control_credential_id: str,
+    foreign_credential_id: str,
+) -> None:
+    """Resuming a suspended binding takes the same credential check as binding.
+
+    The agent owner can see the agent, but a suspended binding to a
+    credential they could not bind themselves stays suspended (uniform 404);
+    their own credential and ``org:admin`` resume as before.
+    """
+    agent_id = binding_agent_id
+    assert (
+        admin_client.post(
+            f"/agents/{agent_id}/credentials", json={"credential_id": foreign_credential_id}
+        ).status_code
+        == 201
+    )
+    assert (
+        admin_client.delete(f"/agents/{agent_id}/credentials/{foreign_credential_id}").status_code
+        == 204
+    )
+
+    resp = owner_client.post(f"/agents/{agent_id}/credentials/{foreign_credential_id}:resume")
+    assert resp.status_code == 404
+    assert resp.json()["type"] == "credential_not_found"
+    rows = {
+        b["credential_id"]: b
+        for b in admin_client.get(f"/agents/{agent_id}/credentials").json()["data"]
+    }
+    assert rows[foreign_credential_id]["suspended"] is True
+
+    resp = admin_client.post(f"/agents/{agent_id}/credentials/{foreign_credential_id}:resume")
+    assert resp.status_code == 200
+    assert resp.json()["suspended"] is False
+
+    # The owner's own credential still round-trips suspend -> resume.
+    assert (
+        owner_client.post(
+            f"/agents/{agent_id}/credentials", json={"credential_id": control_credential_id}
+        ).status_code
+        == 201
+    )
+    assert (
+        owner_client.delete(f"/agents/{agent_id}/credentials/{control_credential_id}").status_code
+        == 204
+    )
+    resp = owner_client.post(f"/agents/{agent_id}/credentials/{control_credential_id}:resume")
+    assert resp.status_code == 200
+    assert resp.json()["suspended"] is False
+
+
 @pytest.fixture()
 async def dcr_agent_id(web_context: Context) -> AsyncGenerator[str, None]:
     """A self-registered (DCR) agent with no human owner (owner_id is NULL)."""

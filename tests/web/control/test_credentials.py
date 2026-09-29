@@ -882,6 +882,135 @@ def test_rule_set_attach_needs_write_scope(
     assert delegated_agent_client.delete(base).status_code == 403
 
 
+_PLAIN_WRITER_SUB = "usr_webtest_plain_writer"
+_OWNED_BINDING_AGENT = "agnt_rulewrite_bound"
+
+
+@pytest.fixture()
+async def owned_binding(
+    plain_writer_client: TestClient, web_context: Context
+) -> AsyncGenerator[tuple[str, str], None]:
+    """A credential owned by a non-admin user, directly bound to that user's agent.
+
+    Yields ``(credential_id, agent_id)``.
+    """
+    credential_id = _create_api_key(plain_writer_client)
+    async with web_context.admin_db.transaction() as session:
+        await session.execute(
+            text(
+                "INSERT INTO agents (id, name, registered_by, status, created_by) "
+                "VALUES (:id, 'rule-write-bound', :owner, 'pending', :owner) "
+                "ON CONFLICT DO NOTHING"
+            ),
+            {"id": _OWNED_BINDING_AGENT, "owner": _PLAIN_WRITER_SUB},
+        )
+        await AgentCredentialBindingRepository.bind(
+            session,
+            agent_id=_OWNED_BINDING_AGENT,
+            credential_id=credential_id,
+            created_by=_PLAIN_WRITER_SUB,
+        )
+    yield credential_id, _OWNED_BINDING_AGENT
+
+    async with web_context.admin_db.session() as session:
+        await session.execute(
+            text("DELETE FROM agent_credential_bindings WHERE credential_id = :cid"),
+            {"cid": credential_id},
+        )
+        await session.execute(
+            text("DELETE FROM agents WHERE id = :id"), {"id": _OWNED_BINDING_AGENT}
+        )
+        await session.commit()
+    async with web_context.control_db.session() as session:
+        await session.execute(
+            text("DELETE FROM credentials WHERE created_by = :who"), {"who": _PLAIN_WRITER_SUB}
+        )
+        await session.commit()
+
+
+@pytest.fixture()
+def bound_writer_agent_client(web_context: Context) -> Iterator[TestClient]:
+    """The bound agent itself, holding credentials:write plus owner delegation."""
+    identity = Identity(
+        sub=_OWNED_BINDING_AGENT,
+        email=f"{_OWNED_BINDING_AGENT}@test.local",
+        permissions=_effective("credentials:read", "credentials:write", "owner:credentials:read"),
+        actor_type=ActorType.AGENT,
+        parent_actor_id=_PLAIN_WRITER_SUB,
+    )
+    app = _build_app(web_context, identity)
+    with TestClient(app) as tc:
+        yield tc
+
+
+def test_binding_rule_writes_require_credential_owner_or_admin(
+    plain_writer_client: TestClient,
+    cred_writer_client: TestClient,
+    bound_writer_agent_client: TestClient,
+    owned_binding: tuple[str, str],
+    clean_rule_sets: None,
+) -> None:
+    """Rule writes on a binding need the credential's owner or org:admin.
+
+    The bound agent can read its own binding's rules, but neither
+    credentials:write nor owner delegation lets it replace, patch, attach or
+    detach them — it gets the same 404 as a caller who cannot see the
+    credential. The owner and an org:admin can.
+    """
+    credential_id, agent_id = owned_binding
+    base = f"/credentials/{credential_id}/agents/{agent_id}"
+    owner_rules = [{"effect": "allow", "methods": ["GET"], "path": "/v1/.*"}]
+
+    resp = plain_writer_client.put(f"{base}/permissions", json=owner_rules)
+    assert resp.status_code == 200, resp.text
+    set_id = plain_writer_client.post(
+        "/permission-rule-sets",
+        json={"name": "owner-set", "rules": [{"effect": "allow", "methods": ["GET"]}]},
+    ).json()["rule_set_id"]
+
+    # Reads stay open to the bound agent.
+    resp = bound_writer_agent_client.get(f"{base}/permissions")
+    assert resp.status_code == 200, resp.text
+    assert len(resp.json()["data"]) == 1
+
+    wide_open = [{"effect": "allow", "methods": ["GET", "POST", "DELETE"], "path": ".*"}]
+    denied = [
+        bound_writer_agent_client.put(f"{base}/permissions", json=wide_open),
+        bound_writer_agent_client.patch(f"{base}/permissions", json={"add": wide_open}),
+        bound_writer_agent_client.patch(f"{base}/permissions", json={"remove": [0]}),
+        bound_writer_agent_client.put(f"{base}/rule-set", json={"rule_set_id": set_id}),
+    ]
+    for resp in denied:
+        assert resp.status_code == 404, resp.text
+        assert resp.json()["type"] == "credential_not_found"
+
+    # Nothing changed.
+    rules = plain_writer_client.get(f"{base}/permissions").json()["data"]
+    assert [(r["effect"], r["methods"], r["path"]) for r in rules] == [("allow", ["GET"], "/v1/.*")]
+
+    # The owner attaches a set; the agent cannot detach it.
+    assert (
+        plain_writer_client.put(f"{base}/rule-set", json={"rule_set_id": set_id}).status_code == 204
+    )
+    resp = bound_writer_agent_client.delete(f"{base}/rule-set")
+    assert resp.status_code == 404
+    assert resp.json()["type"] == "credential_not_found"
+    rows = {
+        r["agent_id"]: r
+        for r in plain_writer_client.get(f"/credentials/{credential_id}/agents").json()["data"]
+    }
+    assert rows[agent_id]["rule_set_id"] == set_id
+
+    # org:admin may write too; the owner can detach.
+    resp = cred_writer_client.patch(
+        f"{base}/permissions",
+        json={"add": [{"effect": "deny", "methods": ["DELETE"], "path": ".*"}]},
+    )
+    assert resp.status_code == 200, resp.text
+    assert plain_writer_client.delete(f"{base}/rule-set").status_code == 204
+    assert cred_writer_client.put(f"{base}/permissions", json=[]).status_code == 200
+
+
 # --- Direct-binding visibility widening (theme 5 phase 1) ---
 
 

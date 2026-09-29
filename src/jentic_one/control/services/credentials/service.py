@@ -445,8 +445,27 @@ class CredentialService:
 
     # --- Per-binding permission rules (theme 5 phase 1) ---
 
+    @staticmethod
+    def _may_write_binding_rules(credential: Credential, identity: Identity) -> bool:
+        """Owner-or-admin write gate for a binding's permission rules.
+
+        The rules bound what an agent may do with the credential, so changing
+        them is the credential owner's call: ``org:admin`` or the identity
+        that created the credential. Read visibility is deliberately not
+        enough — neither being the bound agent itself, nor an owner-delegation
+        read scope, nor an extension's shared-read grant widens this gate.
+        """
+        return ORG_ADMIN in identity.permissions or (
+            credential.created_by is not None and credential.created_by == identity.sub
+        )
+
     async def _require_visible_binding(
-        self, credential_id: str, agent_id: str, *, identity: Identity
+        self,
+        credential_id: str,
+        agent_id: str,
+        *,
+        identity: Identity,
+        for_write: bool = False,
     ) -> AgentCredentialBindingRow:
         """Gate the per-binding rules endpoints on both axes (hard problems 7/9).
 
@@ -455,6 +474,10 @@ class CredentialService:
         ``(agent, credential)`` binding must exist (admin-DB row; the rules
         themselves live control-side, so this is the cross-DB seam). Returns
         the binding row so callers can see its attached ``rule_set_id``.
+
+        ``for_write`` additionally requires :meth:`_may_write_binding_rules`;
+        a caller who can see the credential but not write its rules gets the
+        same 404 as one who cannot see it at all.
         """
         access_filters = build_access_filters(
             identity,
@@ -466,7 +489,9 @@ class CredentialService:
             credential = await CredentialRepository.get_by_id(
                 session, credential_id, filters=access_filters
             )
-            if credential is None:
+            if credential is None or (
+                for_write and not self._may_write_binding_rules(credential, identity)
+            ):
                 raise CredentialNotFoundError(credential_id)
         async with self._ctx.admin_db.session() as session:
             binding = await PrerequisiteRepository.get_agent_credential_binding(
@@ -528,7 +553,9 @@ class CredentialService:
         identity: Identity,
     ) -> list[AgentPermissionRule]:
         """Replace the full user-rule list for a binding (idempotent PUT)."""
-        await self._require_visible_binding(credential_id, agent_id, identity=identity)
+        await self._require_visible_binding(
+            credential_id, agent_id, identity=identity, for_write=True
+        )
         async with self._ctx.control_db.transaction() as session:
             result = await AgentPermissionRuleRepository.replace_user_rules(
                 session, agent_id, credential_id, rules, created_by=identity.sub
@@ -548,7 +575,9 @@ class CredentialService:
         remove: list[int] | None = None,
     ) -> list[AgentPermissionRule]:
         """Additively add and/or remove user rules on a binding."""
-        await self._require_visible_binding(credential_id, agent_id, identity=identity)
+        await self._require_visible_binding(
+            credential_id, agent_id, identity=identity, for_write=True
+        )
         async with self._ctx.control_db.transaction() as session:
             result = await AgentPermissionRuleRepository.patch_rules(
                 session, agent_id, credential_id, add=add, remove=remove, created_by=identity.sub
@@ -644,7 +673,9 @@ class CredentialService:
         across the DB seam, so this check plus the delete-time
         ``rule_set_in_use`` refusal are the integrity guard.
         """
-        await self._require_visible_binding(credential_id, agent_id, identity=identity)
+        await self._require_visible_binding(
+            credential_id, agent_id, identity=identity, for_write=True
+        )
         async with self._ctx.control_db.session() as session:
             if await PermissionRuleSetRepository.get_by_id(session, rule_set_id) is None:
                 raise RuleSetNotFoundError(rule_set_id)
@@ -667,7 +698,9 @@ class CredentialService:
         Idempotent: detaching a binding that already runs on inline rules is
         a no-op, not an error.
         """
-        binding = await self._require_visible_binding(credential_id, agent_id, identity=identity)
+        binding = await self._require_visible_binding(
+            credential_id, agent_id, identity=identity, for_write=True
+        )
         if binding.rule_set_id is None:
             return
         async with self._ctx.admin_db.transaction() as session:
