@@ -23,6 +23,7 @@ def _make_result(
     auth: list[AuthInstruction] | None = None,
     inputs: OperationInputs | None = None,
     response_schema: dict[str, object] | None = None,
+    display_name: str | None = None,
 ) -> OperationInspectResult:
     return OperationInspectResult(
         operation_id="op_abc",
@@ -34,6 +35,7 @@ def _make_result(
             vendor="acme",
             name="Pets API",
             version="v1",
+            display_name=display_name,
             description="A pet management API",
         ),
         inputs=inputs,
@@ -67,6 +69,12 @@ def test_render_markdown_includes_api_context() -> None:
     result = _make_result()
     md = render_markdown(result)
     assert "acme/Pets API v1" in md
+
+
+def test_render_markdown_labels_api_with_display_name() -> None:
+    result = _make_result(display_name="Acme Pets")
+    md = render_markdown(result)
+    assert "**API:** Acme Pets (acme/Pets API v1)" in md
 
 
 def test_render_markdown_includes_description() -> None:

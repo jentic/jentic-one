@@ -125,8 +125,9 @@ class InspectService:
         api = operation.revision.api
         return ApiContext(
             vendor=api.vendor,
-            name=api.display_name or api.name,
+            name=api.name,
             version=api.version,
+            display_name=api.display_name,
             description=api.description,
             tag_descriptions=_extract_tag_descriptions(operation),
         )

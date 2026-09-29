@@ -33,7 +33,11 @@ def _render_operation_markdown(result: OperationInspectResult) -> str:
         lines.append(f"**Server:** `{result.server}`")
     lines.append("")
 
-    lines.append(f"**API:** {result.api.vendor}/{result.api.name} {result.api.version}")
+    api_ref = f"{result.api.vendor}/{result.api.name} {result.api.version}"
+    if result.api.display_name and result.api.display_name != result.api.name:
+        lines.append(f"**API:** {result.api.display_name} ({api_ref})")
+    else:
+        lines.append(f"**API:** {api_ref}")
     if result.api.description:
         lines.append(f"> {result.api.description}")
     lines.append("")

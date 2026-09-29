@@ -26646,7 +26646,7 @@
     },
     "/inspect": {
       "get": {
-        "description": "Inspect an operation — resolve to full structural detail.",
+        "description": "Inspect an operation — resolve to full structural detail.\n\n`api.vendor`/`api.name`/`api.version` in the result is the canonical API\nreference: the identity to use in credential scopes, revision pins and\nother API references. `api.display_name` (optional) is a human-readable\nlabel only.",
         "operationId": "inspectOperation",
         "parameters": [
           {

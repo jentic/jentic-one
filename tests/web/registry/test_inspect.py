@@ -131,6 +131,8 @@ async def test_inspect_by_method_url_summary_returns_200(
     assert data["type"] == "operation"
     assert data["method"] == "GET"
     assert data["api"]["vendor"] == "acme"
+    assert data["api"]["name"] == "pets"
+    assert data["api"]["display_name"] == "Acme Pets"
     assert "links" in data
 
 
