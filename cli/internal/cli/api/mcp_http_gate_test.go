@@ -116,6 +116,19 @@ func TestMCPHTTP_TokenGate(t *testing.T) {
 			t.Errorf("WWW-Authenticate = %q, want a Bearer challenge", header.Get("WWW-Authenticate"))
 		}
 	})
+	t.Run("a case-variant method key cannot smuggle a call past the gate", func(t *testing.T) {
+		for _, frame := range []string{
+			`{"jsonrpc":"2.0","id":3,"Method":"ping","method":"tools/call","params":{"name":"get_started"}}`,
+			`{"jsonrpc":"2.0","id":3,"METHOD":"ping","method":"tools/call","params":{"name":"get_started"}}`,
+			`{"jsonrpc":"2.0","id":3,"method":"tools/call","Method":"ping","params":{"name":"get_started"}}`,
+			`{"jsonrpc":"2.0","id":3,"method":"tools/call","METHOD":"ping","params":{"name":"get_started"}}`,
+			`{"jsonrpc":"2.0","id":3,"method":"tools/call","method":"ping","params":{"name":"get_started"}}`,
+		} {
+			if status, _ := postFrame(t, daemon.URL, frame, nil); status != http.StatusUnauthorized {
+				t.Errorf("status for %s = %d, want 401", frame, status)
+			}
+		}
+	})
 	t.Run("a wrong token is refused", func(t *testing.T) {
 		status, _ := postFrame(t, daemon.URL, callFrame, map[string]string{"Authorization": "Bearer wrong"})
 		if status != http.StatusUnauthorized {
@@ -162,6 +175,29 @@ func TestAllPreAuthMethods(t *testing.T) {
 		`[]`:                       false,
 		`not json`:                 false,
 		`{"jsonrpc":"2.0","id":1}`: false,
+		// Envelope members must be spelled exactly once, in lower case: the
+		// SDK decodes case-sensitively, so a case variant or duplicate could
+		// otherwise make the gate and the dispatcher disagree on the method.
+		`{"jsonrpc":"2.0","id":1,"Method":"ping","method":"tools/call"}`:      false,
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","Method":"ping"}`:      false,
+		`{"jsonrpc":"2.0","id":1,"METHOD":"ping","method":"tools/call"}`:      false,
+		`{"jsonrpc":"2.0","id":1,"method":"ping","METHOD":"tools/call"}`:      false,
+		`{"jsonrpc":"2.0","id":1,"method":"ping","method":"tools/call"}`:      false,
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","method":"ping"}`:      false,
+		`{"jsonrpc":"2.0","id":1,"METHOD":"ping"}`:                            false,
+		`{"jsonrpc":"2.0","id":1,"\u006dethod":"ping","method":"tools/call"}`: false,
+		`{"jsonrpc":"2.0","id":1,"method":"ping","params":{},"Params":{}}`:    false,
+		`{"jsonrpc":"2.0","JSONRPC":"2.0","id":1,"method":"ping"}`:            false,
+		`{"jsonrpc":"2.0","id":1,"Id":2,"method":"ping"}`:                     false,
+		`{"jsonrpc":"2.0","id":1,"method":"\u0070ing"}`:                       false,
+		`{"jsonrpc":"2.0","id":1,"method":["ping"]}`:                          false,
+		`{"jsonrpc":"2.0","id":1,"method":"ping"}{"method":"tools/call"}`:     false,
+		`{"jsonrpc":"2.0","id":1,"method":"ping"} trailing`:                   false,
+		` {"jsonrpc":"2.0","id":1,"method":"ping","params":{"Method":"x"}} `:  true,
+		`[{"method":"ping"},{"Method":"ping","method":"tools/call"}]`:         false,
+		`[{"method":"ping"},{"METHOD":"tools/call","method":"ping"}]`:         false,
+		`[{"method":"ping"}][{"method":"tools/call"}]`:                        false,
+		`[{"method":"ping"},"x"]`:                                             false,
 	}
 	for body, want := range cases {
 		if got := allPreAuthMethods([]byte(body)); got != want {
