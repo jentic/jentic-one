@@ -19,14 +19,12 @@ identity: every server (API- and operation-level) of every indexed revision,
 default server variables pre-expanded by the index builder. Two deliberate
 asymmetries with the raw index, both matching runtime interception:
 
-- **All indexed revisions count, not just the current one.** Discovery's
-  ``lookup_by_host_any_revision`` applies no revision predicate, and
-  archiving a revision clears ``current_revision_id`` without deleting its
-  index rows — so an archived revision's hosts still route through the broker
-  and must stay in the governed set. Discovery does skip a draft held for
-  server-host review; its hosts are still listed here on purpose, so a gate
-  keeps sending that traffic to the broker (which refuses it) rather than
-  direct to the upstream.
+- **All indexed revisions count, not just the current one.** Unpinned
+  discovery (``lookup_by_host_live``) only serves each API's live revision, but
+  a ``Jentic-Revision`` pin still routes a draft's hosts through the broker, and
+  archiving keeps a revision's index rows. Governing the superset is the
+  fail-closed choice: such traffic must still reach the broker to be served or
+  refused, never bypass it.
 - **Variable-bearing hosts (``{var}`` labels) are excluded.** A host server
   variable is indexed once per declared value (each a concrete host, listed
   here) plus a literal ``{var}`` row that only matches a request still
@@ -131,13 +129,12 @@ class GovernedHostsRepository:
         of that vendor (the "wildcard-credential expansion" the issue calls for).
 
         Hosts come from the URL-match index (``operation_url_indexes.host``) of
-        **every indexed revision** of each covered API — the same rows the
-        broker's discovery matches against, which applies no revision predicate
-        (``lookup_by_host_any_revision``) — so archived or superseded
-        revisions keep contributing their hosts for exactly as long as they
-        keep routing. Variable-bearing hosts (``{var}``) are excluded: the
-        index's regex branch never matches them at runtime (see module
-        docstring). One query; the API → revision expansion stays inside the
+        **every indexed revision** of each covered API — a superset of what
+        unpinned discovery serves (``lookup_by_host_live`` reads live revisions
+        only), kept so pinned drafts and archived revisions stay governed for as
+        long as their rows exist (see module docstring). Variable-bearing hosts
+        (``{var}``) are excluded: the index's regex branch never matches them at
+        runtime (see module docstring). One query; the API → revision expansion stays inside the
         database, so wildcard credentials over large vendors cannot overflow a
         bind-parameter limit.
         """

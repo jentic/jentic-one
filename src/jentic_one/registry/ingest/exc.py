@@ -34,6 +34,17 @@ class DuplicateRevisionError(IngestStageError):
         super().__init__(self._MESSAGE)
 
 
+class HostOwnedByOtherVendorIngestError(IngestStageError):
+    """Raised when an auto-live import declares a host another vendor's live API serves.
+
+    Imports that go live immediately (``origin`` set, e.g. catalog or overlay
+    materialization) are held to the same one-vendor-per-host rule as promotion.
+    """
+
+    def __init__(self, detail: str) -> None:
+        super().__init__(f"Cannot import this spec as live: {detail}")
+
+
 class MissingRequiredKeysError(IngestStageError):
     """Raised when required keys are missing from stage context."""
 

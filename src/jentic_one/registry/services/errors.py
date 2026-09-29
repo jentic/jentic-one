@@ -114,6 +114,20 @@ class RevisionStateConflictError(RegistryServiceError):
         self.action = action
 
 
+class HostOwnedByOtherVendorError(RegistryServiceError):
+    """Raised when a revision would go live on a host another vendor's live API serves.
+
+    A host is served by one vendor at a time: the first vendor whose revision
+    goes live on it keeps it until that API stops serving it. Drafts never own a
+    host, so this is checked when a revision goes live (promote, overlay
+    rollback), not on import.
+    """
+
+    def __init__(self, revision_id: str, detail: str) -> None:
+        super().__init__(f"Revision '{revision_id}' cannot go live: {detail}")
+        self.revision_id = revision_id
+
+
 class OverlayNotFoundError(RegistryServiceError):
     """Raised when an overlay does not exist for a given API."""
 

@@ -11,6 +11,9 @@ from sqlalchemy import MetaData
 from jentic_one.migrations.registry.versions import (
     e6f7a8b9c0d1_normalize_url_index_path_templates as url_index_repair_migration,
 )
+from jentic_one.migrations.registry.versions import (
+    e8f9a0b1c2d3_rebuild_displaced_url_index_rows as url_index_rebuild_migration,
+)
 from jentic_one.migrations.targets import (
     DB_METADATA,
     DB_TARGETS,
@@ -209,3 +212,93 @@ def test_url_index_repair_migration_matches_live_normalization(template: str) ->
     assert mig._normalize_path_template(template) == canonical
     assert mig._build_path_regex_pattern(canonical) == live.build_path_regex(canonical).pattern
     assert mig._count_segments(canonical) == live.count_segments(canonical)
+
+
+_URL_INDEX_REBUILD_CANARY_SERVERS = [
+    "https://api.example.com",
+    "https://API.Example.com:443/v1/",
+    "http://api.example.com:80/base",
+    "https://api.example.com:8443/v2",
+    "https://{region}.example.com/v1",
+    "/relative/base",
+]
+
+
+@pytest.mark.parametrize("server_url", _URL_INDEX_REBUILD_CANARY_SERVERS)
+@pytest.mark.parametrize("template", _URL_INDEX_CANARY_TEMPLATES)
+def test_url_index_rebuild_migration_matches_live_index_entry(
+    server_url: str, template: str
+) -> None:
+    """The e8f9a0b1c2d3 data migration's frozen helpers must build the rows the
+    live ``registry.core.url_index`` built before server-variable capture groups
+    (same contract as the repair migration canary above: on failure write a NEW
+    data migration, never edit the frozen copies).
+
+    The rebuilt rows are the legacy format: no ``URL_INDEX_FORMAT_MARKER``, so
+    ``URLLookupService`` re-derives their server-variable values from the stored
+    servers, exactly as for any row indexed before the marker existed.
+    """
+    mig = url_index_rebuild_migration
+    live = live_url_index
+
+    parsed = live.parse_server_url(server_url)
+    assert mig._parse_server_url(server_url) == (parsed.scheme, parsed.host, parsed.path)
+
+    merged = live.merge_paths(parsed.path, template)
+    assert mig._merge_paths(parsed.path, template) == merged
+
+    entry = live.build_index_entry(parsed.host, merged, parsed.scheme)
+    frozen = mig.build_entry(parsed.host, merged, parsed.scheme)
+    assert live.URL_INDEX_FORMAT_MARKER not in frozen["path_regex"]
+    assert frozen == {
+        "host": entry.host_pattern,
+        "host_regex": entry.host_regex.pattern,
+        "path_template": entry.path_pattern,
+        "path_regex": entry.path_regex.pattern.removeprefix(live.URL_INDEX_FORMAT_MARKER),
+        "param_names": entry.param_names,
+        "segment_count": entry.segment_count,
+    }
+    assert mig._structural_regex(entry.path_pattern) == live.structural_regex(entry.path_pattern)
+
+
+_URL_INDEX_REBUILD_VARIABLE_SERVERS = [
+    {"url": "https://api.example.com/v1"},
+    {"url": "https://{region}.example.com/v1", "variables": {"region": {"default": "us"}}},
+    {
+        "url": "https://{region}.example.com/v1",
+        "variables": {"region": {"default": "us", "enum": ["us", "eu"]}},
+    },
+    {"url": "https://api.example.com/{version}", "variables": {"version": {"default": "v1"}}},
+    {"url": "https://{tenant}.example.com", "variables": {"tenant": {}}},
+]
+
+
+@pytest.mark.parametrize("server", _URL_INDEX_REBUILD_VARIABLE_SERVERS)
+@pytest.mark.parametrize("template", ["/pets", "/pets/{petId}", "/users/{id}/posts/{postId}/"])
+def test_url_index_rebuild_rows_share_a_key_with_a_live_entry(
+    server: dict[str, object], template: str
+) -> None:
+    """Every row the e8f9a0b1c2d3 rebuild writes has the same ``(host, path
+    shape)`` key as an entry the live builder makes for that server.
+
+    The rebuild inserts a row only when no existing row of the revision has
+    its key, so this is what keeps it from adding a second, equally specific
+    row next to one a current ingest already wrote (which would make the
+    revision's own lookup ambiguous).
+    """
+    mig = url_index_rebuild_migration
+    live = live_url_index
+
+    content = {"servers": [server], "paths": {template: {"get": {}}}}
+    rebuilt = mig.expected_rows(content, [("op-1", template, "get")])
+    assert rebuilt
+
+    expansion = live.build_server_index_entries(
+        str(server["url"]), server.get("variables"), template
+    )
+    live_keys = {
+        (entry.host_pattern, live.structural_regex(entry.path_pattern))
+        for entry in expansion.entries
+    }
+    for row in rebuilt:
+        assert (row["host"], mig._structural_regex(row["path_template"])) in live_keys

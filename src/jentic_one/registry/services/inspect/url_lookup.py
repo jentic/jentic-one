@@ -57,6 +57,7 @@ class URLLookupResult:
 @dataclass
 class _RankedMatch:
     operation_id: str
+    revision_id: uuid.UUID
     path_params: dict[str, str]
     specificity_key: tuple[bool, int, int, int]
     server_variables: dict[str, str] = field(default_factory=dict)
@@ -76,8 +77,11 @@ class URLLookupService:
     ) -> URLLookupResult | None:
         """Resolve a full URL to the matching operation.
 
-        When revision_id is None, searches across all revisions (uses the
-        globally-unique URL index entries).
+        When ``revision_id`` is None, only each API's live revision
+        (``current_revision_id``) is searched — drafts, archived and superseded
+        revisions never serve an unpinned lookup. Passing ``revision_id`` (a
+        ``Jentic-Revision`` pin) searches exactly that revision, whatever its
+        state; callers gate which revisions may be pinned.
         """
         parsed = urlparse(url)
         scheme = parsed.scheme or "https"
@@ -151,14 +155,14 @@ class URLLookupService:
                     if c.host_regex and re.fullmatch(c.host_regex, host, re.IGNORECASE)
                 ]
         else:
-            candidates = await UrlIndexRepository.lookup_by_host_any_revision(
+            candidates = await UrlIndexRepository.lookup_by_host_live(
                 self._session,
                 method=method,
                 host=host,
                 segment_count=segment_count,
             )
             if not candidates:
-                regex_candidates = await UrlIndexRepository.lookup_by_host_regex_any_revision(
+                regex_candidates = await UrlIndexRepository.lookup_by_host_regex_live(
                     self._session,
                     method=method,
                     segment_count=segment_count,
@@ -298,6 +302,7 @@ class URLLookupService:
             matches.append(
                 _RankedMatch(
                     operation_id=candidate.operation_id,
+                    revision_id=candidate.revision_id,
                     path_params=path_params,
                     specificity_key=specificity_key,
                     server_variables=resolved.values,
@@ -309,14 +314,23 @@ class URLLookupService:
         if not matches:
             return None
 
+        # ``sort`` is stable, so equally specific matches keep the candidate order.
+        # Unpinned candidates arrive most-recently-live revision first (see
+        # ``UrlIndexRepository.lookup_by_host_live``): when two live revisions
+        # (e.g. two versions of one vendor's API) serve the same URL, the newest
+        # wins, as it did before the index was scoped per revision. Ambiguity is
+        # only an error *within* the winning revision — its own spec is at fault.
         matches.sort(key=lambda m: m.specificity_key)
+        best = matches[0]
+        tied = [
+            m
+            for m in matches
+            if m.specificity_key == best.specificity_key and m.revision_id == best.revision_id
+        ]
+        if len(tied) > 1:
+            raise AmbiguousMatchError(len(tied))
 
-        if len(matches) > 1 and matches[0].specificity_key == matches[1].specificity_key:
-            raise AmbiguousMatchError(
-                sum(1 for m in matches if m.specificity_key == matches[0].specificity_key)
-            )
-
-        return matches[0]
+        return best
 
 
 def _match_rebuilt_servers(

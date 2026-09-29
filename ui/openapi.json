@@ -17683,7 +17683,7 @@
     },
     "/apis/{vendor}/{name}/{version}/overlays/{overlay_id}:rollback": {
       "post": {
-        "description": "Un-confirm a materialized overlay, restoring the revision it superseded (A5b).\n\nRequires ``overlays:confirm`` — the symmetric inverse of confirm. Rolling back\nrewrites the API's served spec (it archives the overlay's materialized revision and\npromotes the prior revision back to current), so it is the same operator action as\nconfirm, not a contributor one. The overlay must be CONFIRMED, currently live, and\ncarry a recorded superseded revision that is still restorable; otherwise a 409 is\nreturned (``overlay_conflict`` or ``overlay_rollback_target_missing``) and nothing\nchanges.",
+        "description": "Un-confirm a materialized overlay, restoring the revision it superseded (A5b).\n\nRequires ``overlays:confirm`` — the symmetric inverse of confirm. Rolling back\nrewrites the API's served spec (it archives the overlay's materialized revision and\npromotes the prior revision back to current), so it is the same operator action as\nconfirm, not a contributor one. The overlay must be CONFIRMED, currently live, and\ncarry a recorded superseded revision that is still restorable; otherwise a 409 is\nreturned (``overlay_conflict``, ``overlay_rollback_target_missing``, or\n``host_owned_by_other_vendor`` when another vendor's live API now serves one of the\nrestored revision's hosts) and nothing changes.",
         "operationId": "rollbackOverlay",
         "parameters": [
           {

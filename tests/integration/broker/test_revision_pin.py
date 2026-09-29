@@ -23,13 +23,17 @@ from collections.abc import AsyncGenerator
 
 import httpx
 import pytest
-from sqlalchemy import delete, update
+from sqlalchemy import delete, select, update
 
 from jentic_one.broker.core.exceptions import (
     InvalidRevisionPinError,
     UnauthorizedRevisionPinError,
 )
-from jentic_one.broker.services.discovery import discover, resolve_pin_for_api
+from jentic_one.broker.services.discovery import (
+    discover,
+    discover_via_pins,
+    resolve_pin_for_api,
+)
 from jentic_one.registry.core.schema.api_revisions import ApiRevision
 from jentic_one.registry.core.schema.apis import Api
 from jentic_one.registry.core.schema.operation_url_index import OperationURLIndex
@@ -51,10 +55,10 @@ VENDOR = "acme.com"
 NAME = "pets-api"
 VERSION = "v1"
 HOST = "api.acme.com"
-# Each revision indexes a *distinct* path: the URL index enforces a globally
-# unique ``(method, host, path_template)`` (see ``uq_operation_url_index_lookup``;
-# there is no ``revision_id`` in the key), so identical URLs across revisions
-# would collapse to a single row. Distinct paths keep one row per revision.
+# Each revision indexes a *distinct* path so each test can tell which revision
+# answered. Identical URLs across revisions are also supported — the URL-index
+# key is scoped to the revision (``uq_operation_url_index_lookup``) —
+# and are covered by ``test_pin_and_live_share_one_url``.
 PUBLISHED_PATH = "/v1/pets"
 OWNED_DRAFT_PATH = "/v1/pets-owned-draft"
 FOREIGN_DRAFT_PATH = "/v1/pets-foreign-draft"
@@ -314,3 +318,90 @@ async def test_resolver_outcomes_directly(
         identity=_identity(OWNER),
     )
     assert unknown.outcome is RevisionPinOutcome.UNKNOWN
+
+
+async def test_pin_and_live_share_one_url(
+    registry_db: DatabaseSession, clean_url_index: None
+) -> None:
+    """A draft indexing the live revision's exact URL keeps its own row.
+
+    Unpinned discovery still answers from the live revision; a pin to the draft
+    answers from the draft — neither displaces the other (#1086).
+    """
+    async with registry_db.session() as session:
+        api = Api(vendor=VENDOR, name=NAME, version=VERSION)
+        session.add(api)
+        await session.commit()
+        api_id = api.id
+
+    live = await _seed_revision(
+        registry_db,
+        api_id=api_id,
+        state=ApiRevisionState.PUBLISHED,
+        submitted_by=OWNER,
+        make_current=True,
+        path=PUBLISHED_PATH,
+    )
+    draft = await _seed_revision(
+        registry_db,
+        api_id=api_id,
+        state=ApiRevisionState.DRAFT,
+        submitted_by=OWNER,
+        make_current=False,
+        path=PUBLISHED_PATH,
+    )
+    async with registry_db.session() as session:
+        rows = (await session.execute(select(Operation.id, Operation.revision_id))).all()
+    op_of = {revision_id: op_id for op_id, revision_id in rows}
+
+    resolver = InProcessRegistryResolver(registry_db)
+    unpinned = await discover(resolver, method="GET", url=PUBLISHED_URL)
+    assert unpinned is not None
+    assert unpinned.operation_id == op_of[live]
+
+    pinned = await discover(resolver, method="GET", url=PUBLISHED_URL, revision_id=draft)
+    assert pinned is not None
+    assert pinned.operation_id == op_of[draft]
+
+
+async def test_draft_only_url_resolves_only_through_its_pin(
+    registry_db: DatabaseSession, seeded: dict[str, uuid.UUID]
+) -> None:
+    """A URL only a draft defines is not served unpinned, but its owner can pin it."""
+    resolver = InProcessRegistryResolver(registry_db)
+    draft_url = f"https://{HOST}{OWNED_DRAFT_PATH}"
+
+    assert await discover(resolver, method="GET", url=draft_url) is None
+
+    pins = {(VENDOR, NAME, VERSION): _label(seeded["owned_draft"])}
+    found = await discover_via_pins(
+        resolver, method="GET", url=draft_url, pins=pins, identity=_identity(OWNER)
+    )
+    assert found is not None
+    resolved, revision_id = found
+    assert revision_id == seeded["owned_draft"]
+    assert resolved.api == _api_ref()
+
+
+async def test_pin_fallback_skips_pins_the_caller_cannot_use(
+    registry_db: DatabaseSession, seeded: dict[str, uuid.UUID]
+) -> None:
+    """Another user's draft (or an archived revision) never serves via the fallback."""
+    resolver = InProcessRegistryResolver(registry_db)
+
+    foreign = await discover_via_pins(
+        resolver,
+        method="GET",
+        url=f"https://{HOST}{FOREIGN_DRAFT_PATH}",
+        pins={(VENDOR, NAME, VERSION): _label(seeded["foreign_draft"])},
+        identity=_identity(OWNER),
+    )
+    archived = await discover_via_pins(
+        resolver,
+        method="GET",
+        url=f"https://{HOST}{ARCHIVED_PATH}",
+        pins={(VENDOR, NAME, VERSION): _label(seeded["archived"])},
+        identity=_identity(OWNER),
+    )
+    assert foreign is None
+    assert archived is None

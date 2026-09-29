@@ -13,6 +13,9 @@ from sqlalchemy import text
 from jentic_one.registry.core.schema.api_revisions import ApiRevision
 from jentic_one.registry.core.schema.apis import Api
 from jentic_one.registry.core.schema.servers import Server
+from jentic_one.registry.core.url_index import build_index_entry
+from jentic_one.registry.repos.operation_repo import OperationInput, OperationRepository
+from jentic_one.registry.repos.url_index_repo import UrlIndexRepository
 from jentic_one.shared.context import Context
 
 pytestmark = pytest.mark.integration
@@ -245,3 +248,37 @@ async def test_get_revision_source_inline(authed_client: TestClient, web_context
     data = resp.json()
     assert data["source"]["type"] == "inline"
     assert data["source"]["filename"] == "spec.yaml"
+
+
+async def _index_url(ctx: Context, revision: ApiRevision, host: str, path: str) -> None:
+    async with ctx.registry_db.session() as session:
+        op_ids = await OperationRepository.bulk_create(
+            session, revision.id, [OperationInput(path=path, method="GET")], created_by="usr_test"
+        )
+        await UrlIndexRepository.upsert_entry(
+            session,
+            revision_id=revision.id,
+            operation_id=op_ids[0],
+            method="GET",
+            entry=build_index_entry(host, path, "https"),
+            created_by="usr_test",
+        )
+        await session.commit()
+
+
+async def test_promote_onto_host_served_by_other_vendor_returns_409(
+    authed_client: TestClient, web_context: Context
+) -> None:
+    _owner, [owner_live] = await _seed_api_with_revisions(web_context, vendor="acme")
+    await _index_url(web_context, owner_live, "api.acme.com", "/v1/charges")
+    _other, [other_draft] = await _seed_api_with_revisions(
+        web_context, vendor="other", revision_states=["draft"]
+    )
+    await _index_url(web_context, other_draft, "api.acme.com", "/v1/charges")
+
+    resp = authed_client.post(f"/apis/other/payments/v1/revisions/{other_draft.id}:promote")
+
+    assert resp.status_code == 409
+    body = resp.json()
+    assert body["type"].endswith("host_owned_by_other_vendor")
+    assert "api.acme.com" in body["detail"]

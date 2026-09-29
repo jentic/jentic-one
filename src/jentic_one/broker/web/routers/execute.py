@@ -59,7 +59,11 @@ from jentic_one.broker.core.schemas import (
 )
 from jentic_one.broker.services.credentials.orchestrator import CredentialService
 from jentic_one.broker.services.credentials.resolver import ResolvedCredential
-from jentic_one.broker.services.discovery import discover, resolve_pin_for_api
+from jentic_one.broker.services.discovery import (
+    discover,
+    discover_via_pins,
+    resolve_pin_for_api,
+)
 from jentic_one.broker.services.execution.authorization import authorize_execution
 from jentic_one.broker.services.execution.pipeline import ExecutionOutcome
 from jentic_one.broker.services.execution.service import (
@@ -509,6 +513,20 @@ async def _handle(
     pins = parse_revisions(_revision_header(request))
 
     resolved = await discover(resolver, method=method, url=upstream_url)
+    pinned_revisions: dict[str, str] | None = None
+    if resolved is None and pins:
+        # No live revision serves this URL; a pinned (e.g. never-promoted draft)
+        # revision still may.
+        via_pin = await discover_via_pins(
+            resolver, method=method, url=upstream_url, pins=pins, identity=identity
+        )
+        if via_pin is not None:
+            resolved, pinned_revision_id = via_pin
+            pinned_revisions = {
+                f"{resolved.api.vendor}:{resolved.api.name}:{resolved.api.version}": str(
+                    pinned_revision_id
+                )
+            }
     if resolved is None:
         handled = await _handle_unregistered_url(
             request, method=method, upstream_url=upstream_url, identity=identity
@@ -522,8 +540,7 @@ async def _handle(
 
     # If a pin applies to the discovered API, translate it to a revision_id
     # in-process (no control-plane HTTP) and re-resolve against the pinned spec.
-    pinned_revisions: dict[str, str] | None = None
-    if pins:
+    if pins and pinned_revisions is None:
         revision_id = await resolve_pin_for_api(
             resolver, api=resolved.api, pins=pins, identity=identity
         )

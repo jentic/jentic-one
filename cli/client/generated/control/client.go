@@ -5297,8 +5297,9 @@ type ClientInterface interface {
 	// promotes the prior revision back to current), so it is the same operator action as
 	// confirm, not a contributor one. The overlay must be CONFIRMED, currently live, and
 	// carry a recorded superseded revision that is still restorable; otherwise a 409 is
-	// returned (``overlay_conflict`` or ``overlay_rollback_target_missing``) and nothing
-	// changes.
+	// returned (``overlay_conflict``, ``overlay_rollback_target_missing``, or
+	// ``host_owned_by_other_vendor`` when another vendor's live API now serves one of the
+	// restored revision's hosts) and nothing changes.
 	//
 	// Corresponds with POST /apis/{vendor}/{name}/{version}/overlays/{overlay_id}:rollback (the `RollbackOverlay` operationId).
 	RollbackOverlay(ctx context.Context, vendor string, name string, version string, overlayId string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -8555,8 +8556,9 @@ func (c *Client) ConfirmOverlay(ctx context.Context, vendor string, name string,
 // promotes the prior revision back to current), so it is the same operator action as
 // confirm, not a contributor one. The overlay must be CONFIRMED, currently live, and
 // carry a recorded superseded revision that is still restorable; otherwise a 409 is
-// returned (“overlay_conflict“ or “overlay_rollback_target_missing“) and nothing
-// changes.
+// returned (“overlay_conflict“, “overlay_rollback_target_missing“, or
+// “host_owned_by_other_vendor“ when another vendor's live API now serves one of the
+// restored revision's hosts) and nothing changes.
 //
 // Corresponds with POST /apis/{vendor}/{name}/{version}/overlays/{overlay_id}:rollback (the `RollbackOverlay` operationId).
 func (c *Client) RollbackOverlay(ctx context.Context, vendor string, name string, version string, overlayId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -21375,8 +21377,9 @@ type ClientWithResponsesInterface interface {
 	// promotes the prior revision back to current), so it is the same operator action as
 	// confirm, not a contributor one. The overlay must be CONFIRMED, currently live, and
 	// carry a recorded superseded revision that is still restorable; otherwise a 409 is
-	// returned (``overlay_conflict`` or ``overlay_rollback_target_missing``) and nothing
-	// changes.
+	// returned (``overlay_conflict``, ``overlay_rollback_target_missing``, or
+	// ``host_owned_by_other_vendor`` when another vendor's live API now serves one of the
+	// restored revision's hosts) and nothing changes.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -37988,8 +37991,9 @@ func (c *ClientWithResponses) ConfirmOverlayWithResponse(ctx context.Context, ve
 // promotes the prior revision back to current), so it is the same operator action as
 // confirm, not a contributor one. The overlay must be CONFIRMED, currently live, and
 // carry a recorded superseded revision that is still restorable; otherwise a 409 is
-// returned (“overlay_conflict“ or “overlay_rollback_target_missing“) and nothing
-// changes.
+// returned (“overlay_conflict“, “overlay_rollback_target_missing“, or
+// “host_owned_by_other_vendor“ when another vendor's live API now serves one of the
+// restored revision's hosts) and nothing changes.
 //
 // Returns a wrapper object for the known response body format(s).
 //

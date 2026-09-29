@@ -18,10 +18,15 @@ from jentic_one.registry.ingest.host_change_guard import (
 from jentic_one.registry.repos.api_repo import ApiRepository
 from jentic_one.registry.repos.revision_repo import ApiRevisionRepository
 from jentic_one.registry.repos.server_repo import ServerRepository
+from jentic_one.registry.repos.url_index_repo import (
+    UrlIndexRepository,
+    describe_live_host_owners,
+)
 from jentic_one.registry.services.api_service import ApiService, ApiView
 from jentic_one.registry.services.errors import (
     ApiNotFoundError,
     HostChangeRequiresOperatorError,
+    HostOwnedByOtherVendorError,
     RevisionNotFoundError,
     RevisionStateConflictError,
 )
@@ -235,6 +240,15 @@ class RevisionService:
                 await self._require_no_host_change(
                     session, api.id, revision_uuid, vendor, name, version
                 )
+
+            # One vendor per host: the revision's URL-index rows exist from import
+            # (every revision is indexed), but they only start serving once it is
+            # live — refuse to go live on a host another vendor's live API serves.
+            owners = await UrlIndexRepository.find_live_hosts_of_other_vendors(
+                session, revision_id=revision_uuid, vendor=api.vendor
+            )
+            if owners:
+                raise HostOwnedByOtherVendorError(revision_id, describe_live_host_owners(owners))
 
             # A draft that came from an origin-tracked source (a catalog revision held
             # for review) goes live as IMPORTED, like any catalog revision, so the next
