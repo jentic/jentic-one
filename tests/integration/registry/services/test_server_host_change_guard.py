@@ -140,7 +140,11 @@ async def _run(handler: ImportHandler, source: dict[str, Any]) -> dict[str, Any]
 
 
 async def _bind_credential(
-    control_db: DatabaseSession, admin_db: DatabaseSession, *, wildcard: bool = False
+    control_db: DatabaseSession,
+    admin_db: DatabaseSession,
+    *,
+    wildcard: bool = False,
+    bind: bool = True,
 ) -> None:
     """A credential covering the API, bound to an agent (suspended, to show it still counts)."""
     async with control_db.session() as session:
@@ -156,6 +160,8 @@ async def _bind_credential(
         )
         session.add(credential)
         await session.commit()
+    if not bind:
+        return
     async with admin_db.session() as session:
         agent = Agent(name=f"{_AGENT_PREFIX}-1", registered_by="usr_x")
         session.add(agent)
@@ -483,3 +489,21 @@ async def test_held_draft_is_not_routable_or_pinnable_until_promoted(
             method="GET", url="https://new.example.com/v1/widgets"
         )
         assert moved is not None
+
+
+async def test_reimport_host_change_with_unbound_credential_flows_automatically(
+    integration_context: Context,
+    registry_db: DatabaseSession,
+    control_db: DatabaseSession,
+    admin_db: DatabaseSession,
+    clean_state: None,
+) -> None:
+    """A stored credential that no agent or toolkit binds does not hold the change."""
+    handler = ImportHandler(integration_context)
+    await _run(handler, _source("old.example.com", marker="base"))
+    await _bind_credential(control_db, admin_db, bind=False)
+
+    rev = await _run(handler, _source("new.example.com", marker="moved"))
+
+    assert rev["state"] == ApiRevisionState.IMPORTED
+    assert str((await _api(registry_db)).current_revision_id) == rev["revision_id"]
