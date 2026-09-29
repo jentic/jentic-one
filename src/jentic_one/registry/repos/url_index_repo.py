@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import and_, delete, select
+from sqlalchemy import and_, delete, or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,7 +13,18 @@ from jentic_one.registry.core.schema.apis import Api
 from jentic_one.registry.core.schema.operation_url_index import OperationURLIndex
 from jentic_one.registry.core.schema.operations import Operation
 from jentic_one.registry.core.url_index import URLIndexEntry
+from jentic_one.shared.models import ApiRevisionState
 from jentic_one.shared.schemas import APIReference
+
+#: Excludes revisions held for review from cross-revision (unpinned) lookups.
+#: A held revision is a DRAFT with an ``origin`` (a catalog or MCP import whose
+#: server-host change is waiting for an operator; see
+#: ``registry/ingest/host_change_guard.py``). Its hosts must not become routable
+#: for the API's bound credentials until it is promoted. Manual drafts
+#: (``origin`` NULL) keep their existing behaviour.
+_NOT_HELD_FOR_REVIEW = or_(
+    ApiRevision.state != ApiRevisionState.DRAFT, ApiRevision.origin.is_(None)
+)
 
 
 class UrlIndexRepository:
@@ -115,12 +126,20 @@ class UrlIndexRepository:
         host: str,
         segment_count: int,
     ) -> list[OperationURLIndex]:
-        """Find URL index entries matching host, method, and segment count across all revisions."""
-        stmt = select(OperationURLIndex).where(
-            and_(
-                OperationURLIndex.method == method,
-                OperationURLIndex.host == host,
-                OperationURLIndex.segment_count == segment_count,
+        """Find URL index entries matching host, method, and segment count across all revisions.
+
+        Revisions held for review are excluded (``_NOT_HELD_FOR_REVIEW``).
+        """
+        stmt = (
+            select(OperationURLIndex)
+            .join(ApiRevision, ApiRevision.id == OperationURLIndex.revision_id)
+            .where(
+                and_(
+                    OperationURLIndex.method == method,
+                    OperationURLIndex.host == host,
+                    OperationURLIndex.segment_count == segment_count,
+                    _NOT_HELD_FOR_REVIEW,
+                )
             )
         )
         result = await session.execute(stmt)
@@ -173,13 +192,21 @@ class UrlIndexRepository:
         method: str,
         segment_count: int,
     ) -> list[OperationURLIndex]:
-        """Find regex-host entries matching method and segment count across all revisions."""
-        stmt = select(OperationURLIndex).where(
-            and_(
-                OperationURLIndex.method == method,
-                OperationURLIndex.host.is_(None),
-                OperationURLIndex.host_regex.isnot(None),
-                OperationURLIndex.segment_count == segment_count,
+        """Find regex-host entries matching method and segment count across all revisions.
+
+        Revisions held for review are excluded (``_NOT_HELD_FOR_REVIEW``).
+        """
+        stmt = (
+            select(OperationURLIndex)
+            .join(ApiRevision, ApiRevision.id == OperationURLIndex.revision_id)
+            .where(
+                and_(
+                    OperationURLIndex.method == method,
+                    OperationURLIndex.host.is_(None),
+                    OperationURLIndex.host_regex.isnot(None),
+                    OperationURLIndex.segment_count == segment_count,
+                    _NOT_HELD_FOR_REVIEW,
+                )
             )
         )
         result = await session.execute(stmt)

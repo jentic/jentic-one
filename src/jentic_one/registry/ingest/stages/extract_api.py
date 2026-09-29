@@ -5,7 +5,11 @@ from __future__ import annotations
 import uuid
 from typing import ClassVar
 
-from jentic_one.registry.core.server_hosts import hosts_from_servers, hosts_from_spec
+from jentic_one.registry.core.server_hosts import (
+    hosts_from_servers,
+    hosts_from_spec,
+    needs_review,
+)
 from jentic_one.registry.ingest.exc import DuplicateRevisionError
 from jentic_one.registry.ingest.pipeline.ctx import PipelineContext
 from jentic_one.registry.ingest.stages.base import BasePipelineStage
@@ -211,20 +215,20 @@ class CreateRevisionStage(BasePipelineStage):
     async def _held_host_change(
         ctx: PipelineContext, api_id: uuid.UUID
     ) -> dict[str, list[str]] | None:
-        """``{"current_hosts", "new_hosts"}`` when the spec changes the served hosts, else None.
+        """``{"current_hosts", "new_hosts"}`` when the spec needs host review, else None.
 
-        Compares the new spec's server hosts against the API's *current* revision.
-        No current revision (a first import, or one that was archived) means there
-        is nothing live to redirect, so nothing is held.
+        Compares the new spec's server origins against the API's current revision,
+        or its most recently live revision when nothing is current (so archiving the
+        current revision first does not skip the check). Review is needed when the
+        host set changes or a host moves to plaintext ``http`` (``needs_review``).
+        An API that has never had a live revision has nothing to redirect.
         """
-        api = await ApiRepository.get_by_id(ctx.session, api_id)
-        if api is None or api.current_revision_id is None:
+        baseline = await ApiRevisionRepository.host_baseline_revision_id(ctx.session, api_id)
+        if baseline is None:
             return None
-        current = hosts_from_servers(
-            await ServerRepository.list_url_specs(ctx.session, api.current_revision_id)
-        )
+        current = hosts_from_servers(await ServerRepository.list_url_specs(ctx.session, baseline))
         new = hosts_from_spec(ctx.specification.content)
-        if current == new:
+        if not needs_review(current, new):
             return None
         return {"current_hosts": sorted(current), "new_hosts": sorted(new)}
 

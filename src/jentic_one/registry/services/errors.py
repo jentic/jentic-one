@@ -279,19 +279,19 @@ class OverlaySupersedeForbiddenError(RegistryServiceError):
 class HostChangeRequiresOperatorError(RegistryServiceError):
     """Raised when a promote would change the server hosts of a credential-bound API.
 
-    Making a revision current that declares different server hosts changes where the
-    API's bound credentials are sent. That needs an operator holding
-    ``credentials:write``; the caller sees a 403 naming the hosts involved.
+    Making a revision current that declares different server hosts (or moves a host
+    to plaintext ``http``) changes where, or how, the API's bound credentials are
+    sent. That needs an operator holding ``credentials:write``; the caller sees a
+    403 naming the origins involved.
     """
 
     def __init__(self, revision_id: str, *, current_hosts: list[str], new_hosts: list[str]) -> None:
         current = ", ".join(current_hosts) or "(none)"
         new = ", ".join(new_hosts) or "(none)"
         super().__init__(
-            f"Revision '{revision_id}' changes the API's server hosts from [{current}] to "
-            f"[{new}], and the API has credentials bound to agents. Making it current "
-            "requires the 'credentials:write' permission; ask an operator to review and "
-            "promote it."
+            f"Revision '{revision_id}' changes the server origins of an API with bound "
+            f"credentials from [{current}] to [{new}], which requires the "
+            "'credentials:write' permission"
         )
         self.revision_id = revision_id
         self.current_hosts = current_hosts

@@ -6,7 +6,10 @@ with credentials bound to an agent is held for operator review
 
 - catalog re-import without approval → kept as a DRAFT, current revision unchanged;
 - operator-approved re-import, unchanged hosts, or no bindings → flows as before;
-- promote of a host-changing draft → 403 without ``credentials:write``, allowed with it.
+- promote of a host-changing draft → 403 without ``credentials:write``, allowed with it;
+- an https → http downgrade counts as a change, an http → https upgrade does not;
+- archiving the current revision first does not skip the check;
+- a held draft's hosts are not routable, and pinning it is refused, until promoted.
 """
 
 from __future__ import annotations
@@ -32,8 +35,10 @@ from jentic_one.registry.core.schema.servers import Server, ServerVariable
 from jentic_one.registry.core.schema.spec_files import SpecFile
 from jentic_one.registry.services.errors import HostChangeRequiresOperatorError
 from jentic_one.registry.services.import_service import ImportHandler
+from jentic_one.registry.services.inspect.registry_service import RegistryService
 from jentic_one.registry.services.revision_service import RevisionService
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.broker.protocols import RevisionPinOutcome
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.ids import generate_ksuid
 from jentic_one.shared.db.session import DatabaseSession
@@ -54,12 +59,12 @@ _OPERATOR = Identity(
 )
 
 
-def _spec(host: str, *, marker: str) -> str:
+def _spec(host: str, *, marker: str, scheme: str = "https") -> str:
     return json.dumps(
         {
             "openapi": "3.1.0",
             "info": {"title": "Widgets", "version": _VERSION, "description": marker},
-            "servers": [{"url": f"https://{host}/v1"}],
+            "servers": [{"url": f"{scheme}://{host}/v1"}],
             "paths": {
                 "/widgets": {
                     "get": {
@@ -72,15 +77,18 @@ def _spec(host: str, *, marker: str) -> str:
     )
 
 
-def _source(host: str, *, marker: str, approved: bool = False) -> dict[str, Any]:
+def _source(
+    host: str, *, marker: str, approved: bool = False, scheme: str = "https"
+) -> dict[str, Any]:
     source: dict[str, Any] = {
         "type": "inline",
-        "content": _spec(host, marker=marker),
+        "content": _spec(host, marker=marker, scheme=scheme),
         "filename": "openapi.json",
         "vendor": _VENDOR,
         "api_name": _NAME,
         "version": _VERSION,
         "origin": "catalog",
+        "submitted_by": _WRITER.sub,
     }
     if approved:
         source["host_change_approved"] = "true"
@@ -174,10 +182,14 @@ async def _state(registry_db: DatabaseSession, revision_id: str) -> str:
 
 
 async def _base_then_bind(
-    integration_context: Context, control_db: DatabaseSession, admin_db: DatabaseSession
+    integration_context: Context,
+    control_db: DatabaseSession,
+    admin_db: DatabaseSession,
+    *,
+    scheme: str = "https",
 ) -> tuple[ImportHandler, str]:
     handler = ImportHandler(integration_context)
-    base = await _run(handler, _source("old.example.com", marker="base"))
+    base = await _run(handler, _source("old.example.com", marker="base", scheme=scheme))
     assert base["state"] == ApiRevisionState.IMPORTED
     await _bind_credential(control_db, admin_db)
     return handler, base["revision_id"]
@@ -197,8 +209,8 @@ async def test_catalog_reimport_host_change_is_held_as_draft(
     assert rev["state"] == ApiRevisionState.DRAFT
     assert rev["held_for_review"] is True
     assert rev["host_change"] == {
-        "current_hosts": ["old.example.com"],
-        "new_hosts": ["new.example.com"],
+        "current_hosts": ["https://old.example.com"],
+        "new_hosts": ["https://new.example.com"],
     }
     api = await _api(registry_db)
     assert str(api.current_revision_id) == base_id
@@ -215,7 +227,7 @@ async def test_catalog_reimport_host_change_is_held_as_draft(
             )
         ).scalar_one()
     assert entry.after is not None
-    assert entry.after["host_change"]["new_hosts"] == ["new.example.com"]
+    assert entry.after["host_change"]["new_hosts"] == ["https://new.example.com"]
 
 
 async def test_catalog_reimport_host_change_held_for_wildcard_credential(
@@ -296,8 +308,8 @@ async def test_promote_held_draft_requires_operator(
 
     with pytest.raises(HostChangeRequiresOperatorError) as exc_info:
         await svc.promote(_VENDOR, _NAME, _VERSION, held["revision_id"], identity=_WRITER)
-    assert exc_info.value.current_hosts == ["old.example.com"]
-    assert exc_info.value.new_hosts == ["new.example.com"]
+    assert exc_info.value.current_hosts == ["https://old.example.com"]
+    assert exc_info.value.new_hosts == ["https://new.example.com"]
     assert str((await _api(registry_db)).current_revision_id) == base_id
 
     view = await svc.promote(_VENDOR, _NAME, _VERSION, held["revision_id"], identity=_OPERATOR)
@@ -352,3 +364,122 @@ async def test_promote_without_host_change_needs_no_operator(
     )
 
     assert str(view.current_revision_id) == draft["revision_id"]
+
+
+async def test_scheme_downgrade_is_held_and_upgrade_flows(
+    integration_context: Context,
+    registry_db: DatabaseSession,
+    control_db: DatabaseSession,
+    admin_db: DatabaseSession,
+    clean_state: None,
+) -> None:
+    handler, base_id = await _base_then_bind(integration_context, control_db, admin_db)
+
+    downgrade = await _run(handler, _source("old.example.com", marker="plain", scheme="http"))
+
+    assert downgrade["state"] == ApiRevisionState.DRAFT
+    assert downgrade["held_for_review"] is True
+    assert downgrade["host_change"]["new_hosts"] == ["http://old.example.com"]
+    assert str((await _api(registry_db)).current_revision_id) == base_id
+
+
+async def test_scheme_upgrade_flows_automatically(
+    integration_context: Context,
+    registry_db: DatabaseSession,
+    control_db: DatabaseSession,
+    admin_db: DatabaseSession,
+    clean_state: None,
+) -> None:
+    handler, _ = await _base_then_bind(integration_context, control_db, admin_db, scheme="http")
+
+    upgrade = await _run(handler, _source("old.example.com", marker="tls", scheme="https"))
+
+    assert upgrade["state"] == ApiRevisionState.IMPORTED
+    assert str((await _api(registry_db)).current_revision_id) == upgrade["revision_id"]
+
+
+async def test_archiving_current_revision_does_not_skip_reimport_check(
+    integration_context: Context,
+    registry_db: DatabaseSession,
+    control_db: DatabaseSession,
+    admin_db: DatabaseSession,
+    clean_state: None,
+) -> None:
+    """With nothing current, the last live revision is the baseline."""
+    handler, base_id = await _base_then_bind(integration_context, control_db, admin_db)
+    await RevisionService(integration_context).archive(
+        _VENDOR, _NAME, _VERSION, base_id, identity=_WRITER
+    )
+    assert (await _api(registry_db)).current_revision_id is None
+
+    rev = await _run(handler, _source("new.example.com", marker="moved"))
+
+    assert rev["state"] == ApiRevisionState.DRAFT
+    assert rev["host_change"] == {
+        "current_hosts": ["https://old.example.com"],
+        "new_hosts": ["https://new.example.com"],
+    }
+    assert (await _api(registry_db)).current_revision_id is None
+
+
+async def test_archiving_current_revision_does_not_skip_promote_check(
+    integration_context: Context,
+    registry_db: DatabaseSession,
+    control_db: DatabaseSession,
+    admin_db: DatabaseSession,
+    clean_state: None,
+) -> None:
+    handler, base_id = await _base_then_bind(integration_context, control_db, admin_db)
+    draft_source = _source("new.example.com", marker="manual")
+    draft_source.pop("origin")
+    draft = await _run(handler, draft_source)
+    svc = RevisionService(integration_context)
+    await svc.archive(_VENDOR, _NAME, _VERSION, base_id, identity=_WRITER)
+
+    with pytest.raises(HostChangeRequiresOperatorError) as exc_info:
+        await svc.promote(_VENDOR, _NAME, _VERSION, draft["revision_id"], identity=_WRITER)
+    assert exc_info.value.current_hosts == ["https://old.example.com"]
+    assert (await _api(registry_db)).current_revision_id is None
+
+
+async def test_held_draft_is_not_routable_or_pinnable_until_promoted(
+    integration_context: Context,
+    registry_db: DatabaseSession,
+    control_db: DatabaseSession,
+    admin_db: DatabaseSession,
+    clean_state: None,
+) -> None:
+    handler, _ = await _base_then_bind(integration_context, control_db, admin_db)
+    held = await _run(handler, _source("new.example.com", marker="moved"))
+    rev_label = f"rev_{uuid.UUID(held['revision_id']).hex}"
+
+    async with registry_db.session() as session:
+        resolver = RegistryService(session)
+        old = await resolver.resolve_operation(
+            method="GET", url="https://old.example.com/v1/widgets"
+        )
+        assert old is not None
+        assert old.api.vendor == _VENDOR
+        assert (
+            await resolver.resolve_operation(method="GET", url="https://new.example.com/v1/widgets")
+            is None
+        )
+        # Not even the submitting caller may pin the held revision.
+        pin = await resolver.resolve_revision_pin(
+            vendor=_VENDOR, name=_NAME, version=_VERSION, rev_label=rev_label, identity=_WRITER
+        )
+        assert pin.outcome == RevisionPinOutcome.FORBIDDEN
+        operator_pin = await resolver.resolve_revision_pin(
+            vendor=_VENDOR, name=_NAME, version=_VERSION, rev_label=rev_label, identity=_OPERATOR
+        )
+        assert operator_pin.outcome == RevisionPinOutcome.RESOLVED
+
+    await RevisionService(integration_context).promote(
+        _VENDOR, _NAME, _VERSION, held["revision_id"], identity=_OPERATOR
+    )
+
+    async with registry_db.session() as session:
+        moved = await RegistryService(session).resolve_operation(
+            method="GET", url="https://new.example.com/v1/widgets"
+        )
+        assert moved is not None

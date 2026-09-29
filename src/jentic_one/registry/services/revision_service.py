@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 
 from pydantic import BaseModel
 
-from jentic_one.registry.core.server_hosts import hosts_from_servers
+from jentic_one.registry.core.server_hosts import hosts_from_servers, needs_review
 from jentic_one.registry.ingest.host_change_guard import (
     api_has_bound_credentials,
     may_approve_host_change,
@@ -231,11 +231,9 @@ class RevisionService:
                     "promote",
                 )
 
-            if api.current_revision_id is not None and not may_approve_host_change(
-                identity.permissions
-            ):
+            if not may_approve_host_change(identity.permissions):
                 await self._require_no_host_change(
-                    session, api.current_revision_id, revision_uuid, vendor, name, version
+                    session, api.id, revision_uuid, vendor, name, version
                 )
 
             # A draft that came from an origin-tracked source (a catalog revision held
@@ -286,7 +284,7 @@ class RevisionService:
     async def _require_no_host_change(
         self,
         session: Any,
-        current_revision_id: uuid.UUID,
+        api_id: uuid.UUID,
         revision_id: uuid.UUID,
         vendor: str,
         name: str,
@@ -294,14 +292,24 @@ class RevisionService:
     ) -> None:
         """Refuse a promote that changes the server hosts of a credential-bound API.
 
-        Only called for callers without ``credentials:write``. Same host-set rules as
-        the catalog re-import guard (``registry/ingest/host_change_guard.py``).
+        Only called for callers without ``credentials:write``. Same rules as the
+        catalog re-import guard (``registry/ingest/host_change_guard.py``): the
+        baseline is the current revision, else the most recently live one, so
+        archiving the current revision first does not skip the check. When the
+        API has never had a live revision there is no baseline and every origin
+        of the draft is new: a draft that declares any server is refused if
+        credentials are bound.
         """
-        current = hosts_from_servers(
-            await ServerRepository.list_url_specs(session, current_revision_id)
+        baseline = await ApiRevisionRepository.host_baseline_revision_id(
+            session, api_id, exclude=revision_id
+        )
+        current = (
+            hosts_from_servers(await ServerRepository.list_url_specs(session, baseline))
+            if baseline is not None
+            else frozenset()
         )
         new = hosts_from_servers(await ServerRepository.list_url_specs(session, revision_id))
-        if current == new:
+        if not needs_review(current, new):
             return
         if not await api_has_bound_credentials(
             self._ctx, vendor=vendor, name=name, version=version

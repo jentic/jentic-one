@@ -20,10 +20,13 @@ default server variables pre-expanded by the index builder. Two deliberate
 asymmetries with the raw index, both matching runtime interception:
 
 - **All indexed revisions count, not just the current one.** Discovery's
-  ``lookup_by_host_any_revision`` applies no revision or state predicate, and
+  ``lookup_by_host_any_revision`` applies no revision predicate, and
   archiving a revision clears ``current_revision_id`` without deleting its
   index rows — so an archived revision's hosts still route through the broker
-  and must stay in the governed set.
+  and must stay in the governed set. Discovery does skip a draft held for
+  server-host review; its hosts are still listed here on purpose, so a gate
+  keeps sending that traffic to the broker (which refuses it) rather than
+  direct to the upstream.
 - **Variable-bearing hosts (``{var}`` labels from defaultless server
   variables) are excluded.** The index's regex-match branch requires
   ``host IS NULL``, which the ingest never writes, so a templated host never
@@ -127,8 +130,8 @@ class GovernedHostsRepository:
 
         Hosts come from the URL-match index (``operation_url_indexes.host``) of
         **every indexed revision** of each covered API — the same rows the
-        broker's discovery matches against, which applies no revision or state
-        predicate (``lookup_by_host_any_revision``) — so archived or superseded
+        broker's discovery matches against, which applies no revision predicate
+        (``lookup_by_host_any_revision``) — so archived or superseded
         revisions keep contributing their hosts for exactly as long as they
         keep routing. Variable-bearing hosts (``{var}``) are excluded: the
         index's regex branch never matches them at runtime (see module

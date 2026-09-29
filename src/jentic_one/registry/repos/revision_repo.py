@@ -216,6 +216,33 @@ class ApiRevisionRepository:
         return result.scalar_one_or_none()
 
     @staticmethod
+    async def host_baseline_revision_id(
+        session: AsyncSession, api_id: uuid.UUID, *, exclude: uuid.UUID | None = None
+    ) -> uuid.UUID | None:
+        """The revision a server-host change is measured against, if any.
+
+        The API's current revision when it has one; otherwise the most recently
+        promoted revision (``promoted_at`` is set when a revision goes live, and
+        kept when it is archived). Falling back to the last live revision means
+        archiving the current revision first does not remove the baseline, so a
+        host change is still detected. ``exclude`` skips the revision under test.
+        ``None`` only when no revision of the API has ever been live.
+        """
+        api_current = await session.execute(select(Api.current_revision_id).where(Api.id == api_id))
+        current = api_current.scalar_one_or_none()
+        if current is not None and current != exclude:
+            return current
+        stmt = select(ApiRevision.id).where(
+            ApiRevision.api_id == api_id, ApiRevision.promoted_at.is_not(None)
+        )
+        if exclude is not None:
+            stmt = stmt.where(ApiRevision.id != exclude)
+        result = await session.execute(
+            stmt.order_by(ApiRevision.promoted_at.desc(), ApiRevision.id.desc()).limit(1)
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
     async def current_revision_for_source_url(
         session: AsyncSession, source_url: str
     ) -> tuple[uuid.UUID, uuid.UUID] | None:
