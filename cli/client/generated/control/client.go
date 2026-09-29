@@ -5941,6 +5941,11 @@ type ClientInterface interface {
 	//
 	// Inspect an operation — resolve to full structural detail.
 	//
+	// `api.vendor`/`api.name`/`api.version` in the result is the canonical API
+	// reference: the identity to use in credential scopes, revision pins and
+	// other API references. `api.display_name` (optional) is a human-readable
+	// label only.
+	//
 	// Corresponds with GET /inspect (the `InspectOperation` operationId).
 	InspectOperation(ctx context.Context, params *InspectOperationParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -9827,6 +9832,11 @@ func (c *Client) GetHealth(ctx context.Context, reqEditors ...RequestEditorFn) (
 // InspectOperation Inspect operation
 //
 // Inspect an operation — resolve to full structural detail.
+//
+// `api.vendor`/`api.name`/`api.version` in the result is the canonical API
+// reference: the identity to use in credential scopes, revision pins and
+// other API references. `api.display_name` (optional) is a human-readable
+// label only.
 //
 // Corresponds with GET /inspect (the `InspectOperation` operationId).
 func (c *Client) InspectOperation(ctx context.Context, params *InspectOperationParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -22080,6 +22090,11 @@ type ClientWithResponsesInterface interface {
 	// InspectOperationWithResponse Inspect operation
 	//
 	// Inspect an operation — resolve to full structural detail.
+	//
+	// `api.vendor`/`api.name`/`api.version` in the result is the canonical API
+	// reference: the identity to use in credential scopes, revision pins and
+	// other API references. `api.display_name` (optional) is a human-readable
+	// label only.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -39066,6 +39081,11 @@ func (c *ClientWithResponses) GetHealthWithResponse(ctx context.Context, reqEdit
 // InspectOperationWithResponse Inspect operation
 //
 // Inspect an operation — resolve to full structural detail.
+//
+// `api.vendor`/`api.name`/`api.version` in the result is the canonical API
+// reference: the identity to use in credential scopes, revision pins and
+// other API references. `api.display_name` (optional) is a human-readable
+// label only.
 //
 // Returns a wrapper object for the known response body format(s).
 //

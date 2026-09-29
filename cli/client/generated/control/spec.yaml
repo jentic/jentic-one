@@ -14620,7 +14620,13 @@ paths:
       - System
   /inspect:
     get:
-      description: Inspect an operation — resolve to full structural detail.
+      description: |-
+        Inspect an operation — resolve to full structural detail.
+
+        `api.vendor`/`api.name`/`api.version` in the result is the canonical API
+        reference: the identity to use in credential scopes, revision pins and
+        other API references. `api.display_name` (optional) is a human-readable
+        label only.
       operationId: inspectOperation
       parameters:
       - description: METHOD URL identifier
