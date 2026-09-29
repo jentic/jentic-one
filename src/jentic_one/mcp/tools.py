@@ -1037,7 +1037,9 @@ async def _execute_tool(
         )
     except Exception as exc:
         retry_safe = bool(idempotency_key) or method in ("GET", "HEAD")
-        raise ex.transport_error(exc, retry_safe=retry_safe) from exc
+        # ``from None``: the raw transport message stays out of any rendered
+        # traceback (``transport_error`` logs a redacted copy).
+        raise ex.transport_error(exc, retry_safe=retry_safe) from None
 
     if (redirect := ex.broker_redirect_error(status, response_headers)) is not None:
         raise redirect

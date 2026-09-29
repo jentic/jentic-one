@@ -241,9 +241,12 @@ class CredentialService:
                 ),
             ) from exc
         except RefreshTransientError as exc:
+            # ``str(exc)`` is the credential id + exception class only (the
+            # refresher never forwards raw exception text); ``from None`` keeps
+            # any chained provider/transport error out of rendered tracebacks.
             raise CredentialRefreshTransientError(
                 detail=str(exc), type="refresh_transient_error", origin=ErrorOrigin.UPSTREAM
-            ) from exc
+            ) from None
 
     async def select(
         self,

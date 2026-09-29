@@ -27,6 +27,7 @@ from typing import Any
 from urllib.parse import quote, urlencode, urlsplit
 
 import httpx
+import structlog
 
 from jentic_one.mcp.envelopes import (
     CODE_BROKER_DENIED,
@@ -35,6 +36,9 @@ from jentic_one.mcp.envelopes import (
     SCHEMA_VERSION,
     ToolError,
 )
+from jentic_one.shared.redaction import redact_value
+
+logger = structlog.get_logger(__name__)
 
 #: Context-protection cap on a relayed response body (Go:
 #: ``defaultMaxResultBytes``). MCP has no chunking — a tool result lands in
@@ -314,7 +318,21 @@ def transport_error(exc: Exception, *, retry_safe: bool) -> ToolError:
     """
     pre_send = isinstance(exc, httpx.ConnectError)
     retryable = retry_safe or pre_send
-    message = f"transport error: {exc}"
+    if isinstance(exc, BodyTooLargeError):
+        # Our own fail-closed cap: the message is fixed text, safe to relay.
+        message = f"transport error: {exc}"
+    else:
+        # Third-party exception text can quote request material (an
+        # ``Illegal header value b'...'`` carries the header verbatim —
+        # including the caller's bearer), so only the class name reaches the
+        # agent; the server-side log keeps a redacted copy for diagnosis.
+        logger.warning(
+            "mcp_broker_transport_error",
+            error_type=type(exc).__name__,
+            error=redact_value(str(exc)),
+            retryable=retryable,
+        )
+        message = f"transport error ({type(exc).__name__})"
     if retryable:
         return ToolError(
             CODE_TRANSPORT_ERROR,

@@ -302,6 +302,8 @@ async def test_refresh_transient_maps_to_502_upstream(monkeypatch: pytest.Monkey
         )
     assert exc.value.type == "refresh_transient_error"
     assert exc.value.origin == ErrorOrigin.UPSTREAM
+    assert exc.value.__cause__ is None
+    assert exc.value.__suppress_context__ is True
 
 
 @pytest.mark.asyncio
