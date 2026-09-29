@@ -116,7 +116,7 @@ func TestMCPHTTP_TokenGate(t *testing.T) {
 			t.Errorf("WWW-Authenticate = %q, want a Bearer challenge", header.Get("WWW-Authenticate"))
 		}
 	})
-	t.Run("a case-variant method key cannot smuggle a call past the gate", func(t *testing.T) {
+	t.Run("a case-variant or duplicate method key still needs a credential", func(t *testing.T) {
 		for _, frame := range []string{
 			`{"jsonrpc":"2.0","id":3,"Method":"ping","method":"tools/call","params":{"name":"get_started"}}`,
 			`{"jsonrpc":"2.0","id":3,"METHOD":"ping","method":"tools/call","params":{"name":"get_started"}}`,
