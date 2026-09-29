@@ -32,7 +32,7 @@ export interface CommandToken {
 }
 
 /** The placeholder shown for a broker URL the instance can't advertise. */
-export const BROKER_URL_PLACEHOLDER = '<broker-url>';
+const BROKER_URL_PLACEHOLDER = '<broker-url>';
 
 export interface RegisterCommandOptions {
 	/** The instance's control-plane URL (`--url`, never `--base-url` — #1204). */

@@ -606,8 +606,7 @@ function SelectedAgentPanel({
 	// purged quietly — but only once proven: an `org:admin` viewer, a complete
 	// credentials list, and the credential missing from it. For anyone else every
 	// binding stays live (see `isOrphanBinding` for why the weaker signals fail).
-	const viewer = useOptionalCurrentUser();
-	const viewerIsAdmin = viewerIsOrgAdmin(viewer);
+	const viewerIsAdmin = viewerIsOrgAdmin(useOptionalCurrentUser());
 	const credentialsProven = credentialsSource.complete && !credentialsSource.error;
 	const { live: liveBindings, orphans: orphanBindings } = useMemo(
 		() =>
