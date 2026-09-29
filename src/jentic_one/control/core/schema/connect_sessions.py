@@ -23,7 +23,7 @@ class ConnectSession(AuditableMixin, ControlBase):
     __table_args__ = (
         Index("ix_connect_sessions_agent", "agent_id", "state"),
         Index("ix_connect_sessions_credential", "credential_id"),
-        Index("ix_connect_sessions_poll_token", "poll_token", unique=True),
+        Index("ix_connect_sessions_poll_token_hash", "poll_token_hash", unique=True),
         # Serves the admin-console list (GET /connect-sessions): filter by
         # state + keyset pagination on created_at.
         Index("ix_connect_sessions_state_created_at", "state", "created_at"),
@@ -82,9 +82,11 @@ class ConnectSession(AuditableMixin, ControlBase):
     connected_as: Mapped[str | None] = mapped_column(String(255), nullable=True)
     # Terminal failure code (see `error-taxonomy` — machine-readable slug).
     error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    # Opaque long-lived token given to the initiator so it can call
-    # /connect-sessions/{id}/status without full session-read auth.
-    poll_token: Mapped[str] = mapped_column(String(64), nullable=False)
+    # SHA-256 hex digest of the opaque poll token given to the initiator so
+    # it can call /connect-sessions/{id}/status without full session-read
+    # auth. The plaintext is returned once from ``:connect`` and never
+    # stored; verification hashes the presented token (``hash_secret``).
+    poll_token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     # Optional free-text detail useful for human debugging on the review page.
     # (Deliberately excluded from the plan's `connect_sessions`; kept here as a
     # nullable audit column with no operational meaning — logs remain the

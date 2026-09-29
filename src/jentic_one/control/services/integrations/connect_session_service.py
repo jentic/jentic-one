@@ -56,6 +56,7 @@ from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.catalog import CatalogAutoImportProtocol
 from jentic_one.shared.config import resolved_auth_base_url
 from jentic_one.shared.context import Context
+from jentic_one.shared.crypto import hash_secret
 from jentic_one.shared.metrics import get_meter
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.models.actors import Origin, actor_type_from_id
@@ -238,8 +239,8 @@ def _forbid_self_confirm(row: ConnectSession, caller_actor_type: ActorType) -> N
 
 
 def _verify_poll_token(row: ConnectSession, token: str) -> None:
-    """Constant-time comparison against the session's poll_token."""
-    if not secrets.compare_digest(row.poll_token, token):
+    """Hash the presented poll_token and compare it to the stored digest in constant time."""
+    if not secrets.compare_digest(row.poll_token_hash, hash_secret(token)):
         raise InvalidPollTokenError("poll_token mismatch")
 
 
@@ -369,7 +370,7 @@ class ConnectSessionService:
                 initiator_actor_id=initiator_actor_id,
                 state="created",
                 resolved_flow=flow.kind,
-                poll_token=poll_token,
+                poll_token_hash=hash_secret(poll_token),
                 requested_scopes=requested_scopes or [],
                 requested_permission_rules=requested_permission_rules or [],
                 preferred_flow=preferred_flow,
