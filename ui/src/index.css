@@ -455,6 +455,22 @@
 	animation: j1-live-ping 2.4s cubic-bezier(0, 0, 0.2, 1) infinite;
 }
 
+/* A text caret at rest: a slow on/off blink, like an idle input. */
+@keyframes j1-caret {
+	0%,
+	45% {
+		opacity: 1;
+	}
+	55%,
+	100% {
+		opacity: 0;
+	}
+}
+
+.animate-caret {
+	animation: j1-caret 1.05s steps(1, end) infinite;
+}
+
 /* A dot that pops in when a state first appears (a failure landing). */
 @keyframes j1-pop {
 	0% {
