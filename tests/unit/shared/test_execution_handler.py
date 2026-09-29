@@ -65,6 +65,7 @@ class _FakeInjector:
         self.last_allowed_credential_ids: Any = "unset"
         self.last_credential_id: str | None = None
         self.last_request_server_variables: Any = "unset"
+        self.last_server_variables_unresolved: bool | None = None
 
     async def inject(
         self,
@@ -78,11 +79,13 @@ class _FakeInjector:
         allowed_credential_ids: Any = None,
         trace_id: str | None = None,
         request_server_variables: Any = None,
+        server_variables_unresolved: bool = False,
     ) -> InjectedAuth:
         self.last_trace_id = trace_id
         self.last_allowed_credential_ids = allowed_credential_ids
         self.last_credential_id = credential_id
         self.last_request_server_variables = request_server_variables
+        self.last_server_variables_unresolved = server_variables_unresolved
         return self._injection
 
 
@@ -577,8 +580,37 @@ async def test_handler_scopes_credentials_on_payload_server_variables() -> None:
     )
 
     assert injector.last_request_server_variables == {"region": "eu"}
+    assert injector.last_server_variables_unresolved is False
     assert authorizer.last_request is not None
     assert authorizer.last_request.server_variables == {"region": "eu"}
+    assert authorizer.last_request.server_variables_unresolved is False
+
+
+@pytest.mark.asyncio
+async def test_handler_propagates_unresolved_server_variables() -> None:
+    """An enqueue-time "values unknown" flag keeps the worker failing closed."""
+    executor = _RecordingExecutor(
+        UpstreamExecResult(status_code=200, body=b"", content_type=None, duration_ms=1)
+    )
+    injector = _FakeInjector(InjectedAuth(headers={}, query_params={}, cookies={}))
+    authorizer = _FakeAuthorizer()
+    handler = ExecutionHandler(
+        executor=executor, credential_injector=injector, execution_authorizer=authorizer
+    )
+
+    await handler.execute(
+        "job13",
+        _FakeSession(),
+        payload=_payload(
+            upstream_url="https://api.example.com/us/things", server_variables_unresolved=True
+        ),
+        created_by="usr_test",
+        actor_type="user",
+    )
+
+    assert injector.last_server_variables_unresolved is True
+    assert authorizer.last_request is not None
+    assert authorizer.last_request.server_variables_unresolved is True
 
 
 @pytest.mark.asyncio

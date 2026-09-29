@@ -6,6 +6,7 @@ import pytest
 
 from jentic_one.registry.core.url_index import (
     MAX_SERVER_VARIABLE_EXPANSIONS,
+    URL_INDEX_FORMAT_MARKER,
     ServerVariableMatch,
     ServerVariableSpec,
     URLIndexEntry,
@@ -171,7 +172,7 @@ def test_build_index_entry_trailing_slash_template_regression() -> None:
     """
     entry = build_index_entry("fantasy.premierleague.com", "/api/bootstrap-static/", "https")
     assert entry.path_pattern == "/api/bootstrap-static"
-    assert entry.path_regex.pattern == r"^/api/bootstrap\-static$"
+    assert entry.path_regex.pattern == URL_INDEX_FORMAT_MARKER + r"^/api/bootstrap\-static$"
     assert entry.path_regex.fullmatch(normalize_path("/api/bootstrap-static/"))
     assert entry.segment_count == count_segments(normalize_path("/api/bootstrap-static/"))
 
@@ -330,26 +331,22 @@ def test_enum_host_variable_resolves_values_and_keeps_path_params() -> None:
     assert matches[0].path_params == {"itemId": "42"}
 
 
-def test_free_host_variable_matches_as_pattern() -> None:
+@pytest.mark.parametrize(
+    "server_url", ["https://{tenant}.example.com", "https://{tenant}.com", "https://{tenant}"]
+)
+def test_free_host_variable_indexes_default_and_template_only(server_url: str) -> None:
     variables = {"tenant": {"default": "demo"}}
-    expansion = build_server_index_entries("https://{tenant}.example.com", variables, "/data")
-    patterns = [e.host_pattern for e in expansion.entries]
-    # The default gets a concrete row; any other tenant matches the regex row.
-    assert "demo.example.com" in patterns
-    assert None in patterns
-    free = next(e for e in expansion.entries if e.host_pattern is None)
-    match = _match(free, "acme.example.com", "/data")
-    assert match is not None
-    assert match.values == {"tenant": "acme"}
-    assert _match(free, "acme.other.com", "/data") is None
-    assert _match(free, "a.b.example.com", "/data") is None
-
-
-def test_free_host_variable_with_short_suffix_stays_template_only() -> None:
-    variables = {"sub": {"default": "api"}}
-    expansion = build_server_index_entries("https://{sub}.com", variables, "/data")
-    assert None not in [e.host_pattern for e in expansion.entries]
-    assert sorted(str(e.host_pattern) for e in expansion.entries) == ["api.com", "{sub}.com"]
+    expansion = build_server_index_entries(server_url, variables, "/data")
+    host = server_url.removeprefix("https://")
+    # Only the declared default and the templated host route: a label the
+    # caller picks never selects the API (or its credentials).
+    assert sorted(e.host_pattern for e in expansion.entries) == sorted(
+        [host.replace("{tenant}", "demo"), host]
+    )
+    other = host.replace("{tenant}", "acme")
+    assert not [e for e in expansion.entries if _match(e, other, "/data")]
+    templated = [m for e in expansion.entries if (m := _match(e, host, "/data"))]
+    assert [(m.values, m.defaults) for m in templated] == [({}, {"tenant": "demo"})]
 
 
 def test_free_path_variable_matches_any_segment() -> None:
@@ -366,6 +363,38 @@ def test_repeated_variable_must_agree_between_host_and_path() -> None:
     expansion = build_server_index_entries("https://{region}.example.com/{region}", variables, "/w")
     assert [e for e in expansion.entries if _match(e, "eu.example.com", "/eu/w")]
     assert not [e for e in expansion.entries if _match(e, "eu.example.com", "/us/w")]
+
+
+def test_path_value_comparison_is_case_sensitive() -> None:
+    expansion = build_server_index_entries(
+        "https://api.example.com/{region}", _REGION_VARS, "/widgets"
+    )
+    assert not [e for e in expansion.entries if _match(e, "api.example.com", "/EU/widgets")]
+
+
+def test_empty_value_is_pinned_by_a_fixed_group() -> None:
+    variables = {"prefix": {"default": "", "enum": ["", "beta"]}}
+    expansion = build_server_index_entries("https://api.example.com/{prefix}", variables, "/w")
+    matches = [m for e in expansion.entries if (m := _match(e, "api.example.com", "/w"))]
+    assert [m.values for m in matches] == [{"prefix": ""}]
+
+
+def test_port_variable_falls_back_to_defaults_and_pins_them() -> None:
+    variables = {"region": {"default": "us", "enum": ["us", "eu"]}, "port": {"default": "8443"}}
+    expansion = build_server_index_entries("https://{region}.example.com:{port}", variables, "/w")
+    assert [e.host_pattern for e in expansion.entries] == ["us.example.com:8443"]
+    match = _match(expansion.entries[0], "us.example.com:8443", "/w")
+    assert match is not None
+    assert match.values == {"region": "us", "port": "8443"}
+
+
+def test_every_built_entry_carries_the_format_marker() -> None:
+    expansion = build_server_index_entries(
+        "https://api.example.com/{region}", _REGION_VARS, "/widgets"
+    )
+    plain = build_index_entry("api.example.com", "/widgets", "https")
+    for entry in [*expansion.entries, plain]:
+        assert entry.path_regex.pattern.startswith(URL_INDEX_FORMAT_MARKER)
 
 
 def test_resolve_server_variable_groups_rejects_conflicting_values() -> None:

@@ -79,13 +79,19 @@ async def _seed_api_key(
         await session.commit()
 
 
-async def _inject(ctx: Context, request_server_variables: dict[str, str] | None) -> str:
+async def _inject(
+    ctx: Context,
+    request_server_variables: dict[str, str] | None,
+    *,
+    unresolved: bool = False,
+) -> str:
     result = await CredentialService(ctx).inject(
         api_vendor=_VENDOR,
         api_name=_API_NAME,
         api_version=_API_VERSION,
         identity=_IDENTITY,
         request_server_variables=request_server_variables,
+        server_variables_unresolved=unresolved,
     )
     return result.headers["X-Api-Key"]
 
@@ -165,3 +171,27 @@ async def test_unscoped_credential_matches_any_region(
     )
 
     assert await _inject(integration_context, {"region": "eu"}) == "any-secret"
+
+
+async def test_unresolvable_request_variables_fail_closed_for_scoped_credentials(
+    integration_context: Context, clean_credentials: None
+) -> None:
+    """Discovery could not determine the URL's values: only unscoped credentials qualify."""
+    await _seed_api_key(
+        integration_context,
+        cred_id="cred_us",
+        secret="us-secret",  # pragma: allowlist secret
+        server_variables={"region": "us"},
+    )
+
+    with pytest.raises(CredentialNotProvisionedError):
+        await _inject(integration_context, None, unresolved=True)
+
+    await _seed_api_key(
+        integration_context,
+        cred_id="cred_any",
+        secret="any-secret",  # pragma: allowlist secret
+        server_variables=None,
+    )
+
+    assert await _inject(integration_context, None, unresolved=True) == "any-secret"

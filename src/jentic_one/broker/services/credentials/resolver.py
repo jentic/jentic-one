@@ -87,6 +87,7 @@ class CredentialResolver:
         credential_id: str | None = None,
         allowed_credential_ids: Collection[str] | None = None,
         request_server_variables: Mapping[str, str] | None = None,
+        server_variables_unresolved: bool = False,
     ) -> ResolvedCredential:
         """Resolve a single active credential for the API tuple.
 
@@ -108,6 +109,9 @@ class CredentialResolver:
                 ``server_variables`` give a different value for one of them does
                 not cover the request — e.g. a ``region=us`` credential is never
                 a match for an ``/eu/…`` URL.
+            server_variables_unresolved: Discovery could not determine the
+                request URL's server-variable values; a credential scoped by
+                ``server_variables`` is then never a match (fail closed).
 
         Raises CredentialNotProvisionedError if no match.
         Raises AmbiguousCredentialError if >1 match and no credential_name given.
@@ -149,7 +153,11 @@ class CredentialResolver:
                     scope, vendor=api.vendor, name=api.name, version=api.version
                 ):
                     continue
-                if not server_variables_compatible(c.server_variables, request_server_variables):
+                if not server_variables_compatible(
+                    c.server_variables,
+                    request_server_variables,
+                    unresolved=server_variables_unresolved,
+                ):
                     continue
                 covering.append((c, scope))
 

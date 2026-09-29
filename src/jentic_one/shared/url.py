@@ -50,21 +50,31 @@ def apply_server_variables(
 
 
 def server_variables_compatible(
-    scope: Mapping[str, str] | None, resolved: Mapping[str, str] | None
+    scope: Mapping[str, str] | None,
+    resolved: Mapping[str, str] | None,
+    *,
+    unresolved: bool = False,
 ) -> bool:
     """Whether a credential's ``server_variables`` agree with a request URL's values.
 
     *scope* is the credential's stored ``server_variables``; *resolved* the
     concrete variable values of the request URL. Each scoped variable the URL
-    resolves must carry the same value (compared case-insensitively — host
-    labels are case-insensitive). A variable the URL leaves as a placeholder, or
-    does not declare, imposes no constraint; an unscoped credential matches.
+    resolves must carry exactly the same value (server variables may sit in a
+    case-sensitive path; values resolved from the host arrive lowercased, as
+    the request host is normalised). A variable the URL leaves as a
+    placeholder, or does not declare, imposes no constraint; an unscoped
+    credential matches. *unresolved* means the URL's values could not be
+    determined: a scoped credential then never matches (fail closed).
     """
-    if not scope or not resolved:
+    if not scope:
+        return True
+    if unresolved:
+        return False
+    if not resolved:
         return True
     for name, value in scope.items():
         actual = resolved.get(name)
-        if actual is not None and actual.casefold() != value.casefold():
+        if actual is not None and actual != value:
             return False
     return True
 

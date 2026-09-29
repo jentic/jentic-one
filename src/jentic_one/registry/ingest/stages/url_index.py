@@ -42,7 +42,7 @@ class BuildURLIndexStage(BasePipelineStage):
         operations = await OperationRepository.get_by_ids(ctx.session, operation_ids)
         revision_servers = content.get("servers", [])
 
-        seen: set[tuple[str, str | None, str, str]] = set()
+        seen: set[tuple[str, str, str, str]] = set()
 
         for op in operations:
             op_servers = self._get_effective_servers(op, content, revision_servers)

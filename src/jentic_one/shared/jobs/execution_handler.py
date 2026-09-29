@@ -115,6 +115,7 @@ class ExecutionHandler:
         origin = payload.get("origin")
         server_variables = _str_map(payload.get("server_variables"))
         server_variable_defaults = _str_map(payload.get("server_variable_defaults"))
+        server_variables_unresolved = payload.get("server_variables_unresolved") is True
 
         body: bytes | None = None
         body_b64 = payload.get("body_b64")
@@ -142,6 +143,7 @@ class ExecutionHandler:
                     toolkit_id=payload.get("toolkit_id"),
                     credential_id=payload.get("credential_id"),
                     server_variables=server_variables,
+                    server_variables_unresolved=server_variables_unresolved,
                 )
             )
             if not verdict.allowed:
@@ -177,6 +179,7 @@ class ExecutionHandler:
                 allowed_credential_ids=list(allowed),
                 trace_id=trace_id,
                 request_server_variables=server_variables,
+                server_variables_unresolved=server_variables_unresolved,
             )
             applied = _apply_injection(upstream_url, injection, server_variable_defaults)
             upstream_url, headers = applied.url, applied.headers

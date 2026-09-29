@@ -24,12 +24,13 @@ asymmetries with the raw index, both matching runtime interception:
   archiving a revision clears ``current_revision_id`` without deleting its
   index rows — so an archived revision's hosts still route through the broker
   and must stay in the governed set.
-- **Variable-bearing hosts are excluded.** A literal ``{var}`` host row only
-  matches a request that still carries the placeholder, never a real host —
-  publishing it would tell an integrator's gate to divert traffic the broker
-  cannot serve. Free-form host variables are indexed as a pattern with
-  ``host IS NULL`` (served by the index's regex-match branch); they have no
-  concrete host to publish, so they are not listed either.
+- **Variable-bearing hosts (``{var}`` labels) are excluded.** A host server
+  variable is indexed once per declared value (each a concrete host, listed
+  here) plus a literal ``{var}`` row that only matches a request still
+  carrying the placeholder, never a real host. The index's regex-match branch
+  requires ``host IS NULL``, which the ingest never writes — publishing the
+  templated host would tell an integrator's gate to divert traffic the broker
+  cannot serve.
 """
 
 from __future__ import annotations

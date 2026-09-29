@@ -64,6 +64,7 @@ class _StaticInjector:
         allowed_credential_ids: Any = None,
         trace_id: str | None = None,
         request_server_variables: Any = None,
+        server_variables_unresolved: bool = False,
     ) -> InjectedAuth:
         return self._injection
 

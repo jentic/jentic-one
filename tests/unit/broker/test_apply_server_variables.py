@@ -94,7 +94,18 @@ def test_backslash_value_is_encoded_literally() -> None:
 
 def test_server_variables_compatible_matching_scope() -> None:
     assert server_variables_compatible({"region": "us"}, {"region": "us"})
-    assert server_variables_compatible({"region": "US"}, {"region": "us"})
+
+
+def test_server_variables_compatible_compares_exactly() -> None:
+    # Path server variables may be case-sensitive upstream.
+    assert not server_variables_compatible({"tenant": "Acme"}, {"tenant": "acme"})
+
+
+def test_server_variables_compatible_fails_closed_when_unresolved() -> None:
+    assert not server_variables_compatible({"region": "us"}, None, unresolved=True)
+    assert not server_variables_compatible({"region": "us"}, {}, unresolved=True)
+    # An unscoped credential is unaffected.
+    assert server_variables_compatible(None, None, unresolved=True)
 
 
 def test_server_variables_compatible_mismatch_is_no_match() -> None:

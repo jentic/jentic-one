@@ -42,19 +42,26 @@ class ParsedServerURL:
 
 @dataclass
 class URLIndexEntry:
-    """An entry in the URL index for matching requests to operations.
+    """An entry in the URL index for matching requests to operations."""
 
-    ``host_pattern`` is ``None`` when the host is only matchable by
-    ``host_regex`` (a free-form server variable in the host); the lookup's
-    regex branch serves exactly those rows.
-    """
-
-    host_pattern: str | None
+    host_pattern: str
     host_regex: re.Pattern[str]
     path_pattern: str
     path_regex: re.Pattern[str]
     segment_count: int
     param_names: list[str] = field(default_factory=list)
+
+
+URL_INDEX_FORMAT_MARKER = "(?#sv)"
+"""Regex comment prefixed to every ``path_regex`` this module builds.
+
+Rows carrying it were built with server-variable capture groups (see
+:func:`build_server_index_entries`), so a match yields the request's concrete
+server-variable values directly. A row *without* it predates that and was built
+from the defaults-expanded server URL; ``URLLookupService`` re-derives the
+values of such a row from the operation's stored servers instead. The comment
+is zero-width, so it never changes what a regex matches.
+"""
 
 
 def _normalize_percent_encoding(path: str) -> str:
@@ -366,7 +373,7 @@ def build_index_entry(
         host_pattern=normalized_host,
         host_regex=host_regex,
         path_pattern=normalized_template,
-        path_regex=path_regex,
+        path_regex=re.compile(URL_INDEX_FORMAT_MARKER + path_regex.pattern),
         segment_count=segment_count,
         param_names=param_names,
     )
@@ -383,8 +390,8 @@ Every declared enum value (and the default of a free-form variable) gets its
 own concrete index entry, so the per-server entry count is the cross-product
 of each variable's options. When that product exceeds this cap the builder
 falls back to two entries — the all-defaults URL and the templated URL (free
--form variables still match as a pattern) — so a spec with many large enums
-cannot blow up the index. The fallback is logged by the ingest stage.
+-form path variables still match as a pattern) — so a spec with many large
+enums cannot blow up the index. The fallback is logged by the ingest stage.
 """
 
 # Regex group prefix for a server-variable capture in ``host_regex`` /
@@ -392,13 +399,21 @@ cannot blow up the index. The fallback is logged by the ingest stage.
 # when declared) hex-encoded, so a matched index row alone is enough to recover
 # the concrete variable values of the request URL — no extra lookup.
 _SV_GROUP_PREFIX = "sv__"
+# Prefix of an *empty* regex group that pins a server variable to a value the
+# row's URL bakes in without a capturable position (an empty value, or the
+# default-expanded fallback for a variable in the port). The group name carries
+# the variable name and value hex-encoded; it always captures ``""``.
+_SV_FIXED_GROUP_PREFIX = "svk__"
 # Internal placeholder token for a declared server variable while the server
 # URL goes through parsing/normalization (``{~sv0}``). ``~`` never starts an
 # OpenAPI variable or path-parameter name in practice, and the braces keep the
 # token shielded by ``normalize_path_template``.
 _SV_TOKEN_PREFIX = "~sv"
-# A free-form server variable in the host matches exactly one DNS label.
-_FREE_HOST_VALUE = r"[^.:/]+"
+# A free-form (enum-less) server variable in the *path* matches one segment.
+# Free-form host variables are never indexed as a pattern: the host a
+# credential is sent to must be one the spec names (an enum value or the
+# default) or one a credential supplies for a templated ``{name}`` request —
+# never a label the caller picks.
 _FREE_PATH_VALUE = r"[^/]+"
 
 
@@ -413,7 +428,7 @@ class ServerVariableSpec:
 
 class _BindingKind(StrEnum):
     VALUE = "value"  # a concrete declared value (enum member or default)
-    FREE = "free"  # any value — free-form variable matched as a pattern
+    FREE = "free"  # any value — free-form path variable matched as a pattern
     TEMPLATE = "template"  # the literal ``{name}`` placeholder, left for substitution
 
 
@@ -517,6 +532,20 @@ def _decode_sv_group_name(group: str) -> tuple[str, str | None] | None:
     return name, default
 
 
+def _fixed_value_group(name: str, value: str) -> str:
+    return f"(?P<{_SV_FIXED_GROUP_PREFIX}{name.encode().hex()}_{value.encode().hex()}>)"
+
+
+def _decode_fixed_group_name(group: str) -> tuple[str, str] | None:
+    if not group.startswith(_SV_FIXED_GROUP_PREFIX):
+        return None
+    name_hex, _, value_hex = group[len(_SV_FIXED_GROUP_PREFIX) :].partition("_")
+    try:
+        return bytes.fromhex(name_hex).decode(), bytes.fromhex(value_hex).decode()
+    except ValueError:
+        return None
+
+
 def resolve_server_variable_groups(
     *group_dicts: Mapping[str, str | None],
 ) -> ServerVariableMatch | None:
@@ -533,19 +562,26 @@ def resolve_server_variable_groups(
         for group, captured in groups.items():
             if captured is None:
                 continue
-            decoded = _decode_sv_group_name(group)
-            if decoded is None:
-                path_params[group] = captured
-                continue
-            name, default = decoded
-            if captured == "{" + name + "}":
-                if default is not None:
-                    defaults[name] = default
-                continue
+            fixed = _decode_fixed_group_name(group)
+            if fixed is not None:
+                name, value = fixed
+            else:
+                decoded = _decode_sv_group_name(group)
+                if decoded is None:
+                    path_params[group] = captured
+                    continue
+                name, default = decoded
+                if captured == "{" + name + "}":
+                    if default is not None:
+                        defaults[name] = default
+                    continue
+                value = captured
             existing = values.get(name)
-            if existing is not None and existing.casefold() != captured.casefold():
+            # Host labels are case-insensitive (the request host is lowercased
+            # before matching), so a repeat in host and path compares folded.
+            if existing is not None and existing.casefold() != value.casefold():
                 return None
-            values[name] = captured
+            values[name] = value
     for name in values:
         defaults.pop(name, None)
     return ServerVariableMatch(path_params=path_params, values=values, defaults=defaults)
@@ -557,26 +593,7 @@ def _raw_host(server_url: str) -> str:
     return server_url.split("://", 1)[1].split("/", 1)[0]
 
 
-def _free_host_allowed(host_template: str) -> bool:
-    """Whether a free-form host variable may be indexed as a host pattern.
-
-    The literal suffix after the last placeholder must pin at least two DNS
-    labels (``{tenant}.example.com``): a bare ``{host}`` or ``{sub}.com`` would
-    match hosts that are not the API's, so those stay template-only.
-    """
-    placeholders = list(PATH_PARAM_RE.finditer(host_template))
-    if not placeholders:
-        return True
-    suffix = host_template[placeholders[-1].end() :].split(":", 1)[0]
-    if not suffix.startswith((".", "-")):
-        return False
-    labels = [label for label in suffix.lstrip("-").split(".") if label]
-    return len(labels) >= 2
-
-
-def _variable_options(
-    spec: ServerVariableSpec, *, in_host: bool, free_host_ok: bool
-) -> list[_Binding]:
+def _variable_options(spec: ServerVariableSpec, *, in_host: bool) -> list[_Binding]:
     options: list[_Binding] = []
     if spec.enum:
         members = list(spec.enum)
@@ -587,21 +604,19 @@ def _variable_options(
         return options
     if spec.default is not None:
         options.append(_Binding(_BindingKind.VALUE, spec.default))
-    if in_host and not free_host_ok:
-        options.append(_Binding(_BindingKind.TEMPLATE))
-    else:
-        options.append(_Binding(_BindingKind.FREE))
+    # A free-form host variable stays template-only (see ``_FREE_PATH_VALUE``).
+    options.append(_Binding(_BindingKind.TEMPLATE if in_host else _BindingKind.FREE))
     return options
 
 
 def _fallback_bindings(
-    used: list[ServerVariableSpec], host_template: str, free_host_ok: bool
+    used: list[ServerVariableSpec], host_template: str
 ) -> list[dict[str, _Binding]]:
     """The capped expansion: the all-defaults combination + the templated one."""
 
     def _pattern(spec: ServerVariableSpec) -> _Binding:
         in_host = "{" + spec.name + "}" in host_template
-        if spec.enum or (in_host and not free_host_ok):
+        if spec.enum or in_host:
             return _Binding(_BindingKind.TEMPLATE)
         return _Binding(_BindingKind.FREE)
 
@@ -619,15 +634,10 @@ def _render_server_template(
     bindings: Mapping[str, _Binding],
     *,
     in_host: bool,
-) -> tuple[str, str, bool]:
-    """Render a tokenized host/path into ``(stored pattern, regex body, is_pattern)``.
-
-    ``is_pattern`` is True when a free-form server variable makes the result
-    matchable only by regex (host → ``host`` column left ``NULL``).
-    """
+) -> tuple[str, str]:
+    """Render a tokenized host/path into ``(stored pattern, regex body)``."""
     display: list[str] = []
     regex: list[str] = []
-    is_pattern = False
     seen_groups: set[str] = set()
     for i, part in enumerate(PATH_PARAM_RE.split(template)):
         if i % 2 == 0:
@@ -648,8 +658,7 @@ def _render_server_template(
                 matcher = re.escape(shown)
             else:
                 shown = "{" + spec.name + "}"
-                matcher = _FREE_HOST_VALUE if in_host else _FREE_PATH_VALUE
-                is_pattern = True
+                matcher = _FREE_PATH_VALUE
             display.append(shown)
             if group in seen_groups:
                 regex.append(f"(?P={group})")
@@ -665,7 +674,7 @@ def _render_server_template(
         else:
             name, is_catch_all = _split_param_token(part)
             regex.append(f"(?P<{_safe_param_name(name)}>{'.+' if is_catch_all else '[^/]+'})")
-    return "".join(display), "".join(regex), is_pattern
+    return "".join(display), "".join(regex)
 
 
 def _entry_for_bindings(
@@ -676,29 +685,32 @@ def _entry_for_bindings(
 ) -> URLIndexEntry:
     tokenized = server_url
     captured: list[ServerVariableSpec] = []
+    fixed_groups: list[str] = []
     for spec in used:
         placeholder = "{" + spec.name + "}"
         binding = bindings[spec.name]
         if binding.kind is _BindingKind.VALUE and not binding.value:
-            # An empty value cannot be captured (normalization collapses it).
+            # An empty value cannot be captured (normalization collapses it),
+            # so the row pins it with an empty fixed-value group instead.
             tokenized = tokenized.replace(placeholder, "")
+            fixed_groups.append(_fixed_value_group(spec.name, ""))
             continue
         tokenized = tokenized.replace(placeholder, "{" + f"{_SV_TOKEN_PREFIX}{len(captured)}" + "}")
         captured.append(spec)
 
     parsed = parse_server_url(tokenized)
     full_path = normalize_path_template(merge_paths(parsed.path, operation_path))
-    host_display, host_regex, host_is_pattern = _render_server_template(
+    host_display, host_regex = _render_server_template(
         parsed.host, captured, bindings, in_host=True
     )
-    path_display, path_regex, _ = _render_server_template(
-        full_path, captured, bindings, in_host=False
-    )
+    path_display, path_regex = _render_server_template(full_path, captured, bindings, in_host=False)
     return URLIndexEntry(
-        host_pattern=None if host_is_pattern else host_display,
+        host_pattern=host_display,
         host_regex=re.compile("^" + host_regex + "$", re.IGNORECASE),
         path_pattern=path_display,
-        path_regex=re.compile("^" + path_regex + "$"),
+        path_regex=re.compile(
+            URL_INDEX_FORMAT_MARKER + "^" + "".join(fixed_groups) + path_regex + "$"
+        ),
         segment_count=count_segments(path_display),
         param_names=extract_param_names(path_display),
     )
@@ -711,7 +723,8 @@ def build_server_index_entries(
 
     Each declared server variable contributes its options — every enum value
     plus the literal ``{name}`` template for an enum variable; the default plus
-    a free-form pattern for a variable without an enum — and one entry is built
+    a free-form pattern for an enum-less path variable; the default plus the
+    ``{name}`` template for an enum-less host variable — and one entry is built
     per combination (bounded by :data:`MAX_SERVER_VARIABLE_EXPANSIONS`). Every
     server-variable position is a named regex group, so a matched row yields the
     request's concrete variable values (:func:`resolve_server_variable_groups`).
@@ -719,7 +732,6 @@ def build_server_index_entries(
     specs = server_variable_specs(variables)
     used = [s for s in specs if "{" + s.name + "}" in server_url]
     host_template = _raw_host(server_url)
-    free_host_ok = _free_host_allowed(host_template)
 
     capped = False
     combos: list[dict[str, _Binding]]
@@ -727,14 +739,11 @@ def build_server_index_entries(
         combos = [{}]
     else:
         option_lists = [
-            _variable_options(
-                s, in_host="{" + s.name + "}" in host_template, free_host_ok=free_host_ok
-            )
-            for s in used
+            _variable_options(s, in_host="{" + s.name + "}" in host_template) for s in used
         ]
         if math.prod(len(o) for o in option_lists) > MAX_SERVER_VARIABLE_EXPANSIONS:
             capped = True
-            combos = _fallback_bindings(used, host_template, free_host_ok)
+            combos = _fallback_bindings(used, host_template)
         else:
             combos = [
                 {s.name: b for s, b in zip(used, combo, strict=True)}
@@ -746,12 +755,20 @@ def build_server_index_entries(
     except ValueError:
         # A variable in an unparseable position (e.g. the port): fall back to
         # the default-expanded URL, as before server variables were expanded.
+        # The row pins every expanded variable to its default, so the lookup
+        # still resolves (and scopes credentials on) those values.
         expanded = server_url
-        for spec in specs:
+        fixed: list[str] = []
+        for spec in used:
             if spec.default is not None:
                 expanded = expanded.replace("{" + spec.name + "}", spec.default)
+                fixed.append(_fixed_value_group(spec.name, spec.default))
         parsed = parse_server_url(expanded)
-        entries = [
-            build_index_entry(parsed.host, merge_paths(parsed.path, operation_path), parsed.scheme)
-        ]
+        entry = build_index_entry(
+            parsed.host, merge_paths(parsed.path, operation_path), parsed.scheme
+        )
+        entry.path_regex = re.compile(
+            entry.path_regex.pattern.replace("^", "^" + "".join(fixed), 1)
+        )
+        entries = [entry]
     return ServerIndexExpansion(entries=entries, capped=capped)

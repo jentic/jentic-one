@@ -456,6 +456,7 @@ async def authorize_execution(
     credential_id: str | None = None,
     toolkit_id: str | None = None,
     request_server_variables: Mapping[str, str] | None = None,
+    server_variables_unresolved: bool = False,
 ) -> ExecutionAuthorization:
     """Authorize one execution for ``identity`` against the discovered ``api``.
 
@@ -499,6 +500,7 @@ async def authorize_execution(
             credential_id=credential_id,
             allowed_credential_ids=allowed_credential_ids,
             request_server_variables=request_server_variables,
+            server_variables_unresolved=server_variables_unresolved,
         )
         assert selected_credential is not None  # api.vendor is concrete (asserted above)
         evaluation = await agent_rule_evaluator.evaluate(

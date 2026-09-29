@@ -82,6 +82,7 @@ class CredentialService:
         trace_id: str | None = None,
         preresolved: ResolvedCredential | None = None,
         request_server_variables: Mapping[str, str] | None = None,
+        server_variables_unresolved: bool = False,
     ) -> InjectedAuth:
         """Resolve + inject the credential for the API tuple.
 
@@ -125,6 +126,7 @@ class CredentialService:
                 credential_id=credential_id,
                 allowed_credential_ids=allowed_credential_ids,
                 request_server_variables=request_server_variables,
+                server_variables_unresolved=server_variables_unresolved,
             )
         )
         try:
@@ -261,6 +263,7 @@ class CredentialService:
         credential_id: str | None = None,
         allowed_credential_ids: Collection[str] | None = None,
         request_server_variables: Mapping[str, str] | None = None,
+        server_variables_unresolved: bool = False,
     ) -> ResolvedCredential | None:
         """Resolve-only credential selection — no refresh, decrypt, or audit.
 
@@ -284,6 +287,7 @@ class CredentialService:
             credential_id=credential_id,
             allowed_credential_ids=allowed_credential_ids,
             request_server_variables=request_server_variables,
+            server_variables_unresolved=server_variables_unresolved,
         )
 
     async def _resolve_mapped(
@@ -295,6 +299,7 @@ class CredentialService:
         credential_id: str | None,
         allowed_credential_ids: Collection[str] | None,
         request_server_variables: Mapping[str, str] | None = None,
+        server_variables_unresolved: bool = False,
     ) -> ResolvedCredential:
         """Resolve via ``CredentialResolver``, mapping errors to the broker taxonomy.
 
@@ -310,6 +315,7 @@ class CredentialService:
                 credential_id=credential_id,
                 allowed_credential_ids=allowed_credential_ids,
                 request_server_variables=request_server_variables,
+                server_variables_unresolved=server_variables_unresolved,
             )
         except CredentialNotProvisionedError as exc:
             await self._emit_credential_failure(

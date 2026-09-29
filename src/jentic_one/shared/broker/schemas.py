@@ -47,6 +47,10 @@ class ExecuteRequestContext(BaseModel):
     # credential supplies no value).
     server_variables: dict[str, str] | None = None
     server_variable_defaults: dict[str, str] | None = None
+    # Discovery could not determine the URL's server-variable values (an index
+    # row that predates server-variable capture): credentials scoped by
+    # ``server_variables`` are then not injected.
+    server_variables_unresolved: bool = False
     # Attribution for the stored credential the resolver picked, once injection
     # has run (#740). ``None`` before injection, when no credential path exists,
     # or when the request used inline auth. Carried on the context so both the

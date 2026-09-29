@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from jentic_one.registry.core.url_index import URL_INDEX_FORMAT_MARKER
 from jentic_one.registry.services.errors import (
     AmbiguousMatchError,
     MethodNotAllowedError,
@@ -36,7 +37,9 @@ def _make_index_entry(
     entry.host = host
     entry.host_regex = host_regex
     entry.path_template = path_template
-    entry.path_regex = path_regex
+    # Rows built by the current builder carry the format marker; a row without
+    # it takes the legacy re-derivation path (covered by integration tests).
+    entry.path_regex = URL_INDEX_FORMAT_MARKER + path_regex
     entry.param_names = param_names or []
     entry.segment_count = segment_count
     return entry

@@ -67,6 +67,7 @@ async def test_credential_name_none_when_header_absent(monkeypatch: pytest.Monke
             credential_id: str | None = None,
             allowed_credential_ids: Any = None,
             request_server_variables: Any = None,
+            server_variables_unresolved: bool = False,
         ) -> Any:
             captured["credential_name"] = credential_name
             return await original_resolve(api=api, caller=caller, credential_name=credential_name)
@@ -125,6 +126,7 @@ async def test_credential_name_forwarded_when_header_present(
             credential_id: str | None = None,
             allowed_credential_ids: Any = None,
             request_server_variables: Any = None,
+            server_variables_unresolved: bool = False,
         ) -> Any:
             captured["credential_name"] = credential_name
             return await original_resolve(api=api, caller=caller, credential_name=credential_name)

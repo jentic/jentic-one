@@ -22,7 +22,9 @@ class ResolveResult:
     broker only injects a credential whose ``server_variables`` agree with them.
     ``server_variable_defaults`` are the declared defaults of variables the URL
     left as a literal ``{name}`` placeholder, substituted when no credential
-    supplies a value.
+    supplies a value. ``server_variables_unresolved`` is True when the registry
+    could not determine the URL's server-variable values; the broker then
+    injects no credential scoped by ``server_variables`` (fail closed).
     """
 
     operation_id: str
@@ -30,6 +32,7 @@ class ResolveResult:
     path_params: dict[str, str]
     server_variables: dict[str, str] = field(default_factory=dict)
     server_variable_defaults: dict[str, str] = field(default_factory=dict)
+    server_variables_unresolved: bool = False
 
 
 class RevisionPinOutcome(StrEnum):

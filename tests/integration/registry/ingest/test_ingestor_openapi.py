@@ -17,6 +17,7 @@ from jentic_one.registry.core.schema.operations import Operation
 from jentic_one.registry.core.schema.security_schemes import SecurityScheme
 from jentic_one.registry.core.schema.servers import Server
 from jentic_one.registry.core.schema.spec_files import SpecFile
+from jentic_one.registry.core.url_index import URL_INDEX_FORMAT_MARKER
 from jentic_one.registry.ingest.exc import IngestPipelineError
 from jentic_one.registry.ingest.ingestor import Ingestor
 from jentic_one.registry.ingest.models import ApiIdentifier, IngestSpecification, SpecType
@@ -218,7 +219,10 @@ async def test_ingest_trailing_slash_spec_produces_resolvable_index(
             "/api/bootstrap-static",
             "/api/element-summary/{elementId}",
         }
-        assert by_template["/api/bootstrap-static"].path_regex == r"^/api/bootstrap\-static$"
+        assert (
+            by_template["/api/bootstrap-static"].path_regex
+            == URL_INDEX_FORMAT_MARKER + r"^/api/bootstrap\-static$"
+        )
 
         revision_id = entries[0].revision_id
         svc = URLLookupService(session)

@@ -66,6 +66,7 @@ class CredentialInjector(Protocol):
         allowed_credential_ids: Collection[str] | None = None,
         trace_id: str | None = None,
         request_server_variables: Mapping[str, str] | None = None,
+        server_variables_unresolved: bool = False,
     ) -> InjectedAuth:
         """Return the auth to apply; empty ``InjectedAuth`` when there is no credential path.
 
@@ -103,6 +104,9 @@ class QueuedExecutionRequest:
     # Concrete server-variable values of the request URL (from discovery at
     # enqueue time) — the re-check selects under the same scoping.
     server_variables: Mapping[str, str] | None = None
+    # Discovery could not determine those values at enqueue time — a credential
+    # scoped by ``server_variables`` is then not selected (fail closed).
+    server_variables_unresolved: bool = False
 
 
 @dataclass(frozen=True, slots=True)
