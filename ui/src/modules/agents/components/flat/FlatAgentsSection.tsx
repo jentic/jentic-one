@@ -72,6 +72,7 @@ import {
 	type PreflightItem,
 } from '@/modules/agents/lib/apiPreflight';
 import type { QueueBackSeed } from '@/modules/agents/lib/setupQueue';
+import { isHistory } from '@/modules/agents/lib/firstRun';
 import { useFirstAgentLanding } from '@/modules/agents/lib/useFirstAgentLanding';
 import { usePreflightInputs } from '@/modules/agents/lib/usePreflightInputs';
 import { AgentDock, type AgentDockSurface } from '@/modules/agents/components/flat/AgentDock';
@@ -132,11 +133,13 @@ export function FlatAgentsSection({
 	} | null>(null);
 	const clearAddApisFor = useCallback(() => setAddApisFor(null), []);
 
+	const agentParam = searchParams.get('agent');
 	const approve = useApproveAgent();
 	const deny = useDenyAgent();
 	const landing = useFirstAgentLanding({
 		approve,
 		deny,
+		selectedId: agentParam,
 		selectAgent,
 		openAddApis: setAddApisFor,
 	});
@@ -156,9 +159,11 @@ export function FlatAgentsSection({
 		[landing.agents],
 	);
 
-	const agentParam = searchParams.get('agent');
 	const selected = agents.find((a) => a.id === agentParam) ?? agents[0] ?? null;
-	const fallbackId = agentParam == null ? (selected?.id ?? null) : null;
+	// Written back only once the fleet view is decided and on screen: the resume
+	// reads `?agent=`, and a history agent written there would resume the fleet.
+	const fleetShown = landing.ready && !landing.visible;
+	const fallbackId = agentParam == null && fleetShown ? (selected?.id ?? null) : null;
 	useEffect(() => {
 		if (fallbackId != null) selectAgent(fallbackId, { replace: true });
 	}, [fallbackId, selectAgent]);
@@ -320,6 +325,12 @@ export function FlatAgentsSection({
 					expectedName={landing.expectedName}
 					morePending={landing.morePending}
 					onShowFleet={landing.showFleet}
+					history={landing.history}
+					onShowHistory={() => {
+						// The strip's own order, so it opens on the tab it lists first.
+						const first = agents.find(isHistory);
+						if (first) landing.showHistory(first.id);
+					}}
 					slotRef={landing.slotRef}
 				/>
 				{overlays}

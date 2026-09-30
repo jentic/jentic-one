@@ -42,13 +42,14 @@ function LocationProbe() {
 	return <div data-testid="location-search">{location.search}</div>;
 }
 
-function renderPage(opts: { reduced?: boolean } = {}) {
+function renderPage(opts: { reduced?: boolean; route?: string } = {}) {
 	return renderWithProviders(
 		<MotionConfig reducedMotion={opts.reduced ? 'always' : 'never'}>
 			<AgentsPage />
 			<LocationProbe />
 			<Toaster />
 		</MotionConfig>,
+		{ route: opts.route },
 	);
 }
 
@@ -95,6 +96,8 @@ describe('Agents page — zero agents', () => {
 		const ghost = screen.getByTestId('ghost-fleet');
 		expect(ghost).toHaveAttribute('aria-hidden', 'true');
 		expect(within(ghost).getByTestId('ghost-tab')).toHaveTextContent('Waiting for your agent…');
+		// No denied or archived agents: nothing to point at.
+		expect(screen.queryByTestId('landing-history')).toBeNull();
 
 		expect(screen.queryByTestId('agent-dock')).toBeNull();
 		// The header's button keeps its label and steps back to secondary.
@@ -431,10 +434,13 @@ describe('Agents page — zero agents', () => {
 		await arrive('scoped-bot', queryClient);
 
 		const list = await screen.findByRole('list', { name: 'Requested scopes' });
-		// Nothing hides behind an ellipsis: every scope is its own visible badge.
+		// Nothing hides behind an ellipsis: every scope is its own visible badge,
+		// once the arrival's details have faded in.
 		const items = within(list).getAllByRole('listitem');
 		expect(items).toHaveLength(requested.length);
-		for (const item of items) expect(item).toBeVisible();
+		await waitFor(() => {
+			for (const item of items) expect(item).toBeVisible();
+		});
 		const risk = (scope: string) =>
 			within(list).getByText(scope).closest('[data-risk]')?.getAttribute('data-risk') ?? null;
 		expect(risk('agents:write')).toBe('write');
@@ -1053,7 +1059,10 @@ describe('Agents page — resuming the first run on load', () => {
 		renderPage();
 
 		expect(await screen.findByTestId('agent-strip')).toBeInTheDocument();
-		expect(screen.getByRole('region', { name: 'Awaiting approval' })).toBeInTheDocument();
+		// The banner reads its own pending query, which can land after the roster.
+		expect(
+			await screen.findByRole('region', { name: 'Awaiting approval' }),
+		).toBeInTheDocument();
 		expect(screen.queryByTestId('agents-empty-landing')).toBeNull();
 	});
 
@@ -1078,6 +1087,82 @@ describe('Agents page — resuming the first run on load', () => {
 		expect(screen.getByTestId('register-command')).toBeInTheDocument();
 		expect(screen.getByRole('button', { name: 'New agent' })).toBeInTheDocument();
 		expect(screen.queryByTestId('agent-strip')).toBeNull();
+		expect(screen.getByTestId('landing-history')).toHaveTextContent(
+			/^1 archived, 1 rejected\s*·\s*View$/,
+		);
+	});
+
+	const seedArchived = () =>
+		seedExtraAgents([
+			{ id: 'agnt_a1', name: 'alpha-boom', status: 'archived' },
+			{ id: 'agnt_a2', name: 'gamma-bot', status: 'archived' },
+			{ id: 'agnt_a3', name: 'my-first-agent', status: 'archived' },
+		]);
+
+	it('only archived agents: the landing counts them, with a link to the fleet', async () => {
+		seedArchived();
+		const { container } = renderPage();
+
+		await landing();
+		expect(phase()).toBe('listening');
+		const line = screen.getByTestId('landing-history');
+		expect(line).toHaveTextContent(/^3 archived agents\s*·\s*View$/);
+		expect(
+			within(line).getByRole('button', { name: 'View 3 archived agents' }),
+		).toBeInTheDocument();
+		// The landing leaves the URL alone: a reload of it is the landing again.
+		expect(screen.getByTestId('location-search')).toHaveTextContent(/^$/);
+		await waitFor(() => checkA11y(container), { timeout: 3000 });
+	});
+
+	it('"View" shows the fleet with the history, and the landing stays away', async () => {
+		const user = userEvent.setup();
+		seedArchived();
+		const { queryClient } = renderPage();
+
+		await landing();
+		await user.click(screen.getByRole('button', { name: 'View 3 archived agents' }));
+
+		const strip = await screen.findByTestId('agent-strip');
+		expect(screen.queryByTestId('agents-empty-landing')).toBeNull();
+		for (const name of ['alpha-boom', 'gamma-bot', 'my-first-agent']) {
+			expect(within(strip).getByRole('tab', { name: new RegExp(name) })).toBeInTheDocument();
+		}
+		const selected = within(strip).getByRole('tab', { selected: true });
+		await waitFor(() => expect(selected).toHaveFocus());
+		const search = screen.getByTestId('location-search').textContent ?? '';
+		expect(search).toMatch(/agent=agnt_a[123]/);
+		expect(await screen.findByText('This agent is retired.', { exact: false })).toBeVisible();
+
+		// A roster refetch (a poll, a stream event) doesn't bring the landing back.
+		await queryClient.invalidateQueries({ queryKey: agentsKeysForTest.list('all') });
+		await new Promise((resolve) => setTimeout(resolve, 100));
+		expect(screen.queryByTestId('agents-empty-landing')).toBeNull();
+		expect(screen.getByTestId('agent-strip')).toBeInTheDocument();
+	});
+
+	it('a reload of the history URL shows the fleet; a plain reload, the landing', async () => {
+		seedArchived();
+		const first = renderPage({ route: '/?agent=agnt_a2' });
+		const strip = await screen.findByTestId('agent-strip');
+		expect(within(strip).getByRole('tab', { selected: true })).toHaveTextContent('gamma-bot');
+		expect(screen.queryByTestId('agents-empty-landing')).toBeNull();
+		first.unmount();
+
+		renderPage();
+		await landing();
+		expect(screen.queryByTestId('agent-strip')).toBeNull();
+		expect(screen.getByTestId('landing-history')).toBeInTheDocument();
+	});
+
+	it('an arrival or a first-API suggestion carries no history line', async () => {
+		seedArchived();
+		selfRegisterAgent('new-bot');
+		renderPage();
+
+		await landing();
+		expect(phase()).toBe('arrived');
+		expect(screen.queryByTestId('landing-history')).toBeNull();
 	});
 
 	it('shows only the loading skeleton until the roster and bindings are read', async () => {

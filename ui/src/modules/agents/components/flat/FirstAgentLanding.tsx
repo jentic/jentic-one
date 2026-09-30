@@ -5,7 +5,9 @@
  * Two routes in, side by side: the primary card has the agent register itself
  * (`jentic register`); the secondary card is manual creation through the real
  * create sheet. Below them, a dashed preview of the fleet view with an empty
- * slot for the first agent.
+ * slot for the first agent — and, while the card listens in an org whose only
+ * agents are denied or archived, one quiet line counting them, with a link to
+ * the fleet view that lists them.
  *
  * The parent polls (and the event stream invalidates) the agents list while
  * this is on screen and passes the registered agent in as `agent`. The card
@@ -42,7 +44,7 @@ import {
 	useReducedMotionConfig,
 	type Transition,
 } from 'framer-motion';
-import { KeyRound, Pencil, Plus, UserRound } from 'lucide-react';
+import { Archive, KeyRound, Pencil, Plus, UserRound } from 'lucide-react';
 import { Button, McpIcon } from '@/shared/ui';
 import { useMediaQuery } from '@/shared/hooks';
 import { cn } from '@/shared/lib/utils';
@@ -78,6 +80,11 @@ interface FirstAgentLandingProps {
 	morePending: number;
 	/** Leave for the fleet view, where every pending agent is listed. */
 	onShowFleet: () => void;
+	/** The org's denied and archived agents, counted ("3 archived agents"), or
+	 * null when there are none to show. */
+	history: string | null;
+	/** Leave for the fleet view, where that history is listed. */
+	onShowHistory: () => void;
 	/** The preview's agent slot, where the hand-off to the strip starts. */
 	slotRef: RefObject<HTMLElement | null>;
 }
@@ -94,6 +101,8 @@ export function FirstAgentLanding({
 	expectedName,
 	morePending,
 	onShowFleet,
+	history,
+	onShowHistory,
 	slotRef,
 }: FirstAgentLandingProps) {
 	const reducedMotion = useReducedMotionConfig() ?? false;
@@ -206,6 +215,7 @@ export function FirstAgentLanding({
 				</AnimatePresence>
 			</div>
 			<motion.div layout="position" transition={{ layout: morph }}>
+				{history && <HistoryLine summary={history} onShow={onShowHistory} />}
 				<GhostFleet
 					arrived={
 						agent
@@ -221,6 +231,29 @@ export function FirstAgentLanding({
 				/>
 			</motion.div>
 		</div>
+	);
+}
+
+/** One muted row over the fleet preview: the org's history, one click away. */
+function HistoryLine({ summary, onShow }: { summary: string; onShow: () => void }) {
+	return (
+		<p
+			data-testid="landing-history"
+			className="text-muted-foreground mb-2 flex items-center gap-1.5 text-xs"
+		>
+			<Archive aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
+			<span>{summary}</span>
+			<span aria-hidden="true">·</span>
+			<Button
+				variant="ghost"
+				size="sm"
+				onClick={onShow}
+				aria-label={`View ${summary}`}
+				className="-my-1 px-1.5 py-0.5 text-xs"
+			>
+				View
+			</Button>
+		</p>
 	);
 }
 
