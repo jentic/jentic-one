@@ -63,6 +63,9 @@ describe('LibraryPage', () => {
 		const status = await screen.findByTestId('discover-status');
 		expect(within(status).getByText(/APIs in the catalog/)).toBeInTheDocument();
 		expect(within(status).getByText(/imported/)).toBeInTheDocument();
+		// It heads the catalog column, directly above the toolbar — not a
+		// full-width strip of its own under the page header.
+		expect(status.nextElementSibling).toBe(screen.getByTestId('discover-toolbar'));
 	});
 
 	it('disambiguates umbrella sub-APIs by title (nytimes.com)', async () => {

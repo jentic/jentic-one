@@ -193,15 +193,6 @@ export default function LibraryPage() {
 				}
 			/>
 
-			<DiscoverStatusRow
-				catalogTotal={catalog.catalogTotal}
-				registeredCount={catalog.registeredCount}
-				outdatedCount={catalog.outdatedCount}
-				manifestAgeSeconds={catalog.manifestAgeSeconds}
-				loading={catalog.isPending}
-				workspace={digest.complete ? digest.totals : null}
-			/>
-
 			{/* Below xl the docked panel would sit under an infinite catalog —
 			    unreachable — so a summary bar above the catalog opens the same
 			    panel content in a bottom sheet instead. */}
@@ -214,7 +205,19 @@ export default function LibraryPage() {
 			)}
 
 			<div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(320px,24rem)]">
-				<div className="min-w-0 space-y-3">
+				{/* The catalog's counts head its column, and the sticky toolbar's
+				    own padding spaces them from the search — no full-width strip
+				    (and gap) of their own under the header. */}
+				<div className="min-w-0">
+					<DiscoverStatusRow
+						catalogTotal={catalog.catalogTotal}
+						registeredCount={catalog.registeredCount}
+						outdatedCount={catalog.outdatedCount}
+						manifestAgeSeconds={catalog.manifestAgeSeconds}
+						loading={catalog.isPending}
+						workspace={digest.complete ? digest.totals : null}
+					/>
+
 					<DiscoverToolbar
 						query={query}
 						onQueryChange={setQuery}
@@ -225,23 +228,25 @@ export default function LibraryPage() {
 						refreshing={isRefreshing}
 					/>
 
-					<DiscoveryGrid
-						entities={catalog.entities}
-						loading={catalog.isPending}
-						error={catalog.error}
-						activeId={sheetOpen ? (selected?.id ?? null) : null}
-						onOpen={handleOpen}
-						onImport={importEntity}
-						pendingApiIds={pendingApiIds}
-						hasQuery={debouncedQuery.length > 0}
-						hasNextPage={catalog.hasNextPage}
-						isFetchingNextPage={catalog.isFetchingNextPage}
-						onLoadMore={catalog.fetchNextPage}
-						workspaceByCatalogId={digest.byCatalogApiId}
-						credentialsError={digest.credentialsError}
-						credentials={credentials}
-						onImportOwn={openImportOwn}
-					/>
+					<div className="mt-3">
+						<DiscoveryGrid
+							entities={catalog.entities}
+							loading={catalog.isPending}
+							error={catalog.error}
+							activeId={sheetOpen ? (selected?.id ?? null) : null}
+							onOpen={handleOpen}
+							onImport={importEntity}
+							pendingApiIds={pendingApiIds}
+							hasQuery={debouncedQuery.length > 0}
+							hasNextPage={catalog.hasNextPage}
+							isFetchingNextPage={catalog.isFetchingNextPage}
+							onLoadMore={catalog.fetchNextPage}
+							workspaceByCatalogId={digest.byCatalogApiId}
+							credentialsError={digest.credentialsError}
+							credentials={credentials}
+							onImportOwn={openImportOwn}
+						/>
+					</div>
 				</div>
 
 				{isXl && (
