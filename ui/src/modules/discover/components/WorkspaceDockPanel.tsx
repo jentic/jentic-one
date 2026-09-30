@@ -21,7 +21,7 @@
  * both surfaces carry the `library-workspace` view-transition name, so the
  * shell's link transitions morph this card into the page.
  */
-import { memo, useMemo } from 'react';
+import { memo, useId, useMemo, useState } from 'react';
 import {
 	AlertTriangle,
 	ArrowRight,
@@ -85,11 +85,8 @@ const ATTENTION_TONE: Record<AttentionId, string> = {
 	drafts: 'text-muted-foreground',
 };
 
-/** Workspace-view filter each attention kind maps onto, when one exists. */
-const ATTENTION_FILTER: Partial<Record<AttentionId, string>> = {
-	updates: 'update',
-	drafts: 'draft',
-};
+/** Names an attention item lists before "+N more" (which expands the rest in place). */
+const ATTENTION_PREVIEW = 3;
 
 /** Eyebrow caption above a block of the panel (a label, not a heading). */
 function SectionLabel({ children }: { children: React.ReactNode }) {
@@ -115,11 +112,14 @@ function AttentionItem({
 	entry: AttentionEntry;
 	onAddCredential?: (row: WorkspaceDigestRow) => void;
 }) {
+	const [expanded, setExpanded] = useState(false);
+	const listId = useId();
 	const Icon = ATTENTION_ICON[entry.id];
 	const count = entry.rows.length;
-	const filter = ATTENTION_FILTER[entry.id];
-	const shown = entry.rows.slice(0, 3);
-	const rest = count - shown.length;
+	// "+N more" expands the names in place; every name behaves like the first
+	// ones (a "no credential" name still opens Add credential in place).
+	const shown = expanded ? entry.rows : entry.rows.slice(0, ATTENTION_PREVIEW);
+	const rest = count - ATTENTION_PREVIEW;
 	const noun = count === 1 ? 'API' : 'APIs';
 	return (
 		<li className="flex items-start gap-2.5 px-1 py-1.5" data-testid={`attention-${entry.id}`}>
@@ -135,7 +135,7 @@ function AttentionItem({
 					</strong>{' '}
 					{noun} · {entry.label}
 				</p>
-				<p className="mt-0.5 flex flex-wrap gap-x-2 gap-y-0.5 text-xs">
+				<p id={listId} className="mt-0.5 flex flex-wrap gap-x-2 gap-y-0.5 text-xs">
 					{shown.map((row) =>
 						entry.id === 'credentials' && onAddCredential ? (
 							<Button
@@ -164,14 +164,17 @@ function AttentionItem({
 						),
 					)}
 					{rest > 0 && (
-						<AppLink
-							href={
-								filter ? `${ROUTES.workspace}?status=${filter}` : ROUTES.workspace
-							}
-							className="text-muted-foreground hover:text-foreground"
+						<Button
+							variant="ghost"
+							size="sm"
+							onClick={() => setExpanded((v) => !v)}
+							aria-expanded={expanded}
+							aria-controls={listId}
+							className="text-muted-foreground hover:text-foreground h-auto rounded-sm p-0 text-xs font-normal hover:bg-transparent active:scale-100"
+							data-testid="attention-more"
 						>
-							+{rest} more
-						</AppLink>
+							{expanded ? 'Show fewer' : `+${rest} more`}
+						</Button>
 					)}
 				</p>
 			</div>

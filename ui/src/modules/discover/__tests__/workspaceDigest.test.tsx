@@ -1,6 +1,6 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
-import { renderWithProviders, screen, waitFor, within } from '@/__tests__/test-utils';
+import { renderWithProviders, screen, userEvent, waitFor, within } from '@/__tests__/test-utils';
 import { worker } from '@/mocks/browser';
 import { setToken } from '@/shared/api';
 import { makeMockCredential } from '@/shared/credentials/mocks/handlers';
@@ -179,7 +179,8 @@ describe('WorkspacePanelBody attention links', () => {
 		);
 	});
 
-	it('links overlays to the hub Versions tab and "+N more" drafts to ?status=draft', () => {
+	it('links overlays to the hub Versions tab; "+N more" expands the drafts in place', async () => {
+		const user = userEvent.setup();
 		renderWithProviders(
 			<WorkspacePanelBody
 				digest={digestWith([
@@ -198,11 +199,40 @@ describe('WorkspacePanelBody attention links', () => {
 		expect(
 			within(screen.getByTestId('attention-overlays')).getByRole('link', { name: 'Beta' }),
 		).toHaveAttribute('href', '/library/workspace/beta/beta-api/1?tab=versions');
-		const drafts = screen.getByTestId('attention-drafts');
-		expect(within(drafts).getByRole('link', { name: '+1 more' })).toHaveAttribute(
+		const drafts = within(screen.getByTestId('attention-drafts'));
+		expect(drafts.queryByRole('link', { name: 'Delta' })).not.toBeInTheDocument();
+		const more = drafts.getByRole('button', { name: '+1 more' });
+		expect(more).toHaveAttribute('aria-expanded', 'false');
+		await user.click(more);
+		// The rest appear in place, each linking to its hub like the first ones.
+		expect(drafts.getByRole('link', { name: 'Delta' })).toHaveAttribute(
 			'href',
-			'/library/workspace?status=draft',
+			'/library/workspace/delta/delta-api/1?tab=versions',
 		);
+		const fewer = drafts.getByRole('button', { name: 'Show fewer' });
+		expect(fewer).toHaveAttribute('aria-expanded', 'true');
+		await user.click(fewer);
+		expect(drafts.queryByRole('link', { name: 'Delta' })).not.toBeInTheDocument();
+		expect(drafts.getByRole('button', { name: '+1 more' })).toBeInTheDocument();
+	});
+
+	it('expanded "no credential" names open Add credential in place, like the first ones', async () => {
+		const user = userEvent.setup();
+		const onAddCredential = vi.fn();
+		renderWithProviders(
+			<WorkspacePanelBody
+				digest={digestWith([
+					{ id: 'credentials', label: 'no credential', rows, tab: 'overview' },
+				])}
+				pendingImports={[]}
+				onImportOwn={() => {}}
+				onAddCredential={onAddCredential}
+			/>,
+		);
+		const item = within(screen.getByTestId('attention-credentials'));
+		await user.click(item.getByRole('button', { name: '+1 more' }));
+		await user.click(item.getByRole('button', { name: 'Add a credential for Delta' }));
+		expect(onAddCredential).toHaveBeenCalledWith(rows[3]);
 	});
 
 	it('shows neither "All good" nor a skeleton when a source failed (settled, not complete)', async () => {
