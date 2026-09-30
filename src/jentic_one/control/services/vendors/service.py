@@ -16,10 +16,17 @@ same underlying vendor family surface as **separate picker cards**; users
 pick one, and every subsequent read (auth-capabilities, scope catalog,
 flow selection, confirm-time scope validation) resolves against that
 specific source alone.
+
+Picker cards for registrations carry the registration id as a pin. With no
+pin, ``:connect`` uses the config entry when it offers the requested flow,
+else the vendor's single matching active registration (ambiguous → 400).
+After ``:connect`` the credential's ``oauth_app_registration_id`` records the
+source (NULL = config) and later steps re-open exactly that source.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Protocol
 
 import structlog
@@ -33,6 +40,7 @@ from jentic_one.control.services.integrations.errors import (
     InvalidOAuthAppRegistrationError,
 )
 from jentic_one.control.services.vendors.errors import (
+    AmbiguousVendorError,
     UnknownVendorError,
     UnsupportedFlowError,
     VendorNotConfiguredError,
@@ -59,7 +67,9 @@ _logger = structlog.get_logger(__name__)
 # defined the exceptions and ``ResolvedScope`` inline, and downstream code
 # still imports them from here.
 __all__ = [
+    "AmbiguousVendorError",
     "ResolvedScope",
+    "ResolvedVendorSource",
     "UnknownVendorError",
     "UnsupportedFlowError",
     "VendorAppRegistrationSource",
@@ -72,17 +82,17 @@ __all__ = [
 class VendorAppRegistrationSource(Protocol):
     """Abstraction over the admin-DB registration read path.
 
-    Injectable so unit tests can exercise DB-first / fallback / union
-    semantics without opening a real database session — a fake implementation
-    returns preconfigured registrations. The default implementation
+    Injectable so unit tests can exercise resolution semantics without
+    opening a real database session — a fake implementation returns
+    preconfigured registrations. The default implementation
     (``_DefaultRegistrationSource`` below) uses the control DB and the
     repository layer.
     """
 
-    async def get_preferred_active(
+    async def list_active_for_vendor(
         self, *, api_vendor: str, flow_kind: str | None = None
-    ) -> OAuthAppRegistration | None:
-        """Return the most-recently-updated active registration for a vendor, if any."""
+    ) -> list[OAuthAppRegistration]:
+        """Return every active registration for a vendor slug (optionally one flow kind)."""
 
     async def list_active(self) -> list[OAuthAppRegistration]:
         """Return every active registration across all vendors."""
@@ -101,11 +111,11 @@ class _DefaultRegistrationSource:
     def __init__(self, ctx: Context) -> None:
         self._ctx = ctx
 
-    async def get_preferred_active(
+    async def list_active_for_vendor(
         self, *, api_vendor: str, flow_kind: str | None = None
-    ) -> OAuthAppRegistration | None:
+    ) -> list[OAuthAppRegistration]:
         async with self._ctx.control_db.session() as session:
-            return await OAuthAppRegistrationRepository.get_preferred_for_vendor(
+            return await OAuthAppRegistrationRepository.list_active_for_vendor(
                 session, api_vendor=api_vendor, flow_kind=flow_kind
             )
 
@@ -118,8 +128,26 @@ class _DefaultRegistrationSource:
             return await OAuthAppRegistrationRepository.get_by_id(session, registration_id)
 
 
+@dataclass(frozen=True, slots=True)
+class ResolvedVendorSource:
+    """One OAuth-app source for a vendor, with the flow chosen from it.
+
+    ``registration`` is the admin-registered row the entry and flow were
+    projected from, or ``None`` when the source is the platform config entry.
+    Entry, flow and registration always come from the same source.
+    """
+
+    entry: VendorAuthConfig
+    flow: VendorFlowConfig
+    registration: OAuthAppRegistration | None
+
+    @property
+    def source(self) -> VendorEntrySource:
+        return "config" if self.registration is None else "db"
+
+
 class VendorRegistryService:
-    """Vendor auth registry with a DB-first / config-fallback resolution seam."""
+    """Vendor auth registry: admin registrations and platform config as peers."""
 
     def __init__(
         self,
@@ -142,87 +170,126 @@ class VendorRegistryService:
 
     # ---- core resolution ----------------------------------------------------
 
-    async def _resolve_pinned_entry(
+    async def _pinned_registration(
+        self, vendor_key: str, registration_id: str
+    ) -> OAuthAppRegistration:
+        """Fetch a pinned registration, refusing missing / inactive / wrong-vendor rows."""
+        registration = await self._registrations.get_by_id(registration_id)
+        if registration is None:
+            raise InvalidOAuthAppRegistrationError(registration_id, "not found")
+        if not registration.is_active:
+            raise InvalidOAuthAppRegistrationError(registration_id, "inactive")
+        if registration.api_vendor != vendor_key:
+            raise InvalidOAuthAppRegistrationError(
+                registration_id,
+                f"api_vendor mismatch (expected {vendor_key!r}, "
+                f"registration is {registration.api_vendor!r})",
+            )
+        return registration
+
+    def _config_entry(self, vendor_key: str) -> VendorAuthConfig:
+        cfg = self._config.entries.get(vendor_key)
+        if cfg is None:
+            raise UnknownVendorError(vendor_key)
+        return cfg
+
+    async def resolve_connect_source(
         self,
         vendor_key: str,
         *,
         registration_id: str | None = None,
-        flow_kind: str | None = None,
-    ) -> tuple[VendorAuthConfig, VendorEntrySource]:
-        """Resolve one vendor with source metadata, honouring an optional pin.
+        preferred_flow: str | None = None,
+    ) -> ResolvedVendorSource:
+        """Choose the single source a new connect runs through.
 
-        Admin registrations and platform config entries are peers, never
-        overlays: neither path crosses over.
+        * ``registration_id`` set → that registration, validated
+          (:class:`InvalidOAuthAppRegistrationError` when missing, inactive,
+          or for another vendor).
+        * No pin, and the platform config has ``vendor_key`` offering
+          ``preferred_flow`` → the config entry. Config picker cards send no
+          pin, so a registration sharing the slug never takes them over.
+        * Otherwise the active registrations for the slug offering
+          ``preferred_flow``: exactly one → it; more than one →
+          :class:`AmbiguousVendorError` (the caller must pin); none →
+          :class:`UnsupportedFlowError` if the config entry exists but lacks
+          the flow, else :class:`UnknownVendorError`.
 
-        * ``registration_id`` set → the registration wins outright. Fetch that
-          specific row; fail with :class:`InvalidOAuthAppRegistrationError`
-          when it is missing, inactive, or its ``api_vendor`` does not match
-          ``vendor_key``. The projection reads registration fields only —
-          the config-shipped scope catalog / identity probe is **never**
-          merged in.
-        * ``registration_id`` unset → prefer the "most-recently-updated
-          active" registration for the vendor slug; else fall back to the
-          matching config entry; else :class:`UnknownVendorError`. Same
-          no-merge posture on the DB branch.
+        Entry, flow and registration are resolved together, so the
+        credential's identity and the minting app can never diverge.
         """
         if registration_id is not None:
-            registration = await self._registrations.get_by_id(registration_id)
-            if registration is None:
-                raise InvalidOAuthAppRegistrationError(registration_id, "not found")
-            if not registration.is_active:
-                raise InvalidOAuthAppRegistrationError(registration_id, "inactive")
-            if registration.api_vendor != vendor_key:
-                raise InvalidOAuthAppRegistrationError(
-                    registration_id,
-                    f"api_vendor mismatch (expected {vendor_key!r}, "
-                    f"registration is {registration.api_vendor!r})",
-                )
-            return (_project_registration_to_auth_config(registration), "db")
-
-        registration = await self._registrations.get_preferred_active(
-            api_vendor=vendor_key, flow_kind=flow_kind
-        )
-        if registration is not None:
-            return _project_registration_to_auth_config(registration), "db"
+            registration = await self._pinned_registration(vendor_key, registration_id)
+            return self._from_registration(vendor_key, registration, preferred_flow)
 
         cfg = self._config.entries.get(vendor_key)
-        if cfg is not None:
-            return cfg, "config"
+        if cfg is not None and (
+            preferred_flow is None or any(f.kind == preferred_flow for f in cfg.flows)
+        ):
+            return ResolvedVendorSource(
+                entry=cfg, flow=self._pick_flow(vendor_key, cfg, preferred_flow), registration=None
+            )
+
+        candidates = await self._registrations.list_active_for_vendor(
+            api_vendor=vendor_key, flow_kind=preferred_flow
+        )
+        if len(candidates) > 1:
+            raise AmbiguousVendorError(vendor_key, preferred_flow, [r.id for r in candidates])
+        if candidates:
+            return self._from_registration(vendor_key, candidates[0], preferred_flow)
+        if cfg is not None and preferred_flow is not None:
+            raise UnsupportedFlowError(vendor_key, preferred_flow)
         raise UnknownVendorError(vendor_key)
+
+    async def resolve_session_source(
+        self,
+        vendor_key: str,
+        *,
+        registration_id: str | None,
+        flow_kind: str | None = None,
+    ) -> ResolvedVendorSource:
+        """Re-open the source an existing connect session was created against.
+
+        ``registration_id`` is the credential's ``oauth_app_registration_id``
+        — stamped at ``:connect`` for every registration-backed session, so
+        ``None`` unambiguously means the platform config entry. Never
+        re-prefers: a registration added mid-session can't take over a
+        config session, and a config entry removed mid-session raises
+        :class:`UnknownVendorError` rather than falling through to a DB row.
+        """
+        if registration_id is not None:
+            registration = await self._pinned_registration(vendor_key, registration_id)
+            return self._from_registration(vendor_key, registration, flow_kind)
+        cfg = self._config_entry(vendor_key)
+        return ResolvedVendorSource(
+            entry=cfg, flow=self._pick_flow(vendor_key, cfg, flow_kind), registration=None
+        )
 
     async def resolve_by_pin(
         self,
         vendor_key: str,
         *,
         registration_id: str | None = None,
-        flow_kind: str | None = None,
     ) -> VendorAuthConfig:
-        """Single seam for every vendor read.
+        """Vendor entry for a picker card: the pinned registration, else the connect default.
 
-        Callers that know which admin-registered OAuth app the user picked
-        (``:connect``, auth-capabilities, confirm-time scope validation)
-        pass ``registration_id`` so the returned config's scopes + client
-        material come from *that* row. Callers with no pin fall back to the
-        DB-first / config-fallback behaviour.
+        Same precedence as :meth:`resolve_connect_source` with no flow
+        preference, so a card's capabilities match what ``:connect`` will use.
         """
-        entry, _source = await self._resolve_pinned_entry(
-            vendor_key, registration_id=registration_id, flow_kind=flow_kind
-        )
-        return entry
+        resolved = await self.resolve_connect_source(vendor_key, registration_id=registration_id)
+        return resolved.entry
 
-    async def get(
+    def _from_registration(
         self,
         vendor_key: str,
-        *,
-        registration_id: str | None = None,
-    ) -> VendorAuthConfig:
-        """Look up a vendor entry by registry key (e.g. ``"github"``).
-
-        Thin shim over :meth:`resolve_by_pin`. Kept so older call sites that
-        don't know about the pin (e.g. list-time display-name lookups) can
-        stay compact.
-        """
-        return await self.resolve_by_pin(vendor_key, registration_id=registration_id)
+        registration: OAuthAppRegistration,
+        flow_kind: str | None,
+    ) -> ResolvedVendorSource:
+        entry = _project_registration_to_auth_config(registration)
+        return ResolvedVendorSource(
+            entry=entry,
+            flow=self._pick_flow(vendor_key, entry, flow_kind),
+            registration=registration,
+        )
 
     async def list_all(self) -> list[VendorAuthConfig]:
         """List every vendor known to the platform.
@@ -255,52 +322,20 @@ class VendorRegistryService:
             entries.append(_project_config_entry(key, cfg))
         return sorted(entries, key=lambda e: (e.display_name, e.name))
 
-    async def get_entry(
-        self,
-        vendor_key: str,
-        *,
-        flow_kind: str | None = None,
-    ) -> VendorEntry:
-        """Compact ``VendorEntry`` view for one vendor.
-
-        Kept for callers that specifically want the source-tagged projection
-        (e.g. the admin UI). Prefers the "preferred active" DB registration;
-        otherwise falls back to the config entry. Neither tier merges.
-        """
-        registration = await self._registrations.get_preferred_active(
-            api_vendor=vendor_key, flow_kind=flow_kind
-        )
-        if registration is not None:
-            return _project_db_registration(vendor_key, registration)
-        cfg = self._config.entries.get(vendor_key)
-        if cfg is None:
-            raise UnknownVendorError(vendor_key)
-        return _project_config_entry(vendor_key, cfg)
-
     # ---- flow resolution -----------------------------------------------------
 
-    async def resolve_flow(
-        self,
-        vendor_key: str,
-        preferred: str | None = None,
-        *,
-        registration_id: str | None = None,
+    def _pick_flow(
+        self, vendor_key: str, entry: VendorAuthConfig, preferred: str | None
     ) -> VendorFlowConfig:
-        """Pick a flow for a connect request, DB-first with optional pin.
+        """Pick a flow off one source's entry.
 
-        Precedence: preferred (if supplied and offered by the vendor) > first
-        entry in `vendor.flows`. Raises `UnsupportedFlowError` if a preferred
-        flow is not offered by the vendor. When ``registration_id`` is set,
-        the returned flow's client material comes from that specific
-        registration (see :meth:`resolve_by_pin`).
-
-        Config-sourced auth-code flows carry their ``client_secret``; flows
-        projected from a DB registration carry an empty placeholder — the
-        registration secret is decrypted only at token exchange.
+        Precedence: preferred (if supplied and offered) > first entry in
+        ``entry.flows``. Raises :class:`UnsupportedFlowError` if a preferred
+        flow is not offered. Config-sourced auth-code flows carry their
+        ``client_secret``; flows projected from a DB registration carry an
+        empty placeholder — the registration secret is decrypted only at
+        token exchange.
         """
-        entry, _source = await self._resolve_pinned_entry(
-            vendor_key, registration_id=registration_id, flow_kind=preferred
-        )
         if not entry.flows:
             raise VendorNotConfiguredError(vendor_key, "any", "no flows configured")
         if preferred is None:
@@ -329,26 +364,17 @@ class VendorRegistryService:
 
     # ---- scope resolution ----------------------------------------------------
 
-    async def merge_scopes(
-        self,
-        vendor_key: str,
-        requested: list[str] | None,
-        *,
-        registration_id: str | None = None,
-    ) -> list[ResolvedScope]:
-        """Merge requested scopes with the vendor's defaults.
+    @staticmethod
+    def merge_scopes(entry: VendorAuthConfig, requested: list[str] | None) -> list[ResolvedScope]:
+        """Merge requested scopes with one source's scope catalog.
 
-        Returns every scope offered by the vendor, with:
+        Returns every scope offered by the source, with:
         - `default` = the scope is marked default (pre-selected)
         - `requested` = the initiator asked for this scope explicitly
 
         The review page renders a checkbox per scope; write scopes that were
-        agent-requested get visually flagged. DB-only vendors carry an empty
-        scope catalog until an operator adds a matching config entry. When
-        ``registration_id`` is set the scopes come from that specific
-        registration — matches what the user saw at pick time.
+        agent-requested get visually flagged.
         """
-        entry = await self.resolve_by_pin(vendor_key, registration_id=registration_id)
         requested_set = set(requested or [])
         return [
             ResolvedScope(
@@ -361,15 +387,9 @@ class VendorRegistryService:
             for s in entry.scopes
         ]
 
-    async def validate_scopes(
-        self,
-        vendor_key: str,
-        scopes: list[str],
-        *,
-        registration_id: str | None = None,
-    ) -> list[str]:
-        """Return scopes not offered by the vendor (empty list = all valid)."""
-        entry = await self.resolve_by_pin(vendor_key, registration_id=registration_id)
+    @staticmethod
+    def validate_scopes(entry: VendorAuthConfig, scopes: list[str]) -> list[str]:
+        """Return scopes not offered by the source (empty list = all valid)."""
         offered = {s.name for s in entry.scopes}
         return [s for s in scopes if s not in offered]
 

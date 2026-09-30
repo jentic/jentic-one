@@ -279,9 +279,9 @@ export function getVendorAuthCapabilities(
 	registrationId?: string | null,
 ): Promise<VendorAuthCapabilities> {
 	// Pin the read to a specific admin-registered OAuth app when the picker
-	// tile carried one. Without the pin, the server falls back to the
-	// preferred-active registration for the vendor slug — fine when there's
-	// only one, wrong when the user picked a non-preferred sibling.
+	// tile carried one. Without the pin, the server uses the platform config
+	// entry for the slug, else its single active registration (400 when
+	// several registrations share the slug).
 	const qs =
 		registrationId != null
 			? `?oauth_app_registration_id=${encodeURIComponent(registrationId)}`

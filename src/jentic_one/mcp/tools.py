@@ -49,6 +49,7 @@ from jentic_one.control.services.integrations.connect_session_service import (
 )
 from jentic_one.control.services.integrations.errors import NoOpForFlowError
 from jentic_one.control.services.vendors.service import (
+    AmbiguousVendorError,
     UnknownVendorError,
     UnsupportedFlowError,
     VendorNotConfiguredError,
@@ -1275,6 +1276,18 @@ async def handle_request_connection(
             "If the vendor is not in the registry, this tool cannot connect it: find the "
             "API with search_catalog and ask your human operator to connect a credential "
             "for it in the dashboard instead.",
+            next_tool="search_catalog",
+        ) from None
+    except AmbiguousVendorError as exc:
+        # Several admin-registered OAuth apps serve this vendor and the tool
+        # carries no registration pin — only the human can pick one.
+        raise ToolError(
+            CODE_RESOLVE_FAILED,
+            f"cannot start a connect session for vendor {vendor!r}: {exc}",
+            actionable="Several shared OAuth apps are registered for this vendor, so "
+            "this tool cannot pick one: ask your human operator to connect a credential "
+            "for it in the dashboard instead.",
+            # Same recovery shape as the Go mount's 400 arm.
             next_tool="search_catalog",
         ) from None
     except (UnsupportedFlowError, NoOpForFlowError) as exc:

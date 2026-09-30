@@ -40,6 +40,7 @@ from jentic_one.control.services.oauth_app_registrations.errors import (
     SecretRotationNotSupportedError,
 )
 from jentic_one.control.services.vendors.service import (
+    AmbiguousVendorError,
     UnknownVendorError,
     UnsupportedFlowError,
     VendorNotConfiguredError,
@@ -153,6 +154,7 @@ device_authorization_error_handler = make_service_error_handler(
 
 _VENDOR_ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     UnknownVendorError: (404, "unknown_vendor"),
+    AmbiguousVendorError: (400, "ambiguous_vendor"),
     UnsupportedFlowError: (400, "unsupported_flow"),
     VendorNotConfiguredError: (503, "vendor_not_configured"),
 }

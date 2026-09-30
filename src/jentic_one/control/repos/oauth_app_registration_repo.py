@@ -140,18 +140,17 @@ class OAuthAppRegistrationRepository:
         return list(result.scalars().all())
 
     @staticmethod
-    async def get_preferred_for_vendor(
+    async def list_active_for_vendor(
         session: AsyncSession,
         *,
         api_vendor: str,
         flow_kind: str | None = None,
-    ) -> OAuthAppRegistration | None:
-        """Pick the most-recently-updated active registration for a vendor.
+    ) -> list[OAuthAppRegistration]:
+        """Every active registration for a vendor slug, optionally one flow kind.
 
-        Used by connect-time resolution when the caller asks for a vendor slug
-        rather than a specific registration id. Callers with a specific
-        preferred flow may pin ``flow_kind``; otherwise auth-code is preferred
-        over device flow (auth-code is the newer, browser-driven path).
+        Used by unpinned connect-time resolution, which refuses to guess when
+        more than one row matches — so no ordering preference is applied
+        beyond a stable ``id`` sort.
         """
         stmt = (
             select(OAuthAppRegistration)
@@ -159,12 +158,12 @@ class OAuthAppRegistrationRepository:
                 OAuthAppRegistration.api_vendor == api_vendor,
                 OAuthAppRegistration.is_active.is_(True),
             )
-            .order_by(OAuthAppRegistration.updated_at.desc())
+            .order_by(OAuthAppRegistration.id)
         )
         if flow_kind is not None:
             stmt = stmt.where(OAuthAppRegistration.flow_kind == flow_kind)
         result = await session.execute(stmt)
-        return result.scalars().first()
+        return list(result.scalars().all())
 
     @staticmethod
     async def update_base(

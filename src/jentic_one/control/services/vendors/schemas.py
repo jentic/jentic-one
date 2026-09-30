@@ -4,8 +4,8 @@ Two shapes live here:
 
 * ``ResolvedScope`` — a value object returned by ``merge_scopes`` describing a
   vendor's scope catalog with per-scope ``default`` / ``requested`` flags.
-* ``VendorEntry`` — the unified read view returned by the DB-first + config
-  fallback resolution path. It surfaces both admin-registered
+* ``VendorEntry`` — the unified picker view returned by ``list_entries``. It
+  surfaces both admin-registered
   ``oauth_app_registrations`` rows and platform-shipped ``VendorAuthConfig``
   entries through a single shape. The ``source`` field records which side of
   the seam the row came from so callers can nudge behaviour if needed

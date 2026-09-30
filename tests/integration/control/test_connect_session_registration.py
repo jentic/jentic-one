@@ -136,10 +136,8 @@ async def seed_agent(integration_context: Context) -> AsyncGenerator[None, None]
 def seed_shared_vendor(integration_context: Context) -> None:
     """Register an auth-code vendor in the config catalog.
 
-    The DB registration overrides the operator-config OAuth-app material,
-    but the config catalog is still consulted for scopes, identity_probe,
-    and catalog api_id — so we need both here (a config entry AND an
-    active DB registration).
+    Tests that seed a same-slug registration pin it on ``:connect``; with no
+    pin the config entry is the session's source.
     """
     integration_context.config.vendors.entries[_VENDOR_KEY] = VendorAuthConfig(
         vendor=_VENDOR_API_ID,
@@ -205,7 +203,7 @@ async def test_confirm_against_db_registration_stamps_fk_and_skips_occ(
 
     Also asserts:
     - the authorize URL uses the registration's ``client_id`` (not the
-      operator-config one), proving DB-first resolution won.
+      operator-config one), proving the pin won.
     """
     ctx = integration_context
     registration = await _seed_active_registration(ctx)
@@ -216,6 +214,7 @@ async def test_confirm_against_db_registration_stamps_fk_and_skips_occ(
         agent_id=_AGENT_ID,
         initiator_actor_id=_USER_ID,
         requested_scopes=["scope-a"],
+        oauth_app_registration_id=registration.id,
     )
 
     confirmed = await svc.confirm(
@@ -227,7 +226,7 @@ async def test_confirm_against_db_registration_stamps_fk_and_skips_occ(
     )
     assert isinstance(confirmed, AuthCodeConfirmResult)
     q = parse_qs(urlsplit(confirmed.authorize_url).query)
-    # DB registration's client_id wins over the operator-config one.
+    # Pinned registration's client_id, not the operator-config one.
     assert q["client_id"] == ["shared-registration-client"]
     # PKCE (RFC 7636) rides every new auth-code flow.
     assert q["code_challenge_method"] == ["S256"]
@@ -374,6 +373,7 @@ async def test_complete_from_callback_through_registration_end_to_end(
         agent_id=_AGENT_ID,
         initiator_actor_id=_USER_ID,
         requested_scopes=["scope-a"],
+        oauth_app_registration_id=registration.id,
     )
     confirmed = await svc.confirm(
         created.session_id,
@@ -453,6 +453,7 @@ async def test_finalise_fails_session_when_registration_disabled_mid_flow(
         agent_id=_AGENT_ID,
         initiator_actor_id=_USER_ID,
         requested_scopes=["scope-a"],
+        oauth_app_registration_id=registration.id,
     )
     await svc.confirm(
         created.session_id,
@@ -502,15 +503,49 @@ async def _assert_session_cancelled(ctx: Context, session_id: str, credential_id
         assert await CredentialRepository.get_by_id(session, credential_id) is None
 
 
-async def test_confirm_cancels_when_registration_appears_after_connect(
+async def test_config_session_ignores_registration_added_after_connect(
     integration_context: Context,
     seed_shared_vendor: None,
     seed_agent: None,
     clean_session_tables: None,
 ) -> None:
-    """A legacy (config-app) session must not be confirmed through a
-    registration created after ``:connect`` — the credential's aux rows
-    belong to the config app. The session is cancelled instead.
+    """A config-app session keeps its config source through review and
+    confirm — a same-slug registration created after ``:connect`` never
+    supplies its scopes or client material.
+    """
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    created = await svc.create_session(
+        vendor_key=_VENDOR_KEY,
+        agent_id=_AGENT_ID,
+        initiator_actor_id=_USER_ID,
+        requested_scopes=["scope-a"],
+    )
+
+    await _seed_active_registration(ctx)
+
+    review = await svc.get_review_data(created.session_id, poll_token=created.poll_token)
+    assert review.vendor_display_name == "Shared Auth Vendor"
+    confirmed = await svc.confirm(
+        created.session_id,
+        poll_token=created.poll_token,
+        confirmed_scopes=["scope-a"],
+        permission_rules=[],
+        identity=_USER_IDENTITY,
+    )
+    assert isinstance(confirmed, AuthCodeConfirmResult)
+    q = parse_qs(urlsplit(confirmed.authorize_url).query)
+    assert q["client_id"] == ["config-client"]
+
+
+async def test_confirm_cancels_when_config_entry_removed_after_connect(
+    integration_context: Context,
+    seed_shared_vendor: None,
+    seed_agent: None,
+    clean_session_tables: None,
+) -> None:
+    """Removing the config entry mid-session cancels rather than falling
+    through to a registration for the same slug.
     """
     ctx = integration_context
     svc = ConnectSessionService(ctx)
@@ -525,6 +560,7 @@ async def test_confirm_cancels_when_registration_appears_after_connect(
     assert row is not None
 
     await _seed_active_registration(ctx)
+    del ctx.config.vendors.entries[_VENDOR_KEY]
 
     with pytest.raises(OAuthAppChangedError):
         await svc.confirm(
@@ -554,6 +590,7 @@ async def test_confirm_cancels_when_pinned_registration_disabled(
         agent_id=_AGENT_ID,
         initiator_actor_id=_USER_ID,
         requested_scopes=["scope-a"],
+        oauth_app_registration_id=registration.id,
     )
     async with ctx.control_db.session() as session:
         row = await ConnectSessionRepository.get_by_id(session, created.session_id)

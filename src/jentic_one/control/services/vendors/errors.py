@@ -28,3 +28,23 @@ class VendorNotConfiguredError(Exception):
         self.vendor = vendor
         self.flow = flow
         self.reason = reason
+
+
+class AmbiguousVendorError(Exception):
+    """Raised when an unpinned connect matches more than one OAuth app.
+
+    Registrations for the same ``api_vendor`` can target different catalog
+    APIs (Gmail and Calendar both sit under ``googleapis.com``), so picking
+    one silently would mint the credential through an app the caller didn't
+    choose. The caller must pin ``oauth_app_registration_id``.
+    """
+
+    def __init__(self, vendor: str, flow: str | None, registration_ids: list[str]) -> None:
+        flow_part = f" (flow {flow!r})" if flow else ""
+        super().__init__(
+            f"vendor {vendor!r}{flow_part} matches {len(registration_ids)} OAuth apps; "
+            "pin oauth_app_registration_id to choose one"
+        )
+        self.vendor = vendor
+        self.flow = flow
+        self.registration_ids = registration_ids

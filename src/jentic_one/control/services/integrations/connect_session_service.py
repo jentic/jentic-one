@@ -28,9 +28,6 @@ from jentic_one.control.repos import (
 )
 from jentic_one.control.repos.connect_session_repo import ConnectSessionRepository
 from jentic_one.control.repos.effects_repo import EffectsRepository
-from jentic_one.control.repos.oauth_app_registration_repo import (
-    OAuthAppRegistrationRepository,
-)
 from jentic_one.control.scoping.filters import build_access_filters
 from jentic_one.control.services.credentials.state import consume_callback_state
 from jentic_one.control.services.integrations import identity_echo
@@ -55,8 +52,11 @@ from jentic_one.control.services.integrations.flow_handlers import (
 from jentic_one.control.services.integrations.flow_handlers.base import SuccessTokens
 from jentic_one.control.services.integrations.flow_handlers.session_app import SessionApp
 from jentic_one.control.services.vendors.service import (
+    AmbiguousVendorError,
     ResolvedScope,
+    ResolvedVendorSource,
     UnknownVendorError,
+    UnsupportedFlowError,
     VendorRegistryService,
 )
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_best_effort
@@ -396,9 +396,8 @@ class ConnectSessionService:
         # (or shared registration). Falls back to the vendor's display name.
         credential_name: str | None = None,
         # Optional pin to a specific admin-registered OAuth app. Required
-        # when the vendor has multiple active registrations and the caller
-        # wants to disambiguate; falls back to ``get_preferred_for_vendor``
-        # otherwise.
+        # when the vendor has no config entry and several active
+        # registrations offer the flow (``AmbiguousVendorError`` otherwise).
         oauth_app_registration_id: str | None = None,
     ) -> CreatedSession:
         """Create a pending session + upfront credential row.
@@ -410,17 +409,16 @@ class ConnectSessionService:
         connecting a credential without granting any agent access to it,
         and can bind an agent later through the credentials API.
         """
-        # Route every vendor read through the ``resolve_by_pin`` seam so the
-        # scope catalog + client material used at ``:connect`` matches
-        # whatever the user picked. When ``oauth_app_registration_id`` is
-        # None (no pin) both calls fall back to the DB-first / config-
-        # fallback behaviour.
-        entry = await self._vendors.get(vendor_key, registration_id=oauth_app_registration_id)
-        flow = await self._vendors.resolve_flow(
+        # Entry, flow and minting app come from one source — the pinned
+        # registration, the config entry, or the vendor's single active
+        # registration — so the credential's identity and scope catalog can
+        # never belong to a different app than the one that mints it.
+        resolved = await self._vendors.resolve_connect_source(
             vendor_key,
-            preferred_flow,
             registration_id=oauth_app_registration_id,
+            preferred_flow=preferred_flow,
         )
+        entry, flow = resolved.entry, resolved.flow
 
         try:
             handler_cls = handler_for(flow.kind)
@@ -428,11 +426,7 @@ class ConnectSessionService:
             raise NoOpForFlowError(flow.kind) from exc
         handler = handler_cls(self._ctx)
 
-        session_app = await self._resolve_session_app(
-            vendor_key,
-            flow,
-            pinned_registration_id=oauth_app_registration_id,
-        )
+        session_app = self._session_app_for(resolved)
 
         poll_token = secrets.token_urlsafe(32)
 
@@ -542,53 +536,15 @@ class ConnectSessionService:
             resolved_flow=flow.kind,
         )
 
-    async def _resolve_session_app(
-        self,
-        vendor_key: str,
-        flow: Any,
-        *,
-        pinned_registration_id: str | None = None,
-    ) -> SessionApp:
-        """Resolve the OAuth-app config for this session, DB-first / config-fallback.
+    def _session_app_for(self, resolved: ResolvedVendorSource) -> SessionApp:
+        """Build the session's OAuth-app material from its resolved source.
 
-        An admin-registered ``oauth_app_registrations`` row for this vendor+flow
-        wins over the config-shipped ``VendorFlowConfig``. The shared
-        registration is what enables any-user-on-the-instance SSO: no
-        per-tenant OAuth-app plumbing, one client_id + secret managed by
-        admins. Falls back to the operator-config flow when no active DB
-        registration exists (legacy embedded path stays wired).
-
-        When ``pinned_registration_id`` is set (caller supplied a specific
-        registration on ``:connect``), we bypass ``get_preferred_for_vendor``
-        and refuse the request on any mismatch: missing row, inactive row,
-        or wrong ``api_vendor``. Silent fall-through would mint credentials
-        through an unintended shared app.
+        A registration-backed source carries the admin-registered client
+        (secret decrypted); a config source carries the operator-config flow.
         """
-        registration: OAuthAppRegistration | None
-        if pinned_registration_id is not None:
-            async with self._ctx.control_db.session() as session:
-                registration = await OAuthAppRegistrationRepository.get_by_id(
-                    session, pinned_registration_id
-                )
-            if registration is None:
-                raise InvalidOAuthAppRegistrationError(pinned_registration_id, "not found")
-            if not registration.is_active:
-                raise InvalidOAuthAppRegistrationError(pinned_registration_id, "inactive")
-            if registration.api_vendor != vendor_key:
-                raise InvalidOAuthAppRegistrationError(
-                    pinned_registration_id,
-                    f"api_vendor mismatch (expected {vendor_key!r}, "
-                    f"registration is {registration.api_vendor!r})",
-                )
-            return _session_app_from_registration(self._ctx, registration)
-
-        async with self._ctx.control_db.session() as session:
-            registration = await OAuthAppRegistrationRepository.get_preferred_for_vendor(
-                session, api_vendor=vendor_key, flow_kind=flow.kind
-            )
-        if registration is not None and registration.is_active:
-            return _session_app_from_registration(self._ctx, registration)
-        return _session_app_from_flow(flow)
+        if resolved.registration is not None:
+            return _session_app_from_registration(self._ctx, resolved.registration)
+        return _session_app_from_flow(resolved.flow)
 
     def _approval_url_for(self, session_id: str, poll_token: str) -> str:
         """Build the human-facing approval URL for an agent-initiated session.
@@ -636,18 +592,17 @@ class ConnectSessionService:
             # catalog import populates it asynchronously.
             credential = await CredentialRepository.get_by_id(session, row.credential_id)
 
-        # Honour the pinned registration if this session went through one —
-        # the credential row records which admin-registered app minted it,
-        # so the review page's scope catalog matches what the picker showed.
+        # The credential row records which admin-registered app minted it
+        # (NULL = platform config), so the review page's scope catalog comes
+        # from the session's own source, never a registration added since.
         pinned_registration_id = (
             credential.oauth_app_registration_id if credential is not None else None
         )
-        entry = await self._vendors.get(row.vendor, registration_id=pinned_registration_id)
-        resolved = await self._vendors.merge_scopes(
-            row.vendor,
-            row.requested_scopes or [],
-            registration_id=pinned_registration_id,
+        source = await self._vendors.resolve_session_source(
+            row.vendor, registration_id=pinned_registration_id, flow_kind=row.resolved_flow
         )
+        entry = source.entry
+        resolved = self._vendors.merge_scopes(entry, row.requested_scopes or [])
         # The credential row's ``api_version`` is set at create-time to
         # ``None`` — the imported OpenAPI decides its own version once the
         # catalog import completes. Look it up live from the registry via
@@ -738,14 +693,14 @@ class ConnectSessionService:
     async def _vendor_display_name(self, vendor_key: str) -> str:
         """Resolve a vendor key to its display name, tolerating removed vendors.
 
-        The vendor registry is DB-first + config-fallback — either tier may
-        drop an entry after sessions referencing it were persisted, and the
-        list must not 500 on such historical rows. Fall back to the raw key.
+        Either tier may drop an entry (or gain a second registration) after
+        sessions referencing it were persisted, and the list must not 500 on
+        such historical rows. Fall back to the raw key.
         """
         try:
-            entry = await self._vendors.get(vendor_key)
+            entry = await self._vendors.resolve_by_pin(vendor_key)
             return entry.display_name
-        except UnknownVendorError:
+        except (UnknownVendorError, AmbiguousVendorError, UnsupportedFlowError):
             return vendor_key
 
     # ---- confirm ----------------------------------------------------------
@@ -799,33 +754,26 @@ class ConnectSessionService:
         # is the authoritative guard against a concurrent confirm.
         _require_state(row, expected="created", action="confirm")
 
-        # Re-resolve the SessionApp at confirm time. When the session pinned a
-        # registration at ``:connect``, honour the pin. If the app is no
-        # longer the one the session was created against — the pinned
-        # registration became unusable, or a legacy session now resolves to
-        # a registration — cancel: the credential's aux rows were written
-        # for the old app, so the caller must start a new session.
+        # Re-open the session's own source at confirm time: the pinned
+        # registration, or the config entry when the FK is NULL. If that
+        # source is no longer usable — registration missing / inactive, or
+        # the config entry / flow removed — cancel: the credential's aux rows
+        # were written for that app, so the caller must start a new session.
         try:
-            flow = await self._vendors.resolve_flow(
+            source = await self._vendors.resolve_session_source(
                 row.vendor,
-                row.resolved_flow,
                 registration_id=pinned_registration_id,
+                flow_kind=row.resolved_flow,
             )
-            session_app = await self._resolve_session_app(
-                row.vendor, flow, pinned_registration_id=pinned_registration_id
-            )
-        except InvalidOAuthAppRegistrationError as exc:
+        except (
+            InvalidOAuthAppRegistrationError,
+            UnknownVendorError,
+            UnsupportedFlowError,
+        ) as exc:
             await self._cancel_for_app_change(row, detail=str(exc))
             raise OAuthAppChangedError(row.id) from exc
-        if session_app.registration_id != pinned_registration_id:
-            await self._cancel_for_app_change(
-                row,
-                detail=(
-                    f"oauth app changed from {pinned_registration_id!r} "
-                    f"to {session_app.registration_id!r}"
-                ),
-            )
-            raise OAuthAppChangedError(row.id)
+        flow = source.flow
+        session_app = self._session_app_for(source)
 
         try:
             handler_cls = handler_for(flow.kind)
@@ -833,9 +781,7 @@ class ConnectSessionService:
             raise NoOpForFlowError(flow.kind) from exc
         handler = handler_cls(self._ctx)
 
-        unknown = await self._vendors.validate_scopes(
-            row.vendor, confirmed_scopes, registration_id=pinned_registration_id
-        )
+        unknown = self._vendors.validate_scopes(source.entry, confirmed_scopes)
         if unknown:
             raise ScopeValidationError(unknown)
 
@@ -1217,11 +1163,14 @@ class ConnectSessionService:
             credential.oauth_app_registration_id if credential is not None else None
         )
         try:
-            entry = await self._vendors.get(row.vendor, registration_id=pinned_registration_id)
-        except InvalidOAuthAppRegistrationError as exc:
-            # The registration was disabled (or removed) after the vendor
-            # issued tokens. Fail the session rather than raising out of the
-            # scanner tick, which would leave it stuck in ``polling``.
+            source = await self._vendors.resolve_session_source(
+                row.vendor, registration_id=pinned_registration_id, flow_kind=row.resolved_flow
+            )
+        except (InvalidOAuthAppRegistrationError, UnknownVendorError, UnsupportedFlowError) as exc:
+            # The session's app (registration or config entry) went away
+            # after the vendor issued tokens. Fail the session rather than
+            # raising out of the scanner tick, which would leave it stuck in
+            # ``polling``.
             _logger.warning(
                 "connect_session.registration_unavailable_at_finalise",
                 session_id=row.id,
@@ -1231,6 +1180,7 @@ class ConnectSessionService:
                 row.id, "failed", str(exc), error_code="registration_inactive"
             )
             return StatusResult(status="failed", error_code="registration_inactive")
+        entry = source.entry
 
         connected_as: str | None
         if entry.identity_probe is None:

@@ -8,12 +8,12 @@ tiny fake source that returns preconfigured ``OAuthAppRegistration`` values
 
 The behaviour we pin down:
 
-* ``get_entry`` prefers a DB row over a like-keyed config entry.
-* ``get_entry`` falls back to the config entry when no DB row exists.
-* ``get_entry`` raises when neither tier has the vendor.
-* ``list_entries`` unions both sources, DB winning on collisions, and returns
-  a stable display-name ordering.
-* The config-only sync methods keep working unchanged.
+* ``resolve_connect_source`` with no pin: config entry first, else the single
+  active registration for the slug + flow, else ambiguous / unknown.
+* ``resolve_session_source`` re-opens the session's own source and never
+  re-prefers a registration added since.
+* ``list_entries`` / ``list_all`` surface both tiers as peers, stably ordered.
+* Entry and flow always come from the same source.
 """
 
 from __future__ import annotations
@@ -26,7 +26,11 @@ import pytest
 from jentic_one.control.services.integrations.errors import (
     InvalidOAuthAppRegistrationError,
 )
-from jentic_one.control.services.vendors.errors import UnknownVendorError
+from jentic_one.control.services.vendors.errors import (
+    AmbiguousVendorError,
+    UnknownVendorError,
+    UnsupportedFlowError,
+)
 from jentic_one.control.services.vendors.schemas import VendorEntry
 from jentic_one.control.services.vendors.service import (
     VendorAppRegistrationSource,
@@ -105,16 +109,16 @@ class _FakeRegistrationSource:
     def __init__(self, registrations: list[_FakeRegistration]) -> None:
         self._rows = registrations
 
-    async def get_preferred_active(
+    async def list_active_for_vendor(
         self, *, api_vendor: str, flow_kind: str | None = None
-    ) -> _FakeRegistration | None:
-        for row in self._rows:
-            if row.api_vendor != api_vendor:
-                continue
-            if flow_kind is not None and row.flow_kind != flow_kind:
-                continue
-            return row
-        return None
+    ) -> list[_FakeRegistration]:
+        return [
+            row
+            for row in self._rows
+            if row.is_active
+            and row.api_vendor == api_vendor
+            and (flow_kind is None or row.flow_kind == flow_kind)
+        ]
 
     async def list_active(self) -> list[_FakeRegistration]:
         return list(self._rows)
@@ -201,96 +205,191 @@ def _service(
 
 
 # ---------------------------------------------------------------------------
-# get_entry: DB-first, config-fallback
+# resolve_connect_source: the no-pin rule at ``:connect``
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
-async def test_get_entry_prefers_db_over_like_keyed_config() -> None:
-    """When both tiers know the slug, the DB row wins — but no config merge.
+def _gmail(reg_id: str, flow_kind: str = "device_authorization") -> _FakeRegistration:
+    details = _FakeDetails(default_scopes=[f"{reg_id}.scope"])
+    return _FakeRegistration(
+        api_vendor="googleapis-com",
+        id=reg_id,
+        name=f"Google {reg_id}",
+        flow_kind=flow_kind,
+        client_id=f"{reg_id}-cid",
+        catalog_api_id=f"googleapis.com/{reg_id}",
+        authorization_code_details=details if flow_kind == "authorization_code" else None,
+        device_authorization_details=details if flow_kind == "device_authorization" else None,
+    )
 
-    The DB row's ``display_name`` is the admin-supplied one, not the config
-    entry's. The two tiers are peers on ``list_entries`` (both surface as
-    separate cards) but ``get_entry`` still prefers the DB row when the
-    caller asks for a single vendor slug.
-    """
+
+@pytest.mark.asyncio()
+async def test_connect_no_pin_prefers_config_over_like_keyed_registration() -> None:
+    """Config picker cards send no pin, so a same-slug registration must not
+    take them over — the config entry is the no-pin source when it exists."""
     reg = _FakeRegistration(
         api_vendor="github",
         name="MyOrg GitHub App",
         flow_kind="device_authorization",
         client_id="db-cid",
-        display_name="MyOrg GitHub (family)",
         device_authorization_details=_FakeDetails(default_scopes=["repo"]),
     )
-    svc = _service(
-        config_entries={"github": _github_config_entry()},
-        registrations=[reg],
+    svc = _service(config_entries={"github": _github_config_entry()}, registrations=[reg])
+
+    resolved = await svc.resolve_connect_source("github")
+
+    assert resolved.source == "config"
+    assert resolved.registration is None
+    assert resolved.entry.display_name == "GitHub (config)"
+    assert resolved.flow.client_id == "config-cid"
+
+
+@pytest.mark.asyncio()
+async def test_connect_no_pin_uses_registration_when_config_lacks_flow() -> None:
+    """A config entry without the preferred flow falls through to a
+    registration that offers it."""
+    reg = _gmail("oar_ac", flow_kind="authorization_code")
+    reg.api_vendor = "github"
+    svc = _service(config_entries={"github": _github_config_entry()}, registrations=[reg])
+
+    resolved = await svc.resolve_connect_source("github", preferred_flow="authorization_code")
+
+    assert resolved.registration is not None
+    assert resolved.registration.id == reg.id
+    assert resolved.flow.kind == "authorization_code"
+
+
+@pytest.mark.asyncio()
+async def test_connect_no_pin_single_registration_supplies_entry_and_flow() -> None:
+    """Entry (scopes, catalog id) and flow (client id) come from the same app."""
+    reg = _gmail("oar_calendar")
+    svc = _service(registrations=[reg])
+
+    resolved = await svc.resolve_connect_source("googleapis-com")
+
+    assert resolved.registration is not None
+    assert resolved.registration.id == reg.id
+    assert resolved.entry.vendor == "googleapis.com/oar_calendar"
+    assert [s.name for s in resolved.entry.scopes] == ["oar_calendar.scope"]
+    assert resolved.flow.client_id == "oar_calendar-cid"
+
+
+@pytest.mark.asyncio()
+async def test_connect_no_pin_filters_registrations_by_preferred_flow() -> None:
+    """Only registrations offering the preferred flow count, so a device-flow
+    app and an auth-code app for one slug are not ambiguous for either flow."""
+    device = _gmail("oar_device")
+    auth_code = _gmail("oar_ac", flow_kind="authorization_code")
+    svc = _service(registrations=[device, auth_code])
+
+    resolved = await svc.resolve_connect_source(
+        "googleapis-com", preferred_flow="authorization_code"
     )
 
-    entry = await svc.get_entry("github")
-
-    assert entry.source == "db"
-    # ``display_name`` is the admin-supplied family label from the
-    # registration itself — the config entry's ``display_name`` never
-    # bleeds in.
-    assert entry.display_name == "MyOrg GitHub (family)"
-    assert entry.name == "MyOrg GitHub App"
-    assert entry.client_id == "db-cid"
-    assert entry.flow_kind == "device_authorization"
-    assert entry.default_scopes == ["repo"]
-    assert entry.entry_id == entry.registration_id
-    assert entry.registration_id is not None
+    assert resolved.registration is not None
+    assert resolved.registration.id == auth_code.id
+    assert resolved.entry.vendor == "googleapis.com/oar_ac"
+    assert resolved.flow.client_id == "oar_ac-cid"
 
 
 @pytest.mark.asyncio()
-async def test_get_entry_falls_back_to_config_when_no_db_row() -> None:
-    svc = _service(config_entries={"github": _github_config_entry()})
+async def test_connect_no_pin_with_several_matching_registrations_is_ambiguous() -> None:
+    svc = _service(registrations=[_gmail("oar_gmail"), _gmail("oar_calendar")])
 
-    entry = await svc.get_entry("github")
+    with pytest.raises(AmbiguousVendorError) as excinfo:
+        await svc.resolve_connect_source("googleapis-com")
 
-    assert entry.source == "config"
-    assert entry.display_name == "GitHub (config)"
-    assert entry.name == "GitHub (config)"
-    assert entry.client_id == "config-cid"
-    assert entry.flow_kind == "device_authorization"
-    assert entry.entry_id == "github"
-    assert entry.registration_id is None
+    assert excinfo.value.registration_ids == ["oar_gmail", "oar_calendar"]
 
 
 @pytest.mark.asyncio()
-async def test_get_entry_raises_when_neither_source_has_vendor() -> None:
+async def test_connect_no_pin_ignores_inactive_registrations() -> None:
+    inactive = _gmail("oar_old")
+    inactive.is_active = False
+    active = _gmail("oar_new")
+    svc = _service(registrations=[inactive, active])
+
+    resolved = await svc.resolve_connect_source("googleapis-com")
+
+    assert resolved.registration is not None
+    assert resolved.registration.id == active.id
+
+
+@pytest.mark.asyncio()
+async def test_connect_unknown_vendor_raises() -> None:
     svc = _service()
 
     with pytest.raises(UnknownVendorError):
-        await svc.get_entry("github")
+        await svc.resolve_connect_source("github")
 
 
 @pytest.mark.asyncio()
-async def test_get_entry_pins_flow_kind_when_supplied() -> None:
-    """The flow_kind hint threads through to the repo's pin filter.
+async def test_connect_config_without_flow_and_no_registration_is_unsupported() -> None:
+    svc = _service(config_entries={"github": _github_config_entry()})
 
-    A device-flow-only DB row must not shadow a config entry when the caller
-    asks specifically for the auth-code flow.
-    """
-    device_row = _FakeRegistration(
+    with pytest.raises(UnsupportedFlowError):
+        await svc.resolve_connect_source("github", preferred_flow="authorization_code")
+
+
+# ---------------------------------------------------------------------------
+# resolve_session_source: later steps re-open the session's own source
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_session_source_without_pin_is_config_even_when_registration_added() -> None:
+    """A config session keeps its config source — a registration added since
+    (even one for another flow) never supplies its scopes or drops the
+    identity probe."""
+    reg = _FakeRegistration(
         api_vendor="github",
-        name="Device-only DB row",
-        flow_kind="device_authorization",
-        client_id="dev-cid",
-        device_authorization_details=_FakeDetails(),
+        name="Late GitHub App",
+        flow_kind="authorization_code",
+        client_id="late-cid",
+        authorization_code_details=_FakeDetails(default_scopes=["late"]),
     )
-    svc = _service(
-        config_entries={"github": _github_config_entry()},
-        registrations=[device_row],
+    svc = _service(config_entries={"github": _github_config_entry()}, registrations=[reg])
+
+    source = await svc.resolve_session_source(
+        "github", registration_id=None, flow_kind="device_authorization"
     )
 
-    # No pin — DB row wins.
-    default = await svc.get_entry("github")
-    assert default.source == "db"
+    assert source.registration is None
+    assert source.entry.identity_probe is not None
+    assert [s.name for s in source.entry.scopes] == ["repo:read", "repo:write"]
 
-    # Pin to auth-code — DB has no such row, falls back to config.
-    pinned = await svc.get_entry("github", flow_kind="authorization_code")
-    assert pinned.source == "config"
+
+@pytest.mark.asyncio()
+async def test_session_source_without_pin_raises_when_config_removed() -> None:
+    """No fall-through to a registration when the config entry disappears."""
+    svc = _service(registrations=[_gmail("oar_gmail")])
+
+    with pytest.raises(UnknownVendorError):
+        await svc.resolve_session_source("googleapis-com", registration_id=None)
+
+
+@pytest.mark.asyncio()
+async def test_session_source_with_pin_returns_that_registration() -> None:
+    gmail, calendar = _gmail("oar_gmail"), _gmail("oar_calendar")
+    svc = _service(registrations=[gmail, calendar])
+
+    source = await svc.resolve_session_source(
+        "googleapis-com", registration_id="oar_calendar", flow_kind="device_authorization"
+    )
+
+    assert source.registration is not None
+    assert source.registration.id == calendar.id
+    assert source.flow.client_id == "oar_calendar-cid"
+
+
+@pytest.mark.asyncio()
+async def test_session_source_with_inactive_pin_raises() -> None:
+    reg = _gmail("oar_gmail")
+    reg.is_active = False
+    svc = _service(registrations=[reg])
+
+    with pytest.raises(InvalidOAuthAppRegistrationError):
+        await svc.resolve_session_source("googleapis-com", registration_id="oar_gmail")
 
 
 # ---------------------------------------------------------------------------
@@ -427,15 +526,15 @@ async def test_list_entries_yields_one_entry_per_registration_for_same_vendor() 
 
 
 # ---------------------------------------------------------------------------
-# get / list_all: async, DB-first + config-fallback, VendorAuthConfig shape
+# resolve_by_pin / list_all: VendorAuthConfig shape
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio()
-async def test_get_returns_config_when_no_db_row() -> None:
+async def test_resolve_by_pin_returns_config_when_no_db_row() -> None:
     """The config entry surfaces as ``VendorAuthConfig`` unchanged."""
     svc = _service(config_entries={"github": _github_config_entry()})
-    entry = await svc.get("github")
+    entry = await svc.resolve_by_pin("github")
     assert isinstance(entry, VendorAuthConfig)
     assert entry.display_name == "GitHub (config)"
 
@@ -467,14 +566,14 @@ async def test_list_all_yields_registrations_and_config_side_by_side() -> None:
 
 
 @pytest.mark.asyncio()
-async def test_get_raises_unknown_vendor_when_missing() -> None:
+async def test_resolve_by_pin_raises_unknown_vendor_when_missing() -> None:
     svc = _service()
     with pytest.raises(UnknownVendorError):
-        await svc.get("github")
+        await svc.resolve_by_pin("github")
 
 
 @pytest.mark.asyncio()
-async def test_get_reads_db_only_no_config_merge() -> None:
+async def test_pinned_registration_projects_without_config_merge() -> None:
     """Admin registrations project standalone — the config entry is never
     consulted, even when a matching-slug one exists.
 
@@ -496,7 +595,7 @@ async def test_get_reads_db_only_no_config_merge() -> None:
         config_entries={"github": _github_config_entry()},
         registrations=[github_db],
     )
-    entry = await svc.get("github")
+    entry = await svc.resolve_by_pin("github", registration_id=github_db.id)
     # DB registration is standalone; nothing bleeds in from the config.
     assert entry.display_name == "MyOrg GitHub"
     assert entry.flows[0].client_id == "db-cid"
@@ -507,7 +606,7 @@ async def test_get_reads_db_only_no_config_merge() -> None:
 
 
 @pytest.mark.asyncio()
-async def test_get_projects_db_only_with_catalog_api_id() -> None:
+async def test_db_only_vendor_projects_with_catalog_api_id() -> None:
     """A DB-only vendor projects using its ``catalog_api_id`` as the ``vendor``
     string on the returned ``VendorAuthConfig`` — this feeds
     ``credential.catalog_api_id`` at connect time so the operations preview
@@ -525,7 +624,7 @@ async def test_get_projects_db_only_with_catalog_api_id() -> None:
         device_authorization_details=_FakeDetails(default_scopes=["read"]),
     )
     svc = _service(registrations=[only_db])
-    entry = await svc.get("notion")
+    entry = await svc.resolve_by_pin("notion")
     assert entry.display_name == "Notion"
     # ``vendor`` on the projected config is the admin-picked catalog API id.
     # This is the value stamped onto ``credential.catalog_api_id`` at connect
@@ -538,7 +637,7 @@ async def test_get_projects_db_only_with_catalog_api_id() -> None:
 
 
 @pytest.mark.asyncio()
-async def test_get_falls_back_to_placeholder_vendor_for_pre_refactor_row() -> None:
+async def test_projection_falls_back_to_placeholder_vendor_for_pre_refactor_row() -> None:
     """Pre-refactor registrations without ``catalog_api_id`` still project —
     the ``vendor`` string falls back to a ``<slug>/<slug>`` placeholder and
     the service logs a warning. The connect flow still runs; only the
@@ -554,7 +653,7 @@ async def test_get_falls_back_to_placeholder_vendor_for_pre_refactor_row() -> No
         device_authorization_details=_FakeDetails(),
     )
     svc = _service(registrations=[legacy])
-    entry = await svc.get("notion")
+    entry = await svc.resolve_by_pin("notion")
     assert entry.vendor == "notion/notion"
     # ``display_name`` falls back to the registration's ``name`` when the
     # admin never supplied a family label.
@@ -570,7 +669,7 @@ async def test_get_falls_back_to_placeholder_vendor_for_pre_refactor_row() -> No
 async def test_config_projection_carries_default_scopes_when_marked() -> None:
     """VendorEntry.default_scopes for config = scopes flagged ``default=True``."""
     svc = _service(config_entries={"github": _github_config_entry()})
-    entry = await svc.get_entry("github")
+    [entry] = await svc.list_entries()
     assert entry.default_scopes == ["repo:read"]
 
 
@@ -578,7 +677,7 @@ async def test_config_projection_carries_default_scopes_when_marked() -> None:
 async def test_config_projection_omits_scopes_when_none_default() -> None:
     """Slack config carries no scopes at all → default_scopes is None."""
     svc = _service(config_entries={"slack": _slack_config_entry()})
-    entry = await svc.get_entry("slack")
+    [entry] = await svc.list_entries()
     assert entry.default_scopes is None
 
 
@@ -586,7 +685,7 @@ async def test_config_projection_omits_scopes_when_none_default() -> None:
 async def test_projected_entry_is_a_pydantic_model() -> None:
     """The unified view is a Pydantic model so callers get schema validation."""
     svc = _service(config_entries={"github": _github_config_entry()})
-    entry = await svc.get_entry("github")
+    [entry] = await svc.list_entries()
     assert isinstance(entry, VendorEntry)
 
 
@@ -621,8 +720,7 @@ async def test_resolve_by_pin_returns_pinned_registration_over_preferred() -> No
     )
     svc = _service(registrations=[prod, sandbox])
 
-    # Pinning sandbox returns sandbox's scopes + client_id, regardless of
-    # which one ``get_preferred_active`` would have returned.
+    # Pinning sandbox returns sandbox's scopes + client_id, not prod's.
     entry = await svc.resolve_by_pin("googleapis-com", registration_id="oar_sandbox")
     scope_names = {s.name for s in entry.scopes}
     assert scope_names == {"mail.send", "mail.compose"}
@@ -678,7 +776,7 @@ async def test_resolve_by_pin_raises_on_inactive_registration() -> None:
 @pytest.mark.asyncio()
 async def test_validate_scopes_honours_pin_when_registrations_differ() -> None:
     """The user picked sandbox (scopes: send, compose); a request confirming
-    the *preferred* registration's scope (readonly) is rejected as unknown."""
+    the other registration's scope (readonly) is rejected as unknown."""
     prod = _FakeRegistration(
         api_vendor="googleapis-com",
         id="oar_prod",
@@ -697,20 +795,10 @@ async def test_validate_scopes_honours_pin_when_registrations_differ() -> None:
     )
     svc = _service(registrations=[prod, sandbox])
 
-    unknown = await svc.validate_scopes(
-        "googleapis-com",
-        ["mail.readonly"],
-        registration_id="oar_sandbox",
-    )
-    assert unknown == ["mail.readonly"]
-
+    source = await svc.resolve_session_source("googleapis-com", registration_id="oar_sandbox")
+    assert svc.validate_scopes(source.entry, ["mail.readonly"]) == ["mail.readonly"]
     # And the sandbox-native scope validates cleanly under the same pin.
-    unknown = await svc.validate_scopes(
-        "googleapis-com",
-        ["mail.send"],
-        registration_id="oar_sandbox",
-    )
-    assert unknown == []
+    assert svc.validate_scopes(source.entry, ["mail.send"]) == []
 
 
 # ---------------------------------------------------------------------------
@@ -741,11 +829,11 @@ async def test_vendor_reads_never_decrypt_registration_secret() -> None:
     svc = _service(registrations=[reg])
 
     assert [e.display_name for e in await svc.list_all()] == ["Example (DB)"]
-    entry = await svc.get("googleapis-com", registration_id="oar_ac")
-    assert await svc.validate_scopes("googleapis-com", ["gmail.readonly"]) == []
-    assert [s.name for s in await svc.merge_scopes("googleapis-com", None)] == ["gmail.readonly"]
-    flow = await svc.resolve_flow("googleapis-com", registration_id="oar_ac")
+    resolved = await svc.resolve_connect_source("googleapis-com")
+    session = await svc.resolve_session_source("googleapis-com", registration_id="oar_ac")
+    assert svc.validate_scopes(session.entry, ["gmail.readonly"]) == []
+    assert [s.name for s in svc.merge_scopes(session.entry, None)] == ["gmail.readonly"]
 
-    for f in (entry.flows[0], flow):
+    for f in (resolved.flow, session.flow):
         assert isinstance(f, VendorAuthorizationCodeFlowConfig)
         assert f.client_secret.get_secret_value() == ""

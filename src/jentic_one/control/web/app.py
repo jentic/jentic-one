@@ -15,6 +15,7 @@ from jentic_one.control.services.oauth_app_registrations.errors import (
     OAuthAppRegistrationServiceError,
 )
 from jentic_one.control.services.vendors.service import (
+    AmbiguousVendorError,
     UnknownVendorError,
     UnsupportedFlowError,
     VendorNotConfiguredError,
@@ -68,6 +69,7 @@ def get_exception_handlers() -> list[tuple[type[Exception], Any]]:
         (ConnectSessionServiceError, connect_session_error_handler),
         (DeviceAuthorizationError, device_authorization_error_handler),
         (UnknownVendorError, vendor_error_handler),
+        (AmbiguousVendorError, vendor_error_handler),
         (UnsupportedFlowError, vendor_error_handler),
         (VendorNotConfiguredError, vendor_error_handler),
         (OAuthAppRegistrationServiceError, oauth_app_registration_error_handler),
