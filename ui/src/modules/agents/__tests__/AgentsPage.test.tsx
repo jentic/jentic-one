@@ -303,33 +303,48 @@ describe('AgentsPage — flat agents surface', () => {
 		expect(screen.getByText('Suspended · not serving')).toBeInTheDocument();
 	});
 
-	it('says each identity once — a credential named after its API drops off the tile', async () => {
-		// The mark, the title and the meta line would otherwise print the same word
-		// three times. A credential that names something else keeps its place.
-		resetCredentialsStore([
-			makeMockCredential({
-				credential_id: 'cred_slack_1',
-				name: 'Slack',
-				type: CredentialType.BEARER_TOKEN,
-				api: { vendor: 'slack.com', name: 'default', version: '1.0.0' },
-			}),
-			makeMockCredential({
-				credential_id: 'cred_github_1',
-				name: 'GitHub PAT',
-				type: CredentialType.BEARER_TOKEN,
-				api: { vendor: 'github.com', name: 'default', version: '1.0.0' },
-			}),
-		]);
+	it('labels the credential in the footer, on one line with the rules summary', async () => {
 		renderPage('/?agent=agnt_active_1');
 
-		const slackTile = (await screen.findByText('Slack')).closest(
-			'[data-testid="api-tile"]',
-		) as HTMLElement;
-		expect(within(slackTile).getAllByText('Slack')).toHaveLength(1);
-		const githubTile = screen
-			.getByText('GitHub')
-			.closest('[data-testid="api-tile"]') as HTMLElement;
-		expect(within(githubTile).getByText('GitHub PAT')).toBeInTheDocument();
+		const tileOf = (title: string) =>
+			screen
+				.getByRole('heading', { name: title })
+				.closest('[data-testid="api-tile"]') as HTMLElement;
+		await screen.findByRole('heading', { name: 'Slack' });
+		const githubTile = tileOf('GitHub');
+
+		// Visible: key icon, a muted "Credential" label, the name. Heard:
+		// "Credential: <name>", with the details as its description.
+		const credential = within(githubTile).getByTestId('tile-credential');
+		expect(credential.querySelector('svg')).toHaveAttribute('aria-hidden', 'true');
+		expect(credential).toHaveTextContent(/^Credential: GitHub PAT$/);
+		expect(within(githubTile).getByTestId('tile-credential-label')).toHaveTextContent(
+			/^GitHub PAT$/,
+		);
+		const trigger = credential.parentElement as HTMLElement;
+		expect(trigger).toHaveAttribute('tabindex', '0');
+		expect(
+			document.getElementById(trigger.getAttribute('aria-describedby') ?? ''),
+		).toHaveTextContent('Name: GitHub PAT');
+
+		// One footer line: the credential, the separator, then the rules summary.
+		const slot = within(githubTile).getByTestId('tile-detail-slot');
+		const rulesText = await within(githubTile).findByTestId('tile-rules-summary');
+		expect(rulesText).toHaveTextContent(/^No rules — all calls blocked$/);
+		expect(slot).toContainElement(credential);
+		expect(slot.textContent?.indexOf('·')).toBeGreaterThan(
+			slot.textContent?.indexOf('GitHub PAT') ?? Infinity,
+		);
+		const credentialBox = credential.getBoundingClientRect();
+		const rulesBox = rulesText.getBoundingClientRect();
+		expect(Math.abs(credentialBox.top - rulesBox.top)).toBeLessThan(credentialBox.height);
+		expect(rulesBox.left).toBeGreaterThan(credentialBox.right);
+
+		// The header is unchanged: title and identity only, no chip for one credential.
+		expect(within(githubTile).queryByTestId('tile-accounts-badge')).toBeNull();
+		expect(
+			within(githubTile).getByRole('heading', { name: 'GitHub' }).parentElement,
+		).not.toContainElement(credential);
 
 		// Every tile still stands the same height: what the suspension means
 		// rides beside its chip rather than on a row the others reserve empty.
@@ -338,41 +353,6 @@ describe('AgentsPage — flat agents surface', () => {
 			.getAllByTestId('api-tile')
 			.map((tile) => Math.round(tile.getBoundingClientRect().height));
 		expect(new Set(heights).size).toBe(1);
-	});
-
-	it('drops a credential named after the API’s host, not just after its title', async () => {
-		// A generically-named spec keeps the title and the host distinct, so matching
-		// the title alone would let the host through twice.
-		resetCredentialsStore([
-			makeMockCredential({
-				credential_id: 'cred_slack_1',
-				name: 'slack.com',
-				type: CredentialType.BEARER_TOKEN,
-				api: { vendor: 'slack.com', name: 'default', version: '1.0.0' },
-			}),
-			makeMockCredential({
-				credential_id: 'cred_github_1',
-				name: 'GitHub PAT',
-				type: CredentialType.BEARER_TOKEN,
-				api: { vendor: 'github.com', name: 'default', version: '1.0.0' },
-			}),
-		]);
-		renderPage('/?agent=agnt_active_1');
-
-		const slackTile = (await screen.findByText('Slack')).closest(
-			'[data-testid="api-tile"]',
-		) as HTMLElement;
-		// The identity line states the host; the detail line does not repeat
-		// it under the guise of a credential name.
-		expect(slackTile).toHaveTextContent('slack.com · v1.0.0');
-		expect(within(slackTile).getByTestId('tile-detail-slot')).not.toHaveTextContent(
-			'slack.com',
-		);
-
-		const githubTile = screen
-			.getByText('GitHub')
-			.closest('[data-testid="api-tile"]') as HTMLElement;
-		expect(within(githubTile).getByText('GitHub PAT')).toBeInTheDocument();
 	});
 
 	it('deep link ?agent= preselects the agent and its grid', async () => {
@@ -1811,6 +1791,12 @@ describe('AgentsPage — Add APIs: Back from the setup queue to the tray', () =>
 				.getAllByTestId('tile-credential-label')
 				.map((el) => el.textContent);
 			expect(labels.sort()).toEqual(['Stripe key', 'Stripe sandbox']);
+			// Each footer line labels its credential.
+			const srNames = screen
+				.getAllByTestId('tile-credential')
+				.map((el) => el.textContent)
+				.sort();
+			expect(srNames).toEqual(['Credential: Stripe key', 'Credential: Stripe sandbox']);
 			// No page-level banner: each tile carries a compact badge instead.
 			expect(screen.queryByTestId('multi-account-note')).toBeNull();
 			const badges = screen.getAllByTestId('tile-accounts-badge');

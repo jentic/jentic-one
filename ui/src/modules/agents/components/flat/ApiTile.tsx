@@ -1,15 +1,16 @@
 /**
  * ApiTile — one API on the flat Agents surface; the credential serving it is a
- * property line on the tile, not a card of its own.
+ * labelled entry in the tile's footer, not a card of its own.
  *
  * A dashed border means no calls are flowing, and its tint says why: amber for an
  * unfinished sign-in on this API, neutral when the agent above it is not serving.
  * A suspension outranks the agent-level state.
  */
+import type { ReactNode } from 'react';
 import { KeyRound, PauseCircle, PlayCircle, Settings2 } from 'lucide-react';
 import { Button, Card, StatusText, Tag, Tooltip, VendorIcon } from '@/shared/ui';
 import { formatApiVersion } from '@/shared/lib';
-import { cn } from '@/shared/lib/utils';
+import { cn, timeAgo } from '@/shared/lib/utils';
 import type { BindingRuleSummary } from '@/modules/agents/api';
 import type { ApiTileModel } from '@/modules/agents/lib/apiTiles';
 import { multiCredentialExplanation } from '@/modules/agents/components/flat/MultiCredentialNote';
@@ -42,7 +43,7 @@ interface ApiTileProps {
 	accountCount?: number;
 }
 
-/** The grant-summary line under the credential name. A deny split rides
+/** The grant summary after the credential in the footer. A deny split rides
  * along when one exists — an all-allow grant stays the plain count. */
 function grantSummary(rules: BindingRuleSummary | undefined): string | null {
 	if (rules === undefined) return null;
@@ -56,6 +57,52 @@ function grantSummary(rules: BindingRuleSummary | undefined): string | null {
 function sameIdentity(a: string, b: string): boolean {
 	const key = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
 	return key(a) === key(b);
+}
+
+/** "4d ago" from the shared compact age; "just now" under a second. */
+function ago(iso: string): string {
+	const age = timeAgo(iso);
+	return age === 'now' ? 'just now' : `${age} ago`;
+}
+
+/** The credential line's hover/focus details — only facts the tile already holds;
+ * a missing one is left out rather than shown as a dash. */
+function CredentialDetails({ tile, name }: { tile: ApiTileModel; name: string }) {
+	const scope = [
+		tile.vendor,
+		tile.apiName ?? 'all APIs',
+		tile.version ? formatApiVersion(tile.version) : null,
+	]
+		.filter(Boolean)
+		.join(' / ');
+	// Each row is one text run ("Name: …"): the tooltip's description stays
+	// mounted while closed, so a bare value would repeat the tile's own text.
+	const rows: Array<[string, ReactNode]> = [
+		['Name', name],
+		['Auth', tile.authLabel],
+		[
+			'ID',
+			<span key="id" className="font-mono">
+				{tile.credentialId.length > 8
+					? `…${tile.credentialId.slice(-8)}`
+					: tile.credentialId}
+			</span>,
+		],
+		['Scope', scope],
+		['Added', tile.credentialCreatedAt ? ago(tile.credentialCreatedAt) : null],
+		['Bound', ago(tile.boundAt)],
+	];
+	return (
+		<span className="block" data-testid="tile-credential-details">
+			{rows
+				.filter(([, value]) => value)
+				.map(([label, value]) => (
+					<span key={label} className="block break-words not-first:mt-0.5">
+						{label}: {value}
+					</span>
+				))}
+		</span>
+	);
 }
 
 export function ApiTile({
@@ -80,15 +127,10 @@ export function ApiTile({
 	]
 		.filter(Boolean)
 		.join(' · ');
-	// The credential is named only when it adds a fact, measured against BOTH names
-	// the tile prints — a generically-titled spec can repeat the host. With several
-	// credentials for one API it always adds one: which credential this tile is.
-	const credentialLabel =
-		accountLabel ??
-		(sameIdentity(tile.credentialName, tile.title) ||
-		sameIdentity(tile.credentialName, tile.host)
-			? null
-			: tile.credentialName);
+	// Every tile names its credential, labelled, in its footer. With several
+	// credentials for one API the account label (which may carry an id tail) says
+	// which one this tile is.
+	const credentialLabel = (accountLabel ?? tile.credentialName).trim() || null;
 	// What the access IS, beside the status chip.
 	const capability = [
 		tile.authLabel,
@@ -230,17 +272,17 @@ export function ApiTile({
 				{/* A fixed ONE-line detail slot: grid rows size to their tallest cell, so an
 				    extra line here would stretch every tile beside it. */}
 				<div
-					className="flex h-[1.125rem] items-center gap-1.5 overflow-hidden"
+					className="flex h-[1.125rem] min-w-0 items-center gap-1.5 text-xs"
 					data-testid="tile-detail-slot"
 				>
 					{tile.awaitingConsent ? (
 						<>
-							<span className="text-warning truncate text-xs">
+							<span className="text-warning truncate">
 								Sign-in at {tile.vendor} unfinished
 							</span>
 							<button
 								type="button"
-								className="text-primary relative z-10 w-fit shrink-0 cursor-pointer text-xs font-medium hover:underline"
+								className="text-primary relative z-10 w-fit shrink-0 cursor-pointer font-medium hover:underline"
 								onClick={onOpen}
 							>
 								Finish connecting →
@@ -248,28 +290,64 @@ export function ApiTile({
 						</>
 					) : (
 						<>
-							{credentialLabel && (
-								<span
-									data-testid="tile-credential-label"
-									className="shrink-0 text-xs font-medium"
+							{credentialLabel ? (
+								// Above the overlay, so hover and focus reach the details. It
+								// gives way first: the name truncates before the rules do.
+								<Tooltip
+									content={
+										<CredentialDetails tile={tile} name={credentialLabel} />
+									}
+									className="relative z-10 min-w-0 shrink-[1000] items-center rounded-sm"
+									bubbleClassName="max-w-xs"
 								>
-									{credentialLabel}
+									<span
+										className="flex min-w-0 items-center gap-1"
+										data-testid="tile-credential"
+									>
+										<KeyRound
+											aria-hidden="true"
+											className="text-muted-foreground h-3 w-3 shrink-0"
+										/>
+										<span className="text-muted-foreground shrink-0">
+											Credential<span className="sr-only">: </span>
+										</span>
+										<span
+											className="text-foreground min-w-0 truncate font-medium"
+											data-testid="tile-credential-label"
+										>
+											{credentialLabel}
+										</span>
+									</span>
+								</Tooltip>
+							) : (
+								<span
+									className="text-muted-foreground flex shrink-0 items-center gap-1"
+									data-testid="tile-credential"
+								>
+									<KeyRound aria-hidden="true" className="h-3 w-3 shrink-0" />
+									No credential
 								</span>
-							)}
-							{credentialLabel && summary && (
-								<span className="text-muted-foreground text-xs">·</span>
 							)}
 							{summary && (
-								<span
-									className={cn(
-										'truncate text-xs',
-										rules?.total === 0
-											? 'text-warning'
-											: 'text-muted-foreground',
-									)}
-								>
-									{summary}
-								</span>
+								<>
+									<span
+										aria-hidden="true"
+										className="text-muted-foreground shrink-0"
+									>
+										·
+									</span>
+									<span
+										data-testid="tile-rules-summary"
+										className={cn(
+											'min-w-0 truncate',
+											rules?.total === 0
+												? 'text-warning'
+												: 'text-muted-foreground',
+										)}
+									>
+										{summary}
+									</span>
+								</>
 							)}
 						</>
 					)}
