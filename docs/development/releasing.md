@@ -306,15 +306,19 @@ acknowledged. Read this **before** running migrations.
   authenticating the moment the table drops. This release's
   `flatten-toolkits --verify` fails on the same condition (a
   `verify_live_toolkit_keys` report line), so `--acknowledge` is refused
-  too. Remediation: upgrade via 0.40.x and run `retire-toolkit-keys`, or
-  revoke the key. 0.41 no longer ships `retire-toolkit-keys`; to use it after
+  too. Remediation: upgrade via 0.40.x and run `retire-toolkit-keys` (no
+  release ships a command or route that revokes a toolkit key; if the key
+  must not get a successor, set `revoked = true` on its `toolkit_keys` row
+  in SQL instead). 0.41 no longer ships `retire-toolkit-keys`; to use it after
   the drop has refused, downgrade control to `e1a2b3c4d5f6` on the 0.41
   image (`python -m jentic_one.migrations.run --db control --direction down
   --target e1a2b3c4d5f6`), run the command on 0.40.x, then upgrade again.
 
   On any other state it raises naming the reason (live unmigrated keys / no
   ack / earlier-release ack / stale ack), with the runbook steps, and leaves
-  the toolkit tables untouched. `migrations.run` has already applied `f2b3c4d5e6a7` by then, so
+  the toolkit tables untouched. The runner exits `1` with a Python traceback
+  whose last line is that `RuntimeError` message (unlike the service-account
+  refusal below, which exits `4` with a plain message). `migrations.run` has already applied `f2b3c4d5e6a7` by then, so
   on the new release's image: run `jentic_one flatten-toolkits` (it backfills
   the execution names), re-run until it creates nothing, run
   `jentic_one flatten-toolkits --verify --acknowledge`, and re-run
@@ -665,7 +669,9 @@ paths. Read this **before** running migrations.
   migrated to an agent. Mint a jak_ key for that agent and use it instead."*
   (admin, auth and broker surfaces; MCP answers with its usual `401`
   challenge). Each refusal logs `retired_service_account_key_refused` at
-  INFO with the successor agent id when there is one. Move callers to a
+  INFO with the successor agent id when that agent still holds the retired
+  key's digest (after you mint a new `jak_` key for it, as rule 4 advises,
+  the id is logged as `null`). Move callers to a
   `jak_` key for the successor agent — ideally on 0.40.x before upgrading
   (see [Upgrading to 0.41.0](#upgrading-to-0410), rule 4).
 - **Converted `jntc_live_` keys keep working** until at least 2026-12-01:

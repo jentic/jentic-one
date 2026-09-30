@@ -266,7 +266,7 @@ class RetirementWarning:
 
     def line(self) -> str:
         return (
-            f"{self.service_account_id}: {self.not_copied} was NOT copied to successor agent "
+            f"{self.service_account_id}: {self.not_copied}: NOT copied to successor agent "
             f"{self.successor_agent_id} ({self.reason}); re-grant it if the agent still needs it"
         )
 
