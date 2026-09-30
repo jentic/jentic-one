@@ -318,7 +318,7 @@ func TestWhoami_RendersAgentVariant(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"type":"agent","id":"agnt_1","name":"test-agent","status":"active",
-			"scopes":["apis:read"],"token_scopes":["apis:read"],"toolkit_bindings":[],
+			"scopes":["apis:read"],"token_scopes":["apis:read"],
 			"credential_bindings":[{"credential_id":"cred_1","name":"github main","bound_at":"2026-09-01T00:00:00Z",
 			"serves":[{"vendor":"github-com","name":"github-com-api-github-com","version":"1.0.0"}]}]}`))
 	}))

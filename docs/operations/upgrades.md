@@ -19,7 +19,8 @@ The contract is the same on every install shape; only the commands differ.
    `OVERALL current`, so scripts can branch on it. A full run (all databases,
    no `--target`) also performs the release's one-shot **upgrade steps** —
    data changes that span databases (0.41 ships none; the 0.40 toolkit →
-   direct-binding cutover is done by the time 0.41 installs) — and prints an `==> upgrade step <name>: <action>` line for each.
+   direct-binding cutover is done by the time 0.41 installs) — and prints
+   an `==> upgrade step <name>: <action>` line for each.
    A step that leaves blocking work undone exits `4`: fix the logged cause
    and re-run before starting the new version (`--skip-upgrade-step <name>`
    defers one step deliberately; on Helm, via `migrate.extraArgs`).

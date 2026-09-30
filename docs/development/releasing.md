@@ -202,7 +202,8 @@ steps are what stands between you and Phase 6b.
    migrated, review them; `pooled_rule_drift` lines are pairs whose effective
    rules narrowed from vendor-pooled to per-pair; `active_toolkit_key` lines
    want `retire-toolkit-keys` (or a revoke) on 0.40.x — the command is gone
-   in 0.41.0.
+   in 0.41.0, whose `--verify` fails (and whose drop migration refuses to
+   run) while any such key remains.
 4. **Double-run-and-diff** (the concurrency check — binds racing step 3 are
    possible since OSS cannot quiesce the bind endpoints): run
    `jentic_one flatten-toolkits` again and confirm it reports **zero
@@ -271,9 +272,21 @@ acknowledged. Read this **before** running migrations.
     rows it covered. Toolkit rows added or removed afterwards (e.g. edits
     served by a 0.40 replica during a rolling upgrade) refuse the drop.
 
-  On any other state it raises naming the reason (no ack / earlier-release
-  ack / stale ack), with the runbook steps, and leaves the toolkit tables
-  untouched. `migrations.run` has already applied `f2b3c4d5e6a7` by then, so
+  Independently of the acknowledgement, the drop also refuses while any
+  `toolkit_keys` row is **live and unmigrated** (`revoked = false` and no
+  `migrated_actor_id`): that key has no successor agent and would stop
+  authenticating the moment the table drops. This release's
+  `flatten-toolkits --verify` fails on the same condition (a
+  `verify_live_toolkit_keys` report line), so `--acknowledge` is refused
+  too. Remediation: upgrade via 0.40.x and run `retire-toolkit-keys`, or
+  revoke the key. 0.41 no longer ships `retire-toolkit-keys`; to use it after
+  the drop has refused, downgrade control to `e1a2b3c4d5f6` on the 0.41
+  image (`python -m jentic_one.migrations.run --db control --direction down
+  --target e1a2b3c4d5f6`), run the command on 0.40.x, then upgrade again.
+
+  On any other state it raises naming the reason (live unmigrated keys / no
+  ack / earlier-release ack / stale ack), with the runbook steps, and leaves
+  the toolkit tables untouched. `migrations.run` has already applied `f2b3c4d5e6a7` by then, so
   on the new release's image: run `jentic_one flatten-toolkits` (it backfills
   the execution names), re-run until it creates nothing, run
   `jentic_one flatten-toolkits --verify --acknowledge`, and re-run
@@ -307,17 +320,20 @@ acknowledged. Read this **before** running migrations.
   its successor agent (theme-8 Phase 1 moved every migrated service account
   onto one) — the plaintext is resolved by its digest, which needs no
   toolkit table — until the deprecation window in the table below closes
-  (no earlier than **2026-12-01**). A key **not** migrated by then (e.g. an
-  ownerless key never handed `retire-toolkit-keys --owner`) stops
-  authenticating (`401`). Before upgrading, resolve every ownerless-key
-  warning from the 0.40 migration run; afterwards, rotate holders flagged by
+  (no earlier than **2026-12-01**). A live key **not** migrated (e.g. an
+  ownerless key never handed `retire-toolkit-keys --owner`) would stop
+  authenticating (`401`), so the drop refuses to run while one exists (see
+  the prerequisite above): resolve every ownerless-key warning from the 0.40
+  migration run — retire or revoke the key — before upgrading. Afterwards, rotate holders flagged by
   the `deprecated_toolkit_key_used` WARNING log to a `jak_` key minted for
   their successor agent. The service-account → agent migration no longer
   copies toolkit bindings or re-stamps `toolkit_keys` (both tables are gone);
   it still copies scope grants, credential bindings and their inline rules.
 - **The `Jentic-Toolkit-Id` header is gone**, on both sides: it is no longer
-  consumed on requests (it was already ignored on the default path) and no
-  longer emitted on responses. Attribution rides `Jentic-Credential-Id` /
+  read on requests (it was already ignored on the default path) and no
+  longer emitted on responses. A request that still sends it is served
+  normally; the broker strips the header rather than forwarding it
+  upstream, through the deprecation window (no earlier than 2026-12-01). Attribution rides `Jentic-Credential-Id` /
   `Jentic-Credential-Name`. The `tracestate` vendor value keeps its
   five-field shape; the second (toolkit) segment is now always `_`.
 - **The `broker.direct_bindings_enabled` config key is deleted.** Direct
@@ -338,24 +354,32 @@ acknowledged. Read this **before** running migrations.
 
 ### Rollback (Phase 6b → 6a)
 
-Rollback is two steps, not one: downgrade the drop migrations **and then**
-re-import the Phase 6a export:
+Rollback runs **on the 0.41 image first**, then moves the code back. The
+previous release (0.40.x) does not ship this release's revision scripts
+(control `f2b3c4d5e6a7` / `f3c4d5e6a7b8`, admin `c0e1f2a3b4c5` /
+`d1e2f3a4b5c6`), so its Alembic cannot downgrade them — nor even start
+against a database stamped with them. Order:
 
-1. Roll back to the previous release's code (the toolkit code paths no
-   longer exist in this release).
-2. Downgrade the drop migrations (control `f3c4d5e6a7b8`, admin
-   `d1e2f3a4b5c6`). A `downgrade()` recreates the five tables **empty** —
-   it cannot restore rows.
-3. `jentic_one export-toolkits --import toolkit-export.json` with the file
-   from Phase 6a step 1. Restoring the toolkit path with an empty
-   `toolkit_permission_rules` is a **total default-deny authorization
-   outage** for every agent on the legacy path — never skip the import. The
-   import is additive and idempotent by primary key, so re-running it (or
-   importing over rows created after the downgrade) is safe.
+1. **Downgrade, on the 0.41 image**, to the last revisions 0.40.x knows:
+   `python -m jentic_one.migrations.run --db control --direction down
+   --target e1a2b3c4d5f6` and `python -m jentic_one.migrations.run --db
+   admin --direction down --target 3e7a91c4b2d8`. The drops' `downgrade()` recreates the five tables
+   **empty** — it cannot restore rows. The admin downgrade also reverts
+   `c0e1f2a3b4c5`, which drops `execution_records.toolkit_name` (the
+   historical names 0.40 resolves from the restored `toolkits` table
+   instead), and the control one reverts `f2b3c4d5e6a7`, dropping the
+   acknowledgement evidence columns.
+2. **Re-import, on the 0.41 image**: `jentic_one export-toolkits --import
+   toolkit-export.json` with the file from Phase 6a step 1. Restoring the
+   toolkit path with an empty `toolkit_permission_rules` is a **total
+   default-deny authorization outage** for every agent on the legacy path —
+   never skip the import. The import is additive and idempotent by primary
+   key, so re-running it (or importing over rows created after the
+   downgrade) is safe.
+3. **Only then roll the code back** to 0.40.x.
 
-The scope sweep and the `execution_records.toolkit_name` backfill are not
-reversed on rollback: the swept scopes granted nothing, and the denormalized
-name column is additive (the older release simply ignores it).
+The scope sweep is not reversed on rollback: the swept scopes granted
+nothing.
 
 ## Upgrading to the first theme-8 release
 

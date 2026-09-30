@@ -109,8 +109,14 @@ def evaluate_rules(
     method: str,
     path: str,
     operation_id: str | None,
+    binding: str | None = None,
 ) -> bool:
-    """Evaluate an ordered list of permission rules. Returns True if allowed."""
+    """Evaluate an ordered list of permission rules. Returns True if allowed.
+
+    ``binding`` labels the rule source (``agent:credential`` ids or
+    ``rule_set:<id>`` — identifiers only, never secret material) so a
+    misconfiguration warning names what to fix.
+    """
     for rule in rules:
         # Defense-in-depth: a condition-less `allow` is an unrestricted grant
         # (matches everything) and should have been rejected at the API schema.
@@ -121,6 +127,7 @@ def evaluate_rules(
             _logger.warning(
                 "Ignoring misconfigured condition-less 'allow' permission rule "
                 "(matches all requests); skipping to next rule",
+                binding=binding,
             )
             continue
         if _rule_matches(rule, method=method, path=path, operation_id=operation_id):
@@ -144,6 +151,13 @@ _RULE_SET_RULES_QUERY = text(
     "WHERE rule_set_id = :rule_set_id "
     "ORDER BY sequence ASC"
 )
+
+
+def _binding_label(*, agent_id: str, credential_id: str, rule_set_id: str | None) -> str:
+    """Log label for a rule source: the shared set, or the ``agent:credential`` binding."""
+    if rule_set_id is not None:
+        return f"rule_set:{rule_set_id}"
+    return f"{agent_id}:{credential_id}"
 
 
 def _compile_path(raw: str | None, mode: str, *, binding: str) -> PathMatcher | None:
@@ -228,6 +242,9 @@ class AgentRuleEvaluator:
             method=method,
             path=path,
             operation_id=operation_id,
+            binding=_binding_label(
+                agent_id=agent_id, credential_id=credential_id, rule_set_id=rule_set_id
+            ),
         )
         return RuleEvaluation(allowed=allowed, rules_loaded=len(rules))
 
@@ -264,11 +281,12 @@ class AgentRuleEvaluator:
         if rule_set_id is not None:
             query = _RULE_SET_RULES_QUERY
             params: dict[str, str] = {"rule_set_id": rule_set_id}
-            binding_label = f"rule_set:{rule_set_id}"
         else:
             query = _BINDING_RULES_QUERY
             params = {"agent_id": agent_id, "credential_id": credential_id}
-            binding_label = f"{agent_id}:{credential_id}"
+        binding_label = _binding_label(
+            agent_id=agent_id, credential_id=credential_id, rule_set_id=rule_set_id
+        )
         async with self._control_db.session() as session:
             rows = (await session.execute(query, params)).all()
         return [

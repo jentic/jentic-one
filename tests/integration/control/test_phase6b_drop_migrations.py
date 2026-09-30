@@ -202,6 +202,77 @@ async def test_control_drop_refuses_a_stale_ack(
     assert set(_CONTROL_LEGACY_TABLES) <= await _table_names(control_db)
 
 
+async def _seed_key(control_db: DatabaseSession, *, revoked: bool, migrated: str | None) -> None:
+    async with control_db.session() as session:
+        await session.execute(
+            text(
+                "INSERT INTO toolkit_keys"
+                " (id, toolkit_id, hashed_key, key_preview, lookup_hash, revoked,"
+                "  migrated_actor_id)"
+                " VALUES ('ck_6btest_1', 'tk_6btest_1', 'argon2-6btest', 'jntc_live_6b...',"
+                "  '6btest-lookup', :revoked, :migrated)"
+            ),
+            {"revoked": revoked, "migrated": migrated},
+        )
+        await session.commit()
+
+
+async def test_control_drop_refuses_a_live_unmigrated_key_despite_a_qualifying_ack(
+    integration_config: AppConfig,
+    control_db: DatabaseSession,
+    restore_control_head: None,
+) -> None:
+    """Defence in depth: the ack digest omits toolkit_keys, so a live key with
+    no successor actor (e.g. minted after the ack) is caught by the drop itself."""
+    cfg = _control_cfg(integration_config)
+    await asyncio.to_thread(command.downgrade, cfg, _CONTROL_PRE_DROP)
+    await _seed_one_toolkit(control_db)
+    await _seed_key(control_db, revoked=False, migrated=None)
+    await _insert_ack(
+        control_db, ack_id="tfa_6btest_1", backfilled=True, control_digest=_ONE_TOOLKIT_DIGEST
+    )
+
+    with pytest.raises(Exception, match=r"neither\s+revoked nor migrated") as excinfo:
+        await asyncio.to_thread(command.upgrade, cfg, "head")
+    message = " ".join(str(excinfo.value).split())
+    assert "ck_6btest_1" in message
+    assert "Upgrade via 0.40.x and run retire-toolkit-keys, or revoke the key" in message
+    assert set(_CONTROL_LEGACY_TABLES) <= await _table_names(control_db)
+
+    # Revoking the key resolves it; the same ack then unblocks the drop.
+    async with control_db.session() as session:
+        await session.execute(text("UPDATE toolkit_keys SET revoked = :t"), {"t": True})
+        await session.commit()
+    await asyncio.to_thread(command.upgrade, cfg, "head")
+    assert not (set(_CONTROL_LEGACY_TABLES) & await _table_names(control_db))
+
+
+@pytest.mark.parametrize(
+    ("revoked", "migrated"),
+    [(True, None), (False, "agnt_6btest_successor"), (True, "agnt_6btest_successor")],
+    ids=["revoked", "migrated", "revoked_and_migrated"],
+)
+async def test_control_drop_accepts_resolved_keys(
+    integration_config: AppConfig,
+    control_db: DatabaseSession,
+    restore_control_head: None,
+    revoked: bool,
+    migrated: str | None,
+) -> None:
+    """Revoked or migrated keys do not block the drop (with a qualifying ack)."""
+    cfg = _control_cfg(integration_config)
+    await asyncio.to_thread(command.downgrade, cfg, _CONTROL_PRE_DROP)
+    await _seed_one_toolkit(control_db)
+    await _seed_key(control_db, revoked=revoked, migrated=migrated)
+    await _insert_ack(
+        control_db, ack_id="tfa_6btest_1", backfilled=True, control_digest=_ONE_TOOLKIT_DIGEST
+    )
+
+    await asyncio.to_thread(command.upgrade, cfg, "head")
+
+    assert not (set(_CONTROL_LEGACY_TABLES) & await _table_names(control_db))
+
+
 async def test_admin_drop_blocks_legacy_rows_without_direct_evidence(
     integration_config: AppConfig,
     admin_db: DatabaseSession,

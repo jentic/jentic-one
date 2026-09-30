@@ -83,6 +83,22 @@ CROSS_OWNER_BINDING_CATEGORY = "cross_owner_binding"
 _EXECUTE_SCOPE = "capabilities:execute"
 
 
+#: Remediation for a live (unrevoked, unmigrated) ``jntc_live_`` key. Such a
+#: key blocks ``--verify`` (and so ``--acknowledge``): once the toolkit tables
+#: are dropped it stops authenticating, so the drop must not proceed while any
+#: holder still depends on it. The successor-agent ``jak_`` key is what the
+#: holder should move to; ``retire-toolkit-keys`` (0.40.x only) does it.
+_LIVE_KEY_REMEDIATION = (
+    "upgrade via 0.40.x and run retire-toolkit-keys, or revoke the key; then "
+    "rotate the holder to a jak_ key minted for the successor agent"
+)
+
+
+def _live_unmigrated_keys(snapshot: _Snapshot) -> list[Any]:
+    """Keys that still authenticate on the toolkit path and have no successor."""
+    return [k for k in snapshot.toolkit_keys if not k.revoked and k.migrated_actor_id is None]
+
+
 def _iso(value: dt.datetime | None) -> str | None:
     return value.isoformat() if value is not None else None
 
@@ -167,6 +183,7 @@ class VerificationResult:
     direct_binding_count: int
     missing_pair_count: int
     unbackfilled_execution_name_count: int = 0
+    live_unmigrated_key_count: int = 0
     findings: list[Finding] = field(default_factory=list)
     acknowledged: bool = False
 
@@ -397,9 +414,10 @@ class ToolkitFlatteningService:
     @staticmethod
     def _hygiene_findings(snapshot: _Snapshot, findings: list[Finding]) -> None:
         """Report categories independent of the pair derivation."""
+        live = {k.id for k in _live_unmigrated_keys(snapshot)}
         for key in snapshot.toolkit_keys:
             # Hash material (hashed_key, lookup_hash) stays out of the report.
-            if not key.revoked and key.migrated_actor_id is None:
+            if key.id in live:
                 findings.append(
                     Finding(
                         "active_toolkit_key",
@@ -410,10 +428,7 @@ class ToolkitFlatteningService:
                             "key_preview": key.key_preview,
                             "last_used_at": _iso(key.last_used_at),
                             "created_at": _iso(key.created_at),
-                            "remediation": (
-                                "revoke the key, or mint the holder a service-account "
-                                "key (`retire-toolkit-keys` was removed in Phase 6b)"
-                            ),
+                            "remediation": _LIVE_KEY_REMEDIATION,
                         },
                     )
                 )
@@ -425,7 +440,7 @@ class ToolkitFlatteningService:
                         Finding(
                             "scope_exceeds_execute",
                             {
-                                "service_account_id": key.migrated_actor_id,
+                                "actor_id": key.migrated_actor_id,
                                 "key_id": key.id,
                                 "toolkit_id": key.toolkit_id,
                                 "scopes": sorted(scopes),
@@ -753,6 +768,21 @@ class ToolkitFlatteningService:
                 )
             )
 
+        # Live toolkit keys: a key that is neither revoked nor migrated to a
+        # successor agent stops authenticating the moment the tables drop.
+        # Fail closed — the drop must not strand a holder silently.
+        live_keys = _live_unmigrated_keys(snapshot)
+        if live_keys:
+            findings.append(
+                Finding(
+                    "verify_live_toolkit_keys",
+                    {
+                        "key_ids": sorted(k.id for k in live_keys),
+                        "remediation": _LIVE_KEY_REMEDIATION,
+                    },
+                )
+            )
+
         async with self._ctx.control_db.session() as control_session:
             for key in sorted(pairs):
                 if key in snapshot.existing_pairs:
@@ -764,11 +794,12 @@ class ToolkitFlatteningService:
                     )
 
         result = VerificationResult(
-            passed=not missing and not unbackfilled,
+            passed=not missing and not unbackfilled and not live_keys,
             legacy_pair_count=len(pairs),
             direct_binding_count=len(snapshot.existing_pairs),
             missing_pair_count=len(missing),
             unbackfilled_execution_name_count=len(unbackfilled),
+            live_unmigrated_key_count=len(live_keys),
             findings=findings,
         )
         findings.append(
@@ -780,6 +811,7 @@ class ToolkitFlatteningService:
                     "direct_binding_count": result.direct_binding_count,
                     "missing_pair_count": result.missing_pair_count,
                     "unbackfilled_execution_name_count": (result.unbackfilled_execution_name_count),
+                    "live_unmigrated_key_count": result.live_unmigrated_key_count,
                     "tool_version": __version__,
                 },
             )
@@ -791,6 +823,7 @@ class ToolkitFlatteningService:
             direct_binding_count=result.direct_binding_count,
             missing_pair_count=result.missing_pair_count,
             unbackfilled_execution_name_count=result.unbackfilled_execution_name_count,
+            live_unmigrated_key_count=result.live_unmigrated_key_count,
         )
 
         if acknowledge and result.passed:
@@ -822,6 +855,8 @@ class ToolkitFlatteningService:
                 "toolkit_flattening_acknowledge_refused",
                 detail="verification failed; sentinel not written",
                 missing_pair_count=result.missing_pair_count,
+                unbackfilled_execution_name_count=result.unbackfilled_execution_name_count,
+                live_unmigrated_key_count=result.live_unmigrated_key_count,
             )
         return result
 

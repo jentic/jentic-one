@@ -1,6 +1,6 @@
 """add Phase-6b drop evidence to toolkit_flattening_acks
 
-Three columns the Phase-6b drop gates (control ``v3d4e5f6a7b8``, admin
+Three columns the Phase-6b drop gates (control ``f3c4d5e6a7b8``, admin
 ``d1e2f3a4b5c6``) read before destroying the legacy toolkit tables:
 
 - ``execution_names_backfilled``: the verification that wrote the row also

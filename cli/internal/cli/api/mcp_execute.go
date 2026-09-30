@@ -428,6 +428,10 @@ func (s *mcpServer) executeDenialError(ctx context.Context, denial *agentops.Den
 var provisioningProblemTypes = map[string]bool{
 	"no_credential_binding":      true,
 	"credential_not_provisioned": true,
+	// Retired with the toolkit path in 0.41 (theme-5 Phase 6b), but a 0.40.x
+	// server on its legacy flag-off toolkit path still emits it — this CLI
+	// may talk to one mid-upgrade, so keep treating it as provisioning-shaped.
+	"no_toolkit_binding": true,
 }
 
 // denialNextTool picks the recovery pointer for a broker denial, keyed on the

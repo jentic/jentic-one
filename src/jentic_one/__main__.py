@@ -588,6 +588,7 @@ async def _flatten_toolkits(
                 f"{result.direct_binding_count} direct binding(s), "
                 f"{result.missing_pair_count} missing, "
                 f"{result.unbackfilled_execution_name_count} execution name(s) unbackfilled, "
+                f"{result.live_unmigrated_key_count} live unmigrated toolkit key(s), "
                 f"{len(result.findings)} report line(s).",
                 file=sys.stderr,
                 flush=True,
@@ -596,8 +597,9 @@ async def _flatten_toolkits(
                 print(
                     "==> acknowledgement recorded — Phase 6b drops are unblocked."
                     if result.acknowledged
-                    else "==> acknowledgement REFUSED: verification failed; run "
-                    "flatten-toolkits first, then re-verify.",
+                    else "==> acknowledgement REFUSED: verification failed; resolve "
+                    "the verify_* report lines (run flatten-toolkits for missing pairs "
+                    "or names; retire or revoke live toolkit keys), then re-verify.",
                     file=sys.stderr,
                     flush=True,
                 )
