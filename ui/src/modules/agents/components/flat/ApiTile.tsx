@@ -12,6 +12,7 @@ import { Button, Card, StatusText, Tag, Tooltip, VendorIcon } from '@/shared/ui'
 import { formatApiVersion } from '@/shared/lib';
 import { cn, timeAgo } from '@/shared/lib/utils';
 import type { BindingRuleSummary } from '@/modules/agents/api';
+import { idTail } from '@/shared/credentials/lib/credentialIdentity';
 import type { ApiTileModel } from '@/modules/agents/lib/apiTiles';
 import { multiCredentialExplanation } from '@/modules/agents/components/flat/MultiCredentialNote';
 
@@ -83,9 +84,7 @@ function CredentialDetails({ tile, name }: { tile: ApiTileModel; name: string })
 		[
 			'ID',
 			<span key="id" className="font-mono">
-				{tile.credentialId.length > 8
-					? `…${tile.credentialId.slice(-8)}`
-					: tile.credentialId}
+				{`…${idTail(tile.credentialId)}`}
 			</span>,
 		],
 		['Scope', scope],

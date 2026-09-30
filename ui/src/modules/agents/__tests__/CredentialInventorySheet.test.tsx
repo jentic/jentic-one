@@ -509,10 +509,10 @@ describe('CredentialInventorySheet — page-level org-wide inventory', () => {
 			expect(slack).toHaveTextContent(/Any of these can be bound to an agent/);
 			// Two rows share a name, so the id tail is what sets them apart.
 			expect(slack).toHaveTextContent('Some share a name; rename one to tell them apart.');
-			expect(slack).toHaveTextContent('…lack_1');
-			expect(slack).toHaveTextContent('…lack_3');
+			expect(slack).toHaveTextContent('…ck_1');
+			expect(slack).toHaveTextContent('…ck_3');
 			// A name no other row shares needs no tail.
-			expect(slack).not.toHaveTextContent('…lack_2');
+			expect(slack).not.toHaveTextContent('…ck_2');
 			// The rows pin different revisions; each row says which.
 			const versions = within(slack)
 				.getAllByTestId('credential-row-api')

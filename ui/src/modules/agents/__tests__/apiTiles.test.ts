@@ -505,15 +505,15 @@ describe('multiAccountApis / accountLabels', () => {
 		]);
 	});
 
-	it('adds the id tail when two accounts share a name', () => {
+	it('adds the four-character id tail (as the broker lists it) when two accounts share a name', () => {
 		const tiles = composeApiTiles(
 			[makeBinding(), makeBinding({ id: 'acb_2', credentialId: 'cred_abcdef123456' })],
 			[makeCredential(), makeCredential({ credential_id: 'cred_abcdef123456' })],
 			apis,
 		);
 		expect([...accountLabels(tiles).values()].sort()).toEqual([
-			'Test credential · …123456',
-			'Test credential · …cred_1',
+			'Test credential · …3456',
+			'Test credential · …ed_1',
 		]);
 	});
 

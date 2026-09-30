@@ -8,7 +8,7 @@
 import { apiRefDisplayName } from '@/shared/lib';
 import { CredentialType, type ApiResponse, type Credential } from '@/shared/credentials/api';
 import { apiScopeCovers } from '@/shared/credentials/lib/apiIdentity';
-import { credentialAwaitsConsent } from '@/shared/credentials/lib/credentialIdentity';
+import { credentialAwaitsConsent, idTail } from '@/shared/credentials/lib/credentialIdentity';
 import type { CredentialBindingEntity, ServedApiEntity } from '@/modules/agents/api/types';
 
 /** One tile on the grid: the API is the card, the credential is a line on it. */
@@ -259,7 +259,7 @@ export function accountLabels(tiles: ApiTileModel[]): Map<string, string> {
 		);
 		labels.set(
 			tile.key,
-			twin ? `${tile.credentialName} · …${tile.credentialId.slice(-6)}` : tile.credentialName,
+			twin ? `${tile.credentialName} · …${idTail(tile.credentialId)}` : tile.credentialName,
 		);
 	}
 	return labels;

@@ -1845,16 +1845,26 @@ describe('AgentsPage — Add APIs: Back from the setup queue to the tray', () =>
 			trigger.focus();
 			const tip = await screen.findByRole('tooltip');
 			expect(tip).toHaveTextContent(
-				'This agent has 2 credentials for Stripe. Unless one is scoped more narrowly, each call must name one with the Jentic-Credential-Id header; without it, the call is refused and lists the credentials to choose from.',
+				"This agent has 2 credentials for Stripe. Unless one is scoped more narrowly, each call must name one with the Jentic-Credential-Id header; without it, the call is refused and lists the credentials to choose from. Open a tile to copy its credential's ID.",
 			);
 			expect(trigger).toHaveAttribute('aria-describedby', tip.id);
 			await checkA11y(document.body);
 
-			// The binding's sidebar explains the choice at more length in one quiet line.
+			// The binding's sidebar explains the choice at more length in one quiet line,
+			// beside the full id and the header that names this credential — both copyable.
 			await user.click(screen.getAllByRole('button', { name: 'Manage Stripe access' })[0]);
 			expect(await screen.findByTestId('multi-account-note')).toHaveTextContent(
-				'This agent has 2 credentials for Stripe. A narrower one (for example, pinned to a version) is used automatically; otherwise each call must name one with the Jentic-Credential-Id header, or it is refused and lists the options. These rules apply only when this credential is the one chosen.',
+				"This agent has 2 credentials for Stripe. A narrower one (for example, pinned to a version) is used automatically; otherwise each call must name one with the Jentic-Credential-Id header — copy this credential's ID or header below — or it is refused and lists the options. These rules apply only when this credential is the one chosen.",
 			);
+			const sidebar = screen.getByRole('region', { name: 'Credential' });
+			const idRow = within(sidebar).getByTestId('credential-id-row');
+			const credentialId = idRow.querySelector('code')?.textContent ?? '';
+			expect(credentialId).toMatch(/^cred_stripe_[12]$/);
+			await user.click(within(idRow).getByRole('button', { name: 'Copy the credential ID' }));
+			expect(await navigator.clipboard.readText()).toBe(credentialId);
+			expect(
+				within(sidebar).getByText(`Jentic-Credential-Id: ${credentialId}`),
+			).toBeVisible();
 		});
 
 		it('the mock binds a second credential for one API but 409s the same one twice', async () => {

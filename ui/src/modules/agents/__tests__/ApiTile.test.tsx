@@ -93,7 +93,7 @@ describe('ApiTile credential footer', () => {
 		const details = within(tip).getByTestId('tile-credential-details');
 		expect(details.textContent?.startsWith('Name: Slack bot token')).toBe(true);
 		expect(details).toHaveTextContent('Auth: Bearer token');
-		expect(details).toHaveTextContent('ID: …89abcdef');
+		expect(details).toHaveTextContent('ID: …cdef');
 		expect(details).toHaveTextContent('Scope: slack.com / default / v1.0.0');
 		expect(details).toHaveTextContent('Added: 3d ago');
 		expect(details).toHaveTextContent('Bound: 2h ago');
@@ -147,7 +147,7 @@ describe('ApiTile credential footer', () => {
 		});
 
 		expect(screen.getByTestId('tile-credential-label')).toHaveTextContent(
-			'Slack bot token · …123456',
+			'Slack bot token · …3456',
 		);
 		// The header chip is unchanged.
 		expect(screen.getByTestId('tile-accounts-badge')).toHaveTextContent('2 credentials');
