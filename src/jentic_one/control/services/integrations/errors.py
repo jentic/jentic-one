@@ -75,6 +75,22 @@ class InvalidOAuthAppRegistrationError(ConnectSessionServiceError):
         self.reason = reason
 
 
+class OAuthAppChangedError(ConnectSessionServiceError):
+    """The OAuth app resolved at confirm differs from the one used at ``:connect``.
+
+    The session is cancelled; the caller must start a new one so the
+    credential, its aux rows, and the vendor conversation all agree on a
+    single OAuth app.
+    """
+
+    def __init__(self, session_id: str) -> None:
+        super().__init__(
+            f"session {session_id!r} was cancelled: its OAuth app changed since "
+            "it was created; start a new session"
+        )
+        self.session_id = session_id
+
+
 class CredentialMissingCreatorError(ConnectSessionServiceError):
     """A credential with no ``created_by`` cannot finalise a connect flow.
 

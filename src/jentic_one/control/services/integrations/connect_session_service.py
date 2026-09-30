@@ -42,6 +42,7 @@ from jentic_one.control.services.integrations.errors import (
     InvalidPollTokenError,
     InvalidStateTransitionError,
     NoOpForFlowError,
+    OAuthAppChangedError,
     ScopeValidationError,
     SessionNotFoundError,
 )
@@ -798,24 +799,39 @@ class ConnectSessionService:
         # is the authoritative guard against a concurrent confirm.
         _require_state(row, expected="created", action="confirm")
 
-        flow = await self._vendors.resolve_flow(
-            row.vendor,
-            row.resolved_flow,
-            registration_id=pinned_registration_id,
-        )
+        # Re-resolve the SessionApp at confirm time. When the session pinned a
+        # registration at ``:connect``, honour the pin. If the app is no
+        # longer the one the session was created against — the pinned
+        # registration became unusable, or a legacy session now resolves to
+        # a registration — cancel: the credential's aux rows were written
+        # for the old app, so the caller must start a new session.
+        try:
+            flow = await self._vendors.resolve_flow(
+                row.vendor,
+                row.resolved_flow,
+                registration_id=pinned_registration_id,
+            )
+            session_app = await self._resolve_session_app(
+                row.vendor, flow, pinned_registration_id=pinned_registration_id
+            )
+        except InvalidOAuthAppRegistrationError as exc:
+            await self._cancel_for_app_change(row, detail=str(exc))
+            raise OAuthAppChangedError(row.id) from exc
+        if session_app.registration_id != pinned_registration_id:
+            await self._cancel_for_app_change(
+                row,
+                detail=(
+                    f"oauth app changed from {pinned_registration_id!r} "
+                    f"to {session_app.registration_id!r}"
+                ),
+            )
+            raise OAuthAppChangedError(row.id)
+
         try:
             handler_cls = handler_for(flow.kind)
         except KeyError as exc:
             raise NoOpForFlowError(flow.kind) from exc
         handler = handler_cls(self._ctx)
-
-        # Re-resolve the SessionApp at confirm time so the vendor conversation
-        # picks up whatever registration is authoritative *now*. When the
-        # session pinned a specific registration at ``:connect``, honour the
-        # pin so a mismatched preferred-active registration doesn't take over.
-        session_app = await self._resolve_session_app(
-            row.vendor, flow, pinned_registration_id=pinned_registration_id
-        )
 
         unknown = await self._vendors.validate_scopes(
             row.vendor, confirmed_scopes, registration_id=pinned_registration_id
@@ -1170,6 +1186,15 @@ class ConnectSessionService:
             credential_id=credential_id,
             detail=detail,
         )
+
+    async def _cancel_for_app_change(self, row: ConnectSession, *, detail: str) -> None:
+        _logger.info(
+            "connect_session.oauth_app_changed",
+            session_id=row.id,
+            vendor=row.vendor,
+            detail=detail,
+        )
+        await self._mark_terminal(row.id, "cancelled", detail, error_code="oauth_app_changed")
 
     async def _finalise_connected(
         self,

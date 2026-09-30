@@ -29,6 +29,7 @@ from jentic_one.control.services.integrations.errors import (
     InvalidPollTokenError,
     InvalidStateTransitionError,
     NoOpForFlowError,
+    OAuthAppChangedError,
     ScopeValidationError,
     SessionNotFoundError,
 )
@@ -84,6 +85,7 @@ _CONNECT_SESSION_ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     ScopeValidationError: (400, "connect_session_unknown_scopes"),
     NoOpForFlowError: (400, "connect_session_unsupported_flow"),
     InvalidOAuthAppRegistrationError: (400, "invalid_oauth_app_registration"),
+    OAuthAppChangedError: (409, "connect_session_oauth_app_changed"),
     ConnectSessionServiceError: (500, "connect_session_error"),
 }
 

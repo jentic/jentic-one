@@ -51,6 +51,7 @@ from jentic_one.control.services.integrations.connect_session_service import (
     AuthCodeConfirmResult,
     ConnectSessionService,
 )
+from jentic_one.control.services.integrations.errors import OAuthAppChangedError
 from jentic_one.control.services.integrations.flow_handlers.base import SuccessTokens
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import (
@@ -492,3 +493,81 @@ async def test_finalise_fails_session_when_registration_disabled_mid_flow(
             {"cid": row.credential_id},
         )
         assert token_rows.first() is None
+
+
+async def _assert_session_cancelled(ctx: Context, session_id: str, credential_id: str) -> None:
+    async with ctx.control_db.session() as session:
+        # Terminal sessions are deleted along with their pending credential.
+        assert await ConnectSessionRepository.get_by_id(session, session_id) is None
+        assert await CredentialRepository.get_by_id(session, credential_id) is None
+
+
+async def test_confirm_cancels_when_registration_appears_after_connect(
+    integration_context: Context,
+    seed_shared_vendor: None,
+    seed_agent: None,
+    clean_session_tables: None,
+) -> None:
+    """A legacy (config-app) session must not be confirmed through a
+    registration created after ``:connect`` — the credential's aux rows
+    belong to the config app. The session is cancelled instead.
+    """
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    created = await svc.create_session(
+        vendor_key=_VENDOR_KEY,
+        agent_id=_AGENT_ID,
+        initiator_actor_id=_USER_ID,
+        requested_scopes=["scope-a"],
+    )
+    async with ctx.control_db.session() as session:
+        row = await ConnectSessionRepository.get_by_id(session, created.session_id)
+    assert row is not None
+
+    await _seed_active_registration(ctx)
+
+    with pytest.raises(OAuthAppChangedError):
+        await svc.confirm(
+            created.session_id,
+            poll_token=created.poll_token,
+            confirmed_scopes=["scope-a"],
+            permission_rules=[],
+            identity=_USER_IDENTITY,
+        )
+    await _assert_session_cancelled(ctx, created.session_id, row.credential_id)
+
+
+async def test_confirm_cancels_when_pinned_registration_disabled(
+    integration_context: Context,
+    seed_shared_vendor: None,
+    seed_agent: None,
+    clean_session_tables: None,
+) -> None:
+    """Disabling the session's registration between ``:connect`` and confirm
+    cancels the session rather than leaving it stuck in ``created``.
+    """
+    ctx = integration_context
+    registration = await _seed_active_registration(ctx)
+    svc = ConnectSessionService(ctx)
+    created = await svc.create_session(
+        vendor_key=_VENDOR_KEY,
+        agent_id=_AGENT_ID,
+        initiator_actor_id=_USER_ID,
+        requested_scopes=["scope-a"],
+    )
+    async with ctx.control_db.session() as session:
+        row = await ConnectSessionRepository.get_by_id(session, created.session_id)
+    assert row is not None
+
+    async with ctx.control_db.transaction() as session:
+        await OAuthAppRegistrationRepository.update_base(session, registration.id, is_active=False)
+
+    with pytest.raises(OAuthAppChangedError):
+        await svc.confirm(
+            created.session_id,
+            poll_token=created.poll_token,
+            confirmed_scopes=["scope-a"],
+            permission_rules=[],
+            identity=_USER_IDENTITY,
+        )
+    await _assert_session_cancelled(ctx, created.session_id, row.credential_id)
