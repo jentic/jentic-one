@@ -1111,8 +1111,10 @@ describe('AgentsPage — flat agents surface', () => {
 		expect(screen.queryByTestId('agents-landing')).toBeNull();
 		expect(screen.queryByTestId('agent-dock')).not.toBeInTheDocument();
 
-		// The header's create button is relabelled for a fresh org.
-		await user.click(screen.getByRole('button', { name: 'Create your first agent' }));
+		// The header's create button steps back for a fresh org; it still opens the sheet.
+		const create = screen.getByRole('button', { name: 'New agent' });
+		expect(create).toHaveAttribute('data-emphasis', 'secondary');
+		await user.click(create);
 		expect(await screen.findByRole('dialog', { name: 'Create agent' })).toBeInTheDocument();
 	});
 
@@ -1967,37 +1969,50 @@ describe('AgentsPage — the header follows the zero-agents landing', () => {
 		clearAgentsStore();
 	});
 
-	it('reads first-run while an arrival shows, and steps back once the fleet takes over', async () => {
+	const newAgent = () => screen.getByRole('button', { name: 'New agent' });
+
+	it('is secondary while an arrival shows, and primary once the fleet takes over', async () => {
 		const user = userEvent.setup();
 		selfRegisterAgent('my-first-agent');
 		renderPage();
 
 		await screen.findByTestId('arrival-card');
-		expect(screen.getByRole('button', { name: 'Create your first agent' })).toBeInTheDocument();
-		expect(screen.queryByRole('button', { name: 'New agent' })).toBeNull();
+		expect(newAgent()).toHaveAttribute('data-emphasis', 'secondary');
+		expect(screen.queryByRole('button', { name: 'Create your first agent' })).toBeNull();
 
 		const approve = screen.getByRole('button', { name: 'Approve my-first-agent' });
 		await waitFor(() => expect(approve).toBeEnabled());
 		await user.click(approve);
 		await user.click(await screen.findByRole('button', { name: 'Skip for now' }));
 		await screen.findByTestId('agent-dock');
-		expect(screen.getByRole('button', { name: 'New agent' })).toBeInTheDocument();
+		expect(newAgent()).toHaveAttribute('data-emphasis', 'primary');
 	});
 
-	it('reads first-run for an org whose only agents were denied or archived', async () => {
+	it('is secondary for an org whose only agents were denied or archived', async () => {
 		seedExtraAgents([{ id: 'agnt_old', name: 'stray', status: 'rejected' }]);
 		renderPage();
 
 		await screen.findByTestId('agents-empty-landing');
-		expect(screen.getByRole('button', { name: 'Create your first agent' })).toBeInTheDocument();
+		expect(newAgent()).toHaveAttribute('data-emphasis', 'secondary');
 	});
 
-	it('never reads first-run over the fleet, even while it loads', async () => {
+	it('is never secondary over the fleet, even while it loads', async () => {
 		resetAgentsStore();
 		renderPage();
-		expect(screen.getByRole('button', { name: 'New agent' })).toBeInTheDocument();
+		expect(newAgent()).toHaveAttribute('data-emphasis', 'primary');
 		await screen.findByTestId('agent-dock');
-		expect(screen.getByRole('button', { name: 'New agent' })).toBeInTheDocument();
-		expect(screen.queryByRole('button', { name: 'Create your first agent' })).toBeNull();
+		expect(newAgent()).toHaveAttribute('data-emphasis', 'primary');
+	});
+
+	it('390px: the landing header keeps New agent and Credentials on screen', async () => {
+		await page.viewport(390, 844);
+		renderPage();
+		await screen.findByTestId('agents-empty-landing');
+
+		for (const name of ['New agent', 'Credentials']) {
+			const rect = screen.getByRole('button', { name }).getBoundingClientRect();
+			expect(rect.left).toBeGreaterThanOrEqual(0);
+			expect(rect.right).toBeLessThanOrEqual(390);
+		}
 	});
 });

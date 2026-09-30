@@ -97,7 +97,11 @@ describe('Agents page — zero agents', () => {
 		expect(within(ghost).getByTestId('ghost-tab')).toHaveTextContent('Waiting for your agent…');
 
 		expect(screen.queryByTestId('agent-dock')).toBeNull();
-		expect(screen.getByRole('button', { name: 'Create your first agent' })).toBeInTheDocument();
+		// The header's button keeps its label and steps back to secondary.
+		expect(screen.getByRole('button', { name: 'New agent' })).toHaveAttribute(
+			'data-emphasis',
+			'secondary',
+		);
 		// Retried: the header's controls fade in on mount, and a mid-fade sample
 		// reads as low contrast.
 		await waitFor(() => checkA11y(container), { timeout: 3000 });
@@ -201,7 +205,7 @@ describe('Agents page — zero agents', () => {
 			expect(screen.queryByRole('dialog', { name: 'Create agent' })).toBeNull(),
 		);
 
-		await user.click(screen.getByRole('button', { name: 'Create your first agent' }));
+		await user.click(screen.getByRole('button', { name: 'New agent' }));
 		expect(await screen.findByRole('dialog', { name: 'Create agent' })).toBeInTheDocument();
 	});
 
@@ -1022,7 +1026,7 @@ describe('Agents page — resuming the first run on load', () => {
 		await landing();
 		expect(phase()).toBe('listening');
 		expect(screen.getByTestId('register-command')).toBeInTheDocument();
-		expect(screen.getByRole('button', { name: 'Create your first agent' })).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'New agent' })).toBeInTheDocument();
 		expect(screen.queryByTestId('agent-strip')).toBeNull();
 	});
 
