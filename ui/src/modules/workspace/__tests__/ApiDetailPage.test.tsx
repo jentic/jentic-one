@@ -446,6 +446,16 @@ describe('ApiDetailPage', () => {
 				await screen.findByRole('dialog', { name: 'Add credential — Stripe' }),
 			).toBeVisible();
 			expect(screen.getByText(/Step 2 of 2/)).toBeVisible();
+			// Opened from this API, so the credential defaults to its version.
+			expect(await screen.findByTestId('selected-api-summary')).toHaveTextContent(
+				'stripe/stripe-api@2024-01-01',
+			);
+			expect(
+				within(screen.getByRole('group', { name: 'Use this credential for' })).getByRole(
+					'button',
+					{ name: 'Version 2024-01-01' },
+				),
+			).toHaveAttribute('aria-pressed', 'true');
 		});
 
 		it('lists an unpinned (any-version) credential — how the create flow saves them', async () => {
@@ -472,6 +482,45 @@ describe('ApiDetailPage', () => {
 				screen.queryByRole('button', { name: 'View Not Stripe' }),
 			).not.toBeInTheDocument();
 			expect(screen.queryByTestId('hub-access-none')).not.toBeInTheDocument();
+		});
+
+		it("lists a credential pinned to this version, not one pinned to another — the hub's default", async () => {
+			resetCredentialsStore([
+				makeMockCredential({
+					credential_id: 'cred_stripe_this',
+					name: 'Stripe this version',
+					api: { vendor: 'stripe', name: 'stripe-api', version: '2024-01-01' },
+				}),
+				makeMockCredential({
+					credential_id: 'cred_stripe_other',
+					name: 'Stripe other version',
+					api: { vendor: 'stripe', name: 'stripe-api', version: '2023-06-01' },
+				}),
+			]);
+			renderAt('/library/workspace/stripe/stripe-api/2024-01-01');
+
+			expect(
+				await screen.findByRole('button', { name: 'View Stripe this version' }),
+			).toBeVisible();
+			expect(
+				screen.queryByRole('button', { name: 'View Stripe other version' }),
+			).not.toBeInTheDocument();
+			expect(screen.queryByTestId('hub-access-none')).not.toBeInTheDocument();
+		});
+
+		it('flags a missing credential when the only one is pinned to another version', async () => {
+			resetCredentialsStore([
+				makeMockCredential({
+					credential_id: 'cred_stripe_other',
+					name: 'Stripe other version',
+					api: { vendor: 'stripe', name: 'stripe-api', version: '2023-06-01' },
+				}),
+			]);
+			renderAt('/library/workspace/stripe/stripe-api/2024-01-01');
+
+			expect(await screen.findByTestId('hub-access-none')).toHaveTextContent(
+				/no agent can call it/i,
+			);
 		});
 
 		describe('whether a credential is needed', () => {
@@ -562,12 +611,12 @@ describe('ApiDetailPage', () => {
 					await within(dialog).findByRole('checkbox', { name: 'support-agent' }),
 				).toBeVisible();
 				await waitFor(() => expect(bodies).toHaveLength(1));
-				// No secret, unpinned version (covers every version), like the create form.
+				// No secret, pinned to this API's version like the hub's Add credential.
 				expect(bodies[0]).toEqual({
 					type: 'no_auth',
 					name: 'BigCo (no auth)',
 					provider: 'static',
-					api: { vendor: 'bigco', name: 'big-api' },
+					api: { vendor: 'bigco', name: 'big-api', version: '1' },
 				});
 				// The credentials list refetched, so the card now lists it.
 				expect(

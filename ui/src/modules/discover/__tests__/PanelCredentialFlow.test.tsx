@@ -16,6 +16,7 @@ import {
 	within,
 } from '@/__tests__/test-utils';
 import { setToken } from '@/shared/api';
+import { worker } from '@/mocks/browser';
 import { Toaster } from '@/shared/ui';
 import {
 	makeMockApi,
@@ -74,6 +75,7 @@ describe('workspace panel — add a credential in place', () => {
 		resetCredentialsStore([]);
 	});
 	afterEach(() => {
+		worker.events.removeAllListeners();
 		resetApisStore();
 		resetCredentialsStore();
 	});
@@ -94,14 +96,34 @@ describe('workspace panel — add a credential in place', () => {
 
 	it('confirms a created credential in the panel and drops the API from the list', async () => {
 		const user = userEvent.setup();
+		const createdApis: unknown[] = [];
+		worker.events.on('request:start', ({ request }) => {
+			if (request.method === 'POST' && new URL(request.url).pathname === '/credentials')
+				void request
+					.clone()
+					.json()
+					.then((b: { api?: unknown }) => createdApis.push(b.api));
+		});
 		renderWithProviders(<Harness />);
 
 		const flow = await openFromAttention(user);
+		// Opened from this API, so the credential defaults to its version.
+		expect(await within(flow).findByTestId('selected-api-summary')).toHaveTextContent(
+			'100hires.com/100hires-com@2.0.0',
+		);
 		await user.type(await within(flow).findByLabelText(/^API key/), 'sk_test_123');
 		await user.click(within(flow).getByRole('button', { name: 'Create credential' }));
 
 		const notice = await screen.findByTestId('workspace-panel-credential-added');
 		expect(notice).toHaveTextContent('Credential added for 100hires.com');
+		expect(createdApis).toEqual([
+			{
+				vendor: '100hires.com',
+				name: '100hires-com',
+				version: '2.0.0',
+				catalog_api_id: '100hires.com',
+			},
+		]);
 		expect(notice.closest('[role="status"]')).not.toBeNull();
 		// The flow closed; its own toast still fires.
 		await waitFor(() =>

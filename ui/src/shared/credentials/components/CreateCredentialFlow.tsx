@@ -7,6 +7,7 @@ import {
 	ErrorAlert,
 	Input,
 	Label,
+	SegmentedToggle,
 	SheetPrimitive,
 	Skeleton,
 	toast,
@@ -111,6 +112,10 @@ interface CreateCredentialFlowProps {
 	 * `pinnedApi` it is only a starting point: Back and `Change` still reach the
 	 * picker. Each (re)open starts from it; a different API re-seeds the flow.
 	 * `pinnedApi` wins when both are set.
+	 *
+	 * The credential defaults to this API's version (the host is about that one
+	 * registered revision); the form offers "Any version" to unpin. An API
+	 * re-picked in step 1 starts unpinned, like any other pick.
 	 */
 	initialApi?: SelectedApi;
 	/**
@@ -142,6 +147,9 @@ interface CreateCredentialFlowProps {
 }
 
 type Step = 'pick' | 'form' | 'vendor';
+
+/** Which versions of the seeded API the credential covers. */
+type VersionScope = 'pinned' | 'any';
 
 /**
  * The guided flow for creating a credential.
@@ -189,8 +197,19 @@ export function CreateCredentialFlow({
 	// The API the flow starts on: fixed (`pinnedApi`) or just preselected
 	// (`initialApi`). Only `pinnedApi` hides the way back to the picker.
 	const seedApi = pinnedApi ?? initialApi;
+	// Only a host opened from one API (`initialApi`) defaults the credential to
+	// that API's version; the setup queue's `pinnedApi` batch stays unpinned, as
+	// a catalog pick's version isn't the registry's yet.
+	const seedVersion = pinnedApi ? '' : (initialApi?.version?.trim() ?? '');
+	const seedForm = (): CredentialFormState =>
+		seedApi ? seedFormFromSelectedApi(EMPTY_FORM, seedApi, false, !!seedVersion) : EMPTY_FORM;
 	const [step, setStep] = useState<Step>(seedApi ? 'form' : 'pick');
 	const [selectedApi, setSelectedApi] = useState<SelectedApi | null>(seedApi ?? null);
+	/**
+	 * The version the form can pin to: the seeded API's own, until the operator
+	 * picks an API in step 1 (a pick is unpinned, with nothing to toggle).
+	 */
+	const [pinnableVersion, setPinnableVersion] = useState(seedVersion);
 	const [selectedVendor, setSelectedVendor] = useState<VendorSummary | null>(null);
 	const [manualMode, setManualMode] = useState(false);
 	/** Spec upload from the pick step — "the API isn't listed" is otherwise a dead end. */
@@ -198,9 +217,7 @@ export function CreateCredentialFlow({
 	const [type, setType] = useState<CredentialType>(initialType ?? CredentialType.BEARER_TOKEN);
 	/** When non-null, the spec drove the type (UI hides the manual toggle). */
 	const [activeScheme, setActiveScheme] = useState<SchemeOption | null>(null);
-	const [state, setState] = useState<CredentialFormState>(() =>
-		seedApi ? seedFormFromSelectedApi(EMPTY_FORM, seedApi, false) : EMPTY_FORM,
-	);
+	const [state, setState] = useState<CredentialFormState>(seedForm);
 	const [errors, setErrors] = useState<Partial<Record<keyof CredentialFormState, string>>>({});
 	const [serverVarErrors, setServerVarErrors] = useState<Record<string, string>>({});
 	const [oauth2Flows, setOAuth2Flows] = useState<OAuth2FlowDef[]>([]);
@@ -351,7 +368,8 @@ export function CreateCredentialFlow({
 		setManualMode(false);
 		setUploadOpen(false);
 		setActiveScheme(null);
-		setState(seedApi ? seedFormFromSelectedApi(EMPTY_FORM, seedApi, false) : EMPTY_FORM);
+		setState(seedForm());
+		setPinnableVersion(seedVersion);
 		setErrors({});
 		setServerVarErrors({});
 		setOAuth2Flows([]);
@@ -389,6 +407,7 @@ export function CreateCredentialFlow({
 		setSelectedApi(api);
 		setSelectedVendor(null);
 		setManualMode(false);
+		setPinnableVersion('');
 		setState((s) => seedFormFromSelectedApi(s, api, nameDirty.current));
 		setStep('form');
 	};
@@ -405,6 +424,7 @@ export function CreateCredentialFlow({
 		setSelectedApi(null);
 		setSelectedVendor(null);
 		setManualMode(true);
+		setPinnableVersion('');
 		setState(EMPTY_FORM);
 		setStep('form');
 	};
@@ -569,9 +589,10 @@ export function CreateCredentialFlow({
 
 	// The picked-API summary banner shown atop the form step (label + the
 	// vendor/name triple + whether saving will trigger a catalog import). The
-	// version shown is the one the credential is saved with: a catalog pick is
+	// version shown is the one the credential is saved with: a picker pick is
 	// unpinned (`apiVersion: ''`, see `seedFormFromSelectedApi`), so it reads
-	// "any version" rather than the catalog's version string.
+	// "any version" rather than the catalog's version string; a flow opened from
+	// one API reads that API's version until the operator switches to any.
 	const pinnedVersion = state.apiVersion.trim();
 	const apiSummary = useMemo(() => {
 		if (!selectedApi) return null;
@@ -791,6 +812,33 @@ export function CreateCredentialFlow({
 										</span>
 									)}
 								</p>
+								{pinnableVersion && (
+									<div className="mt-2 flex flex-wrap items-center gap-2">
+										<span
+											aria-hidden="true"
+											className="text-muted-foreground text-xs"
+										>
+											Use for
+										</span>
+										<SegmentedToggle<VersionScope>
+											ariaLabel="Use this credential for"
+											options={[
+												{
+													value: 'pinned',
+													label: `Version ${pinnableVersion}`,
+												},
+												{ value: 'any', label: 'Any version' },
+											]}
+											value={pinnedVersion ? 'pinned' : 'any'}
+											onChange={(scope): void =>
+												patch({
+													apiVersion:
+														scope === 'pinned' ? pinnableVersion : '',
+												})
+											}
+										/>
+									</div>
+								)}
 							</div>
 							{!pinnedApi && (
 								<Button

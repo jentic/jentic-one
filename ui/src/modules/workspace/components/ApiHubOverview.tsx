@@ -184,7 +184,9 @@ function AccessCard({ api }: { api: WorkspaceApi }) {
 	// "Give an agent access" — for an API that needs no credential. The broker
 	// resolves every call through a bound credential regardless, so this finds
 	// a `no_auth` credential the viewer can bind (or creates one: no secret,
-	// unpinned version like the create form) and opens the bind dialog on it.
+	// pinned to this API's version like the hub's Add credential default) and
+	// opens the bind dialog on it. Any covering no-auth credential is reused,
+	// including an unpinned one.
 	const viewer = useOptionalCurrentUser();
 	const canCreate = useCanCreateCredentials();
 	const createCredential = useCreateCredential();
@@ -224,6 +226,7 @@ function AccessCard({ api }: { api: WorkspaceApi }) {
 					api: {
 						vendor: api.api.vendor,
 						name: api.api.name,
+						version: api.api.version || undefined,
 						catalog_api_id: api.catalogApiId ?? undefined,
 					},
 				});

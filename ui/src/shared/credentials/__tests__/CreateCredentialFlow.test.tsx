@@ -11,7 +11,7 @@ import { useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { page, userEvent as browserUser } from 'vitest/browser';
-import { renderWithProviders, screen, waitFor, userEvent } from '@/__tests__/test-utils';
+import { renderWithProviders, screen, waitFor, userEvent, within } from '@/__tests__/test-utils';
 import { worker } from '@/mocks/browser';
 import { setToken } from '@/shared/api';
 import {
@@ -260,7 +260,7 @@ describe('CreateCredentialFlow', () => {
 		await waitFor(() => expect(screen.getByTestId('import-spec-dialog')).not.toBeVisible());
 	});
 
-	it('shows "any version" for a picked API, since the saved credential is unpinned', async () => {
+	it('shows "any version" for a setup-queue (pinnedApi) API, since the saved credential is unpinned', async () => {
 		resetApisStore([ACME]);
 		renderWithProviders(
 			<CreateCredentialFlow
@@ -276,6 +276,10 @@ describe('CreateCredentialFlow', () => {
 		// the banner must not claim a pin that isn't sent.
 		expect(summary).toHaveTextContent('acme.io/main · any version');
 		expect(summary).not.toHaveTextContent('@1.0.0');
+		// The setup queue's batch isn't "opened from this API": nothing to pin.
+		expect(
+			screen.queryByRole('group', { name: 'Use this credential for' }),
+		).not.toBeInTheDocument();
 	});
 
 	describe('a name another credential for the API holds', () => {
@@ -384,6 +388,143 @@ describe('CreateCredentialFlow', () => {
 			expect(
 				await screen.findByRole('dialog', { name: 'Add credential — Acme' }),
 			).toBeVisible();
+		});
+	});
+
+	describe('the version a credential is saved for', () => {
+		/** Every `POST /credentials` body's `api`, passing through to the mock. */
+		function recordCreatedApis(): unknown[] {
+			const apis: unknown[] = [];
+			worker.events.on('request:start', ({ request }) => {
+				if (request.method === 'POST' && new URL(request.url).pathname === '/credentials')
+					void request
+						.clone()
+						.json()
+						.then((b: { api?: unknown }) => apis.push(b.api));
+			});
+			return apis;
+		}
+
+		async function submitApiKey(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+			await user.type(await screen.findByLabelText(/^API key/), 'sk_test_123');
+			await user.click(screen.getByRole('button', { name: 'Create credential' }));
+		}
+
+		const versionToggle = (): HTMLElement =>
+			screen.getByRole('group', { name: 'Use this credential for' });
+
+		beforeEach(() => resetApisStore([ACME]));
+		afterEach(() => worker.events.removeAllListeners());
+
+		it("defaults a flow opened from one API to that API's version", async () => {
+			const user = userEvent.setup();
+			const apis = recordCreatedApis();
+			const onCreated = vi.fn();
+			renderWithProviders(
+				<CreateCredentialFlow
+					open
+					onClose={vi.fn()}
+					onCreated={onCreated}
+					initialApi={PINNED_ACME}
+				/>,
+			);
+
+			const summary = await screen.findByTestId('selected-api-summary');
+			expect(summary).toHaveTextContent('acme.io/main@1.0.0');
+			expect(summary).not.toHaveTextContent('any version');
+			expect(
+				within(versionToggle()).getByRole('button', { name: 'Version 1.0.0' }),
+			).toHaveAttribute('aria-pressed', 'true');
+
+			await submitApiKey(user);
+			await waitFor(() => expect(onCreated).toHaveBeenCalledTimes(1));
+			expect(apis).toEqual([{ vendor: 'acme.io', name: 'main', version: '1.0.0' }]);
+		});
+
+		it('lets the operator save it for any version instead', async () => {
+			const user = userEvent.setup();
+			const apis = recordCreatedApis();
+			const onCreated = vi.fn();
+			renderWithProviders(
+				<CreateCredentialFlow
+					open
+					onClose={vi.fn()}
+					onCreated={onCreated}
+					initialApi={PINNED_ACME}
+				/>,
+			);
+			await screen.findByTestId('selected-api-summary');
+
+			await user.click(within(versionToggle()).getByRole('button', { name: 'Any version' }));
+			expect(screen.getByTestId('selected-api-summary')).toHaveTextContent(
+				'acme.io/main · any version',
+			);
+			expect(
+				within(versionToggle()).getByRole('button', { name: 'Any version' }),
+			).toHaveAttribute('aria-pressed', 'true');
+
+			await submitApiKey(user);
+			await waitFor(() => expect(onCreated).toHaveBeenCalledTimes(1));
+			// Unpinned: no version on the wire (the backend's wildcard).
+			expect(apis).toEqual([{ vendor: 'acme.io', name: 'main' }]);
+		});
+
+		it('saves an API picked in step 1 for any version', async () => {
+			const user = userEvent.setup();
+			const apis = recordCreatedApis();
+			const onCreated = vi.fn();
+			renderWithProviders(
+				<CreateCredentialFlow open onClose={vi.fn()} onCreated={onCreated} />,
+			);
+
+			await user.click(await screen.findByRole('button', { name: /Acme/ }));
+			const summary = await screen.findByTestId('selected-api-summary');
+			expect(summary).toHaveTextContent('acme.io/main · any version');
+			expect(
+				screen.queryByRole('group', { name: 'Use this credential for' }),
+			).not.toBeInTheDocument();
+
+			await submitApiKey(user);
+			await waitFor(() => expect(onCreated).toHaveBeenCalledTimes(1));
+			expect(apis).toEqual([{ vendor: 'acme.io', name: 'main' }]);
+		});
+
+		it('resets to any version when the operator re-picks via Change', async () => {
+			const user = userEvent.setup();
+			renderWithProviders(
+				<CreateCredentialFlow
+					open
+					onClose={vi.fn()}
+					onCreated={vi.fn()}
+					initialApi={PINNED_ACME}
+				/>,
+			);
+			expect(await screen.findByTestId('selected-api-summary')).toHaveTextContent('@1.0.0');
+
+			await user.click(screen.getByRole('button', { name: 'Change' }));
+			await user.click(await screen.findByRole('button', { name: /Acme/ }));
+
+			// A pick in step 1 is a pick like any other — even of the same API.
+			expect(await screen.findByTestId('selected-api-summary')).toHaveTextContent(
+				'acme.io/main · any version',
+			);
+			expect(
+				screen.queryByRole('group', { name: 'Use this credential for' }),
+			).not.toBeInTheDocument();
+		});
+
+		it("returns to the API's version when the flow is reopened", async () => {
+			const user = userEvent.setup();
+			const props = { onClose: vi.fn(), onCreated: vi.fn(), initialApi: PINNED_ACME };
+			const { rerender } = renderWithProviders(<CreateCredentialFlow open {...props} />);
+			await screen.findByTestId('selected-api-summary');
+			await user.click(within(versionToggle()).getByRole('button', { name: 'Any version' }));
+
+			rerender(<CreateCredentialFlow open={false} {...props} />);
+			rerender(<CreateCredentialFlow open {...props} />);
+			expect(await screen.findByTestId('selected-api-summary')).toHaveTextContent(
+				'acme.io/main@1.0.0',
+			);
 		});
 	});
 
