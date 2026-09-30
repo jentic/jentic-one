@@ -41,17 +41,21 @@ test('Agents renders the first-run landing against an empty backend, console cle
 	expect(errors, `unexpected console errors:\n${errors.join('\n')}`).toEqual([]);
 });
 
-test('the first-run create button opens the real create sheet', async ({ page }) => {
+test('the first-run create button opens the New agent panel on "Create here"', async ({ page }) => {
 	await page.goto('/app');
 	await expect(
 		page.getByRole('heading', { name: 'Let your agent register itself' }),
 	).toBeVisible();
 
-	// The manual route opens the real sheet (real router, real guard); closing it
+	// The manual route opens the real panel (real router, real guard); closing it
 	// creates nothing, so the workspace stays in first run for the specs after.
 	await page.getByRole('button', { name: 'New agent' }).click();
-	const sheet = page.getByRole('dialog', { name: 'Create agent' });
+	const sheet = page.getByRole('dialog', { name: 'New agent' });
 	await expect(sheet).toBeVisible();
+	await expect(sheet.getByRole('tab', { name: 'Create here' })).toHaveAttribute(
+		'aria-selected',
+		'true',
+	);
 	await page.keyboard.press('Escape');
 	await expect(sheet).toHaveCount(0);
 	await expect(page.getByRole('button', { name: 'New agent' })).toBeVisible();
