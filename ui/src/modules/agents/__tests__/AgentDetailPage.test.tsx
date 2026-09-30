@@ -782,6 +782,34 @@ describe('AgentDetailPage', () => {
 		expect(screen.getByText(/Ask your operator/)).toBeInTheDocument();
 	});
 
+	it('treats an empty reported broker URL as none: the placeholder stays', async () => {
+		const user = userEvent.setup();
+		worker.use(
+			http.get('/instance', () =>
+				HttpResponse.json({
+					backend: 'remote',
+					canonical_base_url: 'https://jentic.example.test',
+					host: 'jentic.example.test',
+					instance_id: 'inst_digest_1',
+					broker_url: '',
+				}),
+			),
+		);
+		renderDetail('agnt_active_1');
+		await screen.findByRole('heading', { name: 'support-agent' });
+
+		await user.click(screen.getByRole('tab', { name: 'MCP' }));
+		await screen.findByText('Connect via MCP');
+
+		// A bare `--broker-url ''` would register an environment with no broker.
+		expect(
+			await screen.findByText(
+				'jentic register --url https://jentic.example.test --broker-url <broker-url>',
+			),
+		).toBeInTheDocument();
+		expect(screen.getByText(/Ask your operator/)).toBeInTheDocument();
+	});
+
 	it('renders the real broker URL in the register snippet when the instance reports one (#1249)', async () => {
 		const user = userEvent.setup();
 		worker.use(

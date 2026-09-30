@@ -43,6 +43,7 @@ import {
 } from '@/modules/agents/api';
 import { MetaItem } from '@/modules/agents/components/detail/shared';
 import { registerCommand, shellArg } from '@/modules/agents/lib/registerCommand';
+import { useRegisterTarget } from '@/modules/agents/lib/useRegisterTarget';
 
 /**
  * The streamable-HTTP variant renders only when the instance reports
@@ -81,31 +82,25 @@ function safeHost(url: string): string {
 
 export function McpConfigCard({ agentName }: { agentName: string }) {
 	const identity = useInstanceIdentity();
-
-	// The operator is looking at a working address of this instance, so the
-	// browser origin is the honest fallback when no canonical base URL is
-	// configured (or `GET /instance` failed).
-	const instanceUrl = identity.data?.baseUrl || window.location.origin;
+	// The instance URL and, on a remote install, the broker (#1249) — the same
+	// target the landing's command uses. When the broker can't be advertised
+	// (older backend, or a loopback-only broker on a remote install) the snippet
+	// keeps an explicit placeholder and the help text sends the operator to
+	// whoever deployed the instance.
+	const target = useRegisterTarget();
+	const instanceUrl = target.url;
 	const instanceHost = identity.data?.host || safeHost(instanceUrl);
-	// On a remote install the broker lives on its own host and is never derived
-	// from the control-plane URL — without --broker-url the environment has no
-	// broker and `jentic execute` fail-closes (register.go). The instance
-	// endpoint reports the operator-configured broker URL when it can honestly
-	// advertise one (#1249); when it can't (older backend, or a loopback-only
-	// broker on a remote install) the snippet keeps an explicit placeholder
-	// and the help text sends the operator to whoever deployed the instance.
-	const isRemote = identity.data?.backend === 'remote';
-	const brokerUrl = identity.data?.brokerUrl ?? null;
+	const isRemote = target.backend === 'remote';
+	const brokerUrl = target.brokerUrl ?? null;
+	// Shown whenever the backend reports one — never a guess.
+	const reportedBrokerUrl = identity.data?.brokerUrl || null;
 
 	// §3.10 one-agent-per-runtime: the context name is whatever binding the
 	// operator created on the agent machine — the agent's name is the
 	// suggested (and `jentic setup`-default) convention, so pre-fill it.
 	const context = shellArg(agentName);
 	const command = `jentic mcp --context ${context}`;
-	const registerSnippet = registerCommand({
-		url: instanceUrl,
-		...(isRemote ? { brokerUrl } : {}),
-	});
+	const registerSnippet = registerCommand(target);
 	const jsonConfig = JSON.stringify(
 		{ mcpServers: { jentic: { command: 'jentic', args: ['mcp', '--context', agentName] } } },
 		null,
@@ -198,10 +193,10 @@ export function McpConfigCard({ agentName }: { agentName: string }) {
 				)}
 				{/* Operator-facing lookup for the data plane address (#1249):
 				    rendered only when the backend reports one — never a guess. */}
-				{brokerUrl && (
+				{reportedBrokerUrl && (
 					<MetaItem
 						label="Broker URL"
-						value={<span className="font-mono">{brokerUrl}</span>}
+						value={<span className="font-mono">{reportedBrokerUrl}</span>}
 					/>
 				)}
 			</dl>

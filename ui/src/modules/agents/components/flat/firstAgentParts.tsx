@@ -40,6 +40,7 @@ import { EASE_OUT_SOFT } from '@/modules/agents/components/flat/GhostFleet';
 import { AGENT_NAME_MAX_LENGTH, agentNameError } from '@/modules/agents/lib/agentName';
 import type { FirstAgentExit, FirstAgentPhase } from '@/modules/agents/lib/firstRun';
 import { useGithubPick } from '@/modules/agents/lib/githubPick';
+import { useRegisterTarget } from '@/modules/agents/lib/useRegisterTarget';
 import { scopeRisk, type ScopeRisk } from '@/modules/agents/lib/requestedScopes';
 import {
 	DEFAULT_REGISTER_NAME,
@@ -106,8 +107,9 @@ export function RegisterCommand({
 }) {
 	const inputId = useId();
 	const nameError = agentNameError(name);
+	const target = useRegisterTarget();
 	const tokens = registerCommandTokens({
-		url: window.location.origin,
+		...target,
 		name: nameError ? DEFAULT_REGISTER_NAME : name.trim(),
 	});
 
@@ -182,6 +184,18 @@ export function RegisterCommand({
 					))}
 				</pre>
 			</div>
+			{target.backend === 'remote' && (
+				<p
+					data-testid="register-broker-note"
+					className="text-muted-foreground mt-2 text-xs"
+				>
+					On a remote install <code className="font-mono">--broker-url</code> is required
+					— without it <code className="font-mono">jentic execute</code> fail-closes.{' '}
+					{target.brokerUrl
+						? "The command carries this instance's broker (data plane) URL."
+						: 'Ask whoever deployed this instance for the broker (data plane) URL and put it in place of <broker-url>.'}
+				</p>
+			)}
 		</div>
 	);
 }

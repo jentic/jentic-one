@@ -52,6 +52,8 @@ function renderPage(opts: { reduced?: boolean } = {}) {
 }
 
 const landing = () => screen.findByTestId('agents-empty-landing');
+/** The canonical base URL the default `GET /instance` mock reports. */
+const INSTANCE_URL = 'https://jentic.example.test';
 const status = () => screen.getByTestId('register-status');
 
 describe('Agents page — zero agents', () => {
@@ -77,9 +79,14 @@ describe('Agents page — zero agents', () => {
 			screen.getByRole('button', { name: /Create an agent manually/ }),
 		).toBeInTheDocument();
 		// Pin the real CLI flag: `jentic register` takes --url, not --base-url (#1204).
-		expect(screen.getByTestId('register-command')).toHaveTextContent(
-			`$ jentic register --url ${window.location.origin} --name my-first-agent`,
+		// The URL is the instance's canonical base URL, as the MCP tab uses.
+		await waitFor(() =>
+			expect(screen.getByTestId('register-command')).toHaveTextContent(
+				`$ jentic register --url ${INSTANCE_URL} --name my-first-agent`,
+			),
 		);
+		// A local install needs no broker flag, and no note about one.
+		expect(screen.queryByText(/--broker-url/)).toBeNull();
 		expect(screen.queryByText(/--base-url/)).toBeNull();
 		expect(status()).toHaveTextContent('Listening for new agents…');
 		expect(status()).toHaveAttribute('aria-live', 'polite');
@@ -128,13 +135,57 @@ describe('Agents page — zero agents', () => {
 		const user = userEvent.setup();
 		renderPage();
 		await landing();
+		await waitFor(() =>
+			expect(screen.getByTestId('register-command')).toHaveTextContent(INSTANCE_URL),
+		);
 		const copy = screen.getByRole('button', { name: 'Copy the register command' });
 		await user.click(copy);
 		expect(await screen.findByText('Command copied')).toBeInTheDocument();
 		expect(await navigator.clipboard.readText()).toBe(
-			`jentic register --url ${window.location.origin} --name my-first-agent`,
+			`jentic register --url ${INSTANCE_URL} --name my-first-agent`,
 		);
 		expect(copy).toHaveTextContent('Copied!');
+	});
+
+	const remoteInstance = (brokerUrl?: string) =>
+		http.get('/instance', () =>
+			HttpResponse.json({
+				backend: 'remote',
+				canonical_base_url: 'https://jentic.example.test',
+				host: 'jentic.example.test',
+				instance_id: 'inst_digest_1',
+				...(brokerUrl !== undefined ? { broker_url: brokerUrl } : {}),
+			}),
+		);
+
+	it('on a remote install the command carries the reported broker URL', async () => {
+		worker.use(remoteInstance('https://broker.jentic.example.test'));
+		renderPage();
+		await landing();
+
+		await waitFor(() =>
+			expect(screen.getByTestId('register-command')).toHaveTextContent(
+				'$ jentic register --url https://jentic.example.test --broker-url https://broker.jentic.example.test --name my-first-agent',
+			),
+		);
+		expect(screen.getByTestId('register-broker-note')).toHaveTextContent(
+			"The command carries this instance's broker (data plane) URL.",
+		);
+	});
+
+	it('on a remote install with no reported broker, the command keeps a placeholder and says who to ask', async () => {
+		worker.use(remoteInstance(''));
+		renderPage();
+		await landing();
+
+		await waitFor(() =>
+			expect(screen.getByTestId('register-command')).toHaveTextContent(
+				'--broker-url <broker-url> --name my-first-agent',
+			),
+		);
+		expect(screen.getByTestId('register-broker-note')).toHaveTextContent(
+			/without it jentic execute fail-closes\. Ask whoever deployed this instance/,
+		);
 	});
 
 	it('"Create an agent manually" and the header button open the same create sheet', async () => {
