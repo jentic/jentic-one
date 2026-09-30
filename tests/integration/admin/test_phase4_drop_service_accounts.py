@@ -1,7 +1,7 @@
 """Scenario tests for the theme-8 Phase-4 service-account retirement + drop.
 
 Two layers, against the real integration databases (Postgres in CI, SQLite via
-``JENTIC_TEST_BACKEND=sqlite``), downgrading admin below the drop and
+``JENTIC_TEST_BACKEND=sqlite``), restoring admin below the drop and
 re-upgrading:
 
 - **The runner** (``python -m jentic_one.migrations.run``, driven through
@@ -15,7 +15,9 @@ re-upgrading:
 - **The drop revision's own gate** (``e2f3a4b5c6d7``, plain Alembic — the path
   a targeted/partial upgrade takes, skipping the runner's retirement): refuses
   any unfinished row by id, sweeps the retired scope strings, and the
-  documented empty-table downgrade.
+  irreversible downgrade (it raises; tests reach the pre-drop schema through
+  ``tests/integration/service_account_schema.py``, which models the
+  pre-upgrade snapshot restore).
 
 The SQLite-only unit twin of the gate is
 ``tests/unit/test_migration_theme8_drop_service_accounts.py``; the service-level
@@ -44,6 +46,7 @@ from jentic_one.shared.config import AppConfig
 from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.models import ActorType, StoredCredentialType
 from tests.integration.conftest import _TEST_ENCRYPTION_KEY, _alembic_config_for
+from tests.integration.service_account_schema import restore_pre_sa_drop_admin
 
 pytestmark = pytest.mark.integration
 
@@ -157,7 +160,8 @@ def runner_config(
 async def _downgrade(
     integration_config: AppConfig, admin_db: DatabaseSession, control_db: DatabaseSession
 ) -> None:
-    await asyncio.to_thread(command.downgrade, _admin_cfg(integration_config), _ADMIN_PRE_DROP)
+    """Admin below the drop the snapshot-restore way (the drop's downgrade raises)."""
+    await asyncio.to_thread(restore_pre_sa_drop_admin, integration_config)
     await _cleanup(admin_db, control_db)
 
 
@@ -644,22 +648,16 @@ async def test_drop_sweeps_retired_scope_strings(
     assert scopes == ["agents:read"]
 
 
-async def test_downgrade_recreates_empty_tables(
+async def test_downgrade_is_irreversible_and_changes_nothing(
     integration_config: AppConfig,
     admin_db: DatabaseSession,
-    control_db: DatabaseSession,
     restore_admin_head: None,
 ) -> None:
-    """Irreversible for data: the tables come back empty (schema chain walkable)."""
-    await _downgrade(integration_config, admin_db, control_db)
-    assert set(_SA_TABLES) <= await _table_names(admin_db)
-    async with admin_db.session() as session:
-        conn = await session.connection()
-        columns = await conn.run_sync(
-            lambda sync_conn: {
-                c["name"] for c in inspect(sync_conn).get_columns("service_accounts")
-            }
-        )
-        count = (await session.execute(text("SELECT count(*) FROM service_accounts"))).scalar_one()
-    assert {"migrated_to_actor_id", "migrated_at"} <= columns
-    assert count == 0
+    """The drop never recreates empty tables: its downgrade raises, pointing at
+    the pre-upgrade snapshot, and leaves admin at the drop revision."""
+    assert await _admin_revision(admin_db) == _ADMIN_DROP
+    with pytest.raises(RuntimeError, match="irreversible") as excinfo:
+        await asyncio.to_thread(command.downgrade, _admin_cfg(integration_config), _ADMIN_PRE_DROP)
+    assert "restore the admin database from the pre-upgrade snapshot" in str(excinfo.value)
+    assert await _admin_revision(admin_db) == _ADMIN_DROP
+    assert not set(_SA_TABLES) & await _table_names(admin_db)

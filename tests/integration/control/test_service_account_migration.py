@@ -10,9 +10,9 @@ acceptance criteria verbatim where they apply.
 
 The service runs inside the migration runner, before the admin drop migration
 (``e2f3a4b5c6d7``), so it runs against the pre-drop schema: the module
-downgrades the admin chain below the drop (recreating the tables empty — the
-documented rollback shape) and re-upgrades at teardown through the drop's
-fresh-install path, since the suite leaves them empty.
+restores the pre-drop admin schema (the drop's downgrade raises; the helper
+models the pre-upgrade snapshot restore) and re-upgrades at teardown through
+the drop's fresh-install path, since the suite leaves the tables empty.
 The SA ORM models are gone, so seeding is raw SQL.
 """
 
@@ -50,20 +50,18 @@ from jentic_one.shared.context import Context
 from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.models import ActorType, StoredCredentialType
 from tests.integration.conftest import _alembic_config_for
+from tests.integration.service_account_schema import restore_pre_sa_drop_admin
 
 pytestmark = pytest.mark.integration
 
 _OWNER = "usr_t8m_owner"
 
-#: The admin revision just below the theme-8 Phase-4 drop (``e2f3a4b5c6d7``).
-_ADMIN_PRE_DROP = "d1e2f3a4b5c6"  # pragma: allowlist secret
-
 
 @pytest.fixture(scope="module")
 def service_account_tables(integration_config: AppConfig) -> Iterator[None]:
-    """Downgrade below the Phase-4 drop so the SA tables exist, then re-drop."""
+    """Restore the pre-drop SA tables (the drop's downgrade raises), then re-drop."""
     admin_cfg = _alembic_config_for("admin", integration_config.databases.admin)
-    command.downgrade(admin_cfg, _ADMIN_PRE_DROP)
+    restore_pre_sa_drop_admin(integration_config)
     yield
     command.upgrade(admin_cfg, "head")
 
@@ -1225,7 +1223,7 @@ async def test_retire_without_the_tables_is_a_noop(
     try:
         retired = await ServiceAccountMigrationService(integration_context).retire()
     finally:
-        await asyncio.to_thread(command.downgrade, admin_cfg, _ADMIN_PRE_DROP)
+        await asyncio.to_thread(restore_pre_sa_drop_admin, integration_config)
     assert retired.action == "no_tables"
 
 

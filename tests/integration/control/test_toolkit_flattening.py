@@ -39,6 +39,7 @@ from jentic_one.shared.config import AppConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.session import DatabaseSession
 from tests.integration.conftest import _alembic_config_for
+from tests.integration.service_account_schema import restore_pre_sa_drop_admin
 
 pytestmark = pytest.mark.integration
 
@@ -87,6 +88,9 @@ def legacy_tables(integration_config: AppConfig) -> Iterator[None]:
     control_cfg = _alembic_config_for("control", integration_config.databases.control)
     admin_cfg = _alembic_config_for("admin", integration_config.databases.admin)
     command.downgrade(control_cfg, _CONTROL_PRE_DROP)
+    # The theme-8 Phase-4 drop above the 6b one is irreversible (its
+    # downgrade raises): model the pre-upgrade admin snapshot, then walk on.
+    restore_pre_sa_drop_admin(integration_config)
     command.downgrade(admin_cfg, _ADMIN_PRE_DROP)
     yield
     command.upgrade(control_cfg, "head")

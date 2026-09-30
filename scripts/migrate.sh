@@ -14,6 +14,12 @@ Options:
   --target <rev>     Target revision (default: head).
   --dry-run          Generate SQL without applying.
   -h, --help         Show this help.
+
+Migrates ONE database with plain Alembic: it skips the runner's cross-database
+upgrade steps. For a normal upgrade use the full runner instead:
+  uv run python -m jentic_one.migrations.run
+(The admin service-account drop refuses to run until that runner has retired
+the service accounts.)
 USAGE
     exit "${1:-0}"
 }

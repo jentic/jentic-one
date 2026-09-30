@@ -107,10 +107,14 @@ Alembic is configured for async multi-database migrations. Each database has its
 ### Running migrations
 
 ```bash
-uv run alembic -n registry upgrade head
-uv run alembic -n control upgrade head
-uv run alembic -n admin upgrade head
+uv run python -m jentic_one.migrations.run
 ```
+
+This is the full runner the Helm migrate Job, compose, and the installer use:
+it upgrades every database in order and runs the cross-database upgrade steps.
+Per-database `uv run alembic -n <db> upgrade head` still works for schema-only
+work, but skips those steps — the admin service-account drop
+(`e2f3a4b5c6d7`) refuses until the runner has retired the service accounts.
 
 ### Creating a new migration
 

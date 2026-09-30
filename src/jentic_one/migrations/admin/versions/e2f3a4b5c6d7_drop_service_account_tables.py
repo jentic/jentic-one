@@ -36,12 +36,12 @@ What stays: the ``uq_agent_credentials_api_key_hash`` index (it guards agent
 keys) and historical ``sva_`` ids in audit, event and control-DB columns (read
 paths label them, never resolve them).
 
-``downgrade()`` is **irreversible for data**: it recreates the three tables
-empty, in their final historical shape, so the schema chain stays walkable
-(the documented theme-5 6b rollback passes through this revision, and the
-repo convention is an implemented inverse ``downgrade()``, never a raise).
-Service accounts come back only from a database snapshot taken before the
-upgrade; the cleanup and the scope sweep are not reversed.
+``downgrade()`` **raises**: the drop is irreversible. The service-account
+data was migrated to agents and dropped, and recreating empty tables would
+restore nothing. Rolling back means restoring the admin database (and the
+control database, for the swept ``sva_`` inline rules) from the snapshot
+taken before the upgrade — see "Rollback (theme-8 Phase 4)" in
+``docs/development/releasing.md``.
 
 Revision ID: e2f3a4b5c6d7
 Revises: d1e2f3a4b5c6
@@ -123,6 +123,13 @@ _CLEANUP_SQL = (
 )
 
 _MAX_IDS_IN_MESSAGE = 20
+
+_IRREVERSIBLE = (
+    "e2f3a4b5c6d7 is irreversible: the service-account data was migrated to agents "
+    "and dropped; restore the admin database from the pre-upgrade snapshot (and the "
+    "control database, for the swept sva_ inline rules). Nothing was changed. See "
+    "'Rollback (theme-8 Phase 4)' in docs/development/releasing.md."
+)
 
 
 def _ids(bind: sa.engine.Connection, sql: str) -> list[str]:
@@ -233,141 +240,12 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Irreversible for data: recreate the three tables **empty**.
+    """Irreversible: refuse, never recreate empty service-account tables.
 
-    Final historical shape, so the revision chain stays walkable (the
-    theme-5 6b rollback passes through here). Service accounts come back only
-    from a pre-upgrade database snapshot; the cleanup and the scope sweep are
-    not reversed.
+    The upgrade migrated every service account to a successor agent and then
+    dropped the data; empty tables would restore nothing and only make the
+    rollback look complete. The only way back is the admin-database snapshot
+    taken before the upgrade. Raised before any DDL, so a refused downgrade
+    leaves the schema exactly at this revision.
     """
-    pg = op.get_bind().dialect.name == "postgresql"
-    op.create_table(
-        "service_accounts",
-        sa.Column(
-            "id",
-            sa.String(30),
-            server_default=sa.func.generate_ksuid("sva") if pg else None,
-            nullable=False,
-        ),
-        sa.Column("name", sa.String(255), nullable=False),
-        sa.Column("description", sa.String(1024), nullable=True),
-        sa.Column(
-            "owner_id",
-            sa.String(30),
-            sa.ForeignKey("users.id", ondelete="RESTRICT"),
-            nullable=False,
-        ),
-        sa.Column("registered_by", sa.String(30), nullable=False),
-        sa.Column(
-            "approved_by",
-            sa.String(30),
-            sa.ForeignKey("users.id", ondelete="SET NULL"),
-            nullable=True,
-        ),
-        sa.Column("status", sa.String(16), server_default="pending", nullable=False),
-        sa.Column("denial_reason", sa.String(1024), nullable=True),
-        sa.Column("denied_by", sa.String(30), nullable=True),
-        sa.Column(
-            "created_at",
-            sa.DateTime(timezone=True),
-            server_default=sa.func.now(),
-            nullable=False,
-        ),
-        sa.Column(
-            "updated_at",
-            sa.DateTime(timezone=True),
-            server_default=sa.func.now(),
-            nullable=False,
-        ),
-        sa.Column("created_by", sa.String(255), nullable=True),
-        sa.Column("approved_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("migrated_to_actor_id", sa.String(30), nullable=True),
-        sa.Column("migrated_at", sa.DateTime(timezone=True), nullable=True),
-        sa.PrimaryKeyConstraint("id"),
-    )
-    op.create_index("ix_service_accounts_owner_id", "service_accounts", ["owner_id"])
-    op.create_index("ix_service_accounts_status", "service_accounts", ["status"])
-    op.create_index("ix_service_accounts_created_at", "service_accounts", ["created_at"])
-    op.create_index("ix_service_accounts_created_by", "service_accounts", ["created_by"])
-    op.create_index(
-        "ix_service_accounts_migrated_to_actor_id", "service_accounts", ["migrated_to_actor_id"]
-    )
-
-    op.create_table(
-        "service_account_credentials",
-        sa.Column("id", sa.String(30), primary_key=True),
-        sa.Column(
-            "service_account_id",
-            sa.String(30),
-            sa.ForeignKey("service_accounts.id", ondelete="CASCADE"),
-            nullable=False,
-        ),
-        sa.Column("client_secret_hash", sa.String(128), nullable=True),
-        sa.Column("api_key_hash", sa.String(128), nullable=True),
-        sa.Column(
-            "created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
-        ),
-        sa.Column(
-            "updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
-        ),
-        sa.Column("created_by", sa.String(255), nullable=True),
-        sa.Column("rotated_at", sa.DateTime(timezone=True), nullable=True),
-    )
-    op.create_index(
-        "ix_sa_credentials_service_account_id",
-        "service_account_credentials",
-        ["service_account_id"],
-        unique=True,
-    )
-    op.create_index(
-        "ix_service_account_credentials_created_at",
-        "service_account_credentials",
-        ["created_at"],
-    )
-    op.create_index(
-        "ix_service_account_credentials_created_by",
-        "service_account_credentials",
-        ["created_by"],
-    )
-
-    op.create_table(
-        "service_account_migration_acks",
-        sa.Column(
-            "id",
-            sa.String(30),
-            server_default=sa.func.generate_ksuid("smak") if pg else None,
-            nullable=False,
-        ),
-        sa.Column("acknowledged_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("unstamped_count", sa.Integer, nullable=False),
-        sa.Column("grant_twin_missing_count", sa.Integer, nullable=False),
-        sa.Column("unrevoked_token_count", sa.Integer, nullable=False),
-        sa.Column("digest_mismatch_count", sa.Integer, nullable=False),
-        sa.Column("post_stamp_mutation_count", sa.Integer, nullable=False),
-        sa.Column("report_finding_count", sa.Integer, nullable=False),
-        sa.Column("tool_version", sa.String(50), nullable=False),
-        sa.Column(
-            "created_at",
-            sa.DateTime(timezone=True),
-            server_default=sa.func.now(),
-            nullable=False,
-        ),
-        sa.Column(
-            "updated_at",
-            sa.DateTime(timezone=True),
-            server_default=sa.func.now(),
-            nullable=False,
-        ),
-        sa.Column("created_by", sa.String(255), nullable=True),
-        sa.PrimaryKeyConstraint("id"),
-    )
-    op.create_index(
-        "ix_service_account_migration_acks_created_at",
-        "service_account_migration_acks",
-        ["created_at"],
-    )
-    op.create_index(
-        "ix_service_account_migration_acks_created_by",
-        "service_account_migration_acks",
-        ["created_by"],
-    )
+    raise RuntimeError(_IRREVERSIBLE)

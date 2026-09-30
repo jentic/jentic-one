@@ -238,7 +238,8 @@ in the next section). Two rules:
    and names the missing step, leaving the toolkit tables untouched.
 
 Take the Phase 6a export (`jentic_one export-toolkits --out <file>`) before
-upgrading. Rollback needs it.
+upgrading. A rollback of an upgrade that stopped before the service-account
+drop needs it (see [Rollback (Phase 6b → 6a)](#rollback-phase-6b--6a)).
 
 0.41.0 also carries theme-8 Phase 4, which drops the service-account tables
 ([below](#upgrading-to-the-theme-8-phase-4-release-service-account-tables-dropped)).
@@ -360,9 +361,26 @@ acknowledged. Read this **before** running migrations.
 
 ### Rollback (Phase 6b → 6a)
 
-Rollback runs **on the 0.41 image first**, then moves the code back. The
-previous release (0.40.x) does not ship this release's revision scripts
-(control `f2b3c4d5e6a7` / `f3c4d5e6a7b8`, admin `c0e1f2a3b4c5` /
+0.41.0 also carries the theme-8 Phase-4 service-account drop (admin
+`e2f3a4b5c6d7`), which is **irreversible**: its downgrade refuses. Which
+rollback applies depends on how far the upgrade got — check with `python -m
+jentic_one.migrations.run --check` (the `STATUS admin` line):
+
+- **Admin is past `e2f3a4b5c6d7`** (the upgrade completed): restore **both**
+  the admin and the control databases from the snapshots taken before the
+  upgrade, then roll the code back to 0.40.x. The snapshots already hold the
+  0.40.x schema — toolkit tables and service accounts included — so there is
+  nothing to downgrade or re-import. Changes written since the upgrade are
+  lost. Do not restore admin alone: the retirement deleted the `sva_`-keyed
+  inline permission rules from the control database, which 0.40.x still
+  needs for any service account that was unmigrated at snapshot time.
+- **Admin stopped at `d1e2f3a4b5c6` or below** (for example, the
+  service-account retirement refused, so nothing was dropped on the
+  service-account side): the on-image downgrade below still works.
+
+The downgrade path runs **on the 0.41 image first**, then moves the code
+back. The previous release (0.40.x) does not ship this release's revision
+scripts (control `f2b3c4d5e6a7` / `f3c4d5e6a7b8`, admin `c0e1f2a3b4c5` /
 `d1e2f3a4b5c6`), so its Alembic cannot downgrade them — nor even start
 against a database stamped with them. Order:
 
@@ -550,7 +568,8 @@ run the Phase-1 migration (above) first — the boot job still does it.
 paths. Read this **before** running migrations.
 
 - **Snapshot first.** Take admin-DB and control-DB snapshots. The drop is
-  irreversible for data (see *Rollback* below).
+  irreversible: its downgrade refuses, and the snapshots are the only way
+  back (see *Rollback* below).
 - **The retirement is automatic.** On a full upgrade (`python -m
   jentic_one.migrations.run` with no `--db` or `--target`), the runner
   migrates control, brings admin to `d1e2f3a4b5c6` (just before the drop),
@@ -640,15 +659,19 @@ then re-run the migration. Re-running is always safe.
 
 ### Rollback (theme-8 Phase 4)
 
-The drop is **irreversible for data**. `e2f3a4b5c6d7` keeps a schema-only
-downgrade so the chain stays walkable: `python -m jentic_one.migrations.run
---db admin --direction down --target d1e2f3a4b5c6` recreates the three
-tables **empty**, with the Phase-1 stamp columns. Service-account rows come
-back only from the admin-DB snapshot taken before the upgrade (restore the
-control-DB snapshot too, for the swept `sva_` inline rules). The scope sweep
-is not reversed; those scopes granted nothing. Migrated keys resolve through
-their successor agents on both releases, so a rollback does not change who
-authenticates.
+The drop is **irreversible**. `e2f3a4b5c6d7` has no working downgrade:
+`python -m jentic_one.migrations.run --direction down` (or any target below
+it) refuses with `e2f3a4b5c6d7 is irreversible: the service-account data was
+migrated to agents and dropped; restore the admin database from the
+pre-upgrade snapshot …` and changes nothing. Empty service-account tables
+would restore nothing, so none are recreated.
+
+To go back, restore the admin **and** control databases from the snapshots
+taken before the upgrade (control too, for the swept `sva_` inline rules),
+then roll the code back — see [Rollback (Phase 6b → 6a)](#rollback-phase-6b--6a),
+which covers both 0.41.0 drops. Changes written since the upgrade are lost.
+Do not `alembic stamp` past the drop to force a downgrade: the schema would
+claim tables that are not there.
 
 ## Reviewing grants and bindings carried over by the upgrade
 

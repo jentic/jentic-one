@@ -6,10 +6,12 @@ the original document. Also covers import idempotency (partial-failure
 re-run) and the self-describing-format validation.
 
 The legacy tables were dropped at migration head (theme-5 Phase 6b), so the
-module first runs the documented rollback downgrade — control to
-``e1a2b3c4d5f6``, admin to ``3e7a91c4b2d8``, the last revisions 0.40.x knows —
-which is exactly the schema the import runs against in the rollback runbook
-(downgrade on the 0.41 image, re-import, then roll the code back). All
+module first walks back to the schema the Phase-6a import runs against —
+control to ``e1a2b3c4d5f6``, admin to ``3e7a91c4b2d8``, the last revisions
+0.40.x knows. The admin leg starts from a modelled pre-drop snapshot: the
+theme-8 Phase-4 drop ``e2f3a4b5c6d7`` is irreversible, so a real 0.41 rollback
+past it restores both databases from their snapshots instead (see
+docs/development/releasing.md). All
 legacy-table access is raw SQL: the ORM models are gone, which is the point
 of the migration-independent repository.
 """
@@ -33,6 +35,7 @@ from jentic_one.shared.config import AppConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.session import DatabaseSession
 from tests.integration.conftest import _alembic_config_for
+from tests.integration.service_account_schema import restore_pre_sa_drop_admin
 
 pytestmark = pytest.mark.integration
 
@@ -64,6 +67,9 @@ def legacy_tables(integration_config: AppConfig) -> Iterator[None]:
     control_cfg = _alembic_config_for("control", integration_config.databases.control)
     admin_cfg = _alembic_config_for("admin", integration_config.databases.admin)
     command.downgrade(control_cfg, _CONTROL_PRE_DROP)
+    # The theme-8 Phase-4 drop above the 6b one is irreversible (its
+    # downgrade raises): model the pre-upgrade admin snapshot, then walk on.
+    restore_pre_sa_drop_admin(integration_config)
     command.downgrade(admin_cfg, _ADMIN_PRE_DROP)
     yield
     command.upgrade(control_cfg, "head")

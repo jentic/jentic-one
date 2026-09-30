@@ -5,7 +5,7 @@ and the retired ``service_account_migration_acks`` behind a guard-and-raise
 gate (every SA stamped and swept — the runner's pre-drop retirement does
 that). Pinned here against a real database (no DB mocking): the fresh-install
 path, every refusal arm, the swept happy path with the orphan cleanup and the
-retired-scope sweep, and the empty-table downgrade. The Postgres twin lives in
+retired-scope sweep, and the irreversible (raising) downgrade. The Postgres twin lives in
 ``tests/integration/admin/test_phase4_drop_service_accounts.py``.
 """
 
@@ -216,21 +216,21 @@ def test_swept_drops_cleans_orphans_and_sweeps_retired_scopes(sqlite_stack: Path
     assert bindings == 0
 
 
-def test_downgrade_recreates_empty_tables(sqlite_stack: Path) -> None:
-    """Irreversible for data: the tables come back empty (schema chain walkable)."""
+def _admin_revision(stack: Path) -> str:
+    with _connect(stack) as conn:
+        return str(conn.execute("SELECT version_num FROM alembic_version").fetchone()[0])
+
+
+def test_downgrade_is_irreversible_and_changes_nothing(sqlite_stack: Path) -> None:
+    """The drop never recreates empty tables: its downgrade raises, pointing at
+    the pre-upgrade snapshot, before any DDL."""
     run_mod.upgrade(_DB)
-    run_mod.downgrade(_DB, _PRE_DROP)
-    tables = _tables(sqlite_stack)
-    assert {
+    with pytest.raises(RuntimeError, match="e2f3a4b5c6d7 is irreversible") as excinfo:
+        run_mod.downgrade(_DB, _PRE_DROP)
+    assert "restore the admin database from the pre-upgrade snapshot" in str(excinfo.value)
+    assert _admin_revision(sqlite_stack) == _REVISION
+    assert not _tables(sqlite_stack) & {
         "service_accounts",
         "service_account_credentials",
         "service_account_migration_acks",
-    } <= tables
-    with _connect(sqlite_stack) as conn:
-        columns = {row[1] for row in conn.execute("PRAGMA table_info(service_accounts)")}
-        (count,) = conn.execute("SELECT count(*) FROM service_accounts").fetchone()
-    assert {"migrated_to_actor_id", "migrated_at"} <= columns
-    assert count == 0
-    # And back up through the fresh-install path.
-    run_mod.upgrade(_DB)
-    assert "service_accounts" not in _tables(sqlite_stack)
+    }

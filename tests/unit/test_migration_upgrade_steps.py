@@ -66,9 +66,12 @@ def test_binding_table_indexes_survive_the_sqlite_rebuild(sqlite_stack: Path) ->
 
 def test_repair_migration_restores_indexes_a_prior_rebuild_dropped(sqlite_stack: Path) -> None:
     """A dev database that ran the original b9d0e1f2a3b4 regains its indexes."""
-    assert run_mod.main(["--skip-upgrade-steps"]) == 0
-    down_to = "b9d0e1f2a3b4"  # pragma: allowlist secret
-    assert run_mod.main(["--db", "admin", "--direction", "down", "--target", down_to]) == 0
+    # Admin only up to the rebuild (never walked back: the SA drop above it is
+    # irreversible); everything else at head.
+    for name in run_mod._valid_dbs():
+        if name != "admin":
+            run_mod.upgrade(name)
+    run_mod.upgrade("admin", "b9d0e1f2a3b4")  # pragma: allowlist secret
     for name in _BINDING_INDEXES:
         _execute(sqlite_stack / "admin.db", f"DROP INDEX {name}")
 

@@ -54,9 +54,12 @@ def _stub_retirement(
 
 
 def _below_the_drop(stack: Path) -> str:
-    """Full upgrade, then admin back below the drop; returns control's head."""
-    assert run_mod.main(["--skip-upgrade-steps"]) == 0
-    assert run_mod.main(["--db", "admin", "--direction", "down", "--target", _PRE_DROP]) == 0
+    """Every DB at head except admin, left at the drop's parent (the drop is
+    irreversible, so it is never walked back); returns control's head."""
+    for name in run_mod._valid_dbs():
+        if name != "admin":
+            run_mod.upgrade(name)
+    run_mod.upgrade("admin", _PRE_DROP)
     assert _tables(stack) >= _SA_TABLES
     return _control_revision(stack)
 

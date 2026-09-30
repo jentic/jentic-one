@@ -27,6 +27,7 @@ from jentic_one.control.repos.toolkit_flattening_repo import legacy_state_digest
 from jentic_one.shared.config import AppConfig
 from jentic_one.shared.db.session import DatabaseSession
 from tests.integration.conftest import _alembic_config_for
+from tests.integration.service_account_schema import restore_pre_sa_drop_admin
 
 pytestmark = pytest.mark.integration
 
@@ -280,6 +281,7 @@ async def test_admin_drop_blocks_legacy_rows_without_direct_evidence(
 ) -> None:
     """Legacy bindings + zero direct bindings → raise; one direct binding → drop."""
     cfg = _admin_cfg(integration_config)
+    await asyncio.to_thread(restore_pre_sa_drop_admin, integration_config)
     await asyncio.to_thread(command.downgrade, cfg, _ADMIN_PRE_DROP)
     async with admin_db.session() as session:
         # Zero direct bindings is the "flattening clearly has not run" state —
@@ -336,6 +338,7 @@ async def test_admin_drop_uses_the_control_ack_when_readable(
     if admin_db.backend.dialect_name == "sqlite":
         pytest.skip("cross-schema ack lookup is PostgreSQL-only")
     cfg = _superuser_admin_cfg(integration_config)
+    await asyncio.to_thread(restore_pre_sa_drop_admin, integration_config)
     await asyncio.to_thread(command.downgrade, cfg, _ADMIN_PRE_DROP)
     try:
         async with control_db.session() as session:
