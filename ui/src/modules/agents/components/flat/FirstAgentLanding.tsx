@@ -53,7 +53,6 @@ import {
 	StatusLine,
 	Stepper,
 } from '@/modules/agents/components/flat/firstAgentParts';
-import { DEFAULT_REGISTER_NAME } from '@/modules/agents/lib/registerCommand';
 import type { FirstAgentExit, FirstAgentPhase } from '@/modules/agents/lib/firstRun';
 
 interface FirstAgentLandingProps {
@@ -67,6 +66,12 @@ interface FirstAgentLandingProps {
 	onDeny: () => void;
 	/** Show the fleet with `agent` selected, and the Add-APIs flow if asked. */
 	onExit: (exit: FirstAgentExit) => void;
+	/** The name typed in the register card. */
+	registerName: string;
+	onRegisterNameChange: (name: string) => void;
+	/** The name an arrival should carry (the command's), or null when this
+	 * session never showed the command. */
+	expectedName: string | null;
 	/** Other agents waiting for approval besides `agent`. */
 	morePending: number;
 	/** Leave for the fleet view, where every pending agent is listed. */
@@ -82,13 +87,14 @@ export function FirstAgentLanding({
 	approvePending,
 	onDeny,
 	onExit,
+	registerName,
+	onRegisterNameChange,
+	expectedName,
 	morePending,
 	onShowFleet,
 	slotRef,
 }: FirstAgentLandingProps) {
 	const reducedMotion = useReducedMotionConfig() ?? false;
-	// Held here, so a denied agent's return to listening keeps the typed name.
-	const [registerName, setRegisterName] = useState(DEFAULT_REGISTER_NAME);
 	const agentPhase = agent?.status === 'pending' ? 'arrived' : 'approved';
 	const phase: FirstAgentPhase = agent == null ? 'listening' : agentPhase;
 	const morph: Transition = reducedMotion
@@ -157,6 +163,7 @@ export function FirstAgentLanding({
 									onDeny={onDeny}
 									onExit={onExit}
 									fade={fade}
+									expectedName={expectedName}
 									morePending={morePending}
 									onShowFleet={onShowFleet}
 								/>
@@ -164,7 +171,7 @@ export function FirstAgentLanding({
 								<RegisterCommand
 									titleId={titleId}
 									name={registerName}
-									onNameChange={setRegisterName}
+									onNameChange={onRegisterNameChange}
 								/>
 							)}
 						</motion.div>

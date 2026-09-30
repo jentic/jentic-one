@@ -19,6 +19,7 @@ import {
 	checkA11y,
 } from '@/__tests__/test-utils';
 import { setToken } from '@/shared/api';
+import { formatTimestamp } from '@/shared/lib/utils';
 import { Toaster } from '@/shared/ui';
 import {
 	clearAgentsStore,
@@ -280,6 +281,61 @@ describe('Agents page — zero agents', () => {
 		expect(screen.queryByRole('button', { name: /Create an agent manually/ })).toBeNull();
 		expect(screen.getByTestId('ghost-tab')).toHaveAttribute('data-status', 'pending');
 		await waitFor(() => checkA11y(container), { timeout: 3000 });
+	});
+
+	it("an arrival under another name than the command's is flagged before approval", async () => {
+		const user = userEvent.setup();
+		const { queryClient } = renderPage();
+		await landing();
+		const input = screen.getByLabelText('Agent name');
+		await user.clear(input);
+		await user.type(input, 'research-bot');
+		await arrive('research-bot-2', queryClient);
+
+		expect(screen.getByTestId('arrival-name-warning')).toHaveTextContent(
+			'It registered as research-bot-2, not research-bot — the name in your command. Make sure it is yours before approving.',
+		);
+		expect(screen.queryByTestId('arrival-others-warning')).toBeNull();
+	});
+
+	it("an arrival carrying the command's name and alone gets no warning, and its time in full", async () => {
+		const { queryClient } = renderPage();
+		await landing();
+		const id = await arrive('my-first-agent', queryClient);
+
+		expect(screen.queryByTestId('arrival-warnings')).toBeNull();
+		const res = await fetch(`/agents/${id}`);
+		const { created_at: createdAt } = (await res.json()) as { created_at: string };
+		const registered = screen.getByTestId('arrival-registered');
+		expect(registered).toHaveTextContent(`Registered just now · ${formatTimestamp(createdAt)}`);
+		// A neutral glyph, not a brand: the card vouches for nothing.
+		expect(screen.getByTestId('arrival-card').querySelector('[data-vendor-mark]')).toBeNull();
+	});
+
+	it('another pending agent is flagged on the arrival card', async () => {
+		const { queryClient } = renderPage();
+		await landing();
+		await arrive('my-first-agent', queryClient);
+		selfRegisterAgent('my-first-agent');
+		await queryClient.invalidateQueries();
+
+		expect(await screen.findByTestId('arrival-others-warning')).toBeInTheDocument();
+		expect(screen.getByTestId('more-pending')).toHaveTextContent(
+			'+1 more waiting for approval',
+		);
+	});
+
+	it('the manual create sheet starts from the name typed in the register card', async () => {
+		const user = userEvent.setup();
+		renderPage();
+		await landing();
+		const input = screen.getByLabelText('Agent name');
+		await user.clear(input);
+		await user.type(input, 'research-bot');
+
+		await user.click(screen.getByRole('button', { name: /Create an agent manually/ }));
+		const sheet = await screen.findByRole('dialog', { name: 'Create agent' });
+		expect(within(sheet).getByLabelText('Name')).toHaveValue('research-bot');
 	});
 
 	it('shows the provenance facts the API has for the agent', async () => {
@@ -856,6 +912,7 @@ describe('Agents page — resuming the first run on load', () => {
 		expect(screen.queryByTestId('manual-card')).toBeNull();
 		expect(screen.queryByTestId('register-command')).toBeNull();
 		expect(screen.queryByTestId('more-pending')).toBeNull();
+		expect(screen.queryByTestId('arrival-warnings')).toBeNull();
 		expect(screen.queryByTestId('agent-strip')).toBeNull();
 	});
 
@@ -877,6 +934,12 @@ describe('Agents page — resuming the first run on load', () => {
 		).toBeInTheDocument();
 		const more = screen.getByTestId('more-pending');
 		expect(more).toHaveTextContent('+2 more waiting for approval');
+		// Several waiting: the card asks the operator to check this is theirs.
+		expect(screen.getByTestId('arrival-others-warning')).toHaveTextContent(
+			'Other agents are also waiting — check the name and time before approving.',
+		);
+		// A resumed mount never showed the command, so there is no name to compare.
+		expect(screen.queryByTestId('arrival-name-warning')).toBeNull();
 
 		await user.click(more);
 		expect(await screen.findByTestId('agent-strip')).toBeInTheDocument();

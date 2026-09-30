@@ -20,13 +20,21 @@ interface AgentCreateSheetProps {
 	 * on into the Add-APIs flow for it.
 	 */
 	onCreated?: (agent: AgentEntity, opts: { addApis: boolean }) => void;
+	/** A name to start the draft from — the one typed in the landing's register
+	 * card, so either path in creates the agent the operator named. */
+	initialName?: string;
 }
 
 /** Which button is in flight, so only that one spins. */
 type Intent = 'add-apis' | 'empty';
 
-export function AgentCreateSheet({ open, onClose, onCreated }: AgentCreateSheetProps) {
-	const [name, setName] = useState('');
+export function AgentCreateSheet({
+	open,
+	onClose,
+	onCreated,
+	initialName = '',
+}: AgentCreateSheetProps) {
+	const [name, setName] = useState(initialName);
 	const [description, setDescription] = useState('');
 	const [scopes, setScopes] = useState<string[]>([]);
 	const [error, setError] = useState<string | null>(null);
@@ -37,6 +45,16 @@ export function AgentCreateSheet({ open, onClose, onCreated }: AgentCreateSheetP
 	useEffect(() => {
 		if (open) setError(null);
 	}, [open]);
+
+	// The seed syncs only when it changes, and only over a draft that still
+	// reads as the previous seed: a name edited here is the operator's and stays.
+	const lastSeedRef = useRef(initialName);
+	useEffect(() => {
+		const previous = lastSeedRef.current;
+		if (previous === initialName) return;
+		lastSeedRef.current = initialName;
+		setName((current) => (current === previous ? initialName : current));
+	}, [initialName]);
 
 	async function handleSubmit(next: Intent) {
 		const trimmed = name.trim();

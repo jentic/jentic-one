@@ -6,6 +6,7 @@
 import { useEffect, useId, useReducer, type ReactNode } from 'react';
 import { AnimatePresence, motion, type Transition } from 'framer-motion';
 import {
+	Bot,
 	Check,
 	CircleCheck,
 	Clock,
@@ -17,7 +18,6 @@ import {
 import {
 	ActorLabel,
 	ActorStatusBadge,
-	AgentMark,
 	Badge,
 	Button,
 	CopyButton,
@@ -25,7 +25,6 @@ import {
 	Input,
 	Label,
 	Skeleton,
-	Tooltip,
 	VendorMark,
 } from '@/shared/ui';
 import { cn, formatTimestamp, timeAgo } from '@/shared/lib/utils';
@@ -381,6 +380,7 @@ export function AgentDetails({
 	onDeny,
 	onExit,
 	fade,
+	expectedName,
 	morePending,
 	onShowFleet,
 }: {
@@ -392,6 +392,9 @@ export function AgentDetails({
 	onDeny: () => void;
 	onExit: (exit: FirstAgentExit) => void;
 	fade: Transition;
+	/** The name the command on this page registers with, or null when this
+	 * session never showed it. */
+	expectedName: string | null;
 	/** Other agents waiting besides this one — pointed at, never hidden. */
 	morePending: number;
 	onShowFleet: () => void;
@@ -413,21 +416,26 @@ export function AgentDetails({
 		<div data-testid="arrival-card">
 			<CardHeader
 				titleId={titleId}
-				glyph={<AgentMark size="sm" className="mt-0.5" />}
+				glyph={
+					// Neutral on purpose: anyone who can reach `/register` can arrive
+					// here under any name, so the card lends it no brand.
+					<span
+						aria-hidden="true"
+						className="text-muted-foreground bg-muted/60 ring-border grid h-9 w-9 shrink-0 place-items-center rounded-[10px] ring-1 ring-inset"
+					>
+						<Bot className="h-4 w-4" />
+					</span>
+				}
 				title={<span className="font-mono">{agent.name}</span>}
 				detail={
-					<>
-						Registered{' '}
-						<Tooltip content={formatTimestamp(agent.createdAt)}>
-							<time
-								dateTime={agent.createdAt}
-								tabIndex={0}
-								className="decoration-border underline decoration-dotted underline-offset-2"
-							>
-								{relativeTime(agent.createdAt)}
-							</time>
-						</Tooltip>
-					</>
+					// When it registered, in full: the time is how an operator tells
+					// their own run from someone else's.
+					<span data-testid="arrival-registered">
+						Registered {relativeTime(agent.createdAt)} ·{' '}
+						<time dateTime={agent.createdAt} className="text-foreground/90 font-medium">
+							{formatTimestamp(agent.createdAt)}
+						</time>
+					</span>
 				}
 				badge={<ActorStatusBadge status={agent.status} />}
 			/>
@@ -443,6 +451,11 @@ export function AgentDetails({
 				>
 					{phase === 'arrived' ? (
 						<div className="mt-4">
+							<ArrivalWarnings
+								agentName={agent.name}
+								expectedName={expectedName}
+								morePending={morePending}
+							/>
 							<p className="text-foreground/90 text-sm">
 								It has its own key but can&apos;t make calls until you approve it.
 							</p>
@@ -490,6 +503,56 @@ export function AgentDetails({
 				>
 					+{morePending} more waiting for approval
 				</Button>
+			)}
+		</div>
+	);
+}
+
+/**
+ * What to check before approving. Registration is open to anyone who can reach
+ * the instance and the name is free text, so the card says when the arrival
+ * may not be the operator's own: other agents are waiting too, or its name is
+ * not the one the command on this page registers with.
+ */
+function ArrivalWarnings({
+	agentName,
+	expectedName,
+	morePending,
+}: {
+	agentName: string;
+	expectedName: string | null;
+	morePending: number;
+}) {
+	const nameDiffers = expectedName != null && expectedName !== agentName;
+	if (!nameDiffers && morePending === 0) return null;
+	return (
+		<div
+			data-testid="arrival-warnings"
+			className="border-warning/40 bg-warning/5 mb-3 space-y-1.5 rounded-lg border px-3 py-2.5"
+		>
+			{nameDiffers && (
+				<p
+					data-testid="arrival-name-warning"
+					className="text-foreground flex items-start gap-2 text-xs"
+				>
+					<TriangleAlert className="text-warning mt-0.5 h-3.5 w-3.5 shrink-0" />
+					<span>
+						It registered as <b className="font-mono font-medium">{agentName}</b>, not{' '}
+						<b className="font-mono font-medium">{expectedName}</b> — the name in your
+						command. Make sure it is yours before approving.
+					</span>
+				</p>
+			)}
+			{morePending > 0 && (
+				<p
+					data-testid="arrival-others-warning"
+					className="text-foreground flex items-start gap-2 text-xs"
+				>
+					<TriangleAlert className="text-warning mt-0.5 h-3.5 w-3.5 shrink-0" />
+					<span>
+						Other agents are also waiting — check the name and time before approving.
+					</span>
+				</p>
 			)}
 		</div>
 	);

@@ -1,8 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@/__tests__/test-utils';
 import { VendorMark } from '@/shared/ui/VendorMark';
-import { AGENT_MARK_SLUGS, VENDOR_MARKS, isVendorMarkSlug } from '@/shared/ui/vendorMarks';
-import { AgentMark } from '@/shared/ui/AgentMark';
+import { VENDOR_MARKS, isVendorMarkSlug } from '@/shared/ui/vendorMarks';
 
 describe('VendorMark', () => {
 	it('renders a known slug as a decorative brand-coloured SVG', () => {
@@ -26,10 +25,8 @@ describe('VendorMark', () => {
 		expect(tile?.querySelector('svg')).toBeNull();
 	});
 
-	it('ships exactly GitHub and the AI agent marks, each a single path with a hex colour', () => {
-		expect(Object.keys(VENDOR_MARKS).sort()).toEqual(
-			['github', 'claude', 'openai', 'cursor', 'googlegemini'].sort(),
-		);
+	it('ships exactly the GitHub mark, a single path with a hex colour', () => {
+		expect(Object.keys(VENDOR_MARKS)).toEqual(['github']);
 		for (const mark of Object.values(VENDOR_MARKS)) {
 			expect(mark.hex).toMatch(/^#[0-9A-F]{6}$/);
 			// An absolute or relative moveto, as simple-icons ships it.
@@ -37,18 +34,5 @@ describe('VendorMark', () => {
 		}
 		expect(isVendorMarkSlug('github')).toBe(true);
 		expect(isVendorMarkSlug('toString')).toBe(false);
-	});
-});
-
-describe('AgentMark', () => {
-	it('clusters the AI agent marks, and has no OpenClaw mark to fake', () => {
-		const { container } = render(<AgentMark label="Your AI agent" />);
-		expect(screen.getByRole('img', { name: 'Your AI agent' })).toBeInTheDocument();
-		expect(
-			[...container.querySelectorAll('[data-vendor-mark]')].map((el) =>
-				el.getAttribute('data-vendor-mark'),
-			),
-		).toEqual([...AGENT_MARK_SLUGS]);
-		expect(AGENT_MARK_SLUGS).not.toContain('openclaw');
 	});
 });

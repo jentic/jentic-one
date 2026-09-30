@@ -25,6 +25,8 @@ import {
 	type useDenyAgent,
 } from '@/modules/agents/api';
 import { EASE_OUT_SOFT } from '@/modules/agents/components/flat/GhostFleet';
+import { agentNameError } from '@/modules/agents/lib/agentName';
+import { DEFAULT_REGISTER_NAME } from '@/modules/agents/lib/registerCommand';
 import {
 	approvedCandidate,
 	deriveLanding,
@@ -119,6 +121,16 @@ export function useFirstAgentLanding({
 	const agent = view?.agent ?? null;
 	const phase = view?.phase ?? null;
 	if (phase !== pollPhase) setPollPhase(phase);
+
+	// The name typed in the register card. Held here, so a denied agent's return
+	// to listening keeps it and the manual create sheet starts from it.
+	const [registerName, setRegisterName] = useState(DEFAULT_REGISTER_NAME);
+	const commandName = agentNameError(registerName) ? DEFAULT_REGISTER_NAME : registerName.trim();
+	// Whether this session showed the command at all. A mount that resumes
+	// straight into an arrival never did, so there is no typed name to hold the
+	// arrival against.
+	const [commandShown, setCommandShown] = useState(false);
+	if (phase === 'listening' && !commandShown) setCommandShown(true);
 
 	const handOff = view?.handOff ?? false;
 	useEffect(() => {
@@ -217,6 +229,13 @@ export function useFirstAgentLanding({
 		agent,
 		morePending: view?.morePending ?? 0,
 		approving,
+		registerName,
+		setRegisterName,
+		/** The name the displayed command registers with. */
+		commandName,
+		/** The name an arrival is expected to carry: the command's, once this
+		 * session has shown it; otherwise unknown. */
+		expectedName: commandShown ? commandName : null,
 		/** The preview slot the hand-off glides from. */
 		slotRef,
 		exit,

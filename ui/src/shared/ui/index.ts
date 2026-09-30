@@ -170,10 +170,8 @@ export { VendorIcon } from '@/shared/ui/VendorIcon';
 export type { VendorIconProps } from '@/shared/ui/VendorIcon';
 export { VendorMark } from '@/shared/ui/VendorMark';
 export type { VendorMarkProps, VendorMarkSize } from '@/shared/ui/VendorMark';
-export { AGENT_MARK_SLUGS, VENDOR_MARKS, isVendorMarkSlug } from '@/shared/ui/vendorMarks';
-export type { AgentMarkSlug, VendorMarkSlug, VendorMarkData } from '@/shared/ui/vendorMarks';
-export { AgentMark } from '@/shared/ui/AgentMark';
-export type { AgentMarkProps, AgentMarkSize } from '@/shared/ui/AgentMark';
+export { VENDOR_MARKS, isVendorMarkSlug } from '@/shared/ui/vendorMarks';
+export type { VendorMarkSlug, VendorMarkData } from '@/shared/ui/vendorMarks';
 
 export {
 	ActorStatusBadge,

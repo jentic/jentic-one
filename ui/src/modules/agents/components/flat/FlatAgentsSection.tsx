@@ -253,6 +253,7 @@ export function FlatAgentsSection({
 				open={createOpen}
 				onClose={() => setCreateOpen(false)}
 				onCreated={handleAgentCreated}
+				initialName={landingShown ? landing.commandName : undefined}
 			/>
 			<LifecycleDialogs
 				confirm={confirm}
@@ -314,6 +315,9 @@ export function FlatAgentsSection({
 							});
 					}}
 					onExit={landing.exit}
+					registerName={landing.registerName}
+					onRegisterNameChange={landing.setRegisterName}
+					expectedName={landing.expectedName}
 					morePending={landing.morePending}
 					onShowFleet={landing.showFleet}
 					slotRef={landing.slotRef}

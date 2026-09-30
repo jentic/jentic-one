@@ -11,8 +11,8 @@
  */
 import { useEffect, useState, type RefObject } from 'react';
 import { motion } from 'framer-motion';
-import { Activity, KeyRound, Plus, Settings2, ShieldCheck } from 'lucide-react';
-import { AgentMark, McpIcon, STATUS_ICON, STATUS_TINT, VendorMark } from '@/shared/ui';
+import { Activity, Bot, KeyRound, Plus, Settings2, ShieldCheck } from 'lucide-react';
+import { McpIcon, STATUS_ICON, STATUS_TINT, VendorMark } from '@/shared/ui';
 import { cn } from '@/shared/lib/utils';
 
 /** The shared soft ease (`--ease-out-soft`), for framer-motion. */
@@ -94,7 +94,7 @@ export function GhostFleet({ arrived, slotRef, reducedMotion, settled = false }:
 					)}
 				</motion.span>
 				<span className="border-border/70 inline-flex h-[30px] items-center rounded-md border border-dashed px-2.5">
-					<AgentMark className="opacity-35 [&_[data-vendor-mark]]:h-2.5 [&_[data-vendor-mark]]:w-2.5" />
+					<Bot className="text-muted-foreground h-3.5 w-3.5 opacity-60" />
 				</span>
 			</div>
 
