@@ -9,7 +9,11 @@
  *                       and its Add credential opens the shared flow in place,
  *                       already on this API's form (`?credential=new`);
  *                       "Bind to an agent" (one card-level action)
- *                       binds an existing agent in place (`BindAgentDialog`)
+ *                       binds an existing agent in place (`BindAgentDialog`).
+ *                       Whether a credential is needed at all comes from the
+ *                       live spec's required security, not just the declared
+ *                       schemes (`useApiAuthRequirement`); an API with no
+ *                       schemes offers no Add credential
  *   - Calls, 7 days   — `GET /monitoring/usage?group_by=api` (org:admin only;
  *                       hidden otherwise)
  *   - Notes           — `GET /notes?api=vendor:name:version`
@@ -26,6 +30,7 @@ import {
 	ChevronRight,
 	KeyRound,
 	Link2,
+	LockOpen,
 	NotebookPen,
 	PauseCircle,
 	Plus,
@@ -66,6 +71,7 @@ import {
 	workspaceApiDisplayTitle,
 	useAgentAccess,
 	useApiAccessIndex,
+	useApiAuthRequirement,
 	useApiNotes,
 	useApiUsageWeek,
 } from '@/modules/workspace/api';
@@ -110,7 +116,13 @@ function AccessCard({ api }: { api: WorkspaceApi }) {
 	const agents = agentAccess?.agents ?? [];
 	const agentsSettled = agentAccess?.agentsSettled ?? false;
 	const agentsWhole = agentAccess != null && agentsExhaustive(agentAccess);
-	const needsAuth = api.securitySchemes.length > 0;
+	// Required-vs-declared comes from the resolved spec (see
+	// `useApiAuthRequirement`); tiles and the docked panel only see declared.
+	const auth = useApiAuthRequirement(api);
+	const needsAuth = auth.requirement === 'required';
+	// Nothing to configure: a credential form for an API with no schemes has
+	// no scheme to fill in.
+	const canAddCredential = auth.requirement !== 'none';
 
 	// The Add credential flow opens here, on this API's form — the hub already
 	// knows the API, so asking for it again would be redundant. `?credential=new`
@@ -166,16 +178,18 @@ function AccessCard({ api }: { api: WorkspaceApi }) {
 				icon={<Bot className="h-4 w-4" />}
 				testId="hub-access"
 				action={
-					<Button
-						variant="ghost"
-						size="sm"
-						onClick={(): void => setCreateOpen(true)}
-						className="text-primary hover:text-primary h-7 gap-1 px-2 text-xs"
-						data-testid="hub-access-add-credential"
-					>
-						<Plus size={12} aria-hidden="true" />
-						Add credential
-					</Button>
+					canAddCredential ? (
+						<Button
+							variant="ghost"
+							size="sm"
+							onClick={(): void => setCreateOpen(true)}
+							className="text-primary hover:text-primary h-7 gap-1 px-2 text-xs"
+							data-testid="hub-access-add-credential"
+						>
+							<Plus size={12} aria-hidden="true" />
+							Add credential
+						</Button>
+					) : undefined
 				}
 			>
 				{access.error && !access.credentialsComplete ? (
@@ -183,14 +197,30 @@ function AccessCard({ api }: { api: WorkspaceApi }) {
 				) : access.isPending ? (
 					<Skeleton className="h-12 w-full" />
 				) : !entry ? (
-					access.credentialsComplete ? (
+					!access.credentialsComplete || auth.pending ? (
+						<Skeleton className="h-12 w-full" />
+					) : needsAuth ? (
 						<p className="text-muted-foreground text-sm" data-testid="hub-access-none">
-							{needsAuth
-								? 'No active credential covers this API yet, so no agent can call it. Add one, then bind it to an agent.'
-								: 'No active credential covers this API. It declares no security schemes, so none may be needed.'}
+							No active credential covers this API yet, so no agent can call it. Add
+							one, then bind it to an agent.
 						</p>
 					) : (
-						<Skeleton className="h-12 w-full" />
+						<div className="space-y-1" data-testid="hub-access-no-auth">
+							<p className="text-foreground flex items-center gap-1.5 text-sm font-medium">
+								<LockOpen
+									className="text-muted-foreground h-3.5 w-3.5 shrink-0"
+									aria-hidden="true"
+								/>
+								No credential needed
+							</p>
+							<p className="text-muted-foreground text-sm">
+								{auth.requirement === 'optional'
+									? 'It declares security schemes, but none of its operations require one.'
+									: 'It doesn’t use authentication.'}{' '}
+								Jentic still routes every agent call through a credential binding,
+								so an agent needs a no-auth credential (no secret) bound to call it.
+							</p>
+						</div>
 					)
 				) : (
 					<div className="space-y-3">

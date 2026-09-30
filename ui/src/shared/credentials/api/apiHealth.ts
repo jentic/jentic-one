@@ -140,9 +140,12 @@ export function useApiHealthIndex(): ApiHealthIndex {
 }
 
 /**
- * "Agents can't call it": the API declares security schemes and — with every
- * credential page loaded (`credentialCount` non-null) — no active credential
- * covers it.
+ * "Agents can't call it": the API needs auth and — with every credential page
+ * loaded (`credentialCount` non-null) — no active credential covers it.
+ *
+ * The workspace tiles and the Library panel pass the DECLARED schemes as
+ * `needsAuth` (`GET /apis` carries only those); the API hub decides from the
+ * live spec's required security instead (`useApiAuthRequirement`).
  */
 export function isCredentialMissing(needsAuth: boolean, credentialCount: number | null): boolean {
 	return needsAuth && credentialCount === 0;

@@ -11,6 +11,7 @@ export {
 	useApiOperations,
 	useApiRevisions,
 	useApiSpec,
+	useApiAuthRequirement,
 	useRevisionActions,
 	useOverlays,
 	useOverlayActions,
@@ -42,8 +43,16 @@ export {
 } from '@/shared/credentials/api/apiHealth';
 export type { AgentFigure, ApiHealth, ApiHealthIndex } from '@/shared/credentials/api/apiHealth';
 
-export { parseSpecOperations, opDetailKey } from '@/modules/workspace/api/specOperations';
-export type { ParsedSpec, SpecOperationDetail } from '@/modules/workspace/api/specOperations';
+export {
+	parseSpecOperations,
+	opDetailKey,
+	specAuthRequirement,
+} from '@/modules/workspace/api/specOperations';
+export type {
+	ParsedSpec,
+	SpecOperationDetail,
+	SpecAuthRequirement,
+} from '@/modules/workspace/api/specOperations';
 
 export {
 	shortOverlayId,

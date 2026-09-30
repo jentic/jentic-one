@@ -35,6 +35,10 @@ import {
 } from '@/modules/workspace/api/client';
 import type { ApiKey } from '@/modules/workspace/api/apiId';
 import { formatApiKey } from '@/modules/workspace/api/apiId';
+import {
+	specAuthRequirement,
+	type SpecAuthRequirement,
+} from '@/modules/workspace/api/specOperations';
 import type {
 	ApiNote,
 	ApiOperation,
@@ -329,6 +333,33 @@ export function useApiSpec(
 		enabled: key != null && enabled,
 		staleTime: 5 * 60_000,
 	});
+}
+
+/**
+ * Whether this API needs a credential, for the hub.
+ *
+ * `GET /apis` only carries the DECLARED scheme types (`securitySchemes`), not
+ * whether any operation requires one, so the hub reads the resolved live spec
+ * (the same `useApiSpec` cache the Operations tab and spec viewer share) and
+ * asks it (`specAuthRequirement`). Until that read lands — or when it fails,
+ * or the API has no live revision — declared schemes count as required.
+ */
+export function useApiAuthRequirement(api: WorkspaceApi): {
+	requirement: SpecAuthRequirement;
+	/** The spec read is in flight — `requirement` may still change. */
+	pending: boolean;
+	/** Where the answer came from. */
+	source: 'spec' | 'declared';
+} {
+	const declared = api.securitySchemes.length > 0;
+	const spec = useApiSpec(api.api, declared && api.currentRevisionId !== null);
+	const fromSpec = spec.data !== undefined ? specAuthRequirement(spec.data) : null;
+	if (fromSpec != null) return { requirement: fromSpec, pending: false, source: 'spec' };
+	return {
+		requirement: declared ? 'required' : 'none',
+		pending: spec.isLoading,
+		source: 'declared',
+	};
 }
 
 /** Promote / archive a revision, invalidating the API + its revision/op/spec lists. */

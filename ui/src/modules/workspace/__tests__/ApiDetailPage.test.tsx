@@ -473,6 +473,59 @@ describe('ApiDetailPage', () => {
 			expect(screen.queryByTestId('hub-access-none')).not.toBeInTheDocument();
 		});
 
+		describe('whether a credential is needed', () => {
+			const STRIPE_SPEC_URL = '/apis/stripe/stripe-api/2024-01-01/openapi';
+
+			it('flags a missing credential when the spec requires a scheme', async () => {
+				resetCredentialsStore([]);
+				renderAt('/library/workspace/stripe/stripe-api/2024-01-01');
+
+				expect(await screen.findByTestId('hub-access-none')).toHaveTextContent(
+					/no agent can call it/i,
+				);
+				expect(screen.queryByTestId('hub-access-no-auth')).not.toBeInTheDocument();
+				expect(screen.getByTestId('hub-access-add-credential')).toBeInTheDocument();
+			});
+
+			it('says no credential is needed when schemes are declared but not required', async () => {
+				resetCredentialsStore([]);
+				worker.use(
+					http.get(STRIPE_SPEC_URL, () =>
+						HttpResponse.json({
+							openapi: '3.1.0',
+							info: { title: 'Stripe', version: '2024-01-01' },
+							components: { securitySchemes: { bearerAuth: { type: 'http' } } },
+							security: [],
+							paths: { '/v1/charges': { get: { operationId: 'GetCharges' } } },
+						}),
+					),
+				);
+				renderAt('/library/workspace/stripe/stripe-api/2024-01-01');
+
+				const state = await screen.findByTestId('hub-access-no-auth');
+				expect(state).toHaveTextContent('No credential needed');
+				expect(state).toHaveTextContent(/none of its operations require one/i);
+				// Its binding requirement is stated, not hidden.
+				expect(state).toHaveTextContent(/no-auth credential/i);
+				expect(screen.queryByTestId('hub-access-none')).not.toBeInTheDocument();
+				// A credential is optional here, so it can still be added.
+				expect(screen.getByTestId('hub-access-add-credential')).toBeInTheDocument();
+				expect(screen.queryByTestId('hub-access-bind-agent')).not.toBeInTheDocument();
+			});
+
+			it('says no credential is needed, and offers none, when nothing is declared', async () => {
+				resetCredentialsStore([]);
+				renderAt('/library/workspace/bigco/big-api/1');
+
+				const state = await screen.findByTestId('hub-access-no-auth');
+				expect(state).toHaveTextContent('No credential needed');
+				expect(state).toHaveTextContent(/doesn’t use authentication/i);
+				expect(screen.queryByTestId('hub-access-none')).not.toBeInTheDocument();
+				expect(screen.queryByTestId('hub-access-add-credential')).not.toBeInTheDocument();
+				expect(screen.queryByTestId('hub-access-bind-agent')).not.toBeInTheDocument();
+			});
+		});
+
 		it('binds an existing agent in place and the Agents list refreshes', async () => {
 			const user = userEvent.setup();
 			clearAllToasts();
