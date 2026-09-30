@@ -152,12 +152,15 @@ function AttentionItem({ entry }: { entry: AttentionEntry }) {
 function ApiRow({
 	row,
 	agentCount,
+	agentsAtLeast,
 	showUsage,
 	usageExhaustive,
 }: {
 	row: WorkspaceDigestRow;
 	/** Agents with access; null while loading or unknowable (then omitted). */
 	agentCount: number | null;
+	/** `agentCount` is a floor (more bound agents than one read page) — "N+". */
+	agentsAtLeast: boolean;
 	showUsage: boolean;
 	usageExhaustive: boolean;
 }) {
@@ -194,10 +197,16 @@ function ApiRow({
 						{agentCount != null && (
 							<span
 								className="inline-flex items-center gap-0.5"
-								title="Agents bound to a credential for this API"
+								title={
+									agentsAtLeast
+										? 'At least this many agents are bound to a credential for this API'
+										: 'Agents bound to a credential for this API'
+								}
+								data-testid="workspace-panel-api-agents"
 							>
 								<Bot className="h-3 w-3" aria-hidden="true" />
 								{agentCount}
+								{agentsAtLeast ? '+' : ''}
 							</span>
 						)}
 					</div>
@@ -347,15 +356,19 @@ export function WorkspacePanelBody({
 						<div>
 							<SectionLabel>Your APIs</SectionLabel>
 							<ul className="space-y-0.5">
-								{shownRows.map((row) => (
-									<ApiRow
-										key={row.key}
-										row={row}
-										agentCount={agentFigure(row.credentials).agentCount}
-										showUsage={digest.usageAvailable}
-										usageExhaustive={digest.usageExhaustive}
-									/>
-								))}
+								{shownRows.map((row) => {
+									const figure = agentFigure(row.credentials);
+									return (
+										<ApiRow
+											key={row.key}
+											row={row}
+											agentCount={figure.agentCount}
+											agentsAtLeast={figure.agentsAtLeast}
+											showUsage={digest.usageAvailable}
+											usageExhaustive={digest.usageExhaustive}
+										/>
+									);
+								})}
 							</ul>
 							{rows.length > LIST_LIMIT && (
 								<AppLink

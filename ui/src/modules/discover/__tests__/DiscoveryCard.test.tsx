@@ -122,6 +122,21 @@ describe('DiscoveryCard', () => {
 		).toBeInTheDocument();
 	});
 
+	it('renders a truncated agent count as a floor ("50+ agents")', () => {
+		const books = wsRow('nytimes.com/books', 'Books');
+		renderCard({
+			entity: entity({
+				id: 'nytimes.com/books',
+				apiId: 'nytimes.com/books',
+				registered: true,
+			}),
+			workspaceMatches: [books],
+			matchAgentCount: 50,
+			matchAgentsAtLeast: true,
+		});
+		expect(screen.getByTestId('discovery-card-agents')).toHaveTextContent('50+ agents');
+	});
+
 	it('primary action reads "Add to workspace", and "Adding…" while pending', () => {
 		const { unmount } = renderCard();
 		expect(screen.getByTestId('discovery-card-import')).toHaveTextContent('Add to workspace');

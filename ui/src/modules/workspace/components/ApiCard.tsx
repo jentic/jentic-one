@@ -147,14 +147,18 @@ export function ApiCard({
 								title={
 									agents.agentCount == null
 										? 'Couldn’t read every credential’s bound agents'
-										: 'Agents bound to a credential for this API'
+										: agents.agentsAtLeast
+											? 'At least this many agents are bound to a credential for this API'
+											: 'Agents bound to a credential for this API'
 								}
 								data-testid="workspace-api-card-agents"
 							>
 								<Bot size={11} aria-hidden="true" />
 								{agents.agentCount == null
 									? '— agents'
-									: plural(agents.agentCount, 'agent')}
+									: agents.agentsAtLeast
+										? `${agents.agentCount.toLocaleString()}+ agents`
+										: plural(agents.agentCount, 'agent')}
 							</span>
 						)
 					) : null}

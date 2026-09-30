@@ -17,6 +17,10 @@
  *     These fan out one request per credential, so they are read LAZILY
  *     ({@link useAgentAccess}) — only for the credentials of the rows a surface
  *     actually shows — and held fresh for minutes, not refetched on focus.
+ *     A page that reports `has_more` marks the answer truncated, so its count
+ *     reads as a floor ("50+"), never as the whole list. A surface that must
+ *     know EVERY bound agent of one credential drains it instead
+ *     (`useAllCredentialAgents`).
  *
  * Shared (not in one feature module) because two modules read it: the Library
  * catalog's docked "Your workspace" panel (discover) and the API hub
@@ -102,7 +106,10 @@ export interface AgentAccess {
 	agentsSettled: boolean;
 	/** At least one of those reads failed, so `agents` may be missing some. */
 	agentsError: boolean;
-	/** Some credentials fall past the read cap, so `agents` may be missing some. */
+	/**
+	 * `agents` may be missing some: a credential fell past the read cap, or its
+	 * first page reported more agents (`has_more`). What was read is a floor.
+	 */
 	agentsTruncated: boolean;
 }
 
@@ -179,6 +186,8 @@ export function useAgentAccess(
 				}
 				if (read.status === 'pending') access.agentsSettled = false;
 				if (read.status === 'error') access.agentsError = true;
+				// First page only: more bound agents than one page ⇒ a floor.
+				if (read.data?.has_more) access.agentsTruncated = true;
 				for (const agent of read.data?.data ?? []) {
 					if (!access.agents.some((a) => a.agent_id === agent.agent_id)) {
 						access.agents.push(agent);

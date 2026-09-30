@@ -95,18 +95,22 @@ export function DiscoveryGrid({
 	const facts = useMemo(
 		() =>
 			new Map(
-				entities.map((entity, i) => [
-					entity.id,
-					{
-						matchAgentCount: singleMatches[i]
-							? agentFigure(singleMatches[i].credentials).agentCount
-							: null,
-						matches: workspaceByCatalogId?.get(entity.apiId),
-						readyCredentials: readyCredentialsFor(
-							workspaceByCatalogId?.get(entity.apiId),
-						),
-					},
-				]),
+				entities.map((entity, i) => {
+					const figure = singleMatches[i]
+						? agentFigure(singleMatches[i].credentials)
+						: null;
+					return [
+						entity.id,
+						{
+							matchAgentCount: figure?.agentCount ?? null,
+							matchAgentsAtLeast: figure?.agentsAtLeast ?? false,
+							matches: workspaceByCatalogId?.get(entity.apiId),
+							readyCredentials: readyCredentialsFor(
+								workspaceByCatalogId?.get(entity.apiId),
+							),
+						},
+					] as const;
+				}),
 			),
 		// eslint-disable-next-line react-hooks/exhaustive-deps -- `singleMatches` derives from entities + workspaceByCatalogId
 		[entities, workspaceByCatalogId, agentFigure],
@@ -179,6 +183,7 @@ export function DiscoveryGrid({
 						importPending={pendingApiIds.has(entity.apiId)}
 						workspaceMatches={facts.get(entity.id)?.matches}
 						matchAgentCount={facts.get(entity.id)?.matchAgentCount ?? null}
+						matchAgentsAtLeast={facts.get(entity.id)?.matchAgentsAtLeast ?? false}
 						readyCredentials={facts.get(entity.id)?.readyCredentials}
 					/>
 				))}

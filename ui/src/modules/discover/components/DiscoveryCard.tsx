@@ -59,6 +59,8 @@ interface DiscoveryCardProps {
 	workspaceMatches?: WorkspaceDigestRow[];
 	/** Agents with access to that single match; null while loading / unknowable. */
 	matchAgentCount?: number | null;
+	/** `matchAgentCount` is a floor (more bound agents than one read page) — "N+". */
+	matchAgentsAtLeast?: boolean;
 	/** Active credentials covering a workspace API from this entry; null while loading. Not-imported only. */
 	readyCredentials?: Credential[] | null;
 }
@@ -108,6 +110,7 @@ export const DiscoveryCard = memo(function DiscoveryCard({
 	importPending,
 	workspaceMatches = [],
 	matchAgentCount = null,
+	matchAgentsAtLeast = false,
 	readyCredentials,
 }: DiscoveryCardProps) {
 	const { registered } = entity;
@@ -206,9 +209,10 @@ export const DiscoveryCard = memo(function DiscoveryCard({
 								{matchAgentCount != null && matchAgentCount > 0 && (
 									<>
 										<Sep />
-										<span>
-											{matchAgentCount} agent
-											{matchAgentCount === 1 ? '' : 's'}
+										<span data-testid="discovery-card-agents">
+											{matchAgentsAtLeast
+												? `${matchAgentCount}+ agents`
+												: `${matchAgentCount} agent${matchAgentCount === 1 ? '' : 's'}`}
 										</span>
 									</>
 								)}

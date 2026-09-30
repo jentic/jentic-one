@@ -13,7 +13,10 @@
  * Offered only to a viewer with `agents:write` (the bind endpoint's
  * permission). The credential list is narrowed to the ones the viewer may bind
  * — the server lets a non-admin bind only credentials they created (else 404).
- * Agents already bound to the chosen credential are shown, disabled.
+ * Agents already bound to the chosen credential are shown, disabled — read in
+ * full (every page, `useAllCredentialAgents`), so an agent past the first page
+ * can't pass for unbound and be bound twice. Until that read is whole, nothing
+ * can be ticked or bound.
  *
  * State lifecycle (dialog-state rule): the draft (credential + ticks) persists
  * across dismissals and resets on a successful bind; transient error clears on
@@ -38,7 +41,7 @@ import {
 import { ROUTES } from '@/shared/app/routes';
 import { useOptionalCurrentUser } from '@/shared/auth';
 import { credentialsBindableBy } from '@/shared/credentials/lib/bindAuthority';
-import { useCredentialAgents, type Credential } from '@/shared/credentials/api';
+import { useAllCredentialAgents, type Credential } from '@/shared/credentials/api';
 import {
 	useAgentsForPicker,
 	useBindCredentialToAgents,
@@ -80,12 +83,14 @@ export function BindAgentDialog({ open, onClose, credentials, apiLabel }: BindAg
 
 	// A stale / unusable pick falls back to the first usable credential.
 	const credential = usable.find((c) => c.credential_id === credentialId) ?? usable[0] ?? null;
-	const boundHere = useCredentialAgents(credential?.credential_id, {
+	// Every page: a partial list would offer already-bound agents as unbound.
+	const boundHere = useAllCredentialAgents(credential?.credential_id, {
 		enabled: open && credential != null,
 	});
+	const boundKnown = boundHere.complete;
 	const alreadyBound = useMemo(
-		() => new Set((boundHere.data?.data ?? []).map((a) => a.agent_id)),
-		[boundHere.data],
+		() => new Set(boundHere.items.map((a) => a.agent_id)),
+		[boundHere.items],
 	);
 
 	const candidates = useMemo(
@@ -93,7 +98,9 @@ export function BindAgentDialog({ open, onClose, credentials, apiLabel }: BindAg
 		[agents.data],
 	);
 	// Ticks only count for agents still bindable to the chosen credential.
-	const picked = candidates.filter((a) => selected.has(a.id) && !alreadyBound.has(a.id));
+	const picked = boundKnown
+		? candidates.filter((a) => selected.has(a.id) && !alreadyBound.has(a.id))
+		: [];
 
 	const toggle = (id: string): void =>
 		setSelected((prev) => {
@@ -183,6 +190,21 @@ export function BindAgentDialog({ open, onClose, credentials, apiLabel }: BindAg
 				)}
 				<div className="space-y-1.5">
 					<Label>Agents</Label>
+					{!boundKnown &&
+						(boundHere.error ? (
+							<ErrorAlert
+								message="Couldn’t check which agents already use this credential."
+								onRetry={boundHere.retry}
+								retrying={boundHere.isFetching}
+							/>
+						) : (
+							<p
+								className="text-muted-foreground text-xs"
+								data-testid="bind-agent-checking"
+							>
+								Checking which agents already use this credential…
+							</p>
+						))}
 					<ul
 						className="border-border bg-muted/20 max-h-64 space-y-0.5 overflow-y-auto rounded-lg border p-1.5"
 						data-testid="bind-agent-list"
@@ -198,7 +220,7 @@ export function BindAgentDialog({ open, onClose, credentials, apiLabel }: BindAg
 									<Checkbox
 										size="sm"
 										checked={bound || selected.has(a.id)}
-										disabled={bound || bind.isPending}
+										disabled={bound || !boundKnown || bind.isPending}
 										onChange={(): void => toggle(a.id)}
 									>
 										<span className="text-foreground text-sm">{a.name}</span>
@@ -229,7 +251,7 @@ export function BindAgentDialog({ open, onClose, credentials, apiLabel }: BindAg
 			<Button
 				size="sm"
 				onClick={handleBind}
-				disabled={picked.length === 0 || bind.isPending || !credential}
+				disabled={picked.length === 0 || bind.isPending || !credential || !boundKnown}
 				loading={bind.isPending}
 				data-testid="bind-agent-confirm"
 			>

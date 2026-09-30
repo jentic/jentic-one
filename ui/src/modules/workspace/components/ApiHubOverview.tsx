@@ -259,8 +259,9 @@ function AccessCard({ api }: { api: WorkspaceApi }) {
 									className="text-muted-foreground mt-1 text-xs"
 									data-testid="hub-access-agents-partial"
 								>
-									Some credentials’ agents couldn’t be read — this list may be
-									incomplete.
+									{agentAccess?.agentsError
+										? 'Some credentials’ agents couldn’t be read — this list may be incomplete.'
+										: 'More agents are bound than shown — this list is the first page of each credential’s agents.'}
 								</p>
 							)}
 						</div>

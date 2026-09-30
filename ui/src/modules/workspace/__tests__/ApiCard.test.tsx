@@ -107,7 +107,7 @@ describe('ApiCard health rows', () => {
 					credentialCount: 0,
 					usage: { total: 1204, failed: 3, trend: [1, 5, 2, 8] },
 				})}
-				agents={{ agentCount: 0, agentsLoading: false }}
+				agents={{ agentCount: 0, agentsAtLeast: false, agentsLoading: false }}
 			/>,
 		);
 		expect(screen.getByTestId('api-state-live')).toBeInTheDocument();
@@ -129,7 +129,7 @@ describe('ApiCard health rows', () => {
 					credentialCount: 1,
 					usage: { total: 40, failed: 0, trend: [1, 2] },
 				})}
-				agents={{ agentCount: 2, agentsLoading: false }}
+				agents={{ agentCount: 2, agentsAtLeast: false, agentsLoading: false }}
 			/>,
 		);
 		expect(screen.getByTestId('workspace-api-card-agents')).toHaveTextContent('2 agents');
@@ -162,7 +162,7 @@ describe('ApiCard health rows', () => {
 						credentialsComplete: false,
 					},
 				)}
-				agents={{ agentCount: null, agentsLoading: true }}
+				agents={{ agentCount: null, agentsAtLeast: false, agentsLoading: true }}
 			/>,
 		);
 		expect(screen.getByTestId('workspace-api-card-agents-loading')).toBeInTheDocument();
@@ -177,11 +177,22 @@ describe('ApiCard health rows', () => {
 			<ApiCard
 				api={makeApi()}
 				healthIndex={index({})}
-				agents={{ agentCount: null, agentsLoading: false }}
+				agents={{ agentCount: null, agentsAtLeast: false, agentsLoading: false }}
 			/>,
 		);
 		expect(screen.queryByTestId('workspace-api-card-agents-loading')).not.toBeInTheDocument();
 		expect(screen.getByTestId('workspace-api-card-agents')).toHaveTextContent('— agents');
+	});
+
+	it('renders a truncated agent count as a floor ("50+ agents")', () => {
+		renderWithProviders(
+			<ApiCard
+				api={makeApi()}
+				healthIndex={index({})}
+				agents={{ agentCount: 50, agentsAtLeast: true, agentsLoading: false }}
+			/>,
+		);
+		expect(screen.getByTestId('workspace-api-card-agents')).toHaveTextContent('50+ agents');
 	});
 
 	it('hides the usage row for users who cannot read usage (non-admin)', () => {

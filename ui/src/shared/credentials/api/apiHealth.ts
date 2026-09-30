@@ -54,10 +54,15 @@ export interface ApiHealthIndex {
 /** The agents-with-access figure for one API. */
 export interface AgentFigure {
 	/**
-	 * Distinct agents bound to the API's credentials; null unless every read
-	 * answered (still loading, a read failed, or the read cap was hit).
+	 * Distinct agents bound to the API's credentials; null while loading, when
+	 * a read failed, or when a truncated read found none to count from.
 	 */
 	agentCount: number | null;
+	/**
+	 * `agentCount` is a floor, not the total: a credential has more bound agents
+	 * than one page, or fell past the read cap. Render it as "N+".
+	 */
+	agentsAtLeast: boolean;
 	/** The count is still on its way (as opposed to unknowable: failed/capped). */
 	agentsLoading: boolean;
 }
@@ -74,12 +79,21 @@ export function useAgentFigures(
 	const accessFor = useAgentAccess(credentialSets);
 	return useCallback(
 		(credentials) => {
-			if (credentials == null) return { agentCount: null, agentsLoading: !credentialsError };
+			if (credentials == null) {
+				return { agentCount: null, agentsAtLeast: false, agentsLoading: !credentialsError };
+			}
 			const access = accessFor(credentials);
-			if (!access) return { agentCount: null, agentsLoading: true };
+			if (!access) return { agentCount: null, agentsAtLeast: false, agentsLoading: true };
+			const agentsLoading = !access.agentsSettled;
+			if (agentsExhaustive(access)) {
+				return { agentCount: access.agents.length, agentsAtLeast: false, agentsLoading };
+			}
+			// Truncated but otherwise whole: what was read is a floor ("50+").
+			const floor = access.agentsSettled && !access.agentsError && access.agents.length > 0;
 			return {
-				agentCount: agentsExhaustive(access) ? access.agents.length : null,
-				agentsLoading: !access.agentsSettled,
+				agentCount: floor ? access.agents.length : null,
+				agentsAtLeast: floor,
+				agentsLoading,
 			};
 		},
 		[accessFor, credentialsError],
