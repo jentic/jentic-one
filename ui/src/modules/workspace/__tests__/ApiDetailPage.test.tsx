@@ -107,11 +107,40 @@ describe('ApiDetailPage', () => {
 			}
 		}
 
-		it('"Back to your workspace" lands on the workspace in one click after several tabs', async () => {
+		it('Back returns to where the hub was opened from', async () => {
+			const user = userEvent.setup();
+			renderFromWorkspace();
+			await user.click(screen.getByRole('link', { name: 'open hub' }));
+			await screen.findByTestId('workspace-overview-strip');
+			await user.click(screen.getByTestId('back-button'));
+			expect(await screen.findByTestId('workspace-page')).toBeInTheDocument();
+		});
+
+		it('Back leaves the hub in one step after several tab switches', async () => {
 			const user = userEvent.setup();
 			renderFromWorkspace();
 			await visitTabs(user);
-			await user.click(screen.getByRole('link', { name: /back to your workspace/i }));
+			const back = screen.getByTestId('back-button');
+			expect(back.tagName).toBe('BUTTON');
+			expect(back).toHaveTextContent(/^Back$/);
+			await user.click(back);
+			expect(await screen.findByTestId('workspace-page')).toBeInTheDocument();
+		});
+
+		it('Back falls back to /library/workspace on a direct visit', async () => {
+			const user = userEvent.setup();
+			renderWithProviders(
+				<Routes>
+					<Route
+						path="/library/workspace"
+						element={<div data-testid="workspace-page" />}
+					/>
+					<Route path={PATH} element={<ApiDetailPage />} />
+				</Routes>,
+				{ route: HUB },
+			);
+			await screen.findByTestId('workspace-overview-strip');
+			await user.click(screen.getByTestId('back-button'));
 			expect(await screen.findByTestId('workspace-page')).toBeInTheDocument();
 		});
 

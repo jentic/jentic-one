@@ -168,8 +168,8 @@ export default function ApiDetailPage() {
 
 	function setTab(tab: HubTab) {
 		// Replaced, not pushed: tabs are views of one page, so neither the
-		// browser Back button nor "Back to your workspace" should step through
-		// every tab visited. The URL still deep-links the current tab.
+		// browser Back button nor the hub's Back should step through every tab
+		// visited. The URL still deep-links the current tab.
 		setSearchParams(
 			(prev) => {
 				const next = new URLSearchParams(prev);
@@ -184,11 +184,7 @@ export default function ApiDetailPage() {
 	if (!apiKey) {
 		return (
 			<PageShell>
-				<BackButton
-					to={ROUTES.workspace}
-					label="Back to your workspace"
-					useHistory={false}
-				/>
+				<BackButton to={ROUTES.workspace} label="Back" />
 				<ErrorAlert message="That API reference is malformed." />
 			</PageShell>
 		);
@@ -285,11 +281,7 @@ export default function ApiDetailPage() {
 				}
 			/>
 			<div className="flex flex-wrap items-center justify-between gap-2">
-				<BackButton
-					to={ROUTES.workspace}
-					label="Back to your workspace"
-					useHistory={false}
-				/>
+				<BackButton to={ROUTES.workspace} label="Back" />
 				{api ? (
 					<div className="flex items-center gap-1.5" data-testid="hub-state">
 						<ApiStateBadges

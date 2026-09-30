@@ -1,20 +1,35 @@
 import { ChevronLeft } from 'lucide-react';
-import { Link, useNavigate } from 'react-router';
+import { Link, useLocation, useNavigate, type Location } from 'react-router';
 import { cn } from '@/shared/lib/utils';
 
 interface BackButtonProps {
-	/** Static fallback destination when there's no browser history to pop. */
+	/** Static fallback destination when there's no in-app history to pop. */
 	to: string;
 	label: string;
 	className?: string;
 	/**
 	 * When true, uses `navigate(-1)` (browser back) instead of a static link.
-	 * Falls back to `to` if there's no history entry to pop (e.g. direct URL access).
-	 * Default: true.
+	 * Falls back to `to` if there's no in-app entry to pop (e.g. direct URL
+	 * access or a new tab). Default: true.
 	 */
 	useHistory?: boolean;
 	/** Override the default `back-button` test id. */
 	testId?: string;
+}
+
+/**
+ * Whether stepping back stays inside the app.
+ *
+ * `<BrowserRouter>` stamps each history entry it owns with an `idx` (0 on the
+ * tab's first app entry), and keeps it across `replace` navigations — so a
+ * direct visit followed by replaced tab switches still reads 0. Routers that
+ * don't touch `window.history` (the tests' `MemoryRouter`) have no `idx`;
+ * there the initial entry's `default` location key marks "nothing behind".
+ */
+function hasInAppHistory(location: Pick<Location, 'key'>): boolean {
+	const idx: unknown = window.history.state?.idx;
+	if (typeof idx === 'number') return idx > 0;
+	return location.key !== 'default';
 }
 
 /**
@@ -32,6 +47,7 @@ export function BackButton({
 	testId = 'back-button',
 }: BackButtonProps) {
 	const navigate = useNavigate();
+	const location = useLocation();
 
 	const cls = cn(
 		'text-muted-foreground hover:text-foreground inline-flex w-fit items-center gap-0.5 text-xs font-medium transition-colors',
@@ -43,7 +59,7 @@ export function BackButton({
 			<button
 				type="button"
 				onClick={() => {
-					if (window.history.state?.idx > 0) {
+					if (hasInAppHistory(location)) {
 						navigate(-1);
 					} else {
 						navigate(to, { replace: true });
