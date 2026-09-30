@@ -177,13 +177,13 @@ class VendorRegistryService:
                     f"api_vendor mismatch (expected {vendor_key!r}, "
                     f"registration is {registration.api_vendor!r})",
                 )
-            return (_project_registration_to_auth_config(registration, self._ctx), "db")
+            return (_project_registration_to_auth_config(registration), "db")
 
         registration = await self._registrations.get_preferred_active(
             api_vendor=vendor_key, flow_kind=flow_kind
         )
         if registration is not None:
-            return _project_registration_to_auth_config(registration, self._ctx), "db"
+            return _project_registration_to_auth_config(registration), "db"
 
         cfg = self._config.entries.get(vendor_key)
         if cfg is not None:
@@ -235,7 +235,7 @@ class VendorRegistryService:
         """
         registrations = await self._registrations.list_active()
         result: list[VendorAuthConfig] = [
-            _project_registration_to_auth_config(row, self._ctx) for row in registrations
+            _project_registration_to_auth_config(row) for row in registrations
         ]
         result.extend(self._config.entries.values())
         return sorted(result, key=lambda v: v.display_name)
@@ -294,9 +294,9 @@ class VendorRegistryService:
         the returned flow's client material comes from that specific
         registration (see :meth:`resolve_by_pin`).
 
-        The returned ``VendorFlowConfig`` carries the resolved client
-        material — ``client_secret`` is materialised for auth-code flows so
-        the connect handler can POST the token exchange directly.
+        Config-sourced auth-code flows carry their ``client_secret``; flows
+        projected from a DB registration carry an empty placeholder — the
+        registration secret is decrypted only at token exchange.
         """
         entry, _source = await self._resolve_pinned_entry(
             vendor_key, registration_id=registration_id, flow_kind=preferred
@@ -391,7 +391,6 @@ class VendorRegistryService:
 
 def _project_registration_to_auth_config(
     registration: OAuthAppRegistration,
-    ctx: Context,
 ) -> VendorAuthConfig:
     """Build a ``VendorAuthConfig`` from a DB registration — standalone.
 
@@ -414,7 +413,7 @@ def _project_registration_to_auth_config(
     concern; DB-only vendors skip that step at connect finalise and land
     the credential with ``connected_as=None``.
     """
-    flow = _synthesize_flow(registration, ctx)
+    flow = _synthesize_flow(registration)
 
     default_scopes = _extension_default_scopes(registration)
     scopes = [
@@ -445,15 +444,13 @@ def _project_registration_to_auth_config(
     )
 
 
-def _synthesize_flow(
-    registration: OAuthAppRegistration,
-    ctx: Context,
-) -> VendorFlowConfig:
+def _synthesize_flow(registration: OAuthAppRegistration) -> VendorFlowConfig:
     """Project the flow-kind-specific extension row into a ``VendorFlowConfig``.
 
-    For auth-code the encrypted client secret is decrypted via
-    ``ctx.encryption.decrypt`` — this is the one materialisation site for the
-    secret. Device flow has no secret (public client).
+    Never decrypts: vendor reads (listing, scope checks, display names) have
+    no use for the auth-code client secret, so the flow carries an empty
+    placeholder. The connect path re-reads the registration and decrypts
+    lazily at token exchange. Device flow has no secret (public client).
     """
     if registration.flow_kind == "authorization_code":
         ac = registration.authorization_code_details
@@ -463,10 +460,9 @@ def _synthesize_flow(
                 registration.flow_kind,
                 "authorization_code registration is missing its details row",
             )
-        client_secret = ctx.encryption.decrypt(ac.encrypted_client_secret)
         return VendorAuthorizationCodeFlowConfig(
             client_id=registration.client_id,
-            client_secret=SecretStr(client_secret),
+            client_secret=SecretStr(""),
             authorize_url=ac.authorize_url,
             token_url=ac.token_url,
         )

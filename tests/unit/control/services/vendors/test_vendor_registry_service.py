@@ -37,6 +37,7 @@ from jentic_one.shared.config import (
     DatabaseConfig,
     DatabasesConfig,
     VendorAuthConfig,
+    VendorAuthorizationCodeFlowConfig,
     VendorDeviceAuthorizationFlowConfig,
     VendorIdentityProbeConfig,
     VendorRegistryConfig,
@@ -599,10 +600,8 @@ async def test_resolve_by_pin_returns_pinned_registration_over_preferred() -> No
     """Two Gmail registrations with different default_scopes — pinning the
     non-preferred one returns *its* scopes, not the preferred-active one's.
 
-    Uses device-flow registrations so the synthesizer doesn't hit encryption
-    (auth-code decrypts ``encrypted_client_secret`` through ``ctx.encryption``,
-    which isn't configured in these pure-unit tests). The scope-per-pin
-    invariant is flow-kind-agnostic.
+    The scope-per-pin invariant is flow-kind-agnostic; device flow is used
+    for brevity.
     """
     prod = _FakeRegistration(
         api_vendor="googleapis-com",
@@ -712,3 +711,41 @@ async def test_validate_scopes_honours_pin_when_registrations_differ() -> None:
         registration_id="oar_sandbox",
     )
     assert unknown == []
+
+
+# ---------------------------------------------------------------------------
+# Client secret is never decrypted on vendor reads
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_vendor_reads_never_decrypt_registration_secret() -> None:
+    """Listing, scope checks and flow resolution must not touch the secret.
+
+    The ciphertext is garbage and ``ctx.encryption`` is not configured, so
+    any decrypt on these read paths would raise. The projected auth-code
+    flow carries an empty placeholder; the connect path decrypts lazily at
+    token exchange.
+    """
+    reg = _FakeRegistration(
+        api_vendor="googleapis-com",
+        id="oar_ac",
+        name="MyOrg Gmail",
+        flow_kind="authorization_code",
+        client_id="ac-cid",
+        authorization_code_details=_FakeDetails(
+            default_scopes=["gmail.readonly"],
+            encrypted_client_secret="not-a-real-ciphertext",  # pragma: allowlist secret
+        ),
+    )
+    svc = _service(registrations=[reg])
+
+    assert [e.display_name for e in await svc.list_all()] == ["Example (DB)"]
+    entry = await svc.get("googleapis-com", registration_id="oar_ac")
+    assert await svc.validate_scopes("googleapis-com", ["gmail.readonly"]) == []
+    assert [s.name for s in await svc.merge_scopes("googleapis-com", None)] == ["gmail.readonly"]
+    flow = await svc.resolve_flow("googleapis-com", registration_id="oar_ac")
+
+    for f in (entry.flows[0], flow):
+        assert isinstance(f, VendorAuthorizationCodeFlowConfig)
+        assert f.client_secret.get_secret_value() == ""
