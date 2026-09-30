@@ -2,6 +2,7 @@ package cmdcore
 
 import (
 	"context"
+	"log/slog"
 	"os"
 	"time"
 
@@ -116,6 +117,16 @@ func installInterceptor(app *App, root *cobra.Command) {
 		// later log line — including the SDK's via the default logger — carries
 		// the mode-appropriate, secret-scrubbed handler.
 		setupSlog(app, state.Mode, boolFlag(cmd, "verbose"))
+
+		// An unknown mode (typo, or the retired `service-account` alias — 14
+		// BC-12) already failed closed to AgentUX above; say so on stderr only,
+		// so stdout stays one JSON document (13 §1).
+		if state.Mode != clictx.ModeHuman && state.Mode != clictx.ModeAgent {
+			slog.Warn("unknown mode; running in agent mode",
+				"code", "UNKNOWN_MODE",
+				"mode", state.Mode,
+				"actionable_step", "use --mode agent|human or JENTIC_MODE=agent|human; for a persisted context, set mode in config.yaml")
+		}
 
 		// 4. FENCING (guardrail; the enforced boundary is server-side scope + OS
 		// isolation). Block a fenced management command in a fenced mode.

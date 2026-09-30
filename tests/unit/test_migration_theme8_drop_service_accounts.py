@@ -1,10 +1,11 @@
 """The theme-8 Phase-4 admin drop migration, against real SQLite.
 
-``e2f3a4b5c6d7`` drops ``service_accounts`` and ``service_account_credentials``
-behind a guard-and-raise gate. Pinned here against a real database (no DB
-mocking): the fresh-install path, every refusal arm, the acknowledged +
-swept happy path with the retired-scope sweep, and the empty-table
-downgrade. The Postgres twin lives in
+``e2f3a4b5c6d7`` drops ``service_accounts``, ``service_account_credentials``
+and the retired ``service_account_migration_acks`` behind a guard-and-raise
+gate (every SA stamped and swept — the runner's pre-drop retirement does
+that). Pinned here against a real database (no DB mocking): the fresh-install
+path, every refusal arm, the swept happy path with the orphan cleanup and the
+retired-scope sweep, and the empty-table downgrade. The Postgres twin lives in
 ``tests/integration/admin/test_phase4_drop_service_accounts.py``.
 """
 
@@ -24,8 +25,6 @@ _REVISION = "e2f3a4b5c6d7"  # pragma: allowlist secret
 _PRE_DROP = "d1e2f3a4b5c6"  # pragma: allowlist secret
 
 _STAMPED_AT = "2026-09-01 10:00:00.000000"
-_ACKED_AT = "2026-09-02 10:00:00.000000"
-_PAST = "2020-01-01 00:00:00.000000"
 _FUTURE = "2999-01-01 00:00:00.000000"
 
 
@@ -93,16 +92,6 @@ def _sac(digest: str | None) -> _Stmt:
     )
 
 
-def _ack(acknowledged_at: str = _ACKED_AT, *, unstamped: int = 0) -> _Stmt:
-    return (
-        "INSERT INTO service_account_migration_acks (id, acknowledged_at, unstamped_count,"
-        " grant_twin_missing_count, unrevoked_token_count, digest_mismatch_count,"
-        " post_stamp_mutation_count, report_finding_count, tool_version)"
-        " VALUES ('smak_' || hex(randomblob(6)), ?, ?, 0, 0, 0, 0, 0, 'test')",
-        (acknowledged_at, unstamped),
-    )
-
-
 def _access_token(*, revoked_at: str | None, expires_at: str, scopes: list[str]) -> _Stmt:
     return (
         "INSERT INTO access_tokens (id, token_hash, actor_id, actor_type, scopes,"
@@ -117,78 +106,55 @@ def _migrated_and_swept(stack: Path) -> None:
     _seed(stack, _USER, _AGENT, _AGENT_CRED, _sa(), _sac(None))
 
 
-def test_fresh_install_drops_without_an_ack(sqlite_stack: Path) -> None:
+def test_fresh_install_drops(sqlite_stack: Path) -> None:
     run_mod.upgrade(_DB)
     tables = _tables(sqlite_stack)
-    assert "service_accounts" not in tables
-    assert "service_account_credentials" not in tables
-    # The upgrade evidence stays.
-    assert "service_account_migration_acks" in tables
+    assert not tables & {
+        "service_accounts",
+        "service_account_credentials",
+        "service_account_migration_acks",
+    }
 
 
 def _refuses(stack: Path, match: str) -> None:
-    with pytest.raises(RuntimeError, match=match):
+    with pytest.raises(RuntimeError, match=match) as excinfo:
         run_mod.upgrade(_DB, _REVISION)
+    assert "Nothing was dropped" in str(excinfo.value)
+    assert "sva_p4" in str(excinfo.value), "the refusal names the rows"
     assert "service_accounts" in _tables(stack)
 
 
 Seeder = Callable[[Path], None]
+
+_SA_GRANT = (
+    "INSERT INTO actor_scope_grants (id, actor_id, actor_type, scope)"
+    " VALUES ('asg_p4_sa', 'sva_p4', 'service_account', 'agents:read')",
+    (),
+)
 
 
 @pytest.mark.parametrize(
     ("seed", "match"),
     [
         pytest.param(
-            lambda s: _seed(s, _USER, _AGENT, _AGENT_CRED, _sa(), _sac(None)),
-            "no acknowledgement row exists",
-            id="no-ack",
-        ),
-        pytest.param(
-            lambda s: _seed(s, _USER, _sa(stamp=None), _ack()),
-            "1 unstamped service account",
+            lambda s: _seed(s, _USER, _sa(stamp=None)),
+            "1 unmigrated service account",
             id="unstamped",
         ),
         pytest.param(
-            lambda s: _seed(
-                s, _USER, _AGENT, _AGENT_CRED, _sa(status="active"), _sac(None), _ack()
-            ),
-            "1 stamped but unswept service account",
+            lambda s: _seed(s, _USER, _AGENT, _AGENT_CRED, _sa(status="active"), _sac(None)),
+            "1 migrated but unswept service account",
             id="unswept-status",
         ),
         pytest.param(
-            lambda s: _seed(s, _USER, _AGENT, _AGENT_CRED, _sa(), _sac("other-digest"), _ack()),
-            "1 successor digest mismatch",
-            id="digest-mismatch",
+            lambda s: _seed(s, _USER, _AGENT, _AGENT_CRED, _sa(), _sac("digest-1")),
+            "1 migrated but unswept service account",
+            id="unswept-digest",
         ),
         pytest.param(
-            lambda s: _seed(s, _USER, _AGENT, _AGENT_CRED, _sa(), _sac(None), _ack(_PAST)),
-            "stamped after the latest acknowledgement",
-            id="stale-ack",
-        ),
-        pytest.param(
-            lambda s: _seed(s, _USER, _AGENT, _AGENT_CRED, _sa(), _sac(None), _ack(unstamped=1)),
-            "records 1 verification failure",
-            id="failed-ack",
-        ),
-        pytest.param(
-            lambda s: _seed(
-                s,
-                (
-                    "INSERT INTO agent_credential_bindings (id, agent_id, credential_id)"
-                    " VALUES ('acb_p4', 'sva_p4', 'cred_p4')",
-                    (),
-                ),
-            ),
-            "1 sva_-keyed credential binding",
-            id="fresh-with-binding",
-        ),
-        pytest.param(
-            lambda s: _seed(
-                s,
-                _access_token(revoked_at=None, expires_at=_FUTURE, scopes=["agents:read"]),
-            ),
-            "1 live service-account session token",
-            id="fresh-with-live-token",
+            lambda s: _seed(s, _USER, _AGENT, _AGENT_CRED, _sa(), _sac(None), _SA_GRANT),
+            "1 migrated but unswept service account",
+            id="unswept-grant",
         ),
     ],
 )
@@ -198,33 +164,39 @@ def test_gate_refuses(sqlite_stack: Path, seed: Seeder, match: str) -> None:
     _refuses(sqlite_stack, match)
 
 
-def test_latest_ack_wins_over_an_older_one(sqlite_stack: Path) -> None:
-    """A newer ack supersedes a stale one (the rehearsal's 'read the latest row')."""
+def test_refusal_is_safe_to_rerun(sqlite_stack: Path) -> None:
+    """A refused revision rolls back whole; fixing the row lets the re-run drop."""
     run_mod.upgrade(_DB, _PRE_DROP)
-    _migrated_and_swept(sqlite_stack)
-    _seed(sqlite_stack, _ack(_PAST))
-    _refuses(sqlite_stack, "stamped after the latest acknowledgement")
-    _seed(sqlite_stack, _ack(_ACKED_AT))
+    _seed(sqlite_stack, _USER, _AGENT, _AGENT_CRED, _sa(status="active"), _sac(None))
+    _refuses(sqlite_stack, "unswept")
+    _seed(sqlite_stack, ("UPDATE service_accounts SET status = 'archived'", ()))
     run_mod.upgrade(_DB, _REVISION)
     assert "service_accounts" not in _tables(sqlite_stack)
 
 
-def test_acknowledged_and_swept_drops_and_sweeps_retired_scopes(sqlite_stack: Path) -> None:
+def test_swept_drops_cleans_orphans_and_sweeps_retired_scopes(sqlite_stack: Path) -> None:
     run_mod.upgrade(_DB, _PRE_DROP)
     _migrated_and_swept(sqlite_stack)
     _seed(
         sqlite_stack,
-        _ack(),
-        # A revoked SA token is dead weight, not a blocker.
+        # Session rows of the retired actor: all dead weight once the tables go.
         _access_token(
             revoked_at=_STAMPED_AT,
             expires_at=_FUTURE,
             scopes=["service-accounts:read", "agents:read"],
         ),
+        _access_token(revoked_at=None, expires_at=_FUTURE, scopes=["agents:read"]),
+        # Orphans: an sva_ id with no SA row (a hand-deleted service account).
+        (
+            "INSERT INTO agent_credential_bindings (id, agent_id, credential_id)"
+            " VALUES ('acb_p4', 'sva_gone', 'cred_p4')",
+            (),
+        ),
         (
             "INSERT INTO actor_scope_grants (id, actor_id, actor_type, scope)"
             " VALUES ('asg_p4_a', 'agnt_p4', 'agent', 'owner:service-accounts:read'),"
-            "        ('asg_p4_b', 'agnt_p4', 'agent', 'agents:read')",
+            "        ('asg_p4_b', 'agnt_p4', 'agent', 'agents:read'),"
+            "        ('asg_p4_c', 'sva_gone', 'agent', 'agents:read')",
             (),
         ),
     )
@@ -232,19 +204,28 @@ def test_acknowledged_and_swept_drops_and_sweeps_retired_scopes(sqlite_stack: Pa
 
     assert "service_accounts" not in _tables(sqlite_stack)
     with _connect(sqlite_stack) as conn:
-        grants = {r[0] for r in conn.execute("SELECT scope FROM actor_scope_grants")}
-        (token_scopes,) = conn.execute(
-            "SELECT scopes FROM access_tokens WHERE actor_id = 'sva_p4'"
+        grants = {
+            (r[0], r[1]) for r in conn.execute("SELECT actor_id, scope FROM actor_scope_grants")
+        }
+        (sa_tokens,) = conn.execute(
+            "SELECT count(*) FROM access_tokens WHERE actor_id = 'sva_p4'"
         ).fetchone()
-    assert grants == {"agents:read"}
-    assert json.loads(token_scopes) == ["agents:read"]
+        (bindings,) = conn.execute("SELECT count(*) FROM agent_credential_bindings").fetchone()
+    assert grants == {("agnt_p4", "agents:read")}
+    assert sa_tokens == 0
+    assert bindings == 0
 
 
 def test_downgrade_recreates_empty_tables(sqlite_stack: Path) -> None:
+    """Irreversible for data: the tables come back empty (schema chain walkable)."""
     run_mod.upgrade(_DB)
     run_mod.downgrade(_DB, _PRE_DROP)
     tables = _tables(sqlite_stack)
-    assert {"service_accounts", "service_account_credentials"} <= tables
+    assert {
+        "service_accounts",
+        "service_account_credentials",
+        "service_account_migration_acks",
+    } <= tables
     with _connect(sqlite_stack) as conn:
         columns = {row[1] for row in conn.execute("PRAGMA table_info(service_accounts)")}
         (count,) = conn.execute("SELECT count(*) FROM service_accounts").fetchone()

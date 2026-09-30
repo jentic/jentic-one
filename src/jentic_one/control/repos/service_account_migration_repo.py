@@ -3,8 +3,8 @@
 The migration job runs in the control module (it copies the per-binding
 inline permission rules in the control DB) but does nearly all of its work in
 the **admin** DB (successor agents, credential digests, grant and
-binding twins, token revocation, the stamp, the verify queries, and the
-acknowledgement sentinel). The control module must not import admin ORM
+binding twins, token revocation, the stamp, the sweep, and the pre-drop
+verification queries). The control module must not import admin ORM
 models, so every admin-side statement
 here is raw SQL (F1 is also served by this: successor creation must never go
 through ``AgentService.create()``/``approve()``, whose empty-scope default is
@@ -23,7 +23,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import func, inspect, select, text
+from sqlalchemy import delete, func, inspect, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -61,7 +61,7 @@ THEME8_RETIRED_SCOPES: frozenset[str] = frozenset(
 #: Admin-level scopes: the ones that let a holder manage other principals,
 #: their grants or credentials, or platform configuration. A successor agent
 #: that inherits one of these from its service account is reported to the
-#: operator (report line + WARNING log + ``verify`` finding) — never stripped,
+#: operator (a WARNING log line per grant) — never stripped,
 #: because a legitimate automation SA may well have held it.
 ADMIN_LEVEL_SCOPES: frozenset[str] = frozenset(
     {ORG_ADMIN, USERS_WRITE, AGENTS_WRITE, CREDENTIALS_WRITE, CONFIG_WRITE, OAUTH_CLIENTS_WRITE}
@@ -76,7 +76,7 @@ _LIST_SERVICE_ACCOUNTS = text(
     " ORDER BY sa.id"
 )
 
-#: Criterion 4 (#1416): fully-migrated, unswept SAs whose successor does not
+#: Digest parity (#1416): fully-migrated, unswept SAs whose successor does not
 #: hold the SA's still-live digest. LEFT JOINs so a missing successor agent
 #: or credential row surfaces as drift instead of silently dropping out
 #: (``agent_credentials.agent_id`` is unique — at most one row per agent).
@@ -106,11 +106,26 @@ _SUCCESSOR_SUPERSEDED_PREDICATE = (
     " AND ac.rotated_at > sa.migrated_at)))"
 )
 
-#: Criterion 4 as one statement. The theme-8 Phase-4 drop migration
-#: (``e2f3a4b5c6d7``) carries a verbatim copy — pinned equal by
-#: ``tests/unit/control/test_drop_service_accounts_sql.py``.
+#: Digest parity as one statement (:meth:`list_digest_mismatches`).
 DIGEST_MISMATCH_SQL = (
     _SUCCESSOR_DIGEST_DRIFT_SQL + f" AND NOT {_SUCCESSOR_SUPERSEDED_PREDICATE}" + " ORDER BY sa.id"
+)
+
+#: Stamped rows the sweep has not finished (:meth:`list_sweepable`). The
+#: theme-8 Phase-4 drop migration (``e2f3a4b5c6d7``) refuses while any row
+#: matches and carries a verbatim copy — pinned equal by
+#: ``tests/unit/control/test_drop_service_accounts_sql.py``.
+SWEEPABLE_SQL = (
+    "SELECT sa.id, sa.migrated_to_actor_id, sa.migrated_at, sa.status"
+    " FROM service_accounts sa"
+    " WHERE sa.migrated_to_actor_id IS NOT NULL"
+    " AND (sa.status != 'archived'"
+    "  OR EXISTS (SELECT 1 FROM actor_scope_grants g"
+    "   WHERE g.actor_id = sa.id AND g.actor_type = 'service_account')"
+    "  OR EXISTS (SELECT 1 FROM agent_credential_bindings cb WHERE cb.agent_id = sa.id)"
+    "  OR EXISTS (SELECT 1 FROM service_account_credentials sac"
+    "   WHERE sac.service_account_id = sa.id AND sac.api_key_hash IS NOT NULL))"
+    " ORDER BY sa.id"
 )
 
 _SELECT_SERVICE_ACCOUNT_SQL = (
@@ -175,19 +190,6 @@ _REVOKE_REFRESH_TOKENS = text(
     " AND revoked_at IS NULL"
 )
 
-# ``--diff-only`` preview: the rows ``revoke_tokens`` would touch (same WHERE).
-_COUNT_REVOCABLE_ACCESS_TOKENS = text(
-    "SELECT count(*) AS n FROM access_tokens"
-    " WHERE actor_id = :actor_id AND actor_type = 'service_account'"
-    " AND revoked_at IS NULL"
-)
-
-_COUNT_REVOCABLE_REFRESH_TOKENS = text(
-    "SELECT count(*) AS n FROM refresh_tokens"
-    " WHERE actor_id = :actor_id AND actor_type = 'service_account'"
-    " AND revoked_at IS NULL"
-)
-
 _STAMP = text(
     "UPDATE service_accounts"
     " SET migrated_to_actor_id = :stamp, migrated_at = :now"
@@ -207,8 +209,8 @@ class ServiceAccountMigrationRepository:
     async def tables_present(session: AsyncSession) -> bool:
         """Whether the admin DB still has the ``service_accounts`` table.
 
-        Theme-8 Phase 4 drops it; the CLI probes first so a post-drop run is
-        a clean no-op rather than a SQL error.
+        Theme-8 Phase 4 drops it; the retirement probes first so a run
+        against an already-dropped schema is a clean no-op, never a SQL error.
         """
         return await session.run_sync(
             lambda sync_session: inspect(sync_session.connection()).has_table("service_accounts")
@@ -376,31 +378,6 @@ class ServiceAccountMigrationRepository:
         return len(credential_rows)
 
     @staticmethod
-    async def count_copy_candidates(
-        session: AsyncSession, *, service_account_id: str
-    ) -> tuple[int, int]:
-        """``--diff-only`` preview: ``(scopes, credential bindings)`` that
-        :meth:`copy_scope_grants` / :meth:`copy_bindings` would copy — the same
-        source queries and retired-scope filter, no writes."""
-        grants = (await session.execute(_SELECT_GRANTS, {"actor_id": service_account_id})).all()
-        credential_rows = (
-            await session.execute(_SELECT_CREDENTIAL_BINDINGS, {"actor_id": service_account_id})
-        ).all()
-        scopes = sum(1 for row in grants if row.scope not in THEME8_RETIRED_SCOPES)
-        return scopes, len(credential_rows)
-
-    @staticmethod
-    async def count_revocable_tokens(
-        session: AsyncSession, *, service_account_id: str
-    ) -> tuple[int, int]:
-        """``--diff-only`` preview: ``(access, refresh)`` rows
-        :meth:`revoke_tokens` would revoke (same predicate, no writes)."""
-        params = {"actor_id": service_account_id}
-        access = (await session.execute(_COUNT_REVOCABLE_ACCESS_TOKENS, params)).one()
-        refresh = (await session.execute(_COUNT_REVOCABLE_REFRESH_TOKENS, params)).one()
-        return int(access.n), int(refresh.n)
-
-    @staticmethod
     async def revoke_tokens(
         session: AsyncSession, *, service_account_id: str, now: datetime
     ) -> tuple[int, int]:
@@ -528,12 +505,9 @@ class ServiceAccountMigrationRepository:
     # ------------------------------------------------------------------ sweep
 
     @staticmethod
-    async def list_sweepable(
-        session: AsyncSession, *, stamped_before: datetime | None
-    ) -> list[Any]:
-        """Stamped rows that still have anything to sweep; optionally age-gated (N3).
+    async def list_sweepable(session: AsyncSession) -> list[Any]:
+        """Stamped rows that still have anything to sweep.
 
-        ``stamped_before=None`` ignores the age gate (``--sweep-migrated``).
         Skip-but-stamp rows are swept too (OQ-1): archive + delete the
         twin-less grant/binding rows. Rows already ``archived`` at migration
         time are NOT excluded by status (M2 — their lingering ``sva_``-keyed
@@ -541,44 +515,21 @@ class ServiceAccountMigrationRepository:
         filter is "still has SA-keyed satellite rows OR is not yet archived",
         which also keeps repeated sweeps from re-processing finished rows.
         """
-        clause = " AND migrated_at <= :stamped_before" if stamped_before is not None else ""
-        stmt = text(
-            "SELECT sa.id, sa.migrated_to_actor_id, sa.migrated_at, sa.status"
-            " FROM service_accounts sa"
-            " WHERE sa.migrated_to_actor_id IS NOT NULL"
-            " AND (sa.status != 'archived'"
-            "  OR EXISTS (SELECT 1 FROM actor_scope_grants g"
-            "   WHERE g.actor_id = sa.id AND g.actor_type = 'service_account')"
-            "  OR EXISTS (SELECT 1 FROM agent_credential_bindings cb WHERE cb.agent_id = sa.id)"
-            "  OR EXISTS (SELECT 1 FROM service_account_credentials sac"
-            "   WHERE sac.service_account_id = sa.id AND sac.api_key_hash IS NOT NULL))" + clause
-        )
-        params: dict[str, Any] = {}
-        if stamped_before is not None:
-            params["stamped_before"] = stamped_before
-        return list((await session.execute(stmt, params)).all())
+        return list((await session.execute(text(SWEEPABLE_SQL))).all())
 
     @staticmethod
-    async def list_stamped(
-        session: AsyncSession, *, stamped_before: datetime | None
-    ) -> dict[str, str]:
-        """``{sa_id: stamp}`` for every stamped SA (skip-stamped included),
-        optionally age-gated (N3).
+    async def list_stamped(session: AsyncSession) -> dict[str, str]:
+        """``{sa_id: stamp}`` for every stamped SA (skip-stamped included).
 
         Drives the control-DB half of the sweep, which must also reach rows
         whose admin-side satellites are already gone (a crash between the
         admin sweep commit and the control-DB rule delete).
         """
-        clause = " AND migrated_at <= :stamped_before" if stamped_before is not None else ""
-        params: dict[str, Any] = {}
-        if stamped_before is not None:
-            params["stamped_before"] = stamped_before
         rows = await session.execute(
             text(
                 "SELECT id, migrated_to_actor_id FROM service_accounts"
-                " WHERE migrated_to_actor_id IS NOT NULL" + clause
-            ),
-            params,
+                " WHERE migrated_to_actor_id IS NOT NULL"
+            )
         )
         return {r.id: r.migrated_to_actor_id for r in rows.all()}
 
@@ -593,35 +544,6 @@ class ServiceAccountMigrationRepository:
             )
         )
         return [(r.id, r.migrated_to_actor_id) for r in rows.all()]
-
-    @staticmethod
-    async def list_successor_admin_grants(session: AsyncSession) -> list[Any]:
-        """Admin-level grants the migration carried onto successor agents.
-
-        Informational ``verify`` read (never a failing criterion): every
-        :data:`ADMIN_LEVEL_SCOPES` grant still held by a migration-created
-        successor (``registered_by`` = the job's system actor, name
-        ``service-account:<sva_ id>``) with the job as its grantor — a scope an
-        operator has since re-granted themselves is no longer "carried over".
-        Rows: ``agent_id, agent_name, owner_id, status, scope``.
-        """
-        scope_params = {f"scope_{i}": s for i, s in enumerate(sorted(ADMIN_LEVEL_SCOPES))}
-        placeholders = ", ".join(f":{name}" for name in scope_params)
-        rows = await session.execute(
-            text(
-                "SELECT a.id AS agent_id, a.name AS agent_name, a.owner_id, a.status, g.scope"
-                " FROM actor_scope_grants g"
-                " JOIN agents a ON a.id = g.actor_id"
-                " WHERE g.actor_type = 'agent'"
-                " AND a.registered_by = :system_actor"
-                " AND a.name LIKE 'service-account:%'"
-                " AND g.granted_by = :system_actor"
-                f" AND g.scope IN ({placeholders})"
-                " ORDER BY a.id, g.scope"
-            ),
-            {"system_actor": SYSTEM_ACTOR, **scope_params},
-        )
-        return list(rows.all())
 
     @staticmethod
     async def sweep_service_account(session: AsyncSession, *, service_account_id: str) -> bool:
@@ -662,196 +584,147 @@ class ServiceAccountMigrationRepository:
         )
         return bool(result.rowcount)  # type: ignore[attr-defined]
 
-    # ----------------------------------------------------------------- verify
-
     @staticmethod
-    async def count_unstamped(session: AsyncSession) -> int:
-        """Criterion 1: zero *unstamped* rows (skip-but-stamp rows pass, OQ-1)."""
-        row = (
-            await session.execute(
-                text(
-                    "SELECT count(*) AS n FROM service_accounts WHERE migrated_to_actor_id IS NULL"
-                )
+    async def delete_service_account_rules(session: AsyncSession) -> int:
+        """Control DB: delete every remaining ``sva_``-keyed inline rule.
+
+        The retirement's last control-DB step, after the sweep: every SA is
+        migrated by then (the sweep copied and deleted the stamped holders'
+        rules), so what is left belongs to ``sva_`` ids with no SA row — orphans
+        nothing can resolve any more. Returns the rows deleted.
+        """
+        result = await session.execute(
+            delete(AgentPermissionRule).where(
+                AgentPermissionRule.agent_id.startswith("sva_", autoescape=True)
             )
-        ).one()
-        return int(row.n)
+        )
+        return result.rowcount or 0  # type: ignore[attr-defined]
+
+    # ------------------------------------------------- pre-drop verification
 
     @staticmethod
-    async def count_grant_twin_missing(session: AsyncSession) -> int:
-        """Criterion 2: every non-retired SA grant has its agent twin."""
+    async def list_unstamped_ids(session: AsyncSession) -> list[str]:
+        """SA rows the migration never stamped (skip-but-stamp rows are stamped)."""
+        rows = await session.execute(
+            text("SELECT id FROM service_accounts WHERE migrated_to_actor_id IS NULL ORDER BY id")
+        )
+        return [str(r.id) for r in rows.all()]
+
+    @staticmethod
+    async def list_grant_twin_gaps(session: AsyncSession) -> list[Any]:
+        """Copyable SA grants whose successor holds no twin.
+
+        Only fully-migrated SAs (a skip-stamped row has no successor), and
+        never the theme-8-retired scopes (they are not carried). ``post_stamp``
+        is 1 for a grant created after the SA's stamp — the only kind the
+        retirement copies for an SA stamped by an earlier run, so a scope an
+        operator removed from the successor is never resurrected.
+
+        Rows: ``service_account_id, successor_agent_id, scope, post_stamp``.
+        """
         # E2: bound parameters, never f-string interpolation, even for a
         # frozen constant. THEME8_RETIRED_SCOPES ⊆ RETIRED_SCOPES is pinned by
         # tests/unit/shared/test_retired_scopes.py.
         scope_params = {f"scope_{i}": s for i, s in enumerate(sorted(THEME8_RETIRED_SCOPES))}
         placeholders = ", ".join(f":{name}" for name in scope_params)
-        row = (
-            await session.execute(
-                text(
-                    "SELECT count(*) AS n FROM actor_scope_grants g"
-                    " JOIN service_accounts sa ON sa.id = g.actor_id"
-                    " WHERE g.actor_type = 'service_account'"
-                    f" AND g.scope NOT IN ({placeholders})"
-                    " AND sa.migrated_to_actor_id IS NOT NULL"
-                    " AND sa.migrated_to_actor_id != 'skipped'"
-                    " AND NOT EXISTS ("
-                    "  SELECT 1 FROM actor_scope_grants t"
-                    "  WHERE t.actor_id = sa.migrated_to_actor_id"
-                    "  AND t.actor_type = 'agent' AND t.scope = g.scope)"
-                ),
-                scope_params,
-            )
-        ).one()
-        return int(row.n)
+        rows = await session.execute(
+            text(
+                "SELECT sa.id AS service_account_id,"
+                " sa.migrated_to_actor_id AS successor_agent_id, g.scope,"
+                " CASE WHEN g.created_at > sa.migrated_at THEN 1 ELSE 0 END AS post_stamp"
+                " FROM actor_scope_grants g"
+                " JOIN service_accounts sa ON sa.id = g.actor_id"
+                " WHERE g.actor_type = 'service_account'"
+                f" AND g.scope NOT IN ({placeholders})"
+                " AND sa.migrated_to_actor_id IS NOT NULL"
+                " AND sa.migrated_to_actor_id != 'skipped'"
+                " AND NOT EXISTS ("
+                "  SELECT 1 FROM actor_scope_grants t"
+                "  WHERE t.actor_id = sa.migrated_to_actor_id"
+                "  AND t.actor_type = 'agent' AND t.scope = g.scope)"
+                " ORDER BY sa.id, g.scope"
+            ),
+            scope_params,
+        )
+        return list(rows.all())
 
     @staticmethod
-    async def count_unrevoked_tokens(session: AsyncSession, *, now: datetime) -> int:
-        """Criterion 3: zero live (unexpired, unrevoked) SA token rows."""
-        total = 0
-        for table in ("access_tokens", "refresh_tokens"):
-            row = (
-                await session.execute(
-                    text(
-                        f"SELECT count(*) AS n FROM {table}"
-                        " WHERE actor_type = 'service_account'"
-                        " AND revoked_at IS NULL AND expires_at > :now"
-                    ),
-                    {"now": now},
-                )
-            ).one()
-            total += int(row.n)
-        return total
+    async def list_binding_twin_gaps(session: AsyncSession) -> list[Any]:
+        """SA credential bindings whose successor holds no twin.
+
+        Same shape and ``post_stamp`` rule as :meth:`list_grant_twin_gaps`.
+        Rows: ``service_account_id, successor_agent_id, credential_id,
+        rule_set_id, suspended, suspended_reason, post_stamp``.
+        """
+        rows = await session.execute(
+            text(
+                "SELECT sa.id AS service_account_id,"
+                " sa.migrated_to_actor_id AS successor_agent_id, b.credential_id,"
+                " b.rule_set_id, b.suspended, b.suspended_reason,"
+                " CASE WHEN b.created_at > sa.migrated_at THEN 1 ELSE 0 END AS post_stamp"
+                " FROM agent_credential_bindings b"
+                " JOIN service_accounts sa ON sa.id = b.agent_id"
+                " WHERE sa.migrated_to_actor_id IS NOT NULL"
+                " AND sa.migrated_to_actor_id != 'skipped'"
+                " AND NOT EXISTS ("
+                "  SELECT 1 FROM agent_credential_bindings t"
+                "  WHERE t.agent_id = sa.migrated_to_actor_id"
+                "  AND t.credential_id = b.credential_id)"
+                " ORDER BY sa.id, b.credential_id"
+            )
+        )
+        return list(rows.all())
+
+    @staticmethod
+    async def copy_grant_twin(session: AsyncSession, *, agent_id: str, scope: str) -> bool:
+        """Insert one grant twin on the successor; False if it already held it."""
+        result = await session.execute(
+            _INSERT_GRANT_TWIN,
+            {
+                "id": generate_ksuid("asg"),
+                "actor_id": agent_id,
+                "scope": scope,
+                "granted_by": SYSTEM_ACTOR,
+                "created_by": SYSTEM_ACTOR,
+            },
+        )
+        return bool(result.rowcount)  # type: ignore[attr-defined]
+
+    @staticmethod
+    async def copy_binding_twin(session: AsyncSession, *, agent_id: str, source: Any) -> bool:
+        """Insert one credential-binding twin (``source`` is a gap row)."""
+        result = await session.execute(
+            _INSERT_CREDENTIAL_BINDING_TWIN,
+            {
+                "id": generate_ksuid("acb"),
+                "agent_id": agent_id,
+                "credential_id": source.credential_id,
+                "rule_set_id": source.rule_set_id,
+                "suspended": source.suspended,
+                "suspended_reason": source.suspended_reason,
+                "created_by": SYSTEM_ACTOR,
+            },
+        )
+        return bool(result.rowcount)  # type: ignore[attr-defined]
 
     @staticmethod
     async def list_digest_mismatches(session: AsyncSession) -> list[Any]:
-        """Criterion 4: successor digest equals the (still-live) SA digest.
+        """Digest parity: the successor holds the SA's (still-live) digest.
 
         Scoped to fully-migrated SAs whose SA-side digest is still non-NULL —
         after the sweep the SA side is NULLed by design (copy-then-sweep),
         so swept rows are excluded rather than false-failed.
 
         A successor that no longer holds the copied digest because it was
-        legitimately *superseded* is not drift (#1416) and is excluded — see
-        :meth:`list_superseded_successor_digests`. Everything else fails
-        closed: a missing successor agent row, a missing credential row, or a
-        digest that changed without the credential writers' ``rotated_at``
-        stamp (a raw-SQL writer bypassing the service).
+        legitimately *superseded* (#1416: its key rotated or revoked after the
+        stamp, or the agent archived) is not drift and is excluded — the sweep
+        NULLs the stale SA digest. Everything else fails closed: a missing
+        successor agent row, a missing credential row, or a digest that
+        changed without the credential writers' ``rotated_at`` stamp (a
+        raw-SQL writer bypassing the service), including an SA key rotated
+        after the stamp.
 
         Rows: ``service_account_id, successor_agent_id``.
         """
         rows = await session.execute(text(DIGEST_MISMATCH_SQL))
         return list(rows.all())
-
-    @staticmethod
-    async def list_superseded_successor_digests(session: AsyncSession) -> list[Any]:
-        """Informational ``verify`` read: SA digests the successor superseded.
-
-        A fully-migrated SA whose still-live digest the successor no longer
-        holds because the operator acted on the successor after the stamp —
-        its key was rotated or revoked (``agent_credentials.rotated_at`` after
-        ``migrated_at``; every credential writer stamps it) or the agent was
-        archived. The stale SA-side digest authenticates nothing (the resolver
-        fails closed on stamped rows) and ``--sweep-migrated`` NULLs it.
-
-        Rows: ``service_account_id, successor_agent_id, reason`` where
-        ``reason`` is ``successor_archived`` or ``successor_key_rotated``.
-        """
-        rows = await session.execute(
-            text(
-                "SELECT sa.id AS service_account_id,"
-                " sa.migrated_to_actor_id AS successor_agent_id,"
-                " CASE WHEN a.status = 'archived' THEN 'successor_archived'"
-                " ELSE 'successor_key_rotated' END AS reason"
-                + _SUCCESSOR_DIGEST_DRIFT_FROM
-                + f" AND {_SUCCESSOR_SUPERSEDED_PREDICATE}"
-                + " ORDER BY sa.id"
-            )
-        )
-        return list(rows.all())
-
-    @staticmethod
-    async def count_post_stamp_mutations(session: AsyncSession) -> int:
-        """Criterion 5 (NF-3 scope): no re-created SA grant rows, no
-        ``api_key_hash`` rotation, and no fresh ``sva_``-keyed binding rows
-        (M4 — raw-SQL writers bypassing the service guards) after the stamp
-        timestamp."""
-        grants = (
-            await session.execute(
-                text(
-                    "SELECT count(*) AS n FROM actor_scope_grants g"
-                    " JOIN service_accounts sa ON sa.id = g.actor_id"
-                    " WHERE g.actor_type = 'service_account'"
-                    " AND sa.migrated_at IS NOT NULL"
-                    " AND g.created_at > sa.migrated_at"
-                )
-            )
-        ).one()
-        rotations = (
-            await session.execute(
-                text(
-                    "SELECT count(*) AS n FROM service_account_credentials sac"
-                    " JOIN service_accounts sa ON sa.id = sac.service_account_id"
-                    " WHERE sa.migrated_at IS NOT NULL"
-                    " AND sac.rotated_at IS NOT NULL"
-                    " AND sac.rotated_at > sa.migrated_at"
-                )
-            )
-        ).one()
-        bindings = (
-            await session.execute(
-                text(
-                    "SELECT count(*) AS n FROM agent_credential_bindings b"
-                    " JOIN service_accounts sa ON sa.id = b.agent_id"
-                    " WHERE sa.migrated_at IS NOT NULL"
-                    " AND b.created_at > sa.migrated_at"
-                )
-            )
-        ).one()
-        return int(grants.n) + int(rotations.n) + int(bindings.n)
-
-    # --------------------------------------------------------------- sentinel
-
-    @staticmethod
-    async def record_acknowledgement(
-        session: AsyncSession,
-        *,
-        acknowledged_at: datetime,
-        unstamped_count: int,
-        grant_twin_missing_count: int,
-        unrevoked_token_count: int,
-        digest_mismatch_count: int,
-        post_stamp_mutation_count: int,
-        report_finding_count: int,
-        tool_version: str,
-    ) -> str:
-        """Insert the Phase-4 gate row — only call after a passed verification.
-
-        Raw SQL (the table lives in the admin DB and this is the control
-        module); the id is generated in Python so SQLite needs no server
-        default.
-        """
-        ack_id = generate_ksuid("smak")
-        await session.execute(
-            text(
-                "INSERT INTO service_account_migration_acks"
-                " (id, acknowledged_at, unstamped_count, grant_twin_missing_count,"
-                "  unrevoked_token_count, digest_mismatch_count,"
-                "  post_stamp_mutation_count, report_finding_count, tool_version,"
-                "  created_by)"
-                " VALUES (:id, :acknowledged_at, :unstamped, :twin_missing,"
-                "  :unrevoked, :digest_mismatch, :post_stamp, :findings, :version,"
-                "  :created_by)"
-            ),
-            {
-                "id": ack_id,
-                "acknowledged_at": acknowledged_at,
-                "unstamped": unstamped_count,
-                "twin_missing": grant_twin_missing_count,
-                "unrevoked": unrevoked_token_count,
-                "digest_mismatch": digest_mismatch_count,
-                "post_stamp": post_stamp_mutation_count,
-                "findings": report_finding_count,
-                "version": tool_version,
-                "created_by": SYSTEM_ACTOR,
-            },
-        )
-        return ack_id

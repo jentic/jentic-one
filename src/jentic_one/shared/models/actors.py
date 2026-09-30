@@ -4,23 +4,18 @@ from enum import StrEnum
 
 
 class ActorType(StrEnum):
-    """Type of authenticated actor.
+    """Type of authenticated actor: a human user or an agent.
 
-    ``toolkit`` is retired (theme-5 Phase 4): toolkit keys resolve as the
-    agents the key-retirement job created, so no code path mints a
-    toolkit identity. Persisted ``actor_type='toolkit'`` strings survive in
-    historical rows (events, audit entries, execution records) until the
-    Phase-6b scope-data sweep; read paths must tolerate the string without
-    round-tripping it through this enum.
-
-    ``service_account`` is retired the same way (theme-8 Phase 4 dropped the
-    service-account tables and deleted the member). Historical audit rows,
-    execution records, telemetry history and control-DB actor-id columns
-    (``connect_sessions.initiator_actor_id``, ``credentials.created_by``)
-    still carry the string or ``sva_`` ids; read paths use
-    :func:`actor_type_label_from_id` or treat the string as opaque.
+    Historical records may carry older actor-type values that are no longer
+    issued; treat unrecognised values as opaque labels.
     """
 
+    # Retired members (kept out of the docstring, which is published in the
+    # OpenAPI spec): ``toolkit`` (theme-5 Phase 4) and ``service_account``
+    # (theme-8 Phase 4). Their strings survive on historical rows (audit,
+    # execution records, telemetry, control-DB actor-id columns); read paths use
+    # actor_type_label_from_id or treat the string as opaque, never
+    # ActorType(...), which would raise.
     USER = "user"
     AGENT = "agent"
 

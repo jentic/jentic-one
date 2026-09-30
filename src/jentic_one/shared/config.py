@@ -243,6 +243,50 @@ class ServicesConfig(BaseModel):
     retry_max: int = 3
     retry_backoff_s: float = 1.0
 
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_retired_sa_sweep_age(cls, data: Any) -> Any:
+        """Ignore ``services.service_account_sweep_min_stamp_age_hours``.
+
+        The 0.40 age gate of the automatic service-account sweep. Theme-8
+        Phase 4 removed the sweep's boot job: the upgrade now migrates, verifies
+        and sweeps every service account before dropping the tables, so the
+        setting has nothing left to gate. Harmless when left behind — dropped
+        with a one-time warning, never a boot failure.
+        """
+        if isinstance(data, dict) and _RETIRED_SA_SWEEP_AGE_KEY in data:
+            _warn_retired_sa_sweep_age_once()
+            data = {k: v for k, v in data.items() if k != _RETIRED_SA_SWEEP_AGE_KEY}
+        return data
+
+
+_RETIRED_SA_SWEEP_AGE_KEY = "service_account_sweep_min_stamp_age_hours"
+_retired_sa_sweep_age_warned = threading.Event()
+
+
+def _warn_retired_sa_sweep_age_once() -> None:
+    """One WARNING per process for the leftover setting (it is ignored).
+
+    Latched like :func:`_warn_retired_direct_bindings_flag_once`: config is
+    validated more than once per process.
+    """
+    if _retired_sa_sweep_age_warned.is_set():
+        return
+    _retired_sa_sweep_age_warned.set()
+    _logger.warning(
+        "config_retired_setting_ignored",
+        setting=f"services.{_RETIRED_SA_SWEEP_AGE_KEY}",
+        detail=(
+            "removed in theme-8 Phase 4 with the automatic service-account sweep; "
+            "the upgrade migrates and sweeps every service account itself, and the "
+            "value is ignored"
+        ),
+        actionable_step=(
+            f"Remove services.{_RETIRED_SA_SWEEP_AGE_KEY} from the config file or "
+            "JENTIC__SERVICES__SERVICE_ACCOUNT_SWEEP_MIN_STAMP_AGE_HOURS from the environment."
+        ),
+    )
+
 
 class WorkerConfig(BaseModel):
     """Background job-worker durability knobs.

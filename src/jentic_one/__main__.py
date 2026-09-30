@@ -8,7 +8,6 @@ import importlib
 import json
 import os
 import sys
-from dataclasses import asdict
 from getpass import getpass
 
 import structlog
@@ -23,10 +22,6 @@ from jentic_one.admin.services.errors import (
     UserEmailNotFoundError,
 )
 from jentic_one.auth.web.app import install_on_app as _install_auth_verifier
-from jentic_one.control.services.service_account_migration import (
-    ServiceAccountMigrationService,
-    VerificationResult,
-)
 from jentic_one.control.services.toolkit_export import ToolkitExportError, ToolkitExportService
 from jentic_one.control.services.toolkit_flattening import Finding, ToolkitFlatteningService
 from jentic_one.shared.config import (
@@ -396,158 +391,6 @@ async def _reset_password(
     return 0
 
 
-async def _migrate_service_accounts(
-    *,
-    diff_only: bool,
-    report_path: str | None,
-    sweep_migrated: bool,
-    verify: bool,
-    acknowledge: bool,
-) -> int:
-    """Run the theme-8 Phase 1 service-account → agent migration job.
-
-    Default mode migrates every SA (copy→revoke→stamp→audit; idempotent via
-    the stamp) and emits one JSONL line per SA. ``--diff-only`` evaluates
-    dispositions without writing. ``--sweep-migrated`` runs the W3 sweep
-    and emits one JSONL line per swept SA plus a summary line.
-    ``--verify [--acknowledge]`` runs the acceptance queries and optionally
-    writes the Phase-4 gate sentinel (only on pass, same invocation).
-
-    Kept on the theme-8 Phase-4 image as the remediation tool the drop
-    migration names when it refuses; once the drop has run it is a no-op.
-    """
-    config = load_config()
-    configure_logging(config)
-
-    async with Context(config, allowed_dbs={"admin", "control"}) as ctx:
-        svc = ServiceAccountMigrationService(ctx)
-        if not await svc.tables_present():
-            print(
-                "==> service-account tables already dropped (theme-8 Phase 4) — nothing to do.",
-                file=sys.stderr,
-                flush=True,
-            )
-            return 0
-
-        if verify:
-            result = await svc.verify(acknowledge=acknowledge)
-            _write_report_lines(result.findings, report_path)
-            print(
-                f"==> verify {'PASSED' if result.passed else 'FAILED'}: "
-                f"{result.unstamped_count} unstamped, "
-                f"{result.grant_twin_missing_count} grant twin(s) missing, "
-                f"{result.unrevoked_token_count} unrevoked token(s), "
-                f"{result.digest_mismatch_count} digest mismatch(es), "
-                f"{result.post_stamp_mutation_count} post-stamp mutation(s), "
-                f"{result.inline_rule_mismatch_count} inline-rule binding mismatch(es).",
-                file=sys.stderr,
-                flush=True,
-            )
-            if result.successor_admin_scope_count:
-                print(
-                    f"==> REVIEW (informational, does not fail verify): "
-                    f"{result.successor_admin_scope_count} admin-level grant(s) carried onto "
-                    "successor agents — see the successor_admin_scope report lines.",
-                    file=sys.stderr,
-                    flush=True,
-                )
-            if result.superseded_digest_count:
-                print(
-                    f"==> NOTE (informational, does not fail verify): "
-                    f"{result.superseded_digest_count} successor agent(s) had their key rotated "
-                    "or were archived after migration; run `migrate-service-accounts "
-                    "--sweep-migrated` to clear the stale service-account digest(s) — see the "
-                    "successor_digest_superseded report lines.",
-                    file=sys.stderr,
-                    flush=True,
-                )
-            if acknowledge:
-                print(
-                    _sa_acknowledge_message(result),
-                    file=sys.stderr,
-                    flush=True,
-                )
-            return 0 if result.passed else 1
-
-        if sweep_migrated:
-            sweep = await svc.sweep()
-            _write_report_lines(sweep.report_lines(), report_path)
-            print(
-                f"==> swept {len(sweep.swept)} service account(s); revoked "
-                f"{sweep.access_tokens_revoked + sweep.refresh_tokens_revoked} SA "
-                f"session token(s); deleted {sweep.permission_rules_deleted} "
-                f"SA-keyed inline permission rule(s).",
-                file=sys.stderr,
-                flush=True,
-            )
-            return 0
-
-        outcomes = await svc.run(diff_only=diff_only)
-
-    _write_report_lines([asdict(o) for o in outcomes], report_path)
-    migrated = sum(1 for o in outcomes if o.outcome in ("migrated", "migrated-disabled"))
-    already = sum(1 for o in outcomes if o.outcome == "already_migrated")
-    skipped = sum(1 for o in outcomes if o.outcome == "skipped-non-active")
-    failed = sum(1 for o in outcomes if o.outcome == "failed")
-    verb = "would migrate" if diff_only else "migrated"
-    print(
-        f"==> {verb} {migrated} service account(s), {already} already migrated, "
-        f"{skipped} skipped-but-stamped, {failed} failed.",
-        file=sys.stderr,
-        flush=True,
-    )
-    admin_scoped = sum(1 for o in outcomes if o.admin_level_scopes)
-    if admin_scoped:
-        print(
-            f"==> REVIEW: {admin_scoped} successor agent(s) "
-            f"{'would receive' if diff_only else 'received'} admin-level scope(s) from "
-            "their service account — see admin_level_scopes in the report.",
-            file=sys.stderr,
-            flush=True,
-        )
-    return 1 if failed else 0
-
-
-def _sa_acknowledge_message(result: VerificationResult) -> str:
-    """The ``--verify --acknowledge`` outcome line, with the right next step.
-
-    A verify that fails only on what the sweep heals (live SA sessions,
-    unswept inline-rule rows) points at ``--sweep-migrated``; re-running the
-    migration would not help — stamped rows short-circuit it. Digest
-    mismatches (criterion 4) point at their per-SA report lines.
-    """
-    if result.acknowledged:
-        return "==> acknowledgement recorded — theme-8 Phase 4 drops are unblocked."
-    if result.only_sweep_healable_failures:
-        return (
-            "==> acknowledgement REFUSED: verification failed only on unrevoked SA "
-            "session(s) / unswept inline-rule row(s); run "
-            "`migrate-service-accounts --sweep-migrated`, then re-verify."
-        )
-    message = (
-        "==> acknowledgement REFUSED: verification failed; run "
-        "migrate-service-accounts first, then re-verify."
-    )
-    if result.digest_mismatch_count:
-        message += (
-            f" {result.digest_mismatch_count} digest mismatch(es) need operator repair — "
-            "see the digest_mismatch report lines for the service account and successor "
-            "ids (a migration re-run does not repair a stamped row)."
-        )
-    return message
-
-
-def _write_report_lines(lines: list[dict[str, object]], report_path: str | None) -> None:
-    """Emit one JSON line per dict, to ``report_path`` or stdout."""
-    if report_path is None:
-        for line in lines:
-            print(json.dumps(line), flush=True)
-        return
-    with open(report_path, "w", encoding="utf-8") as fh:
-        for line in lines:
-            fh.write(json.dumps(line) + "\n")
-
-
 def _write_report(findings: list[Finding], report_path: str | None) -> None:
     """Emit one JSON line per finding, to ``report_path`` or stdout."""
     if report_path is None:
@@ -700,46 +543,6 @@ def main(argv: list[str] | None = None) -> int:
         help="Temporary password (prompted, or read from stdin when non-interactive, if omitted).",
     )
 
-    migrate_sas = sub.add_parser(
-        "migrate-service-accounts",
-        help=(
-            "Migrate service accounts to successor agents "
-            "(theme-8 Phase 1; idempotent; a no-op once the Phase-4 drop has run)."
-        ),
-    )
-    migrate_sas.add_argument(
-        "--diff-only",
-        action="store_true",
-        help="Report what a run would do without writing anything.",
-    )
-    migrate_sas.add_argument(
-        "--report",
-        metavar="PATH",
-        help="Write the JSONL report here instead of stdout.",
-    )
-    migrate_sas.add_argument(
-        "--sweep-migrated",
-        action="store_true",
-        help=(
-            "Run the deferred sweep: archive migrated service accounts and "
-            "delete their SA-keyed originals."
-        ),
-    )
-    migrate_sas.add_argument(
-        "--verify",
-        action="store_true",
-        help="Run the verification queries instead of migrating.",
-    )
-    migrate_sas.add_argument(
-        "--acknowledge",
-        action="store_true",
-        help=(
-            "With --verify: record the operator acknowledgement that gates "
-            "the theme-8 Phase-4 drop migrations. Refused unless the "
-            "verification passes in this same invocation."
-        ),
-    )
-
     flatten = sub.add_parser(
         "flatten-toolkits",
         help=(
@@ -808,22 +611,6 @@ def main(argv: list[str] | None = None) -> int:
             _reset_password(
                 email=args.email,
                 password=args.password,
-            )
-        )
-
-    if args.command == "migrate-service-accounts":
-        if args.acknowledge and not args.verify:
-            migrate_sas.error("--acknowledge requires --verify (it records a passed verification)")
-        exclusive = [args.diff_only, args.verify, args.sweep_migrated]
-        if sum(1 for flag in exclusive if flag) > 1:
-            migrate_sas.error("--diff-only, --verify, and --sweep-migrated are mutually exclusive")
-        return asyncio.run(
-            _migrate_service_accounts(
-                diff_only=args.diff_only,
-                report_path=args.report,
-                sweep_migrated=args.sweep_migrated,
-                verify=args.verify,
-                acknowledge=args.acknowledge,
             )
         )
 

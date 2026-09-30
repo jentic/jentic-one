@@ -1,9 +1,9 @@
-"""The theme-8 Phase-4 drop migration carries verbatim copies of verify SQL.
+"""The theme-8 Phase-4 drop migration carries verbatim copies of job SQL.
 
 Migrations must not import application code, so the drop gate
-(``e2f3a4b5c6d7``) re-runs copies of the Phase-1 verification queries. If a
-copy drifted from the ``migrate-service-accounts --verify`` query, the gate
-and the acknowledgement would disagree about the same rows. Pin them equal.
+(``e2f3a4b5c6d7``) re-runs a copy of the retirement's "still needs a sweep"
+query. If the copy drifted from the job's, the gate would refuse (or pass) rows
+the pre-drop retirement had judged the other way. Pin them equal.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from pathlib import Path
 from types import ModuleType
 
 from jentic_one.control.repos.service_account_migration_repo import (
-    DIGEST_MISMATCH_SQL,
+    SWEEPABLE_SQL,
     THEME8_RETIRED_SCOPES,
 )
 
@@ -36,8 +36,8 @@ def _load() -> ModuleType:
     return module
 
 
-def test_digest_mismatch_sql_matches_the_verify_query() -> None:
-    assert _load().DIGEST_MISMATCH_SQL == DIGEST_MISMATCH_SQL
+def test_sweepable_sql_matches_the_job() -> None:
+    assert _load().SWEEPABLE_SQL == SWEEPABLE_SQL
 
 
 def test_retired_scopes_match_the_job() -> None:

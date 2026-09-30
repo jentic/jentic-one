@@ -13,8 +13,8 @@ import (
 // `jentic api GET /me`. It renders the discriminated union GET /me returns
 // (user | agent) verbatim: unlike getMe (me.go), which deliberately rejects
 // non-agent discriminators for the agent-only data commands, whoami is exactly
-// the "who am I?" question and must answer it for every token kind. Not fenced — read-only, no local config mutation
-// (mirrors `jentic credentials`).
+// the "who am I?" question and must answer it for every token kind. Not
+// fenced — read-only, no local config mutation (mirrors `jentic credentials`).
 func newWhoamiCmd(_ *app) *cobra.Command {
 	return &cobra.Command{
 		Use:   "whoami",

@@ -104,10 +104,11 @@ toolkit tables (`toolkits`, `toolkit_permission_rules`,
 `User` and `Agent` are the actor tables (an agent is owned by a user);
 `OAuthClient` rows back dynamic client registration, and `agent_credentials`
 holds the long-lived API-key alternative to the OAuth flow. The retired
-`service_accounts`/`service_account_credentials` tables are dropped in 0.41
-(theme-8 Phase 4), behind an acknowledge-gated migration (see the
-[release runbook](../development/releasing.md)); only the
-`service_account_migration_acks` upgrade evidence remains. Token state lives in
+`service_accounts`, `service_account_credentials` and
+`service_account_migration_acks` tables are dropped in 0.41 (theme-8 Phase 4),
+after the migration runner has moved every remaining service account to a
+successor agent (see the [release runbook](../development/releasing.md)).
+Token state lives in
 `access_tokens`/`refresh_tokens`/`authorization_codes`; scope grants in
 `actor_scope_grants` and `user_permission_grants`. Operationally:
 `jobs`/`job_results` (the queue the `WorkerLoop` claims from),

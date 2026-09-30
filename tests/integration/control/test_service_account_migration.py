@@ -4,14 +4,15 @@ Runs ``ServiceAccountMigrationService`` against real admin (+ control)
 databases on both dialects (``JENTIC_TEST_BACKEND=sqlite`` locally, Postgres
 in CI): the copy→revoke→stamp→audit transaction, dispositions (OQ-1),
 resolver behaviour (agent arm; no SA fallback since theme-8 Phase 4), the
-deferred sweep (W3/N3), and verify/acknowledge (W9). Test names lift the
-plan's acceptance criteria verbatim where they apply.
+deferred sweep (W3/N3), and the Phase-4 ``retire()`` pre-drop step
+(migrate → verify → sweep, refusing by SA id). Test names lift the plan's
+acceptance criteria verbatim where they apply.
 
-The job survives Phase 4 as the remediation tool the admin drop migration
-(``e2f3a4b5c6d7``) names when it refuses, so it runs against the pre-drop
-schema: the module downgrades the admin chain below the drop (recreating the
-two tables empty — the documented rollback shape) and re-upgrades at teardown
-through the drop's fresh-install path, since the suite leaves them empty.
+The service runs inside the migration runner, before the admin drop migration
+(``e2f3a4b5c6d7``), so it runs against the pre-drop schema: the module
+downgrades the admin chain below the drop (recreating the tables empty — the
+documented rollback shape) and re-upgrades at teardown through the drop's
+fresh-install path, since the suite leaves them empty.
 The SA ORM models are gone, so seeding is raw SQL.
 """
 
@@ -41,6 +42,7 @@ from jentic_one.control.repos.service_account_migration_repo import (
 )
 from jentic_one.control.services.service_account_migration import (
     ServiceAccountMigrationService,
+    ServiceAccountRetirementError,
 )
 from jentic_one.shared.auth.api_key_resolver import ApiKeyResolver
 from jentic_one.shared.config import AppConfig
@@ -103,7 +105,6 @@ async def clean_tables(
                     text(f"DELETE FROM {table} WHERE {column} IN (SELECT id FROM service_accounts)")
                 )
             await session.execute(text("DELETE FROM service_accounts"))
-            await session.execute(text("DELETE FROM service_account_migration_acks"))
             await session.execute(
                 text("DELETE FROM audit_entries WHERE actor_id = 'migrate-service-accounts'")
             )
@@ -391,8 +392,8 @@ async def test_skip_but_stamp_revokes_outstanding_tokens_too(
     integration_context: Context, admin_db: DatabaseSession, seed_owner: None
 ) -> None:
     """M5: a skip-but-stamp SA (no successor) still gets its opaque sessions
-    family-revoked in the stamp transaction — verify criterion 3 counts every
-    SA row and would otherwise fail unfixably."""
+    family-revoked in the stamp transaction, and the pre-drop retirement
+    accepts and sweeps it (no successor to verify)."""
     sa_id = await _seed_sa(
         admin_db, suffix="skiptok", status="pending", scopes=("toolkit:read",), with_tokens=True
     )
@@ -411,9 +412,13 @@ async def test_skip_but_stamp_revokes_outstanding_tokens_too(
         )
         assert len(tokens) == 1 and tokens[0].revoked_at is not None, table
 
-    result = await svc.verify()
-    assert result.unrevoked_token_count == 0
-    assert result.passed is True
+    retired = await svc.retire()
+    assert retired.action == "retired"
+    assert retired.swept == 1
+    status = await _rows(
+        admin_db, "SELECT status FROM service_accounts WHERE id = :id", {"id": sa_id}
+    )
+    assert status[0].status == "archived"
 
 
 async def test_two_concurrent_sessions_race_one_unstamped_sa(
@@ -566,9 +571,7 @@ async def test_migrated_sak_key_authenticates_with_identical_effective_scopes_on
     assert sorted(after.permissions) == ["capabilities:execute", "toolkit:read"]
 
 
-async def test_unmigrated_sak_key_fails_closed_with_warning(
-    admin_db: DatabaseSession, seed_owner: None
-) -> None:
+async def test_unmigrated_sak_key_fails_closed(admin_db: DatabaseSession, seed_owner: None) -> None:
     """Theme-8 Phase 4 removed the SA fallback: an unmigrated key's digest
     lives only in ``service_account_credentials``, so it no longer resolves."""
     plaintext = "sak_t8m_unmig"
@@ -580,7 +583,7 @@ async def test_unmigrated_sak_key_fails_closed_with_warning(
 
     assert identity is None
     unresolved = [log for log in logs if log["event"] == "retired_key_unresolved"]
-    assert len(unresolved) == 1 and unresolved[0]["log_level"] == "warning"
+    assert len(unresolved) == 1 and unresolved[0]["log_level"] == "info"
 
 
 async def test_disabled_sa_successor_created_disabled_and_key_dead_until_agent_enable(
@@ -806,69 +809,6 @@ async def test_concurrent_winner_detected_by_in_transaction_recheck(
     assert replay.reason == "concurrent_run_won"
 
 
-async def test_diff_only_writes_nothing(
-    integration_context: Context, admin_db: DatabaseSession, seed_owner: None
-) -> None:
-    sa_id = await _seed_sa(
-        admin_db, suffix="diff", scopes=("toolkit:read",), api_key_plaintext="sak_t8m_diff"
-    )
-
-    outcomes = {
-        o.service_account_id: o
-        for o in await ServiceAccountMigrationService(integration_context).run(diff_only=True)
-    }
-
-    assert outcomes[sa_id].outcome == "migrated"  # the disposition it WOULD take
-    stamp, _ = await _stamp_of(admin_db, sa_id)
-    assert stamp is None
-    successors = await _rows(
-        admin_db,
-        "SELECT id FROM agents WHERE registered_by = 'system:theme8-sa-migration'",
-        {},
-    )
-    assert successors == []
-
-
-async def test_diff_only_preview_counts_match_the_real_run(
-    integration_context: Context,
-    admin_db: DatabaseSession,
-    control_db: DatabaseSession,
-    seed_owner: None,
-    rule_credential: str,
-) -> None:
-    """The preview reports what the real run WILL copy/revoke (same queries,
-    retired scopes excluded), and never a misleading zero for a stamped row."""
-    sa_id = await _seed_sa(
-        admin_db,
-        suffix="pvcount",
-        scopes=("toolkit:read", "credentials:read", "service-accounts:read"),
-        api_key_plaintext="sak_t8m_pvcount",
-        with_tokens=True,
-        credential_ids=(rule_credential,),
-    )
-    await _seed_inline_rules(control_db, sa_id, rule_credential)
-    svc = ServiceAccountMigrationService(integration_context)
-
-    preview = {o.service_account_id: o for o in await svc.run(diff_only=True)}[sa_id]
-    real = {o.service_account_id: o for o in await svc.run()}[sa_id]
-
-    assert real.outcome == "migrated"
-    counted = (
-        "stored_scope_count",
-        "credential_binding_count",
-        "permission_rule_count",
-        "access_tokens_revoked",
-        "refresh_tokens_revoked",
-    )
-    assert {f: getattr(preview, f) for f in counted} == {f: getattr(real, f) for f in counted}
-    assert (preview.stored_scope_count, preview.permission_rule_count) == (2, 2)
-    assert (preview.access_tokens_revoked, preview.refresh_tokens_revoked) == (1, 1)
-
-    stamped = {o.service_account_id: o for o in await svc.run(diff_only=True)}[sa_id]
-    assert stamped.outcome == "already_migrated"
-    assert all(getattr(stamped, f) is None for f in counted)  # not computed
-
-
 # ---------------------------------------------------------------- W3 sweep
 
 
@@ -1015,19 +955,18 @@ async def test_repeated_sweeps_write_exactly_one_archive_audit_row(
 # ------------------------------------------------------- W8 stamp guards (M4)
 
 
-async def test_verify_counts_post_stamp_sva_binding_inserts(
+async def test_retire_heals_post_stamp_sva_binding_inserts(
     integration_context: Context, admin_db: DatabaseSession, seed_owner: None
 ) -> None:
-    """M4: verify criterion 5 counts fresh ``sva_``-keyed binding rows written
-    after the stamp (raw-SQL writers bypassing the service guards)."""
+    """M4: a fresh ``sva_``-keyed binding written after the stamp (raw-SQL
+    writers bypassing the service guards) is copied onto the successor by the
+    pre-drop retirement, then swept from the SA side."""
     sa_id = await _seed_sa(
         admin_db, suffix="vbind", scopes=("toolkit:read",), api_key_plaintext="sak_t8m_vbind"
     )
     svc = ServiceAccountMigrationService(integration_context)
-    await svc.run()
-
-    clean = await svc.verify()
-    assert clean.post_stamp_mutation_count == 0
+    outcomes = {o.service_account_id: o for o in await svc.run()}
+    agent_id = outcomes[sa_id].successor_agent_id
 
     async with admin_db.session() as session:
         await session.execute(
@@ -1040,72 +979,83 @@ async def test_verify_counts_post_stamp_sva_binding_inserts(
         )
         await session.commit()
 
-    result = await svc.verify()
-    assert result.passed is False
-    assert result.post_stamp_mutation_count == 1
+    retired = await svc.retire()
+
+    assert retired.action == "retired"
+    assert retired.post_stamp_bindings_copied == 1
+    assert retired.post_stamp_grants_copied == 0
+    bindings = await _rows(
+        admin_db,
+        "SELECT agent_id FROM agent_credential_bindings WHERE credential_id = 'cred_t8m_late'",
+        {},
+    )
+    assert [b.agent_id for b in bindings] == [agent_id]
 
 
-# ------------------------------------------------------------ W9 verify/ack
+# ------------------------------------------------ Phase-4 retire (pre-drop)
 
 
-async def test_verify_fails_on_unstamped_row_and_acknowledge_is_refused(
+async def test_retire_migrates_unstamped_rows_and_sweeps_them(
     integration_context: Context, admin_db: DatabaseSession, seed_owner: None
 ) -> None:
-    await _seed_sa(admin_db, suffix="vfail", api_key_plaintext="sak_t8m_vfail")
-    svc = ServiceAccountMigrationService(integration_context)
-
-    result = await svc.verify(acknowledge=True)
-
-    assert result.passed is False
-    assert result.unstamped_count == 1
-    assert result.acknowledged is False
-    acks = await _rows(admin_db, "SELECT id FROM service_account_migration_acks", {})
-    assert acks == []
-
-
-async def test_verify_passes_after_migration_and_acknowledge_writes_sentinel(
-    integration_context: Context, admin_db: DatabaseSession, seed_owner: None
-) -> None:
-    await _seed_sa(
+    """An unmigrated active SA and a rejected one: ``retire()`` migrates,
+    verifies and sweeps in one call — no operator step, no acknowledgement."""
+    sa_id = await _seed_sa(
         admin_db,
         suffix="vpass",
         scopes=("toolkit:read",),
         api_key_plaintext="sak_t8m_vpass",
         with_tokens=True,
     )
-    await _seed_sa(admin_db, suffix="vpass_skip", status="rejected")
+    skip_id = await _seed_sa(admin_db, suffix="vpass_skip", status="rejected")
     svc = ServiceAccountMigrationService(integration_context)
-    await svc.run()
 
-    result = await svc.verify(acknowledge=True)
+    retired = await svc.retire()
 
-    assert result.passed is True
-    assert result.acknowledged is True
-    acks = await _rows(
-        admin_db,
-        "SELECT unstamped_count, grant_twin_missing_count, unrevoked_token_count,"
-        " digest_mismatch_count, post_stamp_mutation_count, report_finding_count,"
-        " tool_version"
-        " FROM service_account_migration_acks",
-        {},
+    assert (retired.action, retired.migrated, retired.skipped, retired.swept) == (
+        "retired",
+        1,
+        1,
+        2,
     )
-    assert len(acks) == 1
-    assert (
-        acks[0].unstamped_count,
-        acks[0].grant_twin_missing_count,
-        acks[0].unrevoked_token_count,
-        acks[0].digest_mismatch_count,
-        acks[0].post_stamp_mutation_count,
-        acks[0].report_finding_count,  # the verify summary is not a finding
-    ) == (0, 0, 0, 0, 0, 0)
-    assert acks[0].tool_version
-    # ...but it stays in the report.
-    assert [f["category"] for f in result.findings] == ["verify_summary"]
+    for sid in (sa_id, skip_id):
+        stamp, _ = await _stamp_of(admin_db, sid)
+        assert stamp is not None
+    statuses = await _rows(
+        admin_db, "SELECT DISTINCT status FROM service_accounts WHERE id LIKE 'sva_t8m_%'", {}
+    )
+    assert [s.status for s in statuses] == ["archived"]
+    async with admin_db.session() as session:
+        unstamped = await ServiceAccountMigrationRepository.list_unstamped_ids(session)
+    assert unstamped == []
 
 
-async def test_verify_fails_on_missing_grant_twin_and_post_stamp_mutation(
+async def test_retire_is_idempotent(
     integration_context: Context, admin_db: DatabaseSession, seed_owner: None
 ) -> None:
+    await _seed_sa(
+        admin_db, suffix="videm", scopes=("toolkit:read",), api_key_plaintext="sak_t8m_videm"
+    )
+    svc = ServiceAccountMigrationService(integration_context)
+
+    first = await svc.retire()
+    second = await svc.retire()
+
+    assert (first.migrated, first.swept) == (1, 1)
+    assert (second.action, second.migrated, second.already_migrated) == ("retired", 0, 1)
+    assert (second.post_stamp_grants_copied, second.post_stamp_bindings_copied) == (0, 0)
+    successors = await _rows(
+        admin_db, "SELECT id FROM agents WHERE registered_by = 'system:theme8-sa-migration'", {}
+    )
+    assert len(successors) == 1
+
+
+async def test_retire_copies_post_stamp_grants_but_never_resurrects_removed_twins(
+    integration_context: Context, admin_db: DatabaseSession, seed_owner: None
+) -> None:
+    """For an SA stamped by an earlier run, a successor grant the operator
+    removed stays removed (not a refusal), while an SA grant created after
+    the stamp is copied (the M4 post-stamp mutation, healed)."""
     sa_id = await _seed_sa(
         admin_db, suffix="vtwin", scopes=("toolkit:read",), api_key_plaintext="sak_t8m_vtwin"
     )
@@ -1113,7 +1063,6 @@ async def test_verify_fails_on_missing_grant_twin_and_post_stamp_mutation(
     outcomes = {o.service_account_id: o for o in await svc.run()}
     agent_id = outcomes[sa_id].successor_agent_id
 
-    # Break criterion 2 (delete the twin) and criterion 5 (post-stamp grant).
     async with admin_db.session() as session:
         await session.execute(
             text("DELETE FROM actor_scope_grants WHERE actor_id = :id"), {"id": agent_id}
@@ -1122,38 +1071,32 @@ async def test_verify_fails_on_missing_grant_twin_and_post_stamp_mutation(
             text(
                 "INSERT INTO actor_scope_grants"
                 " (id, actor_id, actor_type, scope, granted_by, created_by, created_at)"
-                " VALUES ('asg_t8m_late', :id, 'service_account', 'sneaky:scope',"
+                " VALUES ('asg_t8m_late', :id, 'service_account', 'capabilities:execute',"
                 " :by, :by, :late)"
             ),
             {"id": sa_id, "by": _OWNER, "late": dt.datetime.now(dt.UTC) + dt.timedelta(hours=1)},
         )
         await session.commit()
 
-    result = await svc.verify()
+    retired = await svc.retire()
 
-    assert result.passed is False
-    assert result.grant_twin_missing_count >= 1
-    assert result.post_stamp_mutation_count >= 1
-
-
-# ------------------------------------ criterion 4: superseded successors (#1416)
-
-
-def _findings(result: Any, category: str) -> list[dict[str, Any]]:
-    return [f for f in result.findings if f["category"] == category]
+    assert retired.post_stamp_grants_copied == 1
+    grants = await _rows(
+        admin_db, "SELECT scope FROM actor_scope_grants WHERE actor_id = :id", {"id": agent_id}
+    )
+    assert [g.scope for g in grants] == ["capabilities:execute"]
 
 
 @pytest.mark.parametrize("regenerate", [True, False], ids=["rotated", "revoked"])
-async def test_verify_passes_after_successor_key_rotation_and_sweep_clears_the_note(
+async def test_retire_accepts_a_successor_key_rotation(
     integration_context: Context,
     admin_db: DatabaseSession,
     seed_owner: None,
     regenerate: bool,
 ) -> None:
     """#1416: an operator rotating (revoke + regenerate) or just revoking the
-    successor's key after the stamp is not drift — verify passes, the ack is
-    recorded, and the superseded SA digest is reported informationally with
-    the sweep hint until ``--sweep-migrated`` clears it."""
+    successor's key after the stamp is not drift — the retirement passes and
+    sweeps the superseded SA digest."""
     sa_id = await _seed_sa(
         admin_db, suffix="vrot", scopes=("toolkit:read",), api_key_plaintext="sak_t8m_vrot"
     )
@@ -1171,36 +1114,18 @@ async def test_verify_passes_after_successor_key_rotation_and_sweep_clears_the_n
             )
         await session.commit()
 
-    result = await svc.verify(acknowledge=True)
+    retired = await svc.retire()
 
-    assert result.digest_mismatch_count == 0
-    assert result.passed is True
-    assert result.acknowledged is True
-    assert _findings(result, "digest_mismatch") == []
-    superseded = _findings(result, "successor_digest_superseded")
-    assert [
-        (f["service_account_id"], f["successor_agent_id"], f["reason"]) for f in superseded
-    ] == [(sa_id, agent_id, "successor_key_rotated")]
-    assert superseded[0]["informational"] is True
-    assert "--sweep-migrated" in superseded[0]["actionable_step"]
-    assert result.superseded_digest_count == 1
-    assert result.finding_count == 0
-    acks = await _rows(
+    assert (retired.action, retired.swept) == ("retired", 1)
+    digests = await _rows(
         admin_db,
-        "SELECT digest_mismatch_count, report_finding_count FROM service_account_migration_acks",
-        {},
+        "SELECT api_key_hash FROM service_account_credentials WHERE service_account_id = :id",
+        {"id": sa_id},
     )
-    assert [(a.digest_mismatch_count, a.report_finding_count) for a in acks] == [(0, 0)]
-
-    await svc.sweep()
-    after_sweep = await svc.verify()
-
-    assert after_sweep.passed is True
-    assert after_sweep.superseded_digest_count == 0
-    assert _findings(after_sweep, "successor_digest_superseded") == []
+    assert [d.api_key_hash for d in digests] in ([], [None])
 
 
-async def test_verify_excludes_archived_successor_from_digest_mismatches(
+async def test_retire_accepts_an_archived_successor(
     integration_context: Context, admin_db: DatabaseSession, seed_owner: None
 ) -> None:
     """#1416: an archived successor is terminal — a digest it no longer holds
@@ -1222,14 +1147,9 @@ async def test_verify_excludes_archived_successor_from_digest_mismatches(
         )
         await session.commit()
 
-    result = await svc.verify()
+    retired = await svc.retire()
 
-    assert result.digest_mismatch_count == 0
-    assert result.passed is True
-    assert [
-        (f["service_account_id"], f["reason"])
-        for f in _findings(result, "successor_digest_superseded")
-    ] == [(sa_id, "successor_archived")]
+    assert (retired.action, retired.swept) == ("retired", 1)
 
 
 @pytest.mark.parametrize(
@@ -1248,16 +1168,19 @@ async def test_verify_excludes_archived_successor_from_digest_mismatches(
     ],
     ids=["unstamped-change", "rotated-before-stamp", "credential-missing", "successor-missing"],
 )
-async def test_verify_still_counts_genuine_digest_drift_and_names_the_pair(
+async def test_retire_refuses_genuine_digest_drift_names_the_sa_and_sweeps_nothing(
     integration_context: Context, admin_db: DatabaseSession, seed_owner: None, tamper: str
 ) -> None:
     """#1416 must stay fail-closed: drift that is not a legitimate post-stamp
-    rotation or archive is counted, refuses the ack, and names the SA and
-    successor ids."""
-    sa_id = await _seed_sa(admin_db, suffix="vdrift", api_key_plaintext="sak_t8m_vdrift")
+    rotation or archive refuses the retirement, names the SA and successor
+    ids, and leaves every SA-side original in place for a safe re-run."""
+    sa_id = await _seed_sa(
+        admin_db, suffix="vdrift", api_key_plaintext="sak_t8m_vdrift", with_tokens=True
+    )
     svc = ServiceAccountMigrationService(integration_context)
     outcomes = {o.service_account_id: o for o in await svc.run()}
     agent_id = outcomes[sa_id].successor_agent_id
+    assert agent_id is not None
     _, stamp = await _stamp_of(admin_db, sa_id)
     # Raw-SQL read: a datetime on Postgres, the stored ISO string on SQLite.
     migrated_at = stamp if isinstance(stamp, dt.datetime) else dt.datetime.fromisoformat(str(stamp))
@@ -1273,19 +1196,37 @@ async def test_verify_still_counts_genuine_digest_drift_and_names_the_pair(
         )
         await session.commit()
 
-    result = await svc.verify(acknowledge=True)
+    with pytest.raises(ServiceAccountRetirementError) as exc_info:
+        await svc.retire()
 
-    assert result.digest_mismatch_count == 1
-    assert result.passed is False
-    assert result.acknowledged is False
-    assert result.only_sweep_healable_failures is False
-    mismatches = _findings(result, "digest_mismatch")
-    assert [(f["service_account_id"], f["successor_agent_id"]) for f in mismatches] == [
-        (sa_id, agent_id)
-    ]
-    assert _findings(result, "successor_digest_superseded") == []
-    acks = await _rows(admin_db, "SELECT id FROM service_account_migration_acks", {})
-    assert acks == []
+    error = exc_info.value
+    assert error.service_account_ids == (sa_id,)
+    assert [p.service_account_id for p in error.problems] == [sa_id]
+    assert agent_id in error.problems[0].reason
+    assert "API-key digest" in error.problems[0].reason
+    assert "Nothing was swept or dropped" in str(error)
+    rows = await _rows(
+        admin_db,
+        "SELECT sa.status, c.api_key_hash FROM service_accounts sa"
+        " JOIN service_account_credentials c ON c.service_account_id = sa.id"
+        " WHERE sa.id = :id",
+        {"id": sa_id},
+    )
+    assert [(r.status, r.api_key_hash) for r in rows] == [("active", _digest("sak_t8m_vdrift"))]
+
+
+async def test_retire_without_the_tables_is_a_noop(
+    integration_context: Context, integration_config: AppConfig, clean_tables: None
+) -> None:
+    """Past the drop there is nothing to retire (the runner never calls it
+    there, but the step must stay safe to call)."""
+    admin_cfg = _alembic_config_for("admin", integration_config.databases.admin)
+    await asyncio.to_thread(command.upgrade, admin_cfg, "head")
+    try:
+        retired = await ServiceAccountMigrationService(integration_context).retire()
+    finally:
+        await asyncio.to_thread(command.downgrade, admin_cfg, _ADMIN_PRE_DROP)
+    assert retired.action == "no_tables"
 
 
 # ------------------------------------------------- review follow-ups (PR #1386)
@@ -1413,7 +1354,7 @@ async def _inline_rules(
     return [(r.credential_id, r.effect, r.sequence, r.path) for r in rows]
 
 
-async def test_inline_permission_rules_are_copied_idempotently_verified_and_swept(
+async def test_inline_permission_rules_are_copied_idempotently_and_swept(
     integration_context: Context,
     admin_db: DatabaseSession,
     control_db: DatabaseSession,
@@ -1421,8 +1362,9 @@ async def test_inline_permission_rules_are_copied_idempotently_verified_and_swep
     rule_credential: str,
 ) -> None:
     """H2: control-DB ``agent_permission_rules`` keyed ``(sva_, credential)``
-    are copied onto the successor, re-runs never duplicate them, verify
-    criterion 6 checks per-binding parity, and the sweep drops the sva_ rows."""
+    are copied onto the successor, re-runs never duplicate them (nor merge
+    into an operator-edited successor binding), a lost binding is healed,
+    and the sweep drops the sva_ rows."""
     sa_id = await _seed_sa(
         admin_db,
         suffix="rules",
@@ -1447,19 +1389,13 @@ async def test_inline_permission_rules_are_copied_idempotently_verified_and_swep
     assert second.permission_rule_count == 0
     assert await _inline_rules(control_db, agent_id) == source
 
-    verified = await svc.verify()
-    assert verified.inline_rule_mismatch_count == 0
-
-    # Criterion 6 catches a successor binding that drifted from its source.
+    # An operator edits the successor binding (drops one rule).
     async with control_db.session() as session:
         await session.execute(
             text("DELETE FROM agent_permission_rules WHERE agent_id = :id AND sequence = 1"),
             {"id": agent_id},
         )
         await session.commit()
-    drifted = await svc.verify()
-    assert drifted.inline_rule_mismatch_count == 1
-    assert drifted.passed is False
     # A partially-edited successor binding is never merged into by a re-run.
     third = {o.service_account_id: o for o in await svc.run()}[sa_id]
     assert third.permission_rule_count == 0
@@ -1481,12 +1417,44 @@ async def test_inline_permission_rules_are_copied_idempotently_verified_and_swep
     assert swept.permission_rules_deleted == 2
     assert await _inline_rules(control_db, sa_id) == []
     assert await _inline_rules(control_db, agent_id) == source
-    after_sweep = await svc.verify()
-    assert after_sweep.inline_rule_mismatch_count == 0
 
     # A repeated sweep finds nothing left to delete.
     again = await svc.sweep()
     assert again.permission_rules_deleted == 0
+
+
+async def test_retire_deletes_orphan_sva_inline_rules_and_keeps_the_successor_twin(
+    integration_context: Context,
+    admin_db: DatabaseSession,
+    control_db: DatabaseSession,
+    seed_owner: None,
+    rule_credential: str,
+) -> None:
+    """Rules keyed on an ``sva_`` id no SA row owns (a hand-deleted service
+    account) cannot be migrated anywhere: the retirement deletes them after
+    the sweep, while a real SA's rules end on its successor only."""
+    sa_id = await _seed_sa(
+        admin_db,
+        suffix="orules",
+        api_key_plaintext="sak_t8m_orules",
+        credential_ids=(rule_credential,),
+    )
+    await _seed_inline_rules(control_db, sa_id, rule_credential)
+    source = await _inline_rules(control_db, sa_id)
+    orphan = "sva_t8m_orphan_rules"
+    await _seed_inline_rules(control_db, orphan, rule_credential)
+
+    retired = await ServiceAccountMigrationService(integration_context).retire()
+
+    assert retired.action == "retired"
+    assert retired.permission_rules_deleted == 2
+    assert retired.orphan_permission_rules_deleted == 2
+    assert await _inline_rules(control_db, sa_id) == []
+    assert await _inline_rules(control_db, orphan) == []
+    successor = await _rows(
+        admin_db, "SELECT migrated_to_actor_id FROM service_accounts WHERE id = :id", {"id": sa_id}
+    )
+    assert await _inline_rules(control_db, successor[0].migrated_to_actor_id) == source
 
 
 async def test_sweep_ensures_the_successor_twin_before_deleting_sva_rules(
@@ -1556,7 +1524,7 @@ async def test_sweep_revokes_sa_sessions_minted_during_the_window(
     """M1: SA sessions that appear after the stamp (pre-Phase-2 a
     client-credentials login minted them; the grant is gone now, but a
     pre-upgrade session can still be live) are revoked by the sweep in its
-    transaction — ``--sweep-migrated`` is the kill lever."""
+    transaction (the pre-drop retirement runs it)."""
     sa_id = await _seed_sa(
         admin_db,
         suffix="ccgrant",
@@ -1593,20 +1561,18 @@ async def test_sweep_revokes_sa_sessions_minted_during_the_window(
             )
         )
         await session.commit()
-    live = await svc.verify()
-    assert live.unrevoked_token_count == 2  # the window access + refresh pair
-    assert live.only_sweep_healable_failures  # the refusal hint names the sweep
 
     swept = await svc.sweep()
     assert swept.swept == [sa_id]
     assert swept.access_tokens_revoked == 1
     assert swept.refresh_tokens_revoked == 1
-    row_line, summary = swept.report_lines()
-    assert row_line["service_account_id"] == sa_id
-    assert (row_line["access_tokens_revoked"], row_line["refresh_tokens_revoked"]) == (1, 1)
-    assert summary["category"] == "sweep_summary" and summary["swept"] == 1
-    after = await svc.verify()
-    assert after.unrevoked_token_count == 0
+    for table in ("access_tokens", "refresh_tokens"):
+        live = await _rows(
+            admin_db,
+            f"SELECT id FROM {table} WHERE actor_id = :id AND revoked_at IS NULL",
+            {"id": sa_id},
+        )
+        assert live == [], table
     revokes = await _rows(
         admin_db,
         "SELECT id FROM audit_entries WHERE actor_id = 'migrate-service-accounts'"
@@ -1663,9 +1629,9 @@ async def test_admin_level_grant_is_carried_over_and_reported_not_stripped(
     integration_context: Context, admin_db: DatabaseSession, seed_owner: None
 ) -> None:
     """An SA holding ``org:admin`` keeps it on its successor (the grant copy is
-    unchanged), and the carry-over is reported: preview + run report line,
-    one WARNING per admin-level grant, the scope names in the GRANT audit
-    row, and an informational ``verify`` finding that does not fail it."""
+    unchanged), and the carry-over is reported: the run report line, one
+    WARNING per admin-level grant, the scope names in the GRANT audit row —
+    and it never blocks the pre-drop retirement."""
     sa_id = await _seed_sa(
         admin_db,
         suffix="admin",
@@ -1677,11 +1643,6 @@ async def test_admin_level_grant_is_carried_over_and_reported_not_stripped(
     )
     svc = ServiceAccountMigrationService(integration_context)
     expected_admin = ({"scope": "org:admin", "original_granted_by": _OWNER},)
-
-    preview = {o.service_account_id: o for o in await svc.run(diff_only=True)}
-    assert preview[sa_id].admin_level_scopes == expected_admin
-    assert preview[sa_id].copied_scopes == ("capabilities:execute", "org:admin")
-    assert preview[plain_sa].admin_level_scopes == ()
 
     with structlog.testing.capture_logs() as logs:
         outcomes = {o.service_account_id: o for o in await svc.run()}
@@ -1729,36 +1690,11 @@ async def test_admin_level_grant_is_carried_over_and_reported_not_stripped(
         "admin_level_scopes": ["org:admin"],
     }
 
-    result = await svc.verify()
-    assert result.passed, result.findings[0]
-    assert result.successor_admin_scope_count == 1
-    (finding,) = [f for f in result.findings if f["category"] == "successor_admin_scope"]
-    assert finding["agent_id"] == agent_id
-    assert finding["agent_name"] == f"service-account:{sa_id}"
-    assert finding["owner_id"] == _OWNER
-    assert finding["scope"] == "org:admin"
-    assert finding["informational"] is True
-    assert result.findings[0]["successor_admin_scope_count"] == 1
-
-    # Informational only: acknowledgement is still granted on a passing verify,
-    # and the review lines do not count as findings on the gate row.
-    acked = await svc.verify(acknowledge=True)
-    assert acked.acknowledged
-    (ack,) = await _rows(
-        admin_db, "SELECT report_finding_count FROM service_account_migration_acks", {}
+    retired = await svc.retire()
+    assert (retired.action, retired.swept) == ("retired", 2)
+    grants_after = await _rows(
+        admin_db,
+        "SELECT scope FROM actor_scope_grants WHERE actor_id = :id",
+        {"id": agent_id},
     )
-    assert ack.report_finding_count == 0
-
-    # A scope an operator re-grants themselves is no longer "carried over".
-    async with admin_db.session() as session:
-        await session.execute(
-            text(
-                "UPDATE actor_scope_grants SET granted_by = :by"
-                " WHERE actor_id = :id AND scope = 'org:admin'"
-            ),
-            {"by": _OWNER, "id": agent_id},
-        )
-        await session.commit()
-    regranted = await svc.verify()
-    assert regranted.successor_admin_scope_count == 0
-    assert not [f for f in regranted.findings if f["category"] == "successor_admin_scope"]
+    assert {r.scope for r in grants_after} == {"capabilities:execute", "org:admin"}

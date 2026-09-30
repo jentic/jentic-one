@@ -34,7 +34,7 @@ import hashlib
 import json
 from dataclasses import dataclass
 
-from sqlalchemy import select, text
+from sqlalchemy import inspect, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.control.core.schema.agent_permission_rules import AgentPermissionRule
@@ -422,17 +422,34 @@ class FlatteningAdminRepository:
         return int(row.n)
 
     @staticmethod
+    async def _service_accounts_present(session: AsyncSession) -> bool:
+        """Whether the legacy ``service_accounts`` table still exists.
+
+        Theme-8 Phase 4 drops it (admin ``e2f3a4b5c6d7``, after 6b's
+        ``d1e2f3a4b5c6``). The flatten reads run before the drop on an upgrade,
+        but a re-run of the flatten report after the drop must not 500 — with
+        the table gone there are simply no service-account actors left.
+        """
+        conn = await session.connection()
+        return bool(await conn.run_sync(lambda sync: inspect(sync).has_table("service_accounts")))
+
+    @staticmethod
     async def list_actor_ids(session: AsyncSession) -> set[str]:
         """Every id an ``agent_toolkit_bindings.agent_id`` may legitimately hold."""
-        agents = (await session.execute(_LIST_AGENT_IDS)).scalars().all()
-        service_accounts = (await session.execute(_LIST_SERVICE_ACCOUNT_IDS)).scalars().all()
-        return {str(i) for i in agents} | {str(i) for i in service_accounts}
+        ids = {str(i) for i in (await session.execute(_LIST_AGENT_IDS)).scalars().all()}
+        if await FlatteningAdminRepository._service_accounts_present(session):
+            rows = (await session.execute(_LIST_SERVICE_ACCOUNT_IDS)).scalars().all()
+            ids |= {str(i) for i in rows}
+        return ids
 
     @staticmethod
     async def list_actor_owners(session: AsyncSession) -> dict[str, str | None]:
-        """``{actor_id: owner_id}`` for every agent and service account."""
+        """``{actor_id: owner_id}`` for every agent and (while it exists) service account."""
         owners: dict[str, str | None] = {}
-        for stmt in (_LIST_AGENT_OWNERS, _LIST_SERVICE_ACCOUNT_OWNERS):
+        stmts = [_LIST_AGENT_OWNERS]
+        if await FlatteningAdminRepository._service_accounts_present(session):
+            stmts.append(_LIST_SERVICE_ACCOUNT_OWNERS)
+        for stmt in stmts:
             for row in (await session.execute(stmt)).all():
                 owners[str(row.id)] = str(row.owner_id) if row.owner_id is not None else None
         return owners

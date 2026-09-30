@@ -1077,6 +1077,44 @@ def test_broker_retired_direct_bindings_flag_true_is_ignored(
     assert warnings[0]["setting"] == "broker.direct_bindings_enabled"
 
 
+@pytest.mark.parametrize("value", [24, "0"])
+def test_services_retired_sa_sweep_age_is_ignored(
+    tmp_path: Path,
+    sample_config_dict: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    value: object,
+) -> None:
+    """The 0.40 sweep age gate is harmless: dropped with a one-time warning."""
+    sample_config_dict["services"] = {
+        "service_account_sweep_min_stamp_age_hours": value,
+        "retry_max": 5,
+    }
+    path = tmp_path / "cfg.yaml"
+    path.write_text(yaml.dump(sample_config_dict))
+    monkeypatch.setattr(config_module, "_retired_sa_sweep_age_warned", threading.Event())
+    with structlog.testing.capture_logs() as logs:
+        config = load_config(path)
+        load_config(path)
+    assert config.services.retry_max == 5
+    assert not hasattr(config.services, "service_account_sweep_min_stamp_age_hours")
+    warnings = [e for e in logs if e["event"] == "config_retired_setting_ignored"]
+    assert len(warnings) == 1, "the warning is logged once per process"
+    assert warnings[0]["log_level"] == "warning"
+    assert warnings[0]["setting"] == "services.service_account_sweep_min_stamp_age_hours"
+
+
+def test_services_retired_sa_sweep_age_env_is_ignored(
+    config_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(config_module, "_retired_sa_sweep_age_warned", threading.Event())
+    env = {"JENTIC__SERVICES__SERVICE_ACCOUNT_SWEEP_MIN_STAMP_AGE_HOURS": "48"}
+    with patch.dict(os.environ, env, clear=False), structlog.testing.capture_logs() as logs:
+        load_config(config_file)
+    assert [e["setting"] for e in logs if e["event"] == "config_retired_setting_ignored"] == [
+        "services.service_account_sweep_min_stamp_age_hours"
+    ]
+
+
 def test_server_backend_defaults_to_local(config_file: Path):
     config = load_config(config_file)
     assert config.server.backend == "local"

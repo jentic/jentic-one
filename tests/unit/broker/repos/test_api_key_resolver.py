@@ -129,7 +129,7 @@ async def test_retired_key_digest_miss_fails_closed(
     assert identity is None
     assert call_count == 1
     unresolved = [log for log in logs if log["event"] == "retired_key_unresolved"]
-    assert len(unresolved) == 1 and unresolved[0]["log_level"] == "warning"
+    assert len(unresolved) == 1 and unresolved[0]["log_level"] == "info"
 
 
 @pytest.mark.asyncio

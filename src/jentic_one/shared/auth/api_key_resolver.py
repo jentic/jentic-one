@@ -119,7 +119,10 @@ class ApiKeyResolver:
                 ),
             )
             return None
-        logger.warning(
+        # info, not warning: after Phase 4 every stale sak_/jntc_live_ key in
+        # a client's config lands here on each call; it is an expected,
+        # client-caused 401, not an operator-actionable server fault.
+        logger.info(
             "retired_key_unresolved",
             actionable_step=(
                 "This retired key has no successor agent (it was never "

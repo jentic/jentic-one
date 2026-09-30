@@ -129,7 +129,7 @@
         "type": "object"
       },
       "ActorType": {
-        "description": "Type of authenticated actor.\n\n``toolkit`` is retired (theme-5 Phase 4): toolkit keys resolve as the\nagents the key-retirement job created, so no code path mints a\ntoolkit identity. Persisted ``actor_type='toolkit'`` strings survive in\nhistorical rows (events, audit entries, execution records) until the\nPhase-6b scope-data sweep; read paths must tolerate the string without\nround-tripping it through this enum.\n\n``service_account`` is retired the same way (theme-8 Phase 4 dropped the\nservice-account tables and deleted the member). Historical audit rows,\nexecution records, telemetry history and control-DB actor-id columns\n(``connect_sessions.initiator_actor_id``, ``credentials.created_by``)\nstill carry the string or ``sva_`` ids; read paths use\n:func:`actor_type_label_from_id` or treat the string as opaque.",
+        "description": "Type of authenticated actor: a human user or an agent.\n\nHistorical records may carry older actor-type values that are no longer\nissued; treat unrecognised values as opaque labels.",
         "enum": [
           "user",
           "agent"

@@ -1,8 +1,9 @@
 """Cross-process run lock for control-side batch jobs.
 
-The upgrade steps can run from several places at once — concurrent migration
-runners, extra replicas' hooks — and their find-then-create writes are only
-safe when runs never interleave. They serialise on a control-DB advisory lock
+The upgrade steps and the service-account retirement can run from several
+places at once — concurrent migration runners, extra replicas' hooks — and
+their find-then-create writes are only safe when runs never interleave. They
+serialise on a control-DB advisory lock
 (:meth:`DatabaseSession.advisory_lock`: session-level, on a dedicated
 autocommit connection, a no-op on SQLite).
 """
@@ -20,6 +21,9 @@ from jentic_one.shared.context import Context
 #: ("joKRTR") was the theme-5 key-retirement lock, retired with that job in
 #: Phase 6b — do not reuse it.
 UPGRADE_STEPS_LOCK_KEY = 0x6A6F_5550_4752  # "joUPGR"
+#: The theme-8 Phase-4 service-account retirement (migrate, verify, sweep)
+#: the migration runner performs before the admin drop revision.
+SA_RETIREMENT_LOCK_KEY = 0x6A6F_5341_5254  # "joSART"
 
 
 @asynccontextmanager

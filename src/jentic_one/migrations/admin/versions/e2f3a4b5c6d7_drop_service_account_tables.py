@@ -1,50 +1,47 @@
 """drop service_accounts + service_account_credentials (theme-8 phase 4)
 
-The deletion cut of the service-account → agent migration. Three pieces:
+The deletion cut of the service-account → agent migration. The migration
+runner (``python -m jentic_one.migrations.run``) retires the service accounts
+**before** this revision: on a full upgrade it brings admin to
+``d1e2f3a4b5c6``, migrates every remaining service account to a successor
+agent, verifies the copy, and sweeps the SA-side originals (it must run there:
+the retirement also writes the control DB, which this migration cannot
+reliably reach, and it uses application code). This revision then:
 
-1. **Gate (guard-and-raise, never skip).** Alembic would stamp a skipped
-   revision and nothing would retry, so every refusal raises with the
-   remediation steps. The drop proceeds only when either:
-
-   - **Fresh install / never used:** ``service_accounts`` is empty *and*
-     nothing in the admin DB still references a service account (no
-     ``actor_scope_grants`` row with ``actor_type='service_account'`` or an
-     ``sva_`` actor id, no ``agent_credential_bindings`` row keyed by an
-     ``sva_`` id, no live SA access/refresh token); or
-   - **Migrated, verified, acknowledged and swept:** the *latest*
-     ``service_account_migration_acks`` row (written only by a passing
-     ``jentic_one migrate-service-accounts --verify --acknowledge``) is at
-     least as recent as the newest ``migrated_at`` stamp and records zero
-     failures, **and** the verification is re-run here at drop time — the
-     sentinel is necessary but not sufficient (rows can change after the
-     acknowledgement). The re-verify refuses on any unstamped row, any
-     stamped-but-unswept row (not archived, or still holding SA-keyed
-     grants, bindings or a non-NULL digest), any post-stamp mutation (grant
-     re-created, key rotated, binding added after the stamp), any successor
-     digest drift (the ``list_digest_mismatches`` query, copied verbatim),
-     and any lingering SA reference as above.
-
-2. **Scope-data sweep.** The retired ``service-accounts:read`` /
+1. **Locks** ``service_accounts`` and ``service_account_credentials`` (Postgres
+   ``SHARE ROW EXCLUSIVE``) so nothing can change them between the check and
+   the drop.
+2. **Gate (guard-and-raise, never skip).** Alembic would stamp a skipped
+   revision and nothing would retry, so a refusal raises, naming the rows.
+   The drop proceeds only when every service account is stamped (migrated,
+   or skip-stamped when it was not active) and swept — archived, with no
+   SA-keyed grant or binding row and a NULL SA-side digest. A fresh install
+   (no rows) passes trivially. A partial or targeted upgrade that skipped the
+   runner's retirement refuses here on any unfinished row.
+3. **Cleanup** of what can no longer resolve: grant rows keyed by a service
+   account (``actor_type='service_account'`` or an ``sva_`` actor id with no
+   SA row), ``sva_``-keyed credential bindings, and every SA access/refresh
+   token row (all revoked by the sweep; nothing references them).
+4. **Scope-data sweep.** The retired ``service-accounts:read`` /
    ``service-accounts:write`` / ``owner:service-accounts:read`` strings are
    purged from every stored grant/token surface, exactly like the theme-5
    6b sweep (``d1e2f3a4b5c6``): scalar grant rows are deleted, JSON arrays
    and the space-separated ``authorization_codes.scopes`` are rewritten
    in Python, LIKE-prefiltered so unaffected rows are never touched.
+5. **Drop** ``service_account_migration_acks`` (the retired 0.40
+   acknowledgement sentinel), ``service_account_credentials`` and
+   ``service_accounts``.
 
-3. **Drop** ``service_account_credentials`` then ``service_accounts``.
+What stays: the ``uq_agent_credentials_api_key_hash`` index (it guards agent
+keys) and historical ``sva_`` ids in audit, event and control-DB columns (read
+paths label them, never resolve them).
 
-What stays: ``service_account_migration_acks`` (upgrade evidence; the kept
-``migrate-service-accounts`` CLI is a no-op once the tables are gone), the
-``uq_agent_credentials_api_key_hash`` index (it guards agent keys), residual
-revoked/expired SA token rows (every token resolver fails closed on
-``actor_type='service_account'``), and historical ``sva_`` ids in audit,
-event and control-DB columns (read paths label them, never resolve them).
-
-``downgrade()`` recreates both tables **empty** in their final historical
-shape (``j9k0l1m2n3o4`` + ``o4p5q6r7s8t9`` + ``q6r7s8t9u0v1`` nullable
-``created_by`` + ``c0d1e2f3a4b5`` stamp columns). Rows come back only from a
-database snapshot taken before the upgrade; the scope sweep is not reversed
-(the strings granted nothing since theme-8 Phase 2).
+``downgrade()`` is **irreversible for data**: it recreates the three tables
+empty, in their final historical shape, so the schema chain stays walkable
+(the documented theme-5 6b rollback passes through this revision, and the
+repo convention is an implemented inverse ``downgrade()``, never a raise).
+Service accounts come back only from a database snapshot taken before the
+upgrade; the cleanup and the scope sweep are not reversed.
 
 Revision ID: e2f3a4b5c6d7
 Revises: d1e2f3a4b5c6
@@ -52,7 +49,6 @@ Create Date: 2026-09-30
 
 """
 
-import datetime as dt
 import json
 from collections.abc import Sequence
 
@@ -88,39 +84,17 @@ _JSON_SCOPE_TABLES = (
     ("oauth_clients", "allowed_scopes"),
 )
 
-# --- Verbatim copies of the Phase-1 verify SQL -----------------------------
-# From ``control/repos/service_account_migration_repo.py``; pinned equal by
-# ``tests/unit/control/test_drop_service_accounts_sql.py``.
-_SUCCESSOR_DIGEST_DRIFT_FROM = (
-    " FROM service_account_credentials sac"
-    " JOIN service_accounts sa ON sa.id = sac.service_account_id"
-    " LEFT JOIN agents a ON a.id = sa.migrated_to_actor_id"
-    " LEFT JOIN agent_credentials ac ON ac.agent_id = sa.migrated_to_actor_id"
-    " WHERE sac.api_key_hash IS NOT NULL"
-    " AND sa.migrated_to_actor_id IS NOT NULL"
-    " AND sa.migrated_to_actor_id != 'skipped'"
-    " AND (ac.api_key_hash IS NULL OR ac.api_key_hash != sac.api_key_hash)"
-)
-_SUCCESSOR_DIGEST_DRIFT_SQL = (
-    "SELECT sa.id AS service_account_id, sa.migrated_to_actor_id AS successor_agent_id"
-    + _SUCCESSOR_DIGEST_DRIFT_FROM
-)
-_SUCCESSOR_SUPERSEDED_PREDICATE = (
-    "(a.id IS NOT NULL AND (a.status = 'archived'"
-    " OR (ac.rotated_at IS NOT NULL AND sa.migrated_at IS NOT NULL"
-    " AND ac.rotated_at > sa.migrated_at)))"
-)
-#: ``ServiceAccountMigrationRepository.list_digest_mismatches``.
-DIGEST_MISMATCH_SQL = (
-    _SUCCESSOR_DIGEST_DRIFT_SQL + f" AND NOT {_SUCCESSOR_SUPERSEDED_PREDICATE}" + " ORDER BY sa.id"
-)
+_LOCK_SQL = "LOCK TABLE service_accounts, service_account_credentials IN SHARE ROW EXCLUSIVE MODE"
 
-#: ``count_unstamped``: rows the migration never reached.
-_UNSTAMPED_SQL = "SELECT count(*) FROM service_accounts WHERE migrated_to_actor_id IS NULL"
+#: Rows the retirement never stamped.
+_UNSTAMPED_SQL = "SELECT id FROM service_accounts WHERE migrated_to_actor_id IS NULL ORDER BY id"
 
-#: ``list_sweepable`` (ungated): stamped rows the sweep has not finished.
-_UNSWEPT_SQL = (
-    "SELECT count(*) FROM service_accounts sa"
+#: ``ServiceAccountMigrationRepository.list_sweepable`` — verbatim copy of
+#: ``SWEEPABLE_SQL``, pinned equal by
+#: ``tests/unit/control/test_drop_service_accounts_sql.py``.
+SWEEPABLE_SQL = (
+    "SELECT sa.id, sa.migrated_to_actor_id, sa.migrated_at, sa.status"
+    " FROM service_accounts sa"
     " WHERE sa.migrated_to_actor_id IS NOT NULL"
     " AND (sa.status != 'archived'"
     "  OR EXISTS (SELECT 1 FROM actor_scope_grants g"
@@ -128,149 +102,54 @@ _UNSWEPT_SQL = (
     "  OR EXISTS (SELECT 1 FROM agent_credential_bindings cb WHERE cb.agent_id = sa.id)"
     "  OR EXISTS (SELECT 1 FROM service_account_credentials sac"
     "   WHERE sac.service_account_id = sa.id AND sac.api_key_hash IS NOT NULL))"
+    " ORDER BY sa.id"
 )
 
-#: ``count_post_stamp_mutations``: the three NF-3 arms.
-_POST_STAMP_SQL = (
-    (
-        "SELECT count(*) FROM actor_scope_grants g"
-        " JOIN service_accounts sa ON sa.id = g.actor_id"
-        " WHERE g.actor_type = 'service_account'"
-        " AND sa.migrated_at IS NOT NULL"
-        " AND g.created_at > sa.migrated_at"
-    ),
-    (
-        "SELECT count(*) FROM service_account_credentials sac"
-        " JOIN service_accounts sa ON sa.id = sac.service_account_id"
-        " WHERE sa.migrated_at IS NOT NULL"
-        " AND sac.rotated_at IS NOT NULL"
-        " AND sac.rotated_at > sa.migrated_at"
-    ),
-    (
-        "SELECT count(*) FROM agent_credential_bindings b"
-        " JOIN service_accounts sa ON sa.id = b.agent_id"
-        " WHERE sa.migrated_at IS NOT NULL"
-        " AND b.created_at > sa.migrated_at"
-    ),
-)
-
-# --- Lingering references (independent of the SA rows) ---------------------
-_SA_GRANTS_SQL = (
-    "SELECT count(*) FROM actor_scope_grants"
-    " WHERE actor_type = 'service_account' OR substr(actor_id, 1, 4) = 'sva_'"
-)
-_SA_BINDINGS_SQL = (
-    "SELECT count(*) FROM agent_credential_bindings WHERE substr(agent_id, 1, 4) = 'sva_'"
-)
-_LIVE_SA_TOKENS_SQL = tuple(
-    f"SELECT count(*) FROM {table}"
-    " WHERE actor_type = 'service_account'"
-    " AND revoked_at IS NULL AND expires_at > :now"
-    for table in ("access_tokens", "refresh_tokens")
-)
-
-_LATEST_ACK_SQL = (
-    "SELECT acknowledged_at, unstamped_count, grant_twin_missing_count,"
-    " unrevoked_token_count, digest_mismatch_count, post_stamp_mutation_count"
-    " FROM service_account_migration_acks"
-    " ORDER BY acknowledged_at DESC, id DESC LIMIT 1"
-)
-_LATEST_STAMP_SQL = "SELECT max(migrated_at) FROM service_accounts"
-
+#: The runner's retirement is the only fix; a hand-run partial upgrade skips it.
 _RUNBOOK = (
-    "On this release: run `jentic_one migrate-service-accounts` (migrates any "
-    "row still unstamped), then `jentic_one migrate-service-accounts "
-    "--sweep-migrated`, then `jentic_one migrate-service-accounts --verify "
-    "--acknowledge`, and re-run `python -m jentic_one.migrations.run`. See "
-    "'Upgrading to 0.41.0' in docs/development/releasing.md."
+    "Run the full upgrade — `python -m jentic_one.migrations.run` with no --db or "
+    "--target — which migrates, verifies and sweeps the remaining service accounts "
+    "before this revision; if its verification refuses, it names the rows to fix. "
+    "See 'Upgrading to 0.41.0' in docs/development/releasing.md."
 )
 
+#: Cleanup (after the gate): references nothing can resolve once the tables go.
+_CLEANUP_SQL = (
+    "DELETE FROM actor_scope_grants"
+    " WHERE actor_type = 'service_account' OR substr(actor_id, 1, 4) = 'sva_'",
+    "DELETE FROM agent_credential_bindings WHERE substr(agent_id, 1, 4) = 'sva_'",
+    "DELETE FROM access_tokens WHERE actor_type = 'service_account'",
+    "DELETE FROM refresh_tokens WHERE actor_type = 'service_account'",
+)
 
-def _scalar(bind: sa.engine.Connection, sql: str, params: dict[str, object] | None = None) -> int:
-    return int(bind.execute(sa.text(sql), params or {}).scalar_one() or 0)
-
-
-def _as_utc(value: object) -> dt.datetime | None:
-    """Normalise a raw SELECT datetime (aware on pg, TEXT on SQLite) to aware UTC."""
-    if value is None:
-        return None
-    if isinstance(value, str):
-        value = dt.datetime.fromisoformat(value)
-    if not isinstance(value, dt.datetime):
-        return None
-    if value.tzinfo is None:
-        return value.replace(tzinfo=dt.UTC)
-    return value.astimezone(dt.UTC)
+_MAX_IDS_IN_MESSAGE = 20
 
 
-def _lingering_references(bind: sa.engine.Connection) -> dict[str, int]:
-    now_param = sa.bindparam("now", type_=sa.DateTime(timezone=True))
-    live_tokens = sum(
-        int(
-            bind.execute(
-                sa.text(sql).bindparams(now_param), {"now": dt.datetime.now(dt.UTC)}
-            ).scalar_one()
-            or 0
-        )
-        for sql in _LIVE_SA_TOKENS_SQL
-    )
-    return {
-        "service-account grant rows": _scalar(bind, _SA_GRANTS_SQL),
-        "sva_-keyed credential binding rows": _scalar(bind, _SA_BINDINGS_SQL),
-        "live service-account session tokens": live_tokens,
-    }
+def _ids(bind: sa.engine.Connection, sql: str) -> list[str]:
+    return [str(row[0]) for row in bind.execute(sa.text(sql)).all()]
 
 
-def _ack_problems(bind: sa.engine.Connection) -> list[str]:
-    ack = bind.execute(sa.text(_LATEST_ACK_SQL)).first()
-    if ack is None:
-        return [
-            "no acknowledgement row exists in service_account_migration_acks "
-            "(the Phase-1 `--verify --acknowledge` has not run against this database)"
-        ]
-    problems: list[str] = []
-    failures = (
-        int(ack.unstamped_count)
-        + int(ack.grant_twin_missing_count)
-        + int(ack.unrevoked_token_count)
-        + int(ack.digest_mismatch_count)
-        + int(ack.post_stamp_mutation_count)
-    )
-    if failures:
-        problems.append(f"the latest acknowledgement records {failures} verification failure(s)")
-    acked_at = _as_utc(ack.acknowledged_at)
-    latest_stamp = _as_utc(bind.execute(sa.text(_LATEST_STAMP_SQL)).scalar_one())
-    if acked_at is not None and latest_stamp is not None and latest_stamp > acked_at:
-        problems.append(
-            "a service account was stamped after the latest acknowledgement "
-            f"({latest_stamp.isoformat()} > {acked_at.isoformat()})"
-        )
-    return problems
-
-
-def _reverify_problems(bind: sa.engine.Connection) -> list[str]:
-    counts = {
-        "unstamped service account(s)": _scalar(bind, _UNSTAMPED_SQL),
-        "stamped but unswept service account(s)": _scalar(bind, _UNSWEPT_SQL),
-        "post-stamp mutation(s)": sum(_scalar(bind, sql) for sql in _POST_STAMP_SQL),
-        "successor digest mismatch(es)": len(bind.execute(sa.text(DIGEST_MISMATCH_SQL)).all()),
-    }
-    return [f"{n} {label}" for label, n in counts.items() if n]
+def _describe(label: str, ids: list[str]) -> str:
+    shown = ", ".join(ids[:_MAX_IDS_IN_MESSAGE])
+    more = f" (+{len(ids) - _MAX_IDS_IN_MESSAGE} more)" if len(ids) > _MAX_IDS_IN_MESSAGE else ""
+    return f"{len(ids)} {label}: {shown}{more}"
 
 
 def _assert_gate(bind: sa.engine.Connection) -> None:
-    """Guard-and-raise: fresh install, or acknowledged + clean re-verify."""
-    sa_rows = _scalar(bind, "SELECT count(*) FROM service_accounts")
-    lingering = [f"{n} {label}" for label, n in _lingering_references(bind).items() if n]
-    if sa_rows == 0 and not lingering:
-        return
-    problems = [*_ack_problems(bind), *_reverify_problems(bind), *lingering]
+    """Guard-and-raise: every service account is stamped and swept."""
+    problems = []
+    unstamped = _ids(bind, _UNSTAMPED_SQL)
+    if unstamped:
+        problems.append(_describe("unmigrated service account(s)", unstamped))
+    unswept = _ids(bind, SWEEPABLE_SQL)
+    if unswept:
+        problems.append(_describe("migrated but unswept service account(s)", unswept))
     if not problems:
         return
     raise RuntimeError(
         "Refusing to drop the service-account tables (theme-8 Phase 4): "
         + "; ".join(problems)
-        + ". "
+        + ". Nothing was dropped. "
         + _RUNBOOK
     )
 
@@ -334,24 +213,32 @@ def _sweep_authorization_codes(bind: sa.engine.Connection) -> None:
 
 def upgrade() -> None:
     bind = op.get_bind()
+    if bind.dialect.name == "postgresql":
+        # Held to the end of this revision's transaction: no writer can slip
+        # an SA row, digest or rotation in between the gate and the drop.
+        bind.execute(sa.text(_LOCK_SQL))
     _assert_gate(bind)
 
+    for sql in _CLEANUP_SQL:
+        bind.execute(sa.text(sql))
     _sweep_scalar_tables(bind)
     _sweep_json_tables(bind)
     _sweep_authorization_codes(bind)
 
     # Indexes go with their tables on both dialects (see d1e2f3a4b5c6 for why
     # by-name drops are fragile on SQLite batch-rebuilt tables).
+    op.drop_table("service_account_migration_acks")
     op.drop_table("service_account_credentials")
     op.drop_table("service_accounts")
 
 
 def downgrade() -> None:
-    """Recreate both tables empty, in their final historical shape.
+    """Irreversible for data: recreate the three tables **empty**.
 
-    Rows come back only from a pre-upgrade database snapshot; the scope sweep
-    is not reversed. The ``migrate-service-accounts`` CLI on the pre-Phase-4
-    image works against the recreated (empty) tables.
+    Final historical shape, so the revision chain stays walkable (the
+    theme-5 6b rollback passes through here). Service accounts come back only
+    from a pre-upgrade database snapshot; the cleanup and the scope sweep are
+    not reversed.
     """
     pg = op.get_bind().dialect.name == "postgresql"
     op.create_table(
@@ -440,5 +327,47 @@ def downgrade() -> None:
     op.create_index(
         "ix_service_account_credentials_created_by",
         "service_account_credentials",
+        ["created_by"],
+    )
+
+    op.create_table(
+        "service_account_migration_acks",
+        sa.Column(
+            "id",
+            sa.String(30),
+            server_default=sa.func.generate_ksuid("smak") if pg else None,
+            nullable=False,
+        ),
+        sa.Column("acknowledged_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("unstamped_count", sa.Integer, nullable=False),
+        sa.Column("grant_twin_missing_count", sa.Integer, nullable=False),
+        sa.Column("unrevoked_token_count", sa.Integer, nullable=False),
+        sa.Column("digest_mismatch_count", sa.Integer, nullable=False),
+        sa.Column("post_stamp_mutation_count", sa.Integer, nullable=False),
+        sa.Column("report_finding_count", sa.Integer, nullable=False),
+        sa.Column("tool_version", sa.String(50), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+        ),
+        sa.Column("created_by", sa.String(255), nullable=True),
+        sa.PrimaryKeyConstraint("id"),
+    )
+    op.create_index(
+        "ix_service_account_migration_acks_created_at",
+        "service_account_migration_acks",
+        ["created_at"],
+    )
+    op.create_index(
+        "ix_service_account_migration_acks_created_by",
+        "service_account_migration_acks",
         ["created_by"],
     )

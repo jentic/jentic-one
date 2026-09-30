@@ -81,7 +81,8 @@ func TestFencing_ContextListIsFencedInAgentMode(t *testing.T) {
 // TestFencing_RetiredServiceAccountModeFailsClosed pins the 14 BC-12 removal:
 // the retired service-account alias is now an ordinary unknown mode, so it
 // fails closed to the fenced AgentUX (impl/3.2 §2) — never the unfenced human
-// path — and no longer emits a deprecation notice.
+// path. It no longer emits a deprecation notice; the generic UNKNOWN_MODE
+// warning goes to stderr as a text slog line (13 §1: stdout stays reserved).
 func TestFencing_RetiredServiceAccountModeFailsClosed(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -96,7 +97,8 @@ func TestFencing_RetiredServiceAccountModeFailsClosed(t *testing.T) {
 
 			app := testApp(t)
 			root := newAPIRootCmd(app.App)
-			root.SetOut(new(bytes.Buffer))
+			out := new(bytes.Buffer)
+			root.SetOut(out)
 			root.SetErr(new(bytes.Buffer))
 			root.SetArgs(tc.args)
 
@@ -105,9 +107,36 @@ func TestFencing_RetiredServiceAccountModeFailsClosed(t *testing.T) {
 			if !errors.As(err, &coded) || coded.Code != ux.CodeFenced {
 				t.Fatalf("service-account mode must fail closed to fenced agent, got %v", err)
 			}
-			if s := app.Err.(*bytes.Buffer).String(); strings.Contains(s, "DEPRECATED_MODE") {
-				t.Errorf("the retired alias must not warn as deprecated any more:\n%s", s)
+			stderr := app.Err.(*bytes.Buffer).String()
+			if strings.Contains(stderr, "DEPRECATED_MODE") {
+				t.Errorf("the retired alias must not warn as deprecated any more:\n%s", stderr)
+			}
+			// setupSlog keeps the text handler for an unknown mode (only canonical
+			// agent gets JSON), so match the text-handler key=value form.
+			for _, want := range []string{`code=UNKNOWN_MODE`, `mode=service-account`, `actionable_step="use --mode agent|human`} {
+				if !strings.Contains(stderr, want) {
+					t.Errorf("stderr missing %s:\n%s", want, stderr)
+				}
+			}
+			if strings.Contains(out.String(), "UNKNOWN_MODE") {
+				t.Errorf("unknown-mode warning leaked onto stdout: %q", out.String())
 			}
 		})
+	}
+}
+
+// TestFencing_AgentModeHasNoUnknownModeWarning: canonical agent mode stays quiet.
+func TestFencing_AgentModeHasNoUnknownModeWarning(t *testing.T) {
+	t.Setenv("JENTIC_MODE", "agent")
+
+	app := testApp(t)
+	root := newAPIRootCmd(app.App)
+	root.SetOut(new(bytes.Buffer))
+	root.SetErr(new(bytes.Buffer))
+	root.SetArgs([]string{"reset"})
+	_ = root.Execute()
+
+	if s := app.Err.(*bytes.Buffer).String(); strings.Contains(s, "UNKNOWN_MODE") {
+		t.Errorf("agent mode must not warn:\n%s", s)
 	}
 }
