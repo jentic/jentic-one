@@ -1,9 +1,9 @@
 /**
  * Rotate-secret modal — single input for the new client secret. Disabled
  * (and never rendered) for device-flow registrations, which have no secret;
- * the ClientsTable already hides the "Rotate secret" action for those rows,
- * but this component defends against being opened for one anyway (returns
- * null) rather than posting a request the server will 400.
+ * the shared-apps list already disables "Rotate secret" for those rows, but
+ * this component defends against being opened for one anyway (returns null)
+ * rather than posting a request the server will 400.
  */
 import { useEffect, useState } from 'react';
 import { Button, Dialog, ErrorAlert, Input, Label, toast } from '@/shared/ui';
