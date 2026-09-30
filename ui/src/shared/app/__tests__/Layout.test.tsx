@@ -1,3 +1,4 @@
+import { useRef } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { page } from 'vitest/browser';
 import { renderWithProviders, screen, userEvent, waitFor } from '@/__tests__/test-utils';
@@ -6,6 +7,7 @@ import { AuthProvider } from '@/shared/auth/AuthContext';
 import { setToken } from '@/shared/api';
 import { isNavItemActive, navItems, sortedNavItems } from '@/shared/app/nav';
 import { SheetPrimitive } from '@/shared/ui/SheetPrimitive';
+import { useReportRightDock } from '@/shared/ui/rightEdge';
 import { clearAllToasts, toast } from '@/shared/ui/toastStore';
 
 /**
@@ -145,6 +147,52 @@ describe('toast region', () => {
 		await expect
 			.poll(async () => (await showToast()).right)
 			.toBeCloseTo(window.innerWidth - rail.offsetWidth - 16, 0);
+	});
+
+	/** A page grid whose last column is docked `rightGap` px in from the right edge. */
+	function DockedPage({ rightGap }: { rightGap: number }) {
+		const gridRef = useRef<HTMLDivElement>(null);
+		useReportRightDock(gridRef, { lastChild: true });
+		return (
+			<div
+				ref={gridRef}
+				style={{ position: 'fixed', top: 60, right: rightGap, display: 'flex' }}
+			>
+				<div style={{ width: 200 }}>Catalog</div>
+				<div data-testid="dock" style={{ width: 384, height: 400 }}>
+					Your workspace
+				</div>
+			</div>
+		);
+	}
+
+	it('sits just left of a page’s docked column, and back beside the rail once it unmounts', async () => {
+		await page.viewport(1440, 900);
+		renderShell('/agents');
+		const rail = await screen.findByRole('complementary', { name: 'Activity' });
+		const dockedPage = renderWithProviders(<DockedPage rightGap={rail.offsetWidth + 16} />);
+		const dock = await screen.findByTestId('dock');
+
+		await expect
+			.poll(async () => (await showToast()).right)
+			.toBeCloseTo(dock.getBoundingClientRect().left - 16, 0);
+
+		dockedPage.unmount();
+		await expect
+			.poll(async () => (await showToast()).right)
+			.toBeCloseTo(window.innerWidth - rail.offsetWidth - 16, 0);
+	});
+
+	it('ignores a docked column below xl, where it stacks under the content', async () => {
+		await page.viewport(1024, 800);
+		renderShell();
+		await screen.findByRole('navigation', { name: 'Primary' });
+		renderWithProviders(<DockedPage rightGap={16} />);
+		await screen.findByTestId('dock');
+
+		const rect = await showToast();
+		expect(rect.right).toBeCloseTo(window.innerWidth - 16, 0);
+		await page.viewport(1440, 900);
 	});
 
 	it('drops toasts under the header when a phone-width panel leaves no room beside it', async () => {

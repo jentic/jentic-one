@@ -3,7 +3,9 @@
  * platform `Toaster`, stacked in one column.
  *
  * Bottom-right, beside whatever covers the right edge (the Activity rail at `xl+`,
- * an open right-hand sheet), so a toast never lands on a sheet's footer actions.
+ * an open right-hand sheet, a page's docked side column such as Library's "Your
+ * workspace" panel or Monitor's Live activity panel — see `rightEdge`), so a
+ * toast never lands on a panel's footer actions.
  * It sits as high as `FOOTER_ACTION_BAR_PAGE_PADDING`, clearing a page's
  * floating action dock and, below `md`, the bottom nav. When a sheet leaves no
  * room beside it — a full-width sheet on a phone — the toasts drop in under the

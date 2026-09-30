@@ -102,7 +102,7 @@ export type { CascadeEntityType, CascadeDependentGroup } from '@/shared/ui/Casca
 export { SheetPrimitive } from '@/shared/ui/SheetPrimitive';
 export type { SheetPrimitiveProps } from '@/shared/ui/SheetPrimitive';
 
-export { useCoversRightEdge, useRightEdgeInset } from '@/shared/ui/rightEdge';
+export { useCoversRightEdge, useReportRightDock, useRightEdgeInset } from '@/shared/ui/rightEdge';
 
 export { Toaster } from '@/shared/ui/Toaster';
 export { toast, dismissToast, clearAllToasts, useToasts } from '@/shared/ui/toastStore';

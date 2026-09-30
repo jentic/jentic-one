@@ -24,7 +24,8 @@ import { SHELL_SCROLL_ID } from '@/shared/lib/shellScroll';
  *    default; below `xl` the same rail body opens as a drawer from the
  *    TopNavbar. Not mounted on Monitor, whose Live activity panel already IS the
  *    activity stream (`isRailHiddenOn`),
- *  - the `ToastRegion`, bottom-right beside the rail or an open sheet.
+ *  - the `ToastRegion`, bottom-right beside the rail, an open sheet or a
+ *    page's docked side column (`useReportRightDock`).
  *
  * The shell is viewport-tall and never scrolls itself. Below the fixed navbar
  * (`pt-12` clears it) is a flex row: `<main>` takes the remaining width

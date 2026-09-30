@@ -24,7 +24,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Upload } from 'lucide-react';
-import { PageShell, PageHeader, PageHelp, Button } from '@/shared/ui';
+import { PageShell, PageHeader, PageHelp, Button, useReportRightDock } from '@/shared/ui';
 import { shellScroller, titleFromApiId } from '@/shared/lib';
 import { ImportSpecDialog } from '@/shared/credentials/components/ImportSpecDialog';
 import { useAllCredentials } from '@/shared/credentials/api';
@@ -69,6 +69,9 @@ export default function LibraryPage() {
 	});
 	const { refresh, isRefreshing } = useRefreshCatalog();
 	const digest = useWorkspaceDigest();
+	// Toasts sit left of the docked workspace panel (the grid's last column at xl).
+	const dockGridRef = useRef<HTMLDivElement>(null);
+	useReportRightDock(dockGridRef, { lastChild: true });
 	// The same drained list (and cache slice) the digest's health index reads;
 	// the tiles' "Credential ready" matches not-yet-imported entries against it.
 	const allCredentials = useAllCredentials();
@@ -204,7 +207,10 @@ export default function LibraryPage() {
 				/>
 			)}
 
-			<div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(320px,24rem)]">
+			<div
+				ref={dockGridRef}
+				className="grid grid-cols-1 items-start gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(320px,24rem)]"
+			>
 				{/* The catalog's counts head its column, and the sticky toolbar's
 				    own padding spaces them from the search — no full-width strip
 				    (and gap) of their own under the header. */}
