@@ -14,8 +14,9 @@
  *  - pending: the manual card slides off under the Activity rail and the
  *    primary card grows into the row; the command gives way to the agent's
  *    details with Approve / Deny, and the stepper marks steps 1–2 done.
- *  - active: every step is done, and the actions give way to the first-API
- *    suggestion (GitHub when the workspace or catalog has it).
+ *  - active: steps 1–3 are done and "Give it an API" is current, as the
+ *    actions give way to the first-API suggestion (GitHub when the workspace
+ *    or catalog has it).
  * Each choice there goes to `onExit`, and the parent swaps in the fleet view.
  * A denied agent drops out of `agent`, and the card is back to listening.
  * Reduced motion swaps each state at once.

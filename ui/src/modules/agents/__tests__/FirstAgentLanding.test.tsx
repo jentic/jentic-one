@@ -251,7 +251,7 @@ describe('Agents page — zero agents', () => {
 	it('while listening, the stepper is on its first step', async () => {
 		renderPage();
 		await landing();
-		expect(stepStates()).toEqual(['current', 'upcoming', 'upcoming']);
+		expect(stepStates()).toEqual(['current', 'upcoming', 'upcoming', 'upcoming']);
 		const steps = within(screen.getByTestId('register-stepper')).getAllByRole('listitem');
 		expect(steps[0]).toHaveAttribute('aria-current', 'step');
 		expect(screen.getByTestId('register-stepper').tagName).toBe('OL');
@@ -274,7 +274,7 @@ describe('Agents page — zero agents', () => {
 		expect(within(card).getByRole('button', { name: 'Deny my-first-agent' })).toBeEnabled();
 		// The command view is gone; the steps stay.
 		await waitFor(() => expect(screen.queryByTestId('register-command')).toBeNull());
-		expect(stepStates()).toEqual(['done', 'done', 'current']);
+		expect(stepStates()).toEqual(['done', 'done', 'current', 'upcoming']);
 		expect(within(card).getAllByRole('listitem')[2]).toHaveAttribute('aria-current', 'step');
 		expect(status()).toHaveTextContent(
 			'my-first-agent just registered · awaiting your approval',
@@ -495,7 +495,11 @@ describe('Agents page — zero agents', () => {
 		expect(within(panel).getByRole('button', { name: 'Skip for now' })).toBeInTheDocument();
 		expect(screen.queryByRole('button', { name: 'Approve my-first-agent' })).toBeNull();
 
-		expect(stepStates()).toEqual(['done', 'done', 'done']);
+		expect(stepStates()).toEqual(['done', 'done', 'done', 'current']);
+		// Approved: the step now asked for is its first API.
+		const steps = within(screen.getByTestId('register-stepper')).getAllByRole('listitem');
+		expect(steps[3]).toHaveAttribute('aria-current', 'step');
+		expect(steps[3]).toHaveTextContent('Give it an API');
 		expect(
 			within(screen.getByTestId('arrival-card')).getByText('Active', { selector: 'span' }),
 		).toBeInTheDocument();
@@ -515,7 +519,7 @@ describe('Agents page — zero agents', () => {
 		expect(res.ok).toBe(true);
 		await queryClient.invalidateQueries();
 		expect(await screen.findByTestId('first-api-panel')).toBeInTheDocument();
-		expect(stepStates()).toEqual(['done', 'done', 'done']);
+		expect(stepStates()).toEqual(['done', 'done', 'done', 'current']);
 	});
 
 	async function approved(user: ReturnType<typeof userEvent.setup>) {
@@ -682,7 +686,7 @@ describe('Agents page — zero agents', () => {
 			'listening',
 		);
 		expect(await screen.findByTestId('register-command')).toBeInTheDocument();
-		expect(stepStates()).toEqual(['current', 'upcoming', 'upcoming']);
+		expect(stepStates()).toEqual(['current', 'upcoming', 'upcoming', 'upcoming']);
 		expect(screen.getByTestId('ghost-tab')).toHaveTextContent('Waiting for your agent…');
 		expect(
 			await screen.findByRole('button', { name: /Create an agent manually/ }),
@@ -925,7 +929,7 @@ describe('Agents page — resuming the first run on load', () => {
 		);
 		expect(within(card).getByRole('button', { name: 'Deny my-first-agent' })).toBeEnabled();
 		expect(within(screen.getByTestId('agent-facts')).getByText(id)).toBeInTheDocument();
-		expect(stepStates()).toEqual(['done', 'done', 'current']);
+		expect(stepStates()).toEqual(['done', 'done', 'current', 'upcoming']);
 		// Rendered resolved: the manual card never mounts, so nothing slides off.
 		expect(screen.queryByTestId('manual-card')).toBeNull();
 		expect(screen.queryByTestId('register-command')).toBeNull();
@@ -978,7 +982,7 @@ describe('Agents page — resuming the first run on load', () => {
 		).toBeInTheDocument();
 		expect(within(panel).getByRole('button', { name: 'Add another API' })).toBeInTheDocument();
 		expect(within(panel).getByRole('button', { name: 'Skip for now' })).toBeInTheDocument();
-		expect(stepStates()).toEqual(['done', 'done', 'done']);
+		expect(stepStates()).toEqual(['done', 'done', 'done', 'current']);
 		expect(screen.queryByTestId('manual-card')).toBeNull();
 	});
 

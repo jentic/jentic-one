@@ -59,12 +59,14 @@ test('a fresh workspace finishes its first agent inside the landing', async ({ p
 	await expect(page.getByRole('region', { name: 'Awaiting approval' })).toHaveCount(0);
 	await expect(page.getByTestId('agent-dock')).toHaveCount(0);
 
-	// Approved: every step done, and GitHub suggested.
+	// Approved: the first three steps done, "Give it an API" current, and GitHub suggested.
 	await card.getByRole('button', { name: 'Approve research-bot' }).click();
 	const panel = page.getByTestId('first-api-panel');
 	await expect(panel.getByRole('heading', { name: 'Add GitHub to research-bot' })).toBeVisible();
 	const steps = page.getByTestId('register-stepper').getByRole('listitem');
 	for (const i of [0, 1, 2]) await expect(steps.nth(i)).toHaveAttribute('data-state', 'done');
+	await expect(steps.nth(3)).toHaveAttribute('aria-current', 'step');
+	await expect(steps.nth(3)).toContainText('Give it an API');
 	await expect(page.getByTestId('ghost-tab')).toHaveAttribute('data-status', 'active');
 
 	// Continue with GitHub: straight to its credential step, over the fleet.

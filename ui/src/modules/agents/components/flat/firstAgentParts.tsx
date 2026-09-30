@@ -1,6 +1,6 @@
 /**
  * The pieces of `FirstAgentLanding`'s primary card: the register command, the
- * three-step stepper, the live status line, and the arrived agent's details
+ * four-step stepper, the live status line, and the arrived agent's details
  * with its next action (Approve / Deny, then its first API).
  */
 import { useEffect, useId, useReducer, type ReactNode } from 'react';
@@ -10,6 +10,7 @@ import {
 	Check,
 	CircleCheck,
 	Clock,
+	KeyRound,
 	Plus,
 	Terminal,
 	TriangleAlert,
@@ -239,23 +240,27 @@ const STEPS: Array<{ icon: LucideIcon; title: string; detail: string }> = [
 		title: 'It appears here as pending',
 		detail: 'In the tab below, with no access',
 	},
-	{ icon: CircleCheck, title: 'You approve it', detail: 'Then add the APIs it can use' },
+	{ icon: CircleCheck, title: 'You approve it', detail: 'Then it can authenticate' },
+	{ icon: KeyRound, title: 'Give it an API', detail: 'With the credential it calls through' },
 ];
 
 type StepState = 'done' | 'current' | 'upcoming';
 
+/** The last step is current once the agent is approved. Adding its first API
+ * (or skipping) is the exit that hands the page to the fleet view, so the
+ * landing never shows it done. */
 const STEP_STATES: Record<FirstAgentPhase, StepState[]> = {
-	listening: ['current', 'upcoming', 'upcoming'],
-	arrived: ['done', 'done', 'current'],
-	approved: ['done', 'done', 'done'],
+	listening: ['current', 'upcoming', 'upcoming', 'upcoming'],
+	arrived: ['done', 'done', 'current', 'upcoming'],
+	approved: ['done', 'done', 'done', 'current'],
 };
 
-/** How full each connector is (1→2, 2→3): arrival leads the line on toward
- * step 3, which approval completes. */
-const SEGMENT_FILL: Record<FirstAgentPhase, [number, number]> = {
-	listening: [0, 0],
-	arrived: [1, 0.5],
-	approved: [1, 1],
+/** How full each connector is (1→2, 2→3, 3→4): each phase leads the line
+ * halfway on toward the step it makes current. */
+const SEGMENT_FILL: Record<FirstAgentPhase, [number, number, number]> = {
+	listening: [0, 0, 0],
+	arrived: [1, 0.5, 0],
+	approved: [1, 1, 0.5],
 };
 
 /** One full connector's fill time. */
@@ -274,13 +279,16 @@ export function Stepper({
 		<ol
 			aria-label="Registration progress"
 			data-testid="register-stepper"
-			className="mt-4 grid grid-cols-3 gap-3"
+			className="mt-4 grid grid-cols-2 gap-x-3 gap-y-4 sm:grid-cols-4"
 		>
 			{STEPS.map(({ icon: Icon, title, detail }, i) => {
 				const state = states[i];
 				const fill = i > 0 ? fills[i - 1] : 0;
-				// The second connector waits for the first, so the line reads as one run.
-				const delay = !reducedMotion && i === 2 && phase === 'arrived' ? SEGMENT_S : 0;
+				// A connector that starts filling in this phase waits for the one
+				// before it, so the line reads as one run.
+				const trailing =
+					(i === 2 && phase === 'arrived') || (i === 3 && phase === 'approved');
+				const delay = !reducedMotion && trailing ? SEGMENT_S : 0;
 				return (
 					<li
 						key={title}
@@ -289,10 +297,14 @@ export function Stepper({
 						className="relative flex flex-col items-start gap-2"
 					>
 						{i > 0 && (
-							// The connector from the previous step's icon to this one.
+							// The connector from the previous step's icon to this one. On
+							// two columns the third step starts a row, with nothing to its left.
 							<span
 								aria-hidden="true"
-								className="bg-border absolute top-3.5 right-[calc(100%+6px)] h-px w-[calc(100%-28px)] overflow-hidden"
+								className={cn(
+									'bg-border absolute top-3.5 right-[calc(100%+6px)] h-px w-[calc(100%-28px)] overflow-hidden',
+									i === 2 && 'hidden sm:block',
+								)}
 							>
 								<motion.span
 									className="bg-success absolute inset-0 origin-left"
