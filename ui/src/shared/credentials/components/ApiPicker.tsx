@@ -71,6 +71,9 @@ export interface ApiPickerProps {
 	/** Short badge explaining why a `disabledKeys` row is out (e.g. "Already added");
 	 * a function labels each row by its `apiRefKey`. */
 	disabledLabel?: string | ((key: string) => string | undefined);
+	/** A quiet note on a row that stays pickable (e.g. "Added via GitHub — personal"),
+	 * by `apiRefKey`. */
+	rowHint?: (key: string) => string | undefined;
 	/** The search box, for a host that must move focus there itself (e.g. a sheet
 	 * re-opened without remounting the picker). */
 	searchInputRef?: RefObject<HTMLInputElement | null>;
@@ -97,6 +100,7 @@ export function ApiPicker({
 	selectedKeys,
 	disabledKeys,
 	disabledLabel,
+	rowHint,
 	emptyAction,
 	searchInputRef,
 }: ApiPickerProps) {
@@ -191,7 +195,7 @@ export function ApiPicker({
 
 	// Presence, not emptiness, switches the rows into checkbox mode.
 	const selection: RowSelection | undefined = selectedKeys
-		? { selectedKeys, disabledKeys, disabledLabel }
+		? { selectedKeys, disabledKeys, disabledLabel, rowHint }
 		: undefined;
 
 	return (
@@ -354,6 +358,7 @@ interface RowSelection {
 	selectedKeys: ReadonlySet<string>;
 	disabledKeys?: ReadonlySet<string>;
 	disabledLabel?: ApiPickerProps['disabledLabel'];
+	rowHint?: ApiPickerProps['rowHint'];
 }
 
 /**
@@ -388,6 +393,7 @@ function PickerRow({
 		typeof selection?.disabledLabel === 'function'
 			? selection.disabledLabel(key)
 			: selection?.disabledLabel;
+	const hint = blocked ? undefined : selection?.rowHint?.(key);
 	return (
 		<button
 			type="button"
@@ -412,6 +418,14 @@ function PickerRow({
 					{api.label}
 				</span>
 				<p className="text-muted-foreground mt-0.5 truncate font-mono text-xs">{meta}</p>
+				{hint && (
+					<p
+						data-testid="picker-row-hint"
+						className="text-muted-foreground mt-0.5 truncate text-xs"
+					>
+						{hint}
+					</p>
+				)}
 			</div>
 			{blocked && blockedLabel ? (
 				<Badge variant="default" className="shrink-0 text-[10px]">

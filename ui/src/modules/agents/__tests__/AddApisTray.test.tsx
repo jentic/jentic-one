@@ -4,7 +4,7 @@
  * pin what needs a rendered picker: rows that toggle instead of committing, a
  * tally that stays honest while the credential list drains, rows that only
  * describe the next step (no credential is chosen here), and an already-reached
- * API that cannot be queued twice.
+ * API that stays pickable to add another account.
  */
 import { useState } from 'react';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -244,21 +244,71 @@ describe('AddApisTray — multi-select picks and the preflight tally', () => {
 		expect(screen.getByRole('button', { name: 'Continue' })).toBeDisabled();
 	});
 
-	it('an API the agent already reaches cannot be picked again', async () => {
-		renderWithProviders(<TrayHarness bindings={[makeBinding()]} />);
-
-		const slack = await row(/Slack/);
-		expect(slack).toBeDisabled();
-		// Presence, not visibility: the result rows stagger in from opacity 0.
-		expect(within(slack).getByText('Already added')).toBeInTheDocument();
-		expect(selectionRows()).toHaveLength(0);
-	});
-
-	it('a vendor-wildcard binding is caught by the preflight and excluded from the commit', async () => {
+	it('an API the agent already reaches stays pickable and names its account', async () => {
 		const onContinue = vi.fn();
 		const user = userEvent.setup();
-		// A wildcard binding cannot be enumerated as a row key, so the row stays
-		// pickable — the preflight is what has to catch it.
+		renderWithProviders(<TrayHarness bindings={[makeBinding()]} onContinue={onContinue} />);
+
+		const slack = await row(/Slack/);
+		expect(slack).toBeEnabled();
+		// Presence, not visibility: the result rows stagger in from opacity 0.
+		expect(within(slack).getByText('Added via Slack bot token')).toBeInTheDocument();
+
+		await user.click(slack);
+		await waitFor(() => expect(selectionRows()).toHaveLength(1));
+		expect(within(selectionRows()[0]).getByTestId('tray-added-via')).toHaveTextContent(
+			'Added via Slack bot token — this adds another account',
+		);
+		await waitFor(() =>
+			expect(tallyLines()).toEqual([
+				'1 API needs a new credential',
+				'1 API is already added — this adds another account',
+			]),
+		);
+
+		await user.click(screen.getByRole('button', { name: 'Continue' }));
+		expect(onContinue.mock.calls[0][0]).toEqual([
+			expect.objectContaining({
+				key: 'slack-com/main',
+				outcome: 'form',
+				existing: [expect.objectContaining({ credentialId: 'cred_slack' })],
+			}),
+		]);
+	});
+
+	it('a covered API the agent already reaches offers only the credentials it lacks', async () => {
+		const onContinue = vi.fn();
+		const user = userEvent.setup();
+		const sandbox = makeMockCredential({
+			credential_id: 'cred_stripe_sandbox',
+			name: 'Stripe sandbox',
+			type: CredentialType.API_KEY,
+			api: { vendor: 'stripe.com', name: 'main', version: '1.0.0' },
+		});
+		resetCredentialsStore([STRIPE_CREDENTIAL, sandbox]);
+		const bound = makeBinding({
+			credentialId: 'cred_stripe',
+			name: 'Stripe key',
+			serves: [{ vendor: 'stripe.com', name: 'main', version: null }],
+		});
+		renderWithProviders(<TrayHarness bindings={[bound]} onContinue={onContinue} />);
+
+		await user.click(await row(/Stripe/));
+		await waitFor(() =>
+			expect(within(selectionRows()[0]).getByTestId('tray-covering-count')).toHaveTextContent(
+				'1 of your credentials covers this API',
+			),
+		);
+		await user.click(screen.getByRole('button', { name: 'Continue' }));
+		const [item] = onContinue.mock.calls[0][0] as PreflightItem[];
+		expect(item.covering.map((c) => c.credential_id)).toEqual(['cred_stripe_sandbox']);
+	});
+
+	it('a vendor-wildcard binding is named by the preflight once picked', async () => {
+		const onContinue = vi.fn();
+		const user = userEvent.setup();
+		// A wildcard binding cannot be enumerated as a row key, so the row carries
+		// no hint — the preflight is what names it.
 		const wildcard = makeBinding({
 			serves: [{ vendor: 'slack.com', name: null, version: null }],
 		});
@@ -266,19 +316,18 @@ describe('AddApisTray — multi-select picks and the preflight tally', () => {
 
 		await user.click(await row(/Slack/));
 		await waitFor(() => expect(selectionRows()).toHaveLength(1));
-		expect(
-			within(selectionRows()[0]).getByText('Already added via Slack bot token'),
-		).toBeVisible();
-		// Nothing actionable, so there is nothing to hand on.
-		expect(screen.getByRole('button', { name: 'Continue' })).toBeDisabled();
+		expect(within(selectionRows()[0]).getByTestId('tray-added-via')).toHaveTextContent(
+			'Added via Slack bot token',
+		);
 
 		await user.click(await row(/Stripe/));
 		await waitFor(() => expect(screen.getByRole('button', { name: 'Continue' })).toBeEnabled());
-		expect(screen.getByText('2 selected, 1 already added')).toBeInTheDocument();
+		expect(screen.getByText('2 selected')).toBeInTheDocument();
 
 		await user.click(screen.getByRole('button', { name: 'Continue' }));
 		expect(onContinue).toHaveBeenCalledTimes(1);
 		expect(onContinue.mock.calls[0][0]).toEqual([
+			expect.objectContaining({ key: 'slack-com/main' }),
 			expect.objectContaining({ key: 'stripe-com/main', outcome: 'choose' }),
 		]);
 		// Committing hands the picks to the queue, so the draft is spent.

@@ -601,7 +601,7 @@ describe('Agents page — zero agents', () => {
 		expect(intervals()).not.toContain(FIRST_AGENT_POLL_MS);
 	});
 
-	it('"Continue with GitHub" for an agent that already reaches GitHub says so and shows the fleet', async () => {
+	it('"Continue with GitHub" for an agent that already reaches GitHub queues another account', async () => {
 		worker.use(
 			http.get('/apis', () =>
 				HttpResponse.json({
@@ -622,13 +622,14 @@ describe('Agents page — zero agents', () => {
 		const user = userEvent.setup();
 		const { queryClient } = renderPage();
 		await landing();
-		// Registered with GitHub already bound (from another tab, say), so the
-		// pick has nothing left to set up.
+		// Registered with GitHub already bound (from another tab, say): the pick
+		// adds a second GitHub account rather than dead-ending.
 		const id = selfRegisterAgent('my-first-agent');
 		seedCredentialBindings([
 			{
 				agent_id: id,
 				credential_id: 'cred_github_1',
+				name: 'GitHub PAT',
 				serves: [{ api_vendor: 'github-com', api_name: null, api_version: null }],
 			},
 		]);
@@ -643,11 +644,10 @@ describe('Agents page — zero agents', () => {
 		const github = await screen.findByRole('button', { name: 'Continue with GitHub' });
 		await user.click(github);
 
-		expect(
-			await screen.findByText('GitHub is already available to my-first-agent'),
-		).toBeInTheDocument();
-		expect(await screen.findByTestId('agent-dock')).toBeInTheDocument();
-		expect(screen.queryByRole('dialog', { name: /Set up/ })).toBeNull();
+		const queue = await screen.findByRole('dialog', { name: 'Set up 1 API' });
+		expect(within(queue).getByTestId('queue-existing-accounts')).toHaveTextContent(
+			'Added via GitHub PAT',
+		);
 		expect(screen.queryByRole('dialog', { name: 'Add APIs' })).toBeNull();
 	});
 

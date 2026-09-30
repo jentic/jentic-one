@@ -5,10 +5,12 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
+	accountLabels,
 	agentApiCount,
 	agentSetupGapCount,
 	composeApiTiles,
 	isOrphanBinding,
+	multiAccountApis,
 	partitionBindings,
 	tileStats,
 } from '@/modules/agents/lib/apiTiles';
@@ -481,5 +483,43 @@ describe('orphan bindings (credential deleted, #1426)', () => {
 		);
 		expect(live).toEqual([a, b]);
 		expect(orphans).toEqual([]);
+	});
+});
+
+describe('multiAccountApis / accountLabels', () => {
+	const apis = [makeApi({ vendor: 'slack.com', display_name: 'Slack' })];
+
+	it('flags an API served by two bindings, and labels each tile by its account', () => {
+		const tiles = composeApiTiles(
+			[
+				makeBinding(),
+				makeBinding({ id: 'acb_2', credentialId: 'cred_2', name: 'Slack — ops' }),
+			],
+			[makeCredential(), makeCredential({ credential_id: 'cred_2', name: 'Slack — ops' })],
+			apis,
+		);
+		expect([...multiAccountApis(tiles).values()]).toEqual([{ title: 'Slack', count: 2 }]);
+		expect([...accountLabels(tiles).values()].sort()).toEqual([
+			'Slack — ops',
+			'Test credential',
+		]);
+	});
+
+	it('adds the id tail when two accounts share a name', () => {
+		const tiles = composeApiTiles(
+			[makeBinding(), makeBinding({ id: 'acb_2', credentialId: 'cred_abcdef123456' })],
+			[makeCredential(), makeCredential({ credential_id: 'cred_abcdef123456' })],
+			apis,
+		);
+		expect([...accountLabels(tiles).values()].sort()).toEqual([
+			'Test credential · …123456',
+			'Test credential · …cred_1',
+		]);
+	});
+
+	it('a single-account API is not flagged', () => {
+		const tiles = composeApiTiles([makeBinding()], [makeCredential()], apis);
+		expect(multiAccountApis(tiles).size).toBe(0);
+		expect(accountLabels(tiles).size).toBe(0);
 	});
 });

@@ -10,6 +10,10 @@
  * component mounted meanwhile, and the edited batch is folded back in
  * ({@link reconcileQueue}) so progress survives the round trip. Bindings are created
  * with no rules — default-deny, so an added API cannot serve traffic yet.
+ *
+ * An API the agent already reaches is set up the same way: the pane names the
+ * accounts it has and offers only credentials not bound to it yet, so the item
+ * adds another account rather than a 409.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, ArrowLeft, Check, KeyRound, Loader2, LogIn, Minus, X } from 'lucide-react';
@@ -28,7 +32,11 @@ import {
 	type CredentialChoice,
 } from '@/shared/credentials/lib/credentialIdentity';
 import { CredentialOptions } from '@/shared/credentials/components/CredentialOptions';
-import { defaultChoice, type PreflightItem } from '@/modules/agents/lib/apiPreflight';
+import {
+	addedViaLabel,
+	defaultChoice,
+	type PreflightItem,
+} from '@/modules/agents/lib/apiPreflight';
 import {
 	QUEUE_RULES_NOTICE,
 	QUEUE_STATUS_LABELS,
@@ -119,7 +127,19 @@ export function ApiSetupQueue({
 	const importMutation = useImportCatalogEntry();
 	const { connect: runConnect, deviceDialog } = useDeviceAwareConnect();
 
-	const active = useMemo(() => activeEntry(entries), [entries]);
+	// A credential this queue has bound can't be bound to the agent again (a 409),
+	// even when it also covers a later API — so it leaves every later pane.
+	const active = useMemo(() => {
+		const entry = activeEntry(entries);
+		if (!entry) return null;
+		const bound = new Set(
+			entries.flatMap((e) =>
+				e.status === 'added' && e.credentialId ? [e.credentialId] : [],
+			),
+		);
+		const covering = entry.covering.filter((c) => !bound.has(c.credential_id));
+		return covering.length === entry.covering.length ? entry : { ...entry, covering };
+	}, [entries]);
 	const summary = useMemo(() => queueSummary(entries), [entries]);
 	const formEntry = useMemo(
 		() => entries.find((e) => e.key === formKey) ?? null,
@@ -428,6 +448,7 @@ function ActivePane({
 	const wantsNew = count === 0 || selected?.kind === 'new';
 	/** A new credential for this API is one sign-in click — the tray established it. */
 	const newIsSignIn = entry.outcome === 'oauth';
+	const other = entry.existing.length > 0 ? ' other' : '';
 
 	return (
 		<section
@@ -461,13 +482,20 @@ function ActivePane({
 				)}
 			</div>
 
+			{entry.existing.length > 0 && (
+				<p data-testid="queue-existing-accounts" className="text-muted-foreground text-xs">
+					{addedViaLabel(entry.existing)}. Pick another account to give {agentName} access
+					to both.
+				</p>
+			)}
+
 			{count > 0 && (
 				<CredentialOptions
 					id={`queue-credential-${entry.key}`}
 					legend={
 						count === 1
-							? `You have 1 credential for ${entry.api.label}. Should ${agentName} use it, or a new one?`
-							: `You have ${count} credentials for ${entry.api.label}. Which should ${agentName} use?`
+							? `You have 1${other} credential for ${entry.api.label}. Should ${agentName} use it, or a new one?`
+							: `You have ${count}${other} credentials for ${entry.api.label}. Which should ${agentName} use?`
 					}
 					credentials={entry.covering}
 					selected={selected}

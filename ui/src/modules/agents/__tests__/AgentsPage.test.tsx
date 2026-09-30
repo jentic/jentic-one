@@ -1711,7 +1711,7 @@ describe('AgentsPage — Add APIs: Back from the setup queue to the tray', () =>
 		).toBeInTheDocument();
 	});
 
-	it('after closing midway and reloading, only the API actually bound reads Already added', async () => {
+	it('after closing midway and reloading, only the API actually bound reads Added via', async () => {
 		const user = userEvent.setup();
 		const first = renderPage('/?agent=agnt_disabled_1');
 		await user.click(await screen.findByRole('button', { name: 'Add APIs' }));
@@ -1733,11 +1733,158 @@ describe('AgentsPage — Add APIs: Back from the setup queue to the tray', () =>
 		renderPage('/?agent=agnt_disabled_1');
 		await user.click(await screen.findByRole('button', { name: 'Add APIs' }));
 		const stripe = await trayRow('Stripe');
-		expect(within(stripe).getByText('Already added')).toBeInTheDocument();
-		// Queued but never bound: still a plain, pickable row.
+		expect(within(stripe).getByText('Added via Stripe key')).toBeInTheDocument();
+		// Still pickable: another Stripe account can be added.
+		expect(stripe).toBeEnabled();
+		// Queued but never bound: a plain row with no hint.
 		const notion = await trayRow('Notion');
 		expect(notion).toBeEnabled();
-		expect(within(notion).queryByText(/Already added|Added/)).not.toBeInTheDocument();
+		expect(within(notion).queryByText(/Added/)).not.toBeInTheDocument();
+	});
+
+	describe('a second account for an API the agent already reaches', () => {
+		const sandbox = () =>
+			makeMockCredential({
+				credential_id: 'cred_stripe_2',
+				name: 'Stripe sandbox',
+				type: CredentialType.BEARER_TOKEN,
+				api: { vendor: 'stripe.com', name: 'default', version: '1.0.0' },
+			});
+		const boundStripe = () =>
+			seedCredentialBindings([
+				{
+					agent_id: 'agnt_disabled_1',
+					credential_id: 'cred_stripe_1',
+					name: 'Stripe key',
+					serves: [{ api_vendor: 'stripe.com', api_name: 'default', api_version: null }],
+				},
+			]);
+
+		async function queueStripe(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+			await user.click(await screen.findByRole('button', { name: 'Add APIs' }));
+			await user.click(await trayRow('Stripe'));
+			const tray = screen.getByRole('dialog', { name: 'Add APIs' });
+			await waitFor(() =>
+				expect(within(tray).getByRole('button', { name: 'Continue' })).toBeEnabled(),
+			);
+			await user.click(within(tray).getByRole('button', { name: 'Continue' }));
+		}
+
+		it('offers only the credential not bound yet, binds it, and explains the choice per call', async () => {
+			resetCredentialsStore([
+				makeMockCredential({
+					credential_id: 'cred_stripe_1',
+					name: 'Stripe key',
+					type: CredentialType.BEARER_TOKEN,
+					api: { vendor: 'stripe.com', name: 'default', version: '1.0.0' },
+				}),
+				sandbox(),
+			]);
+			boundStripe();
+			const user = userEvent.setup();
+			renderPage('/?agent=agnt_disabled_1');
+			expect(await screen.findAllByTestId('api-tile')).toHaveLength(1);
+			expect(screen.queryByTestId('tile-accounts-badge')).toBeNull();
+
+			await queueStripe(user);
+			const pane = await screen.findByTestId('queue-active-pane');
+			expect(within(pane).getByTestId('queue-existing-accounts')).toHaveTextContent(
+				'Added via Stripe key',
+			);
+			// The bound credential is not a choice: binding it again is a 409.
+			expect(within(pane).queryByRole('radio', { name: /Stripe key/ })).toBeNull();
+			expect(within(pane).getByRole('radio', { name: /Stripe sandbox/ })).toBeChecked();
+
+			await user.click(within(pane).getByRole('button', { name: 'Use this credential' }));
+			await waitFor(() => expect(queueRows()).toEqual(['Stripe:added']));
+			await user.click(screen.getByRole('button', { name: 'Done' }));
+			await waitFor(
+				() =>
+					expect(document.querySelector('[aria-modal="true"]:not([hidden])')).toBeNull(),
+				{ timeout: 2000 },
+			);
+
+			await waitFor(() => expect(screen.getAllByTestId('api-tile')).toHaveLength(2));
+			const labels = screen
+				.getAllByTestId('tile-credential-label')
+				.map((el) => el.textContent);
+			expect(labels.sort()).toEqual(['Stripe key', 'Stripe sandbox']);
+			// No page-level banner: each tile carries a compact badge instead.
+			expect(screen.queryByTestId('multi-account-note')).toBeNull();
+			const badges = screen.getAllByTestId('tile-accounts-badge');
+			expect(badges).toHaveLength(2);
+			expect(badges[0]).toHaveTextContent('2 accounts');
+
+			// Keyboard: the badge's trigger is focusable and described by the tooltip.
+			const trigger = badges[0].parentElement as HTMLElement;
+			trigger.focus();
+			const tip = await screen.findByRole('tooltip');
+			expect(tip).toHaveTextContent(
+				'legacy-scraper has 2 accounts for Stripe. It chooses one per call with the Jentic-Credential-Id header; without it, calls return the accounts to pick from.',
+			);
+			expect(trigger).toHaveAttribute('aria-describedby', tip.id);
+			await checkA11y(document.body);
+
+			// The binding's sidebar says the same in one quiet line.
+			await user.click(screen.getAllByRole('button', { name: 'Manage Stripe access' })[0]);
+			expect(await screen.findByTestId('multi-account-note')).toHaveTextContent(
+				'legacy-scraper has 2 accounts for Stripe.',
+			);
+		});
+
+		it('the mock binds a second credential for one API but 409s the same one twice', async () => {
+			boundStripe();
+			const bind = (credentialId: string) =>
+				fetch('/agents/agnt_disabled_1/credentials', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ credential_id: credentialId }),
+				});
+			expect((await bind('cred_stripe_2')).status).toBe(201);
+			expect((await bind('cred_stripe_1')).status).toBe(409);
+		});
+
+		it('with every covering credential bound, asks for a new one', async () => {
+			boundStripe();
+			const user = userEvent.setup();
+			renderPage('/?agent=agnt_disabled_1');
+			await queueStripe(user);
+			const pane = await screen.findByTestId('queue-active-pane');
+			expect(within(pane).queryByRole('radio')).toBeNull();
+			expect(within(pane).getByRole('button', { name: 'Add credential' })).toBeEnabled();
+		});
+
+		it('is still owed until a NEW binding serves the API', async () => {
+			resetCredentialsStore([
+				makeMockCredential({
+					credential_id: 'cred_stripe_1',
+					name: 'Stripe key',
+					type: CredentialType.BEARER_TOKEN,
+					api: { vendor: 'stripe.com', name: 'default', version: '1.0.0' },
+				}),
+				sandbox(),
+			]);
+			boundStripe();
+			const user = userEvent.setup();
+			const { queryClient } = renderPage('/?agent=agnt_disabled_1');
+			await queueStripe(user);
+			await user.click(await screen.findByRole('button', { name: 'Close for now' }));
+			// The account the agent already had does not settle the item.
+			expect(
+				await screen.findByRole('button', { name: 'Finish adding 1 API' }),
+			).toBeInTheDocument();
+
+			seedCredentialBindings([
+				{
+					agent_id: 'agnt_disabled_1',
+					credential_id: 'cred_stripe_2',
+					name: 'Stripe sandbox',
+					serves: [{ api_vendor: 'stripe.com', api_name: 'default', api_version: null }],
+				},
+			]);
+			await queryClient.invalidateQueries();
+			expect(await screen.findByRole('button', { name: 'Add APIs' })).toBeInTheDocument();
+		});
 	});
 
 	it('drops an owed API from "Finish adding" once the agent reaches it', async () => {

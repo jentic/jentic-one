@@ -63,6 +63,7 @@ function makeItem(
 		api,
 		outcome,
 		covering: [],
+		existing: [],
 		importsApi: false,
 		...over,
 	};
@@ -543,6 +544,7 @@ describe('ApiSetupQueue — finishing a batch one API at a time', () => {
 						api,
 						outcome: 'form',
 						covering: [],
+						existing: [],
 						importsApi: true,
 					},
 				]}

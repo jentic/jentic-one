@@ -212,6 +212,59 @@ export function composeApiTiles(
 	return tiles.sort((a, b) => a.title.localeCompare(b.title));
 }
 
+/** One API the agent reaches through several bindings (one per account). */
+export interface MultiAccountApi {
+	title: string;
+	/** Distinct bindings serving it — always 2 or more. */
+	count: number;
+}
+
+/** The API identity a tile draws, without the binding — tiles sharing it are
+ * accounts of one API. */
+export function tileApiKey(tile: Pick<ApiTileModel, 'vendor' | 'apiName' | 'version'>): string {
+	return `${tile.vendor}/${tile.apiName ?? '*'}/${tile.version ?? '*'}`;
+}
+
+/** The APIs the grid draws more than one binding for, keyed by {@link tileApiKey},
+ * in grid order. With several accounts the broker needs the call to name one. */
+export function multiAccountApis(tiles: ApiTileModel[]): Map<string, MultiAccountApi> {
+	const bindingsByApi = new Map<string, { title: string; bindings: Set<string> }>();
+	for (const tile of tiles) {
+		const key = tileApiKey(tile);
+		const entry = bindingsByApi.get(key) ?? { title: tile.title, bindings: new Set() };
+		entry.bindings.add(tile.bindingId);
+		bindingsByApi.set(key, entry);
+	}
+	const multi = new Map<string, MultiAccountApi>();
+	for (const [key, { title, bindings }] of bindingsByApi) {
+		if (bindings.size > 1) multi.set(key, { title, count: bindings.size });
+	}
+	return multi;
+}
+
+/** The label each multi-account tile prints so its account is told apart, keyed
+ * by tile key: the credential's name, with its id tail when two accounts of one
+ * API share a name. Tiles of a single-account API are absent. */
+export function accountLabels(tiles: ApiTileModel[]): Map<string, string> {
+	const multi = multiAccountApis(tiles);
+	const labels = new Map<string, string>();
+	for (const tile of tiles) {
+		const apiKey = tileApiKey(tile);
+		if (!multi.has(apiKey)) continue;
+		const twin = tiles.some(
+			(t) =>
+				t.bindingId !== tile.bindingId &&
+				tileApiKey(t) === apiKey &&
+				t.credentialName === tile.credentialName,
+		);
+		labels.set(
+			tile.key,
+			twin ? `${tile.credentialName} · …${tile.credentialId.slice(-6)}` : tile.credentialName,
+		);
+	}
+	return labels;
+}
+
 /** How many APIs an agent reaches — the count on its tab in the strip. */
 export function agentApiCount(
 	bindings: CredentialBindingEntity[] | undefined,

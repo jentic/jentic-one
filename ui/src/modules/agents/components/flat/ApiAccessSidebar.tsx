@@ -37,6 +37,7 @@ import {
 import { AgentBindingPermissionsEditor } from '@/modules/agents/components/detail/AgentBindingPermissionsEditor';
 import { AgentBindingRuleTester } from '@/modules/agents/components/detail/AgentBindingRuleTester';
 import { ConfirmDialog } from '@/modules/agents/components/confirm/ConfirmDialog';
+import { MultiAccountNote } from '@/modules/agents/components/flat/MultiAccountNote';
 import type { ApiTileModel } from '@/modules/agents/lib/apiTiles';
 
 /** The sheet's scrolling body, with a bottom fade shown only while content
@@ -92,6 +93,9 @@ export interface ApiAccessSidebarProps {
 	/** Titles of the OTHER tiles sharing this binding — the blast radius. Rules are
 	 * keyed by (agent, credential), so editing them here affects all of them. */
 	siblingApiTitles: string[];
+	/** How many of the agent's bindings serve this tile's API — above 1, the panel
+	 * says how a call picks between the accounts. */
+	accountCount?: number;
 	open: boolean;
 	onClose: () => void;
 	/** DOM id for the panel content — the tile's `aria-controls` target. */
@@ -102,6 +106,7 @@ export function ApiAccessSidebar({
 	agent,
 	tile,
 	siblingApiTitles,
+	accountCount = 1,
 	open,
 	onClose,
 	sidebarId,
@@ -388,6 +393,13 @@ export function ApiAccessSidebar({
 										<Pencil className="h-4 w-4" /> Edit credential
 									</Button>
 								</div>
+								{accountCount > 1 && (
+									<MultiAccountNote
+										agentName={agent.name}
+										apiTitle={shown.title}
+										count={accountCount}
+									/>
+								)}
 							</section>
 
 							{/* Blast radius: rules are keyed by (credential, agent) —

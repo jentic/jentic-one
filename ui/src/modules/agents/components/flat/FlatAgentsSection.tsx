@@ -13,15 +13,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'reac
 import { useSearchParams } from 'react-router';
 import { motion, useReducedMotionConfig } from 'framer-motion';
 import { Plus } from 'lucide-react';
-import {
-	Button,
-	Card,
-	ErrorAlert,
-	ExpandableText,
-	Skeleton,
-	STATUS_ICON,
-	toast,
-} from '@/shared/ui';
+import { Button, Card, ErrorAlert, ExpandableText, Skeleton, STATUS_ICON } from '@/shared/ui';
 import { cn } from '@/shared/lib/utils';
 import { useEagerCursorDrain, useHotkey } from '@/shared/hooks';
 import {
@@ -50,10 +42,13 @@ import {
 	type AgentEntity,
 } from '@/modules/agents/api';
 import {
+	accountLabels,
 	agentApiCount,
 	agentSetupGapCount,
 	composeApiTiles,
+	multiAccountApis,
 	partitionBindings,
+	tileApiKey,
 	tileStats,
 } from '@/modules/agents/lib/apiTiles';
 import { viewerIsOrgAdmin } from '@/modules/agents/lib/bindAuthority';
@@ -635,6 +630,10 @@ function SelectedAgentPanel({
 		[liveBindings, credentialsSource.items, apisSource.items],
 	);
 	const stats = useMemo(() => tileStats(tiles), [tiles]);
+	// APIs reached through several accounts: each such tile names its account and
+	// carries a badge saying how a call picks between them.
+	const multiAccount = useMemo(() => multiAccountApis(tiles), [tiles]);
+	const tileAccountLabels = useMemo(() => accountLabels(tiles), [tiles]);
 
 	// The same per-actor read the console's KPI strip makes; `null` on 403.
 	const usageQuery = useActorUsageDetail(agent.id);
@@ -709,10 +708,11 @@ function SelectedAgentPanel({
 					: null;
 
 	// Re-entry lands on the queue while a batch is owed — those picks are decided.
-	// "Owed" is judged against the live bindings whenever the queue is shut: an API
-	// the agent now reaches (bound by the queue, or elsewhere meanwhile) is done, so
-	// it leaves the batch rather than holding "Finish adding N" or reopening. Never
-	// pruned while the queue is open — it tracks its own progress.
+	// "Owed" is judged against the live bindings whenever the queue is shut: an item
+	// a new binding now serves (bound by the queue, or elsewhere meanwhile) is done,
+	// so it leaves the batch rather than holding "Finish adding N" or reopening. A
+	// second-account item is not settled by the account the agent already had.
+	// Never pruned while the queue is open — it tracks its own progress.
 	const queueShut = addStep === 'closed';
 	const owedBatch = useMemo(
 		() =>
@@ -733,9 +733,9 @@ function SelectedAgentPanel({
 	// tray. Consuming before the `canBind` gate would drop a live intent for a
 	// not-yet-approved agent; once it's approvable the same signal still fires.
 	// APIs already chosen skip the tray: they are preflighted exactly as the
-	// tray's Continue would, then handed to the queue. A preflight that can't run
-	// (a failed read) falls back to the tray; picks the agent already reaches
-	// leave nothing to set up, which a toast says, and the fleet stays.
+	// tray's Continue would, then handed to the queue — a pick the agent already
+	// reaches included, which adds another account. A preflight that can't run
+	// (a failed read) falls back to the tray.
 	const preflight = usePreflightInputs(bindings);
 	const bindingsFailedToLoad = bindingsQuery.isError;
 	useEffect(() => {
@@ -751,17 +751,7 @@ function SelectedAgentPanel({
 		}
 		if (!preflight.ready) return;
 		onAutoOpenAddApisConsumed();
-		const items = preflightApis(autoQueueApis, preflight.inputs).filter(
-			(item) => item.outcome !== 'attached',
-		);
-		if (items.length === 0) {
-			const labels = autoQueueApis.map((a) => a.label).join(', ');
-			toast({
-				title: `${labels} ${autoQueueApis.length === 1 ? 'is' : 'are'} already available to ${agent.name}`,
-			});
-			return;
-		}
-		onQueueBatchChange(agent.id, items);
+		onQueueBatchChange(agent.id, preflightApis(autoQueueApis, preflight.inputs));
 		setAddStep('queue');
 	}, [
 		autoOpenAddApis,
@@ -774,7 +764,6 @@ function SelectedAgentPanel({
 		preflight.inputs,
 		onQueueBatchChange,
 		agent.id,
-		agent.name,
 	]);
 
 	const addApisButton = !isArchived && (
@@ -889,6 +878,9 @@ function SelectedAgentPanel({
 								agentServing={serving}
 								expanded={openTileKey === tile.key}
 								sidebarId={API_ACCESS_SIDEBAR_ID}
+								accountLabel={tileAccountLabels.get(tile.key)}
+								accountCount={multiAccount.get(tileApiKey(tile))?.count ?? 1}
+								agentName={agent.name}
 							/>
 						))}
 					</div>
@@ -947,6 +939,7 @@ function SelectedAgentPanel({
 				agent={agent}
 				tile={openTile}
 				siblingApiTitles={siblingApiTitles}
+				accountCount={openTile ? (multiAccount.get(tileApiKey(openTile))?.count ?? 1) : 1}
 				open={openTileKey != null}
 				onClose={onCloseTile}
 				sidebarId={API_ACCESS_SIDEBAR_ID}
