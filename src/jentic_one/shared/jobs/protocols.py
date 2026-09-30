@@ -86,9 +86,9 @@ class QueuedExecutionRequest:
     """What the worker knows about a queued execution when it re-authorizes it.
 
     Built from the job row (``actor_id`` / ``actor_type`` are the enqueuing
-    actor) and the enqueue payload. ``credential_id`` / ``toolkit_id`` are the
-    enqueue-time selection, replayed as the disambiguation inputs so the
-    re-check picks the same credential/toolkit — never as a grant.
+    actor) and the enqueue payload. ``credential_id`` is the enqueue-time
+    selection, replayed as the disambiguation input so the re-check picks the
+    same credential — never as a grant.
     """
 
     actor_id: str
@@ -99,7 +99,6 @@ class QueuedExecutionRequest:
     api_name: str
     api_version: str
     operation_id: str | None = None
-    toolkit_id: str | None = None
     credential_id: str | None = None
     # Concrete server-variable values of the request URL (from discovery at
     # enqueue time) — the re-check selects under the same scoping.

@@ -16,14 +16,9 @@ from jentic_one.admin.repos import (
     AgentCredentialBindingRepository,
     AgentCredentialRepository,
     AgentRepository,
-    AgentToolkitBindingRepository,
 )
 from jentic_one.admin.scoping.filters import build_access_filters
-from jentic_one.auth.repos import (
-    BindingRuleRepository,
-    CredentialRefRepository,
-    ToolkitNameRepository,
-)
+from jentic_one.auth.repos import BindingRuleRepository, CredentialRefRepository
 from jentic_one.auth.services.agent_scope_ceiling import check_agent_scope_grant
 from jentic_one.auth.services.errors import (
     ActorNotFoundError,
@@ -46,7 +41,6 @@ from jentic_one.auth.services.schemas.agents import (
     AgentCreatePayload,
     AgentView,
     CredentialBindingView,
-    ToolkitBindingView,
 )
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
 from jentic_one.shared.auth.identity import Identity
@@ -464,7 +458,6 @@ class AgentService:
                 raise InvalidTransitionError(agent_id, ActorStatus.ARCHIVED, "archive")
             await AgentRepository.archive(session, agent_id)
             await ActorScopeGrantRepository.revoke_all(session, agent_id)
-            await AgentToolkitBindingRepository.delete_for_agent(session, agent_id)
             await AgentCredentialBindingRepository.delete_for_agent(session, agent_id)
             # #1233 (archive arm): archive is terminal — the status enum has
             # no exit — so any consent grant left `active` would misreport
@@ -492,39 +485,6 @@ class AgentService:
                 actor_id=identity.sub,
                 origin=identity.origin.value,
             )
-
-    async def list_toolkits(self, agent_id: str, *, identity: Identity) -> list[ToolkitBindingView]:
-        """Toolkit bindings for an agent, name/serves-enriched (read-only).
-
-        The toolkit bind/unbind management routes are gone (theme-5 Phase 5b);
-        this read survives solely for ``GET /me``'s ``toolkit_bindings`` block,
-        which reports the rows the flag-off broker fallback still derives from
-        until Phase 6b retires the toolkit path.
-        """
-        await self.get_agent(agent_id, identity=identity)
-        async with self._ctx.admin_db.session() as session:
-            bindings = await AgentToolkitBindingRepository.list_for_agent(session, agent_id)
-        views = [ToolkitBindingView.model_validate(b) for b in bindings]
-        # Enrich each binding from the control DB with (a) a human-readable
-        # toolkit name so an agent can map an opaque `tk_…` id to something it can
-        # show its operator (issue #686), and (b) the APIs the toolkit's bound
-        # credentials serve, so `whoami` tells the agent what it can already call
-        # and can skip a redundant provisioning plan / a throwaway denied execute.
-        # Names/serves live in the control DB; the bindings above are already
-        # scoped to this agent, so we only resolve for toolkits the caller is
-        # bound to. Failure to reach the control DB is non-fatal.
-        toolkit_ids = [v.toolkit_id for v in views]
-        if toolkit_ids and self._ctx.is_db_allowed("control"):
-            async with self._ctx.control_db.session() as session:
-                names = await ToolkitNameRepository.get_names_for_ids(session, toolkit_ids)
-                served = await ToolkitNameRepository.get_served_apis_for_ids(session, toolkit_ids)
-            for view in views:
-                view.name = names.get(view.toolkit_id)
-                view.serves = [
-                    ServedApiRef(api_vendor=vendor, api_name=name, api_version=version)
-                    for vendor, name, version in served.get(view.toolkit_id, [])
-                ]
-        return views
 
     def _can_bind_credential(self, identity: Identity, created_by: str | None) -> bool:
         """Bind authorization for the direct bind path.
@@ -571,8 +531,7 @@ class AgentService:
             bindings = await AgentCredentialBindingRepository.list_for_agent(session, agent_id)
         views = [CredentialBindingView.model_validate(b) for b in bindings]
         # Enrich from the control DB with the credential's human-readable name
-        # and the API it serves (the credential-side analogue of the toolkit
-        # `serves` enrichment, issue #686). The bindings above are already
+        # and the API it serves (issue #686). The bindings above are already
         # scoped to this agent. Failure to reach the control DB is non-fatal.
         credential_ids = [v.credential_id for v in views]
         if credential_ids and self._ctx.is_db_allowed("control"):
@@ -597,10 +556,8 @@ class AgentService:
     ) -> CredentialBindingView:
         """Create a direct agent↔credential binding.
 
-        Unlike the toolkit bind route, this path verifies the caller can see
-        the target credential before writing the binding (control-DB lookup;
-        the toolkit route's missing check is a known asymmetry the direct
-        path deliberately does not inherit).
+        Verifies the caller can see the target credential before writing the
+        binding (control-DB lookup).
         """
         await self.get_agent(agent_id, identity=identity)
         ref = None
@@ -829,7 +786,7 @@ class AgentService:
         self-serve. Fail-safe posture — if the sweep fails, the transfer rolls
         back; the new owner re-consents through the normal flow if the
         connection is still wanted. The agent's key channel (API key, scopes,
-        toolkit bindings) is deliberately untouched.
+        credential bindings) is deliberately untouched.
 
         Only the owner or an ``org:admin`` caller may update the agent (others
         get a uniform 404); changing ``owner_id`` is ``org:admin``-only.

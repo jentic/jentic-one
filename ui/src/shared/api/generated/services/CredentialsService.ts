@@ -251,7 +251,8 @@ export class CredentialsService {
      * List agents directly bound to a credential with cursor-based pagination.
      *
      * The reverse lookup for the credential-detail "Agents" view (theme 5
-     * phase 1) — the direct-binding mirror of ``GET /toolkits/{id}/agents``.
+     * phase 1) — the direct-binding successor of the removed
+     * ``GET /toolkits/{id}/agents``.
      * Suspended bindings are included with their flag set.
      * @returns CredentialAgentListResponse Successful Response
      * @throws ApiError

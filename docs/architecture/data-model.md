@@ -94,8 +94,9 @@ in a shared, ordered `PermissionRuleSet` that several bindings can point at.
 (device-authorization / auth-code) from creation to a terminal state;
 `CustomerAPIKey` is the bearer-key row for API-key access. The retired
 toolkit tables (`toolkits`, `toolkit_permission_rules`,
-`toolkit_credential_bindings`, `toolkit_keys`) remain until the phase-6b
-drops, gated on the `toolkit_flattening_acks` sentinel — see the
+`toolkit_credential_bindings`, `toolkit_keys`, and admin's
+`agent_toolkit_bindings`) were dropped in theme-5 Phase 6b, gated on the
+`toolkit_flattening_acks` sentinel — see the
 [release runbook](../development/releasing.md).
 
 ### Admin — identity and operations

@@ -23,8 +23,9 @@ OWNER_RESOURCES_READ = "owner:resources:read"
 # the implication map no longer expands it).
 #
 # - The toolkit scopes retired in theme-5 Phase 5b (the toolkit management
-#   surface is gone; authorization runs on the agent↔credential axis); they —
-#   and the stored strings — are swept in Phase 6b.
+#   surface is gone; authorization runs on the agent↔credential axis). The
+#   Phase 6b admin migration sweeps the stored strings, but they stay here so
+#   a replayed pre-0.41 grant payload is still accepted-and-ignored.
 # - ``owner:access-requests:read`` retired in theme 7 (the access-request flow
 #   is gone; nothing is left to delegate reads over).
 # - The service-account scopes retired in theme-8 Phase 2 (the service-account

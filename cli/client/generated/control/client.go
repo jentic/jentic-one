@@ -1759,10 +1759,11 @@ type GovernedHostsResponse struct {
 
 // GroupBy Grouping dimension for usage statistics.
 //
-// “TOOLKIT“ is deprecated (theme-5 Phase 5b) and will be removed one
-// release later, with the toolkit tables (Phase 6b): execution records
-// carry a “credential_id“ since Phase 2 and the direct-binding path
-// writes no “toolkit_id“, so “CREDENTIAL“ is the replacement axis.
+// “TOOLKIT“ is a legacy axis: it groups over the surviving
+// “execution_records.toolkit_id“ attribution column, which nothing writes
+// since the toolkit path was deleted (theme-5 Phase 6b). It stays so
+// historical dashboards keep working; “CREDENTIAL“ is the live
+// consumer axis (execution records carry “credential_id“ since Phase 2).
 type GroupBy string
 
 // HealthResponse Health check response for the admin surface.
@@ -1916,7 +1917,6 @@ type MeAgent struct {
 	Scopes             []string                  `json:"scopes"`
 	Status             string                    `json:"status"`
 	TokenScopes        []string                  `json:"token_scopes"`
-	ToolkitBindings    []ToolkitBindingEntry     `json:"toolkit_bindings"`
 	Type               *MeAgentType              `json:"type,omitempty"`
 }
 
@@ -1960,7 +1960,7 @@ type MeUserType string
 // NoAuthCreateRequest Create request for no_auth credentials.
 //
 // A no-auth credential carries no secret — it represents "this API is called
-// without authentication". It still exists as a credential row so a toolkit
+// without authentication". It still exists as a credential row so an agent
 // binding (and its permission rules) can hang off it, and the broker resolves
 // it as a no-op auth (see broker credential resolver / injection).
 type NoAuthCreateRequest struct {
@@ -2979,7 +2979,7 @@ type SecuritySchemeResponse struct {
 	Type             string                        `json:"type"`
 }
 
-// ServedApiRef An API served by a toolkit's bound credential, keyed by its stored identity.
+// ServedApiRef An API served by an agent's bound credential, keyed by its stored identity.
 //
 // Distinct from “APIReference“ on purpose: this carries the *stored* credential
 // identity, where “api_name“/“api_version“ may be NULL (the "covers all
@@ -3058,14 +3058,6 @@ type TokenResponse struct {
 	// Scope Space-delimited effective scopes of the minted access token (RFC 6749 §3.3), computed the way the platform's resolvers enforce them (live scope grants ∩ client ceiling ∩ consent-grant scopes for agent tokens), so the granted set may be narrower than requested and clients must not assume they got what they asked for. Present on every response whose token carries at least one scope; OMITTED (never the ABNF-invalid empty string) only when the effective set is empty — reachable solely on legs where the client requested no scopes at the token endpoint (the token request carries no scope parameter, and consent fails closed on an empty intersection).
 	Scope     *string `json:"scope,omitempty"`
 	TokenType *string `json:"token_type,omitempty"`
-}
-
-// ToolkitBindingEntry Toolkit binding summary for the /me response.
-type ToolkitBindingEntry struct {
-	BoundAt   time.Time       `json:"bound_at"`
-	Name      *string         `json:"name,omitempty"`
-	Serves    *[]ServedApiRef `json:"serves,omitempty"`
-	ToolkitId string          `json:"toolkit_id"`
 }
 
 // TopOperation Aggregated execution counts for a single operation.
@@ -5712,7 +5704,8 @@ type ClientInterface interface {
 	// List agents directly bound to a credential with cursor-based pagination.
 	//
 	// The reverse lookup for the credential-detail "Agents" view (theme 5
-	// phase 1) — the direct-binding mirror of ``GET /toolkits/{id}/agents``.
+	// phase 1) — the direct-binding successor of the removed
+	// ``GET /toolkits/{id}/agents``.
 	// Suspended bindings are included with their flag set.
 	//
 	// Corresponds with GET /credentials/{credential_id}/agents (the `ListCredentialAgents` operationId).
@@ -9381,7 +9374,8 @@ func (c *Client) UpdateCredential(ctx context.Context, credentialId string, body
 // List agents directly bound to a credential with cursor-based pagination.
 //
 // The reverse lookup for the credential-detail "Agents" view (theme 5
-// phase 1) — the direct-binding mirror of “GET /toolkits/{id}/agents“.
+// phase 1) — the direct-binding successor of the removed
+// “GET /toolkits/{id}/agents“.
 // Suspended bindings are included with their flag set.
 //
 // Corresponds with GET /credentials/{credential_id}/agents (the `ListCredentialAgents` operationId).
@@ -21854,7 +21848,8 @@ type ClientWithResponsesInterface interface {
 	// List agents directly bound to a credential with cursor-based pagination.
 	//
 	// The reverse lookup for the credential-detail "Agents" view (theme 5
-	// phase 1) — the direct-binding mirror of ``GET /toolkits/{id}/agents``.
+	// phase 1) — the direct-binding successor of the removed
+	// ``GET /toolkits/{id}/agents``.
 	// Suspended bindings are included with their flag set.
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -38714,7 +38709,8 @@ func (c *ClientWithResponses) UpdateCredentialWithResponse(ctx context.Context, 
 // List agents directly bound to a credential with cursor-based pagination.
 //
 // The reverse lookup for the credential-detail "Agents" view (theme 5
-// phase 1) — the direct-binding mirror of “GET /toolkits/{id}/agents“.
+// phase 1) — the direct-binding successor of the removed
+// “GET /toolkits/{id}/agents“.
 // Suspended bindings are included with their flag set.
 //
 // Returns a wrapper object for the known response body format(s).

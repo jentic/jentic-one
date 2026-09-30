@@ -35,10 +35,12 @@ working through the deprecation window (see the
   `sak_` keys are issued;
   the `/service-accounts` API, `POST /oauth/mint`, and the
   `client_credentials` grant are gone.
-- **`toolkit`** — a startup migration turns each `jntc_live_` toolkit key
-  into a successor agent (it minted a service account before theme 8, and
-  those service accounts migrate like any other), and the retired plaintext
-  keeps authenticating as that successor.
+- **`toolkit`** — on 0.40.x a startup migration turned each `jntc_live_`
+  toolkit key into a successor agent (it minted a service account before
+  theme 8, and those service accounts migrate like any other). The toolkit
+  tables are dropped in 0.41 (theme-5 Phase 6b); a retired plaintext keeps
+  authenticating as its successor agent through the migrated digest, until
+  no earlier than 2026-12-01.
 
 An agent's `Identity` carries its owner (`parent_actor_id`) and the owner's
 effective permissions (`parent_permissions`): an agent can never out-rank

@@ -21,9 +21,10 @@ from pydantic import BaseModel
 class ExecuteRequestContext(BaseModel):
     """Contextual metadata for a broker proxy request — discovery-driven.
 
-    ``toolkit_id`` is optional: derived from the discovered API identity or
-    supplied as an inbound disambiguator. ``operation_id`` / ``api_*`` come from
-    in-process discovery, not inbound ``Jentic-Api-*`` headers.
+    ``toolkit_id`` is nullable-legacy: nothing sets it since theme-5 Phase 6b
+    deleted toolkit derivation; it stays so queued/in-process callers built
+    against the older shape keep validating. ``operation_id`` / ``api_*`` come
+    from in-process discovery, not inbound ``Jentic-Api-*`` headers.
     """
 
     upstream_url: str

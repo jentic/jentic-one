@@ -172,7 +172,8 @@ func TestMCPExecute_DenialNextToolKeysOnProblemType(t *testing.T) {
 			`{"type":"no_credential_binding","detail":"denied"}`, "whoami",
 		},
 		{
-			"no_toolkit_binding_no_directive", http.StatusForbidden,
+			// Retired pre-6b wire type: now just an unknown type → whoami.
+			"retired_no_toolkit_binding", http.StatusForbidden,
 			`{"type":"no_toolkit_binding","detail":"denied"}`, "whoami",
 		},
 		{

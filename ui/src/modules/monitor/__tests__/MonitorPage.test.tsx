@@ -224,17 +224,17 @@ describe('MonitorPage', () => {
 		).not.toBeInTheDocument();
 	});
 
-	// --- theme-5 5d: retired ?toolkit_id= deep links (scrub is deletable in 6b)
-
-	it('ignores a retired ?toolkit_id= deep link and scrubs it from the URL', async () => {
+	it('ignores an unknown query param without crashing or corrupting filters', async () => {
+		// Retired pre-5b deep links could carry `?toolkit_id=…`. The 5d
+		// deprecation-window scrub is gone (6b); unknown params are simply
+		// ignored by every filter reader — the feed renders unfiltered and the
+		// live params keep working.
 		renderMonitor('/app/monitor?show=calls&toolkit_id=tk_0123456789abcdef&days=7');
 
 		expect(await screen.findByText('POST /v1/charges')).toBeInTheDocument();
 		expect(screen.getByText('GET /repos/{owner}/{repo}')).toBeInTheDocument();
 
-		await waitFor(() => {
-			expect(currentParams().get('toolkit_id')).toBeNull();
-		});
+		// The surviving filter vocabulary is untouched.
 		expect(currentParams().get('show')).toBe('calls');
 		expect(currentParams().get('days')).toBe('7');
 	});

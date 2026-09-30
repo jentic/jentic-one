@@ -77,14 +77,11 @@ export default function MonitorPage() {
 
 	// Arrival rewrites (replace: no history entry). Legacy `?tab=` values map
 	// onto the new vocabulary; the rest are retired params.
-	//  - `toolkit_id`: deprecation-window scrub (theme-5 5d) — DELETE IN 6b.
-	//    Pre-5b deep links could carry it, and `setSearchParams((prev) => …)`
-	//    would otherwise copy it forward on every change.
 	//  - `live`: the old Events tab's opt-in; the feed is always live now.
 	//  - `lens`: the old Usage tab's breakdown lens; the charts own it now.
 	useEffect(() => {
 		const legacy = tabParam ? (LEGACY_TABS[tabParam] ?? {}) : undefined;
-		const retired = ['toolkit_id', 'live', 'lens'].filter((k) => searchParams.has(k));
+		const retired = ['live', 'lens'].filter((k) => searchParams.has(k));
 		if (!legacy && retired.length === 0) return;
 		setSearchParams(
 			(prev) => {

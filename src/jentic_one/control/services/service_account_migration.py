@@ -1,15 +1,15 @@
 """Theme-8 Phase 1 — the service-account → agent migration job.
 
 Converts every service account into a successor **agent** (copy-then-sweep,
-N1): the SA's stored scope grants, toolkit/credential bindings, and API-key
+N1): the SA's stored scope grants, credential bindings, and API-key
 digest are COPIED onto a raw-SQL-minted successor agent, the SA's opaque
 sessions are revoked (H-1), and the row is stamped
 (``migrated_to_actor_id`` + ``migrated_at``) — all in one admin transaction
 per SA, with per-SA audit rows under the system actor (F4). The SA-side
 originals stay live until the deferred :meth:`sweep` so old-image pods keep
 resolving migrated keys through a rolling upgrade (H-B). The control-DB
-half — the ``toolkit_keys`` re-stamp and the copy of the ``sva_``-keyed
-per-binding inline permission rules (H2) — runs in its own transaction after
+half — the copy of the ``sva_``-keyed per-binding inline permission rules
+(H2) — runs in its own transaction after
 the admin commit, is idempotent, and is retried on every ``already_migrated``
 re-run; a control-DB failure is reported as a ``failed`` row (L1).
 
@@ -22,7 +22,7 @@ value ``skipped``). Successor creation is raw SQL — never
 successor).
 
 Idempotency: the stamp short-circuits re-runs, so the boot job runs on every
-start (like theme-5 key retirement) and catches SAs created during the
+start and catches SAs created during the
 window (until Phase 2 removed ``POST /service-accounts``, F5). Concurrency: one
 admin transaction per SA (``BEGIN IMMEDIATE`` on SQLite), a pg advisory-lock
 fast path, an in-transaction stamp re-check, and — the real backstop — the
@@ -139,7 +139,6 @@ class ServiceAccountMigrationOutcome:
     #: whose re-run copies nothing new but whose historical counts are not
     #: reconstructed — never a misleading zero.
     stored_scope_count: int | None = 0
-    toolkit_binding_count: int | None = 0
     credential_binding_count: int | None = 0
     #: Control-DB ``agent_permission_rules`` rows copied sva_ → agnt_ (H2).
     permission_rule_count: int | None = 0
@@ -177,7 +176,6 @@ class _PreviewCounts:
     """What a real run would copy/revoke for one unstamped SA (``--diff-only``)."""
 
     stored_scopes: int = 0
-    toolkit_bindings: int = 0
     credential_bindings: int = 0
     permission_rules: int = 0
     access_tokens: int = 0
@@ -320,7 +318,7 @@ class ServiceAccountMigrationService:
         no successor — only their token revocation is counted.
         """
         _label, successor_status = self._disposition(row.status)
-        scopes = toolkit_bindings = credential_bindings = rules = 0
+        scopes = credential_bindings = rules = 0
         grants: list[tuple[str, str | None]] = []
         async with self._ctx.admin_db.session() as session:
             access, refresh = await ServiceAccountMigrationRepository.count_revocable_tokens(
@@ -329,7 +327,6 @@ class ServiceAccountMigrationService:
             if successor_status is not None:
                 (
                     scopes,
-                    toolkit_bindings,
                     credential_bindings,
                 ) = await ServiceAccountMigrationRepository.count_copy_candidates(
                     session, service_account_id=row.id
@@ -347,7 +344,6 @@ class ServiceAccountMigrationService:
             rules = sum(by_binding.values())
         return _PreviewCounts(
             stored_scopes=scopes,
-            toolkit_bindings=toolkit_bindings,
             credential_bindings=credential_bindings,
             permission_rules=rules,
             access_tokens=access,
@@ -371,7 +367,6 @@ class ServiceAccountMigrationService:
                     None if row.migrated_to_actor_id == SKIPPED_STAMP else row.migrated_to_actor_id
                 ),
                 stored_scope_count=None,
-                toolkit_binding_count=None,
                 credential_binding_count=None,
                 permission_rule_count=None,
                 access_tokens_revoked=None,
@@ -386,7 +381,6 @@ class ServiceAccountMigrationService:
             service_account_id=row.id,
             outcome=label,
             stored_scope_count=None if c is None else c.stored_scopes,
-            toolkit_binding_count=None if c is None else c.toolkit_bindings,
             credential_binding_count=None if c is None else c.credential_bindings,
             permission_rule_count=None if c is None else c.permission_rules,
             access_tokens_revoked=None if c is None else c.access_tokens,
@@ -417,9 +411,10 @@ class ServiceAccountMigrationService:
     async def _sync_control(self, service_account_id: str, agent_id: str) -> int:
         """Idempotent control-DB half of one SA migration; returns rules copied.
 
-        One control transaction: re-stamp ``toolkit_keys.migrated_actor_id``
-        (M-E) and copy the ``sva_``-keyed per-binding inline permission
-        rules onto the successor (H2). Called after the admin commit on
+        One control transaction: copy the ``sva_``-keyed per-binding inline
+        permission rules onto the successor (H2). (The M-E
+        ``toolkit_keys.migrated_actor_id`` re-stamp was deleted with that
+        table in theme-5 Phase 6b.) Called after the admin commit on
         fresh migrations AND on every ``already_migrated`` re-run (M1): the
         two DBs cannot share a transaction, so a crash between them would
         otherwise lose this step forever behind the stamp short-circuit.
@@ -427,9 +422,6 @@ class ServiceAccountMigrationService:
         if not self._ctx.has_db("control"):
             return 0
         async with self._ctx.control_db.transaction() as control_session:
-            await ServiceAccountMigrationRepository.restamp_toolkit_keys(
-                control_session, service_account_id=service_account_id, agent_id=agent_id
-            )
             return await ServiceAccountMigrationRepository.copy_permission_rules(
                 control_session, service_account_id=service_account_id, agent_id=agent_id
             )
@@ -461,7 +453,7 @@ class ServiceAccountMigrationService:
 
     async def _migrate_one(self, row: Any) -> ServiceAccountMigrationOutcome:
         """Copy → revoke → stamp → audit, one admin transaction; then the
-        control-DB step (toolkit-key re-stamp + inline-rule copy; separate,
+        control-DB step (inline-rule copy; separate,
         idempotent, after the admin commit)."""
         if row.migrated_to_actor_id is not None:
             # M1: the control-DB step runs AFTER the admin commit, so a
@@ -492,7 +484,7 @@ class ServiceAccountMigrationService:
         label = "failed"
         successor_status: str | None = None
         agent_id: str | None = None
-        stored_scopes = toolkit_bindings = credential_bindings = 0
+        stored_scopes = credential_bindings = 0
         copied: list[tuple[str, str | None]] = []
         access_revoked = refresh_revoked = 0
 
@@ -500,9 +492,9 @@ class ServiceAccountMigrationService:
             async with self._ctx.admin_db.transaction() as session:
                 await ServiceAccountMigrationRepository.acquire_migration_lock(session, row.id)
                 # Stamp time is taken only once the lock is held: rows the
-                # previous holder committed while we waited (key-retirement
-                # binds) predate the stamp and must not read as post-stamp
-                # mutations in verify criterion 5.
+                # previous holder committed while we waited predate the stamp
+                # and must not read as post-stamp mutations in verify
+                # criterion 5.
                 now = dt.datetime.now(dt.UTC)
                 # In-transaction re-read (FOR UPDATE OF sa on pg; SQLite holds
                 # the BEGIN IMMEDIATE write lock). It serialises with the
@@ -532,10 +524,7 @@ class ServiceAccountMigrationService:
                         session, service_account_id=row.id, agent_id=agent_id
                     )
                     stored_scopes = len(copied)
-                    (
-                        toolkit_bindings,
-                        credential_bindings,
-                    ) = await ServiceAccountMigrationRepository.copy_bindings(
+                    credential_bindings = await ServiceAccountMigrationRepository.copy_bindings(
                         session, service_account_id=row.id, agent_id=agent_id
                     )
 
@@ -654,10 +643,8 @@ class ServiceAccountMigrationService:
                 reason=f"error:{type(exc).__name__}",
             )
 
-        # Control DB (separate, idempotent, after the admin commit): re-stamp
-        # toolkit_keys.migrated_actor_id so key revocation keeps disabling the
-        # right actor (M-E; the W8 retarget keeps set_actor_status meaningful)
-        # and copy the per-binding inline rules (H2). A failure here is a row
+        # Control DB (separate, idempotent, after the admin commit): copy the
+        # per-binding inline rules (H2). A failure here is a row
         # outcome (L1); a crash between the admin commit and this call is
         # healed by the M1 re-run on the already_migrated path.
         admin_level = _admin_level_grants(copied)
@@ -689,7 +676,6 @@ class ServiceAccountMigrationService:
             outcome="failed" if sync_error is not None else label,
             successor_agent_id=agent_id,
             stored_scope_count=stored_scopes,
-            toolkit_binding_count=toolkit_bindings,
             credential_binding_count=credential_bindings,
             permission_rule_count=rules_copied,
             access_tokens_revoked=access_revoked,

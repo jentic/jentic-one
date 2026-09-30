@@ -32,12 +32,13 @@ _fallback_resolve_counter = _meter.create_counter(
 AGENT_API_KEY_PREFIX = "jak_"
 SERVICE_ACCOUNT_API_KEY_PREFIX = "sak_"
 # Theme-5 Phase 4 (key retirement): a retired toolkit key's plaintext keeps
-# authenticating — as the actor the retirement job created for it — because
-# the job copies the key's SHA-256 lookup digest into the credential table and
-# this resolver matches by digest, not by prefix. The prefix is DEPRECATED
-# (see the deprecation notice in ``docs/releasing.md``): each successful
-# resolve logs a warning naming the actor, and the acceptance is deleted with
-# the toolkit surface.
+# authenticating — as the actor the retirement job created for it (its
+# successor agent once theme-8 migrated it) — because the job copied the key's
+# SHA-256 lookup digest into the credential table and this resolver matches by
+# digest, not by prefix. Acceptance needs no toolkit table, so it outlives the
+# Phase-6b drops (which removed the retirement job itself). The prefix is
+# DEPRECATED (see ``docs/development/releasing.md``): each successful resolve
+# logs a warning naming the actor; acceptance ends no earlier than 2026-12-01.
 RETIRED_TOOLKIT_KEY_PREFIX = "jntc_live_"
 
 
@@ -123,8 +124,8 @@ class ApiKeyResolver:
                         agent_id=arm.sub,
                         actionable_step=(
                             "Rotate this caller to its successor agent's jak_ "
-                            "key; jntc_live_ acceptance is removed with the "
-                            "toolkit surface."
+                            "key; jntc_live_ acceptance ends no earlier than "
+                            "2026-12-01 (see docs/development/releasing.md)."
                         ),
                     )
                 return arm
@@ -197,8 +198,8 @@ class ApiKeyResolver:
                         actionable_step=(
                             "Rotate this caller to its successor agent's jak_ key "
                             "(run `jentic_one migrate-service-accounts` if not yet "
-                            "migrated); jntc_live_ acceptance is removed with the "
-                            "toolkit surface."
+                            "migrated); jntc_live_ acceptance ends no earlier than "
+                            "2026-12-01 (see docs/development/releasing.md)."
                         ),
                     )
             return identity

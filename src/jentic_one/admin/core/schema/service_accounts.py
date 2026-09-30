@@ -17,9 +17,9 @@ class ServiceAccount(AuditableMixin, AdminBase):
     """Platform service account — a non-interactive actor for system integrations.
 
     Theme-8 Phase 1 (service-account → agent migration): ``migrated_to_actor_id``
-    is the migration job's **sole idempotency short-circuit** (the
-    ``toolkit_keys.migrated_actor_id`` twin, ``control/core/schema/
-    toolkit_keys.py``). Non-NULL means the row is done: either the successor
+    is the migration job's **sole idempotency short-circuit** (modelled on the
+    theme-5 ``toolkit_keys.migrated_actor_id`` stamp, whose table Phase 6b
+    dropped). Non-NULL means the row is done: either the successor
     agent's ``agnt_…`` id (full migration) or the literal sentinel string
     ``skipped`` (skip-but-stamp for pending/rejected/archived rows — OQ-1).
     The stamp — never the account name — keys idempotency, and the W6 writer

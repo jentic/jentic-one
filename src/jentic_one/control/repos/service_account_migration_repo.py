@@ -1,11 +1,11 @@
 """Repository for theme-8 Phase 1 service-account → agent migration.
 
-The migration job runs in the control module (it must re-stamp
-``toolkit_keys.migrated_actor_id`` in the control DB) but does nearly all of
-its work in the **admin** DB (successor agents, credential digests, grant and
+The migration job runs in the control module (it copies the per-binding
+inline permission rules in the control DB) but does nearly all of its work in
+the **admin** DB (successor agents, credential digests, grant and
 binding twins, token revocation, the stamp, the verify queries, and the
 acknowledgement sentinel). The control module must not import admin ORM
-models, so — like ``KeyRetirementRepository`` — every admin-side statement
+models, so every admin-side statement
 here is raw SQL (F1 is also served by this: successor creation must never go
 through ``AgentService.create()``/``approve()``, whose empty-scope default is
 ``DEFAULT_AGENT_SCOPES``).
@@ -113,16 +113,6 @@ _INSERT_GRANT_TWIN = text(
     " ON CONFLICT (actor_id, scope) DO NOTHING"
 )
 
-_SELECT_TOOLKIT_BINDINGS = text(
-    "SELECT toolkit_id FROM agent_toolkit_bindings WHERE agent_id = :actor_id"
-)
-
-_INSERT_TOOLKIT_BINDING_TWIN = text(
-    "INSERT INTO agent_toolkit_bindings (id, agent_id, toolkit_id, created_by)"
-    " VALUES (:id, :agent_id, :toolkit_id, :created_by)"
-    " ON CONFLICT (agent_id, toolkit_id) DO NOTHING"
-)
-
 _SELECT_CREDENTIAL_BINDINGS = text(
     "SELECT credential_id, rule_set_id, suspended, suspended_reason"
     " FROM agent_credential_bindings WHERE agent_id = :actor_id"
@@ -167,16 +157,11 @@ _STAMP = text(
     " WHERE id = :id AND migrated_to_actor_id IS NULL"
 )
 
-_RESTAMP_TOOLKIT_KEYS = text(
-    "UPDATE toolkit_keys SET migrated_actor_id = :agent_id"
-    " WHERE migrated_actor_id = :service_account_id"
-)
-
 
 class ServiceAccountMigrationRepository:
     """Admin-DB (and a few control-DB) operations for the SA-migration job.
 
-    Control-DB methods (``restamp_toolkit_keys``, ``copy_permission_rules``,
+    Control-DB methods (``copy_permission_rules``,
     ``list_service_account_rule_holders``, ``count_permission_rules_by_binding``)
     must be called with a **control** session; everything else is admin.
     """
@@ -316,25 +301,14 @@ class ServiceAccountMigrationRepository:
     @staticmethod
     async def copy_bindings(
         session: AsyncSession, *, service_account_id: str, agent_id: str
-    ) -> tuple[int, int]:
-        """Twin the SA's toolkit + credential bindings onto the successor.
+    ) -> int:
+        """Twin the SA's credential bindings onto the successor; return the count.
 
-        Coexistence is legal — uniqueness is per ``(agent_id, X)`` pair (N1),
-        so the ``sva_``-keyed originals stay until the sweep.
+        Coexistence is legal — uniqueness is per ``(agent_id, credential_id)``
+        pair (N1), so the ``sva_``-keyed originals stay until the sweep. (The
+        toolkit-binding twin was deleted with ``agent_toolkit_bindings`` in
+        theme-5 Phase 6b.)
         """
-        toolkit_rows = (
-            await session.execute(_SELECT_TOOLKIT_BINDINGS, {"actor_id": service_account_id})
-        ).all()
-        for row in toolkit_rows:
-            await session.execute(
-                _INSERT_TOOLKIT_BINDING_TWIN,
-                {
-                    "id": generate_ksuid("atb"),
-                    "agent_id": agent_id,
-                    "toolkit_id": row.toolkit_id,
-                    "created_by": SYSTEM_ACTOR,
-                },
-            )
         credential_rows = (
             await session.execute(_SELECT_CREDENTIAL_BINDINGS, {"actor_id": service_account_id})
         ).all()
@@ -351,25 +325,21 @@ class ServiceAccountMigrationRepository:
                     "created_by": SYSTEM_ACTOR,
                 },
             )
-        return len(toolkit_rows), len(credential_rows)
+        return len(credential_rows)
 
     @staticmethod
     async def count_copy_candidates(
         session: AsyncSession, *, service_account_id: str
-    ) -> tuple[int, int, int]:
-        """``--diff-only`` preview: ``(scopes, toolkit bindings, credential
-        bindings)`` that :meth:`copy_scope_grants` / :meth:`copy_bindings`
-        would copy — the same source queries and retired-scope filter, no
-        writes."""
+    ) -> tuple[int, int]:
+        """``--diff-only`` preview: ``(scopes, credential bindings)`` that
+        :meth:`copy_scope_grants` / :meth:`copy_bindings` would copy — the same
+        source queries and retired-scope filter, no writes."""
         grants = (await session.execute(_SELECT_GRANTS, {"actor_id": service_account_id})).all()
-        toolkit_rows = (
-            await session.execute(_SELECT_TOOLKIT_BINDINGS, {"actor_id": service_account_id})
-        ).all()
         credential_rows = (
             await session.execute(_SELECT_CREDENTIAL_BINDINGS, {"actor_id": service_account_id})
         ).all()
         scopes = sum(1 for row in grants if row.scope not in THEME8_RETIRED_SCOPES)
-        return scopes, len(toolkit_rows), len(credential_rows)
+        return scopes, len(credential_rows)
 
     @staticmethod
     async def count_revocable_tokens(
@@ -408,17 +378,6 @@ class ServiceAccountMigrationRepository:
             _STAMP, {"id": service_account_id, "stamp": value, "now": now}
         )
         return bool(result.rowcount)  # type: ignore[attr-defined]
-
-    @staticmethod
-    async def restamp_toolkit_keys(
-        session: AsyncSession, *, service_account_id: str, agent_id: str
-    ) -> int:
-        """Control-DB re-stamp (M-E): keep key revocation pointing at the live actor."""
-        result = await session.execute(
-            _RESTAMP_TOOLKIT_KEYS,
-            {"service_account_id": service_account_id, "agent_id": agent_id},
-        )
-        return result.rowcount or 0  # type: ignore[attr-defined]
 
     @staticmethod
     async def copy_permission_rules(
@@ -542,7 +501,6 @@ class ServiceAccountMigrationRepository:
             " AND (sa.status != 'archived'"
             "  OR EXISTS (SELECT 1 FROM actor_scope_grants g"
             "   WHERE g.actor_id = sa.id AND g.actor_type = 'service_account')"
-            "  OR EXISTS (SELECT 1 FROM agent_toolkit_bindings tb WHERE tb.agent_id = sa.id)"
             "  OR EXISTS (SELECT 1 FROM agent_credential_bindings cb WHERE cb.agent_id = sa.id)"
             "  OR EXISTS (SELECT 1 FROM service_account_credentials sac"
             "   WHERE sac.service_account_id = sa.id AND sac.api_key_hash IS NOT NULL))" + clause
@@ -634,10 +592,6 @@ class ServiceAccountMigrationRepository:
                 "DELETE FROM actor_scope_grants"
                 " WHERE actor_id = :sid AND actor_type = 'service_account'"
             ),
-            {"sid": service_account_id},
-        )
-        await session.execute(
-            text("DELETE FROM agent_toolkit_bindings WHERE agent_id = :sid"),
             {"sid": service_account_id},
         )
         await session.execute(
@@ -772,20 +726,17 @@ class ServiceAccountMigrationRepository:
                 )
             )
         ).one()
-        bindings = 0
-        for table in ("agent_toolkit_bindings", "agent_credential_bindings"):
-            row = (
-                await session.execute(
-                    text(
-                        f"SELECT count(*) AS n FROM {table} b"
-                        " JOIN service_accounts sa ON sa.id = b.agent_id"
-                        " WHERE sa.migrated_at IS NOT NULL"
-                        " AND b.created_at > sa.migrated_at"
-                    )
+        bindings = (
+            await session.execute(
+                text(
+                    "SELECT count(*) AS n FROM agent_credential_bindings b"
+                    " JOIN service_accounts sa ON sa.id = b.agent_id"
+                    " WHERE sa.migrated_at IS NOT NULL"
+                    " AND b.created_at > sa.migrated_at"
                 )
-            ).one()
-            bindings += int(row.n)
-        return int(grants.n) + int(rotations.n) + bindings
+            )
+        ).one()
+        return int(grants.n) + int(rotations.n) + int(bindings.n)
 
     # --------------------------------------------------------------- sentinel
 

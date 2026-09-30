@@ -212,3 +212,42 @@ async def test_invalid_stored_path_is_fail_closed() -> None:
     )
     assert result.allowed is False
     assert result.rules_loaded == 1
+
+
+@pytest.mark.asyncio
+async def test_coerces_sqlite_json_string_methods() -> None:
+    """Regression: SQLite returns ``methods``/``operations`` as raw JSON strings.
+
+    The evaluator reads rules via raw ``text()`` SQL, bypassing the ORM's JSON
+    deserialization. On SQLite ``methods`` arrives as ``'["GET", ...]'`` and
+    ``operations`` as ``'null'``; without coercion these get iterated
+    character-by-character, so a legitimate ``allow`` rule silently fails to
+    match. Feed the SQLite wire form and assert the method still matches.
+    """
+    mock_db, _ = _mock_db(
+        [("allow", '["GET", "POST", "PUT", "PATCH", "DELETE"]', ".*", "null", "regex")]
+    )
+    evaluator = AgentRuleEvaluator(mock_db, cache_ttl_seconds=300.0)
+    allowed = await evaluator.evaluate(
+        agent_id="agt_1",
+        credential_id="cred_1",
+        rule_set_id=None,
+        method="POST",
+        path="/v1/things",
+        operation_id=None,
+    )
+    assert allowed.allowed is True
+    assert allowed.rules_loaded == 1
+
+    # A method outside the (correctly parsed) set must NOT match.
+    denied = await evaluator.evaluate(
+        agent_id="agt_1",
+        credential_id="cred_1",
+        rule_set_id=None,
+        method="OPTIONS",
+        path="/v1/things",
+        operation_id=None,
+    )
+    assert denied.allowed is False
+    # Non-zero rules_loaded distinguishes "loaded but no match" from "no rules".
+    assert denied.rules_loaded == 1

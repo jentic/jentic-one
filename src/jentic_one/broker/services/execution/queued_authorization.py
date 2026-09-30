@@ -33,8 +33,6 @@ from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.broker.protocols import (
     AgentRuleEvaluatorProtocol,
     CredentialDeriverProtocol,
-    RuleEvaluatorProtocol,
-    ToolkitDeriverProtocol,
 )
 from jentic_one.shared.context import Context
 from jentic_one.shared.jobs.protocols import QueuedExecutionRequest, QueuedExecutionVerdict
@@ -88,15 +86,11 @@ class QueuedExecutionAuthorizer:
         ctx: Context,
         *,
         actor_status: ActorStatusResolver,
-        deriver: ToolkitDeriverProtocol,
-        rule_evaluator: RuleEvaluatorProtocol,
         credential_deriver: CredentialDeriverProtocol,
         agent_rule_evaluator: AgentRuleEvaluatorProtocol,
     ) -> None:
         self._ctx = ctx
         self._actor_status = actor_status
-        self._deriver = deriver
-        self._rule_evaluator = rule_evaluator
         self._credential_deriver = credential_deriver
         self._agent_rule_evaluator = agent_rule_evaluator
 
@@ -163,12 +157,9 @@ class QueuedExecutionAuthorizer:
                 method=request.method,
                 path=urlparse(request.upstream_url).path,
                 instance=instance,
-                deriver=self._deriver,
-                rule_evaluator=self._rule_evaluator,
                 credential_deriver=self._credential_deriver,
                 agent_rule_evaluator=self._agent_rule_evaluator,
                 credential_id=request.credential_id,
-                toolkit_id=request.toolkit_id,
                 request_server_variables=request.server_variables,
                 server_variables_unresolved=request.server_variables_unresolved,
             )
@@ -181,15 +172,10 @@ class QueuedExecutionAuthorizer:
             )
             return QueuedExecutionVerdict(allowed=False, problem=broker_error_problem(exc))
 
-        selected = authorization.selected_credential
         return QueuedExecutionVerdict(
             allowed=True,
             allowed_credential_ids=tuple(authorization.allowed_credential_ids),
-            # Direct path: the credential the re-check just selected (the same
-            # one enqueue picked, if it is still bound). Toolkit path: the
-            # caller's enqueue-time Jentic-Credential-Id, bounded by the
-            # re-derived toolkit boundary at injection.
-            credential_id=(
-                selected.credential_id if selected is not None else request.credential_id
-            ),
+            # The credential the re-check just selected (the same one enqueue
+            # picked, if it is still bound).
+            credential_id=authorization.selected_credential.credential_id,
         )

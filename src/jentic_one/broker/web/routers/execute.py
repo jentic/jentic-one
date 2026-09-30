@@ -81,9 +81,7 @@ from jentic_one.broker.web.deps import (
     CredentialDeriver,
     HttpRunnerDep,
     IdempotencyStoreDep,
-    RequireToolkitAccess,
-    RuleEvaluatorDep,
-    ToolkitDeriver,
+    RequireExecuteAccess,
 )
 from jentic_one.broker.web.streaming import StreamingOutcome
 from jentic_one.shared.auth.identity import Identity
@@ -93,8 +91,6 @@ from jentic_one.shared.broker.protocols import (
     CredentialDeriverProtocol,
     RegistryResolverProtocol,
     ResolveResult,
-    RuleEvaluatorProtocol,
-    ToolkitDeriverProtocol,
 )
 from jentic_one.shared.config import UpstreamClientConfig
 from jentic_one.shared.context import Context
@@ -307,9 +303,9 @@ def _context_from_discovery(
         upstream_url=upstream_url,
         method=method,
         trace_id=_derive_trace_id(headers),
-        # toolkit_id is intentionally left unset here — it is derived from the
-        # discovered API identity by ``select_toolkit`` after discovery,
-        # never taken verbatim from the inbound header.
+        # toolkit_id is nullable-legacy: nothing sets it since theme-5 Phase 6b
+        # deleted toolkit derivation; it survives on the schema so historical
+        # execution rows keep their attribution shape.
         toolkit_id=None,
         operation_id=resolved.operation_id,
         api_vendor=resolved.api.vendor,
@@ -325,8 +321,6 @@ def _context_from_discovery(
 
 def _metadata_headers(ctx_req: ExecuteRequestContext, execution_id: str) -> dict[str, str]:
     meta: dict[str, str] = {JenticHeader.EXECUTION_ID.value: execution_id}
-    if ctx_req.toolkit_id:
-        meta[JenticHeader.TOOLKIT_ID.value] = ctx_req.toolkit_id
     if ctx_req.operation_id:
         meta[JenticHeader.OPERATION.value] = ctx_req.operation_id
     if ctx_req.api_vendor:
@@ -369,10 +363,10 @@ async def _resolve_credentials(
     ``preresolved`` carries the direct path's already-selected credential so
     injection never re-resolves (and cannot pick a different credential than
     the one the rules were evaluated against). ``allowed_credential_ids`` is
-    the injection boundary for a path that resolves here (the toolkit path):
-    only these ids may resolve, and an empty list resolves nothing.
-    ``credential_id`` (``Jentic-Credential-Id``) disambiguates *within* that
-    boundary — it can never select a credential outside it.
+    the injection boundary: only these ids may resolve, and an empty list
+    resolves nothing. ``credential_id`` (``Jentic-Credential-Id``)
+    disambiguates *within* that boundary — it can never select a credential
+    outside it.
     """
     return await CredentialService(ctx).inject(
         api_vendor=ctx_req.api_vendor or "",
@@ -485,8 +479,6 @@ async def _handle(
     method: str,
     ctx: Context,
     identity: Identity,
-    deriver: ToolkitDeriverProtocol,
-    rule_evaluator: RuleEvaluatorProtocol,
     credential_deriver: CredentialDeriverProtocol,
     agent_rule_evaluator: AgentRuleEvaluatorProtocol,
     runner: UpstreamRunner,
@@ -568,11 +560,9 @@ async def _handle(
     # credential injection substitutes it — this is the signal that drives the
     # region-mismatch hint on an upstream 401/403 (#638).
     ctx_req.has_server_variable = has_host_server_variable(upstream_url)
-    # Authorization path split (theme-5 Phase 2, config-flagged): direct
-    # agent→credential bindings when enabled; the legacy toolkit path
-    # otherwise. Every caller kind rides the same split — toolkit keys, the
-    # one identity that bypassed it, are retired (Phase 4) and resolve as
-    # successor agents holding both binding forms.
+    # Direct agent→credential bindings (theme-5): every caller kind rides this
+    # path — retired toolkit keys resolve as successor agents. The legacy
+    # toolkit-derivation path was deleted in Phase 6b.
     authorization = await authorize_execution(
         ctx=ctx,
         identity=identity,
@@ -581,19 +571,15 @@ async def _handle(
         method=method,
         path=urlparse(upstream_url).path,
         instance=request.url.path,
-        deriver=deriver,
-        rule_evaluator=rule_evaluator,
         credential_deriver=credential_deriver,
         agent_rule_evaluator=agent_rule_evaluator,
         credential_name=request.headers.get("jentic-credential-name"),
         credential_id=request.headers.get("jentic-credential-id"),
-        toolkit_id=request.headers.get("jentic-toolkit-id"),
         request_server_variables=ctx_req.server_variables,
         server_variables_unresolved=ctx_req.server_variables_unresolved,
     )
     selected_credential = authorization.selected_credential
     allowed_credential_ids = authorization.allowed_credential_ids
-    ctx_req.toolkit_id = authorization.toolkit_id
     if selected_credential is not None:
         # Attribution is known at selection time on the direct path, so the
         # 202/streaming metadata carries it too (the buffered path re-stamps
@@ -607,13 +593,7 @@ async def _handle(
             ctx_req,
             ctx,
             identity,
-            selected_credential_id=(
-                selected_credential.credential_id
-                if selected_credential
-                # Toolkit path: the caller's Jentic-Credential-Id, bounded by
-                # allowed_credential_ids at the worker's injection.
-                else request.headers.get("jentic-credential-id")
-            ),
+            selected_credential_id=selected_credential.credential_id,
             allowed_credential_ids=allowed_credential_ids,
         )
 
@@ -647,13 +627,13 @@ async def _handle(
     # work — only the sync path is idempotent here.
     fp: str | None = None
     if idempotency is not None and idem_key:
-        # The fingerprint's consumer scope is the toolkit on the legacy path and
-        # the selected credential on the direct path (whose executions carry no
-        # toolkit — without this the scope component would collapse to "").
+        # The fingerprint's consumer scope is the selected credential
+        # (historically the toolkit on the pre-6b legacy path — same slot,
+        # so replay identity is stable across the cutover).
         fp = fingerprint(
             method,
             ctx_req.upstream_url,
-            ctx_req.toolkit_id or ctx_req.credential_id or "",
+            ctx_req.credential_id or "",
             body,
         )
         outcome_idem = await idempotency.begin(identity.sub, idem_key, fp)
@@ -866,8 +846,7 @@ async def _handle_async(
     """Enqueue an async (202) execution. The worker shares the same pipeline.
 
     The payload carries the injection boundary (``allowed_credential_ids`` —
-    the caller's bound credentials on the direct path, the selected toolkit's
-    on the toolkit path) and, when known, the credential id, so the worker's
+    the caller's bound credentials) and the selected credential id, so the worker's
     injection replays the same selection under the same boundary (Q-02) —
     rules were already enforced here at the edge.
     """
@@ -878,7 +857,6 @@ async def _handle_async(
         "execution_id": execution_id,
         "upstream_url": ctx_req.upstream_url,
         "method": ctx_req.method,
-        "toolkit_id": ctx_req.toolkit_id,
         "trace_id": ctx_req.trace_id,
         "operation_id": ctx_req.operation_id,
         "api_vendor": ctx_req.api_vendor,
@@ -935,9 +913,7 @@ async def _handle_async(
 async def proxy(
     upstream_url: str,
     request: Request,
-    identity: RequireToolkitAccess,
-    deriver: ToolkitDeriver,
-    rule_evaluator: RuleEvaluatorDep,
+    identity: RequireExecuteAccess,
     credential_deriver: CredentialDeriver,
     agent_rule_evaluator: AgentRuleEvaluatorDep,
     runner: HttpRunnerDep,
@@ -950,8 +926,6 @@ async def proxy(
         request.method,
         ctx,
         identity,
-        deriver,
-        rule_evaluator,
         credential_deriver,
         agent_rule_evaluator,
         runner,

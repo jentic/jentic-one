@@ -10,8 +10,7 @@ import (
 
 // IsBrokerDenial reports whether a result is one the broker itself emitted to
 // deny a call the agent can recover from: missing credential binding → 403
-// (wire type no_credential_binding; the legacy flag-off path still emits
-// no_toolkit_binding), ambiguous credential binding → 409, credential needs
+// (wire type no_credential_binding), ambiguous credential binding → 409, credential needs
 // reconnect → 401, no credential provisioned → 424. Each carries an
 // agent_directive (see broker/web/errors.STATUS_BY_ERROR).
 //

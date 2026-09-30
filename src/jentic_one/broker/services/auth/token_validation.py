@@ -236,8 +236,9 @@ def _is_api_key(value: str) -> bool:
     retirement job migrated each key's digest onto an actor, and
     ``ApiKeyResolver`` resolves the unchanged plaintext **agent-first**
     (theme-8 Phase 1) — as the successor agent once migrated, else through
-    the service-account fallback (logging a deprecation warning). Unmigrated
-    keys resolve to nothing → 401.
+    the service-account fallback (logging a deprecation warning). Keys not
+    migrated before the Phase-6b drops (which removed the retirement job)
+    resolve to nothing → 401.
     """
     return value.startswith("jak_") or value.startswith("sak_") or value.startswith("jntc_live_")
 
