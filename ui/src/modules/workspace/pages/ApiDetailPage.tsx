@@ -286,7 +286,9 @@ export default function ApiDetailPage() {
 					<div className="flex items-center gap-1.5" data-testid="hub-state">
 						<ApiStateBadges
 							currentRevisionId={api.currentRevisionId}
-							updateAvailable={api.updateAvailable}
+							// The Overview tab's update banner already says it (with
+							// Mute / Re-import); other tabs keep the badge.
+							updateAvailable={api.updateAvailable && activeTab !== 'overview'}
 						/>
 					</div>
 				) : null}

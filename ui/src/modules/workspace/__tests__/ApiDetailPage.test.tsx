@@ -15,6 +15,7 @@ import { Link, Route, Routes, useNavigate } from 'react-router';
 import ApiDetailPage from '@/modules/workspace/pages/ApiDetailPage';
 import { AuthProvider } from '@/shared/auth/AuthContext';
 import { makeMockCredential, resetCredentialsStore } from '@/shared/credentials/mocks/handlers';
+import { patchMockApi } from '@/modules/workspace/mocks/handlers';
 
 /** See WorkspacePage.test for why we settle the PageHeader entrance animation. */
 async function settleAnimations(container: HTMLElement): Promise<void> {
@@ -60,6 +61,25 @@ describe('ApiDetailPage', () => {
 		await user.click(screen.getByRole('tab', { name: /versions/i }));
 		expect(await screen.findByTestId('revisions-section')).toBeInTheDocument();
 		expect(screen.getByTestId('overlays-section')).toBeInTheDocument();
+	});
+
+	it('says "Update available" once: the Overview banner, else the badge by Back', async () => {
+		const user = userEvent.setup();
+		patchMockApi('stripe/stripe-api/2024-01-01', { update_available: true });
+		try {
+			renderAt('/library/workspace/stripe/stripe-api/2024-01-01');
+			expect(await screen.findByTestId('workspace-update-available')).toBeInTheDocument();
+			const state = screen.getByTestId('hub-state');
+			// The banner says it on Overview; the badges row keeps Live only.
+			expect(within(state).queryByTestId('api-state-update')).not.toBeInTheDocument();
+			expect(within(state).getByTestId('api-state-live')).toBeInTheDocument();
+			// Off Overview (no banner) the badge is back.
+			await user.click(screen.getByRole('tab', { name: /versions/i }));
+			expect(await within(state).findByTestId('api-state-update')).toBeInTheDocument();
+			expect(screen.getByTestId('workspace-update-available')).not.toBeVisible();
+		} finally {
+			patchMockApi('stripe/stripe-api/2024-01-01', { update_available: false });
+		}
 	});
 
 	describe('back navigation', () => {
