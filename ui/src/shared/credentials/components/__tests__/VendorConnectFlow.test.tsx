@@ -412,6 +412,38 @@ describe('VendorConnectFlow — self mode', () => {
 		});
 	});
 
+	it('names the shared app on the configure step for admin-registered vendors', async () => {
+		stubCapabilities();
+		const vendorPinned = {
+			...vendor,
+			entry_id: 'oar_prod',
+			registration_id: 'oar_prod',
+			name: 'MyOrg Prod GitHub',
+			source: 'db' as const,
+		};
+		renderWithProviders(
+			<VendorConnectFlow
+				mode="self"
+				vendor={vendorPinned}
+				onBack={vi.fn()}
+				onDone={vi.fn()}
+			/>,
+		);
+		expect(await screen.findByText('Shared app')).toBeInTheDocument();
+		expect(screen.getByText('via MyOrg Prod GitHub')).toBeInTheDocument();
+	});
+
+	it('shows no shared-app line for platform vendors', async () => {
+		stubCapabilities();
+		renderWithProviders(
+			<VendorConnectFlow mode="self" vendor={vendor} onBack={vi.fn()} onDone={vi.fn()} />,
+		);
+		await waitFor(() =>
+			expect(screen.getByRole('button', { name: /^continue$/i })).not.toBeDisabled(),
+		);
+		expect(screen.queryByText('Shared app')).not.toBeInTheDocument();
+	});
+
 	it('omits oauth_app_registration_id when the vendor prop has no registration', async () => {
 		stubCapabilities();
 		let capturedBody: Record<string, unknown> | null = null;

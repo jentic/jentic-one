@@ -550,12 +550,23 @@ function VendorTile({
 		>
 			<VendorIcon name={vendor.display_name} vendor={vendor.vendor} size="md" />
 			<div className="min-w-0 flex-1">
-				<p className="text-foreground truncate text-sm font-semibold">
-					{vendor.source === 'db' ? vendor.name : `Sign in with ${vendor.display_name}`}
-				</p>
+				<div className="flex min-w-0 items-center gap-2">
+					<p className="text-foreground truncate text-sm font-semibold">
+						{vendor.source === 'db'
+							? vendor.name
+							: `Sign in with ${vendor.display_name}`}
+					</p>
+					{/* Always badged: an admin app named like its API ("Gmail") would
+					    otherwise read as the platform's own sign-in tile. */}
+					{vendor.source === 'db' && (
+						<Badge variant="default" className="shrink-0">
+							Shared app
+						</Badge>
+					)}
+				</div>
 				<p className="text-muted-foreground mt-0.5 truncate text-xs">
-					{vendor.source === 'db' && vendor.name !== vendor.display_name
-						? `${vendor.display_name} · shared org app`
+					{vendor.source === 'db'
+						? `${vendor.display_name} · set up by your organization`
 						: 'Instant OAuth · no keys to copy'}
 				</p>
 			</div>

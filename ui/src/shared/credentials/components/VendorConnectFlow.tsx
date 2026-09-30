@@ -115,6 +115,12 @@ export type VendorConnectFlowProps =
 interface VendorDisplay {
 	displayName: string;
 	iconKey: string;
+	/**
+	 * The admin-registered shared app this connection goes through, when the
+	 * picked tile was one — so the configure step still says *which* app,
+	 * not just the vendor it shares a name with.
+	 */
+	sharedAppName?: string;
 }
 
 type Phase = 'configure' | 'rules' | 'awaiting' | 'terminal';
@@ -430,6 +436,7 @@ function VendorSelfConnectFlow({
 	const display: VendorDisplay = {
 		displayName: vendor.display_name,
 		iconKey: vendor.vendor,
+		sharedAppName: vendor.source === 'db' ? vendor.name : undefined,
 	};
 	// Errors from either the on-mount ``:connect`` or the rules-page
 	// ``:confirm`` — surfaced on whichever page the user is looking at.
@@ -1137,11 +1144,22 @@ function VendorHeader({ display, subtitle }: { display: VendorDisplay; subtitle:
 	return (
 		<div className="flex items-center gap-3">
 			<VendorIcon name={display.displayName} vendor={display.iconKey} size="lg" />
-			<div>
+			<div className="min-w-0">
 				<p className="text-foreground text-base font-semibold">{display.displayName}</p>
+				<SharedAppLine display={display} />
 				<p className="text-muted-foreground text-xs">{subtitle}</p>
 			</div>
 		</div>
+	);
+}
+
+function SharedAppLine({ display }: { display: VendorDisplay }) {
+	if (!display.sharedAppName) return null;
+	return (
+		<p className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs">
+			<Badge variant="default">Shared app</Badge>
+			<span className="text-muted-foreground truncate">via {display.sharedAppName}</span>
+		</p>
 	);
 }
 
@@ -1175,6 +1193,7 @@ function EditableVendorHeader({
 					disabled={disabled}
 					onChange={(e): void => onNameChange(e.target.value)}
 				/>
+				<SharedAppLine display={display} />
 				<p className="text-muted-foreground mt-0.5 text-xs">{subtitle}</p>
 			</div>
 		</div>

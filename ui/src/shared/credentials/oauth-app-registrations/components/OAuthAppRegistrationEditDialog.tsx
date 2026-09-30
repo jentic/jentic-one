@@ -3,11 +3,15 @@
  * default scopes, active flag. `client_id` is immutable server-side and
  * `client_secret` rotates via the dedicated action, so neither appears here.
  *
- * Registration *creation* lives on the credentials page (the "Available to
- * everyone in the organization" toggle on OAuth2 creates) — this dialog is
- * only for lifecycle changes on registrations that already exist.
+ * Registration *creation* runs through the credential create flow ("Register
+ * as a shared OAuth app") — this dialog is only for lifecycle changes on
+ * registrations that already exist.
+ *
+ * Draft lifecycle follows dialog-state-lifecycle: the draft seeds when the
+ * target registration changes (not on every open), survives Esc / Cancel,
+ * and resets only after a successful save.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { Button, Checkbox, CopyButton, Dialog, ErrorAlert, Input, Label, toast } from '@/shared/ui';
 import {
 	useUpdateOAuthAppRegistration,
@@ -60,13 +64,23 @@ export function OAuthAppRegistrationEditDialog({ open, onClose, registration }: 
 	const [scopeInput, setScopeInput] = useState('');
 	const updateMutation = useUpdateOAuthAppRegistration();
 	const { redirectUri } = usePlatformRedirectUri();
+	const fieldId = useId();
 
+	// (a) Transient flags clear on every (re)open.
 	useEffect(() => {
-		if (open && registration) {
-			setDraft(draftFromRegistration(registration));
-			setValidationError(null);
-			setScopeInput('');
-		}
+		if (!open) return;
+		setValidationError(null);
+	}, [open]);
+
+	// (b) Seed only when the target changes, so re-opening the same
+	// registration after an Esc keeps the admin's edits. ``seededId`` is
+	// cleared after a successful save so the next open re-reads the server.
+	const seededId = useRef<string | null>(null);
+	useEffect(() => {
+		if (!open || !registration || seededId.current === registration.id) return;
+		seededId.current = registration.id;
+		setDraft(draftFromRegistration(registration));
+		setScopeInput('');
 	}, [open, registration]);
 
 	if (!registration) return null;
@@ -117,7 +131,9 @@ export function OAuthAppRegistrationEditDialog({ open, onClose, registration }: 
 							}),
 				},
 			});
-			toast({ title: 'OAuth app registration updated', variant: 'success' });
+			toast({ title: 'Shared app updated', variant: 'success' });
+			// (c) Hard reset only on success.
+			seededId.current = null;
 			onClose();
 		} catch (err) {
 			toast({
@@ -158,8 +174,11 @@ export function OAuthAppRegistrationEditDialog({ open, onClose, registration }: 
 				{validationError && <ErrorAlert message={validationError} />}
 
 				<div className="space-y-1.5">
-					<Label required>Display name</Label>
+					<Label htmlFor={`${fieldId}-name`} required>
+						Display name
+					</Label>
 					<Input
+						id={`${fieldId}-name`}
 						value={draft.name}
 						onChange={(e): void => patch({ name: e.target.value })}
 						placeholder="MyOrg GitHub app"
@@ -167,22 +186,33 @@ export function OAuthAppRegistrationEditDialog({ open, onClose, registration }: 
 				</div>
 
 				<div className="space-y-1.5">
-					<Label>API vendor</Label>
-					<Input value={registration.api_vendor} disabled readOnly />
+					<Label htmlFor={`${fieldId}-vendor`}>API vendor</Label>
+					<Input
+						id={`${fieldId}-vendor`}
+						value={registration.api_vendor}
+						disabled
+						readOnly
+					/>
 					<p className="text-muted-foreground text-xs">Immutable after creation.</p>
 				</div>
 
 				<div className="space-y-1.5">
-					<Label>Client ID</Label>
-					<Input value={registration.client_id} disabled readOnly />
+					<Label htmlFor={`${fieldId}-client`}>Client ID</Label>
+					<Input
+						id={`${fieldId}-client`}
+						value={registration.client_id}
+						disabled
+						readOnly
+					/>
 					<p className="text-muted-foreground text-xs">Immutable after creation.</p>
 				</div>
 
 				{isAuthCode && redirectUri && (
 					<div className="space-y-1.5">
-						<Label>Callback URL</Label>
+						<Label htmlFor={`${fieldId}-callback`}>Callback URL</Label>
 						<div className="flex gap-1.5">
 							<Input
+								id={`${fieldId}-callback`}
 								value={redirectUri}
 								readOnly
 								className="flex-1 font-mono text-xs"
@@ -202,16 +232,18 @@ export function OAuthAppRegistrationEditDialog({ open, onClose, registration }: 
 				{isAuthCode ? (
 					<>
 						<div className="space-y-1.5">
-							<Label>Authorize URL</Label>
+							<Label htmlFor={`${fieldId}-authorize`}>Authorize URL</Label>
 							<Input
+								id={`${fieldId}-authorize`}
 								type="url"
 								value={draft.authorize_url}
 								onChange={(e): void => patch({ authorize_url: e.target.value })}
 							/>
 						</div>
 						<div className="space-y-1.5">
-							<Label>Token URL</Label>
+							<Label htmlFor={`${fieldId}-token`}>Token URL</Label>
 							<Input
+								id={`${fieldId}-token`}
 								type="url"
 								value={draft.token_url}
 								onChange={(e): void => patch({ token_url: e.target.value })}
@@ -221,8 +253,11 @@ export function OAuthAppRegistrationEditDialog({ open, onClose, registration }: 
 				) : (
 					<>
 						<div className="space-y-1.5">
-							<Label>Device authorization endpoint</Label>
+							<Label htmlFor={`${fieldId}-device-auth`}>
+								Device authorization endpoint
+							</Label>
 							<Input
+								id={`${fieldId}-device-auth`}
 								type="url"
 								value={draft.authorization_endpoint}
 								onChange={(e): void =>
@@ -231,8 +266,9 @@ export function OAuthAppRegistrationEditDialog({ open, onClose, registration }: 
 							/>
 						</div>
 						<div className="space-y-1.5">
-							<Label>Token endpoint</Label>
+							<Label htmlFor={`${fieldId}-device-token`}>Token endpoint</Label>
 							<Input
+								id={`${fieldId}-device-token`}
 								type="url"
 								value={draft.token_endpoint}
 								onChange={(e): void => patch({ token_endpoint: e.target.value })}
@@ -242,9 +278,10 @@ export function OAuthAppRegistrationEditDialog({ open, onClose, registration }: 
 				)}
 
 				<div className="space-y-2">
-					<Label>Default scopes</Label>
+					<Label htmlFor={`${fieldId}-scopes`}>Default scopes</Label>
 					<div className="flex gap-1.5">
 						<Input
+							id={`${fieldId}-scopes`}
 							value={scopeInput}
 							onChange={(e): void => setScopeInput(e.target.value)}
 							onKeyDown={(e): void => {

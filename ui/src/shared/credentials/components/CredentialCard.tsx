@@ -113,7 +113,7 @@ export function CredentialCard({
 						{title}
 					</h3>
 					<div
-						className="mt-1 flex flex-wrap items-center gap-1.5"
+						className="mt-1 flex min-w-0 flex-wrap items-center gap-1.5"
 						data-testid="credential-card-badges"
 					>
 						{connected && <Badge variant="success">Connected</Badge>}
@@ -122,10 +122,14 @@ export function CredentialCard({
 						{cred.oauth_app_registration_name && (
 							<Badge
 								variant="default"
-								className="max-w-[16rem] truncate"
+								// Caps at the row, not a fixed width, so a phone-width card
+								// doesn't clip a name that would fit.
+								className="max-w-full min-w-0"
 								title={cred.oauth_app_registration_name}
 							>
-								Source: {cred.oauth_app_registration_name}
+								<span className="truncate">
+									Source: {cred.oauth_app_registration_name}
+								</span>
 							</Badge>
 						)}
 					</div>

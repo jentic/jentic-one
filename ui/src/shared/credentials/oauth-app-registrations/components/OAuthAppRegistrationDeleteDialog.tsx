@@ -51,7 +51,7 @@ export function OAuthAppRegistrationDeleteDialog({
 				setInUseError(
 					`This registration is still referenced by ${registration.dependent_credential_count} credential${
 						registration.dependent_credential_count === 1 ? '' : 's'
-					}. Revoke or deactivate those first, or PATCH is_active=false instead of deleting.`,
+					}. Delete those credentials first — or deactivate this app instead of deleting it.`,
 				);
 				return;
 			}
@@ -74,6 +74,8 @@ export function OAuthAppRegistrationDeleteDialog({
 						variant="danger"
 						onClick={(): void => void handleConfirm()}
 						loading={mutation.isPending}
+						// A 409 won't clear on retry — the dependent credentials must go first.
+						disabled={inUseError != null}
 					>
 						Delete
 					</Button>
@@ -84,8 +86,8 @@ export function OAuthAppRegistrationDeleteDialog({
 				<div className="text-danger bg-danger/10 border-danger/30 flex items-start gap-2 rounded-md border p-3 text-sm">
 					<AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
 					<p>
-						Deleting removes this shared OAuth application registration. Users who SSO
-						through it can no longer do so.
+						Deleting removes this shared OAuth app. Nobody in the organization can
+						connect through it afterwards.
 					</p>
 				</div>
 				{inUseError && <ErrorAlert message={inUseError} />}
