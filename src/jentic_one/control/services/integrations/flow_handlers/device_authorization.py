@@ -60,7 +60,6 @@ class DeviceAuthorizationHandler:
         app: SessionApp,
         requested_scopes: list[str],
         created_by: str,
-        owner_user_id: str | None = None,
     ) -> None:
         # Device flow (RFC 8628) needs the aux row unconditionally: it carries
         # the transient device_code / poll bookkeeping that has no home on the
@@ -84,15 +83,11 @@ class DeviceAuthorizationHandler:
             created_by=created_by,
         )
         if app.registration_id is not None:
-            # Shared-registration path: FK + owner stamp so the broker's
-            # binding resolver can enforce owner scope, and the refresh /
-            # advance paths can dereference the registration for current
-            # endpoints even if the aux row has drifted.
+            # Shared-registration path: stamp the FK so the refresh / advance
+            # paths can dereference the registration for current endpoints
+            # even if the aux row has drifted.
             await CredentialRepository.set_oauth_app_registration(
-                db_session,
-                credential_id,
-                registration_id=app.registration_id,
-                owner_user_id=owner_user_id,
+                db_session, credential_id, registration_id=app.registration_id
             )
 
     async def begin(

@@ -3,7 +3,7 @@
 Pins the branching contract:
 
 * ``prepare`` with ``SessionApp.registration_id`` non-None sets the credential
-  FK + owner_user_id via the repository, and skips the legacy embedded write
+  FK via the repository, and skips the legacy embedded write
   (``oauth_client_credentials`` for auth-code, aux app-config columns for
   device flow are still written because the aux row is required for
   transient state).
@@ -185,15 +185,13 @@ async def test_auth_code_prepare_registration_path_sets_fk_and_owner() -> None:
             app=_auth_code_app_from_registration(),
             requested_scopes=["repo"],
             created_by="usr_alice",
-            owner_user_id="usr_alice",
         )
 
-    # FK stamped through the repository, ``owner_user_id`` threaded through.
+    # FK stamped through the repository.
     set_reg.assert_awaited_once()
     assert set_reg.await_args is not None
     call_kwargs = set_reg.await_args.kwargs
     assert call_kwargs["registration_id"] == "oar_123"
-    assert call_kwargs["owner_user_id"] == "usr_alice"
     # Legacy embedded write is skipped — every mint through the shared
     # registration must resolve to the same client material at refresh time.
     create_occ.assert_not_awaited()
@@ -246,7 +244,6 @@ async def test_auth_code_complete_from_callback_uses_registration_when_fk_set() 
 
     credential = MagicMock()
     credential.oauth_app_registration_id = "oar_123"
-    credential.owner_user_id = "usr_alice"
 
     ac_details = MagicMock()
     ac_details.token_url = "https://idp.example.com/token"
@@ -405,14 +402,12 @@ async def test_device_prepare_registration_path_sets_fk_and_writes_aux() -> None
             app=_device_app_from_registration(),
             requested_scopes=[],
             created_by="usr_alice",
-            owner_user_id="usr_alice",
         )
 
     create_aux.assert_awaited_once()
     set_reg.assert_awaited_once()
     assert set_reg.await_args is not None
     assert set_reg.await_args.kwargs["registration_id"] == "oar_dev_456"
-    assert set_reg.await_args.kwargs["owner_user_id"] == "usr_alice"
 
 
 @pytest.mark.asyncio()

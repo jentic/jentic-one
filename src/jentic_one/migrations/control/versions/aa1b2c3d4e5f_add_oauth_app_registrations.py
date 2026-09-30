@@ -1,12 +1,11 @@
-"""add oauth_app_registrations + owner_user_id/oauth_app_registration_id on credentials
+"""add oauth_app_registrations + oauth_app_registration_id on credentials
 
 Adds a class-table-inheritance triple for admin-configured OAuth app
-registrations that any user on the instance can SSO through, plus two
-columns on ``credentials`` that record which registration minted a grant
-(``oauth_app_registration_id``) and who owns the resulting connection
-(``owner_user_id``). A user may connect multiple times through the same
-registration (one credential per agent / environment / etc.), so no unique
-constraint is placed on the pair.
+registrations that any user on the instance can SSO through, plus a
+column on ``credentials`` that records which registration minted a grant
+(``oauth_app_registration_id``). A user may connect multiple times through
+the same registration (one credential per agent / environment / etc.), so
+the column carries no unique constraint.
 
 Revision ID: aa1b2c3d4e5f
 Revises: e1a2b3c4d5f6
@@ -150,11 +149,10 @@ def upgrade() -> None:
         ["created_at"],
     )
 
-    # 4. credentials columns — record which registration a grant was minted
-    # through, and who owns the resulting connection. Adding an FK column to
-    # an existing table on SQLite requires batch mode (copy-and-move).
+    # 4. credentials column — record which registration a grant was minted
+    # through. Adding an FK column to an existing table on SQLite requires
+    # batch mode (copy-and-move).
     with op.batch_alter_table("credentials") as batch:
-        batch.add_column(sa.Column("owner_user_id", sa.String(30), nullable=True))
         batch.add_column(
             sa.Column(
                 "oauth_app_registration_id",
@@ -168,11 +166,6 @@ def upgrade() -> None:
             )
         )
     op.create_index(
-        "ix_credentials_owner_user_id",
-        "credentials",
-        ["owner_user_id"],
-    )
-    op.create_index(
         "ix_credentials_oauth_app_registration_id",
         "credentials",
         ["oauth_app_registration_id"],
@@ -181,10 +174,8 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_index("ix_credentials_oauth_app_registration_id", table_name="credentials")
-    op.drop_index("ix_credentials_owner_user_id", table_name="credentials")
     with op.batch_alter_table("credentials") as batch:
         batch.drop_column("oauth_app_registration_id")
-        batch.drop_column("owner_user_id")
 
     op.drop_index(
         "ix_device_auth_app_reg_details_created_at",

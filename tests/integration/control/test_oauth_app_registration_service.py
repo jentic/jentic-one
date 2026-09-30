@@ -195,7 +195,6 @@ async def test_get_returns_dependent_credential_count(
             session,
             credential.id,
             registration_id=reg.id,
-            owner_user_id="usr_alice",
         )
 
     view = await svc.get(reg.id)
@@ -436,7 +435,6 @@ async def test_delete_refused_with_dependent_credential(
             session,
             credential.id,
             registration_id=reg.id,
-            owner_user_id="usr_alice",
         )
 
     with pytest.raises(OAuthAppRegistrationInUseError) as exc:

@@ -32,7 +32,6 @@ class Credential(AuditableMixin, ControlBase):
     __table_args__ = (
         Index("ix_credentials_api_vendor", "api_vendor"),
         Index("ix_credentials_provider", "provider"),
-        Index("ix_credentials_owner_user_id", "owner_user_id"),
         Index("ix_credentials_oauth_app_registration_id", "oauth_app_registration_id"),
     )
 
@@ -73,11 +72,6 @@ class Credential(AuditableMixin, ControlBase):
     server_variables: Mapped[dict[str, str] | None] = mapped_column(
         json_variant(), nullable=True, default=None
     )
-    # NULL = org-shared (anyone on the instance may resolve this credential);
-    # non-NULL = only that user (and their on-behalf-of agents whose
-    # ``parent_actor_id`` matches) may resolve. Enforced inside the broker's
-    # binding boundary — the FK-less user id references the auth surface.
-    owner_user_id: Mapped[str | None] = mapped_column(String(30), nullable=True)
     # Set on OAuth grants minted through a shared registration. NULL when the
     # legacy embedded ``oauth_client_credentials`` path is used, and on
     # non-OAuth credential types.

@@ -301,29 +301,6 @@ def _session_app_from_flow(flow: Any) -> SessionApp:
     raise NoOpForFlowError(f"unsupported config flow kind: {flow.kind!r}")
 
 
-def _owner_user_id_from_initiator(
-    initiator_actor_id: str, parent_actor_id: str | None
-) -> str | None:
-    """Derive the ``credentials.owner_user_id`` stamp for one connect session.
-
-    Mirrors ``owner_user_id_from_identity`` at the service surface: a user
-    initiator owns their own credentials; an agent inherits ownership from
-    its ``usr_``-prefixed parent (so on-behalf-of executions can resolve the
-    owner's personal credentials). Anything else — an agent without a user
-    parent — leaves the stamp NULL (org-shared; the broker's owner filter
-    fails closed for callers without ``owner:credentials:read``, so no leak).
-    """
-    if initiator_actor_id.startswith("usr_"):
-        return initiator_actor_id
-    if (
-        initiator_actor_id.startswith("agnt_")
-        and parent_actor_id
-        and parent_actor_id.startswith("usr_")
-    ):
-        return parent_actor_id
-    return None
-
-
 def _scope_view(s: ResolvedScope) -> ScopeView:
     return ScopeView(
         name=s.name,
@@ -413,11 +390,6 @@ class ConnectSessionService:
         # review page so the human owner sees exactly what the agent asked
         # for before committing anything to ``agent_permission_rules``.
         requested_permission_rules: list[dict[str, object]] | None = None,
-        # Parent user id (for agent initiators): threaded through so the
-        # owner-user stamp on the resulting credential covers the "agent
-        # acting on behalf of a user" case. ``None`` for user-initiated
-        # sessions — the initiator itself is the owner.
-        initiator_parent_actor_id: str | None = None,
         # Optional user-facing label for the resulting credential — lets a
         # user distinguish multiple credentials minted from the same vendor
         # (or shared registration). Falls back to the vendor's display name.
@@ -460,7 +432,6 @@ class ConnectSessionService:
             flow,
             pinned_registration_id=oauth_app_registration_id,
         )
-        owner_user_id = _owner_user_id_from_initiator(initiator_actor_id, initiator_parent_actor_id)
 
         poll_token = secrets.token_urlsafe(32)
 
@@ -503,7 +474,6 @@ class ConnectSessionService:
                 app=session_app,
                 requested_scopes=requested_scopes or [],
                 created_by=initiator_actor_id,
-                owner_user_id=owner_user_id,
             )
             row = await ConnectSessionRepository.create(
                 session,
@@ -1363,15 +1333,12 @@ class ConnectSessionService:
 
         async with self._ctx.control_db.transaction() as session:
             # Look up the credential once so we can stamp the oauth_tokens
-            # row with the shared-registration provenance (registration_id +
-            # issued_to_user). Both columns are nullable — legacy embedded
-            # credentials just leave them NULL.
+            # row with the shared-registration provenance. Nullable — legacy
+            # embedded credentials just leave it NULL.
             credential_for_stamp = await CredentialRepository.get_by_id(session, credential_id)
             registration_id_stamp: str | None = None
-            issued_to_user_stamp: str | None = None
             if credential_for_stamp is not None:
                 registration_id_stamp = credential_for_stamp.oauth_app_registration_id
-                issued_to_user_stamp = credential_for_stamp.owner_user_id
 
             # Upsert: a re-connect over an existing token row (same
             # credential, fresh grant) MUST update in place rather than
@@ -1391,7 +1358,6 @@ class ConnectSessionService:
                     expires_at=expires_at,
                     scope=scope_to_persist,
                     app_registration_id=registration_id_stamp,
-                    issued_to_user=issued_to_user_stamp,
                     created_by=created_by,
                 )
             else:
@@ -1406,9 +1372,8 @@ class ConnectSessionService:
                 # Refresh the provenance columns on the existing row too so
                 # a re-connect that starts going through a shared registration
                 # (or migrates off one) is reflected on the token row.
-                if registration_id_stamp is not None or issued_to_user_stamp is not None:
+                if registration_id_stamp is not None:
                     existing.app_registration_id = registration_id_stamp
-                    existing.issued_to_user = issued_to_user_stamp
                     await session.flush()
             await handler.on_finalise(session, credential_id=credential_id)
             credential = await CredentialRepository.get_by_id(session, credential_id)

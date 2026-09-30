@@ -101,7 +101,6 @@ def _legacy_credential() -> MagicMock:
     """Credential mock representing the legacy embedded path (no shared registration)."""
     credential = MagicMock()
     credential.oauth_app_registration_id = None
-    credential.owner_user_id = None
     return credential
 
 

@@ -155,13 +155,12 @@ class AuthFlowHandler(Protocol):
         app: SessionApp,
         requested_scopes: list[str],
         created_by: str,
-        owner_user_id: str | None = None,
     ) -> None:
         """Set up flow-specific storage for the session. In-txn caller-side.
 
         ``app`` carries the normalised OAuth-app config (DB registration or
         config-source); when ``app.registration_id`` is non-None the handler
-        sets the credential's FK + owner columns and skips the legacy
+        sets the credential's FK and skips the legacy
         embedded aux-row writes for its app-config columns.
         """
 

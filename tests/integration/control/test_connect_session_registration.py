@@ -3,10 +3,9 @@
 Covers the branching that only shows up end-to-end against real ORM rows:
 
 * Initiate + confirm against a DB registration writes
-  ``credentials.oauth_app_registration_id`` + ``credentials.owner_user_id``
-  and does NOT create an ``oauth_client_credentials`` aux row (the shared
-  registration is the client-material source of truth for every credential
-  minted through it).
+  ``credentials.oauth_app_registration_id`` and does NOT create an
+  ``oauth_client_credentials`` aux row (the shared registration is the
+  client-material source of truth for every credential minted through it).
 * ``DirectOAuth2Provider.refresh`` refuses to mint through an
   ``is_active=False`` registration.
 * Legacy embedded path (config-source vendor with no DB registration) still
@@ -203,7 +202,6 @@ async def test_confirm_against_db_registration_stamps_fk_and_skips_occ(
     credential and does not create an ``oauth_client_credentials`` row.
 
     Also asserts:
-    - ``owner_user_id`` is stamped from the user initiator,
     - the authorize URL uses the registration's ``client_id`` (not the
       operator-config one), proving DB-first resolution won.
     """
@@ -238,9 +236,8 @@ async def test_confirm_against_db_registration_stamps_fk_and_skips_occ(
         assert row is not None
         credential = await CredentialRepository.get_by_id(session, row.credential_id)
         assert credential is not None
-        # FK stamped, owner captured, legacy aux row skipped.
+        # FK stamped, legacy aux row skipped.
         assert credential.oauth_app_registration_id == registration.id
-        assert credential.owner_user_id == _USER_ID
         occ = await OAuthClientCredentialRepository.get_by_credential(session, credential.id)
         assert occ is None
 
@@ -287,7 +284,6 @@ async def test_refresh_refuses_inactive_registration(
             session,
             credential.id,
             registration_id=registration.id,
-            owner_user_id=_USER_ID,
         )
     credential_id = credential.id
 
@@ -365,7 +361,7 @@ async def test_complete_from_callback_through_registration_end_to_end(
 
     Verifies the token exchange dereferences the registration for client
     material and the vaulted ``oauth_tokens`` row is stamped with
-    ``app_registration_id`` + ``issued_to_user``.
+    ``app_registration_id``.
     """
     ctx = integration_context
     registration = await _seed_active_registration(ctx)
@@ -428,13 +424,9 @@ async def test_complete_from_callback_through_registration_end_to_end(
     async with ctx.control_db.session() as session:
         row = await ConnectSessionRepository.get_by_id(session, created.session_id)
         assert row is not None
-        # Token row stamped with registration provenance + issued_to_user.
-        stmt = text(
-            "SELECT app_registration_id, issued_to_user FROM oauth_tokens "
-            "WHERE credential_id = :cid"
-        )
+        # Token row stamped with registration provenance.
+        stmt = text("SELECT app_registration_id FROM oauth_tokens WHERE credential_id = :cid")
         result_rs = await session.execute(stmt, {"cid": row.credential_id})
         stamp = result_rs.first()
         assert stamp is not None
         assert stamp[0] == registration.id
-        assert stamp[1] == _USER_ID

@@ -11,8 +11,8 @@ Two OAuth-app sources are supported behind one seam (``SessionApp``):
 * **Config** — writes the legacy ``oauth_client_credentials`` aux row at
   ``prepare`` time; ``complete_from_callback`` reads it back for the
   code exchange.
-* **DB registration** — sets ``credentials.oauth_app_registration_id`` +
-  ``credentials.owner_user_id`` at ``prepare`` time; skips the aux row.
+* **DB registration** — sets ``credentials.oauth_app_registration_id`` at
+  ``prepare`` time; skips the aux row.
   ``complete_from_callback`` dereferences the shared registration via
   its ``authorization_code_details`` extension.
 
@@ -100,18 +100,14 @@ class AuthCodeFlowHandler:
         app: SessionApp,
         requested_scopes: list[str],
         created_by: str,
-        owner_user_id: str | None = None,
     ) -> None:
         if app.registration_id is not None:
-            # Shared-registration path: stamp the FK + owner on the credential
-            # row and skip the legacy embedded aux write. All client material
+            # Shared-registration path: stamp the FK on the credential row and
+            # skip the legacy embedded aux write. All client material
             # is dereferenced through ``oauth_app_registrations`` at
             # complete-callback / refresh time.
             await CredentialRepository.set_oauth_app_registration(
-                db_session,
-                credential_id,
-                registration_id=app.registration_id,
-                owner_user_id=owner_user_id,
+                db_session, credential_id, registration_id=app.registration_id
             )
             return
 

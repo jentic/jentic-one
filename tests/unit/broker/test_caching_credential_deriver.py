@@ -19,13 +19,7 @@ class _CountingDeriver:
         self.calls = 0
 
     async def derive_credentials(
-        self,
-        *,
-        agent_id: str,
-        vendor: str,
-        name: str,
-        version: str,
-        owner_user_id: str | None = None,
+        self, *, agent_id: str, vendor: str, name: str, version: str
     ) -> CredentialDerivation:
         self.calls += 1
         return CredentialDerivation(
@@ -84,21 +78,6 @@ async def test_clear_drops_entries() -> None:
     cached.clear()
     await cached.derive_credentials(**kwargs)
     assert inner.calls == 2
-
-
-@pytest.mark.asyncio
-async def test_owner_scope_participates_in_cache_key() -> None:
-    """Different owner scopes must not collide in the cache — each returns fresh derivations."""
-    inner = _CountingDeriver()
-    cached = CachingCredentialDeriver(inner, cache_ttl_seconds=300.0)
-    base = {"agent_id": "agt_1", "vendor": "acme.com", "name": "p", "version": "v1"}
-    await cached.derive_credentials(**base, owner_user_id=None)
-    await cached.derive_credentials(**base, owner_user_id="usr_alice")
-    await cached.derive_credentials(**base, owner_user_id="usr_bob")
-    # Second-hit re-requests are still cache hits (per owner scope).
-    await cached.derive_credentials(**base, owner_user_id=None)
-    await cached.derive_credentials(**base, owner_user_id="usr_alice")
-    assert inner.calls == 3
 
 
 @pytest.mark.asyncio
