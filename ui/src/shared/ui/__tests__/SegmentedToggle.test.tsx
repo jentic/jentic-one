@@ -37,6 +37,28 @@ describe('SegmentedToggle', () => {
 		expect(onChange).toHaveBeenCalledWith('grid');
 	});
 
+	it('disabled: every segment is disabled, the group aria-disabled, and clicks do nothing', async () => {
+		const user = userEvent.setup();
+		const onChange = vi.fn();
+		renderWithProviders(
+			<SegmentedToggle
+				options={options}
+				value="list"
+				onChange={onChange}
+				ariaLabel="View"
+				disabled
+			/>,
+		);
+		expect(screen.getByRole('group', { name: 'View' })).toHaveAttribute(
+			'aria-disabled',
+			'true',
+		);
+		expect(screen.getByRole('button', { name: 'List' })).toBeDisabled();
+		expect(screen.getByRole('button', { name: 'Grid' })).toBeDisabled();
+		await user.click(screen.getByRole('button', { name: 'Grid' }));
+		expect(onChange).not.toHaveBeenCalled();
+	});
+
 	it('has no critical a11y violations', async () => {
 		const { container } = renderWithProviders(
 			<SegmentedToggle options={options} value="list" onChange={() => {}} layoutId="view3" />,

@@ -128,15 +128,20 @@ export default function WorkspacePage() {
 	}, [apis, filter, status]);
 
 	const total = apis?.length ?? 0;
-	const isFiltering = filter.trim().length > 0 || status !== 'all';
+	// Nothing to narrow: disable both filters so the real empty state (and its
+	// Import button) shows instead of a "No matches" over an empty workspace.
+	const noApis = !list.isPending && list.items.length === 0;
+	const isFiltering = !noApis && (filter.trim().length > 0 || status !== 'all');
 	const resultsLabel = isFiltering ? `${filtered.length} of ${total}` : undefined;
 
+	// Counts only once every page answered — never a "· 0" while loading.
+	const countSuffix = (n: number) => (list.complete ? ` · ${n}` : '');
 	const statusOptions = [
 		{ value: 'all' as const, label: 'All' },
-		{ value: 'live' as const, label: `Live · ${counts.live}` },
-		{ value: 'draft' as const, label: `Draft · ${counts.draft}` },
+		{ value: 'live' as const, label: `Live${countSuffix(counts.live)}` },
+		{ value: 'draft' as const, label: `Draft${countSuffix(counts.draft)}` },
 		...(counts.update > 0 || status === 'update'
-			? [{ value: 'update' as const, label: `Update available · ${counts.update}` }]
+			? [{ value: 'update' as const, label: `Update available${countSuffix(counts.update)}` }]
 			: []),
 	];
 
@@ -199,12 +204,14 @@ export default function WorkspacePage() {
 					value={filter}
 					onChange={setFilterAndUrl}
 					resultsLabel={resultsLabel}
+					disabled={noApis}
 					trailing={
 						<SegmentedToggle
 							options={statusOptions}
 							value={status}
 							onChange={setStatus}
 							ariaLabel="Filter by serving state"
+							disabled={noApis}
 						/>
 					}
 				/>

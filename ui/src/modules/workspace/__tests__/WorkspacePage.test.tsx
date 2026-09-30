@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
+import { http, HttpResponse } from 'msw';
 import {
 	renderWithProviders,
 	screen,
@@ -100,6 +101,57 @@ describe('WorkspacePage', () => {
 		renderWithProviders(<WorkspacePage />);
 		expect(await screen.findByText('No APIs in your workspace yet')).toBeInTheDocument();
 		expect(screen.getAllByTestId('workspace-import-open').length).toBeGreaterThanOrEqual(1);
+	});
+
+	it('disables both filters over an empty workspace, keeping the real empty state', async () => {
+		worker.use(
+			createErrorHandler('get', '/apis', {
+				status: 200,
+				body: { data: [], has_more: false, next_cursor: null },
+			}),
+		);
+		// A stale filtered link must not stack "No matches" over an empty workspace.
+		renderWithProviders(<WorkspacePage />, { route: '/library/workspace?status=draft&q=x' });
+		expect(await screen.findByText('No APIs in your workspace yet')).toBeInTheDocument();
+		expect(screen.queryByText('No APIs match your filter')).not.toBeInTheDocument();
+		expect(screen.getByLabelText('Filter your APIs')).toBeDisabled();
+		const toggle = screen.getByRole('group', { name: 'Filter by serving state' });
+		expect(toggle).toHaveAttribute('aria-disabled', 'true');
+		for (const name of ['All', 'Live · 0', 'Draft · 0']) {
+			expect(screen.getByRole('button', { name })).toBeDisabled();
+		}
+		// The empty state keeps its Import button (header + empty state).
+		expect(screen.getAllByTestId('workspace-import-open')).toHaveLength(2);
+	});
+
+	it('shows plain Live / Draft (no counts) until the API list has loaded', async () => {
+		let release: () => void = () => {};
+		const gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		worker.use(
+			http.get('/apis', async () => {
+				await gate;
+				return HttpResponse.json({ data: [], has_more: false, next_cursor: null });
+			}),
+		);
+		renderWithProviders(<WorkspacePage />, { route: '/library/workspace?status=update' });
+		expect(await screen.findByRole('button', { name: 'Live' })).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Draft' })).toBeInTheDocument();
+		// A deep link onto "Update available" never reads "· 0" while loading.
+		expect(screen.getByRole('button', { name: 'Update available' })).toBeInTheDocument();
+		expect(screen.queryByText(/· 0/)).not.toBeInTheDocument();
+		// Enabled while loading — only a loaded, empty workspace disables it.
+		expect(screen.getByLabelText('Filter your APIs')).toBeEnabled();
+		release();
+		expect(await screen.findByRole('button', { name: 'Live · 0' })).toBeInTheDocument();
+	});
+
+	it('shows the counts once loaded', async () => {
+		renderWithProviders(<WorkspacePage />);
+		await screen.findByText('Stripe');
+		expect(screen.getByRole('button', { name: /^Live · \d+$/ })).toBeEnabled();
+		expect(screen.getByRole('button', { name: /^Draft · \d+$/ })).toBeEnabled();
 	});
 
 	it('surfaces a load error with a retry affordance', async () => {

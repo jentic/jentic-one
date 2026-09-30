@@ -21,6 +21,8 @@ export interface WorkspaceFilterBarProps {
 	resultsLabel?: string;
 	/** Extra controls after the filter (e.g. the status toggle). */
 	trailing?: React.ReactNode;
+	/** Nothing to filter (the workspace has no APIs): the input is disabled. */
+	disabled?: boolean;
 }
 
 export function WorkspaceFilterBar({
@@ -28,6 +30,7 @@ export function WorkspaceFilterBar({
 	onChange,
 	resultsLabel,
 	trailing,
+	disabled = false,
 }: WorkspaceFilterBarProps) {
 	const sentinelRef = useRef<HTMLDivElement | null>(null);
 	const barRef = useRef<HTMLDivElement | null>(null);
@@ -62,6 +65,7 @@ export function WorkspaceFilterBar({
 						icon={<Filter className="h-3.5 w-3.5" />}
 						placeholder="Filter your workspace by name or description…"
 						aria-label="Filter your APIs"
+						disabled={disabled}
 					/>
 				</div>
 				{resultsLabel ? (
