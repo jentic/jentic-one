@@ -1515,7 +1515,8 @@ class BrokerConfig(BaseModel):
         path it selected — direct bindings are the only path. Unknown keys
         are otherwise ignored here, so without this check an operator who
         pinned ``false`` to stay on toolkits would boot on direct bindings
-        without noticing. ``true`` (the old default) is harmless and ignored.
+        without noticing. ``true`` (the old default) is harmless: ignored,
+        with a one-time deprecation warning.
         """
         if isinstance(data, dict) and "direct_bindings_enabled" in data:
             value = data["direct_bindings_enabled"]
@@ -1528,8 +1529,35 @@ class BrokerConfig(BaseModel):
                     "if toolkit-bound agents lose access, run the Phase-6a flattening "
                     "(docs/development/releasing.md)."
                 )
+            _warn_retired_direct_bindings_flag_once()
             data = {k: v for k, v in data.items() if k != "direct_bindings_enabled"}
         return data
+
+
+_retired_direct_bindings_flag_warned = threading.Event()
+
+
+def _warn_retired_direct_bindings_flag_once() -> None:
+    """One deprecation WARNING per process for a leftover ``true`` (it is ignored).
+
+    Config is validated more than once per process (reloads, per-surface
+    copies), so the line is latched to avoid repeating on every validation.
+    """
+    if _retired_direct_bindings_flag_warned.is_set():
+        return
+    _retired_direct_bindings_flag_warned.set()
+    _logger.warning(
+        "config_retired_setting_ignored",
+        setting="broker.direct_bindings_enabled",
+        detail=(
+            "removed in theme-5 Phase 6b; direct agent-credential bindings are the "
+            "only access path and the value is ignored"
+        ),
+        actionable_step=(
+            "Remove broker.direct_bindings_enabled from the config file or "
+            "JENTIC__BROKER__DIRECT_BINDINGS_ENABLED from the environment."
+        ),
+    )
 
 
 class SearchConfig(BaseModel):

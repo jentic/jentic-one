@@ -6,9 +6,12 @@ the original document. Also covers import idempotency (partial-failure
 re-run) and the self-describing-format validation.
 
 The legacy tables were dropped at migration head (theme-5 Phase 6b), so the
-module downgrades the two drop migrations first — the post-rollback state the
-import tool actually targets. All legacy-table access is raw SQL: the ORM
-models are gone, which is the point of the migration-independent repository.
+module first runs the documented rollback downgrade — control to
+``e1a2b3c4d5f6``, admin to ``3e7a91c4b2d8``, the last revisions 0.40.x knows —
+which is exactly the schema the import runs against in the rollback runbook
+(downgrade on the 0.41 image, re-import, then roll the code back). All
+legacy-table access is raw SQL: the ORM models are gone, which is the point
+of the migration-independent repository.
 """
 
 from __future__ import annotations
@@ -19,7 +22,7 @@ from typing import Any
 
 import pytest
 from alembic import command
-from sqlalchemy import text
+from sqlalchemy import inspect, text
 
 from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.services.toolkit_export import (
@@ -33,9 +36,12 @@ from tests.integration.conftest import _alembic_config_for
 
 pytestmark = pytest.mark.integration
 
-#: Revisions just below the theme-5 Phase 6b drop migrations.
-_CONTROL_PRE_DROP = "f2b3c4d5e6a7"  # pragma: allowlist secret
-_ADMIN_PRE_DROP = "c0e1f2a3b4c5"  # pragma: allowlist secret
+#: The rollback targets (docs/development/releasing.md, "Rollback (Phase 6b →
+#: 6a)"): the last control/admin revisions the previous release ships. Below
+#: every 0.41 revision, including the drops and their evidence/backfill
+#: companions (control f2b3c4d5e6a7, admin c0e1f2a3b4c5).
+_CONTROL_PRE_DROP = "e1a2b3c4d5f6"  # pragma: allowlist secret
+_ADMIN_PRE_DROP = "3e7a91c4b2d8"  # pragma: allowlist secret
 
 _TABLES = (
     "toolkits",
@@ -50,7 +56,7 @@ _BOUND_AT = dt.datetime(2026, 3, 1, 8, 30, tzinfo=dt.UTC)
 
 @pytest.fixture(scope="module")
 def legacy_tables(integration_config: AppConfig) -> Iterator[None]:
-    """Downgrade the 6b drop migrations so the legacy tables exist, then re-drop.
+    """Run the rollback downgrade so the legacy tables exist, then re-drop.
 
     Teardown re-upgrades to head; the drop gates pass because the suite leaves
     the tables empty (the fresh-install path of the guard).
@@ -261,3 +267,36 @@ async def test_import_rejects_malformed_documents(
     }
     with pytest.raises(ToolkitExportError, match="row_count"):
         await service.import_document(truncated)
+
+
+async def test_rollback_downgrade_leaves_the_previous_release_schema(
+    control_db: DatabaseSession, admin_db: DatabaseSession, legacy_tables: None
+) -> None:
+    """The runbook's downgrade targets leave no 0.41-only schema behind.
+
+    The admin downgrade reverts ``c0e1f2a3b4c5`` (drops
+    ``execution_records.toolkit_name``) and the control one reverts
+    ``f2b3c4d5e6a7`` (drops the ack evidence columns) — the state a 0.40.x
+    image expects once the code is rolled back.
+    """
+
+    def _columns(sync_conn: Any, table: str) -> set[str]:
+        return {c["name"] for c in inspect(sync_conn).get_columns(table)}
+
+    async with admin_db.session() as session:
+        conn = await session.connection()
+        names = await conn.run_sync(lambda c: set(inspect(c).get_table_names()))
+        assert "agent_toolkit_bindings" in names
+        exec_columns = await conn.run_sync(_columns, "execution_records")
+    assert "toolkit_name" not in exec_columns
+
+    async with control_db.session() as session:
+        conn = await session.connection()
+        names = await conn.run_sync(lambda c: set(inspect(c).get_table_names()))
+        assert set(_TABLES) - {"agent_toolkit_bindings"} <= names
+        ack_columns = await conn.run_sync(_columns, "toolkit_flattening_acks")
+    assert not ack_columns & {
+        "execution_names_backfilled",
+        "control_state_digest",
+        "admin_state_digest",
+    }

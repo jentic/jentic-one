@@ -7,6 +7,8 @@ direct-binding evaluator.
 
 from __future__ import annotations
 
+import structlog.testing
+
 from jentic_one.broker.repos.agent_rule_evaluator import (
     PermissionRule,
     _coerce_json_list,
@@ -253,6 +255,16 @@ def test_condition_less_allow_is_ignored() -> None:
         PermissionRule(effect="allow", methods=None, path=None, operations=None),
     ]
     assert evaluate_rules(rules, method="PUT", path="/anything", operation_id="op") is False
+
+
+def test_condition_less_allow_warning_names_the_binding() -> None:
+    """The skip warning identifies the rule source so an operator can fix it."""
+    rules = [PermissionRule(effect="allow", methods=None, path=None, operations=None)]
+    with structlog.testing.capture_logs() as logs:
+        evaluate_rules(rules, method="GET", path="/x", operation_id=None, binding="agnt_1:cred_1")
+    (entry,) = [e for e in logs if "condition-less 'allow'" in e["event"]]
+    assert entry["log_level"] == "warning"
+    assert entry["binding"] == "agnt_1:cred_1"
 
 
 def test_condition_less_deny_still_matches_all() -> None:

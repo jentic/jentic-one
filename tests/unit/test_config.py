@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import os
+import threading
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -13,6 +14,7 @@ import structlog.testing
 import yaml
 from pydantic import SecretStr, ValidationError
 
+from jentic_one.shared import config as config_module
 from jentic_one.shared.config import (
     _ONESHOT_CONFIG_CACHE,
     AdminAuthConfig,
@@ -1058,14 +1060,21 @@ def test_broker_retired_direct_bindings_flag_false_env_is_rejected(config_file: 
 
 
 def test_broker_retired_direct_bindings_flag_true_is_ignored(
-    tmp_path: Path, sample_config_dict: dict[str, Any]
+    tmp_path: Path, sample_config_dict: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """``true`` was the 0.40 default: harmless, dropped without error."""
+    """``true`` was the 0.40 default: harmless, dropped with a one-time warning."""
     sample_config_dict["broker"] = {"direct_bindings_enabled": True}
     path = tmp_path / "cfg.yaml"
     path.write_text(yaml.dump(sample_config_dict))
-    config = load_config(path)
+    monkeypatch.setattr(config_module, "_retired_direct_bindings_flag_warned", threading.Event())
+    with structlog.testing.capture_logs() as logs:
+        config = load_config(path)
+        load_config(path)
     assert not hasattr(config.broker, "direct_bindings_enabled")
+    warnings = [e for e in logs if e["event"] == "config_retired_setting_ignored"]
+    assert len(warnings) == 1, "the deprecation warning is logged once per process"
+    assert warnings[0]["log_level"] == "warning"
+    assert warnings[0]["setting"] == "broker.direct_bindings_enabled"
 
 
 def test_server_backend_defaults_to_local(config_file: Path):

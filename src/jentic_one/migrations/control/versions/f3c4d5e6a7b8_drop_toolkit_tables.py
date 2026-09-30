@@ -27,6 +27,14 @@ nothing would ever retry): the drop proceeds only when EITHER
     (e.g. by an old replica during a rolling upgrade), so the flatten that
     was verified no longer covers them.
 
+Independently of the acknowledgement (defence in depth — the ack digest does
+not cover ``toolkit_keys``), the drop also refuses while any ``toolkit_keys``
+row is live and unmigrated (``revoked = false AND migrated_actor_id IS
+NULL``): such a key has no successor agent, so it would stop authenticating
+the moment the table drops. ``flatten-toolkits --verify`` fails on the same
+condition, so a qualifying ack can only be written once it is resolved; this
+check catches a key minted (or un-revoked) after the ack.
+
 On PostgreSQL an additional ordering guard runs first: if any table outside
 this set still holds a foreign key into ``toolkits`` (the enterprise
 ``toolkit_user_grants`` FK), the migration raises naming the enterprise
@@ -113,6 +121,24 @@ _REMEDIATION_STALE_ACK = (
     "rolling upgrade), so the verified flatten no longer covers them. " + _RUNBOOK
 )
 
+_REMEDIATION_LIVE_KEYS = (
+    "Refusing to drop the toolkit tables: {count} toolkit key(s) are neither "
+    "revoked nor migrated to a successor agent ({ids}); they would stop "
+    "authenticating once toolkit_keys is dropped. Upgrade via 0.40.x and run "
+    "retire-toolkit-keys, or revoke the key — this release no longer ships "
+    "`retire-toolkit-keys`, so to use it roll the control database back to "
+    "e1a2b3c4d5f6 on this image first, run the command on 0.40.x, then upgrade "
+    "again. Then re-run `jentic_one flatten-toolkits --verify --acknowledge` "
+    "and this migration. See the theme-5 upgrading runbook in "
+    "docs/development/releasing.md."
+)
+
+#: Live toolkit keys with no successor actor (the ``active_toolkit_key``
+#: condition in ``control/services/toolkit_flattening.py``).
+_LIVE_KEYS_QUERY = sa.text(
+    "SELECT id FROM toolkit_keys WHERE revoked = :revoked AND migrated_actor_id IS NULL ORDER BY id"
+).bindparams(revoked=False)
+
 #: The legacy rows an acknowledgement's ``control_state_digest`` covers, and
 #: the order-independent digest over them. A verbatim copy of
 #: ``control.repos.toolkit_flattening_repo.legacy_state_digest`` (migrations
@@ -157,9 +183,13 @@ def _assert_no_foreign_fks(bind: sa.engine.Connection) -> None:
 
 
 def _assert_gate(bind: sa.engine.Connection) -> None:
-    """Guard-and-raise: empty tables OR a qualifying acknowledgement unblock the drop."""
+    """Guard-and-raise: empty tables, or no live unmigrated key AND a qualifying ack."""
     if all(_count(bind, table) == 0 for table in _DOOMED_TABLES):
         return
+    live_keys = [str(r[0]) for r in bind.execute(_LIVE_KEYS_QUERY)]
+    if live_keys:
+        shown = ", ".join(live_keys[:10]) + (", ..." if len(live_keys) > 10 else "")
+        raise RuntimeError(_REMEDIATION_LIVE_KEYS.format(count=len(live_keys), ids=shown))
     acks = bind.execute(
         sa.text(
             "SELECT execution_names_backfilled, control_state_digest FROM toolkit_flattening_acks"

@@ -460,9 +460,11 @@ async def test_flattening_creates_all_pairs_with_expected_semantics(
     (live_key,) = report["active_toolkit_key"]
     assert live_key["key_id"] == "ck_fltest_live"
     assert "hashed_key" not in live_key and "lookup_hash" not in live_key
+    assert "retire-toolkit-keys" in live_key["remediation"]
+    assert "revoke the key" in live_key["remediation"]
 
     (scopes,) = report["scope_exceeds_execute"]
-    assert scopes["service_account_id"] == _MIGRATED_SVA
+    assert scopes["actor_id"] == _MIGRATED_SVA
     assert scopes["excess_scopes"] == ["agents:read"]
 
     # One audit entry per derived binding, system-actor attributed.
@@ -553,6 +555,16 @@ async def _ack_rows(control_db: DatabaseSession) -> list[ToolkitFlatteningAck]:
         return list((await session.execute(select(ToolkitFlatteningAck))).scalars().all())
 
 
+async def _update_live_key(control_db: DatabaseSession, *, column: str, value: object) -> None:
+    """Resolve the seeded live key (revoke it, or stamp a successor actor)."""
+    async with control_db.session() as session:
+        await session.execute(
+            text(f"UPDATE toolkit_keys SET {column} = :value WHERE id = 'ck_fltest_live'"),
+            {"value": value},
+        )
+        await session.commit()
+
+
 async def test_verify_gates_acknowledgement_on_coverage(
     integration_context: Context,
     control_db: DatabaseSession,
@@ -579,8 +591,24 @@ async def test_verify_gates_acknowledgement_on_coverage(
 
     await service.run()
 
+    # Full coverage, but the seeded jntc_live_ key is neither revoked nor
+    # migrated: it would stop authenticating at the drop, so verify fails
+    # closed and the acknowledgement is refused.
+    blocked = await service.verify(acknowledge=True)
+    assert not blocked.passed
+    assert blocked.missing_pair_count == 0
+    assert blocked.live_unmigrated_key_count == 1
+    assert not blocked.acknowledged
+    assert await _ack_rows(control_db) == []
+    (live,) = [f.detail for f in blocked.findings if f.category == "verify_live_toolkit_keys"]
+    assert live["key_ids"] == ["ck_fltest_live"]
+    assert "retire-toolkit-keys" in live["remediation"]
+
+    await _update_live_key(control_db, column="revoked", value=True)
+
     after = await service.verify(acknowledge=True)
     assert after.passed
+    assert after.live_unmigrated_key_count == 0
     assert after.legacy_pair_count == len(_EXPECTED_PAIRS)
     assert after.missing_pair_count == 0
     assert after.acknowledged
@@ -596,6 +624,27 @@ async def test_verify_gates_acknowledgement_on_coverage(
     assert ack.control_state_digest and len(ack.control_state_digest) == 64
     assert ack.admin_state_digest and len(ack.admin_state_digest) == 64
     assert ack.control_state_digest != ack.admin_state_digest
+
+
+async def test_verify_passes_once_the_live_key_is_migrated(
+    integration_context: Context,
+    control_db: DatabaseSession,
+    admin_db: DatabaseSession,
+    clean_tables: None,
+) -> None:
+    """A key still unrevoked but migrated to a successor actor does not block:
+    it keeps authenticating via its digest after the drop."""
+    await _seed_graph(control_db, admin_db)
+    service = ToolkitFlatteningService(integration_context)
+    await service.run()
+    await _update_live_key(control_db, column="migrated_actor_id", value=_AGENT_A)
+
+    result = await service.verify(acknowledge=True)
+
+    assert result.passed
+    assert result.live_unmigrated_key_count == 0
+    assert result.acknowledged
+    assert not [f for f in result.findings if f.category == "verify_live_toolkit_keys"]
 
 
 async def test_verify_reports_rule_mismatch_without_failing(
@@ -621,6 +670,7 @@ async def test_verify_reports_rule_mismatch_without_failing(
             )
         )
         await session.commit()
+    await _update_live_key(control_db, column="revoked", value=True)
 
     result = await service.verify()
 
