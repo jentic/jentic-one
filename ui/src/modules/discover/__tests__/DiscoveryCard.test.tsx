@@ -149,7 +149,12 @@ describe('DiscoveryCard', () => {
 		unmount();
 		renderCard({ importPending: true });
 		expect(screen.getByTestId('discovery-card-import')).toHaveTextContent('Adding…');
-		expect(screen.getByTestId('card-status-pending')).toHaveTextContent('Adding…');
+	});
+
+	it('keeps the status pill on the entry’s normal status while an import runs', () => {
+		renderCard({ importPending: true });
+		expect(screen.getByTestId('card-status-available')).toHaveTextContent('Available');
+		expect(screen.queryByTestId('card-status-pending')).toBeNull();
 	});
 
 	it('keeps behaviour: surface opens the preview, Import imports, GitHub is a secondary link', async () => {

@@ -495,16 +495,21 @@ describe('LibraryPage', () => {
 		const githubCard = screen.getByRole('button', { name: 'View github.com' }).closest('div');
 		await user.click(within(githubCard as HTMLElement).getByTestId('discovery-card-import'));
 
-		// Immediately enters the pending state.
+		// Immediately enters the pending state: the button spins, the pill keeps
+		// the entry's normal status.
 		expect(await screen.findByText('Adding to workspace')).toBeInTheDocument();
-		expect(await screen.findByTestId('card-status-pending')).toBeInTheDocument();
+		expect(
+			within(githubCard as HTMLElement).getByTestId('discovery-card-import'),
+		).toHaveTextContent('Adding…');
+		expect(
+			within(githubCard as HTMLElement).getByTestId('card-status-available'),
+		).toBeInTheDocument();
 
 		// The poll picks up registered: true and resolves the card on its own —
 		// wait on the poll itself, then on the (default-budget) UI flip.
 		await waitFor(() => expect(pollsAfterImport).toBeGreaterThan(0));
 		expect(await screen.findByText('Added to workspace')).toBeInTheDocument();
 		expect(await screen.findByTestId('card-status-imported')).toBeInTheDocument();
-		expect(screen.queryByTestId('card-status-pending')).not.toBeInTheDocument();
 	});
 
 	it('invalidates the workspace API list when an import lands (so it is not stale)', async () => {

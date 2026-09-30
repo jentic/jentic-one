@@ -1,18 +1,18 @@
 /**
  * CardStatusPill — a catalog entry's relation to your workspace: "In your
- * workspace" vs "Available" (or "Adding…" while an import job settles).
+ * workspace" vs "Available".
  *
  * A small, self-contained presentational pill (emerald filled for imported,
  * neutral outline for available). Keyed off the catalog entry's `registered`
  * flag — the single source of truth under D-005a. An upstream update is a
- * serving state, rendered beside it with the shared `ApiStateBadge`.
+ * serving state, rendered beside it with the shared `ApiStateBadge`. An import
+ * in flight is shown on the card's primary button and the docked panel's
+ * "Adding" section, not here.
  */
-import { CheckCircle2, Globe, Loader2 } from 'lucide-react';
+import { CheckCircle2, Globe } from 'lucide-react';
 
 interface CardStatusPillProps {
 	registered: boolean;
-	/** Import job in flight — overrides the Available state with a spinner pill. */
-	pending?: boolean;
 	className?: string;
 }
 
@@ -29,23 +29,17 @@ const SPEC = {
 		cls: 'border-border/70 bg-transparent text-muted-foreground ring-border/60',
 		testId: 'card-status-available',
 	},
-	pending: {
-		label: 'Adding…',
-		icon: Loader2,
-		cls: 'bg-primary/10 text-primary ring-primary/30',
-		testId: 'card-status-pending',
-	},
 } as const;
 
-export function CardStatusPill({ registered, pending, className }: CardStatusPillProps) {
-	const spec = pending ? SPEC.pending : registered ? SPEC.imported : SPEC.available;
+export function CardStatusPill({ registered, className }: CardStatusPillProps) {
+	const spec = registered ? SPEC.imported : SPEC.available;
 	const Icon = spec.icon;
 	return (
 		<span
 			data-testid={spec.testId}
 			className={`inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0 text-[11px] font-medium whitespace-nowrap ring-1 ${spec.cls} ${className ?? ''}`}
 		>
-			<Icon size={11} aria-hidden="true" className={pending ? 'animate-spin' : undefined} />
+			<Icon size={11} aria-hidden="true" />
 			{spec.label}
 		</span>
 	);

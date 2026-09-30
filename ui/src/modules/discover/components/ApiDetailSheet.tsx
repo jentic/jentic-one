@@ -148,11 +148,8 @@ export function ApiDetailSheet({
 								</p>
 							)}
 							<div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-								<CardStatusPill
-									registered={entity.registered}
-									pending={importPending}
-								/>
-								{/* Mid-import the pending spinner is the honest state. */}
+								<CardStatusPill registered={entity.registered} />
+								{/* Mid-import the button's "Adding…" spinner is the honest state. */}
 								{entity.registered && entity.updateAvailable && !importPending && (
 									<ApiStateBadge state="update" />
 								)}

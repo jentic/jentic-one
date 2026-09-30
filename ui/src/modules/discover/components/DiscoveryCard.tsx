@@ -165,7 +165,7 @@ export const DiscoveryCard = memo(function DiscoveryCard({
 								className="flex shrink-0 items-center"
 								data-testid="discovery-card-footer"
 							>
-								<CardStatusPill registered={registered} pending={importPending} />
+								<CardStatusPill registered={registered} />
 							</span>
 							{registered && (
 								<ChevronRight
