@@ -1501,6 +1501,7 @@
         "type": "string"
       },
       "AuthorizationCodeRegistrationCreateRequest": {
+        "additionalProperties": false,
         "description": "Create request for an authorization-code registration.",
         "examples": [
           {
@@ -3115,6 +3116,7 @@
         "type": "object"
       },
       "DeviceAuthorizationRegistrationCreateRequest": {
+        "additionalProperties": false,
         "description": "Create request for a device-authorization registration.",
         "examples": [
           {
@@ -5194,6 +5196,7 @@
         "type": "object"
       },
       "OAuthAppRegistrationRotateSecretRequest": {
+        "additionalProperties": false,
         "description": "Rotate the client secret on an auth-code registration.",
         "properties": {
           "client_secret": {
@@ -5210,6 +5213,7 @@
         "type": "object"
       },
       "OAuthAppRegistrationUpdateRequest": {
+        "additionalProperties": false,
         "description": "Partial update — fields not present are left untouched.",
         "properties": {
           "authorization_endpoint": {

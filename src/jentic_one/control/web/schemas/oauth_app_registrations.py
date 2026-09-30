@@ -66,6 +66,7 @@ class AuthorizationCodeRegistrationCreateRequest(BaseModel):
     """Create request for an authorization-code registration."""
 
     model_config = ConfigDict(
+        extra="forbid",
         json_schema_extra={
             "examples": [
                 {
@@ -81,7 +82,7 @@ class AuthorizationCodeRegistrationCreateRequest(BaseModel):
                     "default_scopes": ["repo", "read:user"],
                 }
             ]
-        }
+        },
     )
 
     name: Annotated[str, Field(min_length=1, max_length=255)]
@@ -118,6 +119,7 @@ class DeviceAuthorizationRegistrationCreateRequest(BaseModel):
     """Create request for a device-authorization registration."""
 
     model_config = ConfigDict(
+        extra="forbid",
         json_schema_extra={
             "examples": [
                 {
@@ -132,7 +134,7 @@ class DeviceAuthorizationRegistrationCreateRequest(BaseModel):
                     "default_scopes": ["repo"],
                 }
             ]
-        }
+        },
     )
 
     name: Annotated[str, Field(min_length=1, max_length=255)]
@@ -170,6 +172,8 @@ OAuthAppRegistrationCreateRequest = (
 class OAuthAppRegistrationUpdateRequest(BaseModel):
     """Partial update — fields not present are left untouched."""
 
+    model_config = ConfigDict(extra="forbid")
+
     name: Annotated[str, Field(min_length=1, max_length=255)] | None = None
     display_name: Annotated[str, Field(min_length=1, max_length=255)] | None = None
     is_active: bool | None = None
@@ -182,5 +186,7 @@ class OAuthAppRegistrationUpdateRequest(BaseModel):
 
 class OAuthAppRegistrationRotateSecretRequest(BaseModel):
     """Rotate the client secret on an auth-code registration."""
+
+    model_config = ConfigDict(extra="forbid")
 
     client_secret: Annotated[str, Field(min_length=1, json_schema_extra=SENSITIVE)]

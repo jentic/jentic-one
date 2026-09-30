@@ -15,6 +15,7 @@ import datetime as dt
 from typing import Any
 from unittest.mock import AsyncMock
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from jentic.problem_details import ProblemDetailException, problem_detail_exception_handler
@@ -195,6 +196,26 @@ def test_create_requires_display_name() -> None:
     svc.create_authorization_code.assert_not_called()
 
 
+@pytest.mark.parametrize(
+    ("body", "method"),
+    [
+        ({**_auth_code_body(), "is_active": False}, "create_authorization_code"),
+        # A secret on a public-client registration must not be silently dropped.
+        (
+            {**_device_body(), "client_secret": "s"},  # pragma: allowlist secret
+            "create_device_authorization",
+        ),
+    ],
+)
+def test_create_rejects_unknown_fields(body: dict[str, Any], method: str) -> None:
+    svc = AsyncMock(spec=OAuthAppRegistrationService)
+    app = _build_app(svc=svc)
+    with TestClient(app) as client:
+        resp = client.post("/oauth-app-registrations", json=body)
+    assert resp.status_code == 422
+    getattr(svc, method).assert_not_called()
+
+
 def test_create_refused_for_non_admin() -> None:
     svc = AsyncMock(spec=OAuthAppRegistrationService)
     app = _build_app(svc=svc, identity=_READER_IDENTITY)
@@ -270,6 +291,28 @@ def test_update_refused_for_non_admin() -> None:
         )
     assert resp.status_code == 403
     svc.update.assert_not_called()
+
+
+def test_update_rejects_unknown_fields() -> None:
+    # ``client_id`` is not updatable; it must 422 rather than silently no-op.
+    svc = AsyncMock(spec=OAuthAppRegistrationService)
+    app = _build_app(svc=svc)
+    with TestClient(app) as client:
+        resp = client.patch("/oauth-app-registrations/oar_test", json={"client_id": "other"})
+    assert resp.status_code == 422
+    svc.update.assert_not_called()
+
+
+def test_rotate_secret_rejects_unknown_fields() -> None:
+    svc = AsyncMock(spec=OAuthAppRegistrationService)
+    app = _build_app(svc=svc)
+    with TestClient(app) as client:
+        resp = client.post(
+            "/oauth-app-registrations/oar_test:rotate-secret",
+            json={"client_secret": "new", "client_id": "other"},  # pragma: allowlist secret
+        )
+    assert resp.status_code == 422
+    svc.rotate_client_secret.assert_not_called()
 
 
 def test_rotate_secret_refused_on_device_flow() -> None:

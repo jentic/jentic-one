@@ -940,6 +940,7 @@ components:
       title: AuditTargetType
       type: string
     AuthorizationCodeRegistrationCreateRequest:
+      additionalProperties: false
       description: Create request for an authorization-code registration.
       examples:
       - api_vendor: github
@@ -2028,6 +2029,7 @@ components:
       title: DenyRequest
       type: object
     DeviceAuthorizationRegistrationCreateRequest:
+      additionalProperties: false
       description: Create request for a device-authorization registration.
       examples:
       - api_vendor: github
@@ -3369,6 +3371,7 @@ components:
       title: OAuthAppRegistrationResponse
       type: object
     OAuthAppRegistrationRotateSecretRequest:
+      additionalProperties: false
       description: Rotate the client secret on an auth-code registration.
       properties:
         client_secret:
@@ -3381,6 +3384,7 @@ components:
       title: OAuthAppRegistrationRotateSecretRequest
       type: object
     OAuthAppRegistrationUpdateRequest:
+      additionalProperties: false
       description: Partial update — fields not present are left untouched.
       properties:
         authorization_endpoint:
