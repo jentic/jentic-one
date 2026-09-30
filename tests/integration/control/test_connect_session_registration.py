@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
@@ -51,6 +51,7 @@ from jentic_one.control.services.integrations.connect_session_service import (
     AuthCodeConfirmResult,
     ConnectSessionService,
 )
+from jentic_one.control.services.integrations.flow_handlers.base import SuccessTokens
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import (
     DirectOAuth2ProviderConfig,
@@ -430,3 +431,64 @@ async def test_complete_from_callback_through_registration_end_to_end(
         stamp = result_rs.first()
         assert stamp is not None
         assert stamp[0] == registration.id
+
+
+async def test_finalise_fails_session_when_registration_disabled_mid_flow(
+    integration_context: Context,
+    seed_shared_vendor: None,
+    seed_agent: None,
+    clean_session_tables: None,
+) -> None:
+    """Disabling the registration after the vendor issued tokens fails the
+    session as ``registration_inactive`` instead of raising out of finalise
+    (which would strand the session in a non-terminal state).
+    """
+    ctx = integration_context
+    registration = await _seed_active_registration(ctx)
+
+    svc = ConnectSessionService(ctx)
+    created = await svc.create_session(
+        vendor_key=_VENDOR_KEY,
+        agent_id=_AGENT_ID,
+        initiator_actor_id=_USER_ID,
+        requested_scopes=["scope-a"],
+    )
+    await svc.confirm(
+        created.session_id,
+        poll_token=created.poll_token,
+        confirmed_scopes=["scope-a"],
+        permission_rules=[],
+        identity=_USER_IDENTITY,
+    )
+
+    async with ctx.control_db.transaction() as session:
+        await OAuthAppRegistrationRepository.update_base(session, registration.id, is_active=False)
+
+    async with ctx.control_db.session() as session:
+        row = await ConnectSessionRepository.get_by_id(session, created.session_id)
+    assert row is not None
+
+    result = await svc._finalise_connected(
+        row,
+        MagicMock(),
+        SuccessTokens(
+            access_token="at",
+            refresh_token=None,
+            expires_in=None,
+            scope=None,
+            granted_scopes=["scope-a"],
+        ),
+    )
+    assert result.status == "failed"
+    assert result.error_code == "registration_inactive"
+
+    async with ctx.control_db.session() as session:
+        # Terminal sessions are deleted along with their pending credential
+        # (see ``_mark_terminal``); nothing is vaulted.
+        assert await ConnectSessionRepository.get_by_id(session, created.session_id) is None
+        assert await CredentialRepository.get_by_id(session, row.credential_id) is None
+        token_rows = await session.execute(
+            text("SELECT 1 FROM oauth_tokens WHERE credential_id = :cid"),
+            {"cid": row.credential_id},
+        )
+        assert token_rows.first() is None

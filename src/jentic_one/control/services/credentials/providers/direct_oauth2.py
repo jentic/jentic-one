@@ -11,6 +11,7 @@ from jentic_one.control.repos.oauth_app_registration_repo import (
     OAuthAppRegistrationRepository,
 )
 from jentic_one.control.services.credentials.providers.base import (
+    InactiveRegistrationError,
     NotConnectableError,
     ProviderError,
 )
@@ -43,17 +44,6 @@ __all__ = [
     "InvalidGrantError",
     "TokenExchangeError",
 ]
-
-
-class InactiveRegistrationError(ProviderError):
-    """Raised when a credential references an inactive ``oauth_app_registrations`` row.
-
-    Refresh (and complete-connect) fail closed against an inactive
-    registration: the operator has flipped the kill switch on this shared
-    OAuth app, so no new tokens may be minted through it. Existing vaulted
-    access tokens keep injecting until their expiry — this only blocks
-    refresh + new grants, matching the ``is_active`` semantics.
-    """
 
 
 class DirectOAuth2Provider(OAuth2Provider):

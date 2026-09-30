@@ -212,8 +212,17 @@ class DeviceAuthorizationHandler:
         assert dfc is not None
         assert dfc.encrypted_device_code is not None
 
+        endpoints = await self._resolve_poll_endpoints(credential_id, dfc)
+        if endpoints is None:
+            # The shared registration was disabled mid-flow: stop polling so
+            # no token is minted through the killed app.
+            return StatusReport(
+                kind="failed",
+                error_code="registration_inactive",
+                terminal_detail="oauth_app_registration is inactive",
+            )
+        client_id, token_endpoint = endpoints
         device_code = self._ctx.encryption.decrypt(dfc.encrypted_device_code)
-        client_id, token_endpoint = await self._resolve_poll_endpoints(credential_id, dfc)
         result = await device_authorization.poll_device_authorization(
             token_endpoint=token_endpoint,
             client_id=client_id,
@@ -294,14 +303,15 @@ class DeviceAuthorizationHandler:
         self,
         credential_id: str,
         dfc: DeviceAuthorizationCredential,
-    ) -> tuple[str, str]:
+    ) -> tuple[str, str] | None:
         """Return the ``(client_id, token_endpoint)`` used for one poll tick.
 
         Dereferences through ``oauth_app_registrations`` when the credential
         was minted through a shared registration (``credentials.oauth_app_registration_id``
         set) — that keeps rotated endpoints or a rotated client_id in effect
         for in-flight sessions even if the aux row's copy has drifted. Falls
-        back to the aux row for legacy embedded credentials.
+        back to the aux row for legacy embedded credentials. Returns ``None``
+        when the referenced registration is inactive.
         """
         async with self._ctx.control_db.session() as session:
             credential = await CredentialRepository.get_by_id(session, credential_id)
@@ -310,6 +320,8 @@ class DeviceAuthorizationHandler:
             registration = await OAuthAppRegistrationRepository.get_by_id(
                 session, credential.oauth_app_registration_id
             )
+            if registration is not None and not registration.is_active:
+                return None
             if registration is None or registration.device_authorization_details is None:
                 return dfc.client_id, dfc.token_url
             return (

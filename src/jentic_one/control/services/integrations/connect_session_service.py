@@ -1191,7 +1191,21 @@ class ConnectSessionService:
         pinned_registration_id = (
             credential.oauth_app_registration_id if credential is not None else None
         )
-        entry = await self._vendors.get(row.vendor, registration_id=pinned_registration_id)
+        try:
+            entry = await self._vendors.get(row.vendor, registration_id=pinned_registration_id)
+        except InvalidOAuthAppRegistrationError as exc:
+            # The registration was disabled (or removed) after the vendor
+            # issued tokens. Fail the session rather than raising out of the
+            # scanner tick, which would leave it stuck in ``polling``.
+            _logger.warning(
+                "connect_session.registration_unavailable_at_finalise",
+                session_id=row.id,
+                error=str(exc),
+            )
+            await self._mark_terminal(
+                row.id, "failed", str(exc), error_code="registration_inactive"
+            )
+            return StatusResult(status="failed", error_code="registration_inactive")
 
         connected_as: str | None
         if entry.identity_probe is None:

@@ -18,10 +18,15 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+from jentic_one.control.repos import CredentialRepository
 from jentic_one.control.repos.device_authorization_credential_repo import (
     DeviceAuthorizationCredentialRepository,
 )
+from jentic_one.control.repos.oauth_app_registration_repo import (
+    OAuthAppRegistrationRepository,
+)
 from jentic_one.control.services.credentials.providers.base import (
+    InactiveRegistrationError,
     NotConnectableError,
     NotRefreshableError,
     ProviderError,
@@ -128,10 +133,21 @@ class DeviceAuthorizationConnectProvider(OAuth2Provider):
     ) -> RefreshResult:
         # Standard OAuth 2.0 refresh with a public client — no client_secret.
         # Reads the token endpoint off the credential's device_authorization row.
+        # A credential minted through a shared registration that has since been
+        # disabled fails closed, mirroring ``DirectOAuth2Provider``.
         async with ctx.control_db.session() as session:
             dfc = await DeviceAuthorizationCredentialRepository.get_by_credential(
                 session, token.credential_id
             )
+            credential = await CredentialRepository.get_by_id(session, token.credential_id)
+            if credential is not None and credential.oauth_app_registration_id is not None:
+                registration = await OAuthAppRegistrationRepository.get_by_id(
+                    session, credential.oauth_app_registration_id
+                )
+                if registration is not None and not registration.is_active:
+                    raise InactiveRegistrationError(
+                        f"oauth_app_registration {registration.id!r} is inactive — refresh refused"
+                    )
         if dfc is None:
             raise NotRefreshableError(f"credential {token.credential_id!r} has no device-flow row")
         refresh_token = await token.decrypt()

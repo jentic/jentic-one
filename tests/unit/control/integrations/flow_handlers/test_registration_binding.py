@@ -162,7 +162,7 @@ def _device_app_from_config() -> SessionApp:
 
 
 @pytest.mark.asyncio()
-async def test_auth_code_prepare_registration_path_sets_fk_and_owner() -> None:
+async def test_auth_code_prepare_registration_path_sets_fk() -> None:
     ctx = _make_context()
     handler = AuthCodeFlowHandler(ctx)
     session = MagicMock()
