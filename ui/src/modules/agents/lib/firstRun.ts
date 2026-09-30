@@ -3,22 +3,22 @@
  * what the landing shows in-session. The page's hook (`useFirstAgentLanding`)
  * owns the state; everything here is pure.
  *
- * Resume, decided once per page mount from the roster, the URL's selection
- * (`?agent=`) and, for a lone active agent, its bindings:
- * - the URL selects a denied or archived agent → the fleet view, where that
- *   history is listed (the landing's "N archived · View" link leads there);
- * - no fleet at all             → the landing, listening;
- * - nothing working, ≥1 pending → the landing's arrival, for the newest
+ * Resume, decided once per page mount from the roster and, for a lone active
+ * agent, its bindings:
+ * - no agents at all, of any status → the landing, listening;
+ * - nothing working, ≥1 pending     → the landing's arrival, for the newest
  *   pending agent (the rest are counted, so the card can point at them);
- * - exactly one agent, active, no API bindings, first-run not dismissed
- *   → the landing's approved state (the first-API suggestion);
- * - otherwise                   → the fleet view.
+ * - exactly one agent besides denied or archived ones, active, no API
+ *   bindings, first-run not dismissed → the landing's approved state (the
+ *   first-API suggestion);
+ * - otherwise                       → the fleet view — including an org whose
+ *   agents are all denied or archived, which lists them there.
  *
  * "Working" is active or disabled — the same test the in-session landing uses
- * to hand off to the fleet — and denied or archived agents are history, not
- * fleet, so an operator who denied a stray registration still resumes.
+ * to hand off to the fleet. In session the landing stays up once shown: an
+ * operator who denies the arrival goes back to listening, not to a fleet of
+ * one rejected agent. Only a reload of that org resumes on the fleet view.
  */
-import { STATUS_LABELS, type ActorStatus } from '@/shared/ui';
 import type { AgentEntity } from '@/modules/agents/api';
 import type { SelectedApi } from '@/shared/credentials/api';
 
@@ -44,9 +44,8 @@ export type FirstRunResume =
 export type BindingsRead =
 	{ state: 'loading' } | { state: 'error' } | { state: 'ready'; count: number };
 
-/** Denied or archived: listed in the fleet view, but not fleet. */
-export const isHistory = (a: AgentEntity): boolean =>
-	a.status === 'rejected' || a.status === 'archived';
+/** Denied or archived: listed in the fleet view, but no part of its working set. */
+const isHistory = (a: AgentEntity): boolean => a.status === 'rejected' || a.status === 'archived';
 const isWorking = (a: AgentEntity): boolean => a.status === 'active' || a.status === 'disabled';
 
 /** The newest pending agent that isn't `exclude`d, or null. */
@@ -75,14 +74,10 @@ export function resolveFirstRun(input: {
 	agents: AgentEntity[];
 	bindings: BindingsRead;
 	isDismissed: (agentId: string) => boolean;
-	/** The agent the URL selects (`?agent=`), if any. */
-	selectedId?: string | null;
 }): FirstRunResume | null {
-	const { agents, bindings, isDismissed, selectedId = null } = input;
-	const selected = selectedId == null ? undefined : agents.find((a) => a.id === selectedId);
-	if (selected && isHistory(selected)) return { kind: 'fleet' };
+	const { agents, bindings, isDismissed } = input;
+	if (agents.length === 0) return { kind: 'listening' };
 	const fleet = agents.filter((a) => !isHistory(a));
-	if (fleet.length === 0) return { kind: 'listening' };
 	if (!fleet.some(isWorking)) {
 		const pending = newestPending(fleet);
 		if (pending) return { kind: 'arrival', agentId: pending.id };
@@ -139,25 +134,6 @@ export function deriveLanding(input: {
 		morePending,
 		handOff: agent == null && agents.some(isWorking),
 	};
-}
-
-// ── History ─────────────────────────────────────────────────────────────────
-
-/**
- * The landing's one-line count of the org's denied and archived agents, or
- * null when it has none: "3 archived agents", "1 rejected agent",
- * "2 archived, 1 rejected". Labels are the shared status vocabulary.
- */
-export function historySummary(agents: AgentEntity[]): string | null {
-	const counts = (['archived', 'rejected'] as const)
-		.map((status) => ({ status, n: agents.filter((a) => a.status === status).length }))
-		.filter(({ n }) => n > 0);
-	const part = ({ status, n }: { status: ActorStatus; n: number }) =>
-		`${n} ${STATUS_LABELS[status].toLowerCase()}`;
-	const [only, second] = counts;
-	if (!only) return null;
-	if (second) return `${part(only)}, ${part(second)}`;
-	return `${part(only)} ${only.n === 1 ? 'agent' : 'agents'}`;
 }
 
 // ── Dismissal ───────────────────────────────────────────────────────────────

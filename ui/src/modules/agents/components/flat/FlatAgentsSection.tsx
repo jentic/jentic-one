@@ -72,7 +72,6 @@ import {
 	type PreflightItem,
 } from '@/modules/agents/lib/apiPreflight';
 import type { QueueBackSeed } from '@/modules/agents/lib/setupQueue';
-import { isHistory } from '@/modules/agents/lib/firstRun';
 import { useFirstAgentLanding } from '@/modules/agents/lib/useFirstAgentLanding';
 import { usePreflightInputs } from '@/modules/agents/lib/usePreflightInputs';
 import { AgentDock, type AgentDockSurface } from '@/modules/agents/components/flat/AgentDock';
@@ -139,7 +138,6 @@ export function FlatAgentsSection({
 	const landing = useFirstAgentLanding({
 		approve,
 		deny,
-		selectedId: agentParam,
 		selectAgent,
 		openAddApis: setAddApisFor,
 	});
@@ -160,8 +158,8 @@ export function FlatAgentsSection({
 	);
 
 	const selected = agents.find((a) => a.id === agentParam) ?? agents[0] ?? null;
-	// Written back only once the fleet view is decided and on screen: the resume
-	// reads `?agent=`, and a history agent written there would resume the fleet.
+	// Written back only once the fleet view is decided and on screen, so the
+	// landing leaves the URL plain.
 	const fleetShown = landing.ready && !landing.visible;
 	const fallbackId = agentParam == null && fleetShown ? (selected?.id ?? null) : null;
 	useEffect(() => {
@@ -340,12 +338,6 @@ export function FlatAgentsSection({
 					expectedName={landing.expectedName}
 					morePending={landing.morePending}
 					onShowFleet={landing.showFleet}
-					history={landing.history}
-					onShowHistory={() => {
-						// The strip's own order, so it opens on the tab it lists first.
-						const first = agents.find(isHistory);
-						if (first) landing.showHistory(first.id);
-					}}
 					slotRef={landing.slotRef}
 				/>
 				{overlays}

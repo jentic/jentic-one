@@ -31,7 +31,6 @@ import {
 	approvedCandidate,
 	deriveLanding,
 	dismissFirstRun,
-	historySummary,
 	isFirstRunDismissed,
 	resolveFirstRun,
 	type FirstAgentExit,
@@ -49,9 +48,6 @@ const NO_AGENTS: AgentEntity[] = [];
 export interface FirstAgentLandingOptions {
 	approve: Pick<ReturnType<typeof useApproveAgent>, 'variables' | 'isPending' | 'isSuccess'>;
 	deny: Pick<ReturnType<typeof useDenyAgent>, 'variables' | 'isSuccess'>;
-	/** The agent the URL selects (`?agent=`): one of the org's history resumes
-	 * the fleet view, where it is listed. */
-	selectedId: string | null;
 	/** Select an agent in the fleet view (`?agent=`). */
 	selectAgent: (id: string, opts?: { replace?: boolean }) => void;
 	/** Open the Add-APIs flow for an agent (`queue` skips the tray), or clear it. */
@@ -61,7 +57,6 @@ export interface FirstAgentLandingOptions {
 export function useFirstAgentLanding({
 	approve,
 	deny,
-	selectedId,
 	selectAgent,
 	openAddApis,
 }: FirstAgentLandingOptions) {
@@ -112,7 +107,6 @@ export function useFirstAgentLanding({
 								? { state: 'ready', count: candidateBindings.data.length }
 								: { state: 'loading' },
 						isDismissed: isFirstRunDismissed,
-						selectedId,
 					});
 	// Adjusted during render, not in an effect, so the frame after the reads
 	// resolve is already the resolved view.
@@ -227,14 +221,6 @@ export function useFirstAgentLanding({
 		endLanding();
 	}
 
-	/** "N archived · View": the fleet, with that history agent selected. The
-	 * URL now names it, so a reload resumes the fleet too. */
-	function showHistory(id: string) {
-		selectAgent(id);
-		handoffRef.current = { from: null };
-		endLanding();
-	}
-
 	/** An agent finished outside the landing (created by hand, or registered
 	 * and approved from the New agent panel) ends it; a reload goes to the fleet,
 	 * not back to a first-API suggestion for this agent. */
@@ -251,8 +237,6 @@ export function useFirstAgentLanding({
 		visible,
 		agent,
 		morePending: view?.morePending ?? 0,
-		/** The org's denied and archived agents, counted, while the card listens. */
-		history: phase === 'listening' ? historySummary(agents) : null,
 		approving,
 		registerName: nameDraft.name,
 		setRegisterName: nameDraft.setName,
@@ -267,7 +251,6 @@ export function useFirstAgentLanding({
 		slotRef,
 		exit,
 		showFleet,
-		showHistory,
 		finishedElsewhere,
 	};
 }

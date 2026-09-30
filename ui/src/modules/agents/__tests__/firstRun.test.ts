@@ -4,7 +4,6 @@ import {
 	deriveLanding,
 	dismissFirstRun,
 	firstRunDismissedKey,
-	historySummary,
 	isFirstRunDismissed,
 	resolveFirstRun,
 	type BindingsRead,
@@ -24,32 +23,16 @@ describe('resolveFirstRun', () => {
 		});
 	});
 
-	it('only denied or archived agents → listening', () => {
-		const agents = [agent('r', 'rejected'), agent('x', 'archived')];
-		expect(resolveFirstRun({ agents, bindings: ready(0), isDismissed: none })).toEqual({
-			kind: 'listening',
-		});
-	});
-
-	it('a URL selecting a denied or archived agent → fleet, where it is listed', () => {
-		const agents = [agent('r', 'rejected'), agent('x', 'archived'), agent('p', 'pending')];
-		for (const selectedId of ['r', 'x']) {
-			expect(
-				resolveFirstRun({ agents, bindings: ready(0), isDismissed: none, selectedId }),
-			).toEqual({ kind: 'fleet' });
+	it('any agent at all, even only denied or archived ones → fleet', () => {
+		for (const agents of [
+			[agent('r', 'rejected')],
+			[agent('x', 'archived')],
+			[agent('r', 'rejected'), agent('x', 'archived')],
+		]) {
+			expect(resolveFirstRun({ agents, bindings: ready(0), isDismissed: none })).toEqual({
+				kind: 'fleet',
+			});
 		}
-		// A selection that is not history (or not in the roster) changes nothing.
-		expect(
-			resolveFirstRun({ agents, bindings: ready(0), isDismissed: none, selectedId: 'p' }),
-		).toEqual({ kind: 'arrival', agentId: 'p' });
-		expect(
-			resolveFirstRun({
-				agents: [agent('x', 'archived')],
-				bindings: ready(0),
-				isDismissed: none,
-				selectedId: 'agnt_unknown',
-			}),
-		).toEqual({ kind: 'listening' });
 	});
 
 	it('only pending → arrival for the newest', () => {
@@ -154,29 +137,6 @@ describe('deriveLanding', () => {
 		expect(derive([agent('mine', 'pending')], 'mine', 'mine').phase).toBe('listening');
 		// Denied elsewhere: the roster says rejected.
 		expect(derive([agent('mine', 'rejected')], 'mine').phase).toBe('listening');
-	});
-});
-
-describe('historySummary', () => {
-	it('counts archived and rejected agents, with the right plural', () => {
-		expect(historySummary([])).toBeNull();
-		expect(historySummary([agent('a', 'active'), agent('p', 'pending')])).toBeNull();
-		expect(historySummary([agent('x', 'archived')])).toBe('1 archived agent');
-		expect(
-			historySummary([
-				agent('x', 'archived'),
-				agent('y', 'archived'),
-				agent('z', 'archived'),
-			]),
-		).toBe('3 archived agents');
-		expect(historySummary([agent('r', 'rejected')])).toBe('1 rejected agent');
-		expect(
-			historySummary([
-				agent('x', 'archived'),
-				agent('r', 'rejected'),
-				agent('y', 'archived'),
-			]),
-		).toBe('2 archived, 1 rejected');
 	});
 });
 

@@ -2000,12 +2000,13 @@ describe('AgentsPage — the header follows the zero-agents landing', () => {
 		expect(newAgent()).toHaveAttribute('data-emphasis', 'primary');
 	});
 
-	it('is secondary for an org whose only agents were denied or archived', async () => {
+	it('is primary for an org whose only agents were denied or archived: it shows the fleet', async () => {
 		seedExtraAgents([{ id: 'agnt_old', name: 'stray', status: 'rejected' }]);
 		renderPage();
 
-		await screen.findByTestId('agents-empty-landing');
-		expect(newAgent()).toHaveAttribute('data-emphasis', 'secondary');
+		await screen.findByTestId('agent-strip');
+		expect(screen.queryByTestId('agents-empty-landing')).toBeNull();
+		expect(newAgent()).toHaveAttribute('data-emphasis', 'primary');
 	});
 
 	it('is never secondary over the fleet, even while it loads', async () => {

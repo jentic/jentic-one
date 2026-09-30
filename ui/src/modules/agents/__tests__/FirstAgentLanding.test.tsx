@@ -96,8 +96,6 @@ describe('Agents page — zero agents', () => {
 		const ghost = screen.getByTestId('ghost-fleet');
 		expect(ghost).toHaveAttribute('aria-hidden', 'true');
 		expect(within(ghost).getByTestId('ghost-tab')).toHaveTextContent('Waiting for your agent…');
-		// No denied or archived agents: nothing to point at.
-		expect(screen.queryByTestId('landing-history')).toBeNull();
 
 		expect(screen.queryByTestId('agent-dock')).toBeNull();
 		// The header's button keeps its label and steps back to secondary.
@@ -710,6 +708,35 @@ describe('Agents page — zero agents', () => {
 		expect(screen.getByRole('button', { name: 'Add APIs' })).toBeEnabled();
 	});
 
+	it('a deny keeps the landing listening in session; a reload shows the fleet', async () => {
+		const user = userEvent.setup();
+		const first = renderPage();
+		await landing();
+		await arrive('my-first-agent', first.queryClient);
+
+		await user.click(screen.getByRole('button', { name: 'Deny my-first-agent' }));
+		const dialog = await screen.findByRole('dialog', { name: 'Deny my-first-agent' });
+		await user.type(within(dialog).getByLabelText('Reason'), 'Not ours');
+		await user.click(within(dialog).getByRole('button', { name: 'Deny' }));
+		await waitFor(() => expect(status()).toHaveTextContent('Listening for new agents…'));
+
+		// A roster refetch (a poll, a stream event) doesn't swap in the fleet.
+		await first.queryClient.invalidateQueries({ queryKey: agentsKeysForTest.list('all') });
+		await new Promise((resolve) => setTimeout(resolve, 100));
+		expect(screen.getByTestId('agents-empty-landing')).toHaveAttribute(
+			'data-phase',
+			'listening',
+		);
+		expect(screen.queryByTestId('agent-strip')).toBeNull();
+		first.unmount();
+
+		// The org now has an agent, if only a rejected one.
+		renderPage();
+		const strip = await screen.findByTestId('agent-strip');
+		expect(within(strip).getByRole('tab', { name: /my-first-agent/ })).toBeInTheDocument();
+		expect(screen.queryByTestId('agents-empty-landing')).toBeNull();
+	});
+
 	it('denying the arrival returns the landing to listening', async () => {
 		const user = userEvent.setup();
 		const { queryClient } = renderPage();
@@ -1078,119 +1105,44 @@ describe('Agents page — resuming the first run on load', () => {
 		expect(phase()).toBe('approved');
 	});
 
-	it('only denied or archived agents: the landing resumes listening', async () => {
+	it('only archived agents: the fleet view lists them, with no landing', async () => {
+		seedExtraAgents([
+			{ id: 'agnt_a1', name: 'alpha-boom', status: 'archived' },
+			{ id: 'agnt_a2', name: 'gamma-bot', status: 'archived' },
+			{ id: 'agnt_a3', name: 'my-first-agent', status: 'archived' },
+		]);
+		const { container } = renderPage();
+
+		const strip = await screen.findByTestId('agent-strip');
+		for (const name of ['alpha-boom', 'gamma-bot', 'my-first-agent']) {
+			expect(within(strip).getByRole('tab', { name: new RegExp(name) })).toBeInTheDocument();
+		}
+		expect(screen.queryByTestId('agents-empty-landing')).toBeNull();
+		expect(screen.queryByText(/archived agents/)).toBeNull();
+		expect(await screen.findByText('This agent is retired.', { exact: false })).toBeVisible();
+		expect(screen.getByRole('button', { name: 'New agent' })).toBeInTheDocument();
+		await waitFor(() => checkA11y(container), { timeout: 3000 });
+	});
+
+	it('only denied or archived agents: the fleet view, too', async () => {
 		seedExtraAgents([
 			{ id: 'agnt_old', name: 'stray', status: 'rejected' },
 			{ id: 'agnt_gone', name: 'retired', status: 'archived' },
 		]);
 		renderPage();
 
-		await landing();
-		expect(phase()).toBe('listening');
-		expect(screen.getByTestId('register-command')).toBeInTheDocument();
-		expect(screen.getByRole('button', { name: 'New agent' })).toBeInTheDocument();
-		expect(screen.queryByTestId('agent-strip')).toBeNull();
-		expect(screen.getByTestId('landing-history')).toHaveTextContent(
-			/^1 archived, 1 rejected\s*·\s*View$/,
-		);
-	});
-
-	const seedArchived = () =>
-		seedExtraAgents([
-			{ id: 'agnt_a1', name: 'alpha-boom', status: 'archived' },
-			{ id: 'agnt_a2', name: 'gamma-bot', status: 'archived' },
-			{ id: 'agnt_a3', name: 'my-first-agent', status: 'archived' },
-		]);
-
-	it('suggests a name no archived agent has, and hints at a typed namesake', async () => {
-		seedArchived();
-		seedExtraAgents([{ id: 'agnt_a4', name: 'my-first-agent', status: 'archived' }]);
-		const user = userEvent.setup();
-		renderPage();
-		await landing();
-
-		const input = screen.getByLabelText('Agent name');
-		expect(input).toHaveValue('my-first-agent-2');
-		await waitFor(() =>
-			expect(screen.getByTestId('register-command')).toHaveTextContent(
-				/--name my-first-agent-2$/,
-			),
-		);
-		expect(screen.queryByTestId('agent-name-duplicate')).toBeNull();
-
-		await user.clear(input);
-		await user.type(input, 'gamma-bot');
-		expect(screen.getByTestId('agent-name-duplicate')).toHaveTextContent(
-			'An agent named gamma-bot already exists — pick a different name so you can tell them apart.',
-		);
-		await user.type(input, '-v2');
-		expect(screen.queryByTestId('agent-name-duplicate')).toBeNull();
-	});
-
-	it('only archived agents: the landing counts them, with a link to the fleet', async () => {
-		seedArchived();
-		const { container } = renderPage();
-
-		await landing();
-		expect(phase()).toBe('listening');
-		const line = screen.getByTestId('landing-history');
-		expect(line).toHaveTextContent(/^3 archived agents\s*·\s*View$/);
-		expect(
-			within(line).getByRole('button', { name: 'View 3 archived agents' }),
-		).toBeInTheDocument();
-		// The landing leaves the URL alone: a reload of it is the landing again.
-		expect(screen.getByTestId('location-search')).toHaveTextContent(/^$/);
-		await waitFor(() => checkA11y(container), { timeout: 3000 });
-	});
-
-	it('"View" shows the fleet with the history, and the landing stays away', async () => {
-		const user = userEvent.setup();
-		seedArchived();
-		const { queryClient } = renderPage();
-
-		await landing();
-		await user.click(screen.getByRole('button', { name: 'View 3 archived agents' }));
-
 		const strip = await screen.findByTestId('agent-strip');
+		expect(within(strip).getAllByRole('tab')).toHaveLength(2);
 		expect(screen.queryByTestId('agents-empty-landing')).toBeNull();
-		for (const name of ['alpha-boom', 'gamma-bot', 'my-first-agent']) {
-			expect(within(strip).getByRole('tab', { name: new RegExp(name) })).toBeInTheDocument();
-		}
-		const selected = within(strip).getByRole('tab', { selected: true });
-		await waitFor(() => expect(selected).toHaveFocus());
-		const search = screen.getByTestId('location-search').textContent ?? '';
-		expect(search).toMatch(/agent=agnt_a[123]/);
-		expect(await screen.findByText('This agent is retired.', { exact: false })).toBeVisible();
-
-		// A roster refetch (a poll, a stream event) doesn't bring the landing back.
-		await queryClient.invalidateQueries({ queryKey: agentsKeysForTest.list('all') });
-		await new Promise((resolve) => setTimeout(resolve, 100));
-		expect(screen.queryByTestId('agents-empty-landing')).toBeNull();
-		expect(screen.getByTestId('agent-strip')).toBeInTheDocument();
 	});
 
-	it('a reload of the history URL shows the fleet; a plain reload, the landing', async () => {
-		seedArchived();
-		const first = renderPage({ route: '/?agent=agnt_a2' });
-		const strip = await screen.findByTestId('agent-strip');
-		expect(within(strip).getByRole('tab', { selected: true })).toHaveTextContent('gamma-bot');
-		expect(screen.queryByTestId('agents-empty-landing')).toBeNull();
-		first.unmount();
-
-		renderPage();
-		await landing();
-		expect(screen.queryByTestId('agent-strip')).toBeNull();
-		expect(screen.getByTestId('landing-history')).toBeInTheDocument();
-	});
-
-	it('an arrival or a first-API suggestion carries no history line', async () => {
-		seedArchived();
+	it('a pending arrival beside archived agents still resumes on the landing', async () => {
+		seedExtraAgents([{ id: 'agnt_a1', name: 'alpha-boom', status: 'archived' }]);
 		selfRegisterAgent('new-bot');
 		renderPage();
 
 		await landing();
 		expect(phase()).toBe('arrived');
-		expect(screen.queryByTestId('landing-history')).toBeNull();
 	});
 
 	it('shows only the loading skeleton until the roster and bindings are read', async () => {
