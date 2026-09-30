@@ -88,7 +88,6 @@ export async function listCatalog(params: {
 	try {
 		const res = await CatalogService.listCatalog({
 			q: params.q || null,
-			registeredOnly: params.filter === 'registered',
 			unregisteredOnly: params.filter === 'unregistered',
 			outdatedOnly: params.filter === 'outdated',
 			cursor: params.cursor ?? null,

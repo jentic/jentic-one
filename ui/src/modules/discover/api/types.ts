@@ -65,8 +65,8 @@ export interface DiscoveryEntity {
 
 /**
  * The registration filter the toolbar exposes. Maps onto the catalog query
- * params: `all` sends neither flag, `registered` → `registered_only`,
- * `unregistered` → `unregistered_only`, `outdated` → `outdated_only` (registered
- * entries with an upstream update available).
+ * params: `all` sends no flag, `unregistered` → `unregistered_only`,
+ * `outdated` → `outdated_only` (registered entries with an upstream update
+ * available).
  */
-export type CatalogFilter = 'all' | 'registered' | 'unregistered' | 'outdated';
+export type CatalogFilter = 'all' | 'unregistered' | 'outdated';

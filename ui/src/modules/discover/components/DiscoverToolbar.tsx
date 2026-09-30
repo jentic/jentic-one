@@ -3,8 +3,9 @@
  *
  * Built entirely from shared primitives (SearchInput, SegmentedToggle,
  * RefreshButton). The filter maps onto the catalog query:
- * All (no flag) / Imported (`registered_only`) / Available (`unregistered_only`) /
- * Updates (`outdated_only`, registered entries with an upstream update).
+ * All (no flag) / Available (`unregistered_only`) / Updates (`outdated_only`,
+ * registered entries with an upstream update). What's already in your
+ * workspace is the docked panel's job, and each tile's pill.
  *
  * Sticky-on-scroll: the bar pins below the fixed `h-12` TopNavbar
  * (`sticky top-0` of the shell's scroller). It stays inside its column (no
@@ -30,8 +31,7 @@ interface DiscoverToolbarProps {
 
 const FILTER_OPTIONS: { value: CatalogFilter; label: string }[] = [
 	{ value: 'all', label: 'All' },
-	// Same words as the card / sheet pill (CardStatusPill).
-	{ value: 'registered', label: 'In your workspace' },
+	// Same word as the card / sheet pill (CardStatusPill).
 	{ value: 'unregistered', label: 'Available' },
 	{ value: 'outdated', label: 'Updates' },
 ];

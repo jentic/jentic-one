@@ -207,6 +207,18 @@ describe('LibraryPage', () => {
 		});
 	});
 
+	it('offers All / Available / Updates as catalog filters (no "In your workspace")', async () => {
+		renderWithProviders(<LibraryPage />);
+		await screen.findByText('stripe.com');
+		const toolbar = screen.getByTestId('discover-toolbar');
+		for (const name of ['All', 'Available', 'Updates']) {
+			expect(within(toolbar).getByRole('button', { name })).toBeInTheDocument();
+		}
+		expect(
+			within(toolbar).queryByRole('button', { name: 'In your workspace' }),
+		).not.toBeInTheDocument();
+	});
+
 	it('filters by registration state (Available hides imported rows)', async () => {
 		const user = userEvent.setup();
 		renderWithProviders(<LibraryPage />);

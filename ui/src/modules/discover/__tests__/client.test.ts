@@ -36,7 +36,8 @@ describe('listCatalog', () => {
 
 		expect(seen!.get('outdated_only')).toBe('true');
 		// The other registration flags stay off so the backend only narrows to
-		// the outdated set.
+		// the outdated set (the UI never sets registered_only; the generated
+		// client sends its `false` default).
 		expect(seen!.get('registered_only')).toBe('false');
 		expect(seen!.get('unregistered_only')).toBe('false');
 	});
@@ -58,7 +59,7 @@ describe('listCatalog', () => {
 			}),
 		);
 
-		await listCatalog({ filter: 'registered' });
+		await listCatalog({ filter: 'unregistered' });
 		expect(captured.outdatedOnly).toBe('false');
 	});
 
