@@ -256,6 +256,21 @@ A third rule applies:
    **refuses**: it exits `4`, names each service account and why, and
    **drops nothing** — see [If the retirement refuses](#if-the-retirement-refuses).
    An install that never had service accounts just drops the empty tables.
+4. **Move `sak_` callers to `jak_` keys before upgrading.** **Breaking:**
+   `sak_` service-account keys stop working in 0.41.0. Every request with
+   one gets a `401` whose detail says the key was retired and names the
+   replacement (a `jak_` key for the successor agent), and the refusal is
+   logged at INFO (`retired_service_account_key_refused`, with the successor
+   agent id). There is no grace period. For **zero downtime**, do it on
+   0.40.x: the successor agents already exist there (0.40.x migrated every
+   service account at boot), named `service-account:<sva_ id>`. For each
+   one, mint a key (`POST /agents/{agent_id}:generate-api-key`, or the
+   agent's **Keys** panel in the UI), switch the callers to it, and only
+   then upgrade. 0.41.0 lists every service account and its successor agent
+   in a WARNING summary when the retirement completes (see
+   [the Phase-4 section](#upgrading-to-the-theme-8-phase-4-release-service-account-tables-dropped)).
+   `jntc_live_` toolkit keys are **not** affected: a converted one keeps
+   authenticating as its successor agent until at least 2026-12-01.
 
 ## Upgrading to the theme-5 Phase 6b release (the drops)
 
@@ -420,7 +435,7 @@ SA surface survives this release (Phase 2 removes it) but is stamp-guarded.
   sessions are revoked, and the row is stamped (`migrated_to_actor_id`).
   **API-key callers keep authenticating**: the resolver is now agent-first,
   so migrated `sak_`/`jntc_live_` plaintexts keep working without a key
-  change — but they now authenticate **as the successor agent**, which
+  change (`sak_` keys only until 0.41.0, which refuses them) — but they now authenticate **as the successor agent**, which
   changes behaviour on a few endpoints (next bullet). Non-active SAs
   (pending/rejected/archived) are skipped-but-stamped; disabled SAs get a
   disabled successor.
@@ -448,7 +463,7 @@ SA surface survives this release (Phase 2 removes it) but is stamp-guarded.
   successor agent. **Breaking** for issuers minting SA claims.
 - **Rotating a successor agent's API key ends the old plaintext.** The
   migrated `sak_`/`jntc_live_` plaintext authenticates via the copied
-  digest; rotating or revoking the successor's key replaces that digest —
+  digest (`sak_` until 0.41.0); rotating or revoking the successor's key replaces that digest —
   deliberate, audited, irreversible.
 
 ### Theme-8 Phase 1 runbook: snapshot, migrate, sweep, verify, acknowledge
@@ -549,7 +564,7 @@ run the Phase-1 migration (above) first — the boot job still does it.
 - **API keys keep working:** migrated `sak_`/`jntc_live_` plaintexts keep
   authenticating as the successor agent; an unmigrated `sak_` key still
   resolves through the SA fallback (and `GET /me` / MCP `me` still answer
-  for it) until Phase 4.
+  for it) until Phase 4. Phase 4 (0.41.0) refuses every `sak_` key.
 - **Scopes retired:** `service-accounts:read`, `service-accounts:write` and
   `owner:service-accounts:read` are no longer granted, listed, or implied by
   `org:admin`; stored grants of them are tolerated (a re-submitted scope
@@ -584,10 +599,11 @@ paths. Read this **before** running migrations.
      anything an operator removed from the successor since is **not**
      restored.
   2. **Verifies** before touching anything: no failed migration, nothing
-     left unmigrated, every grant and binding present on the successor,
-     each successor holding the service account's current key digest (a
-     successor that is archived or whose key was rotated after the
-     migration is fine), and the inline-rule parity in the control DB.
+     left unmigrated, every grant and binding present on the successor, and
+     the inline-rule parity in the control DB. The key digest is not
+     checked: `sak_` keys stop working in this release whatever the
+     successor holds (the copied digest only matters for a `jntc_live_`
+     toolkit key that 0.40 converted into a service account).
   3. **Sweeps** the service-account side (grants, bindings, key digests,
      sessions, `sva_`-keyed inline rules — including rules left by service
      accounts that no longer exist), then applies the drop, which also
@@ -595,8 +611,12 @@ paths. Read this **before** running migrations.
      rows.
 
   It logs one `service_account_migration` line per service account and a
-  `service_account_retirement_done` summary. A second run finds nothing to
-  do. There is no command to run, no acknowledgement, and no configuration.
+  `service_account_retirement_done` summary. When the retirement found
+  service accounts, it then prints a WARNING summary to stdout and logs a
+  `service_account_keys_retired` WARNING: each service account id and its
+  successor agent id (ids only, never a key), and that `sak_` keys no longer
+  authenticate — callers must switch to a `jak_` key for the listed agent.
+  A second run finds nothing to do. There is no command to run, no acknowledgement, and no configuration.
   If the verification fails, see
   [If the retirement refuses](#if-the-retirement-refuses).
 - **Targeted or partial upgrades skip the retirement.** With `--db` (admin
@@ -608,20 +628,27 @@ paths. Read this **before** running migrations.
   serving traffic cannot read them: a `sak_` or `jntc_live_` request to a
   0.40.x replica returns `500`, and a 0.40.x replica that restarts logs
   `service_account_migration_startup_failed` (the boot job fails; the
-  server still starts). Finish the rollout promptly, or drain 0.40.x
-  replicas before the migration Job runs.
+  server still starts). There is no 0.40.x patch for this: finish the
+  rollout promptly, or drain 0.40.x replicas before the migration Job runs.
 - **Retired scope strings are swept.** `service-accounts:read`,
   `service-accounts:write` and `owner:service-accounts:read` are removed from
   every stored grant and token surface, in the same way as the theme-5
   toolkit-scope sweep. They have granted nothing since Phase 2.
-- **Migrated keys keep working.** A migrated `sak_` or `jntc_live_`
-  plaintext still authenticates **as its successor agent**, and each resolve
-  logs a `deprecated_service_account_key_used` (or
-  `deprecated_toolkit_key_used`) WARNING. Rotate holders to the agent's
-  `jak_` key. There is no service-account fallback any more: a key that
-  matches no agent is refused (`401`, `retired_key_unresolved` INFO). A
-  migrated key whose successor is disabled or whose digest was rotated away
-  is refused too (`migrated_key_fail_closed`).
+- **`sak_` keys stop working (breaking).** Every `sak_` key is refused,
+  migrated or not, before any lookup: `401` with the detail *"Service-account
+  keys (sak_) were retired in Jentic One 0.41: each service account was
+  migrated to an agent. Mint a jak_ key for that agent and use it instead."*
+  (admin, auth and broker surfaces; MCP answers with its usual `401`
+  challenge). Each refusal logs `retired_service_account_key_refused` at
+  INFO with the successor agent id when there is one. Move callers to a
+  `jak_` key for the successor agent — ideally on 0.40.x before upgrading
+  (see [Upgrading to 0.41.0](#upgrading-to-0410), rule 4).
+- **Converted `jntc_live_` keys keep working** until at least 2026-12-01:
+  they authenticate **as their successor agent**, and each resolve logs a
+  `deprecated_toolkit_key_used` WARNING. Rotate holders to the agent's
+  `jak_` key. A key that matches no agent is refused (`401`,
+  `retired_key_unresolved` INFO), and so is one whose successor is disabled
+  or whose digest was rotated away (`migrated_key_fail_closed`).
 - **Leftover service-account rows fail closed.** Revoked or expired SA token
   rows are kept, and every token path refuses them: `/me`, introspection,
   refresh, revocation and the broker. Historical `sva_` ids in audit, event,
@@ -648,14 +675,14 @@ paths. Read this **before** running migrations.
 ### If the retirement refuses
 
 The runner exits `4` and prints `Refusing to retire the service accounts …`,
-listing each service account id with the reason (for example, the successor
-lacks a grant, or does not hold the current key digest). A
+listing each service account id with the reason (for example, its migration
+failed because its key digest already belongs to another agent, or the
+successor lacks a grant). A
 `service_account_retirement_refused` ERROR log carries the same ids.
 **Nothing was swept or dropped**: admin stays at `d1e2f3a4b5c6` and every
 service-account row is intact. Fix the named rows — typically restore the
-missing grant or binding on the successor agent, or rotate the successor's
-key if the service account's key was changed outside the supported paths —
-then re-run the migration. Re-running is always safe.
+missing grant or binding on the successor agent, or clear the conflicting
+credential — then re-run the migration. Re-running is always safe.
 
 ### Rollback (theme-8 Phase 4)
 
@@ -773,8 +800,8 @@ runtime signal an operator can watch, and the earliest removal point.
 | Deprecated | Since | Runtime signal | Removal |
 | ---------- | ----- | -------------- | ------- |
 | `jntc_live_` toolkit API keys (theme-5 Phase 4). No new keys are issued. Keys migrated before the Phase 6b drops keep authenticating — as their successor **agents** once theme-8 Phase 1 migrates them; the `retire-toolkit-keys` command and the boot/migration retirement steps are gone with the `toolkit_keys` table (Phase 6b), so a key not migrated by then stops authenticating. Rotate holders to the successor agent's `jak_` key. | The first release carrying theme-5 Phase 4 (opened 2026-09-11). | `deprecated_toolkit_key_used` WARNING log lines — one per resolve, naming the successor agent presenting the retired key form. | Plaintext acceptance ends no earlier than **2026-12-01** (a follow-up to Phase 6b). |
-| Service accounts (theme-8 Phase 1). Every SA is auto-migrated to a successor agent; the migrated `sak_`/`jntc_live_` plaintext keeps authenticating — as that agent. The SA management surface, `POST /oauth/mint` and the `client_credentials` grant were removed in theme-8 Phase 2, and broker JWTs may no longer assert `actor_type=service_account`. Rotate holders to the successor agent's `jak_` key. | The first release carrying theme-8 Phase 1. | Until Phase 4: `service_account_fallback_resolve` WARNING log lines and the `auth_service_account_fallback_resolves` OTel counter (both removed with the fallback). | **Removed.** The surface went in theme-8 Phase 2; Phase 4 (0.41.0) retires any remaining service account automatically and drops the tables. |
-| `sak_` service-account API keys (theme-8 Phase 4). No new keys can be issued. A key migrated to a successor agent keeps authenticating as that agent; an unmigrated key is refused. Rotate holders to the successor agent's `jak_` key. | 0.41.0 (theme-8 Phase 4). | `deprecated_service_account_key_used` WARNING log lines, one per resolve, naming the successor agent. | Not yet scheduled. The date will be published here before plaintext acceptance ends. |
+| Service accounts (theme-8 Phase 1). Every SA is auto-migrated to a successor agent; the migrated `sak_`/`jntc_live_` plaintext keeps authenticating — as that agent (`sak_` until 0.41.0). The SA management surface, `POST /oauth/mint` and the `client_credentials` grant were removed in theme-8 Phase 2, and broker JWTs may no longer assert `actor_type=service_account`. Rotate holders to the successor agent's `jak_` key. | The first release carrying theme-8 Phase 1. | Until Phase 4: `service_account_fallback_resolve` WARNING log lines and the `auth_service_account_fallback_resolves` OTel counter (both removed with the fallback). | **Removed.** The surface went in theme-8 Phase 2; Phase 4 (0.41.0) retires any remaining service account automatically and drops the tables. |
+| `sak_` service-account API keys (theme-8 Phase 4). No new keys could be issued; a key migrated to a successor agent authenticated as that agent through 0.40.x. Move holders to a `jak_` key for the successor agent (on 0.40.x, before upgrading, for zero downtime). | The first release carrying theme-8 Phase 1. | From 0.41.0: `retired_service_account_key_refused` INFO per refused request, and the upgrade's `service_account_keys_retired` WARNING summary. | **Removed in 0.41.0.** Every `sak_` key is refused with `401`; the detail names the retirement and the `jak_` replacement. Converted `jntc_live_` keys are unaffected (their own row). |
 
 
 ## One-time setup (repo/org admin)

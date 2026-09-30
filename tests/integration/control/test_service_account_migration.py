@@ -42,7 +42,6 @@ from jentic_one.control.repos.service_account_migration_repo import (
 )
 from jentic_one.control.services.service_account_migration import (
     ServiceAccountMigrationService,
-    ServiceAccountRetirementError,
 )
 from jentic_one.shared.auth.api_key_resolver import ApiKeyResolver
 from jentic_one.shared.config import AppConfig
@@ -545,10 +544,13 @@ async def test_no_successor_holds_stored_grant_row_its_sa_did_not(
 # ------------------------------------------------------ resolver, dispositions
 
 
-async def test_migrated_sak_key_authenticates_with_identical_effective_scopes_on_agent_arm(
+async def test_converted_jntc_live_key_authenticates_as_successor_with_identical_scopes(
     integration_context: Context, admin_db: DatabaseSession, seed_owner: None
 ) -> None:
-    plaintext = "sak_t8m_resolve"
+    """A retired toolkit key the theme-5 retirement converted into a service
+    account keeps working through the migration (until at least 2026-12-01):
+    the SA's digest copied onto the successor resolves as that agent."""
+    plaintext = "jntc_live_t8m_resolve"
     sa_id = await _seed_sa(
         admin_db,
         suffix="resolve",
@@ -569,25 +571,42 @@ async def test_migrated_sak_key_authenticates_with_identical_effective_scopes_on
     assert sorted(after.permissions) == ["capabilities:execute", "toolkit:read"]
 
 
-async def test_unmigrated_sak_key_fails_closed(admin_db: DatabaseSession, seed_owner: None) -> None:
-    """Theme-8 Phase 4 removed the SA fallback: an unmigrated key's digest
-    lives only in ``service_account_credentials``, so it no longer resolves."""
-    plaintext = "sak_t8m_unmig"
-    await _seed_sa(admin_db, suffix="unmig", scopes=("toolkit:read",), api_key_plaintext=plaintext)
+@pytest.mark.parametrize("migrate", [True, False], ids=["migrated", "unmigrated"])
+async def test_sak_key_never_authenticates_migrated_or_not(
+    integration_context: Context, admin_db: DatabaseSession, seed_owner: None, migrate: bool
+) -> None:
+    """0.41: ``sak_`` keys stop working. Migrated (the successor holds the
+    copied digest) or not, the key is refused; the INFO line names the
+    successor when there is one."""
+    plaintext = f"sak_t8m_dead_{migrate}"
+    sa_id = await _seed_sa(
+        admin_db, suffix=f"dead_{migrate}", scopes=("toolkit:read",), api_key_plaintext=plaintext
+    )
+    agent_id = None
+    if migrate:
+        outcomes = await ServiceAccountMigrationService(integration_context).run()
+        agent_id = {o.service_account_id: o for o in outcomes}[sa_id].successor_agent_id
+        held = await _rows(
+            admin_db,
+            "SELECT api_key_hash FROM agent_credentials WHERE agent_id = :id",
+            {"id": agent_id},
+        )
+        assert [r.api_key_hash for r in held] == [_digest(plaintext)]
 
     resolver = ApiKeyResolver(admin_db)
     with structlog.testing.capture_logs() as logs:
         identity = await resolver.resolve(plaintext)
 
     assert identity is None
-    unresolved = [log for log in logs if log["event"] == "retired_key_unresolved"]
-    assert len(unresolved) == 1 and unresolved[0]["log_level"] == "info"
+    refused = [log for log in logs if log["event"] == "retired_service_account_key_refused"]
+    assert len(refused) == 1 and refused[0]["log_level"] == "info"
+    assert refused[0]["successor_agent_id"] == agent_id
 
 
 async def test_disabled_sa_successor_created_disabled_and_key_dead_until_agent_enable(
     integration_context: Context, admin_db: DatabaseSession, seed_owner: None
 ) -> None:
-    plaintext = "sak_t8m_disabled"
+    plaintext = "jntc_live_t8m_disabled"
     sa_id = await _seed_sa(
         admin_db, suffix="disabled", status="disabled", api_key_plaintext=plaintext
     )
@@ -617,7 +636,7 @@ async def test_disabling_the_successor_fails_closed_never_falls_back_to_active_s
     """H1(a): the runbook's kill lever — disable the successor agent — must cut
     the old plaintext even though the SA row is still active (the SA-side
     disable is 409-refused by the stamp guard)."""
-    plaintext = "sak_t8m_killlever"
+    plaintext = "jntc_live_t8m_killlever"
     sa_id = await _seed_sa(
         admin_db, suffix="killlever", scopes=("toolkit:read",), api_key_plaintext=plaintext
     )
@@ -653,7 +672,7 @@ async def test_revoking_the_successor_key_fails_closed(
     """H1(b): revoking/rotating the successor's key NULLs the agent-side
     digest — a genuine agent-arm miss — and the still-live SA-side digest
     must not resurrect the key (there is no SA fallback)."""
-    plaintext = "sak_t8m_revlever"
+    plaintext = "jntc_live_t8m_revlever"
     sa_id = await _seed_sa(
         admin_db, suffix="revlever", scopes=("toolkit:read",), api_key_plaintext=plaintext
     )
@@ -813,7 +832,7 @@ async def test_concurrent_winner_detected_by_in_transaction_recheck(
 async def test_sweep_clears_sa_satellites_and_archives(
     integration_context: Context, admin_db: DatabaseSession, seed_owner: None
 ) -> None:
-    plaintext = "sak_t8m_sweep"
+    plaintext = "jntc_live_t8m_sweep"  # a converted toolkit key keeps serving
     sa_id = await _seed_sa(
         admin_db,
         suffix="sweep",
@@ -1153,8 +1172,7 @@ async def test_retire_accepts_an_archived_successor(
 @pytest.mark.parametrize(
     "tamper",
     [
-        # Digest changed by a writer that bypassed the credential repository
-        # (no rotated_at stamp).
+        # Digest changed without a rotation stamp.
         "UPDATE agent_credentials SET api_key_hash = :other WHERE agent_id = :id",
         # A rotation stamp that predates the migration is not a post-stamp rotation.
         "UPDATE agent_credentials SET api_key_hash = :other, rotated_at = :before"
@@ -1166,12 +1184,13 @@ async def test_retire_accepts_an_archived_successor(
     ],
     ids=["unstamped-change", "rotated-before-stamp", "credential-missing", "successor-missing"],
 )
-async def test_retire_refuses_genuine_digest_drift_names_the_sa_and_sweeps_nothing(
+async def test_retire_does_not_gate_on_the_successor_key_digest(
     integration_context: Context, admin_db: DatabaseSession, seed_owner: None, tamper: str
 ) -> None:
-    """#1416 must stay fail-closed: drift that is not a legitimate post-stamp
-    rotation or archive refuses the retirement, names the SA and successor
-    ids, and leaves every SA-side original in place for a safe re-run."""
+    """0.41 dropped the API-key digest parity check: ``sak_`` keys stop
+    working whatever the successor's credential row holds, so a digest the
+    successor no longer carries (however it changed) does not block the
+    retirement. The SA-side digest is still swept."""
     sa_id = await _seed_sa(
         admin_db, suffix="vdrift", api_key_plaintext="sak_t8m_vdrift", with_tokens=True
     )
@@ -1194,15 +1213,9 @@ async def test_retire_refuses_genuine_digest_drift_names_the_sa_and_sweeps_nothi
         )
         await session.commit()
 
-    with pytest.raises(ServiceAccountRetirementError) as exc_info:
-        await svc.retire()
+    retired = await svc.retire()
 
-    error = exc_info.value
-    assert error.service_account_ids == (sa_id,)
-    assert [p.service_account_id for p in error.problems] == [sa_id]
-    assert agent_id in error.problems[0].reason
-    assert "API-key digest" in error.problems[0].reason
-    assert "Nothing was swept or dropped" in str(error)
+    assert (retired.action, retired.swept) == ("retired", 1)
     rows = await _rows(
         admin_db,
         "SELECT sa.status, c.api_key_hash FROM service_accounts sa"
@@ -1210,7 +1223,7 @@ async def test_retire_refuses_genuine_digest_drift_names_the_sa_and_sweeps_nothi
         " WHERE sa.id = :id",
         {"id": sa_id},
     )
-    assert [(r.status, r.api_key_hash) for r in rows] == [("active", _digest("sak_t8m_vdrift"))]
+    assert [(r.status, r.api_key_hash) for r in rows] == [("archived", None)]
 
 
 async def test_retire_without_the_tables_is_a_noop(

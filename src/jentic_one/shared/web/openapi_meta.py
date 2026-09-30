@@ -205,6 +205,7 @@ JWKS, then RFC 7523 JWT-bearer assertions exchanged at
   | `note_` | Note | ULID-shaped. Free-form annotation attached to a registry resource — see the `Notes` tag. |
   | `ovr_` | Overlay | ULID-shaped. OpenAPI Overlay 1.0 document attached to an `Api` aggregate — see the `Overlays` tag. |
   | `jntc_live_` | Plaintext toolkit API key value (retired) | Never issued anymore. A value migrated before Phase 6b keeps authenticating — as its successor agent — until the deprecation window closes (no earlier than 2026-12-01); rotate holders to the successor agent's `jak_` key. |
+  | `sak_` | Plaintext service-account API key value (retired) | Retired in 0.41: refused with `401` (the detail names the retirement). Each service account was migrated to an agent; mint a `jak_` key for that agent. |
 
   Surfaces still being designed (agent identity, OAuth brokers)
   will add their own prefixes when they land.

@@ -7,9 +7,11 @@ re-upgrading:
 - **The runner** (``python -m jentic_one.migrations.run``, driven through
   ``main()``): on a full upgrade it brings admin to ``d1e2f3a4b5c6``, migrates
   + verifies + sweeps every remaining service account, and only then applies
-  the drop. Pinned end to end: an unmigrated SA is migrated and dropped and its
-  ``sak_`` key resolves to the successor; a failed verification refuses with
-  the SA ids, drops nothing, and a re-run after the fix succeeds; orphan
+  the drop. Pinned end to end: an unmigrated SA is migrated and dropped, its
+  ``sak_`` key is refused while a converted ``jntc_live_`` key resolves to the
+  successor, and the runner prints the SA → successor WARNING summary; a failed
+  migration refuses with the SA ids, drops nothing, and a re-run after the fix
+  succeeds; orphan
   ``sva_`` rows are cleaned; an empty install and a repeated run are no-ops;
   post-stamp SA rows are healed onto the successor.
 - **The drop revision's own gate** (``e2f3a4b5c6d7``, plain Alembic — the path
@@ -297,24 +299,32 @@ async def _successor_of(admin_db: DatabaseSession, name: str) -> str | None:
 # ------------------------------------------------------------------- runner
 
 
-async def test_full_upgrade_migrates_verifies_and_drops_and_the_sak_key_resolves(
+async def test_full_upgrade_migrates_verifies_and_drops_and_refuses_the_sak_key(
     integration_config: AppConfig,
     admin_db: DatabaseSession,
     control_db: DatabaseSession,
     restore_admin_head: None,
     runner_config: None,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Unmigrated SAs (an active one with grant, binding and inline rules, a
-    pending one) → one full upgrade migrates, verifies, sweeps and drops; the
-    ``sak_`` key keeps authenticating, now as the successor agent."""
+    """Unmigrated SAs (an active one with grant, binding and inline rules, one
+    holding a converted ``jntc_live_`` toolkit key, a pending one) → one full
+    upgrade migrates, verifies, sweeps and drops. The ``sak_`` key stops
+    authenticating (0.41); the ``jntc_live_`` key keeps resolving as its
+    successor; stdout carries the SA → successor WARNING summary."""
     await _downgrade(integration_config, admin_db, control_db)
     await _seed_owner(admin_db)
     plaintext = "sak_p4test_live_key"
+    toolkit_plaintext = "jntc_live_p4test_toolkit_key"
+    toolkit_sa = "sva_p4test_toolkit"
     await _seed_sa(
         admin_db,
         api_key=plaintext,
         scopes=("capabilities:execute", "service-accounts:read"),
         credential_ids=(_CRED,),
+    )
+    await _seed_sa(
+        admin_db, sa_id=toolkit_sa, api_key=toolkit_plaintext, scopes=("capabilities:execute",)
     )
     await _seed_sa(admin_db, sa_id="sva_p4test_pending", status="pending")
     await _seed_rule_credential(control_db, _SA)
@@ -329,11 +339,30 @@ async def test_full_upgrade_migrates_verifies_and_drops_and_the_sak_key_resolves
 
     successor = await _successor_of(admin_db, f"service-account:{_SA}")
     assert successor is not None and successor.startswith("agnt_")
-    identity = await resolver.resolve(plaintext)
+    # The successor carries the copied digest, yet the sak_ key is refused.
+    assert await resolver.resolve(plaintext) is None
+    toolkit_successor = await _successor_of(admin_db, f"service-account:{toolkit_sa}")
+    assert toolkit_successor is not None
+    identity = await resolver.resolve(toolkit_plaintext)
     assert identity is not None
-    assert identity.sub == successor
+    assert identity.sub == toolkit_successor
     assert identity.actor_type is ActorType.AGENT
-    assert identity.permissions == ["capabilities:execute"]  # retired scope not carried
+    assert identity.permissions == ["capabilities:execute"]
+    grants = await _scalar(
+        admin_db,
+        "SELECT scope FROM actor_scope_grants WHERE actor_id = :a",
+        {"a": successor},
+    )
+    assert grants == "capabilities:execute"  # retired scope not carried
+
+    out = capsys.readouterr().out
+    assert "WARNING (service-account retirement)" in out
+    assert "no longer authenticate" in out
+    assert "jak_" in out
+    assert f"{_SA} -> {successor}" in out
+    assert f"{toolkit_sa} -> {toolkit_successor}" in out
+    assert "sva_p4test_pending -> no successor agent" in out
+    assert plaintext not in out and _digest(plaintext) not in out  # no secrets
 
     # The successor holds the binding and the inline rules; no sva_ row survives.
     assert await _rule_holders(control_db) == {successor: 2}
@@ -355,7 +384,7 @@ async def test_full_upgrade_migrates_verifies_and_drops_and_the_sak_key_resolves
     assert await _successor_of(admin_db, "service-account:sva_p4test_pending") is None
 
 
-async def test_failed_verification_refuses_names_the_sa_drops_nothing_and_rerun_succeeds(
+async def test_failed_migration_refuses_names_the_sa_drops_nothing_and_rerun_succeeds(
     integration_config: AppConfig,
     admin_db: DatabaseSession,
     control_db: DatabaseSession,
@@ -363,42 +392,37 @@ async def test_failed_verification_refuses_names_the_sa_drops_nothing_and_rerun_
     runner_config: None,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """A post-stamp SA key rotation (the successor holds the old digest) fails
-    digest parity: the runner exits 4 naming the SA, admin stays before the
-    drop with every SA-side original in place. Once the operator resolves it
-    (here: rotates the successor's key), the re-run completes the drop."""
+    """An SA whose API-key digest already sits on another agent's credential
+    cannot be migrated (``uq_agent_credentials_api_key_hash``): the runner
+    exits 4 naming the SA, admin stays before the drop with every SA-side
+    original in place. Once the operator resolves it (here: clears the
+    conflicting credential), the re-run completes the drop."""
     await _downgrade(integration_config, admin_db, control_db)
     await _seed_owner(admin_db)
+    clash = "jntc_live_p4test_clash"
     await _exec(
         admin_db,
         "INSERT INTO agents (id, name, owner_id, registered_by, status, created_by)"
-        " VALUES (:id, 'p4-successor', :owner, :by, 'active', :by)",
-        {"id": _AGENT, "owner": _OWNER, "by": _SUCCESSOR_REGISTRAR},
+        " VALUES (:id, 'p4-other-agent', :owner, :owner, 'active', :owner)",
+        {"id": _AGENT, "owner": _OWNER},
     )
     await _exec(
         admin_db,
         "INSERT INTO agent_credentials (id, agent_id, api_key_hash, created_by)"
         " VALUES ('agc_p4test', :id, :digest, 'system:test')",
-        {"id": _AGENT, "digest": _digest("sak_p4test_before_rotation")},
+        {"id": _AGENT, "digest": _digest(clash)},
     )
-    await _seed_sa(
-        admin_db, api_key="sak_p4test_after_rotation", scopes=("toolkit:read",), stamp=_AGENT
-    )
-    # The earlier run's grant twin (so only the digest is wrong).
-    await _exec(
-        admin_db,
-        "INSERT INTO actor_scope_grants (id, actor_id, actor_type, scope)"
-        " VALUES ('asg_p4test_twin', :a, 'agent', 'toolkit:read')",
-        {"a": _AGENT},
-    )
+    await _seed_sa(admin_db, api_key=clash, scopes=("toolkit:read",))
 
     assert await _run_full_upgrade() == run_mod.EXIT_UPGRADE_STEP_FAILED
 
-    err = capsys.readouterr().err
+    captured = capsys.readouterr()
+    err = captured.err
     assert "Refusing to retire the service accounts" in err
     assert _SA in err
-    assert "API-key digest" in err
+    assert "migration failed" in err
     assert "Nothing was swept or dropped" in err
+    assert "WARNING (service-account retirement)" not in captured.out
     assert set(_SA_TABLES) <= await _table_names(admin_db)
     assert await _admin_revision(admin_db) == _ADMIN_PRE_DROP
     status = await _scalar(
@@ -410,12 +434,8 @@ async def test_failed_verification_refuses_names_the_sa_drops_nothing_and_rerun_
     )
     assert sa_grants == 1
 
-    # The fix: a successor-key rotation after the stamp supersedes the SA digest.
-    await _exec(
-        admin_db,
-        "UPDATE agent_credentials SET api_key_hash = :d, rotated_at = :now WHERE agent_id = :a",
-        {"d": _digest("ak_p4test_new"), "now": dt.datetime.now(dt.UTC), "a": _AGENT},
-    )
+    # The fix: the conflicting credential is cleared.
+    await _exec(admin_db, "DELETE FROM agent_credentials WHERE agent_id = :a", {"a": _AGENT})
     assert await _run_full_upgrade() == 0
     assert not set(_SA_TABLES) & await _table_names(admin_db)
 

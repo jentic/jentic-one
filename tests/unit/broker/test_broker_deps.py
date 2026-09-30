@@ -19,6 +19,7 @@ from jentic.problem_details import ProblemDetailException, problem_detail_except
 from jentic_one.broker.core.token_validation import CachedTokenValidator
 from jentic_one.broker.services.auth import DualTokenValidator, JwtTokenValidator, JwtVerifier
 from jentic_one.broker.web.deps import RequireExecuteAccess
+from jentic_one.shared.auth.api_key_resolver import RETIRED_SERVICE_ACCOUNT_KEY_DETAIL
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.scopes import BROKER_EXECUTE_SCOPE
@@ -83,6 +84,18 @@ def test_returns_401_with_invalid_token() -> None:
     client = _create_test_app(resolver_return=None)
     resp = client.post("/execute", headers={"Authorization": "Bearer at_invalid"})
     assert resp.status_code == 401
+
+
+def test_sak_key_401_names_the_retirement_and_the_jak_replacement() -> None:
+    """0.41: a refused ``sak_`` key gets the retirement detail, not the generic one."""
+    client = _create_test_app(resolver_return=None)
+    resp = client.post("/execute", headers={"Authorization": "Bearer sak_retired"})
+    assert resp.status_code == 401
+    assert resp.json()["detail"] == RETIRED_SERVICE_ACCOUNT_KEY_DETAIL
+    assert "jak_" in resp.json()["detail"]
+
+    other = client.post("/execute", headers={"Authorization": "Bearer at_invalid"})
+    assert other.json()["detail"] == "Invalid or expired access token"
 
 
 def test_returns_401_with_inactive_token() -> None:

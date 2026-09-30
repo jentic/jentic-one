@@ -1,20 +1,18 @@
 """Integration tests for retired ``jntc_live_`` / ``sak_`` key authentication.
 
 The theme-5 and theme-8 migrations copied each retired key's SHA-256 digest
-onto its successor agent (``agent_credentials.api_key_hash``), so the
-unchanged plaintext resolves as that *agent*. Theme-8 Phase 4 dropped the
-service-account tables and with them the SA fallback: a retired key whose
-digest no agent holds fails closed. Seeds the admin DB accordingly and asserts
-the agent arm, the deprecation warnings, and the rejection paths (inactive
-successor, unknown key). Acceptance of ``jntc_live_`` plaintexts stays until
-the published deprecation date (no earlier than 2026-12-01).
+onto its successor agent (``agent_credentials.api_key_hash``). A
+``jntc_live_`` plaintext keeps resolving as that *agent* until the published
+deprecation date (no earlier than 2026-12-01); a digest no agent holds, or an
+inactive successor, fails closed. ``sak_`` keys stopped working in 0.41
+(theme-8 Phase 4): they are refused even when a successor holds the digest.
 """
 
 from __future__ import annotations
 
 import hashlib
 import secrets
-from collections.abc import AsyncGenerator, Callable
+from collections.abc import AsyncGenerator
 
 import pytest
 import structlog
@@ -106,21 +104,12 @@ async def _seed_successor(
         await session.commit()
 
 
-@pytest.mark.parametrize(
-    ("make_key", "event"),
-    [
-        pytest.param(_retired_toolkit_key, "deprecated_toolkit_key_used", id="jntc_live_"),
-        pytest.param(
-            _retired_service_account_key, "deprecated_service_account_key_used", id="sak_"
-        ),
-    ],
-)
-async def test_retired_key_resolves_to_successor_agent(
-    admin_db: DatabaseSession, clean_tables: None, make_key: Callable[[], str], event: str
+async def test_retired_toolkit_key_resolves_to_successor_agent(
+    admin_db: DatabaseSession, clean_tables: None
 ) -> None:
-    """The unchanged plaintext resolves as the successor agent, and each
-    resolve logs the prefix's deprecation WARNING naming that agent."""
-    plaintext = make_key()
+    """The unchanged ``jntc_live_`` plaintext resolves as the successor agent,
+    and each resolve logs the deprecation WARNING naming that agent."""
+    plaintext = _retired_toolkit_key()
     await _seed_successor(admin_db, plaintext=plaintext)
 
     resolver = ApiKeyResolver(admin_db)
@@ -132,9 +121,26 @@ async def test_retired_key_resolves_to_successor_agent(
     assert identity.actor_type is ActorType.AGENT
     assert identity.permissions == [BROKER_EXECUTE_SCOPE]
     assert identity.active is True
-    warnings = [log for log in logs if log["event"] == event]
+    warnings = [log for log in logs if log["event"] == "deprecated_toolkit_key_used"]
     assert len(warnings) == 1 and warnings[0]["log_level"] == "warning"
     assert warnings[0]["agent_id"] == _AGENT
+
+
+async def test_sak_key_is_refused_although_its_successor_holds_the_digest(
+    admin_db: DatabaseSession, clean_tables: None
+) -> None:
+    """0.41: a ``sak_`` key never authenticates, even as an active successor
+    holding its digest; the INFO refusal names that agent for the operator."""
+    plaintext = _retired_service_account_key()
+    await _seed_successor(admin_db, plaintext=plaintext)
+
+    resolver = ApiKeyResolver(admin_db)
+    with structlog.testing.capture_logs() as logs:
+        assert await resolver.resolve(plaintext) is None
+
+    refused = [log for log in logs if log["event"] == "retired_service_account_key_refused"]
+    assert len(refused) == 1 and refused[0]["log_level"] == "info"
+    assert refused[0]["successor_agent_id"] == _AGENT
 
 
 async def test_retired_key_with_inactive_successor_fails_closed(
@@ -151,15 +157,8 @@ async def test_retired_key_with_inactive_successor_fails_closed(
     assert len(closed) == 1 and closed[0]["agent_id"] == _AGENT
 
 
-@pytest.mark.parametrize(
-    "plaintext",
-    [
-        pytest.param("jntc_live_does_not_exist", id="jntc_live_"),
-        pytest.param("sak_does_not_exist", id="sak_"),  # pragma: allowlist secret
-    ],
-)
-async def test_unknown_retired_key_resolves_to_none(
-    admin_db: DatabaseSession, clean_tables: None, plaintext: str
+async def test_unknown_retired_toolkit_key_resolves_to_none(
+    admin_db: DatabaseSession, clean_tables: None
 ) -> None:
     """No agent holds the digest (never migrated, or rotated): fail closed —
     there is no service-account fallback after theme-8 Phase 4."""
@@ -167,5 +166,5 @@ async def test_unknown_retired_key_resolves_to_none(
 
     resolver = ApiKeyResolver(admin_db)
     with structlog.testing.capture_logs() as logs:
-        assert await resolver.resolve(plaintext) is None
+        assert await resolver.resolve("jntc_live_does_not_exist") is None
     assert [log for log in logs if log["event"] == "retired_key_unresolved"]

@@ -1,10 +1,14 @@
-"""Unified API-key resolver — resolves jak_ (and retired sak_/jntc_live_) keys to Identity."""
+"""Unified API-key resolver — resolves jak_ (and retired jntc_live_) keys to Identity.
+
+Retired ``sak_`` service-account keys are refused (theme-8 Phase 4, 0.41).
+"""
 
 from __future__ import annotations
 
 import enum
 import hashlib
 from dataclasses import dataclass
+from typing import Any
 
 import structlog
 from sqlalchemy import text
@@ -16,13 +20,25 @@ from jentic_one.shared.models import ActorType
 logger = structlog.get_logger(__name__)
 
 AGENT_API_KEY_PREFIX = "jak_"
-# Theme-8 Phase 4 dropped the service-account tables. A ``sak_`` key keeps
-# authenticating as its successor agent: the Phase-1 migration copied its
-# SHA-256 lookup digest into ``agent_credentials`` and this resolver matches by
-# digest, not by prefix. The prefix is DEPRECATED (see
-# ``docs/development/releasing.md``); each successful resolve logs a warning
-# naming the successor agent.
+# Theme-8 Phase 4 (0.41) retired service accounts: every one was migrated to a
+# successor agent and its tables were dropped. ``sak_`` keys no longer
+# authenticate — not even as the successor — and are refused by prefix before
+# any lookup, so a digest the migration copied onto a successor's credential
+# row (it may be a converted ``jntc_live_`` key's, which must keep working) can
+# never be reached with a ``sak_`` plaintext.
 RETIRED_SERVICE_ACCOUNT_KEY_PREFIX = "sak_"
+#: The 401 ``detail`` every surface answers for a ``sak_`` key.
+RETIRED_SERVICE_ACCOUNT_KEY_DETAIL = (
+    "Service-account keys (sak_) were retired in Jentic One 0.41: each service "
+    "account was migrated to an agent. Mint a jak_ key for that agent and use it instead."
+)
+
+
+def is_retired_service_account_key(token: str) -> bool:
+    """Whether ``token`` is a retired ``sak_`` service-account key."""
+    return token.startswith(RETIRED_SERVICE_ACCOUNT_KEY_PREFIX)
+
+
 # Theme-5 Phase 4 (key retirement): a retired toolkit key's plaintext keeps
 # authenticating as its successor agent for the same reason (digest copied into
 # ``agent_credentials``). The prefix is DEPRECATED (see
@@ -52,12 +68,13 @@ class ApiKeyResolver:
     """Resolves API keys to an Identity by digest lookup in ``agent_credentials``.
 
     - ``jak_`` keys query ``agent_credentials`` joined to ``agents``.
-    - ``sak_`` and ``jntc_live_`` keys (both retired, both deprecated) go
-      through the same lookup: the theme-8 / theme-5 migrations copied each
-      retired key's digest onto its successor agent, so the key resolves as
-      that agent. There is no fallback (theme-8 Phase 4 dropped the
-      service-account tables): a digest miss, or a hit on an inactive agent,
-      fails closed with a WARNING naming the next step.
+    - ``jntc_live_`` keys (retired, deprecated) go through the same lookup:
+      the theme-5 migration copied each retired key's digest onto its
+      successor agent, so the key resolves as that agent. A digest miss, or a
+      hit on an inactive agent, fails closed with a log line naming the next
+      step.
+    - ``sak_`` keys (retired in 0.41) never resolve: they are refused with an
+      INFO line naming the successor agent when one holds the digest.
 
     Implements ``TokenResolverProtocol`` (via ``resolve_access_token``) so it
     can be wrapped by ``CachedTokenValidator``.
@@ -80,13 +97,27 @@ class ApiKeyResolver:
                 event="deprecated_toolkit_key_used",
                 deadline_note="jntc_live_ acceptance ends no earlier than 2026-12-01",
             )
-        if raw_key.startswith(RETIRED_SERVICE_ACCOUNT_KEY_PREFIX):
-            return await self._resolve_retired(
-                raw_key,
-                event="deprecated_service_account_key_used",
-                deadline_note="sak_ acceptance is deprecated",
-            )
+        if is_retired_service_account_key(raw_key):
+            await self._refuse_service_account_key(raw_key)
         return None
+
+    async def _refuse_service_account_key(self, raw_key: str) -> None:
+        """Log the refusal of a retired ``sak_`` key; it never authenticates.
+
+        INFO, not WARNING: a stale key in a client's config lands here on
+        every call — an expected client-side 401, not a server fault. The
+        digest lookup only names the successor agent for the operator.
+        """
+        row = await self._credential_row(raw_key)
+        logger.info(
+            "retired_service_account_key_refused",
+            successor_agent_id=None if row is None else row.agent_id,
+            actionable_step=(
+                "Service-account (sak_) keys stopped working in 0.41. Mint a jak_ key "
+                "for the successor agent and switch this caller to it (see "
+                "'Upgrading to 0.41.0' in docs/development/releasing.md)."
+            ),
+        )
 
     async def _resolve_retired(
         self, raw_key: str, *, event: str, deadline_note: str
@@ -119,8 +150,8 @@ class ApiKeyResolver:
                 ),
             )
             return None
-        # info, not warning: after Phase 4 every stale sak_/jntc_live_ key in
-        # a client's config lands here on each call; it is an expected,
+        # info, not warning: every stale jntc_live_ key in a client's config
+        # lands here on each call; it is an expected,
         # client-caused 401, not an operator-actionable server fault.
         logger.info(
             "retired_key_unresolved",
@@ -137,7 +168,8 @@ class ApiKeyResolver:
         arm = await self._lookup_agent(raw_key)
         return arm if isinstance(arm, Identity) else None
 
-    async def _lookup_agent(self, raw_key: str) -> Identity | _AgentArm | _InactiveAgent:
+    async def _credential_row(self, raw_key: str) -> Any:
+        """The agent holding ``raw_key``'s digest: ``agent_id, status, owner_id``."""
         key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
         stmt = text(
             "SELECT a.id AS agent_id, a.status, a.owner_id"
@@ -146,8 +178,10 @@ class ApiKeyResolver:
             " WHERE ac.api_key_hash = :key_hash"
         )
         async with self._admin_db.session() as session:
-            row = (await session.execute(stmt, {"key_hash": key_hash})).one_or_none()
+            return (await session.execute(stmt, {"key_hash": key_hash})).one_or_none()
 
+    async def _lookup_agent(self, raw_key: str) -> Identity | _AgentArm | _InactiveAgent:
+        row = await self._credential_row(raw_key)
         if row is None:
             return _AgentArm.MISS
         if row.status != "active":

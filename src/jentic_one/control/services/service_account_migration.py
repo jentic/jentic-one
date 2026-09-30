@@ -2,7 +2,10 @@
 
 Converts every service account into a successor **agent** (copy-then-sweep,
 N1): the SA's stored scope grants, credential bindings, and API-key
-digest are COPIED onto a raw-SQL-minted successor agent, the SA's opaque
+digest are COPIED onto a raw-SQL-minted successor agent (the digest only
+matters for a retired ``jntc_live_`` toolkit key the theme-5 retirement
+converted into the SA — ``sak_`` keys stopped authenticating in 0.41 and the
+resolver refuses them by prefix), the SA's opaque
 sessions are revoked (H-1), and the row is stamped
 (``migrated_to_actor_id`` + ``migrated_at``) — all in one admin transaction
 per SA, with per-SA audit rows under the system actor (F4). The control-DB
@@ -25,9 +28,11 @@ jentic_one.migrations.run``) calls it on a full upgrade, after the admin DB
 reaches ``d1e2f3a4b5c6`` and before it applies the ``e2f3a4b5c6d7`` drop. It
 migrates whatever is still unstamped, copies onto earlier successors any SA
 grant or binding created after their stamp, **verifies** (every SA stamped, no
-failed row, grant and binding twins present, digest parity, inline-rule
-parity) and only on a clean verification sweeps the SA-side originals and
-deletes the remaining ``sva_``-keyed control-DB rules. A failed verification
+failed row, grant and binding twins present, inline-rule parity) and only on
+a clean verification sweeps the SA-side originals and deletes the remaining
+``sva_``-keyed control-DB rules. It then WARNS (log line + the runner's
+stdout) with every service account → successor agent id, because the
+accounts' ``sak_`` keys no longer work. A failed verification
 raises :class:`ServiceAccountRetirementError` naming every failing SA before
 anything is swept; every step is idempotent, so a re-run after the fix is
 safe.
@@ -178,8 +183,9 @@ class ServiceAccountMigrationOutcome:
     #: objects ``created_by`` the ``sva_`` id are NOT re-attributed, so the
     #: successor loses owner-scoped access to them; (b) with
     #: ``parent_actor_id=owner`` any copied ``owner:*`` delegation scope now
-    #: widens to the owner's resources; (c) migrated ``sak_`` callers now act
-    #: as an agent — ``POST /oauth/mint`` is gone (404),
+    #: widens to the owner's resources; (c) ``sak_`` keys no longer
+    #: authenticate (0.41): callers need a ``jak_`` key for the successor,
+    #: and as an agent ``POST /oauth/mint`` is gone (404),
     #: ``/integrations:connect`` refuses ``agent_id`` in the body, and an
     #: agent-initiated connect session cannot be confirmed by the agent itself
     #: (``_forbid_self_confirm``).
@@ -224,6 +230,20 @@ class RetirementOutcome:
     permission_rules_deleted: int = 0
     #: Control-DB ``sva_`` rules left behind by ``sva_`` ids with no SA row.
     orphan_permission_rules_deleted: int = 0
+    #: Every retired service account → its successor agent id (``None``: a
+    #: skip-stamped account, which got no successor). Ids only, never secrets.
+    successors: dict[str, str | None] = field(default_factory=dict)
+
+
+#: The operator warning printed (and logged) after a retirement that retired
+#: at least one service account.
+SAK_KEYS_RETIRED_WARNING = (
+    "service-account (sak_) keys no longer authenticate: each service account "
+    "below was migrated to the listed successor agent. Mint a jak_ key for that "
+    "agent and switch its callers to it. (A retired jntc_live_ toolkit key that "
+    "had been converted into one of these accounts keeps working, as the "
+    "successor agent, until at least 2026-12-01.)"
+)
 
 
 def rule_parity_problems(
@@ -306,8 +326,9 @@ class ServiceAccountMigrationService:
             f" parent_actor_id={row.owner_id} (OQ-5, report-only); any copied owner:*"
             f" scope now also reaches that owner's resources; control-DB objects"
             f" created_by {row.id} are not re-attributed (the successor loses"
-            f" owner-scoped access to them); sak_ callers now act as an agent:"
-            f" POST /oauth/mint is gone (404), /integrations:connect refuses agent_id"
+            f" owner-scoped access to them); sak_ keys no longer authenticate"
+            f" (0.41) — callers need a jak_ key for the successor, and as an"
+            f" agent: POST /oauth/mint is gone (404), /integrations:connect refuses agent_id"
             f" in the body, and agent-initiated connect sessions cannot be"
             f" self-confirmed"
         )
@@ -713,9 +734,13 @@ class ServiceAccountMigrationService:
            the stamp (only those: a scope or binding an operator removed from
            the successor is never resurrected).
         3. Verify: no failed row, nothing unstamped, grant and binding twins
-           present, digest parity, inline-rule parity. Any problem raises
-           :class:`ServiceAccountRetirementError`.
+           present, inline-rule parity. Any problem raises
+           :class:`ServiceAccountRetirementError`. (There is no API-key digest
+           parity check: ``sak_`` keys stop working in 0.41 whatever the
+           successor's credential row holds.)
         4. :meth:`sweep`, then delete the ``sva_`` rules no SA row owns.
+        5. WARN with every service account → successor agent id
+           (:data:`SAK_KEYS_RETIRED_WARNING`).
 
         Raises:
             ServiceAccountRetirementError: the verification failed.
@@ -736,6 +761,8 @@ class ServiceAccountMigrationService:
                     actionable_step=_RETIREMENT_RERUN_STEP,
                 )
                 raise error
+            async with self._ctx.admin_db.session() as session:
+                stamps = await ServiceAccountMigrationRepository.list_stamped(session)
             swept = await self.sweep()
             orphans = 0
             async with self._ctx.control_db.transaction() as control_session:
@@ -754,8 +781,19 @@ class ServiceAccountMigrationService:
             refresh_tokens_revoked=swept.refresh_tokens_revoked,
             permission_rules_deleted=swept.permission_rules_deleted,
             orphan_permission_rules_deleted=orphans,
+            successors={
+                sa_id: None if stamp == SKIPPED_STAMP else stamp
+                for sa_id, stamp in sorted(stamps.items())
+            },
         )
         logger.info("service_account_retirement_done", **_log_fields(asdict(result)))
+        if result.successors:
+            logger.warning(
+                "service_account_keys_retired",
+                service_account_count=len(result.successors),
+                successors=result.successors,
+                actionable_step=SAK_KEYS_RETIRED_WARNING,
+            )
         return result
 
     async def _copy_post_stamp_rows(self, migrated_now: set[str]) -> tuple[int, int]:
@@ -832,7 +870,6 @@ class ServiceAccountMigrationService:
             unstamped = await ServiceAccountMigrationRepository.list_unstamped_ids(session)
             grant_gaps = await ServiceAccountMigrationRepository.list_grant_twin_gaps(session)
             binding_gaps = await ServiceAccountMigrationRepository.list_binding_twin_gaps(session)
-            digest = await ServiceAccountMigrationRepository.list_digest_mismatches(session)
             pairs = await ServiceAccountMigrationRepository.list_migrated_pairs(session)
         problems += [
             RetirementProblem(sa_id, "not migrated") for sa_id in unstamped if sa_id not in failed
@@ -857,14 +894,6 @@ class ServiceAccountMigrationService:
             for b in binding_gaps
             if b.service_account_id in migrated_now or b.post_stamp
         ]
-        problems += [
-            RetirementProblem(
-                d.service_account_id,
-                f"successor {d.successor_agent_id} does not hold the service account's "
-                "current API-key digest (sak_ keys would stop resolving after the drop)",
-            )
-            for d in digest
-        ]
         if pairs:
             actor_ids = [sa_id for sa_id, _ in pairs] + [agent_id for _, agent_id in pairs]
             async with self._ctx.control_db.session() as control_session:
@@ -876,6 +905,7 @@ class ServiceAccountMigrationService:
 
 
 __all__ = [
+    "SAK_KEYS_RETIRED_WARNING",
     "SYSTEM_ACTOR",
     "RetirementOutcome",
     "RetirementProblem",

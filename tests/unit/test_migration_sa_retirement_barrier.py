@@ -16,6 +16,10 @@ from pathlib import Path
 
 import pytest
 
+from jentic_one.control.services.service_account_migration import (
+    SAK_KEYS_RETIRED_WARNING,
+    RetirementOutcome,
+)
 from jentic_one.migrations import run as run_mod
 
 _PRE_DROP = run_mod.SA_DROP_PARENT_REVISION
@@ -149,3 +153,27 @@ def test_unexpected_retirement_error_exits_4_and_names_the_parent(
     err = capsys.readouterr().err
     assert "the service-account retirement could not run (RuntimeError" in err
     assert f"admin stays at {_PRE_DROP}" in err
+
+
+def test_sak_warning_lists_each_service_account_and_its_successor(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    outcome = RetirementOutcome(
+        action="retired", successors={"sva_a": "agnt_a", "sva_pending": None}
+    )
+
+    run_mod._print_sak_warning(outcome)
+
+    assert capsys.readouterr().out.splitlines() == [
+        f"==> WARNING (service-account retirement): {SAK_KEYS_RETIRED_WARNING}",
+        "==> WARNING   sva_a -> agnt_a",
+        "==> WARNING   sva_pending -> no successor agent (the account was not active or disabled)",
+    ]
+
+
+def test_sak_warning_is_silent_without_service_accounts(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    run_mod._print_sak_warning(RetirementOutcome(action="no_tables"))
+
+    assert capsys.readouterr().out == ""

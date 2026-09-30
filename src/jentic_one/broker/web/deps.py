@@ -22,6 +22,10 @@ from jentic_one.broker.core.exceptions import RateLimitExceededError
 from jentic_one.broker.core.proxy_headers import reconstruct_upstream_url
 from jentic_one.broker.services.auth import CompositeTokenValidator
 from jentic_one.broker.services.idempotency import SharedStateIdempotencyStore
+from jentic_one.shared.auth.api_key_resolver import (
+    RETIRED_SERVICE_ACCOUNT_KEY_DETAIL,
+    is_retired_service_account_key,
+)
 from jentic_one.shared.auth.errors import TokenValidationError
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.broker.protocols import (
@@ -112,7 +116,11 @@ async def require_broker_identity(request: Request) -> Identity:
         resolved = await validator.validate(credential)
     except TokenValidationError as exc:
         raise Unauthorized(
-            detail="Invalid or expired access token",
+            detail=(
+                RETIRED_SERVICE_ACCOUNT_KEY_DETAIL
+                if is_retired_service_account_key(credential)
+                else "Invalid or expired access token"
+            ),
             instance=request.url.path,
             type="unauthorized",
         ) from exc

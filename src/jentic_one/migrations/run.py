@@ -35,7 +35,10 @@ because migrations must not import application code. It is not an upgrade
 step: those run after head, i.e. after the drop. A refused verification exits
 ``4`` with admin still before the drop, and nothing swept; a re-run is safe.
 A partial or targeted upgrade skips it — the drop revision then refuses on
-any service account the retirement has not finished.
+any service account the retirement has not finished. A retirement that
+retired any service account prints ``==> WARNING`` lines on stdout listing
+each service account → successor agent id: ``sak_`` keys stop working in 0.41
+and their callers must switch to a ``jak_`` key of the successor agent.
 """
 
 from __future__ import annotations
@@ -53,6 +56,8 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 
 from jentic_one.control.services.service_account_migration import (
+    SAK_KEYS_RETIRED_WARNING,
+    RetirementOutcome,
     ServiceAccountMigrationService,
     ServiceAccountRetirementError,
 )
@@ -188,7 +193,18 @@ async def _retire_service_accounts_async() -> int:
             return EXIT_UPGRADE_STEP_FAILED
     print(f"==> service-account retirement: {outcome.action}", flush=True)
     print(json.dumps(asdict(outcome)), flush=True)
+    _print_sak_warning(outcome)
     return 0
+
+
+def _print_sak_warning(outcome: RetirementOutcome) -> None:
+    """Tell the operator which agents replaced which service accounts (ids only)."""
+    if not outcome.successors:
+        return
+    print(f"==> WARNING (service-account retirement): {SAK_KEYS_RETIRED_WARNING}", flush=True)
+    for sa_id, agent_id in outcome.successors.items():
+        target = agent_id or "no successor agent (the account was not active or disabled)"
+        print(f"==> WARNING   {sa_id} -> {target}", flush=True)
 
 
 def retire_service_accounts() -> int:

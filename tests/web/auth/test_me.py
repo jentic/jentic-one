@@ -27,6 +27,7 @@ from jentic_one.admin.services._support.passwords import hash_password
 from jentic_one.admin.services._support.tokens import issue_jwt
 from jentic_one.auth.services.token_service import TokenService
 from jentic_one.auth.web.app import create_app
+from jentic_one.shared.auth.api_key_resolver import RETIRED_SERVICE_ACCOUNT_KEY_DETAIL
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import ActorType, InviteState
 from tests.web.conftest import noop_lifespan
@@ -341,8 +342,9 @@ def test_me_retired_service_account_subject_is_401(web_context: Context) -> None
     assert resp.status_code == 401
 
 
-def test_me_retired_sak_key_without_successor_is_401(web_context: Context) -> None:
-    """A ``sak_`` key whose digest no agent holds resolves to nothing (401)."""
+def test_me_retired_sak_key_is_401_with_the_retirement_detail(web_context: Context) -> None:
+    """0.41: every ``sak_`` key is refused (401) with a detail naming the
+    retirement and the ``jak_`` replacement."""
     app = _build_app(web_context)
     with TestClient(
         app,
@@ -350,6 +352,7 @@ def test_me_retired_sak_key_without_successor_is_401(web_context: Context) -> No
     ) as client:
         resp = client.get("/me")
     assert resp.status_code == 401
+    assert resp.json()["detail"] == RETIRED_SERVICE_ACCOUNT_KEY_DETAIL
 
 
 def test_me_unauthenticated(web_context: Context) -> None:

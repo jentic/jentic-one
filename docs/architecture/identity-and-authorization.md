@@ -22,16 +22,16 @@ Agents are the only machine identity. Headless integrations (CI jobs, cron
 runners, scripts) register as an agent and authenticate with its `jak_` API
 key.
 
-Two former actor kinds are retired, and their existing plaintexts keep
-working through the deprecation window (see the
+Two former actor kinds are retired (see the
 [release runbook](../development/releasing.md)):
 
-- **`service_account`** — removed in theme 8. The Phase-1 migration
-  converted each service account into a successor agent, carrying over its
-  grants, bindings, and API-key digest, so an existing `sak_` plaintext keeps
-  authenticating as the successor agent. The service-account tables are
-  dropped in 0.41 (theme-8 Phase 4), so there is no service-account fallback:
-  an unmigrated `sak_` key is refused. No new `sak_` keys are issued; the
+- **`service_account`** — removed in theme 8. The migration converted each
+  service account into a successor agent, carrying over its grants and
+  bindings. In 0.41 (theme-8 Phase 4) the service-account tables are dropped
+  and **`sak_` keys stop working**: every surface answers a `sak_` key with a
+  401 whose detail says service-account keys were retired and to mint a
+  `jak_` key for the successor agent (an INFO `retired_service_account_key_refused`
+  log line names that agent). No new `sak_` keys are issued; the
   `/service-accounts` API, `POST /oauth/mint`, and the `client_credentials`
   grant are gone. `service_account` is no longer an `ActorType` value.
   Leftover `service_account` token rows fail closed on every path, and
@@ -110,8 +110,9 @@ sequenceDiagram
    on NTP.
 
 Operators and the SPA use session JWTs minted at login; agent API
-keys (`jak_`, plus legacy `sak_`/`jntc_live_` plaintexts that resolve as
-their successor agents once migrated) are the long-lived alternative,
+keys (`jak_`, plus legacy `jntc_live_` plaintexts that resolve as their
+successor agents once migrated; retired `sak_` keys are refused) are the
+long-lived alternative,
 dispatched by prefix and matched by digest against
 the admin DB ([`shared/auth/api_key_resolver.py`](../../src/jentic_one/shared/auth/api_key_resolver.py)). JWT verification for
 asymmetric tokens allows only asymmetric algorithms — `alg: none` and all

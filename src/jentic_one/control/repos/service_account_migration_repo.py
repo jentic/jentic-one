@@ -76,41 +76,6 @@ _LIST_SERVICE_ACCOUNTS = text(
     " ORDER BY sa.id"
 )
 
-#: Digest parity (#1416): fully-migrated, unswept SAs whose successor does not
-#: hold the SA's still-live digest. LEFT JOINs so a missing successor agent
-#: or credential row surfaces as drift instead of silently dropping out
-#: (``agent_credentials.agent_id`` is unique — at most one row per agent).
-_SUCCESSOR_DIGEST_DRIFT_FROM = (
-    " FROM service_account_credentials sac"
-    " JOIN service_accounts sa ON sa.id = sac.service_account_id"
-    " LEFT JOIN agents a ON a.id = sa.migrated_to_actor_id"
-    " LEFT JOIN agent_credentials ac ON ac.agent_id = sa.migrated_to_actor_id"
-    " WHERE sac.api_key_hash IS NOT NULL"
-    " AND sa.migrated_to_actor_id IS NOT NULL"
-    " AND sa.migrated_to_actor_id != 'skipped'"
-    " AND (ac.api_key_hash IS NULL OR ac.api_key_hash != sac.api_key_hash)"
-)
-_SUCCESSOR_DIGEST_DRIFT_SQL = (
-    "SELECT sa.id AS service_account_id, sa.migrated_to_actor_id AS successor_agent_id"
-    + _SUCCESSOR_DIGEST_DRIFT_FROM
-)
-
-#: The successor was legitimately superseded after the stamp: archived, or its
-#: key rotated/revoked (every ``AgentCredentialRepository`` writer stamps
-#: ``rotated_at``). Written NULL-safe — a missing agent row, a missing
-#: credential row, or a NULL ``rotated_at``/``migrated_at`` evaluates to FALSE,
-#: never NULL, so ``NOT (...)`` keeps those rows counted (fail-closed).
-_SUCCESSOR_SUPERSEDED_PREDICATE = (
-    "(a.id IS NOT NULL AND (a.status = 'archived'"
-    " OR (ac.rotated_at IS NOT NULL AND sa.migrated_at IS NOT NULL"
-    " AND ac.rotated_at > sa.migrated_at)))"
-)
-
-#: Digest parity as one statement (:meth:`list_digest_mismatches`).
-DIGEST_MISMATCH_SQL = (
-    _SUCCESSOR_DIGEST_DRIFT_SQL + f" AND NOT {_SUCCESSOR_SUPERSEDED_PREDICATE}" + " ORDER BY sa.id"
-)
-
 #: Stamped rows the sweep has not finished (:meth:`list_sweepable`). The
 #: theme-8 Phase-4 drop migration (``e2f3a4b5c6d7``) refuses while any row
 #: matches and carries a verbatim copy — pinned equal by
@@ -706,25 +671,3 @@ class ServiceAccountMigrationRepository:
             },
         )
         return bool(result.rowcount)  # type: ignore[attr-defined]
-
-    @staticmethod
-    async def list_digest_mismatches(session: AsyncSession) -> list[Any]:
-        """Digest parity: the successor holds the SA's (still-live) digest.
-
-        Scoped to fully-migrated SAs whose SA-side digest is still non-NULL —
-        after the sweep the SA side is NULLed by design (copy-then-sweep),
-        so swept rows are excluded rather than false-failed.
-
-        A successor that no longer holds the copied digest because it was
-        legitimately *superseded* (#1416: its key rotated or revoked after the
-        stamp, or the agent archived) is not drift and is excluded — the sweep
-        NULLs the stale SA digest. Everything else fails closed: a missing
-        successor agent row, a missing credential row, or a digest that
-        changed without the credential writers' ``rotated_at`` stamp (a
-        raw-SQL writer bypassing the service), including an SA key rotated
-        after the stamp.
-
-        Rows: ``service_account_id, successor_agent_id``.
-        """
-        rows = await session.execute(text(DIGEST_MISMATCH_SQL))
-        return list(rows.all())
