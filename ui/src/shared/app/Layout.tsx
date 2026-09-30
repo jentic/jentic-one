@@ -8,7 +8,6 @@ import { ShellActivityEffects, isRailHiddenOn } from '@/shared/app/rail/ShellAct
 import { ToastRegion } from '@/shared/app/ToastRegion';
 import { useShellNavigation } from '@/shared/app/shellNavigation';
 import { useLinkViewTransitions } from '@/shared/app/viewTransitions';
-import { useScrollToTopOnPathChange } from '@/shared/app/useScrollToTopOnPathChange';
 import { ErrorBoundary } from '@/shared/ui/ErrorBoundary';
 import { useCoversRightEdge } from '@/shared/ui/rightEdge';
 import { AgentStreamProvider } from '@/shared/lib/agentStream';
@@ -45,7 +44,8 @@ import { SHELL_SCROLL_ID } from '@/shared/lib/shellScroll';
  * the rail here, the panel (and full log) on Monitor.
  *
  * Cross-page navigations (a pathname change, not a query-param one) land at
- * the top of the page (`useScrollToTopOnPathChange`).
+ * the top of `<main>` — or at the `#hash` anchor they link to — and
+ * Back/Forward restores the entry's offset (`useShellNavigation`).
  *
  * Everything is wrapped in `AgentStreamProvider` so the rail, the drawer and
  * the ToastHost share one live event stream. Rendered behind AuthGuard, so `user` is always
@@ -60,7 +60,6 @@ export function Layout() {
 	// The rail's column is `hidden` below `xl`, where it measures 0 and takes no room.
 	useCoversRightEdge(railRef, showRail);
 	useLinkViewTransitions();
-	useScrollToTopOnPathChange();
 
 	return (
 		<AgentStreamProvider>
