@@ -1,10 +1,11 @@
 /**
- * The pieces of `FirstAgentLanding`'s primary card: the register command, the
- * four-step stepper, the live status line, the collapsed CLI install hint, and
- * the arrived agent's details with its next action (Approve / Deny, then its
- * first API).
+ * The pieces of the self-registration flow (`RegisterFlow`), shown by the
+ * zero-agents landing's primary card and the New agent panel: the register
+ * command, the four-step stepper, the live status line, the collapsed CLI
+ * install hint, and the arrived agent's details with its next action
+ * (Approve / Deny, then its first API).
  */
-import { useEffect, useId, useReducer, useState, type ReactNode } from 'react';
+import { useEffect, useId, useReducer, useState, type ReactNode, type RefObject } from 'react';
 import { AnimatePresence, motion, type Transition } from 'framer-motion';
 import {
 	Bot,
@@ -54,6 +55,10 @@ import {
 	type CommandTone,
 } from '@/modules/agents/lib/registerCommand';
 
+/** Where the flow is shown: the landing's card, or the New agent panel (narrower,
+ * and its tab already says the route is recommended). */
+export type RegisterSurface = 'landing' | 'panel';
+
 /** Card header: glyph, title, one line, trailing badge. The title takes focus
  * (programmatically only) when the card's content changes under the keyboard. */
 function CardHeader({
@@ -67,7 +72,7 @@ function CardHeader({
 	glyph: ReactNode;
 	title: ReactNode;
 	detail: ReactNode;
-	badge: ReactNode;
+	badge?: ReactNode;
 }) {
 	return (
 		<div className="flex items-start gap-3">
@@ -82,7 +87,7 @@ function CardHeader({
 				</h2>
 				<p className="text-muted-foreground mt-[3px] text-sm leading-normal">{detail}</p>
 			</div>
-			<span className="shrink-0">{badge}</span>
+			{badge && <span className="shrink-0">{badge}</span>}
 		</div>
 	);
 }
@@ -105,10 +110,14 @@ export function RegisterCommand({
 	titleId,
 	name,
 	onNameChange,
+	surface = 'landing',
+	inputRef,
 }: {
 	titleId: string;
 	name: string;
 	onNameChange: (name: string) => void;
+	surface?: RegisterSurface;
+	inputRef?: RefObject<HTMLInputElement | null>;
 }) {
 	const inputId = useId();
 	const nameError = agentNameError(name);
@@ -132,7 +141,11 @@ export function RegisterCommand({
 				}
 				title="Let your agent register itself"
 				detail="Run one command where your agent runs. It signs up with its own key and shows up here for you to approve."
-				badge={<Badge className="font-sans text-[11px] font-semibold">Recommended</Badge>}
+				badge={
+					surface === 'landing' ? (
+						<Badge className="font-sans text-[11px] font-semibold">Recommended</Badge>
+					) : undefined
+				}
 			/>
 
 			<div className="mt-4 mb-2.5 flex items-start gap-3">
@@ -144,6 +157,7 @@ export function RegisterCommand({
 				</Label>
 				<div className="w-full max-w-[260px]">
 					<Input
+						ref={inputRef}
 						id={inputId}
 						size="sm"
 						value={name}
@@ -281,12 +295,19 @@ export function CliInstallHint({ reducedMotion }: { reducedMotion: boolean }) {
 // The stepper
 // ---------------------------------------------------------------------------
 
-const STEPS: Array<{ icon: LucideIcon; title: string; detail: string }> = [
+const STEPS: Array<{
+	icon: LucideIcon;
+	title: string;
+	detail: string | Record<RegisterSurface, string>;
+}> = [
 	{ icon: Terminal, title: 'Run the command', detail: 'The CLI makes its keypair and signs up' },
 	{
 		icon: Clock,
 		title: 'It appears here as pending',
-		detail: 'In the tab below, with no access',
+		detail: {
+			landing: 'In the tab below, with no access',
+			panel: 'And in your fleet, with no access',
+		},
 	},
 	{ icon: CircleCheck, title: 'You approve it', detail: 'Then it can authenticate' },
 	{ icon: KeyRound, title: 'Give it an API', detail: 'With the credential it calls through' },
@@ -317,17 +338,21 @@ const SEGMENT_S = 0.6;
 export function Stepper({
 	phase,
 	reducedMotion,
+	surface = 'landing',
 }: {
 	phase: FirstAgentPhase;
 	reducedMotion: boolean;
+	/** The panel is too narrow for four columns at any viewport: it keeps two. */
+	surface?: RegisterSurface;
 }) {
+	const twoColumns = surface === 'panel';
 	const states = STEP_STATES[phase];
 	const fills = SEGMENT_FILL[phase];
 	return (
 		<ol
 			aria-label="Registration progress"
 			data-testid="register-stepper"
-			className="mt-4 grid grid-cols-2 gap-x-3 gap-y-4 sm:grid-cols-4"
+			className={cn('mt-4 grid grid-cols-2 gap-x-3 gap-y-4', !twoColumns && 'sm:grid-cols-4')}
 		>
 			{STEPS.map(({ icon: Icon, title, detail }, i) => {
 				const state = states[i];
@@ -351,7 +376,7 @@ export function Stepper({
 								aria-hidden="true"
 								className={cn(
 									'bg-border absolute top-3.5 right-[calc(100%+6px)] h-px w-[calc(100%-28px)] overflow-hidden',
-									i === 2 && 'hidden sm:block',
+									i === 2 && (twoColumns ? 'hidden' : 'hidden sm:block'),
 								)}
 							>
 								<motion.span
@@ -394,7 +419,7 @@ export function Stepper({
 								{state === 'done' && <span className="sr-only"> (done)</span>}
 							</span>
 							<span className="text-muted-foreground mt-0.5 block text-xs leading-snug">
-								{detail}
+								{typeof detail === 'string' ? detail : detail[surface]}
 							</span>
 						</span>
 					</li>

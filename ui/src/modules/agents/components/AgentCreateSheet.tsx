@@ -1,89 +1,19 @@
 /**
- * AgentCreateSheet — slide-over form to create an agent manually. Fields reset
- * only after a successful create; a dismissal preserves the draft.
- *
- * Creating flows straight into the Add-APIs step: an agent with nothing bound can
- * authenticate but every call it makes fails, so "created" is not a finished
- * state. `Create empty` stays available, de-emphasised, for reserving an identity.
+ * AgentCreateSheet — slide-over form to create an agent manually. The draft
+ * lives in `useAgentCreateForm`, above the sheet's content, so a dismissal
+ * preserves it.
  */
-import { useEffect, useRef, useState } from 'react';
-import { Button, Input, Label, Textarea, SheetPrimitive } from '@/shared/ui';
-import { useCreateAgent, type AgentEntity } from '@/modules/agents/api';
-import { InitialScopesField } from '@/modules/agents/components/InitialScopesField';
-import { AGENT_NAME_MAX_LENGTH, agentNameError } from '@/modules/agents/lib/agentName';
+import { SheetPrimitive } from '@/shared/ui';
+import {
+	AgentCreateActions,
+	AgentCreateFields,
+	useAgentCreateForm,
+	type AgentCreateFormOptions,
+} from '@/modules/agents/components/AgentCreateForm';
 
-interface AgentCreateSheetProps {
-	open: boolean;
-	onClose: () => void;
-	/**
-	 * The agent that was just created, and whether the operator asked to carry
-	 * on into the Add-APIs flow for it.
-	 */
-	onCreated?: (agent: AgentEntity, opts: { addApis: boolean }) => void;
-	/** A name to start the draft from — the one typed in the landing's register
-	 * card, so either path in creates the agent the operator named. */
-	initialName?: string;
-}
-
-/** Which button is in flight, so only that one spins. */
-type Intent = 'add-apis' | 'empty';
-
-export function AgentCreateSheet({
-	open,
-	onClose,
-	onCreated,
-	initialName = '',
-}: AgentCreateSheetProps) {
-	const [name, setName] = useState(initialName);
-	const [description, setDescription] = useState('');
-	const [scopes, setScopes] = useState<string[]>([]);
-	const [error, setError] = useState<string | null>(null);
-	const [intent, setIntent] = useState<Intent | null>(null);
-	const nameRef = useRef<HTMLInputElement>(null);
-	const create = useCreateAgent();
-
-	useEffect(() => {
-		if (open) setError(null);
-	}, [open]);
-
-	// The seed syncs only when it changes, and only over a draft that still
-	// reads as the previous seed: a name edited here is the operator's and stays.
-	const lastSeedRef = useRef(initialName);
-	useEffect(() => {
-		const previous = lastSeedRef.current;
-		if (previous === initialName) return;
-		lastSeedRef.current = initialName;
-		setName((current) => (current === previous ? initialName : current));
-	}, [initialName]);
-
-	async function handleSubmit(next: Intent) {
-		const trimmed = name.trim();
-		const invalid = agentNameError(name);
-		if (invalid) {
-			setError(invalid);
-			return;
-		}
-		setIntent(next);
-		try {
-			const agent = await create.mutateAsync({
-				name: trimmed,
-				description: description.trim() || null,
-				scopes,
-			});
-			setName('');
-			setDescription('');
-			setScopes([]);
-			setError(null);
-			onClose();
-			// After the close, so the host's tray opens onto a dismissed sheet
-			// rather than stacking a second layer over this one.
-			onCreated?.(agent, { addApis: next === 'add-apis' });
-		} catch {
-			// hook surfaces a toast; keep the draft so the user can retry.
-		} finally {
-			setIntent(null);
-		}
-	}
+export function AgentCreateSheet(props: AgentCreateFormOptions) {
+	const { open, onClose } = props;
+	const form = useAgentCreateForm(props);
 
 	return (
 		<SheetPrimitive
@@ -91,71 +21,19 @@ export function AgentCreateSheet({
 			onClose={onClose}
 			side="right"
 			ariaLabel="Create agent"
-			initialFocus={nameRef}
+			initialFocus={form.nameRef}
 			className="flex flex-col"
 		>
 			<header className="border-border border-b p-5">
 				<h2 className="text-foreground text-lg font-semibold">Create agent</h2>
-				<p className="text-muted-foreground mt-1 text-sm">
-					Agents represent autonomous actors on the platform. New agents are created as
-					active and can authenticate immediately — you pick the APIs they can reach next.
-				</p>
 			</header>
 
-			<div className="flex-1 space-y-4 overflow-y-auto p-5">
-				<div className="space-y-1.5">
-					<Label htmlFor="agent-name">Name</Label>
-					<Input
-						ref={nameRef}
-						id="agent-name"
-						value={name}
-						onChange={(e) => setName(e.target.value)}
-						placeholder="e.g. inbox-triage-bot"
-						error={error ?? undefined}
-						maxLength={AGENT_NAME_MAX_LENGTH}
-					/>
-				</div>
-				<div className="space-y-1.5">
-					<Label htmlFor="agent-description">Description</Label>
-					<Textarea
-						id="agent-description"
-						value={description}
-						onChange={(e) => setDescription(e.target.value)}
-						placeholder="What does this agent do?"
-						rows={3}
-						maxLength={1024}
-					/>
-				</div>
-				<InitialScopesField
-					selected={scopes}
-					onChange={setScopes}
-					idPrefix="agent-create"
-				/>
+			<div className="flex-1 overflow-y-auto p-5">
+				<AgentCreateFields form={form} />
 			</div>
 
 			<footer className="border-border flex flex-wrap items-center justify-end gap-2 border-t p-5">
-				<Button variant="ghost" onClick={onClose} disabled={create.isPending}>
-					Cancel
-				</Button>
-				{/* De-emphasised, not hidden: reserving an identity ahead of the
-				    credentials it will need is a real case, and the operator who
-				    takes this exit lands on the agent's own screen, where the
-				    same Add-APIs step is one click away. */}
-				<Button
-					variant="secondary"
-					onClick={() => void handleSubmit('empty')}
-					loading={create.isPending && intent === 'empty'}
-					disabled={create.isPending && intent !== 'empty'}
-				>
-					Create empty
-				</Button>
-				<Button
-					onClick={() => void handleSubmit('add-apis')}
-					loading={create.isPending && intent === 'add-apis'}
-					disabled={create.isPending && intent !== 'add-apis'}
-				>
-					Create and add APIs
-				</Button>
+				<AgentCreateActions form={form} onCancel={onClose} />
 			</footer>
 		</SheetPrimitive>
 	);

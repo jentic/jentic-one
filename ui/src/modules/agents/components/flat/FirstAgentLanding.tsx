@@ -26,17 +26,10 @@
  * On a reload the parent may mount this straight into `arrived` or `approved`
  * (it resumes from the org's data). That state is simply rendered — no manual
  * card sliding off, no tab pop, no focus move — and only later, in-session
- * changes animate and move focus to the card's new heading.
+ * changes animate and move focus to the card's new heading. The card's content
+ * is `RegisterFlow`, which the New agent panel renders too.
  */
-import {
-	useEffect,
-	useId,
-	useLayoutEffect,
-	useRef,
-	useState,
-	type ReactNode,
-	type RefObject,
-} from 'react';
+import { useId, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 import {
 	AnimatePresence,
 	motion,
@@ -50,13 +43,7 @@ import { useMediaQuery } from '@/shared/hooks';
 import { cn } from '@/shared/lib/utils';
 import type { AgentEntity } from '@/modules/agents/api';
 import { EASE_OUT_SOFT, GhostFleet } from '@/modules/agents/components/flat/GhostFleet';
-import {
-	AgentDetails,
-	CliInstallHint,
-	RegisterCommand,
-	StatusLine,
-	Stepper,
-} from '@/modules/agents/components/flat/firstAgentParts';
+import { RegisterFlow, registerFlowTitleId } from '@/modules/agents/components/flat/RegisterFlow';
 import type { FirstAgentExit, FirstAgentPhase } from '@/modules/agents/lib/firstRun';
 
 interface FirstAgentLandingProps {
@@ -115,30 +102,8 @@ export function FirstAgentLanding({
 	const wide = useMediaQuery(WIDE_QUERY);
 	// The state this mount opened in is already settled: it doesn't pop.
 	const [mountPhase] = useState(phase);
-	// One id per view (keyed like the view): during the crossfade both views are
-	// mounted, so a fixed id would be duplicated.
 	const baseId = useId();
-	const titleId = `${baseId}-${agent ? agent.id : 'command'}`;
-
-	// An in-session phase change swaps the card's content from under the
-	// keyboard (the Approve button focused a moment ago is gone): focus moves to
-	// the new heading. The phase the page loaded in keeps focus where it is. A
-	// change made from a modal (the deny dialog) lands once it closes — its own
-	// focus return targets a trigger that is on its way out.
-	const lastPhaseRef = useRef(phase);
-	useEffect(() => {
-		if (lastPhaseRef.current === phase) return;
-		lastPhaseRef.current = phase;
-		const focusTitle = () => document.getElementById(titleId)?.focus({ preventScroll: true });
-		const modal = document.querySelector('dialog[open]');
-		if (!modal) {
-			focusTitle();
-			return;
-		}
-		const onModalClose = () => requestAnimationFrame(focusTitle);
-		modal.addEventListener('close', onModalClose, { once: true });
-		return () => modal.removeEventListener('close', onModalClose);
-	}, [phase, titleId]);
+	const titleId = registerFlowTitleId(baseId, agent);
 
 	return (
 		<div data-testid="agents-empty-landing" data-phase={phase} className="relative">
@@ -155,55 +120,23 @@ export function FirstAgentLanding({
 							: 'border-primary/35 bg-[linear-gradient(180deg,hsl(var(--primary)/0.045),transparent_60%)]',
 					)}
 				>
-					<AnimatePresence mode="popLayout" initial={false}>
-						<motion.div
-							key={agent ? `agent-${agent.id}` : 'command'}
-							layout="position"
-							initial={{ opacity: 0 }}
-							animate={{ opacity: 1 }}
-							exit={{ opacity: 0 }}
-							transition={fade}
-						>
-							{agent ? (
-								<AgentDetails
-									titleId={titleId}
-									agent={agent}
-									phase={agentPhase}
-									onApprove={onApprove}
-									approvePending={approvePending}
-									onDeny={onDeny}
-									onExit={onExit}
-									fade={fade}
-									expectedName={expectedName}
-									morePending={morePending}
-									onShowFleet={onShowFleet}
-								/>
-							) : (
-								<RegisterCommand
-									titleId={titleId}
-									name={registerName}
-									onNameChange={onRegisterNameChange}
-								/>
-							)}
-						</motion.div>
-					</AnimatePresence>
-					<motion.div layout="position" transition={{ layout: morph }}>
-						<Stepper phase={phase} reducedMotion={reducedMotion} />
-						<StatusLine phase={phase} name={agent?.name ?? null} />
-						<AnimatePresence initial={false}>
-							{phase === 'listening' && (
-								<motion.div
-									key="cli-install"
-									initial={{ opacity: 0 }}
-									animate={{ opacity: 1 }}
-									exit={{ opacity: 0 }}
-									transition={fade}
-								>
-									<CliInstallHint reducedMotion={reducedMotion} />
-								</motion.div>
-							)}
-						</AnimatePresence>
-					</motion.div>
+					<RegisterFlow
+						baseId={baseId}
+						agent={agent}
+						onApprove={onApprove}
+						approvePending={approvePending}
+						onDeny={onDeny}
+						onExit={onExit}
+						registerName={registerName}
+						onRegisterNameChange={onRegisterNameChange}
+						expectedName={expectedName}
+						morePending={morePending}
+						onShowFleet={onShowFleet}
+						surface="landing"
+						reducedMotion={reducedMotion}
+						fade={fade}
+						morph={morph}
+					/>
 				</motion.section>
 
 				<AnimatePresence initial={false}>
