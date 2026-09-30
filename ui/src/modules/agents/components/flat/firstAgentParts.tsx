@@ -1,13 +1,15 @@
 /**
  * The pieces of `FirstAgentLanding`'s primary card: the register command, the
- * four-step stepper, the live status line, and the arrived agent's details
- * with its next action (Approve / Deny, then its first API).
+ * four-step stepper, the live status line, the collapsed CLI install hint, and
+ * the arrived agent's details with its next action (Approve / Deny, then its
+ * first API).
  */
-import { useEffect, useId, useReducer, type ReactNode } from 'react';
+import { useEffect, useId, useReducer, useState, type ReactNode } from 'react';
 import { AnimatePresence, motion, type Transition } from 'framer-motion';
 import {
 	Bot,
 	Check,
+	ChevronRight,
 	CircleCheck,
 	Clock,
 	KeyRound,
@@ -22,6 +24,7 @@ import {
 	AppLink,
 	Badge,
 	Button,
+	CodeSnippet,
 	CopyButton,
 	ErrorAlert,
 	Input,
@@ -198,7 +201,6 @@ export function RegisterCommand({
 						: 'Ask whoever deployed this instance for the broker (data plane) URL and put it in place of <broker-url>.'}
 				</p>
 			)}
-			<CliInstallHint />
 		</div>
 	);
 }
@@ -209,23 +211,69 @@ const CLI_INSTALL = {
 	script: 'curl -fsSL https://raw.githubusercontent.com/jentic/jentic-one/main/tools/install.sh | sh',
 } as const;
 
-/** How to get `jentic` for an operator who has never installed it. */
-function CliInstallHint() {
+/**
+ * How to get `jentic` for an operator who has never installed it: one compact
+ * trigger at the foot of the card, collapsed by default, that opens onto the
+ * copyable install commands and the docs.
+ */
+export function CliInstallHint({ reducedMotion }: { reducedMotion: boolean }) {
+	const [open, setOpen] = useState(false);
+	const bodyId = useId();
 	return (
-		<p
-			data-testid="cli-install-hint"
-			className="text-muted-foreground mt-2 text-xs leading-relaxed [overflow-wrap:anywhere]"
-		>
-			Don&apos;t have the CLI?{' '}
-			<code className="text-foreground/90 font-mono">{CLI_INSTALL.brew}</code> or{' '}
-			<code className="text-foreground/90 font-mono">{CLI_INSTALL.script}</code>. Setting up a
-			local coding agent? Run{' '}
-			<code className="text-foreground/90 font-mono">jentic setup</code> instead — it
-			registers too, and adds an isolated account and the agent skills.{' '}
-			<AppLink href={`${ROUTES.docs}#installation`} data-no-transition className="underline">
-				Installation docs
-			</AppLink>
-		</p>
+		<div data-testid="cli-install-hint" className="mt-2.5">
+			<Button
+				variant="ghost"
+				size="sm"
+				aria-expanded={open}
+				// Only reference the body while it is mounted.
+				aria-controls={open ? bodyId : undefined}
+				onClick={() => setOpen((v) => !v)}
+				className="text-muted-foreground hover:text-foreground h-auto gap-1 px-0 py-0.5 text-xs font-medium hover:bg-transparent"
+			>
+				<ChevronRight
+					aria-hidden="true"
+					className={cn(
+						'h-3.5 w-3.5 transition-transform duration-200',
+						open && 'rotate-90',
+						reducedMotion && 'transition-none',
+					)}
+				/>
+				Don&apos;t have the jentic CLI?
+			</Button>
+			<AnimatePresence initial={false}>
+				{open && (
+					<motion.div
+						key="body"
+						id={bodyId}
+						initial={{ height: 0, opacity: 0 }}
+						animate={{ height: 'auto', opacity: 1 }}
+						exit={{ height: 0, opacity: 0 }}
+						transition={
+							reducedMotion ? { duration: 0 } : { duration: 0.2, ease: 'easeOut' }
+						}
+						className="overflow-hidden"
+					>
+						<div className="space-y-2 pt-2 pb-0.5">
+							<CodeSnippet label="Homebrew" code={CLI_INSTALL.brew} />
+							<CodeSnippet label="Install script" code={CLI_INSTALL.script} />
+							<p className="text-muted-foreground text-xs leading-relaxed">
+								Setting up a local coding agent? Run{' '}
+								<code className="text-foreground/90 font-mono">jentic setup</code>{' '}
+								instead — it registers too, and adds an isolated account and the
+								agent skills.{' '}
+								<AppLink
+									href={`${ROUTES.docs}#installation`}
+									data-no-transition
+									className="underline"
+								>
+									Installation docs
+								</AppLink>
+							</p>
+						</div>
+					</motion.div>
+				)}
+			</AnimatePresence>
+		</div>
 	);
 }
 

@@ -152,17 +152,49 @@ describe('Agents page — zero agents', () => {
 		expect(copy).toHaveTextContent('Copied!');
 	});
 
-	it('says how to get the CLI, under the command', async () => {
-		renderPage();
+	it('tucks how to get the CLI into a collapsed section at the foot of the card', async () => {
+		const user = userEvent.setup();
+		const { container } = renderPage();
 		await landing();
 		const hint = screen.getByTestId('cli-install-hint');
-		expect(hint).toHaveTextContent(
-			"Don't have the CLI? brew install --cask jentic/tap/jentic or curl -fsSL https://raw.githubusercontent.com/jentic/jentic-one/main/tools/install.sh | sh.",
+		// Below the stepper and the status line, not under the command.
+		expect(
+			screen.getByTestId('register-status').compareDocumentPosition(hint) &
+				Node.DOCUMENT_POSITION_FOLLOWING,
+		).toBeTruthy();
+
+		const toggle = within(hint).getByRole('button', { name: "Don't have the jentic CLI?" });
+		expect(toggle).toHaveAttribute('aria-expanded', 'false');
+		expect(toggle).not.toHaveAttribute('aria-controls');
+		expect(within(hint).queryByText(/brew install/)).not.toBeInTheDocument();
+		expect(within(hint).queryByRole('link')).not.toBeInTheDocument();
+
+		await user.click(toggle);
+		expect(toggle).toHaveAttribute('aria-expanded', 'true');
+		const body = document.getElementById(toggle.getAttribute('aria-controls') ?? '');
+		expect(body).not.toBeNull();
+		expect(within(body!).getByText('brew install --cask jentic/tap/jentic').tagName).toBe(
+			'PRE',
 		);
-		expect(hint).toHaveTextContent(/Run jentic setup instead/);
-		expect(within(hint).getByRole('link', { name: 'Installation docs' })).toHaveAttribute(
+		expect(
+			within(body!).getByText(
+				'curl -fsSL https://raw.githubusercontent.com/jentic/jentic-one/main/tools/install.sh | sh',
+			).tagName,
+		).toBe('PRE');
+		expect(within(body!).getAllByRole('button', { name: 'Copy to clipboard' })).toHaveLength(2);
+		expect(body).toHaveTextContent(/Run jentic setup instead/);
+		expect(within(body!).getByRole('link', { name: 'Installation docs' })).toHaveAttribute(
 			'href',
 			expect.stringContaining('/docs#installation'),
+		);
+		await waitFor(() => checkA11y(container), { timeout: 3000 });
+
+		// The keyboard closes it again.
+		toggle.focus();
+		await user.keyboard('{Enter}');
+		expect(toggle).toHaveAttribute('aria-expanded', 'false');
+		await waitFor(() =>
+			expect(within(hint).queryByText(/brew install/)).not.toBeInTheDocument(),
 		);
 	});
 

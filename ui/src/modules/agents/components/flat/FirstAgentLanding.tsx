@@ -50,6 +50,7 @@ import type { AgentEntity } from '@/modules/agents/api';
 import { EASE_OUT_SOFT, GhostFleet } from '@/modules/agents/components/flat/GhostFleet';
 import {
 	AgentDetails,
+	CliInstallHint,
 	RegisterCommand,
 	StatusLine,
 	Stepper,
@@ -180,6 +181,19 @@ export function FirstAgentLanding({
 					<motion.div layout="position" transition={{ layout: morph }}>
 						<Stepper phase={phase} reducedMotion={reducedMotion} />
 						<StatusLine phase={phase} name={agent?.name ?? null} />
+						<AnimatePresence initial={false}>
+							{phase === 'listening' && (
+								<motion.div
+									key="cli-install"
+									initial={{ opacity: 0 }}
+									animate={{ opacity: 1 }}
+									exit={{ opacity: 0 }}
+									transition={fade}
+								>
+									<CliInstallHint reducedMotion={reducedMotion} />
+								</motion.div>
+							)}
+						</AnimatePresence>
 					</motion.div>
 				</motion.section>
 
