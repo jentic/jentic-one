@@ -27,6 +27,7 @@ import { Upload } from 'lucide-react';
 import { PageShell, PageHeader, PageHelp, Button } from '@/shared/ui';
 import { shellScroller, titleFromApiId } from '@/shared/lib';
 import { ImportSpecDialog } from '@/shared/credentials/components/ImportSpecDialog';
+import { useAllCredentials } from '@/shared/credentials/api';
 import { DiscoverToolbar } from '@/modules/discover/components/DiscoverToolbar';
 import { DiscoveryGrid } from '@/modules/discover/components/DiscoveryGrid';
 import { workspaceHrefFor } from '@/modules/discover/lib/catalogRelations';
@@ -68,6 +69,10 @@ export default function LibraryPage() {
 	});
 	const { refresh, isRefreshing } = useRefreshCatalog();
 	const digest = useWorkspaceDigest();
+	// The same drained list (and cache slice) the digest's health index reads;
+	// the tiles' "Credential ready" matches not-yet-imported entries against it.
+	const allCredentials = useAllCredentials();
+	const credentials = allCredentials.complete ? allCredentials.items : null;
 	// Tailwind `xl` — where the grid below goes two-column and docks the panel.
 	const isXl = useMediaQuery(XL_QUERY);
 
@@ -234,6 +239,7 @@ export default function LibraryPage() {
 						onLoadMore={catalog.fetchNextPage}
 						workspaceByCatalogId={digest.byCatalogApiId}
 						credentialsError={digest.credentialsError}
+						credentials={credentials}
 						onImportOwn={openImportOwn}
 					/>
 				</div>

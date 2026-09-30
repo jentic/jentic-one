@@ -13,8 +13,9 @@ import { Compass, Upload } from 'lucide-react';
 import { Button, EmptyState, ErrorAlert, Skeleton } from '@/shared/ui';
 import { shellScrollRoot } from '@/shared/lib';
 import { DiscoveryCard } from '@/modules/discover/components/DiscoveryCard';
-import { readyCredentialsFor } from '@/modules/discover/lib/catalogRelations';
+import { readyCredentialsForEntry } from '@/modules/discover/lib/catalogRelations';
 import { useAgentFigures } from '@/shared/credentials/api/apiHealth';
+import type { Credential } from '@/shared/credentials/api';
 import type { DiscoveryEntity, WorkspaceDigestRow } from '@/modules/discover/api';
 
 interface DiscoveryGridProps {
@@ -38,6 +39,8 @@ interface DiscoveryGridProps {
 	workspaceByCatalogId?: Map<string, WorkspaceDigestRow[]>;
 	/** The credential list failed — agent figures are unknowable, not loading. */
 	credentialsError?: boolean;
+	/** Every credential the viewer can see (drained); null while loading. Feeds "Credential ready". */
+	credentials?: Credential[] | null;
 	/** Opens the Import-your-own-spec dialog (the empty-state CTA). */
 	onImportOwn: () => void;
 }
@@ -76,6 +79,7 @@ export function DiscoveryGrid({
 	onLoadMore,
 	workspaceByCatalogId,
 	credentialsError = false,
+	credentials = null,
 	onImportOwn,
 }: DiscoveryGridProps) {
 	const sentinelRef = useRef<HTMLDivElement | null>(null);
@@ -105,15 +109,20 @@ export function DiscoveryGrid({
 							matchAgentCount: figure?.agentCount ?? null,
 							matchAgentsAtLeast: figure?.agentsAtLeast ?? false,
 							matches: workspaceByCatalogId?.get(entity.apiId),
-							readyCredentials: readyCredentialsFor(
-								workspaceByCatalogId?.get(entity.apiId),
-							),
+							// Not-imported tiles only: an imported one never shows the chip.
+							readyCredentials: entity.registered
+								? null
+								: readyCredentialsForEntry(
+										entity,
+										workspaceByCatalogId?.get(entity.apiId),
+										credentials,
+									),
 						},
 					] as const;
 				}),
 			),
 		// eslint-disable-next-line react-hooks/exhaustive-deps -- `singleMatches` derives from entities + workspaceByCatalogId
-		[entities, workspaceByCatalogId, agentFigure],
+		[entities, workspaceByCatalogId, agentFigure, credentials],
 	);
 
 	useEffect(() => {

@@ -16,10 +16,11 @@
  *   state line (imported, exactly one workspace match) Live/Draft · ops ·
  *              agents from that API, plus Update available — the shared
  *              `ApiStateBadge` vocabulary.
- *   chips      (not imported) "Credential ready" — an active credential
- *              covers a workspace API imported from this entry (the same rule
- *              as the hub's "Credential missing"). Match rule:
- *              `lib/catalogRelations`.
+ *   chips      (not imported) "Credential ready" — you already have an active
+ *              credential that would cover this entry once imported (the
+ *              broker's own scope rule, or one created for this exact
+ *              entry). Links to the credential list on the Agents page. Match
+ *              rule: `credentialsCoveringEntry` in `lib/catalogRelations`.
  *   actions    slim row pinned to the bottom so rows line up: Review update
  *              (left) + Open →, or GitHub (secondary icon) + Add to workspace.
  *
@@ -61,12 +62,14 @@ interface DiscoveryCardProps {
 	matchAgentCount?: number | null;
 	/** `matchAgentCount` is a floor (more bound agents than one read page) — "N+". */
 	matchAgentsAtLeast?: boolean;
-	/** Active credentials covering a workspace API from this entry; null while loading. Not-imported only. */
+	/** Active credentials that would cover this entry once imported; null while loading. Not-imported only. */
 	readyCredentials?: Credential[] | null;
 }
 
 const CHIP =
 	'pointer-events-auto relative z-10 inline-flex max-w-full min-w-0 items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 transition-colors focus-visible:ring-2 focus-visible:outline-none';
+
+const CREDENTIAL_READY_HINT = 'You already have a credential that covers this API';
 
 function Sep() {
 	return (
@@ -234,9 +237,13 @@ export const DiscoveryCard = memo(function DiscoveryCard({
 							icon={<KeyRound size={11} />}
 							tone="bg-success/10 text-success ring-success/30 hover:bg-success/20"
 							testId="discovery-card-credential-ready"
-							extra={{ title: credentials.map((c) => c.name).join(', ') }}
+							extra={{
+								title: `${CREDENTIAL_READY_HINT}: ${credentials.map((c) => c.name).join(', ')}`,
+								// The tooltip isn't announced; say what the chip means and where it goes.
+								'aria-label': `Credential ready. ${CREDENTIAL_READY_HINT}. Opens the Credentials list on the Agents page.`,
+							}}
 						>
-							Credential ready — add to use it
+							Credential ready
 						</Chip>
 					</div>
 				)}

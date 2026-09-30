@@ -120,6 +120,12 @@ describe('catalogEntryToEntity', () => {
 		expect(entity.summary).toBe('example.org');
 		expect(entity.subtitle).toBeUndefined();
 		expect(entity.vendor).toBe('example.org');
+		// The icon key falls back; the import identity's vendor does not.
+		expect(entity.catalogVendor).toBeUndefined();
+	});
+
+	it('keeps the catalog vendor verbatim for the import identity', () => {
+		expect(catalogEntryToEntity(umbrellaSubApi).catalogVendor).toBe('nytimes.com');
 	});
 
 	it('gives umbrella sub-APIs a distinct title with the vendor as subtitle', () => {

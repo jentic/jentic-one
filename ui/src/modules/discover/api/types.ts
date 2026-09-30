@@ -48,6 +48,12 @@ export interface DiscoveryEntity {
 	/** Vendor / domain key (e.g. `stripe.com`) used for the vendor icon. */
 	vendor?: string;
 	/**
+	 * The catalog entry's own `vendor`, verbatim (no `api_id` fallback) — what a
+	 * catalog import registers the API under (`catalogImportRef`). Absent when
+	 * the manifest has none.
+	 */
+	catalogVendor?: string;
+	/**
 	 * Spec version read off `spec_url` — only when it follows the
 	 * jentic-public-apis layout (`parseCatalogSpecUrl`); absent otherwise.
 	 */

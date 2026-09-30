@@ -101,6 +101,49 @@ describe('LibraryPage', () => {
 		expect(screen.queryByTestId('discovery-card-usage')).not.toBeInTheDocument();
 	});
 
+	it('marks an un-imported entry "Credential ready" from a vendor-wide credential alone', async () => {
+		// github.com is Available and has no workspace row; a vendor-wide
+		// credential for `github` (the slug its import registers) covers it,
+		// a credential for another vendor covers nothing.
+		worker.use(
+			http.get('/credentials', () =>
+				HttpResponse.json({
+					data: [
+						{
+							credential_id: 'cred_gh_all',
+							name: 'GitHub org token',
+							type: 'bearer_token',
+							api: { vendor: 'github', name: '', version: '' },
+							catalog_api_id: null,
+							provider: 'static',
+							active: true,
+							created_at: '2026-01-01T00:00:00Z',
+						},
+						{
+							credential_id: 'cred_other',
+							name: 'Other',
+							type: 'api_key',
+							api: { vendor: 'acme', name: '', version: '' },
+							catalog_api_id: null,
+							provider: 'static',
+							active: true,
+							created_at: '2026-01-01T00:00:00Z',
+						},
+					],
+					has_more: false,
+					next_cursor: null,
+				}),
+			),
+		);
+		renderWithProviders(<LibraryPage />);
+		const chip = await screen.findByTestId('discovery-card-credential-ready');
+		expect(chip).toHaveAttribute('title', expect.stringContaining('GitHub org token'));
+		expect(chip).not.toHaveAttribute('title', expect.stringContaining('Other'));
+		const tile = chip.closest('[data-testid="discovery-card-api"]');
+		expect(tile).toHaveTextContent('github.com');
+		expect(screen.getAllByTestId('discovery-card-credential-ready')).toHaveLength(1);
+	});
+
 	it('has no critical a11y violations', async () => {
 		const { container } = renderWithProviders(<LibraryPage />);
 		await screen.findByText('stripe.com');

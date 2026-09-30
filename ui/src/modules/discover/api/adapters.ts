@@ -37,6 +37,7 @@ export function catalogEntryToEntity(entry: CatalogEntryResponse): DiscoveryEnti
 		registered: entry.registered,
 		updateAvailable: entry.update_available ?? false,
 		vendor: vendor ?? entry.api_id,
+		catalogVendor: vendor,
 		version: parseCatalogSpecUrl(entry.spec_url, entry.api_id) ?? undefined,
 		githubUrl: entry._links.github ?? undefined,
 		raw: entry,

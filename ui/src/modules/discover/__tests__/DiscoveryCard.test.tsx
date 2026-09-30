@@ -68,13 +68,19 @@ describe('DiscoveryCard', () => {
 		expect(screen.queryByTestId('discovery-card-notes')).not.toBeInTheDocument();
 	});
 
-	it('available tile: credential-ready note links to the credential inventory', async () => {
+	it('available tile: "Credential ready" chip links to the credential inventory, no "add" copy', async () => {
 		const { container } = renderCard({ readyCredentials: [CRED] });
-		const note = screen.getByTestId('discovery-card-credential-ready');
-		expect(note).toHaveTextContent('Credential ready — add to use it');
-		expect(
-			screen.getByRole('link', { name: 'Credential ready — add to use it' }),
-		).toHaveAttribute('href', expect.stringContaining('/agents?credentials=1'));
+		const chip = screen.getByTestId('discovery-card-credential-ready');
+		expect(chip).toHaveTextContent(/^Credential ready/);
+		expect(chip).not.toHaveTextContent(/add/i);
+		expect(chip).toHaveAttribute(
+			'title',
+			'You already have a credential that covers this API: NYT key',
+		);
+		const link = screen.getByRole('link', {
+			name: /^Credential ready\. You already have a credential that covers this API\./,
+		});
+		expect(link).toHaveAttribute('href', expect.stringContaining('/agents?credentials=1'));
 		await checkA11y(container);
 	});
 
