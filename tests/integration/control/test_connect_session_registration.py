@@ -6,8 +6,12 @@ Covers the branching that only shows up end-to-end against real ORM rows:
   ``credentials.oauth_app_registration_id`` and does NOT create an
   ``oauth_client_credentials`` aux row (the shared registration is the
   client-material source of truth for every credential minted through it).
-* ``DirectOAuth2Provider.refresh`` refuses to mint through an
-  ``is_active=False`` registration.
+* ``DirectOAuth2Provider.refresh`` takes client material from the
+  registration when the credential is FK'd to one, refuses to mint through an
+  ``is_active=False`` registration, and falls back to the embedded
+  ``oauth_client_credentials`` row when there is no FK.
+* Device-flow ``prepare`` always writes its aux row and stamps the FK only on
+  the shared-registration path.
 * Legacy embedded path (config-source vendor with no DB registration) still
   writes ``oauth_client_credentials`` untouched.
 """
@@ -29,6 +33,9 @@ from jentic_one.control.core.schema.authorization_code_app_registration_details 
 )
 from jentic_one.control.core.schema.connect_sessions import ConnectSession
 from jentic_one.control.core.schema.credentials import Credential
+from jentic_one.control.core.schema.device_authorization_app_registration_details import (
+    DeviceAuthorizationAppRegistrationDetails,
+)
 from jentic_one.control.core.schema.device_authorization_credentials import (
     DeviceAuthorizationCredential,
 )
@@ -53,6 +60,10 @@ from jentic_one.control.services.integrations.connect_session_service import (
 )
 from jentic_one.control.services.integrations.errors import OAuthAppChangedError
 from jentic_one.control.services.integrations.flow_handlers.base import SuccessTokens
+from jentic_one.control.services.integrations.flow_handlers.device_authorization import (
+    DeviceAuthorizationHandler,
+)
+from jentic_one.control.services.integrations.flow_handlers.session_app import SessionApp
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import (
     DirectOAuth2ProviderConfig,
@@ -88,6 +99,7 @@ async def clean_session_tables(control_db: DatabaseSession) -> AsyncGenerator[No
         ConnectSession,
         Credential,
         AuthorizationCodeAppRegistrationDetails,
+        DeviceAuthorizationAppRegistrationDetails,
         OAuthAppRegistration,
     )
     async with control_db.session() as session:
@@ -610,3 +622,163 @@ async def test_confirm_cancels_when_pinned_registration_disabled(
             identity=_USER_IDENTITY,
         )
     await _assert_session_cancelled(ctx, created.session_id, row.credential_id)
+
+
+async def _plant_credential(ctx: Context, *, registration_id: str | None) -> str:
+    """Insert a connected direct_oauth2 credential, optionally FK'd to a registration."""
+    async with ctx.control_db.transaction() as session:
+        credential = await CredentialRepository.create(
+            session,
+            type="oauth2",
+            name="Alice's Shared Dev",
+            api_vendor=_VENDOR_KEY,
+            api_name="api.shareddev.example",
+            catalog_api_id=_VENDOR_API_ID,
+            created_by=_USER_ID,
+            provider="direct_oauth2",
+            state="connected",
+        )
+        if registration_id is not None:
+            await CredentialRepository.set_oauth_app_registration(
+                session, credential.id, registration_id=registration_id
+            )
+    return credential.id
+
+
+async def _refresh_capturing_post(ctx: Context, credential_id: str) -> tuple[str, dict[str, str]]:
+    """Run ``DirectOAuth2Provider.refresh`` against a fake token endpoint.
+
+    Returns the new access token and the form body posted to the endpoint.
+    """
+    posted: list[dict[str, str]] = []
+    token_response = httpx.Response(
+        200, json={"access_token": "at_new", "expires_in": 3600, "scope": "scope-a"}
+    )
+
+    class _FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, url, data=None, **kwargs):
+            posted.append(dict(data or {}))
+            return token_response
+
+    async def _decrypt() -> str:
+        return "old-refresh"
+
+    provider = DirectOAuth2Provider(
+        DirectOAuth2ProviderConfig(
+            redirect_uri="https://app.example.com/credentials/oauth/callback",
+        )
+    )
+    token_view = OAuthTokenView(
+        credential_id=credential_id,
+        provider="direct_oauth2",
+        expires_at=datetime.now(UTC),
+        decrypt=_decrypt,
+    )
+    with patch("httpx.AsyncClient", return_value=_FakeClient()):
+        result = await provider.refresh(ctx, token=token_view)
+    assert len(posted) == 1
+    return result.access_token, posted[0]
+
+
+async def test_refresh_takes_client_material_from_registration(
+    integration_context: Context,
+    seed_shared_vendor: None,
+    clean_session_tables: None,
+) -> None:
+    ctx = integration_context
+    registration = await _seed_active_registration(ctx)
+    credential_id = await _plant_credential(ctx, registration_id=registration.id)
+
+    access_token, posted = await _refresh_capturing_post(ctx, credential_id)
+
+    assert access_token == "at_new"
+    assert posted["client_id"] == "shared-registration-client"
+    assert posted["client_secret"] == "shared-registration-secret"  # pragma: allowlist secret
+
+
+async def test_refresh_falls_back_to_embedded_client_without_registration(
+    integration_context: Context,
+    seed_shared_vendor: None,
+    clean_session_tables: None,
+) -> None:
+    ctx = integration_context
+    credential_id = await _plant_credential(ctx, registration_id=None)
+    async with ctx.control_db.transaction() as session:
+        await OAuthClientCredentialRepository.create(
+            session,
+            credential_id=credential_id,
+            token_url="https://idp.example.com/token",
+            client_id="embedded-client",
+            encrypted_client_secret=ctx.encryption.encrypt("embedded-secret"),
+            created_by=_USER_ID,
+        )
+
+    access_token, posted = await _refresh_capturing_post(ctx, credential_id)
+
+    assert access_token == "at_new"
+    assert posted["client_id"] == "embedded-client"
+    assert posted["client_secret"] == "embedded-secret"  # pragma: allowlist secret
+
+
+def _device_app(*, registration_id: str | None) -> SessionApp:
+    return SessionApp(
+        flow_kind="device_authorization",
+        client_id="device-client",
+        client_secret_provider=None,
+        default_scopes=[],
+        registration_id=registration_id,
+        authorization_endpoint="https://idp.example.com/device",
+        token_endpoint="https://idp.example.com/token",
+    )
+
+
+@pytest.mark.parametrize("pinned", [True, False], ids=["registration", "config"])
+async def test_device_prepare_writes_aux_and_stamps_fk_only_for_registration(
+    integration_context: Context,
+    clean_session_tables: None,
+    pinned: bool,
+) -> None:
+    """The aux row carries transient device_code state, so it's written on
+    both paths; the FK is stamped only when the app is a shared registration.
+    """
+    ctx = integration_context
+    registration_id: str | None = None
+    if pinned:
+        async with ctx.control_db.transaction() as session:
+            registration = await OAuthAppRegistrationRepository.create_device_authorization(
+                session,
+                name="Org Device App",
+                api_vendor=_VENDOR_KEY,
+                catalog_api_id=_VENDOR_API_ID,
+                display_name="Shared Dev",
+                client_id="device-client",
+                authorization_endpoint="https://idp.example.com/device",
+                token_endpoint="https://idp.example.com/token",
+                created_by=_USER_ID,
+            )
+        registration_id = registration.id
+    credential_id = await _plant_credential(ctx, registration_id=None)
+
+    async with ctx.control_db.transaction() as session:
+        await DeviceAuthorizationHandler(ctx).prepare(
+            session,
+            credential_id=credential_id,
+            app=_device_app(registration_id=registration_id),
+            requested_scopes=[],
+            created_by=_USER_ID,
+        )
+
+    async with ctx.control_db.session() as session:
+        credential = await CredentialRepository.get_by_id(session, credential_id)
+        aux = await session.get(DeviceAuthorizationCredential, credential_id)
+    assert credential is not None
+    assert credential.oauth_app_registration_id == registration_id
+    assert aux is not None
+    assert aux.client_id == "device-client"
+    assert aux.authorization_endpoint == "https://idp.example.com/device"
