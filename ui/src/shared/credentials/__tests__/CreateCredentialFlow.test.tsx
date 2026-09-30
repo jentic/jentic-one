@@ -100,11 +100,28 @@ describe('CreateCredentialFlow', () => {
 			await page.viewport(414, 896);
 		});
 
-		/** Click the dimmed backdrop well clear of the drawer (top-left corner). */
-		const clickBackdrop = (): Promise<void> =>
-			browserUser.click(screen.getByTestId('sheet-backdrop'), {
-				position: { x: 5, y: 5 },
+		/**
+		 * Resolve once the drawer has finished opening. The sheet ignores a backdrop
+		 * click during its entrance (it only dismisses once `open`, which lands a
+		 * double rAF after mount), so a click fired as soon as the sheet is in the
+		 * DOM can race it under load — and a "stays open" assertion would then pass
+		 * for the wrong reason. The backdrop reaches full opacity only once `open`,
+		 * and must be what the pointer hits at the click point, not the panel.
+		 */
+		async function drawerSettled(): Promise<HTMLElement> {
+			const backdrop = await screen.findByTestId('sheet-backdrop');
+			await waitFor(() => {
+				expect(getComputedStyle(backdrop).opacity).toBe('1');
+				expect(document.elementFromPoint(5, 5)).toBe(backdrop);
 			});
+			return backdrop;
+		}
+
+		/** Click the dimmed backdrop well clear of the drawer (top-left corner). */
+		const clickBackdrop = async (): Promise<void> => {
+			const backdrop = await drawerSettled();
+			await browserUser.click(backdrop, { position: { x: 5, y: 5 } });
+		};
 
 		/** A host that owns `open`, like the real ones, so a close can be reopened. */
 		function Host() {
@@ -170,7 +187,7 @@ describe('CreateCredentialFlow', () => {
 				/>,
 			);
 			const name = await screen.findByLabelText(/^Name/);
-			const backdrop = screen.getByTestId('sheet-backdrop');
+			const backdrop = await drawerSettled();
 			const upOnBackdrop = vi.fn();
 			backdrop.addEventListener('mouseup', upOnBackdrop);
 
@@ -179,9 +196,10 @@ describe('CreateCredentialFlow', () => {
 			await browserUser.dragAndDrop(name, backdrop, {
 				targetPosition: { x: 5, y: 5 },
 			});
-			await new Promise((r) => setTimeout(r, 50));
-			// The drag really did end on the backdrop…
-			expect(upOnBackdrop).toHaveBeenCalled();
+			// The drag really did end on the backdrop — and that mouseup's click (if
+			// any) is dispatched in the same task, so the sheet has already had its
+			// chance to close…
+			await expect.poll(() => upOnBackdrop).toHaveBeenCalled();
 			// …yet the browser dispatches that click to the common ancestor, not the
 			// backdrop, so the drawer stays open.
 			expect(onClose).not.toHaveBeenCalled();
@@ -198,12 +216,16 @@ describe('CreateCredentialFlow', () => {
 					approvalSession={{ sessionId: 'sess_x', pollToken: 'tok_x' }}
 				/>,
 			);
-			await screen.findByTestId('sheet-primitive');
+			const backdrop = await drawerSettled();
+			const clickOnBackdrop = vi.fn();
+			backdrop.addEventListener('click', clickOnBackdrop);
 
 			// Closing unmounts the connect, which cancels its session — a stray
 			// click must not abandon a sign-in in progress.
 			await clickBackdrop();
-			await new Promise((r) => setTimeout(r, 50));
+			// The click reached the backdrop of a fully open drawer (whose own
+			// handler runs in that same dispatch), and still didn't close it.
+			await expect.poll(() => clickOnBackdrop).toHaveBeenCalledTimes(1);
 			expect(onClose).not.toHaveBeenCalled();
 
 			await browserUser.keyboard('{Escape}');
