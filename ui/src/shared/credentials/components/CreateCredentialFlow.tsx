@@ -209,8 +209,14 @@ export function CreateCredentialFlow({
 	const registrationMutation = useCreateRegistrationMutation();
 	/** When non-null, the spec drove the type (UI hides the manual toggle). */
 	const [activeScheme, setActiveScheme] = useState<SchemeOption | null>(null);
+	// The empty form's provider must fit the initial type — ``static`` is no
+	// OAuth2 provider, and a spec with no OAuth scheme never re-derives it.
+	const baseForm: CredentialFormState = {
+		...EMPTY_FORM,
+		provider: providerOptions(initialType ?? CredentialType.BEARER_TOKEN)[0].id,
+	};
 	const [state, setState] = useState<CredentialFormState>(() =>
-		pinnedApi ? seedFormFromSelectedApi(EMPTY_FORM, pinnedApi, false) : EMPTY_FORM,
+		pinnedApi ? seedFormFromSelectedApi(baseForm, pinnedApi, false) : baseForm,
 	);
 	const [errors, setErrors] = useState<Partial<Record<keyof CredentialFormState, string>>>({});
 	const [serverVarErrors, setServerVarErrors] = useState<Record<string, string>>({});
@@ -362,7 +368,7 @@ export function CreateCredentialFlow({
 		setManualMode(false);
 		setUploadOpen(false);
 		setActiveScheme(null);
-		setState(pinnedApi ? seedFormFromSelectedApi(EMPTY_FORM, pinnedApi, false) : EMPTY_FORM);
+		setState(pinnedApi ? seedFormFromSelectedApi(baseForm, pinnedApi, false) : baseForm);
 		setErrors({});
 		setServerVarErrors({});
 		setOAuth2Flows([]);
@@ -406,7 +412,7 @@ export function CreateCredentialFlow({
 		setSelectedApi(null);
 		setSelectedVendor(null);
 		setManualMode(true);
-		setState(EMPTY_FORM);
+		setState({ ...EMPTY_FORM, provider: providerOptions(type)[0].id });
 		setStep('form');
 	};
 
