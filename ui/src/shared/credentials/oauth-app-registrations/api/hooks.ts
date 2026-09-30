@@ -107,7 +107,7 @@ export function useDeleteOAuthAppRegistration() {
  * The platform's OAuth callback redirect URI — what an admin must paste into
  * the vendor's OAuth-app console for the authorization-code flow. Sourced
  * from `GET /credentials/providers` (the same discovery response
- * `CreateCredentialDialog` already reads from), filtered to the
+ * `CreateCredentialFlow` already reads from), filtered to the
  * `direct_oauth2` entry so the value matches what the connect flow actually
  * hands the vendor at authorize time.
  */
