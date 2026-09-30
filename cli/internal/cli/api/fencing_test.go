@@ -78,7 +78,7 @@ func TestFencing_ContextListIsFencedInAgentMode(t *testing.T) {
 	}
 }
 
-// TestFencing_ServiceAccountModeRunsAsAgent pins theme-8 D4: the retired
+// TestFencing_ServiceAccountModeRunsAsAgent pins 14 BC-12: the retired
 // service-account mode is a deprecated alias of agent. It is fenced exactly
 // like agent, and the deprecation notice goes to stderr as a JSON slog line
 // (13 §1: stdout stays reserved for the single JSON document).
@@ -107,7 +107,7 @@ func TestFencing_ServiceAccountModeRunsAsAgent(t *testing.T) {
 				t.Fatalf("service-account mode must be fenced like agent, got %v", err)
 			}
 			stderr := app.Err.(*bytes.Buffer).String()
-			for _, want := range []string{`"msg":"deprecated mode; running in agent mode"`, `"mode":"service-account"`, `"replacement":"agent"`} {
+			for _, want := range []string{`"msg":"deprecated mode; running in agent mode"`, `"code":"DEPRECATED_MODE"`, `"mode":"service-account"`, `"replacement":"agent"`, `"actionable_step":"use --mode agent`} {
 				if !strings.Contains(stderr, want) {
 					t.Errorf("stderr missing %s:\n%s", want, stderr)
 				}

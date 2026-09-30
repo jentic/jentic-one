@@ -24,16 +24,14 @@ import (
 	sdkconfig "github.com/jentic/jentic-one/cli/client/config"
 )
 
-// Canonical mode strings (14 BC-9; mirrored in client/config Context.Mode docs).
+// Canonical mode strings (impl/3.1 §0, 14 BC-12; mirrored in client/config Context.Mode docs).
 const (
 	ModeHuman = "human"
 	ModeAgent = "agent"
-	// LegacyModeServiceAccount is the retired third mode. Theme 8 removed the
-	// platform service-account actor (migrated accounts are agents), and the
-	// mode already shared AgentUX byte-for-byte (impl/3.1 §0), so it collapses
-	// into agent. It is still accepted from --mode, $JENTIC_MODE and persisted
-	// contexts as a deprecated alias (13 forbids removing a contract value
-	// outside a flagged breaking release); the root interceptor warns on stderr.
+	// LegacyModeServiceAccount is a deprecated alias of ModeAgent (14 BC-12). It
+	// is accepted from --mode, $JENTIC_MODE and persisted contexts, canonicalized
+	// to agent by the ladder, and the root interceptor warns on stderr. It shares
+	// AgentUX byte-for-byte (impl/3.1 §0).
 	LegacyModeServiceAccount = "service-account"
 )
 

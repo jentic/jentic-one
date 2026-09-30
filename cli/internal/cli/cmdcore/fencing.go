@@ -123,9 +123,10 @@ func installInterceptor(app *App, root *cobra.Command) {
 		// stderr only, so stdout stays one JSON document (13 §1).
 		if state.DeprecatedMode != "" {
 			slog.Warn("deprecated mode; running in agent mode",
+				"code", "DEPRECATED_MODE",
 				"mode", state.DeprecatedMode,
 				"replacement", clictx.ModeAgent,
-				"action", "use --mode agent or JENTIC_MODE=agent; for a persisted context, set mode: agent in config.yaml")
+				"actionable_step", "use --mode agent or JENTIC_MODE=agent; for a persisted context, set mode: agent in config.yaml")
 		}
 
 		// 4. FENCING (guardrail; the enforced boundary is server-side scope + OS

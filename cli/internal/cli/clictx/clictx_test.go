@@ -112,7 +112,7 @@ func TestActiveStateContextRoundTrip(t *testing.T) {
 }
 
 // The retired service-account mode resolves to agent on every rung and reports
-// the alias so the interceptor can warn (theme-8 D4).
+// the alias so the interceptor can warn (14 BC-12).
 func TestResolveModeLadder_ServiceAccountAliasesAgent(t *testing.T) {
 	t.Setenv("JENTIC_MODE", "")
 	os.Unsetenv("JENTIC_MODE")
