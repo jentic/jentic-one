@@ -1,6 +1,6 @@
 /**
  * InitialScopesField — optional "start with these scopes" section for the
- * agent create sheet (POST /agents already accepts `scopes[]`, so a new
+ * agent create form (POST /agents already accepts `scopes[]`, so a new
  * agent shouldn't need a follow-up PUT from its detail page just to get its
  * first grants).
  *

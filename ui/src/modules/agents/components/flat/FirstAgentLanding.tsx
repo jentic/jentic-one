@@ -3,8 +3,8 @@
  * place its first self-registered agent is finished.
  *
  * Two routes in, side by side: the primary card has the agent register itself
- * (`jentic register`); the secondary card is manual creation through the real
- * create sheet. Below them, a dashed preview of the fleet view with an empty
+ * (`jentic register`); the secondary card is manual creation, in the New
+ * agent panel's "Create here" tab. Below them, a dashed preview of the fleet view with an empty
  * slot for the first agent — and, while the card listens in an org whose only
  * agents are denied or archived, one quiet line counting them, with a link to
  * the fleet view that lists them.
@@ -47,7 +47,7 @@ import { RegisterFlow, registerFlowTitleId } from '@/modules/agents/components/f
 import type { FirstAgentExit, FirstAgentPhase } from '@/modules/agents/lib/firstRun';
 
 interface FirstAgentLandingProps {
-	/** Opens the real create sheet — the same handler as the page header's button. */
+	/** Opens the New agent panel — the same handler as the page header's button. */
 	onCreateAgent: () => void;
 	/** The self-registered agent being finished here: pending or active. */
 	agent: AgentEntity | null;

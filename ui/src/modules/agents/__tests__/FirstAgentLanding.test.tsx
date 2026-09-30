@@ -132,7 +132,7 @@ describe('Agents page — zero agents', () => {
 			/--name '\$\(id\)'\\''s bot'$/,
 		);
 
-		// The create sheet's name rule: blank is an error; the command keeps the default.
+		// The create form's name rule: blank is an error; the command keeps the default.
 		await user.clear(input);
 		expect(await screen.findByText('A name is required.')).toBeInTheDocument();
 		expect(input).toHaveAttribute('aria-invalid', 'true');
@@ -242,20 +242,23 @@ describe('Agents page — zero agents', () => {
 		);
 	});
 
-	it('"Create an agent manually" and the header button open the same create sheet', async () => {
+	it('"Create an agent manually" and the header button open the New agent panel on "Create here"', async () => {
 		const user = userEvent.setup();
 		renderPage();
 		await landing();
 
 		await user.click(screen.getByRole('button', { name: /Create an agent manually/ }));
-		expect(await screen.findByRole('dialog', { name: 'Create agent' })).toBeInTheDocument();
+		expect(await screen.findByRole('dialog', { name: 'New agent' })).toBeInTheDocument();
 		await user.keyboard('{Escape}');
-		await waitFor(() =>
-			expect(screen.queryByRole('dialog', { name: 'Create agent' })).toBeNull(),
-		);
+		await waitFor(() => expect(screen.queryByRole('dialog', { name: 'New agent' })).toBeNull());
 
 		await user.click(screen.getByRole('button', { name: 'New agent' }));
-		expect(await screen.findByRole('dialog', { name: 'Create agent' })).toBeInTheDocument();
+		const panel = await screen.findByRole('dialog', { name: 'New agent' });
+		expect(within(panel).getByRole('tab', { name: 'Create here' })).toHaveAttribute(
+			'aria-selected',
+			'true',
+		);
+		expect(within(panel).getByLabelText('Name')).toBeInTheDocument();
 	});
 
 	/** Registers `name` the way `jentic register` does and waits for the arrival
@@ -378,7 +381,7 @@ describe('Agents page — zero agents', () => {
 		);
 	});
 
-	it('the manual create sheet starts from the name typed in the register card', async () => {
+	it('the manual create form starts from the name typed in the register card', async () => {
 		const user = userEvent.setup();
 		renderPage();
 		await landing();
@@ -387,7 +390,7 @@ describe('Agents page — zero agents', () => {
 		await user.type(input, 'research-bot');
 
 		await user.click(screen.getByRole('button', { name: /Create an agent manually/ }));
-		const sheet = await screen.findByRole('dialog', { name: 'Create agent' });
+		const sheet = await screen.findByRole('dialog', { name: 'New agent' });
 		expect(within(sheet).getByLabelText('Name')).toHaveValue('research-bot');
 	});
 

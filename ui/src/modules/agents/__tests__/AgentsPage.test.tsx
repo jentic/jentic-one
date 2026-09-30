@@ -79,6 +79,14 @@ function renderPage(route = '/', { withAuth = false }: { withAuth?: boolean } = 
 	return renderWithProviders(withAuth ? <AuthProvider>{ui}</AuthProvider> : ui, { route });
 }
 
+/** Open the New agent panel over the fleet and switch to its "Create here" tab. */
+async function openCreateHere(user: ReturnType<typeof userEvent.setup>): Promise<HTMLElement> {
+	await user.click(screen.getByRole('button', { name: 'New agent' }));
+	const sheet = await screen.findByRole('dialog', { name: 'New agent' });
+	await user.click(within(sheet).getByRole('tab', { name: 'Create here' }));
+	return sheet;
+}
+
 /** The strip pill (a real tab) for the given agent name. */
 function stripTab(name: string): HTMLElement {
 	return screen.getByRole('tab', { name: new RegExp(name) });
@@ -1111,11 +1119,16 @@ describe('AgentsPage — flat agents surface', () => {
 		expect(screen.queryByTestId('agents-landing')).toBeNull();
 		expect(screen.queryByTestId('agent-dock')).not.toBeInTheDocument();
 
-		// The header's create button steps back for a fresh org; it still opens the sheet.
+		// The header's create button steps back for a fresh org; it opens the panel
+		// on "Create here", beside the landing's own register card.
 		const create = screen.getByRole('button', { name: 'New agent' });
 		expect(create).toHaveAttribute('data-emphasis', 'secondary');
 		await user.click(create);
-		expect(await screen.findByRole('dialog', { name: 'Create agent' })).toBeInTheDocument();
+		const panel = await screen.findByRole('dialog', { name: 'New agent' });
+		expect(within(panel).getByRole('tab', { name: 'Create here' })).toHaveAttribute(
+			'aria-selected',
+			'true',
+		);
 	});
 
 	// --- Pagination honesty: guarded drain + fully-drained join sources ------
@@ -1534,8 +1547,7 @@ describe('AgentsPage — flat agents surface', () => {
 		renderPage();
 		await screen.findAllByText('inbox-triage-bot');
 
-		await user.click(screen.getByRole('button', { name: 'New agent' }));
-		const sheet = await screen.findByRole('dialog', { name: 'Create agent' });
+		const sheet = await openCreateHere(user);
 		await user.type(within(sheet).getByLabelText('Name'), 'scoped-agent');
 
 		// The scopes section is an optional, collapsed disclosure.
@@ -1571,8 +1583,7 @@ describe('AgentsPage — flat agents surface', () => {
 		renderPage();
 		await screen.findAllByText('inbox-triage-bot');
 
-		await user.click(screen.getByRole('button', { name: 'New agent' }));
-		const sheet = await screen.findByRole('dialog', { name: 'Create agent' });
+		const sheet = await openCreateHere(user);
 		await user.type(within(sheet).getByLabelText('Name'), 'plain-agent');
 		await user.click(within(sheet).getByRole('button', { name: 'Create empty' }));
 
@@ -1586,8 +1597,7 @@ describe('AgentsPage — flat agents surface', () => {
 		renderPage();
 		await screen.findAllByText('inbox-triage-bot');
 
-		await user.click(screen.getByRole('button', { name: 'New agent' }));
-		const sheet = await screen.findByRole('dialog', { name: 'Create agent' });
+		const sheet = await openCreateHere(user);
 		await user.type(within(sheet).getByLabelText('Name'), 'chained-agent');
 		await user.click(within(sheet).getByRole('button', { name: 'Create and add APIs' }));
 
@@ -1608,8 +1618,7 @@ describe('AgentsPage — flat agents surface', () => {
 		renderPage();
 		await screen.findAllByText('inbox-triage-bot');
 
-		await user.click(screen.getByRole('button', { name: 'New agent' }));
-		const sheet = await screen.findByRole('dialog', { name: 'Create agent' });
+		const sheet = await openCreateHere(user);
 		await user.type(within(sheet).getByLabelText('Name'), 'identity-only');
 		await user.click(within(sheet).getByRole('button', { name: 'Create empty' }));
 

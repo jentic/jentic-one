@@ -121,8 +121,9 @@ export default function AgentsPage() {
 								</Kbd>
 							)}
 						</div>
-						{/* Secondary while the landing is up: its register card is the
-						    recommended way in, and this opens the manual sheet. */}
+						{/* Opens the New agent panel. Secondary while the landing is up: its
+						    register card is the recommended way in, and the panel opens on
+						    "Create here" there. */}
 						<Button
 							size="sm"
 							variant={firstRun ? 'outline' : 'primary'}

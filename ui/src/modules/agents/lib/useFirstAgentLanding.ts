@@ -129,7 +129,7 @@ export function useFirstAgentLanding({
 	if (phase !== pollPhase) setPollPhase(phase);
 
 	// The name typed in the register card. Held here, so a denied agent's return
-	// to listening keeps it and the manual create sheet starts from it.
+	// to listening keeps it and the New agent panel's manual form starts from it.
 	const [registerName, setRegisterName] = useState(DEFAULT_REGISTER_NAME);
 	const commandName = agentNameError(registerName) ? DEFAULT_REGISTER_NAME : registerName.trim();
 	// Whether this session showed the command at all. A mount that resumes
@@ -227,9 +227,10 @@ export function useFirstAgentLanding({
 		endLanding();
 	}
 
-	/** A manual create ends the landing; a reload goes to the fleet, not back to
-	 * a first-API suggestion for this agent. */
-	function createdManually(id: string) {
+	/** An agent finished outside the landing (created by hand, or registered
+	 * and approved from the New agent panel) ends it; a reload goes to the fleet,
+	 * not back to a first-API suggestion for this agent. */
+	function finishedElsewhere(id: string) {
 		dismissFirstRun(id);
 		endLanding();
 	}
@@ -257,6 +258,6 @@ export function useFirstAgentLanding({
 		exit,
 		showFleet,
 		showHistory,
-		createdManually,
+		finishedElsewhere,
 	};
 }

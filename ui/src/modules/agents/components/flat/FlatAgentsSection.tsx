@@ -62,7 +62,7 @@ import {
 	LifecycleDialogs,
 	type PendingConfirm,
 } from '@/modules/agents/components/LifecycleDialogs';
-import { AgentCreateSheet } from '@/modules/agents/components/AgentCreateSheet';
+import { NewAgentPanel } from '@/modules/agents/components/flat/NewAgentPanel';
 import { FirstAgentLanding } from '@/modules/agents/components/flat/FirstAgentLanding';
 import { AddApisTray } from '@/modules/agents/components/flat/AddApisTray';
 import { ApiSetupQueue } from '@/modules/agents/components/flat/ApiSetupQueue';
@@ -187,7 +187,7 @@ export function FlatAgentsSection({
 		// shows once the roster has it.
 		selectAgent(agent.id);
 		setAddApisFor(opts.addApis ? { agentId: agent.id, queue: [] } : null);
-		landing.createdManually(agent.id);
+		landing.finishedElsewhere(agent.id);
 	}
 
 	// Same cache slice the nav badge polls; `atLeast` hedges an incomplete drain.
@@ -251,14 +251,32 @@ export function FlatAgentsSection({
 
 	// Rendered by every branch below: the header's "New agent" flips `createOpen`
 	// from outside, and a loading roster would otherwise swallow the click. The
-	// lifecycle confirms serve the landing and the fleet.
+	// lifecycle confirms serve the landing, the panel and the fleet.
+	//
+	// The panel opens on "Create here" while the landing is up: the landing's own
+	// card already is the register route, so the panel adds the other one. Over
+	// the fleet it opens on "Register from the CLI", the recommended route.
 	const overlays = (
 		<>
-			<AgentCreateSheet
+			<NewAgentPanel
 				open={createOpen}
 				onClose={() => setCreateOpen(false)}
+				initialTab={landingShown ? 'create' : 'register'}
 				onCreated={handleAgentCreated}
 				initialName={landingShown ? landing.commandName : undefined}
+				approve={approve}
+				deny={deny}
+				onDeny={({ id, name }) => setConfirm({ kind: 'deny', id, name })}
+				onExit={(agent, to) => {
+					selectAgent(agent.id);
+					setAddApisFor(
+						to.kind === 'skip'
+							? null
+							: { agentId: agent.id, queue: to.kind === 'queue' ? to.apis : [] },
+					);
+					landing.finishedElsewhere(agent.id);
+				}}
+				onShowFleet={(agent) => selectAgent(agent.id)}
 			/>
 			<LifecycleDialogs
 				confirm={confirm}
