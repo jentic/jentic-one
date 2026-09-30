@@ -630,8 +630,8 @@ function SelectedAgentPanel({
 		[liveBindings, credentialsSource.items, apisSource.items],
 	);
 	const stats = useMemo(() => tileStats(tiles), [tiles]);
-	// APIs reached through several accounts: each such tile names its account and
-	// carries a badge saying how a call picks between them.
+	// APIs reached through several credentials: each such tile names its credential
+	// and carries a chip saying how a call picks between them.
 	const multiAccount = useMemo(() => multiAccountApis(tiles), [tiles]);
 	const tileAccountLabels = useMemo(() => accountLabels(tiles), [tiles]);
 
@@ -734,7 +734,7 @@ function SelectedAgentPanel({
 	// not-yet-approved agent; once it's approvable the same signal still fires.
 	// APIs already chosen skip the tray: they are preflighted exactly as the
 	// tray's Continue would, then handed to the queue — a pick the agent already
-	// reaches included, which adds another account. A preflight that can't run
+	// reaches included, which adds another credential. A preflight that can't run
 	// (a failed read) falls back to the tray.
 	const preflight = usePreflightInputs(bindings);
 	const bindingsFailedToLoad = bindingsQuery.isError;
@@ -880,7 +880,6 @@ function SelectedAgentPanel({
 								sidebarId={API_ACCESS_SIDEBAR_ID}
 								accountLabel={tileAccountLabels.get(tile.key)}
 								accountCount={multiAccount.get(tileApiKey(tile))?.count ?? 1}
-								agentName={agent.name}
 							/>
 						))}
 					</div>

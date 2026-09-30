@@ -141,7 +141,7 @@ export function AddApisTray({
 	);
 
 	// Rows the agent already reaches say through which credentials, and stay
-	// pickable to add another account. Only bindings naming a concrete API are
+	// pickable to add another credential. Only bindings naming a concrete API are
 	// enumerable; a vendor wildcard is named by the preflight once picked.
 	const addedVia = useMemo(() => {
 		const names = new Map<string, string[]>();
@@ -157,7 +157,7 @@ export function AddApisTray({
 	}, [bindings]);
 	const rowHint = (key: string): string | undefined => {
 		const names = addedVia.get(key);
-		return names ? `Added via ${names.join(', ')}` : undefined;
+		return names ? `Added via ${names.join(', ')} · add another credential` : undefined;
 	};
 
 	const remove = (key: string): void =>
@@ -291,7 +291,7 @@ export function AddApisTray({
 											className="text-muted-foreground mt-0.5 truncate text-xs"
 										>
 											{addedViaLabel(item.existing)} — this adds another
-											account
+											credential
 										</p>
 									)}
 									{item.outcome === 'choose' && (

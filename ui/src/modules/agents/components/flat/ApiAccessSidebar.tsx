@@ -37,7 +37,7 @@ import {
 import { AgentBindingPermissionsEditor } from '@/modules/agents/components/detail/AgentBindingPermissionsEditor';
 import { AgentBindingRuleTester } from '@/modules/agents/components/detail/AgentBindingRuleTester';
 import { ConfirmDialog } from '@/modules/agents/components/confirm/ConfirmDialog';
-import { MultiAccountNote } from '@/modules/agents/components/flat/MultiAccountNote';
+import { MultiCredentialNote } from '@/modules/agents/components/flat/MultiCredentialNote';
 import type { ApiTileModel } from '@/modules/agents/lib/apiTiles';
 
 /** The sheet's scrolling body, with a bottom fade shown only while content
@@ -94,7 +94,7 @@ export interface ApiAccessSidebarProps {
 	 * keyed by (agent, credential), so editing them here affects all of them. */
 	siblingApiTitles: string[];
 	/** How many of the agent's bindings serve this tile's API — above 1, the panel
-	 * says how a call picks between the accounts. */
+	 * says how a call picks between the credentials. */
 	accountCount?: number;
 	open: boolean;
 	onClose: () => void;
@@ -394,8 +394,7 @@ export function ApiAccessSidebar({
 									</Button>
 								</div>
 								{accountCount > 1 && (
-									<MultiAccountNote
-										agentName={agent.name}
+									<MultiCredentialNote
 										apiTitle={shown.title}
 										count={accountCount}
 									/>

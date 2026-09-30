@@ -175,7 +175,7 @@ export interface PreflightTally {
 	oauth: number;
 	choose: number;
 	form: number;
-	/** Picks the agent already reaches — each adds another account. */
+	/** Picks the agent already reaches — each adds another credential. */
 	another: number;
 	/** Catalog picks that will be imported into the workspace. */
 	imports: number;
@@ -243,6 +243,6 @@ export function preflightTallyLabel(outcome: PreflightOutcome, count: number): s
 /** The tally line for picks the agent already reaches. */
 export function anotherAccountTallyLabel(count: number): string {
 	return count === 1
-		? '1 API is already added — this adds another account'
-		: `${count} APIs are already added — this adds another account to each`;
+		? '1 API is already added — this adds another credential'
+		: `${count} APIs are already added — this adds another credential to each`;
 }

@@ -6,13 +6,13 @@
  * unfinished sign-in on this API, neutral when the agent above it is not serving.
  * A suspension outranks the agent-level state.
  */
-import { PauseCircle, PlayCircle, Settings2, Users } from 'lucide-react';
+import { KeyRound, PauseCircle, PlayCircle, Settings2 } from 'lucide-react';
 import { Button, Card, StatusText, Tag, Tooltip, VendorIcon } from '@/shared/ui';
 import { formatApiVersion } from '@/shared/lib';
 import { cn } from '@/shared/lib/utils';
 import type { BindingRuleSummary } from '@/modules/agents/api';
 import type { ApiTileModel } from '@/modules/agents/lib/apiTiles';
-import { multiAccountExplanation } from '@/modules/agents/components/flat/MultiAccountNote';
+import { multiCredentialExplanation } from '@/modules/agents/components/flat/MultiCredentialNote';
 
 interface ApiTileProps {
 	tile: ApiTileModel;
@@ -34,14 +34,12 @@ interface ApiTileProps {
 	expanded: boolean;
 	/** DOM id of the sidebar panel this tile controls (aria-controls). */
 	sidebarId: string;
-	/** Set when the agent reaches this API through several accounts: the label that
-	 * tells this tile's account apart, always printed. */
+	/** Set when the agent reaches this API through several credentials: the label
+	 * that tells this tile's credential apart, always printed. */
 	accountLabel?: string;
 	/** How many of the agent's bindings serve this tile's API. Above 1 the header
-	 * carries an accounts badge whose tooltip says how a call picks one. */
+	 * carries a credentials chip whose tooltip says how a call picks one. */
 	accountCount?: number;
-	/** The agent's name, for the accounts badge's explanation. */
-	agentName?: string;
 }
 
 /** The grant-summary line under the credential name. A deny split rides
@@ -72,7 +70,6 @@ export function ApiTile({
 	sidebarId,
 	accountLabel,
 	accountCount = 1,
-	agentName = 'This agent',
 }: ApiTileProps) {
 	const summary = grantSummary(rules);
 	// The host is dropped when the title is only a humanisation of it (`slack.com` →
@@ -85,7 +82,7 @@ export function ApiTile({
 		.join(' · ');
 	// The credential is named only when it adds a fact, measured against BOTH names
 	// the tile prints — a generically-titled spec can repeat the host. With several
-	// accounts for one API it always adds one: which account this tile is.
+	// credentials for one API it always adds one: which credential this tile is.
 	const credentialLabel =
 		accountLabel ??
 		(sameIdentity(tile.credentialName, tile.title) ||
@@ -132,16 +129,12 @@ export function ApiTile({
 						{accountCount > 1 && (
 							// Above the overlay, so hover and focus reach the tooltip.
 							<Tooltip
-								content={multiAccountExplanation(
-									agentName,
-									tile.title,
-									accountCount,
-								)}
+								content={multiCredentialExplanation(tile.title, accountCount)}
 								className="relative z-10 shrink-0 rounded-md"
 								bubbleClassName="max-w-xs"
 							>
-								<Tag icon={Users} data-testid="tile-accounts-badge">
-									{accountCount} accounts
+								<Tag icon={KeyRound} data-testid="tile-accounts-badge">
+									{accountCount} credentials
 								</Tag>
 							</Tooltip>
 						)}

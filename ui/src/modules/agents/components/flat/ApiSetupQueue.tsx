@@ -12,8 +12,8 @@
  * with no rules — default-deny, so an added API cannot serve traffic yet.
  *
  * An API the agent already reaches is set up the same way: the pane names the
- * accounts it has and offers only credentials not bound to it yet, so the item
- * adds another account rather than a 409.
+ * credentials it has and offers only credentials not bound to it yet, so the item
+ * adds another credential rather than a 409.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, ArrowLeft, Check, KeyRound, Loader2, LogIn, Minus, X } from 'lucide-react';
@@ -484,8 +484,8 @@ function ActivePane({
 
 			{entry.existing.length > 0 && (
 				<p data-testid="queue-existing-accounts" className="text-muted-foreground text-xs">
-					{addedViaLabel(entry.existing)}. Pick another account to give {agentName} access
-					to both.
+					{addedViaLabel(entry.existing)}. Pick another credential to give {agentName}{' '}
+					access to both.
 				</p>
 			)}
 

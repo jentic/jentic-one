@@ -389,10 +389,10 @@ describe('preflightTallyLabel', () => {
 		expect(preflightTallyLabel('form', 1)).toBe('1 API needs a new credential');
 		expect(preflightTallyLabel('form', 2)).toBe('2 APIs need a new credential');
 		expect(anotherAccountTallyLabel(1)).toBe(
-			'1 API is already added — this adds another account',
+			'1 API is already added — this adds another credential',
 		);
 		expect(anotherAccountTallyLabel(2)).toBe(
-			'2 APIs are already added — this adds another account to each',
+			'2 APIs are already added — this adds another credential to each',
 		);
 	});
 });

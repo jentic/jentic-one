@@ -252,17 +252,19 @@ describe('AddApisTray — multi-select picks and the preflight tally', () => {
 		const slack = await row(/Slack/);
 		expect(slack).toBeEnabled();
 		// Presence, not visibility: the result rows stagger in from opacity 0.
-		expect(within(slack).getByText('Added via Slack bot token')).toBeInTheDocument();
+		expect(
+			within(slack).getByText('Added via Slack bot token · add another credential'),
+		).toBeInTheDocument();
 
 		await user.click(slack);
 		await waitFor(() => expect(selectionRows()).toHaveLength(1));
 		expect(within(selectionRows()[0]).getByTestId('tray-added-via')).toHaveTextContent(
-			'Added via Slack bot token — this adds another account',
+			'Added via Slack bot token — this adds another credential',
 		);
 		await waitFor(() =>
 			expect(tallyLines()).toEqual([
 				'1 API needs a new credential',
-				'1 API is already added — this adds another account',
+				'1 API is already added — this adds another credential',
 			]),
 		);
 

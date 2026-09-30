@@ -1733,7 +1733,9 @@ describe('AgentsPage — Add APIs: Back from the setup queue to the tray', () =>
 		renderPage('/?agent=agnt_disabled_1');
 		await user.click(await screen.findByRole('button', { name: 'Add APIs' }));
 		const stripe = await trayRow('Stripe');
-		expect(within(stripe).getByText('Added via Stripe key')).toBeInTheDocument();
+		expect(
+			within(stripe).getByText('Added via Stripe key · add another credential'),
+		).toBeInTheDocument();
 		// Still pickable: another Stripe account can be added.
 		expect(stripe).toBeEnabled();
 		// Queued but never bound: a plain row with no hint.
@@ -1813,14 +1815,15 @@ describe('AgentsPage — Add APIs: Back from the setup queue to the tray', () =>
 			expect(screen.queryByTestId('multi-account-note')).toBeNull();
 			const badges = screen.getAllByTestId('tile-accounts-badge');
 			expect(badges).toHaveLength(2);
-			expect(badges[0]).toHaveTextContent('2 accounts');
+			expect(badges[0]).toHaveTextContent('2 credentials');
+			expect(badges[0]).not.toHaveTextContent(/account/i);
 
 			// Keyboard: the badge's trigger is focusable and described by the tooltip.
 			const trigger = badges[0].parentElement as HTMLElement;
 			trigger.focus();
 			const tip = await screen.findByRole('tooltip');
 			expect(tip).toHaveTextContent(
-				'legacy-scraper has 2 accounts for Stripe. It chooses one per call with the Jentic-Credential-Id header; without it, calls return the accounts to pick from.',
+				'This agent has 2 credentials for Stripe. It chooses one per call with the Jentic-Credential-Id header; without it, calls return the credentials to pick from.',
 			);
 			expect(trigger).toHaveAttribute('aria-describedby', tip.id);
 			await checkA11y(document.body);
@@ -1828,7 +1831,7 @@ describe('AgentsPage — Add APIs: Back from the setup queue to the tray', () =>
 			// The binding's sidebar says the same in one quiet line.
 			await user.click(screen.getAllByRole('button', { name: 'Manage Stripe access' })[0]);
 			expect(await screen.findByTestId('multi-account-note')).toHaveTextContent(
-				'legacy-scraper has 2 accounts for Stripe.',
+				'This agent has 2 credentials for Stripe.',
 			);
 		});
 
