@@ -115,6 +115,7 @@ export type { BasicAuthCreateRequest } from '@/shared/api/generated/models/Basic
 export type { BasicAuthUpdateRequest } from '@/shared/api/generated/models/BasicAuthUpdateRequest';
 export type { BearerTokenCreateRequest } from '@/shared/api/generated/models/BearerTokenCreateRequest';
 export type { BearerTokenUpdateRequest } from '@/shared/api/generated/models/BearerTokenUpdateRequest';
+export type { NoAuthCreateRequest } from '@/shared/api/generated/models/NoAuthCreateRequest';
 export type { OAuth2CreateRequest } from '@/shared/api/generated/models/OAuth2CreateRequest';
 export type { OAuth2UpdateRequest } from '@/shared/api/generated/models/OAuth2UpdateRequest';
 export type { Sigv4CreateRequest } from '@/shared/api/generated/models/Sigv4CreateRequest';

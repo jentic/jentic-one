@@ -9,7 +9,7 @@ import {
 	checkA11y,
 } from '@/__tests__/test-utils';
 import { worker } from '@/mocks/browser';
-import { setToken } from '@/shared/api';
+import { CredentialType, setToken } from '@/shared/api';
 import { clearAllToasts, Toaster } from '@/shared/ui';
 import { Link, Route, Routes, useNavigate } from 'react-router';
 import ApiDetailPage from '@/modules/workspace/pages/ApiDetailPage';
@@ -506,11 +506,11 @@ describe('ApiDetailPage', () => {
 				const state = await screen.findByTestId('hub-access-no-auth');
 				expect(state).toHaveTextContent('No credential needed');
 				expect(state).toHaveTextContent(/none of its operations require one/i);
-				// Its binding requirement is stated, not hidden.
-				expect(state).toHaveTextContent(/no-auth credential/i);
 				expect(screen.queryByTestId('hub-access-none')).not.toBeInTheDocument();
-				// A credential is optional here, so it can still be added.
+				// A credential is optional here, so it can still be added — and
+				// an agent can be given access without one.
 				expect(screen.getByTestId('hub-access-add-credential')).toBeInTheDocument();
+				expect(screen.getByTestId('hub-access-give-agent-access')).toBeVisible();
 				expect(screen.queryByTestId('hub-access-bind-agent')).not.toBeInTheDocument();
 			});
 
@@ -524,6 +524,134 @@ describe('ApiDetailPage', () => {
 				expect(screen.queryByTestId('hub-access-none')).not.toBeInTheDocument();
 				expect(screen.queryByTestId('hub-access-add-credential')).not.toBeInTheDocument();
 				expect(screen.queryByTestId('hub-access-bind-agent')).not.toBeInTheDocument();
+				expect(screen.getByTestId('hub-access-give-agent-access')).toBeVisible();
+			});
+		});
+
+		describe('Give an agent access (no credential needed)', () => {
+			const BIGCO = '/library/workspace/bigco/big-api/1';
+
+			/** Record every `POST /credentials` body, passing through to the mock. */
+			function recordCreates(): unknown[] {
+				const bodies: unknown[] = [];
+				worker.events.on('request:start', ({ request }) => {
+					if (
+						request.method === 'POST' &&
+						new URL(request.url).pathname === '/credentials'
+					)
+						void request
+							.clone()
+							.json()
+							.then((b: unknown) => bodies.push(b));
+				});
+				return bodies;
+			}
+			afterEach(() => worker.events.removeAllListeners());
+
+			it('creates a no-auth credential for the API and opens the bind dialog on it', async () => {
+				const user = userEvent.setup();
+				resetCredentialsStore([]);
+				const bodies = recordCreates();
+				renderAt(BIGCO);
+
+				await user.click(await screen.findByTestId('hub-access-give-agent-access'));
+
+				const dialog = await screen.findByRole('dialog', { name: 'Bind to an agent' });
+				expect(await within(dialog).findByText('BigCo (no auth)')).toBeVisible();
+				expect(
+					await within(dialog).findByRole('checkbox', { name: 'support-agent' }),
+				).toBeVisible();
+				await waitFor(() => expect(bodies).toHaveLength(1));
+				// No secret, unpinned version (covers every version), like the create form.
+				expect(bodies[0]).toEqual({
+					type: 'no_auth',
+					name: 'BigCo (no auth)',
+					provider: 'static',
+					api: { vendor: 'bigco', name: 'big-api' },
+				});
+				// The credentials list refetched, so the card now lists it.
+				expect(
+					await within(screen.getByTestId('hub-access')).findByRole('button', {
+						name: 'View BigCo (no auth)',
+					}),
+				).toBeInTheDocument();
+			});
+
+			it("reuses the API's existing no-auth credential instead of creating another", async () => {
+				const user = userEvent.setup();
+				resetCredentialsStore([
+					makeMockCredential({
+						credential_id: 'cred_big_other',
+						name: 'BigCo key',
+						api: { vendor: 'bigco', name: 'big-api', version: '' },
+					}),
+					makeMockCredential({
+						credential_id: 'cred_big_noauth',
+						name: 'BigCo open access',
+						type: CredentialType.NO_AUTH,
+						details: {},
+						api: { vendor: 'bigco', name: 'big-api', version: '' },
+					}),
+				]);
+				const bodies = recordCreates();
+				renderAt(BIGCO);
+
+				// A covering credential already exists, so the card lists it and
+				// the Bind action opens on the no-auth one.
+				await user.click(await screen.findByTestId('hub-access-bind-agent'));
+				const dialog = await screen.findByRole('dialog', { name: 'Bind to an agent' });
+				expect(within(dialog).getByLabelText('Credential')).toHaveValue('cred_big_noauth');
+				expect(bodies).toHaveLength(0);
+			});
+
+			it('surfaces a failed create inline and opens no dialog', async () => {
+				const user = userEvent.setup();
+				resetCredentialsStore([]);
+				worker.use(
+					http.post('/credentials', () =>
+						HttpResponse.json(
+							{ detail: 'Credential store unavailable' },
+							{ status: 500 },
+						),
+					),
+				);
+				renderAt(BIGCO);
+
+				await user.click(await screen.findByTestId('hub-access-give-agent-access'));
+
+				const state = screen.getByTestId('hub-access-no-auth');
+				expect(await within(state).findByRole('alert')).toBeVisible();
+				expect(screen.queryByRole('dialog', { name: 'Bind to an agent' })).toBeNull();
+			});
+
+			it('is not offered to a viewer who can neither create credentials nor bind', async () => {
+				resetCredentialsStore([]);
+				worker.use(
+					http.get('/users/me', () =>
+						HttpResponse.json({
+							id: 'usr_member',
+							email: 'member@test.local',
+							first_name: 'Mem',
+							last_name: 'Ber',
+							permissions: ['agents:write'],
+							must_change_password: false,
+							created_at: '2026-01-01T00:00:00Z',
+							updated_at: null,
+						}),
+					),
+				);
+				renderWithProviders(
+					<AuthProvider>
+						<ApiDetailPage />
+					</AuthProvider>,
+					{ route: BIGCO, path: PATH },
+				);
+
+				// Binds, but can't create the no-auth credential it would need.
+				const state = await screen.findByTestId('hub-access-no-auth');
+				expect(state).toHaveTextContent('No credential needed');
+				expect(state).toHaveTextContent(/needs access bound to it/i);
+				expect(screen.queryByTestId('hub-access-give-agent-access')).toBeNull();
 			});
 		});
 

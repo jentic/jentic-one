@@ -51,3 +51,18 @@ export function useCanBindAgents(): boolean {
 	const perms = viewer.permissions ?? [];
 	return perms.includes(AGENTS_WRITE) || perms.includes(ORG_ADMIN);
 }
+
+/** The create endpoint's permission (`POST /credentials`). */
+export const CREDENTIALS_WRITE = 'credentials:write';
+
+/**
+ * Whether to offer creating a credential: the viewer holds `credentials:write`
+ * (or is an `org:admin`, which the server accepts in its place). Same UX-only
+ * posture as {@link useCanBindAgents}: an unknown viewer is offered it.
+ */
+export function useCanCreateCredentials(): boolean {
+	const viewer = useOptionalCurrentUser();
+	if (!viewer) return true;
+	const perms = viewer.permissions ?? [];
+	return perms.includes(CREDENTIALS_WRITE) || perms.includes(ORG_ADMIN);
+}

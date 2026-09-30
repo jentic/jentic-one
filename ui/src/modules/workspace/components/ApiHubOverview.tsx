@@ -13,7 +13,11 @@
  *                       Whether a credential is needed at all comes from the
  *                       live spec's required security, not just the declared
  *                       schemes (`useApiAuthRequirement`); an API with no
- *                       schemes offers no Add credential
+ *                       schemes offers no Add credential. An API that needs
+ *                       none offers "Give an agent access": the broker still
+ *                       resolves every call through a bound credential, so it
+ *                       reuses (or creates) a `no_auth` credential for the API
+ *                       and opens the bind dialog on it
  *   - Calls, 7 days   — `GET /monitoring/usage?group_by=api` (org:admin only;
  *                       hidden otherwise)
  *   - Notes           — `GET /notes?api=vendor:name:version`
@@ -52,6 +56,7 @@ import {
 import { ROUTE_PATHS } from '@/shared/app/routes';
 import { useAgentStreamOptional } from '@/shared/lib';
 import { timeAgo } from '@/shared/lib/utils';
+import { CredentialType, useCreateCredential, type Credential } from '@/shared/credentials/api';
 import { initialApiFor } from '@/shared/credentials/lib/initialApiFor';
 import {
 	CreateCredentialFlow,
@@ -76,7 +81,12 @@ import {
 	useApiUsageWeek,
 } from '@/modules/workspace/api';
 import type { ApiKey, WorkspaceApi } from '@/modules/workspace/api';
-import { useCanBindAgents } from '@/shared/credentials/lib/bindAuthority';
+import { useOptionalCurrentUser } from '@/shared/auth';
+import {
+	credentialsBindableBy,
+	useCanBindAgents,
+	useCanCreateCredentials,
+} from '@/shared/credentials/lib/bindAuthority';
 import { BindAgentDialog } from '@/modules/workspace/components/BindAgentDialog';
 
 function HubCard({
@@ -168,7 +178,64 @@ function AccessCard({ api }: { api: WorkspaceApi }) {
 	// credential. Mounted once, toggled.
 	const canBind = useCanBindAgents();
 	const [bindOpen, setBindOpen] = useState(false);
-	const openBind = (): void => setBindOpen(true);
+	// The credential the dialog opens on (set by "Give an agent access").
+	const [bindCredentialId, setBindCredentialId] = useState<string | null>(null);
+
+	// "Give an agent access" — for an API that needs no credential. The broker
+	// resolves every call through a bound credential regardless, so this finds
+	// a `no_auth` credential the viewer can bind (or creates one: no secret,
+	// unpinned version like the create form) and opens the bind dialog on it.
+	const viewer = useOptionalCurrentUser();
+	const canCreate = useCanCreateCredentials();
+	const createCredential = useCreateCredential();
+	// Held until the credentials refetch lists it, so the dialog can open on it.
+	const [createdNoAuth, setCreatedNoAuth] = useState<Credential | null>(null);
+	const reusableNoAuth = useMemo(
+		() =>
+			credentialsBindableBy(entry?.credentials ?? [], viewer).find(
+				(c) => c.type === CredentialType.NO_AUTH,
+			) ??
+			createdNoAuth ??
+			null,
+		[entry, viewer, createdNoAuth],
+	);
+	const noAuthRequirement = auth.requirement === 'none' || auth.requirement === 'optional';
+	const offerNoAuthAccess = noAuthRequirement && canBind && (reusableNoAuth != null || canCreate);
+	const bindCredentials = useMemo(() => {
+		const listed = entry?.credentials ?? [];
+		if (!createdNoAuth || listed.some((c) => c.credential_id === createdNoAuth.credential_id))
+			return listed;
+		return [...listed, createdNoAuth];
+	}, [entry, createdNoAuth]);
+	const openBind = (): void => {
+		// On an API that needs no credential, open on its no-auth credential.
+		setBindCredentialId(noAuthRequirement ? (reusableNoAuth?.credential_id ?? null) : null);
+		setBindOpen(true);
+	};
+	const giveAgentAccess = async (): Promise<void> => {
+		createCredential.reset();
+		let credentialId = reusableNoAuth?.credential_id ?? null;
+		if (!credentialId) {
+			try {
+				const created = await createCredential.mutateAsync({
+					type: CredentialType.NO_AUTH,
+					name: `${workspaceApiDisplayTitle(api)} (no auth)`,
+					provider: 'static',
+					api: {
+						vendor: api.api.vendor,
+						name: api.api.name,
+						catalog_api_id: api.catalogApiId ?? undefined,
+					},
+				});
+				setCreatedNoAuth(created.credential);
+				credentialId = created.credential.credential_id;
+			} catch {
+				return; // surfaced inline from the mutation's error
+			}
+		}
+		setBindCredentialId(credentialId);
+		setBindOpen(true);
+	};
 
 	return (
 		<>
@@ -204,21 +271,47 @@ function AccessCard({ api }: { api: WorkspaceApi }) {
 							one, then bind it to an agent.
 						</p>
 					) : (
-						<div className="space-y-1" data-testid="hub-access-no-auth">
-							<p className="text-foreground flex items-center gap-1.5 text-sm font-medium">
-								<LockOpen
-									className="text-muted-foreground h-3.5 w-3.5 shrink-0"
-									aria-hidden="true"
-								/>
-								No credential needed
-							</p>
-							<p className="text-muted-foreground text-sm">
-								{auth.requirement === 'optional'
-									? 'It declares security schemes, but none of its operations require one.'
-									: 'It doesn’t use authentication.'}{' '}
-								Jentic still routes every agent call through a credential binding,
-								so an agent needs a no-auth credential (no secret) bound to call it.
-							</p>
+						<div
+							className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between md:gap-6"
+							data-testid="hub-access-no-auth"
+						>
+							<div className="min-w-0 space-y-1">
+								<p className="text-foreground flex items-center gap-1.5 text-sm font-medium">
+									<LockOpen
+										className="text-muted-foreground h-3.5 w-3.5 shrink-0"
+										aria-hidden="true"
+									/>
+									No credential needed
+								</p>
+								<p className="text-muted-foreground text-sm">
+									{auth.requirement === 'optional'
+										? 'It declares security schemes, but none of its operations require one.'
+										: 'It doesn’t use authentication.'}{' '}
+									{offerNoAuthAccess
+										? 'Give an agent access to let it call this API — no secret to set up.'
+										: 'An agent still needs access bound to it before it can call this API.'}
+								</p>
+								{createCredential.error && (
+									<ErrorAlert
+										message={createCredential.error}
+										onRetry={(): void => void giveAgentAccess()}
+									/>
+								)}
+							</div>
+							{offerNoAuthAccess && (
+								<div className="shrink-0">
+									<Button
+										size="sm"
+										onClick={(): void => void giveAgentAccess()}
+										loading={createCredential.isPending}
+										disabled={createCredential.isPending}
+										data-testid="hub-access-give-agent-access"
+									>
+										<Link2 size={14} aria-hidden="true" />
+										Give an agent access
+									</Button>
+								</div>
+							)}
 						</div>
 					)
 				) : (
@@ -366,12 +459,13 @@ function AccessCard({ api }: { api: WorkspaceApi }) {
 				}}
 			/>
 			{deviceDialog}
-			{entry && canBind && (
+			{bindCredentials.length > 0 && canBind && (
 				<BindAgentDialog
 					open={bindOpen}
 					onClose={(): void => setBindOpen(false)}
-					credentials={entry.credentials}
+					credentials={bindCredentials}
 					apiLabel={workspaceApiDisplayTitle(api)}
+					initialCredentialId={bindCredentialId}
 				/>
 			)}
 		</>

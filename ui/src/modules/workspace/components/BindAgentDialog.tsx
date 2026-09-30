@@ -22,7 +22,7 @@
  * across dismissals and resets on a successful bind; transient error clears on
  * reopen.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Bot } from 'lucide-react';
 import {
 	ActorStatusBadge,
@@ -57,6 +57,12 @@ export interface BindAgentDialogProps {
 	credentials: Credential[];
 	/** Shown in the subtitle, e.g. "NewsAPI". */
 	apiLabel: string;
+	/**
+	 * Preselect this credential. Seeds the pick when it changes (a caller that
+	 * just created a credential opens the dialog on it); the user can still
+	 * switch.
+	 */
+	initialCredentialId?: string | null;
 }
 
 /** "a", "a and b", "a, b and c"; past three, just the count. */
@@ -66,13 +72,27 @@ function agentList(names: string[]): string {
 	return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
 }
 
-export function BindAgentDialog({ open, onClose, credentials, apiLabel }: BindAgentDialogProps) {
+export function BindAgentDialog({
+	open,
+	onClose,
+	credentials,
+	apiLabel,
+	initialCredentialId,
+}: BindAgentDialogProps) {
 	const viewer = useOptionalCurrentUser();
 	const usable = useMemo(() => credentialsBindableBy(credentials, viewer), [credentials, viewer]);
 	const agents = useAgentsForPicker();
 	const bind = useBindCredentialToAgents();
 
-	const [credentialId, setCredentialId] = useState<string | null>(null);
+	const [credentialId, setCredentialId] = useState<string | null>(initialCredentialId ?? null);
+	// Seed-from-props syncs only when the seed itself changes (dialog-state rule).
+	const lastSeedRef = useRef(initialCredentialId);
+	useEffect(() => {
+		if (lastSeedRef.current !== initialCredentialId) {
+			lastSeedRef.current = initialCredentialId;
+			if (initialCredentialId) setCredentialId(initialCredentialId);
+		}
+	}, [initialCredentialId]);
 	const [selected, setSelected] = useState<Set<string>>(new Set());
 
 	// Transient: clear the last error on every (re)open.
