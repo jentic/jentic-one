@@ -6,6 +6,12 @@ import type { CreatedCredentialInfo } from '@/shared/credentials/components/Crea
 
 type Connect = ReturnType<typeof useDeviceAwareConnect>['connect'];
 
+/** Toast copy once an abandoned sign-in's credential is deleted. */
+const DISCARDED = 'The unconnected credential was discarded.';
+/** …and when that delete failed, so the unusable credential is still listed. */
+const NOT_DISCARDED =
+	'Sign-in didn’t finish and the credential couldn’t be removed — delete it from the Credentials list on the Agents page.';
+
 /**
  * The OAuth connect every credential surface runs (the agents inventory
  * sheet and API-access sidebar, the API hub), with the
@@ -17,9 +23,10 @@ type Connect = ReturnType<typeof useDeviceAwareConnect>['connect'];
  *     opens its sign-in straight away; anything else is ready as is. A
  *     freshly-created credential that never completes its sign-in is unusable
  *     ("if it wasn't signed, we shouldn't store it"), so an abandoned, timed-out
- *     or failed handshake DISCARDS it. `redirected` (popup blocked → same-tab
- *     navigation) must NOT clean up: the user is mid-flow and the callback
- *     lands on return.
+ *     or failed handshake DISCARDS it — and if that delete fails, says so (an
+ *     error toast pointing at the Credentials list on the Agents page) rather than claiming it's gone.
+ *     `redirected` (popup blocked → same-tab navigation) must NOT clean up:
+ *     the user is mid-flow and the callback lands on return.
  *   - `connectExisting` — the standalone Connect action on a listed
  *     credential: keeps the credential whatever the outcome.
  *
@@ -44,19 +51,36 @@ export function useConnectAfterCreate(opts: { connect?: Connect } = {}): {
 			) {
 				return;
 			}
-			const discard = async (): Promise<void> => {
+			/** Delete the unusable credential; false when the delete failed. */
+			const discard = async (): Promise<boolean> => {
 				try {
 					await deleteCredential(info.credentialId);
+					return true;
 				} catch {
-					// Best-effort cleanup; the row stays listed if the delete fails.
+					return false;
 				}
 			};
-			const discarded = (title: string, variant?: 'error'): void => {
-				toast({
-					title,
-					description: 'The unconnected credential was discarded.',
-					variant,
-				});
+			/**
+			 * Discard, then say what actually happened: the outcome's own toast
+			 * when the credential is gone, or an error pointing at the Credentials
+			 * list on the Agents page when the delete failed — the unusable row is
+			 * still listed there
+			 * (and in the bind picker), so it must not read as discarded.
+			 */
+			const discardAndReport = async (outcome: {
+				title: string;
+				description?: string;
+				variant?: 'error';
+			}): Promise<void> => {
+				if (await discard()) {
+					toast({
+						title: outcome.title,
+						description: outcome.description ?? DISCARDED,
+						variant: outcome.variant,
+					});
+					return;
+				}
+				toast({ title: outcome.title, description: NOT_DISCARDED, variant: 'error' });
 			};
 			void (async (): Promise<void> => {
 				toast({ title: 'Opening sign-in…' });
@@ -69,34 +93,34 @@ export function useConnectAfterCreate(opts: { connect?: Connect } = {}): {
 						case 'redirected':
 							break;
 						case 'cancelled':
-							await discard();
-							discarded('Sign-in cancelled');
+							await discardAndReport({ title: 'Sign-in cancelled' });
 							break;
 						case 'timeout':
-							await discard();
-							toast({
+							await discardAndReport({
 								title: 'Sign-in timed out',
-								description: 'The unconnected credential was discarded. Try again.',
+								description: `${DISCARDED} Try again.`,
 								variant: 'error',
 							});
 							break;
 						case 'unsupported_challenge':
-							await discard();
-							discarded('Unsupported sign-in challenge', 'error');
+							await discardAndReport({
+								title: 'Unsupported sign-in challenge',
+								variant: 'error',
+							});
 							break;
 						case 'unsafe_challenge_url':
-							await discard();
-							toast({
+							await discardAndReport({
 								title: 'Sign-in link refused',
-								description:
-									'The provider returned an unsafe sign-in URL. The unconnected credential was discarded.',
+								description: `The provider returned an unsafe sign-in URL. ${DISCARDED}`,
 								variant: 'error',
 							});
 							break;
 					}
 				} catch {
-					await discard();
-					discarded('Could not complete sign-in', 'error');
+					await discardAndReport({
+						title: 'Could not complete sign-in',
+						variant: 'error',
+					});
 				}
 			})();
 		},

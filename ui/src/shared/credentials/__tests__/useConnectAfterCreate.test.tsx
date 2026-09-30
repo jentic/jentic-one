@@ -72,7 +72,42 @@ describe('useConnectAfterCreate', () => {
 		await user.click(screen.getByRole('button', { name: 'created' }));
 		expect(await screen.findByText(title)).toBeInTheDocument();
 		await waitFor(() => expect(deleted).toEqual(['cred_new']));
+		expect(
+			await screen.findByText(/The unconnected credential was discarded\./),
+		).toBeInTheDocument();
 	});
+
+	it.each([
+		[{ status: 'cancelled' } as const, 'Sign-in cancelled'],
+		[{ status: 'timeout' } as const, 'Sign-in timed out'],
+		[{ status: 'unsupported_challenge' } as const, 'Unsupported sign-in challenge'],
+		[{ status: 'unsafe_challenge_url' } as const, 'Sign-in link refused'],
+		['throw' as const, 'Could not complete sign-in'],
+	])(
+		'when the discard fails after %o, says the credential is still there (never "discarded")',
+		async (outcome, title) => {
+			worker.use(
+				http.delete('/credentials/:id', ({ params }) => {
+					deleted.push(String(params.id));
+					return HttpResponse.json({ detail: 'boom' }, { status: 500 });
+				}),
+			);
+			const user = userEvent.setup();
+			renderWithProviders(<Host outcome={outcome} />);
+			await user.click(screen.getByRole('button', { name: 'created' }));
+			expect(
+				await screen.findByText(
+					'Sign-in didn’t finish and the credential couldn’t be removed — delete it from the Credentials list on the Agents page.',
+				),
+			).toBeInTheDocument();
+			expect(
+				screen.getByText(/the credential couldn’t be removed/).closest('[data-variant]'),
+			).toHaveAttribute('data-variant', 'error');
+			expect(screen.getByText(title)).toBeInTheDocument();
+			expect(deleted).toEqual(['cred_new']);
+			expect(screen.queryByText(/was discarded/)).not.toBeInTheDocument();
+		},
+	);
 
 	it('keeps the credential when sign-in redirected (mid-flow in this tab)', async () => {
 		const user = userEvent.setup();
