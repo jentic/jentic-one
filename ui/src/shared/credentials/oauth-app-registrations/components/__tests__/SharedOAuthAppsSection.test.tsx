@@ -6,12 +6,12 @@ import { SharedOAuthAppsSection } from '@/shared/credentials/oauth-app-registrat
 import { resetOAuthAppRegistrationsStore } from '@/shared/credentials/oauth-app-registrations/mocks/handlers';
 
 /**
- * The admin's shared-OAuth-apps management section on the credentials
- * page. Not itself creation-capable — creates route through the credentials
- * Add dialog with the "Available to everyone in the org" toggle flipped.
- * These tests pin: (a) the section renders the seeded registrations,
- * (b) the empty state fires the enclosing page's ``onAddCredential``
- * callback rather than any legacy "go to credentials" nav.
+ * The admin's shared-OAuth-apps management section in the credential
+ * inventory sheet. Registration itself runs through the credential create
+ * flow; the section's "Register shared app" actions hand off to the host via
+ * ``onRegister``. These tests pin: (a) the section renders the seeded
+ * registrations, (b) both the header action and the empty-state CTA fire
+ * ``onRegister``.
  */
 
 describe('SharedOAuthAppsSection', () => {
@@ -24,7 +24,7 @@ describe('SharedOAuthAppsSection', () => {
 	});
 
 	it('renders seeded registrations grouped under the section heading', async () => {
-		renderWithProviders(<SharedOAuthAppsSection onAddCredential={vi.fn()} />);
+		renderWithProviders(<SharedOAuthAppsSection onRegister={vi.fn()} />);
 		// Heading is rendered synchronously (no query gates it).
 		expect(screen.getByRole('heading', { name: /shared oauth apps/i })).toBeInTheDocument();
 		// The three seeded rows land in the table once the list query resolves.
@@ -33,7 +33,17 @@ describe('SharedOAuthAppsSection', () => {
 		expect(await screen.findByText('Slack (paused)')).toBeInTheDocument();
 	});
 
-	it('empty state fires onAddCredential — no legacy "go to credentials" nav', async () => {
+	it('header "Register shared app" fires onRegister', async () => {
+		const onRegister = vi.fn();
+		renderWithProviders(<SharedOAuthAppsSection onRegister={onRegister} />);
+		await screen.findByText('GitHub production app');
+
+		const user = userEvent.setup();
+		await user.click(screen.getByRole('button', { name: /register shared app/i }));
+		expect(onRegister).toHaveBeenCalledTimes(1);
+	});
+
+	it('empty state offers "Register shared app" and fires onRegister', async () => {
 		// Override the seeded list with an empty payload so the EmptyState branch renders.
 		worker.use(
 			http.get('/oauth-app-registrations', () =>
@@ -41,15 +51,16 @@ describe('SharedOAuthAppsSection', () => {
 			),
 		);
 
-		const onAddCredential = vi.fn();
-		renderWithProviders(<SharedOAuthAppsSection onAddCredential={onAddCredential} />);
+		const onRegister = vi.fn();
+		renderWithProviders(<SharedOAuthAppsSection onRegister={onRegister} />);
 
-		// EmptyState "Add credential" CTA supersedes the pre-refactor "Go to credentials" link.
-		const addBtn = await screen.findByRole('button', { name: /add credential/i });
-		expect(screen.queryByRole('link', { name: /go to credentials/i })).not.toBeInTheDocument();
+		expect(await screen.findByText(/no shared oauth apps/i)).toBeInTheDocument();
+		const buttons = screen.getAllByRole('button', { name: /register shared app/i });
+		// Header action + empty-state CTA.
+		expect(buttons).toHaveLength(2);
 
 		const user = userEvent.setup();
-		await user.click(addBtn);
-		await waitFor(() => expect(onAddCredential).toHaveBeenCalledTimes(1));
+		await user.click(buttons[1]);
+		await waitFor(() => expect(onRegister).toHaveBeenCalledTimes(1));
 	});
 });

@@ -8,6 +8,7 @@ import {
 	ErrorAlert,
 	Input,
 	Label,
+	Select,
 	SheetPrimitive,
 	Skeleton,
 	toast,
@@ -140,9 +141,21 @@ interface CreateCredentialFlowProps {
 	 * discarding a draft — the flow itself does not decide what "back" costs.
 	 */
 	back?: { label: string; onBack: (dirty: boolean) => void };
+	/**
+	 * Open with the admin "Register as a shared OAuth app" toggle already on —
+	 * the shared-apps section's "Register shared app" action. Pair with
+	 * `initialType={CredentialType.OAUTH2}` so manual entry lands on OAuth 2.0.
+	 */
+	initialShareWithOrg?: boolean;
 }
 
 type Step = 'pick' | 'form' | 'vendor';
+
+/** Grant types an org-shared OAuth app can sign people in through. */
+function isShareableGrant(grantType: string): boolean {
+	const g = grantType.trim();
+	return g === 'authorization_code' || g === 'device_code';
+}
 
 /**
  * The guided flow for creating a credential.
@@ -178,6 +191,7 @@ export function CreateCredentialFlow({
 	preselectedAgentId,
 	renderPostConnect,
 	back,
+	initialShareWithOrg = false,
 }: CreateCredentialFlowProps) {
 	const [step, setStep] = useState<Step>(pinnedApi ? 'form' : 'pick');
 	const [selectedApi, setSelectedApi] = useState<SelectedApi | null>(pinnedApi ?? null);
@@ -190,7 +204,7 @@ export function CreateCredentialFlow({
 	// instead of creating a personal credential, so any user on the instance
 	// can SSO through the resulting shared OAuth app. Only meaningful on the
 	// direct_oauth2 provider path (user provides their own client_id/secret).
-	const [shareWithOrg, setShareWithOrg] = useState(false);
+	const [shareWithOrg, setShareWithOrg] = useState(initialShareWithOrg);
 	const isAdmin = usePermission(ORG_ADMIN);
 	const registrationMutation = useCreateRegistrationMutation();
 	/** When non-null, the spec drove the type (UI hides the manual toggle). */
@@ -357,7 +371,7 @@ export function CreateCredentialFlow({
 		nameDirty.current = false;
 		formTouched.current = false;
 		setType(initialType ?? CredentialType.BEARER_TOKEN);
-		setShareWithOrg(false);
+		setShareWithOrg(initialShareWithOrg);
 		createMutation.reset();
 		importMutation.reset();
 		registrationMutation.reset();
@@ -503,25 +517,41 @@ export function CreateCredentialFlow({
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [isOAuth2, availableScopes, selectedScopeList.length]);
 
-	// Whether the "make this an org-shared registration" toggle is meaningful
-	// for the current form state. Only the direct_oauth2 path (user brings
-	// their own client_id + secret + endpoints) is eligible — the managed
-	// Pipedream flow and the platform-shipped-vendor path have no admin-owned
-	// OAuth app to share.
+	// Whether the "register as a shared OAuth app" toggle is offered. Only the
+	// direct_oauth2 path (admin brings their own client_id + endpoints) is
+	// eligible — the managed Pipedream flow and the platform-shipped-vendor
+	// path have no admin-owned OAuth app to share. A shared app is keyed to a
+	// catalog API, so manual entry (no catalog id) can't be shared. A spec that
+	// declares only non-interactive grants (e.g. client_credentials) has nothing
+	// to sign in through; a spec with no OAuth flows at all lets the admin pick
+	// the flow by hand below the toggle.
+	const specHasShareableFlow = oauth2Flows.some((f) => isShareableGrant(f.grantType));
 	const canShareWithOrg =
 		isAdmin &&
+		!manualMode &&
+		!!selectedApi?.apiId &&
 		type === CredentialType.OAUTH2 &&
 		state.provider === 'direct_oauth2' &&
-		(state.grantType.trim() === 'authorization_code' ||
-			state.grantType.trim() === 'device_code');
+		(oauth2Flows.length === 0 || specHasShareableFlow);
+	const sharing = canShareWithOrg && shareWithOrg;
+	/** The spec's grant selector offers a non-shareable flow that's currently picked. */
+	const sharingNeedsShareableGrant = sharing && !isShareableGrant(state.grantType);
+	// Without spec flows there's no grant-type selector, so an empty grant type
+	// would otherwise leave the shared app with no flow — default it on toggle-on.
+	useEffect(() => {
+		if (sharing && oauth2Flows.length === 0 && !isShareableGrant(state.grantType)) {
+			setState((s) => ({ ...s, grantType: 'authorization_code' }));
+		}
+	}, [sharing, oauth2Flows.length, state.grantType]);
 
-	// Submit path when the admin flipped "Available to everyone in the org":
+	// Submit path when the admin flipped "Register as a shared OAuth app":
 	// creates a shared OAuth app registration instead of a personal credential.
 	// Field mapping mirrors CredentialFormState onto the registration API:
 	// authorize_url / token_url on auth-code, authorization_endpoint /
 	// token_endpoint on device flow. Grant type discriminates flow_kind.
 	const submitAsRegistration = async (): Promise<void> => {
 		const grantType = state.grantType.trim();
+		if (!isShareableGrant(grantType)) return;
 		const scopes = state.scopes
 			.split(/\s+/)
 			.map((s) => s.trim())
@@ -613,7 +643,7 @@ export function CreateCredentialFlow({
 		setServerVarErrors(svErrors);
 		if (Object.keys(validation).length > 0 || Object.keys(svErrors).length > 0) return;
 
-		if (canShareWithOrg && shareWithOrg) {
+		if (sharing) {
 			await submitAsRegistration();
 			return;
 		}
@@ -705,10 +735,17 @@ export function CreateCredentialFlow({
 	const title = approvalSession
 		? 'Approve integration'
 		: step === 'pick'
-			? 'Add credential'
+			? initialShareWithOrg
+				? 'Register shared OAuth app'
+				: 'Add credential'
 			: step === 'vendor' && selectedVendor
 				? `Connect ${selectedVendor.display_name}`
-				: `Add credential${titleSuffix}`;
+				: sharing
+					? `Register shared OAuth app${titleSuffix}`
+					: `Add credential${titleSuffix}`;
+	const formStepHint = sharing
+		? 'Fill in the shared app details'
+		: 'Fill in the credential details';
 	// A pinned API removes the pick step, so the step counter would be lying. The
 	// vendor path is its own two-step flow, so it drops the counter too.
 	const subtitle = approvalSession ? (
@@ -716,16 +753,20 @@ export function CreateCredentialFlow({
 	) : step === 'vendor' ? (
 		<span>Pick an agent and the access it needs.</span>
 	) : pinnedApi ? (
-		<span>Fill in the credential details for {pinnedApi.label}</span>
+		<span>
+			{formStepHint} for {pinnedApi.label}
+		</span>
 	) : step === 'pick' ? (
 		<span>
 			<span className="font-mono text-[10px] tracking-widest uppercase">Step 1 of 2</span> ·
-			Choose a one-click sign-in, or pick an API to authenticate against
+			{initialShareWithOrg
+				? 'Pick the API the shared app signs in to'
+				: 'Choose a one-click sign-in, or pick an API to authenticate against'}
 		</span>
 	) : (
 		<span>
 			<span className="font-mono text-[10px] tracking-widest uppercase">Step 2 of 2</span> ·
-			Fill in the credential details
+			{formStepHint}
 		</span>
 	);
 
@@ -802,11 +843,9 @@ export function CreateCredentialFlow({
 						importMutation.isPending ||
 						registrationMutation.isPending
 					}
-					disabled={specPending}
+					disabled={specPending || sharingNeedsShareableGrant}
 				>
-					{canShareWithOrg && shareWithOrg
-						? 'Register for organization'
-						: 'Create credential'}
+					{sharing ? 'Register shared app' : 'Create credential'}
 				</Button>
 			</>
 		) : undefined;
@@ -868,30 +907,58 @@ export function CreateCredentialFlow({
 						// Sticky-top so the toggle stays visible as the admin
 						// scrolls through vendor / auth-type / scope fields.
 						// ``-mx-5 -mt-4 px-5 pt-4`` extends edge-to-edge inside
-						// the Dialog's scroll container (which owns ``px-5 py-4``).
-						<div className="bg-card border-border sticky top-0 z-10 -mx-5 -mt-4 border-b px-5 pt-4 pb-3">
-							<div className="flex items-start gap-3">
-								<Checkbox
-									id={`${fieldId}-share`}
-									checked={shareWithOrg}
-									onChange={(checked): void => setShareWithOrg(checked)}
-									className="mt-0.5"
-								/>
-								<label
-									htmlFor={`${fieldId}-share`}
-									className="min-w-0 flex-1 cursor-pointer select-none"
-								>
-									<div className="text-foreground flex items-center gap-1.5 text-sm font-medium">
-										<Users className="h-3.5 w-3.5" />
-										Available to everyone in the organization
-									</div>
-									<p className="text-muted-foreground mt-0.5 text-xs leading-snug">
-										Shared apps let any user on this instance connect with your
-										registered client_id/secret.
-									</p>
-								</label>
-							</div>
+						// the scroll container — both the Sheet and Dialog
+						// surfaces pad it with ``px-5 py-4``.
+						<div className="bg-card border-border sticky top-0 z-10 -mx-5 -mt-4 space-y-3 border-b px-5 pt-4 pb-3">
+							<Checkbox
+								checked={shareWithOrg}
+								onChange={(checked): void => setShareWithOrg(checked)}
+								className="items-start"
+							>
+								<span className="text-foreground flex items-center gap-1.5 font-medium">
+									<Users className="h-3.5 w-3.5" />
+									Register as a shared OAuth app
+								</span>
+								<span className="mt-0.5 block text-xs leading-snug">
+									Everyone in the organization can connect through this app. Each
+									person signs in with their own account — tokens are never
+									shared.
+								</span>
+							</Checkbox>
+							{sharing && oauth2Flows.length === 0 && (
+								<div className="space-y-1.5">
+									<Label htmlFor={`${fieldId}-share-flow`}>Sign-in flow</Label>
+									<Select
+										id={`${fieldId}-share-flow`}
+										value={state.grantType}
+										onChange={(e): void => patch({ grantType: e.target.value })}
+									>
+										<option value="authorization_code">
+											Authorization code (browser redirect)
+										</option>
+										<option value="device_code">
+											Device code (enter a code)
+										</option>
+									</Select>
+								</div>
+							)}
+							{sharingNeedsShareableGrant && (
+								<p className="text-danger text-xs" role="alert">
+									Shared apps sign people in interactively — pick an authorization
+									code or device code grant type below.
+								</p>
+							)}
 						</div>
+					)}
+
+					{initialShareWithOrg && isAdmin && manualMode && (
+						<p
+							className="border-border bg-muted/40 text-muted-foreground rounded-lg border p-3 text-xs leading-snug"
+							role="note"
+						>
+							Shared OAuth apps are registered against a catalog API. Go back and pick
+							the API to share an app for — this form creates a personal credential.
+						</p>
 					)}
 
 					{apiSummary && (
@@ -980,13 +1047,11 @@ export function CreateCredentialFlow({
 
 					<div className="space-y-2">
 						<FormSectionLabel>
-							{canShareWithOrg && shareWithOrg
-								? 'Registration details'
-								: 'Credential details'}
+							{sharing ? 'Registration details' : 'Credential details'}
 						</FormSectionLabel>
 						<div className="space-y-1.5">
 							<Label htmlFor={`${fieldId}-name`} required>
-								{canShareWithOrg && shareWithOrg
+								{sharing
 									? 'Registration name'
 									: canShareWithOrg
 										? 'Credential name'
@@ -1000,7 +1065,7 @@ export function CreateCredentialFlow({
 									patch({ name: e.target.value });
 								}}
 								placeholder={
-									canShareWithOrg && shareWithOrg
+									sharing
 										? 'MyOrg Google'
 										: canShareWithOrg
 											? 'Google (personal)'
@@ -1020,7 +1085,7 @@ export function CreateCredentialFlow({
 								/>
 							) : (
 								<p className="text-muted-foreground text-xs">
-									{canShareWithOrg && shareWithOrg
+									{sharing
 										? "Admin-facing label for this shared OAuth app (e.g. 'MyOrg Google')."
 										: canShareWithOrg
 											? "Your name for this credential (e.g. 'Google (personal)'). You can create multiple credentials from a shared app with different names."
@@ -1232,7 +1297,7 @@ function FormSectionLabel({ children }: { children: React.ReactNode }) {
 
 /**
  * Colocated mutation that POSTs to `/oauth-app-registrations` when the admin
- * flips the "Available to everyone in the org" toggle in the create dialog.
+ * flips the "Register as a shared OAuth app" toggle in the create flow.
  *
  * Lives here (not in the oauth-app-registrations module's api/hooks) because
  * this dialog is the shared surface where an org-shared registration might

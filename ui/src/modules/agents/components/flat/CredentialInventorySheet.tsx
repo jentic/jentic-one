@@ -86,6 +86,8 @@ export function CredentialInventorySheet({
 	const [typeFilter, setTypeFilter] = useState<CredentialTypeFilter>('all');
 	const [bindingFilter, setBindingFilter] = useState<BindingFilter>('any');
 	const [createOpen, setCreateOpen] = useState(false);
+	/** The open create flow came from "Register shared app" — preset sharing on. */
+	const [createShared, setCreateShared] = useState(false);
 	const [editId, setEditId] = useState<string | null>(null);
 	const [stickyEditId, setStickyEditId] = useState<string | null>(null);
 	const [deleteTarget, setDeleteTarget] = useState<Credential | null>(null);
@@ -445,7 +447,10 @@ export function CredentialInventorySheet({
 						{isAdmin && (
 							<div className="mb-6">
 								<SharedOAuthAppsSection
-									onAddCredential={(): void => setCreateOpen(true)}
+									onRegister={(): void => {
+										setCreateShared(true);
+										setCreateOpen(true);
+									}}
 								/>
 							</div>
 						)}
@@ -514,8 +519,11 @@ export function CredentialInventorySheet({
 			{createOpen && (
 				<CreateCredentialFlow
 					open
+					initialShareWithOrg={createShared}
+					initialType={createShared ? CredentialType.OAUTH2 : undefined}
 					onClose={(): void => {
 						setCreateOpen(false);
+						setCreateShared(false);
 						if (approvalSession) onApprovalClose?.();
 					}}
 					approvalSession={approvalSession}
@@ -527,6 +535,7 @@ export function CredentialInventorySheet({
 					)}
 					onCreated={(info: CreatedCredentialInfo): void => {
 						setCreateOpen(false);
+						setCreateShared(false);
 						if (
 							info.type === CredentialType.OAUTH2 &&
 							info.provider !== 'static' &&

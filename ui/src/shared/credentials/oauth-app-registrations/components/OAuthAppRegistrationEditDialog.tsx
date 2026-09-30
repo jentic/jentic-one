@@ -282,18 +282,15 @@ export function OAuthAppRegistrationEditDialog({ open, onClose, registration }: 
 					)}
 				</div>
 
-				<div className="border-border flex items-center gap-3 border-t pt-3">
+				<div className="border-border border-t pt-3">
 					<Checkbox
-						id="oar-edit-is-active"
 						checked={draft.is_active}
 						onChange={(checked): void => patch({ is_active: checked })}
-					/>
-					<label
-						htmlFor="oar-edit-is-active"
-						className="cursor-pointer text-sm select-none"
 					>
-						Active — allow users to SSO through this registration
-					</label>
+						<span className="text-foreground">
+							Active — people in the organization can connect through this app
+						</span>
+					</Checkbox>
 				</div>
 			</form>
 		</Dialog>

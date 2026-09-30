@@ -4,7 +4,7 @@ import { CreateCredentialFlow } from '@/shared/credentials/components/CreateCred
 import { resetCredentialsStore } from '@/shared/credentials/mocks/handlers';
 
 /**
- * The "Available to everyone in the organization" toggle is admin-only —
+ * The "Register as a shared OAuth app" toggle is admin-only —
  * it flips the create dialog from the personal-credential path onto the
  * shared OAuth app registration path. These tests pin the visibility
  * gate: non-admin callers never see the toggle, no matter what form state
@@ -39,7 +39,7 @@ describe('CreateCredentialFlow — admin-only registration toggle', () => {
 		vi.restoreAllMocks();
 	});
 
-	it('hides the "Available to everyone in the organization" toggle for non-admins', async () => {
+	it('hides the "Register as a shared OAuth app" toggle for non-admins', async () => {
 		usePermissionMock.mockReturnValue(false);
 		renderWithProviders(
 			<CreateCredentialFlow open={true} onClose={vi.fn()} onCreated={vi.fn()} />,
@@ -50,9 +50,7 @@ describe('CreateCredentialFlow — admin-only registration toggle', () => {
 		await user.click(await screen.findByRole('button', { name: /enter manually/i }));
 
 		// Even in the form step, the toggle is absent for a non-admin.
-		expect(
-			screen.queryByText(/available to everyone in the organization/i),
-		).not.toBeInTheDocument();
+		expect(screen.queryByText(/register as a shared oauth app/i)).not.toBeInTheDocument();
 	});
 
 	it('keeps the toggle absent even when the form is in a shape that would show it for an admin', async () => {
@@ -67,11 +65,8 @@ describe('CreateCredentialFlow — admin-only registration toggle', () => {
 		const user = userEvent.setup();
 		await user.click(await screen.findByRole('button', { name: /enter manually/i }));
 
-		// The toggle text is a stable string ("Available to everyone in the
-		// organization"); a regression that leaked it to a non-admin would
+		// The toggle text is a stable string ("Register as a shared OAuth app"); a regression that leaked it to a non-admin would
 		// fail this assertion whether the underlying render was gated or not.
-		expect(
-			screen.queryByText(/available to everyone in the organization/i),
-		).not.toBeInTheDocument();
+		expect(screen.queryByText(/register as a shared oauth app/i)).not.toBeInTheDocument();
 	});
 });

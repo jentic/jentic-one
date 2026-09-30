@@ -1,12 +1,13 @@
 /**
- * Embedded "Shared OAuth apps" management section for the credentials
- * page. Admin-only surface — creation still lives on the credentials Add
- * dialog with the "Available to everyone in the organization" toggle;
- * this section covers the rest of the lifecycle (edit, rotate secret,
- * activate/deactivate, delete).
+ * Embedded "Shared OAuth apps" management section for the credential
+ * inventory sheet. Admin-only surface. "Register shared app" opens the
+ * credential create flow with "Register as a shared OAuth app" preset (the
+ * flow owns API picking + endpoint seeding); this section covers the rest
+ * of the lifecycle (edit, rotate secret, activate/deactivate, delete).
  */
 import { useState } from 'react';
-import { RefreshButton, toast } from '@/shared/ui';
+import { Plus } from 'lucide-react';
+import { Button, RefreshButton, toast } from '@/shared/ui';
 import { OAuthAppRegistrationsTable } from '@/shared/credentials/oauth-app-registrations/components/OAuthAppRegistrationsTable';
 import { OAuthAppRegistrationEditDialog } from '@/shared/credentials/oauth-app-registrations/components/OAuthAppRegistrationEditDialog';
 import { OAuthAppRegistrationRotateSecretDialog } from '@/shared/credentials/oauth-app-registrations/components/OAuthAppRegistrationRotateSecretDialog';
@@ -18,16 +19,11 @@ import {
 } from '@/shared/credentials/oauth-app-registrations/api/hooks';
 
 interface SharedOAuthAppsSectionProps {
-	/**
-	 * Called from the empty-state CTA to open the enclosing page's
-	 * credentials Add dialog. Registration happens through that dialog with
-	 * the "Available to everyone in the organization" toggle flipped —
-	 * there's no dedicated registration surface.
-	 */
-	onAddCredential: () => void;
+	/** Opens the host's create flow with "Register as a shared OAuth app" preset. */
+	onRegister: () => void;
 }
 
-export function SharedOAuthAppsSection({ onAddCredential }: SharedOAuthAppsSectionProps) {
+export function SharedOAuthAppsSection({ onRegister }: SharedOAuthAppsSectionProps) {
 	const listQuery = useOAuthAppRegistrations({ includeInactive: true });
 	const toggleActive = useUpdateOAuthAppRegistration();
 
@@ -72,23 +68,28 @@ export function SharedOAuthAppsSection({ onAddCredential }: SharedOAuthAppsSecti
 						Shared OAuth apps
 					</h2>
 					<p className="text-muted-foreground text-xs">
-						OAuth applications any user on this instance can SSO through. Add one by
-						flipping "Available to everyone in the organization" on the credentials Add
-						dialog.
+						OAuth apps everyone in the organization can connect through. Each person
+						signs in with their own account — tokens are never shared.
 					</p>
 				</div>
-				<RefreshButton
-					onRefresh={(): void => void listQuery.refetch()}
-					pending={listQuery.isFetching}
-					title="Refresh shared OAuth apps"
-				/>
+				<div className="flex shrink-0 items-center gap-2">
+					<Button size="sm" variant="secondary" onClick={onRegister}>
+						<Plus className="h-4 w-4" />
+						Register shared app
+					</Button>
+					<RefreshButton
+						onRefresh={(): void => void listQuery.refetch()}
+						pending={listQuery.isFetching}
+						title="Refresh shared OAuth apps"
+					/>
+				</div>
 			</div>
 
 			<OAuthAppRegistrationsTable
 				registrations={listQuery.data}
 				isLoading={listQuery.isLoading}
 				error={listQuery.error}
-				onAddCredential={onAddCredential}
+				onRegister={onRegister}
 				pendingId={pendingId}
 				onAction={(registration, action): void => {
 					switch (action) {

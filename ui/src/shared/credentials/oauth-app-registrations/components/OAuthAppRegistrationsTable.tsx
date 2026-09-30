@@ -33,12 +33,8 @@ interface OAuthAppRegistrationsTableProps {
 	registrations: OAuthAppRegistration[] | undefined;
 	isLoading: boolean;
 	error: unknown;
-	/**
-	 * Opens the credentials Add dialog on the enclosing page. Registration
-	 * happens from that dialog (with the "Available to everyone in the org"
-	 * toggle flipped), not from this management section.
-	 */
-	onAddCredential: () => void;
+	/** Opens the create flow with "Register as a shared OAuth app" preset. */
+	onRegister: () => void;
 	onAction: (registration: OAuthAppRegistration, action: RegistrationRowAction) => void;
 	pendingId?: string | null;
 }
@@ -56,7 +52,7 @@ export function OAuthAppRegistrationsTable({
 	registrations,
 	isLoading,
 	error,
-	onAddCredential,
+	onRegister,
 	onAction,
 	pendingId,
 }: OAuthAppRegistrationsTableProps) {
@@ -72,9 +68,9 @@ export function OAuthAppRegistrationsTable({
 		return (
 			<EmptyState
 				icon={<KeyRound className="h-6 w-6" />}
-				title="No OAuth app registrations"
-				description="Register a shared OAuth application from the credentials Add dialog — flip “Available to everyone in the organization” on any OAuth2 create."
-				action={<Button onClick={onAddCredential}>Add credential</Button>}
+				title="No shared OAuth apps"
+				description="Register an OAuth app your organization can connect through — each person signs in with their own account."
+				action={<Button onClick={onRegister}>Register shared app</Button>}
 			/>
 		);
 	}
