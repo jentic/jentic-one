@@ -101,6 +101,22 @@ describe('TabNav', () => {
 		expect(screen.getByRole('tab', { name: /Overview/ })).toHaveAttribute('tabindex', '-1');
 	});
 
+	it('shows a trailing tag as part of the tab name', () => {
+		renderWithProviders(
+			<TabNav
+				options={[
+					{ value: 'a', label: 'First', badge: <span>Recommended</span> },
+					{ value: 'b', label: 'Second' },
+				]}
+				value="a"
+				onChange={() => {}}
+				ariaLabel="Routes"
+			/>,
+		);
+		expect(screen.getByRole('tab', { name: 'First Recommended' })).toBeInTheDocument();
+		expect(screen.getByRole('tab', { name: 'Second' })).toBeInTheDocument();
+	});
+
 	it('has no critical a11y violations', async () => {
 		const { container } = renderWithProviders(<Harness />);
 		await checkA11y(container);

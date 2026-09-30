@@ -26,6 +26,9 @@ export interface TabNavOption<T extends string = string> {
 	icon?: ReactNode;
 	/** Optional trailing count badge. Hidden when undefined. */
 	count?: number;
+	/** Optional trailing tag (e.g. a small `Badge` saying "Recommended"). It is
+	 * part of the tab's accessible name, so keep it to a word or two. */
+	badge?: ReactNode;
 }
 
 interface TabNavProps<T extends string = string> {
@@ -155,6 +158,9 @@ export function TabNav<T extends string = string>({
 							>
 								{option.count}
 							</span>
+						)}
+						{option.badge != null && (
+							<span className="inline-flex shrink-0">{option.badge}</span>
 						)}
 					</button>
 				);
