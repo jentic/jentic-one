@@ -2,13 +2,15 @@
  * CreateCredentialFlow — the shell `surface` switches, and nothing else; the
  * wizard's own behaviour is covered where it runs end to end (`ApiSetupQueue`,
  * `CredentialInventorySheet`). Pins the drawer default, the
- * top-layer host's centred dialog, that no backdrop click discards a draft, and
- * that an uploaded spec lands on the credential form for the API it registered,
- * and that a name another credential for the API holds is warned about, not blocked.
+ * top-layer host's centred dialog, that a backdrop click closes the drawer like
+ * Escape (but not mid-drag, nor over a live connect), that an uploaded spec lands
+ * on the credential form for the API it registered, and that a name another
+ * credential for the API holds is warned about, not blocked.
  */
+import { useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
-import { userEvent as browserUser } from 'vitest/browser';
+import { page, userEvent as browserUser } from 'vitest/browser';
 import { renderWithProviders, screen, waitFor, userEvent } from '@/__tests__/test-utils';
 import { worker } from '@/mocks/browser';
 import { setToken } from '@/shared/api';
@@ -88,19 +90,125 @@ describe('CreateCredentialFlow', () => {
 		expect(screen.getByRole('heading', { name: /^Add credential$/ })).toBeVisible();
 	});
 
-	it('does not close the drawer on a backdrop click, but Escape still does', async () => {
-		const onClose = vi.fn();
-		renderWithProviders(<CreateCredentialFlow open onClose={onClose} onCreated={vi.fn()} />);
-		await screen.findByTestId('sheet-primitive');
+	describe('backdrop dismissal', () => {
+		// A phone-width drawer is full-bleed — no backdrop to click — so give the
+		// drawer room to leave the dimmed page showing beside it.
+		beforeEach(async () => {
+			await page.viewport(1280, 800);
+		});
+		afterEach(async () => {
+			await page.viewport(414, 896);
+		});
 
-		// A stray click outside would discard the wizard's draft — closing
-		// resets it — so the backdrop is inert here.
-		await browserUser.click(document.body, { position: { x: 5, y: 5 } });
-		expect(onClose).not.toHaveBeenCalled();
+		/** Click the dimmed backdrop well clear of the drawer (top-left corner). */
+		const clickBackdrop = (): Promise<void> =>
+			browserUser.click(screen.getByTestId('sheet-backdrop'), {
+				position: { x: 5, y: 5 },
+			});
 
-		// Escape is a deliberate dismissal and keeps working.
-		await browserUser.keyboard('{Escape}');
-		await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+		/** A host that owns `open`, like the real ones, so a close can be reopened. */
+		function Host() {
+			const [open, setOpen] = useState(true);
+			return (
+				<>
+					<button type="button" onClick={(): void => setOpen(true)}>
+						Reopen
+					</button>
+					<CreateCredentialFlow
+						open={open}
+						onClose={(): void => setOpen(false)}
+						onCreated={vi.fn()}
+						initialApi={PINNED_ACME}
+					/>
+				</>
+			);
+		}
+
+		it('closes the drawer on a backdrop click', async () => {
+			const onClose = vi.fn();
+			renderWithProviders(
+				<CreateCredentialFlow open onClose={onClose} onCreated={vi.fn()} />,
+			);
+			await screen.findByTestId('sheet-primitive');
+
+			await clickBackdrop();
+			await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+		});
+
+		it.each([
+			['Escape', (): Promise<void> => browserUser.keyboard('{Escape}')],
+			['the backdrop', clickBackdrop],
+		])('treats the draft the same when closed via %s', async (_how, close) => {
+			resetApisStore([ACME]);
+			const user = userEvent.setup();
+			renderWithProviders(<Host />);
+			const name = await screen.findByLabelText(/^Name/);
+			await waitFor(() => expect(name).toHaveValue('Acme'));
+			await user.clear(name);
+			await user.type(name, 'Draft name');
+
+			await close();
+			await waitFor(() =>
+				expect(screen.queryByTestId('sheet-primitive')).not.toBeInTheDocument(),
+			);
+
+			// Every close of this flow wipes the draft (it can hold a secret), so
+			// reopening lands on the seeded form — the same for either dismissal.
+			await user.click(screen.getByRole('button', { name: 'Reopen' }));
+			await waitFor(() => expect(screen.getByLabelText(/^Name/)).toHaveValue('Acme'));
+		});
+
+		it('does not close on a drag that starts inside and ends on the backdrop', async () => {
+			resetApisStore([ACME]);
+			const onClose = vi.fn();
+			renderWithProviders(
+				<CreateCredentialFlow
+					open
+					onClose={onClose}
+					onCreated={vi.fn()}
+					initialApi={PINNED_ACME}
+				/>,
+			);
+			const name = await screen.findByLabelText(/^Name/);
+			const backdrop = screen.getByTestId('sheet-backdrop');
+			const upOnBackdrop = vi.fn();
+			backdrop.addEventListener('mouseup', upOnBackdrop);
+
+			// A real mousedown in the field and mouseup over the backdrop — the
+			// text-selection overshoot — must not read as a click outside.
+			await browserUser.dragAndDrop(name, backdrop, {
+				targetPosition: { x: 5, y: 5 },
+			});
+			await new Promise((r) => setTimeout(r, 50));
+			// The drag really did end on the backdrop…
+			expect(upOnBackdrop).toHaveBeenCalled();
+			// …yet the browser dispatches that click to the common ancestor, not the
+			// backdrop, so the drawer stays open.
+			expect(onClose).not.toHaveBeenCalled();
+			expect(screen.getByTestId('sheet-primitive')).toBeInTheDocument();
+		});
+
+		it('keeps the backdrop inert while a connect session is live, but Escape still closes', async () => {
+			const onClose = vi.fn();
+			renderWithProviders(
+				<CreateCredentialFlow
+					open
+					onClose={onClose}
+					onCreated={vi.fn()}
+					approvalSession={{ sessionId: 'sess_x', pollToken: 'tok_x' }}
+				/>,
+			);
+			await screen.findByTestId('sheet-primitive');
+
+			// Closing unmounts the connect, which cancels its session — a stray
+			// click must not abandon a sign-in in progress.
+			await clickBackdrop();
+			await new Promise((r) => setTimeout(r, 50));
+			expect(onClose).not.toHaveBeenCalled();
+
+			await browserUser.keyboard('{Escape}');
+			await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+		});
 	});
 
 	it('offers an upload from the pick step', async () => {

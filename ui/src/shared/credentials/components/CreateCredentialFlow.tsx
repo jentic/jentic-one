@@ -163,8 +163,15 @@ type Step = 'pick' | 'form' | 'vendor';
  * dialog for a host in the top layer. Everything between the header and the action
  * row is one implementation, so the two surfaces cannot drift.
  *
- * Neither surface dismisses on a backdrop click — a stray click would discard a
- * half-typed secret.
+ * The drawer closes on a backdrop click exactly as it does on Escape / X / Cancel:
+ * every close wipes the draft (see the reset effect — a half-typed secret is not
+ * kept around). Two exceptions keep the backdrop inert:
+ *  - a live vendor / approval connect (`step === 'vendor'`, `approvalSession`):
+ *    `VendorConnectFlow` opens a connect session on mount and cancels it on
+ *    unmount, so a stray click would silently abandon a sign-in in progress.
+ *    Escape and the flow's own Cancel still close it deliberately.
+ *  - the `dialog` surface: the native-`<dialog>` backdrop test in `Dialog` can't
+ *    tell a drag that ends outside from a click, so it would close mid-select.
  */
 export function CreateCredentialFlow({
 	open,
@@ -1003,6 +1010,9 @@ export function CreateCredentialFlow({
 		</>
 	);
 
+	/** A connect session is open (created on `VendorConnectFlow` mount). */
+	const connectInPlay = !!approvalSession || step === 'vendor';
+
 	if (surface === 'dialog') {
 		return (
 			<Dialog
@@ -1024,7 +1034,9 @@ export function CreateCredentialFlow({
 			open={open}
 			onClose={onClose}
 			ariaLabelledBy={headingId}
-			dismissOnBackdrop={false}
+			// Same close as Escape / X (see the doc comment); inert only while a
+			// vendor / approval connect session is live.
+			dismissOnBackdrop={!connectInPlay}
 			className="sm:w-[640px] xl:w-[760px]"
 		>
 			<div className="flex h-full flex-col">
