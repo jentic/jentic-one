@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { renderWithProviders, screen, userEvent, waitFor } from '@/__tests__/test-utils';
 import { worker } from '@/mocks/browser';
@@ -7,6 +7,7 @@ import { Button, clearAllToasts, Toaster } from '@/shared/ui';
 import { CredentialType, type ConnectOutcome } from '@/shared/credentials/api';
 import { useConnectAfterCreate } from '@/shared/credentials/components/useConnectAfterCreate';
 import type { CreatedCredentialInfo } from '@/shared/credentials/components/CreateCredentialFlow';
+import { makeMockCredential } from '@/shared/credentials/mocks/handlers';
 
 /**
  * The one connect-after-create / standalone-connect policy every credential
@@ -28,9 +29,11 @@ let deleted: string[] = [];
 function Host({
 	outcome,
 	info = OAUTH,
+	onUsable,
 }: {
 	outcome: ConnectOutcome | 'throw';
 	info?: CreatedCredentialInfo;
+	onUsable?: () => void;
 }) {
 	const { afterCreate, connectExisting } = useConnectAfterCreate({
 		connect: async () => {
@@ -40,7 +43,7 @@ function Host({
 	});
 	return (
 		<>
-			<Button onClick={() => afterCreate(info)}>created</Button>
+			<Button onClick={() => afterCreate(info, onUsable)}>created</Button>
 			<Button onClick={() => void connectExisting('cred_listed', 'Listed')}>connect</Button>
 			<Toaster />
 		</>
@@ -130,6 +133,49 @@ describe('useConnectAfterCreate', () => {
 		await new Promise((r) => setTimeout(r, 100));
 		expect(screen.queryByText('Opening sign-in…')).not.toBeInTheDocument();
 		expect(deleted).toEqual([]);
+	});
+
+	describe('onUsable — the credential can actually be used', () => {
+		it('fires once the new OAuth credential connects', async () => {
+			const onUsable = vi.fn();
+			const user = userEvent.setup();
+			renderWithProviders(
+				<Host
+					outcome={{ status: 'connected', credential: makeMockCredential() }}
+					onUsable={onUsable}
+				/>,
+			);
+			await user.click(screen.getByRole('button', { name: 'created' }));
+			await waitFor(() => expect(onUsable).toHaveBeenCalledOnce());
+		});
+
+		it('fires straight away when no sign-in is needed', async () => {
+			const onUsable = vi.fn();
+			const user = userEvent.setup();
+			renderWithProviders(
+				<Host
+					outcome={{ status: 'cancelled' }}
+					info={{ ...OAUTH, type: CredentialType.API_KEY, needsConnect: false }}
+					onUsable={onUsable}
+				/>,
+			);
+			await user.click(screen.getByRole('button', { name: 'created' }));
+			expect(onUsable).toHaveBeenCalledOnce();
+		});
+
+		it.each([
+			[{ status: 'cancelled' } as const, 'Sign-in cancelled'],
+			[{ status: 'redirected' } as const, 'Opening sign-in…'],
+			['throw' as const, 'Could not complete sign-in'],
+		])('never fires when sign-in ends %o', async (outcome, text) => {
+			const onUsable = vi.fn();
+			const user = userEvent.setup();
+			renderWithProviders(<Host outcome={outcome} onUsable={onUsable} />);
+			await user.click(screen.getByRole('button', { name: 'created' }));
+			expect(await screen.findByText(text)).toBeInTheDocument();
+			await new Promise((r) => setTimeout(r, 100));
+			expect(onUsable).not.toHaveBeenCalled();
+		});
 	});
 
 	it('never discards a listed credential on a standalone connect', async () => {

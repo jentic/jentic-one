@@ -26,7 +26,9 @@ const NOT_DISCARDED =
  *     or failed handshake DISCARDS it — and if that delete fails, says so (an
  *     error toast pointing at the Credentials list on the Agents page) rather than claiming it's gone.
  *     `redirected` (popup blocked → same-tab navigation) must NOT clean up:
- *     the user is mid-flow and the callback lands on return.
+ *     the user is mid-flow and the callback lands on return. `onUsable` fires
+ *     once the credential can actually be used: straight away when no sign-in
+ *     is needed, else only on `connected` (never on discard or `redirected`).
  *   - `connectExisting` — the standalone Connect action on a listed
  *     credential: keeps the credential whatever the outcome.
  *
@@ -34,7 +36,7 @@ const NOT_DISCARDED =
  * connect); `deviceDialog` is then null — the injector renders its own.
  */
 export function useConnectAfterCreate(opts: { connect?: Connect } = {}): {
-	afterCreate: (info: CreatedCredentialInfo) => void;
+	afterCreate: (info: CreatedCredentialInfo, onUsable?: () => void) => void;
 	connectExisting: (credentialId: string, credentialName: string) => Promise<void>;
 	deviceDialog: ReactNode;
 } {
@@ -43,12 +45,13 @@ export function useConnectAfterCreate(opts: { connect?: Connect } = {}): {
 	const { mutateAsync: deleteCredential } = useDeleteCredential();
 
 	const afterCreate = useCallback(
-		(info: CreatedCredentialInfo): void => {
+		(info: CreatedCredentialInfo, onUsable?: () => void): void => {
 			if (
 				info.type !== CredentialType.OAUTH2 ||
 				info.provider === 'static' ||
 				!info.needsConnect
 			) {
+				onUsable?.();
 				return;
 			}
 			/** Delete the unusable credential; false when the delete failed. */
@@ -89,6 +92,7 @@ export function useConnectAfterCreate(opts: { connect?: Connect } = {}): {
 					switch (outcome.status) {
 						case 'connected':
 							toast({ title: 'Connected', variant: 'success' });
+							onUsable?.();
 							break;
 						case 'redirected':
 							break;

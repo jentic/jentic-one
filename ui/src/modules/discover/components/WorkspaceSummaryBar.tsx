@@ -13,7 +13,9 @@
  * The sheet is a modal dialog (SheetPrimitive): Escape / backdrop close it,
  * focus is trapped inside and returns to the bar on close. It portals above
  * the mobile BottomNavbar and pads for the device's bottom safe area. Any link
- * inside closes it as it navigates.
+ * inside closes it as it navigates; a "no credential yet" API closes it and
+ * hands over to the host's in-place Add credential flow (like "Import your own
+ * API"), rather than stacking a drawer on the sheet.
  */
 import { useId, useState, type MouseEvent, type ReactNode } from 'react';
 import {
@@ -28,7 +30,8 @@ import {
 import { AppLink, Button, SheetPrimitive } from '@/shared/ui';
 import { ROUTES } from '@/shared/app/routes';
 import { cn } from '@/shared/lib/utils';
-import type { WorkspaceDigest } from '@/modules/discover/api';
+import type { WorkspaceDigest, WorkspaceDigestRow } from '@/modules/discover/api';
+import type { CredentialAddedNotice } from '@/modules/discover/components/usePanelCredentialFlow';
 import {
 	WorkspaceApiCount,
 	WorkspacePanelBody,
@@ -41,6 +44,10 @@ export interface WorkspaceSummaryBarProps {
 	pendingImports: PendingImport[];
 	/** Opens the import-your-own-spec dialog. */
 	onImportOwn: () => void;
+	/** Opens the in-place Add credential flow for a "no credential yet" API. */
+	onAddCredential?: (row: WorkspaceDigestRow) => void;
+	credentialNotice?: CredentialAddedNotice | null;
+	onDismissCredentialNotice?: () => void;
 	className?: string;
 }
 
@@ -67,6 +74,9 @@ export function WorkspaceSummaryBar({
 	digest,
 	pendingImports,
 	onImportOwn,
+	onAddCredential,
+	credentialNotice,
+	onDismissCredentialNotice,
 	className,
 }: WorkspaceSummaryBarProps) {
 	const [open, setOpen] = useState(false);
@@ -87,6 +97,14 @@ export function WorkspaceSummaryBar({
 		setOpen(false);
 		onImportOwn();
 	}
+
+	const addCredential = onAddCredential
+		? (row: WorkspaceDigestRow) => {
+				// Same handoff: close the sheet, then open the flow's drawer.
+				setOpen(false);
+				onAddCredential(row);
+			}
+		: undefined;
 
 	let status: ReactNode = null;
 	if (digest.error && !digest.complete) {
@@ -148,6 +166,20 @@ export function WorkspaceSummaryBar({
 						<>
 							<Dot />
 							{status}
+						</>
+					)}
+					{credentialNotice && (
+						<>
+							<Dot />
+							<span
+								className="text-success inline-flex min-w-0 items-center gap-1 text-xs"
+								data-testid="workspace-summary-credential-added"
+							>
+								<CheckCircle2 className="h-3 w-3 shrink-0" aria-hidden="true" />
+								<span className="truncate">
+									Credential added for {credentialNotice.label}
+								</span>
+							</span>
 						</>
 					)}
 					{importing > 0 && (
@@ -214,6 +246,9 @@ export function WorkspaceSummaryBar({
 							digest={digest}
 							pendingImports={pendingImports}
 							onImportOwn={importOwn}
+							onAddCredential={addCredential}
+							credentialNotice={credentialNotice}
+							onDismissCredentialNotice={onDismissCredentialNotice}
 						/>
 					</div>
 					<div className="border-border/60 flex items-center justify-between gap-2 border-t px-4 py-2">

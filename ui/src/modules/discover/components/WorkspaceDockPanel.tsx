@@ -12,6 +12,11 @@
  * and usage reads) or the live event stream; a signal whose read hasn't
  * answered — or isn't readable for this user — is omitted, never zeroed.
  *
+ * A "no credential yet" API name is a button, not a link: it opens the shared
+ * Add credential flow in place, on that API's form (the host owns the flow —
+ * `usePanelCredentialFlow`), and the panel confirms a usable credential with a
+ * transient "Credential added" row at the top.
+ *
  * Expand (and the footer link) is an ordinary link to the full Workspace view;
  * both surfaces carry the `library-workspace` view-transition name, so the
  * shell's link transitions morph this card into the page.
@@ -30,6 +35,7 @@ import {
 	Plus,
 	RefreshCw,
 	Upload,
+	X,
 } from 'lucide-react';
 import {
 	ApiStateBadges,
@@ -58,6 +64,7 @@ import type {
 	WorkspaceDigest,
 	WorkspaceDigestRow,
 } from '@/modules/discover/api';
+import type { CredentialAddedNotice } from '@/modules/discover/components/usePanelCredentialFlow';
 
 const LIST_LIMIT = 8;
 const RECENT_LIMIT = 5;
@@ -94,14 +101,20 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 }
 
 function hrefFor(row: WorkspaceDigestRow, entry: AttentionEntry): string {
-	// "No credential yet" names one API per link, so each opens that API's hub
-	// straight onto its Add credential form rather than the generic picker.
+	// Without an in-place flow, "No credential yet" still names one API per
+	// link, each opening that API's hub straight onto its Add credential form.
 	return ROUTE_PATHS.workspaceApiHub(row.ref, entry.tab, {
 		addCredential: entry.id === 'credentials',
 	});
 }
 
-function AttentionItem({ entry }: { entry: AttentionEntry }) {
+function AttentionItem({
+	entry,
+	onAddCredential,
+}: {
+	entry: AttentionEntry;
+	onAddCredential?: (row: WorkspaceDigestRow) => void;
+}) {
 	const Icon = ATTENTION_ICON[entry.id];
 	const count = entry.rows.length;
 	const filter = ATTENTION_FILTER[entry.id];
@@ -123,16 +136,33 @@ function AttentionItem({ entry }: { entry: AttentionEntry }) {
 					{noun} · {entry.label}
 				</p>
 				<p className="mt-0.5 flex flex-wrap gap-x-2 gap-y-0.5 text-xs">
-					{shown.map((row) => (
-						<AppLink
-							key={row.key}
-							href={hrefFor(row, entry)}
-							className="text-primary truncate hover:underline"
-						>
-							{row.title}
-							{entry.id === 'failures' && row.usage ? ` (${row.usage.failed})` : ''}
-						</AppLink>
-					))}
+					{shown.map((row) =>
+						entry.id === 'credentials' && onAddCredential ? (
+							<Button
+								key={row.key}
+								variant="ghost"
+								size="sm"
+								onClick={() => onAddCredential(row)}
+								aria-label={`Add a credential for ${row.title}`}
+								title={`Add a credential for ${row.title}`}
+								className="text-primary hover:text-primary h-auto min-w-0 truncate rounded-sm p-0 text-xs font-normal hover:bg-transparent hover:underline active:scale-100"
+								data-testid="attention-add-credential"
+							>
+								{row.title}
+							</Button>
+						) : (
+							<AppLink
+								key={row.key}
+								href={hrefFor(row, entry)}
+								className="text-primary truncate hover:underline"
+							>
+								{row.title}
+								{entry.id === 'failures' && row.usage
+									? ` (${row.usage.failed})`
+									: ''}
+							</AppLink>
+						),
+					)}
 					{rest > 0 && (
 						<AppLink
 							href={
@@ -230,6 +260,50 @@ interface PanelContentProps {
 	pendingImports: PendingImport[];
 	/** Opens the import-your-own-spec dialog. */
 	onImportOwn: () => void;
+	/**
+	 * Opens the Add credential flow in place for a "no credential yet" API.
+	 * Omitted ⇒ those names link to the API hub's form instead.
+	 */
+	onAddCredential?: (row: WorkspaceDigestRow) => void;
+	/** A just-added (usable) credential to confirm at the top of the panel. */
+	credentialNotice?: CredentialAddedNotice | null;
+	onDismissCredentialNotice?: () => void;
+}
+
+/** The transient "Credential added for …" confirmation row. */
+function CredentialAddedRow({
+	notice,
+	onDismiss,
+}: {
+	notice: CredentialAddedNotice;
+	onDismiss?: () => void;
+}) {
+	return (
+		<div
+			className="border-success/30 bg-success/10 flex items-center gap-2 rounded-lg border px-2.5 py-2"
+			data-testid="workspace-panel-credential-added"
+		>
+			<CheckCircle2 className="text-success h-4 w-4 shrink-0" aria-hidden="true" />
+			<p
+				className="text-foreground min-w-0 flex-1 truncate text-sm"
+				title={`Credential added for ${notice.label}`}
+			>
+				Credential added for <strong className="font-semibold">{notice.label}</strong>
+			</p>
+			{onDismiss && (
+				<Button
+					variant="ghost"
+					size="icon"
+					onClick={onDismiss}
+					className="h-6 w-6 shrink-0 p-0"
+					aria-label="Dismiss"
+					data-testid="workspace-panel-credential-added-dismiss"
+				>
+					<X className="h-3.5 w-3.5" aria-hidden="true" />
+				</Button>
+			)}
+		</div>
+	);
 }
 
 /**
@@ -241,6 +315,9 @@ export function WorkspacePanelBody({
 	digest,
 	pendingImports,
 	onImportOwn,
+	onAddCredential,
+	credentialNotice,
+	onDismissCredentialNotice,
 	className,
 }: PanelContentProps & { className?: string }) {
 	const stream = useAgentStreamOptional();
@@ -270,6 +347,15 @@ export function WorkspacePanelBody({
 
 	return (
 		<div className={cn('space-y-4', className)}>
+			{/* Always-present polite live region, so the confirmation is announced. */}
+			<div role="status" aria-live="polite" className="empty:hidden">
+				{credentialNotice && (
+					<CredentialAddedRow
+						notice={credentialNotice}
+						onDismiss={onDismissCredentialNotice}
+					/>
+				)}
+			</div>
 			{digest.error && !digest.complete ? (
 				<ErrorAlert message={digest.error} onRetry={digest.retry} />
 			) : digest.isPending ? (
@@ -304,7 +390,11 @@ export function WorkspacePanelBody({
 							</p>
 							<ul className="divide-warning/15 divide-y">
 								{digest.attention.map((entry) => (
-									<AttentionItem key={entry.id} entry={entry} />
+									<AttentionItem
+										key={entry.id}
+										entry={entry}
+										onAddCredential={onAddCredential}
+									/>
 								))}
 							</ul>
 						</div>
@@ -445,6 +535,9 @@ export const WorkspaceDockPanel = memo(function WorkspaceDockPanel({
 	digest,
 	pendingImports,
 	onImportOwn,
+	onAddCredential,
+	credentialNotice,
+	onDismissCredentialNotice,
 	className,
 }: WorkspaceDockPanelProps) {
 	return (
@@ -480,6 +573,9 @@ export const WorkspaceDockPanel = memo(function WorkspaceDockPanel({
 						digest={digest}
 						pendingImports={pendingImports}
 						onImportOwn={onImportOwn}
+						onAddCredential={onAddCredential}
+						credentialNotice={credentialNotice}
+						onDismissCredentialNotice={onDismissCredentialNotice}
 					/>
 				</CardBody>
 

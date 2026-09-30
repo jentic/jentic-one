@@ -38,6 +38,7 @@ import {
 	type PendingImport,
 } from '@/modules/discover/components/WorkspaceDockPanel';
 import { WorkspaceSummaryBar } from '@/modules/discover/components/WorkspaceSummaryBar';
+import { usePanelCredentialFlow } from '@/modules/discover/components/usePanelCredentialFlow';
 import { useConsumedFlagParam, useMediaQuery } from '@/shared/hooks';
 import { useDebouncedValue } from '@/modules/discover/lib/useDebouncedValue';
 import {
@@ -72,6 +73,9 @@ export default function LibraryPage() {
 	// Toasts sit left of the docked workspace panel (the grid's last column at xl).
 	const dockGridRef = useRef<HTMLDivElement>(null);
 	useReportRightDock(dockGridRef, { lastChild: true });
+	// The panel's "no credential yet" names open the shared Add credential
+	// flow here, over the catalog, on that API's form.
+	const credentialFlow = usePanelCredentialFlow();
 	// The same drained list (and cache slice) the digest's health index reads;
 	// the tiles' "Credential ready" matches not-yet-imported entries against it.
 	const allCredentials = useAllCredentials();
@@ -204,6 +208,9 @@ export default function LibraryPage() {
 					digest={digest}
 					pendingImports={pendingImports}
 					onImportOwn={openImportOwn}
+					onAddCredential={credentialFlow.addCredentialFor}
+					credentialNotice={credentialFlow.notice}
+					onDismissCredentialNotice={credentialFlow.dismissNotice}
 				/>
 			)}
 
@@ -263,6 +270,9 @@ export default function LibraryPage() {
 						digest={digest}
 						pendingImports={pendingImports}
 						onImportOwn={openImportOwn}
+						onAddCredential={credentialFlow.addCredentialFor}
+						credentialNotice={credentialFlow.notice}
+						onDismissCredentialNotice={credentialFlow.dismissNotice}
 					/>
 				)}
 			</div>
@@ -277,6 +287,7 @@ export default function LibraryPage() {
 			/>
 
 			<ImportSpecDialog open={importOwnOpen} onClose={() => setImportOwnOpen(false)} />
+			{credentialFlow.element}
 		</PageShell>
 	);
 }

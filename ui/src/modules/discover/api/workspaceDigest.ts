@@ -46,6 +46,8 @@ export interface WorkspaceDigestRow {
 	operationCount: number;
 	/** The API declares security schemes (so an agent needs a credential to call it). */
 	needsAuth: boolean;
+	/** Declared security scheme types (`security_schemes`) — the credential form's hint. */
+	securitySchemes: string[];
 	/**
 	 * Active credentials covering this API (the shared `apiAccess` rule); null
 	 * until every credential page loaded.
@@ -141,6 +143,7 @@ export function useWorkspaceDigest(): WorkspaceDigest {
 				updateAvailable: r.update_available === true,
 				operationCount: r.operation_count,
 				needsAuth: r.security_schemes.length > 0,
+				securitySchemes: r.security_schemes,
 				credentials,
 				credentialCount,
 				pendingOverlays: overlays.byApi.get(key) ?? null,

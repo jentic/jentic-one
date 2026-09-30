@@ -24,6 +24,7 @@ export function makeDigestRow(
 		updateAvailable: false,
 		operationCount: 3,
 		needsAuth: false,
+		securitySchemes: [],
 		credentials: [],
 		credentialCount: 0,
 		pendingOverlays: null,
