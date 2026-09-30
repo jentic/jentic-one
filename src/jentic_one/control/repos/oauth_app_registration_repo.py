@@ -40,8 +40,8 @@ class OAuthAppRegistrationRepository:
         encrypted_client_secret: str,
         authorize_url: str,
         token_url: str,
-        catalog_api_id: str | None = None,
-        display_name: str | None = None,
+        catalog_api_id: str,
+        display_name: str,
         default_scopes: list[str] | None = None,
         created_by: str,
     ) -> OAuthAppRegistration:
@@ -85,8 +85,8 @@ class OAuthAppRegistrationRepository:
         client_id: str,
         authorization_endpoint: str,
         token_endpoint: str,
-        catalog_api_id: str | None = None,
-        display_name: str | None = None,
+        catalog_api_id: str,
+        display_name: str,
         default_scopes: list[str] | None = None,
         created_by: str,
     ) -> OAuthAppRegistration:

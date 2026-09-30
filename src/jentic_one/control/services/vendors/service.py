@@ -420,12 +420,6 @@ def _project_registration_to_auth_config(
     time and makes the operations preview resolve against a real registered
     API.
 
-    Registrations created before the decouple refactor may not carry
-    ``catalog_api_id`` — those degrade to a synthesized ``<slug>/<slug>``
-    placeholder and log a warning. Users can still connect through them; the
-    operations preview just won't resolve until an admin re-creates or edits
-    the registration to pick a real API.
-
     Scopes come off the registration's ``default_scopes`` extension column,
     with every entry defaulted-on and classified ``read`` (no separate
     classification catalog on the DB side). ``identity_probe`` is always
@@ -441,23 +435,9 @@ def _project_registration_to_auth_config(
         for s in (default_scopes or [])
     ]
 
-    if registration.catalog_api_id is not None:
-        canonical_vendor = registration.catalog_api_id
-    else:
-        raw = registration.api_vendor
-        canonical_vendor = raw if "/" in raw else f"{raw}/{raw}"
-        _logger.warning(
-            "oauth_app_registration.missing_catalog_api_id",
-            registration_id=registration.id,
-            api_vendor=raw,
-            fallback_vendor=canonical_vendor,
-            hint="operations preview will not resolve until an admin picks a "
-            "catalog API for this registration",
-        )
-
     return VendorAuthConfig(
-        vendor=canonical_vendor,
-        display_name=registration.display_name or registration.name,
+        vendor=registration.catalog_api_id,
+        display_name=registration.display_name,
         flows=[flow],
         scopes=scopes,
         identity_probe=None,
@@ -520,17 +500,15 @@ def _project_db_registration(
     """Project a DB registration into the compact ``VendorEntry`` view.
 
     Registration-only shape: ``display_name`` reads off the admin-supplied
-    vendor family label (falling back to the registration's ``api_vendor``
-    for pre-refactor rows that don't have one). No config merge.
+    vendor family label. No config merge.
     """
     default_scopes = _extension_default_scopes(registration)
     flow_kind: VendorFlowKind = _cast_flow_kind(registration.flow_kind)
-    family_display = registration.display_name or registration.api_vendor
     return VendorEntry(
         entry_id=registration.id,
         registration_id=registration.id,
         key=key,
-        display_name=family_display,
+        display_name=registration.display_name,
         name=registration.name,
         flow_kind=flow_kind,
         client_id=registration.client_id,

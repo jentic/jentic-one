@@ -160,7 +160,7 @@ func (OAuth2CreateRequest) RequiredFields() []string              { return []str
 func (OAuth2UpdateRequest) RequiredFields() []string              { return []string{"type"} }
 func (OAuthAppRegistrationListResponse) RequiredFields() []string { return []string{"data"} }
 func (OAuthAppRegistrationResponse) RequiredFields() []string {
-	return []string{"api_vendor", "client_id", "created_at", "created_by", "dependent_credential_count", "flow_kind", "has_client_secret", "id", "is_active", "name", "secret_last_rotated_at", "updated_at"}
+	return []string{"api_vendor", "catalog_api_id", "client_id", "created_at", "created_by", "dependent_credential_count", "display_name", "flow_kind", "has_client_secret", "id", "is_active", "name", "secret_last_rotated_at", "updated_at"}
 }
 func (OAuthAppRegistrationRotateSecretRequest) RequiredFields() []string {
 	return []string{"client_secret"}

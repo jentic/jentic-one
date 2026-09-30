@@ -24,20 +24,17 @@ class OAuthAppRegistrationResponse(BaseModel):
     id: str
     name: str
     api_vendor: str
-    catalog_api_id: str | None = Field(
-        default=None,
+    catalog_api_id: str = Field(
         description=(
             "Catalog API slug this OAuth app targets (e.g. 'googleapis-com/gmail'). "
             "Feeds credential.catalog_api_id at connect time so the operations "
-            "preview resolves against a real registered API. Nullable on pre-refactor "
-            "rows only — new registrations always carry a value."
+            "preview resolves against a real registered API."
         ),
     )
-    display_name: str | None = Field(
-        default=None,
+    display_name: str = Field(
         description=(
             "Vendor family label ('Gmail'), shown alongside the admin's per-registration "
-            "'name' on the picker card. Nullable on pre-refactor rows only."
+            "'name' on the picker card."
         ),
     )
     flow_kind: OAuthAppRegistrationFlowKind

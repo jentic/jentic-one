@@ -87,12 +87,10 @@ class _FakeRegistration:
     flow_kind: str
     client_id: str
     id: str = "oar_test"
-    # Post-refactor: registrations are self-describing. Tests default to
-    # populated values so the projection uses the real catalog id / family
-    # label; a specific test sets ``catalog_api_id=None`` to exercise the
-    # pre-refactor degraded state warning.
-    catalog_api_id: str | None = "example.com/api.example.com"
-    display_name: str | None = "Example (DB)"
+    # Registrations are self-describing: the catalog API they target and
+    # the vendor family label.
+    catalog_api_id: str = "example.com/api.example.com"
+    display_name: str = "Example (DB)"
     authorization_code_details: _FakeDetails | None = None
     device_authorization_details: _FakeDetails | None = None
     is_active: bool = True
@@ -634,30 +632,6 @@ async def test_db_only_vendor_projects_with_catalog_api_id() -> None:
     # Admin registrations never carry an identity probe — that's a
     # platform-config concern. Credentials land with connected_as=None.
     assert entry.identity_probe is None
-
-
-@pytest.mark.asyncio()
-async def test_projection_falls_back_to_placeholder_vendor_for_pre_refactor_row() -> None:
-    """Pre-refactor registrations without ``catalog_api_id`` still project —
-    the ``vendor`` string falls back to a ``<slug>/<slug>`` placeholder and
-    the service logs a warning. The connect flow still runs; only the
-    operations preview degrades until an admin picks a real catalog API.
-    """
-    legacy = _FakeRegistration(
-        api_vendor="notion",
-        name="Notion (pre-refactor)",
-        display_name=None,
-        catalog_api_id=None,
-        flow_kind="device_authorization",
-        client_id="notion-cid",
-        device_authorization_details=_FakeDetails(),
-    )
-    svc = _service(registrations=[legacy])
-    entry = await svc.resolve_by_pin("notion")
-    assert entry.vendor == "notion/notion"
-    # ``display_name`` falls back to the registration's ``name`` when the
-    # admin never supplied a family label.
-    assert entry.display_name == "Notion (pre-refactor)"
 
 
 # ---------------------------------------------------------------------------

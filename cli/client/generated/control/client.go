@@ -2142,16 +2142,16 @@ type OAuthAppRegistrationResponse struct {
 	AuthorizationEndpoint *string `json:"authorization_endpoint,omitempty"`
 	AuthorizeUrl          *string `json:"authorize_url,omitempty"`
 
-	// CatalogApiId Catalog API slug this OAuth app targets (e.g. 'googleapis-com/gmail'). Feeds credential.catalog_api_id at connect time so the operations preview resolves against a real registered API. Nullable on pre-refactor rows only — new registrations always carry a value.
-	CatalogApiId             *string   `json:"catalog_api_id,omitempty"`
+	// CatalogApiId Catalog API slug this OAuth app targets (e.g. 'googleapis-com/gmail'). Feeds credential.catalog_api_id at connect time so the operations preview resolves against a real registered API.
+	CatalogApiId             string    `json:"catalog_api_id"`
 	ClientId                 string    `json:"client_id"`
 	CreatedAt                time.Time `json:"created_at"`
 	CreatedBy                *string   `json:"created_by"`
 	DefaultScopes            *[]string `json:"default_scopes,omitempty"`
 	DependentCredentialCount int       `json:"dependent_credential_count"`
 
-	// DisplayName Vendor family label ('Gmail'), shown alongside the admin's per-registration 'name' on the picker card. Nullable on pre-refactor rows only.
-	DisplayName *string `json:"display_name,omitempty"`
+	// DisplayName Vendor family label ('Gmail'), shown alongside the admin's per-registration 'name' on the picker card.
+	DisplayName string `json:"display_name"`
 
 	// FlowKind Which OAuth flow a registration supports.
 	FlowKind            OAuthAppRegistrationFlowKind `json:"flow_kind"`

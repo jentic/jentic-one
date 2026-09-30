@@ -7,6 +7,15 @@ column on ``credentials`` that records which registration minted a grant
 the same registration (one credential per agent / environment / etc.), so
 the column carries no unique constraint.
 
+Each registration is self-describing: ``catalog_api_id`` is the catalog API
+the app targets (stamped verbatim onto credentials minted through it) and
+``display_name`` is the vendor family label shown on the picker card.
+
+Also adds ``connect_sessions.pkce_code_verifier``: the auth-code flow keeps
+its PKCE (RFC 7636) verifier server-side — never in the state JWT, which
+transits the browser — across the redirect gap. Nullable: device flow
+never sets it.
+
 Revision ID: aa1b2c3d4e5f
 Revises: e1a2b3c4d5f6
 """
@@ -39,6 +48,8 @@ def upgrade() -> None:
         sa.Column("api_vendor", sa.String(100), nullable=False),
         sa.Column("flow_kind", sa.String(50), nullable=False),
         sa.Column("client_id", sa.String(255), nullable=False),
+        sa.Column("catalog_api_id", sa.String(255), nullable=False),
+        sa.Column("display_name", sa.String(255), nullable=False),
         sa.Column(
             "is_active",
             sa.Boolean,
@@ -111,9 +122,14 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index(
-        "ix_auth_code_app_reg_details_created_at",
+        "ix_authorization_code_app_registration_details_created_at",
         "authorization_code_app_registration_details",
         ["created_at"],
+    )
+    op.create_index(
+        "ix_authorization_code_app_registration_details_created_by",
+        "authorization_code_app_registration_details",
+        ["created_by"],
     )
 
     # 3. Device-flow extension — 1:1 with the base for device-flow rows.
@@ -144,9 +160,14 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index(
-        "ix_device_auth_app_reg_details_created_at",
+        "ix_device_authorization_app_registration_details_created_at",
         "device_authorization_app_registration_details",
         ["created_at"],
+    )
+    op.create_index(
+        "ix_device_authorization_app_registration_details_created_by",
+        "device_authorization_app_registration_details",
+        ["created_by"],
     )
 
     # 4. credentials column — record which registration a grant was minted
@@ -171,20 +192,35 @@ def upgrade() -> None:
         ["oauth_app_registration_id"],
     )
 
+    op.add_column(
+        "connect_sessions",
+        sa.Column("pkce_code_verifier", sa.String(128), nullable=True),
+    )
+
 
 def downgrade() -> None:
+    op.drop_column("connect_sessions", "pkce_code_verifier")
+
     op.drop_index("ix_credentials_oauth_app_registration_id", table_name="credentials")
     with op.batch_alter_table("credentials") as batch:
         batch.drop_column("oauth_app_registration_id")
 
     op.drop_index(
-        "ix_device_auth_app_reg_details_created_at",
+        "ix_device_authorization_app_registration_details_created_by",
+        table_name="device_authorization_app_registration_details",
+    )
+    op.drop_index(
+        "ix_device_authorization_app_registration_details_created_at",
         table_name="device_authorization_app_registration_details",
     )
     op.drop_table("device_authorization_app_registration_details")
 
     op.drop_index(
-        "ix_auth_code_app_reg_details_created_at",
+        "ix_authorization_code_app_registration_details_created_by",
+        table_name="authorization_code_app_registration_details",
+    )
+    op.drop_index(
+        "ix_authorization_code_app_registration_details_created_at",
         table_name="authorization_code_app_registration_details",
     )
     op.drop_table("authorization_code_app_registration_details")

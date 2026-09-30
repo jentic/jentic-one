@@ -55,14 +55,11 @@ class OAuthAppRegistration(AuditableMixin, ControlBase):
     # The catalog API slug this OAuth app targets (e.g.
     # ``googleapis-com/gmail``). Stamped verbatim onto the credential's
     # ``catalog_api_id`` at connect time so the operations preview on the
-    # rules page resolves against a real registered API. Nullable to keep
-    # pre-refactor rows loadable; the create endpoint requires it for all
-    # new rows.
-    catalog_api_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # rules page resolves against a real registered API.
+    catalog_api_id: Mapped[str] = mapped_column(String(255), nullable=False)
     # Vendor family label ("Gmail") — distinct from ``name``, which is the
-    # admin's per-registration label ("MyOrg Prod Gmail"). Nullable for
-    # back-compat; UI falls back to ``api_vendor`` when absent.
-    display_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # admin's per-registration label ("MyOrg Prod Gmail").
+    display_name: Mapped[str] = mapped_column(String(255), nullable=False)
     # Kill switch: false blocks new connects and refuses refresh on
     # dependent credentials (existing tokens continue injecting until expiry).
     is_active: Mapped[bool] = mapped_column(

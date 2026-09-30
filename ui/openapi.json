@@ -5058,16 +5058,9 @@
             "title": "Authorize Url"
           },
           "catalog_api_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Catalog API slug this OAuth app targets (e.g. 'googleapis-com/gmail'). Feeds credential.catalog_api_id at connect time so the operations preview resolves against a real registered API. Nullable on pre-refactor rows only — new registrations always carry a value.",
-            "title": "Catalog Api Id"
+            "description": "Catalog API slug this OAuth app targets (e.g. 'googleapis-com/gmail'). Feeds credential.catalog_api_id at connect time so the operations preview resolves against a real registered API.",
+            "title": "Catalog Api Id",
+            "type": "string"
           },
           "client_id": {
             "title": "Client Id",
@@ -5108,16 +5101,9 @@
             "type": "integer"
           },
           "display_name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Vendor family label ('Gmail'), shown alongside the admin's per-registration 'name' on the picker card. Nullable on pre-refactor rows only.",
-            "title": "Display Name"
+            "description": "Vendor family label ('Gmail'), shown alongside the admin's per-registration 'name' on the picker card.",
+            "title": "Display Name",
+            "type": "string"
           },
           "flow_kind": {
             "$ref": "#/components/schemas/OAuthAppRegistrationFlowKind"
@@ -5182,6 +5168,8 @@
           "id",
           "name",
           "api_vendor",
+          "catalog_api_id",
+          "display_name",
           "flow_kind",
           "client_id",
           "is_active",
