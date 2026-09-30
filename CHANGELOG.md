@@ -1,5 +1,40 @@
 # Changelog
 
+## [0.41.0](https://github.com/jentic/jentic-one/compare/v0.40.1...v0.41.0) (2026-09-30)
+
+
+### ⚠ BREAKING CHANGES
+
+* **cli:** remove the service-account mode alias; use --mode agent or JENTIC_MODE=agent (BC-12)
+* **auth:** retire sak_ service-account keys and drop the service-account tables (theme 8, phase 4); the upgrade migrates remaining service accounts to agents, and callers must switch to a jak_ key for each successor agent before upgrading
+* **control:** the toolkit tables are dropped. Before upgrading, run `flatten-toolkits --verify --acknowledge` on the 0.41 image and retire any live toolkit key on 0.40.x. `broker.direct_bindings_enabled: false` is no longer accepted.
+
+### Features
+
+* **auth:** retire sak_ service-account keys and drop the service-account tables (theme 8, phase 4); the upgrade migrates remaining service accounts to agents, and callers must switch to a jak_ key for each successor agent before upgrading ([4c04ed9](https://github.com/jentic/jentic-one/commit/4c04ed9c2be3930fe625d5d4b4b57db0422188ed))
+* **control:** drop the toolkit tables (theme 5, phase 6b) ([#1498](https://github.com/jentic/jentic-one/issues/1498)) ([bd5f490](https://github.com/jentic/jentic-one/commit/bd5f49096042ab94528748a300a78f0955cadbd8))
+
+
+### Bug Fixes
+
+* **control:** stop counting superseded successors as SA digest mismatches ([#1497](https://github.com/jentic/jentic-one/issues/1497)) ([c48704a](https://github.com/jentic/jentic-one/commit/c48704aec4a57f557604aca6f7b10426136aa08d)), closes [#1416](https://github.com/jentic/jentic-one/issues/1416)
+
+
+### Refactors
+
+* **cli:** collapse the service-account mode into agent (theme-8 D4) ([#1410](https://github.com/jentic/jentic-one/issues/1410)) ([68871ff](https://github.com/jentic/jentic-one/commit/68871ff4e1ff6caef2c189e6317ff03ce7a51046))
+* **cli:** remove the service-account mode alias; use --mode agent or JENTIC_MODE=agent (BC-12) ([4c04ed9](https://github.com/jentic/jentic-one/commit/4c04ed9c2be3930fe625d5d4b4b57db0422188ed))
+
+
+### Build System
+
+* **deps-dev:** bump brace-expansion from 1.1.18 to 1.1.21 in /ui ([#1496](https://github.com/jentic/jentic-one/issues/1496)) ([2d22c84](https://github.com/jentic/jentic-one/commit/2d22c8465b68868d21a75cb4999831c903dddc3b))
+* **deps:** bump @tanstack/react-query from 5.102.8 to 5.103.2 in /ui ([#1450](https://github.com/jentic/jentic-one/issues/1450)) ([aa267f5](https://github.com/jentic/jentic-one/commit/aa267f5e5cf7b3010cfeead2f75e59d4fb5443df))
+* **deps:** bump pyjwt from 2.13.0 to 2.14.0 ([#1493](https://github.com/jentic/jentic-one/issues/1493)) ([5666faf](https://github.com/jentic/jentic-one/commit/5666faffade00c1a51ee4677c8fa656d585b5f2d))
+* **deps:** bump tailwind-merge from 3.6.0 to 3.7.0 in /ui ([#1449](https://github.com/jentic/jentic-one/issues/1449)) ([1700f01](https://github.com/jentic/jentic-one/commit/1700f0197de12219baf5e927459b9555600ab549))
+* **deps:** bump the python group with 10 updates ([#1494](https://github.com/jentic/jentic-one/issues/1494)) ([a23a2ed](https://github.com/jentic/jentic-one/commit/a23a2edc7ba425e6a99c192f2f45a805ece2c795))
+* **deps:** bump urllib3 from 2.7.0 to 2.8.0 ([#1501](https://github.com/jentic/jentic-one/issues/1501)) ([c50bb2e](https://github.com/jentic/jentic-one/commit/c50bb2e1aa6af5cbc15ebedb6e16fbf94bf62f97))
+
 ## [0.40.1](https://github.com/jentic/jentic-one/compare/v0.40.0...v0.40.1) (2026-09-29)
 
 
