@@ -5,9 +5,14 @@
  * requests):
  *
  *   title row  vendor mark, friendly title, status marker (In your workspace /
- *              Available / Adding…), chevron on imported tiles.
+ *              Available / Adding…), chevron on imported tiles. With exactly
+ *              one workspace match the title and mark are that API's
+ *              (`workspaceApiTitle` + `vendorIconPropsFor`, as in the panel,
+ *              workspace tiles and hub), so one API never reads as two;
+ *              otherwise the catalog entry's own.
  *   subtitle   `vendor · version` (version from `parseCatalogSpecUrl`, omitted
- *              when it doesn't parse).
+ *              when it doesn't parse). A matched tile keeps the catalog
+ *              domain here when the workspace title doesn't already say it.
  *   state line (imported, exactly one workspace match) Live/Draft · ops ·
  *              agents from that API, plus Update available — the shared
  *              `ApiStateBadge` vocabulary.
@@ -33,6 +38,7 @@ import {
 import { memo, type ReactNode } from 'react';
 import { ApiStateBadge, AppLink, Button, VendorIcon, apiServingState } from '@/shared/ui';
 import { ROUTE_PATHS } from '@/shared/app';
+import { vendorIconPropsFor } from '@/shared/lib';
 import type { Credential } from '@/shared/credentials/api';
 import { CardStatusPill } from '@/modules/discover/components/CardStatusPill';
 import { versionLabel } from '@/modules/discover/lib/catalogSpec';
@@ -106,6 +112,17 @@ export const DiscoveryCard = memo(function DiscoveryCard({
 }: DiscoveryCardProps) {
 	const { registered } = entity;
 	const match = workspaceMatches.length === 1 ? workspaceMatches[0] : null;
+	const title = match?.title ?? entity.summary;
+	const icon = match
+		? vendorIconPropsFor({
+				title: match.title,
+				host: match.host,
+				vendor: match.ref.vendor,
+				iconUrl: match.iconUrl,
+			})
+		: { name: entity.summary, vendor: entity.vendor };
+	const subtitle =
+		entity.subtitle ?? (match && entity.vendor !== title ? entity.vendor : undefined);
 	const openHref = workspaceHrefFor(workspaceMatches);
 	const credentials = !registered && readyCredentials?.length ? readyCredentials : null;
 	const showUpdate = registered && entity.updateAvailable && !importPending;
@@ -126,17 +143,17 @@ export const DiscoveryCard = memo(function DiscoveryCard({
 			<button
 				type="button"
 				onClick={() => onOpen(entity)}
-				aria-label={`View ${entity.summary}`}
+				aria-label={`View ${title}`}
 				className="focus-visible:ring-primary/50 absolute inset-0 z-0 cursor-pointer rounded-xl focus-visible:ring-2 focus-visible:outline-none focus-visible:ring-inset"
 			/>
 
 			<div className="pointer-events-none relative flex flex-1 flex-col gap-2 px-3.5 pt-3 pb-2.5">
 				<div className="flex items-start gap-3">
-					<VendorIcon name={entity.summary} vendor={entity.vendor} />
+					<VendorIcon {...icon} />
 					<div className="min-w-0 flex-1">
 						<div className="flex min-w-0 items-center gap-2">
 							<h3 className="text-foreground min-w-0 flex-1 truncate text-sm leading-tight font-semibold">
-								{entity.summary}
+								{title}
 							</h3>
 							<span
 								className="flex shrink-0 items-center"
@@ -155,8 +172,8 @@ export const DiscoveryCard = memo(function DiscoveryCard({
 							className="text-muted-foreground mt-1 flex min-w-0 items-center gap-1.5 text-xs"
 							data-testid="discovery-card-subtitle"
 						>
-							{entity.subtitle && <span className="truncate">{entity.subtitle}</span>}
-							{entity.subtitle && entity.version && <Sep />}
+							{subtitle && <span className="truncate">{subtitle}</span>}
+							{subtitle && entity.version && <Sep />}
 							{entity.version && (
 								<span
 									className="shrink-0 font-mono text-[11px]"
@@ -254,7 +271,7 @@ export const DiscoveryCard = memo(function DiscoveryCard({
 							<AppLink
 								href={entity.githubUrl}
 								className="border-border text-muted-foreground hover:bg-muted hover:text-foreground inline-flex h-7 w-7 items-center justify-center rounded-md border transition-colors"
-								aria-label={`View ${entity.summary} on GitHub`}
+								aria-label={`View ${title} on GitHub`}
 								title="View on GitHub"
 							>
 								<ExternalLink size={13} aria-hidden="true" />

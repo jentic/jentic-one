@@ -5,6 +5,7 @@ import {
 	humanizeDomainSlug,
 	humanizeName,
 	titleFromApiId,
+	vendorIconPropsFor,
 	workspaceApiTitle,
 } from '../api-display';
 
@@ -422,5 +423,27 @@ describe('workspaceApiTitle', () => {
 		expect(workspaceApiTitle({ vendor: '', name: 'main', version: '1' })).toBe('main');
 		expect(workspaceApiTitle({ vendor: '', name: '', version: '1' })).toBe('1');
 		expect(workspaceApiTitle({ vendor: '', name: '', version: '' })).toBe('Untitled API');
+	});
+});
+
+describe('vendorIconPropsFor', () => {
+	it('seeds the avatar on the host, else the registry vendor', () => {
+		expect(
+			vendorIconPropsFor({ title: 'GitHub', host: 'api.github.com', vendor: 'github.com' }),
+		).toEqual({ name: 'GitHub', vendor: 'api.github.com', iconUrl: null });
+		expect(vendorIconPropsFor({ title: 'Stripe', host: null, vendor: 'stripe.com' })).toEqual({
+			name: 'Stripe',
+			vendor: 'stripe.com',
+			iconUrl: null,
+		});
+		// A blank host is no key — fall back rather than seed every such API alike.
+		expect(vendorIconPropsFor({ title: 'X', host: '', vendor: 'x.com' }).vendor).toBe('x.com');
+	});
+
+	it('passes the logo through', () => {
+		expect(
+			vendorIconPropsFor({ title: 'S', vendor: 's', iconUrl: 'https://e.test/s.png' })
+				.iconUrl,
+		).toBe('https://e.test/s.png');
 	});
 });

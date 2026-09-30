@@ -309,3 +309,24 @@ export function workspaceApiTitle(input: {
 		'Untitled API'
 	);
 }
+
+/**
+ * `VendorIcon` props for one workspace API — the SAME inputs on every surface
+ * that draws its avatar (Library panel rows and matched catalog tiles,
+ * workspace tiles, the hub header, agent API tiles). `VendorIcon` seeds its
+ * gradient on `vendor`, so that key must be identical everywhere or one API
+ * renders in two colours: the API's host, else its registry vendor. `name`
+ * (the initials) is the caller's already-resolved title.
+ */
+export function vendorIconPropsFor(input: {
+	title: string;
+	host?: string | null;
+	vendor: string;
+	iconUrl?: string | null;
+}): { name: string; vendor: string; iconUrl: string | null } {
+	return {
+		name: input.title,
+		vendor: input.host || input.vendor,
+		iconUrl: input.iconUrl ?? null,
+	};
+}

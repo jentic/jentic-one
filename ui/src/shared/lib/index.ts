@@ -84,6 +84,7 @@ export {
 	titleFromApiId,
 	apiRefDisplayName,
 	workspaceApiTitle,
+	vendorIconPropsFor,
 	apiIdentityTuple,
 	formatApiVersion,
 } from '@/shared/lib/api-display';

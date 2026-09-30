@@ -55,7 +55,7 @@ import {
 	useWorkspaceApi,
 } from '@/modules/workspace/api';
 import type { ApiKey, SpecDiffBase } from '@/modules/workspace/api';
-import { workspaceApiTitle } from '@/shared/lib';
+import { vendorIconPropsFor, workspaceApiTitle } from '@/shared/lib';
 import { usePendingOverlayCounts } from '@/shared/hooks';
 import { ROUTES } from '@/shared/app/routes';
 
@@ -239,9 +239,7 @@ export default function ApiDetailPage() {
 				icon={
 					api ? (
 						<VendorIcon
-							name={title}
-							vendor={api.api.host ?? api.api.vendor}
-							iconUrl={api.iconUrl}
+							{...vendorIconPropsFor({ title, ...api.api, iconUrl: api.iconUrl })}
 							size="lg"
 						/>
 					) : undefined

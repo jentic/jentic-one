@@ -18,6 +18,7 @@ import {
 	VendorIcon,
 	toast,
 } from '@/shared/ui';
+import { vendorIconPropsFor } from '@/shared/lib';
 import { formatTimestamp, timeAgo } from '@/shared/lib/utils';
 import { useCredentialAgents, useDeleteCredential } from '@/shared/credentials/api';
 import { useConnectAfterCreate } from '@/shared/credentials/components/useConnectAfterCreate';
@@ -219,12 +220,7 @@ export function ApiAccessSidebar({
 					<div id={sidebarId} className="flex h-full flex-col">
 						<header className="border-border flex items-start justify-between gap-3 border-b px-5 py-4">
 							<div className="flex min-w-0 items-start gap-3">
-								<VendorIcon
-									name={shown.title}
-									vendor={shown.vendor}
-									iconUrl={shown.iconUrl}
-									size="sm"
-								/>
+								<VendorIcon {...vendorIconPropsFor(shown)} size="sm" />
 								<div className="min-w-0">
 									<div className="flex min-w-0 items-center gap-2">
 										<h2

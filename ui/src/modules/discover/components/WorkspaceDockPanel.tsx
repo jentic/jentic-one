@@ -49,7 +49,7 @@ import {
 import { callsInWeek, useAgentFigures } from '@/shared/credentials/api/apiHealth';
 import { ROUTES, ROUTE_PATHS } from '@/shared/app/routes';
 import { libraryWorkspaceVtStyle } from '@/shared/app/viewTransitions';
-import { useAgentStreamOptional } from '@/shared/lib';
+import { useAgentStreamOptional, vendorIconPropsFor } from '@/shared/lib';
 import { cn } from '@/shared/lib/utils';
 import { newestFirst } from '@/shared/lib/newestFirst';
 import type {
@@ -170,9 +170,12 @@ function ApiRow({
 				data-testid="workspace-panel-api"
 			>
 				<VendorIcon
-					name={row.title}
-					vendor={row.host ?? row.ref.vendor}
-					iconUrl={row.iconUrl}
+					{...vendorIconPropsFor({
+						title: row.title,
+						host: row.host,
+						vendor: row.ref.vendor,
+						iconUrl: row.iconUrl,
+					})}
 					size="sm"
 				/>
 				<div className="min-w-0 flex-1">

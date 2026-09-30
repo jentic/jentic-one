@@ -31,6 +31,7 @@ import {
 	type WorkspaceApi,
 } from '@/modules/workspace/api';
 import { ROUTE_PATHS } from '@/shared/app/routes';
+import { vendorIconPropsFor } from '@/shared/lib';
 
 function plural(n: number, noun: string): string {
 	return `${n.toLocaleString()} ${noun}${n === 1 ? '' : 's'}`;
@@ -83,9 +84,7 @@ export function ApiCard({
 		>
 			<div className="flex items-start gap-3">
 				<VendorIcon
-					name={title}
-					vendor={api.api.host ?? api.api.vendor}
-					iconUrl={api.iconUrl}
+					{...vendorIconPropsFor({ title, ...api.api, iconUrl: api.iconUrl })}
 					size="lg"
 				/>
 				<div className="min-w-0 flex-1">
