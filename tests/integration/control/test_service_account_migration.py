@@ -28,6 +28,7 @@ from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.refresh_tokens import RefreshToken
 from jentic_one.admin.core.schema.service_account_credentials import ServiceAccountCredential
 from jentic_one.admin.core.schema.service_accounts import ServiceAccount
+from jentic_one.admin.repos.agent_credential_repo import AgentCredentialRepository
 from jentic_one.control.core.schema.agent_permission_rules import AgentPermissionRule
 from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.core.schema.toolkit_keys import ToolkitKey
@@ -1353,6 +1354,158 @@ async def test_verify_fails_on_missing_grant_twin_and_post_stamp_mutation(
     assert result.passed is False
     assert result.grant_twin_missing_count >= 1
     assert result.post_stamp_mutation_count >= 1
+
+
+# ------------------------------------ criterion 4: superseded successors (#1416)
+
+
+def _findings(result: Any, category: str) -> list[dict[str, Any]]:
+    return [f for f in result.findings if f["category"] == category]
+
+
+@pytest.mark.parametrize("regenerate", [True, False], ids=["rotated", "revoked"])
+async def test_verify_passes_after_successor_key_rotation_and_sweep_clears_the_note(
+    integration_context: Context,
+    admin_db: DatabaseSession,
+    seed_owner: None,
+    regenerate: bool,
+) -> None:
+    """#1416: an operator rotating (revoke + regenerate) or just revoking the
+    successor's key after the stamp is not drift — verify passes, the ack is
+    recorded, and the superseded SA digest is reported informationally with
+    the sweep hint until ``--sweep-migrated`` clears it."""
+    sa_id = await _seed_sa(
+        admin_db, suffix="vrot", scopes=("toolkit:read",), api_key_plaintext="sak_t8m_vrot"
+    )
+    svc = ServiceAccountMigrationService(integration_context)
+    outcomes = {o.service_account_id: o for o in await svc.run()}
+    agent_id = outcomes[sa_id].successor_agent_id
+    assert agent_id is not None
+
+    # The real credential writers (the ones the agent key routes call).
+    async with admin_db.session() as session:
+        assert await AgentCredentialRepository.clear_api_key_hash(session, agent_id)
+        if regenerate:
+            await AgentCredentialRepository.set_api_key_hash(
+                session, agent_id, api_key_hash=_digest("ak_t8m_vrot_new"), created_by=_OWNER
+            )
+        await session.commit()
+
+    result = await svc.verify(acknowledge=True)
+
+    assert result.digest_mismatch_count == 0
+    assert result.passed is True
+    assert result.acknowledged is True
+    assert _findings(result, "digest_mismatch") == []
+    superseded = _findings(result, "successor_digest_superseded")
+    assert [
+        (f["service_account_id"], f["successor_agent_id"], f["reason"]) for f in superseded
+    ] == [(sa_id, agent_id, "successor_key_rotated")]
+    assert superseded[0]["informational"] is True
+    assert "--sweep-migrated" in superseded[0]["actionable_step"]
+    assert result.superseded_digest_count == 1
+    assert result.finding_count == 0
+    acks = await _rows(
+        admin_db,
+        "SELECT digest_mismatch_count, report_finding_count FROM service_account_migration_acks",
+        {},
+    )
+    assert [(a.digest_mismatch_count, a.report_finding_count) for a in acks] == [(0, 0)]
+
+    await svc.sweep(ignore_age_gate=True)
+    after_sweep = await svc.verify()
+
+    assert after_sweep.passed is True
+    assert after_sweep.superseded_digest_count == 0
+    assert _findings(after_sweep, "successor_digest_superseded") == []
+
+
+async def test_verify_excludes_archived_successor_from_digest_mismatches(
+    integration_context: Context, admin_db: DatabaseSession, seed_owner: None
+) -> None:
+    """#1416: an archived successor is terminal — a digest it no longer holds
+    is superseded, not drift, even when the change carried no rotation stamp."""
+    sa_id = await _seed_sa(
+        admin_db, suffix="varch", scopes=("toolkit:read",), api_key_plaintext="sak_t8m_varch"
+    )
+    svc = ServiceAccountMigrationService(integration_context)
+    outcomes = {o.service_account_id: o for o in await svc.run()}
+    agent_id = outcomes[sa_id].successor_agent_id
+
+    async with admin_db.session() as session:
+        await session.execute(
+            text("UPDATE agents SET status = 'archived' WHERE id = :id"), {"id": agent_id}
+        )
+        await session.execute(
+            text("UPDATE agent_credentials SET api_key_hash = NULL WHERE agent_id = :id"),
+            {"id": agent_id},
+        )
+        await session.commit()
+
+    result = await svc.verify()
+
+    assert result.digest_mismatch_count == 0
+    assert result.passed is True
+    assert [
+        (f["service_account_id"], f["reason"])
+        for f in _findings(result, "successor_digest_superseded")
+    ] == [(sa_id, "successor_archived")]
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    [
+        # Digest changed by a writer that bypassed the credential repository
+        # (no rotated_at stamp).
+        "UPDATE agent_credentials SET api_key_hash = :other WHERE agent_id = :id",
+        # A rotation stamp that predates the migration is not a post-stamp rotation.
+        "UPDATE agent_credentials SET api_key_hash = :other, rotated_at = :before"
+        " WHERE agent_id = :id",
+        # Successor credential row gone.
+        "DELETE FROM agent_credentials WHERE agent_id = :id",
+        # Successor agent row gone (cascades its credential row).
+        "DELETE FROM agents WHERE id = :id",
+    ],
+    ids=["unstamped-change", "rotated-before-stamp", "credential-missing", "successor-missing"],
+)
+async def test_verify_still_counts_genuine_digest_drift_and_names_the_pair(
+    integration_context: Context, admin_db: DatabaseSession, seed_owner: None, tamper: str
+) -> None:
+    """#1416 must stay fail-closed: drift that is not a legitimate post-stamp
+    rotation or archive is counted, refuses the ack, and names the SA and
+    successor ids."""
+    sa_id = await _seed_sa(admin_db, suffix="vdrift", api_key_plaintext="sak_t8m_vdrift")
+    svc = ServiceAccountMigrationService(integration_context)
+    outcomes = {o.service_account_id: o for o in await svc.run()}
+    agent_id = outcomes[sa_id].successor_agent_id
+    _, stamp = await _stamp_of(admin_db, sa_id)
+    # Raw-SQL read: a datetime on Postgres, the stored ISO string on SQLite.
+    migrated_at = stamp if isinstance(stamp, dt.datetime) else dt.datetime.fromisoformat(str(stamp))
+
+    async with admin_db.session() as session:
+        await session.execute(
+            text(tamper),
+            {
+                "id": agent_id,
+                "other": _digest("sak_t8m_vdrift_other"),
+                "before": migrated_at - dt.timedelta(hours=1),
+            },
+        )
+        await session.commit()
+
+    result = await svc.verify(acknowledge=True)
+
+    assert result.digest_mismatch_count == 1
+    assert result.passed is False
+    assert result.acknowledged is False
+    assert result.only_sweep_healable_failures is False
+    mismatches = _findings(result, "digest_mismatch")
+    assert [(f["service_account_id"], f["successor_agent_id"]) for f in mismatches] == [
+        (sa_id, agent_id)
+    ]
+    assert _findings(result, "successor_digest_superseded") == []
+    acks = await _rows(admin_db, "SELECT id FROM service_account_migration_acks", {})
+    assert acks == []
 
 
 # ------------------------------------------------- review follow-ups (PR #1386)

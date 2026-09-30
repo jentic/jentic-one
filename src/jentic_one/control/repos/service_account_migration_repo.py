@@ -76,6 +76,36 @@ _LIST_SERVICE_ACCOUNTS = text(
     " ORDER BY sa.id"
 )
 
+#: Criterion 4 (#1416): fully-migrated, unswept SAs whose successor does not
+#: hold the SA's still-live digest. LEFT JOINs so a missing successor agent
+#: or credential row surfaces as drift instead of silently dropping out
+#: (``agent_credentials.agent_id`` is unique — at most one row per agent).
+_SUCCESSOR_DIGEST_DRIFT_FROM = (
+    " FROM service_account_credentials sac"
+    " JOIN service_accounts sa ON sa.id = sac.service_account_id"
+    " LEFT JOIN agents a ON a.id = sa.migrated_to_actor_id"
+    " LEFT JOIN agent_credentials ac ON ac.agent_id = sa.migrated_to_actor_id"
+    " WHERE sac.api_key_hash IS NOT NULL"
+    " AND sa.migrated_to_actor_id IS NOT NULL"
+    " AND sa.migrated_to_actor_id != 'skipped'"
+    " AND (ac.api_key_hash IS NULL OR ac.api_key_hash != sac.api_key_hash)"
+)
+_SUCCESSOR_DIGEST_DRIFT_SQL = (
+    "SELECT sa.id AS service_account_id, sa.migrated_to_actor_id AS successor_agent_id"
+    + _SUCCESSOR_DIGEST_DRIFT_FROM
+)
+
+#: The successor was legitimately superseded after the stamp: archived, or its
+#: key rotated/revoked (every ``AgentCredentialRepository`` writer stamps
+#: ``rotated_at``). Written NULL-safe — a missing agent row, a missing
+#: credential row, or a NULL ``rotated_at``/``migrated_at`` evaluates to FALSE,
+#: never NULL, so ``NOT (...)`` keeps those rows counted (fail-closed).
+_SUCCESSOR_SUPERSEDED_PREDICATE = (
+    "(a.id IS NOT NULL AND (a.status = 'archived'"
+    " OR (ac.rotated_at IS NOT NULL AND sa.migrated_at IS NOT NULL"
+    " AND ac.rotated_at > sa.migrated_at)))"
+)
+
 _SELECT_SERVICE_ACCOUNT_SQL = (
     "SELECT sa.id, sa.name, sa.description, sa.owner_id, sa.status,"
     " sa.migrated_to_actor_id, sa.migrated_at,"
@@ -720,29 +750,57 @@ class ServiceAccountMigrationRepository:
         return total
 
     @staticmethod
-    async def count_digest_mismatches(session: AsyncSession) -> int:
+    async def list_digest_mismatches(session: AsyncSession) -> list[Any]:
         """Criterion 4: successor digest equals the (still-live) SA digest.
 
         Scoped to fully-migrated SAs whose SA-side digest is still non-NULL —
         after the sweep the SA side is NULLed by design (copy-then-sweep),
         so swept rows are excluded rather than false-failed.
+
+        A successor that no longer holds the copied digest because it was
+        legitimately *superseded* is not drift (#1416) and is excluded — see
+        :meth:`list_superseded_successor_digests`. Everything else fails
+        closed: a missing successor agent row, a missing credential row, or a
+        digest that changed without the credential writers' ``rotated_at``
+        stamp (a raw-SQL writer bypassing the service).
+
+        Rows: ``service_account_id, successor_agent_id``.
         """
-        row = (
-            await session.execute(
-                text(
-                    "SELECT count(*) AS n FROM service_account_credentials sac"
-                    " JOIN service_accounts sa ON sa.id = sac.service_account_id"
-                    " WHERE sac.api_key_hash IS NOT NULL"
-                    " AND sa.migrated_to_actor_id IS NOT NULL"
-                    " AND sa.migrated_to_actor_id != 'skipped'"
-                    " AND NOT EXISTS ("
-                    "  SELECT 1 FROM agent_credentials ac"
-                    "  WHERE ac.agent_id = sa.migrated_to_actor_id"
-                    "  AND ac.api_key_hash = sac.api_key_hash)"
-                )
+        rows = await session.execute(
+            text(
+                _SUCCESSOR_DIGEST_DRIFT_SQL
+                + f" AND NOT {_SUCCESSOR_SUPERSEDED_PREDICATE}"
+                + " ORDER BY sa.id"
             )
-        ).one()
-        return int(row.n)
+        )
+        return list(rows.all())
+
+    @staticmethod
+    async def list_superseded_successor_digests(session: AsyncSession) -> list[Any]:
+        """Informational ``verify`` read: SA digests the successor superseded.
+
+        A fully-migrated SA whose still-live digest the successor no longer
+        holds because the operator acted on the successor after the stamp —
+        its key was rotated or revoked (``agent_credentials.rotated_at`` after
+        ``migrated_at``; every credential writer stamps it) or the agent was
+        archived. The stale SA-side digest authenticates nothing (the resolver
+        fails closed on stamped rows) and ``--sweep-migrated`` NULLs it.
+
+        Rows: ``service_account_id, successor_agent_id, reason`` where
+        ``reason`` is ``successor_archived`` or ``successor_key_rotated``.
+        """
+        rows = await session.execute(
+            text(
+                "SELECT sa.id AS service_account_id,"
+                " sa.migrated_to_actor_id AS successor_agent_id,"
+                " CASE WHEN a.status = 'archived' THEN 'successor_archived'"
+                " ELSE 'successor_key_rotated' END AS reason"
+                + _SUCCESSOR_DIGEST_DRIFT_FROM
+                + f" AND {_SUCCESSOR_SUPERSEDED_PREDICATE}"
+                + " ORDER BY sa.id"
+            )
+        )
+        return list(rows.all())
 
     @staticmethod
     async def count_post_stamp_mutations(session: AsyncSession) -> int:

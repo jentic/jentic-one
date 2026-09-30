@@ -106,6 +106,24 @@ _ADMIN_SCOPE_REVIEW_STEP = (
     "Review whether the successor agent should keep this scope; if not, remove it "
     "with `PUT /agents/{agent_id}/scopes` (see the upgrade notes for the audit queries)."
 )
+#: Failing ``verify`` finding (criterion 4): a fully-migrated SA whose
+#: successor does not hold its still-live digest and was not legitimately
+#: superseded (#1416) — one line per SA, so the operator knows which failed.
+_DIGEST_MISMATCH_CATEGORY = "digest_mismatch"
+_DIGEST_MISMATCH_STEP = (
+    "The successor agent does not hold the service account's API-key digest and "
+    "was neither rotated nor archived after the migration stamp. Inspect the "
+    "successor's agent and agent_credentials rows; a re-run of the migration does "
+    "not repair a stamped row."
+)
+#: Informational ``verify`` finding (#1416): the successor's key was rotated or
+#: revoked, or the successor archived, after the stamp — not drift, never
+#: fails the verification; the sweep clears the stale SA-side digest.
+_SUPERSEDED_DIGEST_CATEGORY = "successor_digest_superseded"
+_SUPERSEDED_DIGEST_STEP = (
+    "Not drift: the successor was changed after the migration. Run "
+    "`migrate-service-accounts --sweep-migrated` to clear the stale service-account digest."
+)
 
 
 def _admin_level_grants(grants: list[tuple[str, str | None]]) -> tuple[dict[str, Any], ...]:
@@ -237,6 +255,10 @@ class VerificationResult:
     #: migration carried onto successor agents, one ``successor_admin_scope``
     #: report line each.
     successor_admin_scope_count: int = 0
+    #: Informational (never gates ``passed``, #1416): SA digests the successor
+    #: superseded after the stamp (key rotated/revoked, or agent archived) —
+    #: not drift; ``--sweep-migrated`` clears them.
+    superseded_digest_count: int = 0
     #: JSONL report lines. The first is always the ``verify_summary`` line
     #: (the run's counts + tool version) — report context, not a finding.
     findings: list[dict[str, Any]] = field(default_factory=list)
@@ -879,8 +901,11 @@ class ServiceAccountMigrationService:
             unrevoked = await ServiceAccountMigrationRepository.count_unrevoked_tokens(
                 session, now=now
             )
-            digest_mismatch = await ServiceAccountMigrationRepository.count_digest_mismatches(
+            digest_mismatches = await ServiceAccountMigrationRepository.list_digest_mismatches(
                 session
+            )
+            superseded_digests = (
+                await ServiceAccountMigrationRepository.list_superseded_successor_digests(session)
             )
             post_stamp = await ServiceAccountMigrationRepository.count_post_stamp_mutations(session)
             migrated_pairs = await ServiceAccountMigrationRepository.list_migrated_pairs(session)
@@ -888,6 +913,7 @@ class ServiceAccountMigrationService:
                 session
             )
         rule_mismatch = await self._count_inline_rule_mismatches(migrated_pairs)
+        digest_mismatch = len(digest_mismatches)
 
         result = VerificationResult(
             passed=(
@@ -905,6 +931,7 @@ class ServiceAccountMigrationService:
             post_stamp_mutation_count=post_stamp,
             inline_rule_mismatch_count=rule_mismatch,
             successor_admin_scope_count=len(admin_grants),
+            superseded_digest_count=len(superseded_digests),
         )
         result.findings.append(
             {
@@ -917,9 +944,30 @@ class ServiceAccountMigrationService:
                 "post_stamp_mutation_count": post_stamp,
                 "inline_rule_mismatch_count": rule_mismatch,
                 "successor_admin_scope_count": len(admin_grants),
+                "superseded_digest_count": len(superseded_digests),
                 "tool_version": __version__,
             }
         )
+        for mismatch in digest_mismatches:
+            result.findings.append(
+                {
+                    "category": _DIGEST_MISMATCH_CATEGORY,
+                    "service_account_id": mismatch.service_account_id,
+                    "successor_agent_id": mismatch.successor_agent_id,
+                    "actionable_step": _DIGEST_MISMATCH_STEP,
+                }
+            )
+        for superseded in superseded_digests:
+            result.findings.append(
+                {
+                    "category": _SUPERSEDED_DIGEST_CATEGORY,
+                    "service_account_id": superseded.service_account_id,
+                    "successor_agent_id": superseded.successor_agent_id,
+                    "reason": superseded.reason,
+                    "informational": True,
+                    "actionable_step": _SUPERSEDED_DIGEST_STEP,
+                }
+            )
         for grant in admin_grants:
             result.findings.append(
                 {
@@ -943,6 +991,7 @@ class ServiceAccountMigrationService:
             post_stamp_mutation_count=post_stamp,
             inline_rule_mismatch_count=rule_mismatch,
             successor_admin_scope_count=len(admin_grants),
+            superseded_digest_count=len(superseded_digests),
         )
         if admin_grants:
             logger.warning(

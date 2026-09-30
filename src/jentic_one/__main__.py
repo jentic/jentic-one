@@ -494,6 +494,16 @@ async def _migrate_service_accounts(
                     file=sys.stderr,
                     flush=True,
                 )
+            if result.superseded_digest_count:
+                print(
+                    f"==> NOTE (informational, does not fail verify): "
+                    f"{result.superseded_digest_count} successor agent(s) had their key rotated "
+                    "or were archived after migration; run `migrate-service-accounts "
+                    "--sweep-migrated` to clear the stale service-account digest(s) — see the "
+                    "successor_digest_superseded report lines.",
+                    file=sys.stderr,
+                    flush=True,
+                )
             if acknowledge:
                 print(
                     _sa_acknowledge_message(result),
@@ -546,7 +556,8 @@ def _sa_acknowledge_message(result: VerificationResult) -> str:
 
     A verify that fails only on what the sweep heals (live SA sessions,
     unswept inline-rule rows) points at ``--sweep-migrated``; re-running the
-    migration would not help — stamped rows short-circuit it.
+    migration would not help — stamped rows short-circuit it. Digest
+    mismatches (criterion 4) point at their per-SA report lines.
     """
     if result.acknowledged:
         return "==> acknowledgement recorded — theme-8 Phase 4 drops are unblocked."
@@ -556,10 +567,17 @@ def _sa_acknowledge_message(result: VerificationResult) -> str:
             "session(s) / unswept inline-rule row(s); run "
             "`migrate-service-accounts --sweep-migrated`, then re-verify."
         )
-    return (
+    message = (
         "==> acknowledgement REFUSED: verification failed; run "
         "migrate-service-accounts first, then re-verify."
     )
+    if result.digest_mismatch_count:
+        message += (
+            f" {result.digest_mismatch_count} digest mismatch(es) need operator repair — "
+            "see the digest_mismatch report lines for the service account and successor "
+            "ids (a migration re-run does not repair a stamped row)."
+        )
+    return message
 
 
 def _write_report_lines(lines: list[dict[str, object]], report_path: str | None) -> None:
