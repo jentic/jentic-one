@@ -18,6 +18,7 @@ import {
 import {
 	ActorLabel,
 	ActorStatusBadge,
+	AppLink,
 	Badge,
 	Button,
 	CopyButton,
@@ -28,6 +29,7 @@ import {
 	VendorMark,
 } from '@/shared/ui';
 import { cn, formatTimestamp, timeAgo } from '@/shared/lib/utils';
+import { ROUTES } from '@/shared/app/routes';
 import {
 	ACTION_LABEL,
 	ACTION_VARIANT,
@@ -195,7 +197,34 @@ export function RegisterCommand({
 						: 'Ask whoever deployed this instance for the broker (data plane) URL and put it in place of <broker-url>.'}
 				</p>
 			)}
+			<CliInstallHint />
 		</div>
+	);
+}
+
+/** The install one-liners, as `cli/README.md` gives them. */
+const CLI_INSTALL = {
+	brew: 'brew install --cask jentic/tap/jentic',
+	script: 'curl -fsSL https://raw.githubusercontent.com/jentic/jentic-one/main/tools/install.sh | sh',
+} as const;
+
+/** How to get `jentic` for an operator who has never installed it. */
+function CliInstallHint() {
+	return (
+		<p
+			data-testid="cli-install-hint"
+			className="text-muted-foreground mt-2 text-xs leading-relaxed [overflow-wrap:anywhere]"
+		>
+			Don&apos;t have the CLI?{' '}
+			<code className="text-foreground/90 font-mono">{CLI_INSTALL.brew}</code> or{' '}
+			<code className="text-foreground/90 font-mono">{CLI_INSTALL.script}</code>. Setting up a
+			local coding agent? Run{' '}
+			<code className="text-foreground/90 font-mono">jentic setup</code> instead — it
+			registers too, and adds an isolated account and the agent skills.{' '}
+			<AppLink href={`${ROUTES.docs}#installation`} data-no-transition className="underline">
+				Installation docs
+			</AppLink>
+		</p>
 	);
 }
 

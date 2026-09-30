@@ -152,6 +152,20 @@ describe('Agents page — zero agents', () => {
 		expect(copy).toHaveTextContent('Copied!');
 	});
 
+	it('says how to get the CLI, under the command', async () => {
+		renderPage();
+		await landing();
+		const hint = screen.getByTestId('cli-install-hint');
+		expect(hint).toHaveTextContent(
+			"Don't have the CLI? brew install --cask jentic/tap/jentic or curl -fsSL https://raw.githubusercontent.com/jentic/jentic-one/main/tools/install.sh | sh.",
+		);
+		expect(hint).toHaveTextContent(/Run jentic setup instead/);
+		expect(within(hint).getByRole('link', { name: 'Installation docs' })).toHaveAttribute(
+			'href',
+			expect.stringContaining('/docs#installation'),
+		);
+	});
+
 	const remoteInstance = (brokerUrl?: string) =>
 		http.get('/instance', () =>
 			HttpResponse.json({
