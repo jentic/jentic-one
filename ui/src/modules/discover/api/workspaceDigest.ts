@@ -186,7 +186,9 @@ export function useWorkspaceDigest(): WorkspaceDigest {
 				label: 'overlay awaiting review',
 				rows: pending,
 				tab: 'versions',
-				atLeast: pending.some((r) => r.pendingOverlays?.atLeast) || overlays.truncated,
+				// The entry counts APIs, not overlays: one API with a capped overlay
+				// read is still exactly one API. Only a capped API list is a floor.
+				atLeast: overlays.truncated,
 			},
 			{
 				id: 'failures',

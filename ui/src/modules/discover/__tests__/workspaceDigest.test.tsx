@@ -113,6 +113,27 @@ describe('useWorkspaceDigest attention rules', () => {
 		// Usage is admin-only; the test user can't read it, so no failure rule is claimed.
 		expect(screen.queryByTestId('rule-failures')).not.toBeInTheDocument();
 	});
+
+	it('counts one API with more than a page of pending overlays as exactly one API (no "+")', async () => {
+		worker.use(
+			http.get('/apis/:vendor/:name/:version/overlays', ({ params }) =>
+				HttpResponse.json({
+					data:
+						params.vendor === 'open'
+							? Array.from({ length: 50 }, (_, i) => ({
+									id: `ov_${i}`,
+									status: 'pending',
+								}))
+							: [],
+					// More than the first page (50) waits on this one API.
+					has_more: params.vendor === 'open',
+					next_cursor: params.vendor === 'open' ? 'next' : null,
+				}),
+			),
+		);
+		renderWithProviders(<DigestProbe />);
+		expect(await screen.findByTestId('rule-overlays')).toHaveTextContent(/^Open$/);
+	});
 });
 
 function digestWith(attention: AttentionEntry[]): WorkspaceDigest {
