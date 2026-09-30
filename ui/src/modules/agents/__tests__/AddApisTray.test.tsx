@@ -17,6 +17,7 @@ import {
 	within,
 	userEvent,
 	checkA11y,
+	settleAnimations,
 } from '@/__tests__/test-utils';
 import { worker } from '@/mocks/browser';
 import { setToken } from '@/shared/api';
@@ -532,6 +533,9 @@ describe('AddApisTray — multi-select picks and the preflight tally', () => {
 		await user.click(await row(/Slack/));
 		await waitFor(() => expect(tallyLines()).toHaveLength(2));
 
+		// The picker rows stagger in from opacity 0 and the sheet slides in; audit
+		// the settled frame, not a half-faded row.
+		await settleAnimations(document.body);
 		await checkA11y(document.body, { modal: true });
 	});
 
