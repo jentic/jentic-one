@@ -153,16 +153,23 @@ describe('Agents page — zero agents', () => {
 		expect(await screen.findByRole('dialog', { name: 'Create agent' })).toBeInTheDocument();
 	});
 
-	/** Registers `name` the way `jentic register` does and waits for the arrival card. */
+	/** Registers `name` the way `jentic register` does and waits for the arrival
+	 * card — and, unless told otherwise, for its requested scopes, which Approve
+	 * waits on. */
 	async function arrive(
 		name: string,
 		queryClient: { invalidateQueries: () => Promise<void> },
 		over: Parameters<typeof selfRegisterAgent>[1] = {},
+		{ scopesRead = true }: { scopesRead?: boolean } = {},
 	) {
 		const id = selfRegisterAgent(name, over);
 		// The fallback poll would find it; invalidating is what the stream does.
 		await queryClient.invalidateQueries();
 		await screen.findByTestId('arrival-card', {}, { timeout: 6000 });
+		if (scopesRead)
+			await waitFor(() =>
+				expect(screen.queryByTestId('approve-waits-for-scopes')).toBeNull(),
+			);
 		return id;
 	}
 
@@ -209,8 +216,10 @@ describe('Agents page — zero agents', () => {
 		expect(facts.getByText('Self-registered from the CLI')).toBeInTheDocument();
 		expect(facts.getByText('Its own keypair')).toBeInTheDocument();
 		expect(facts.getByText(id)).toBeInTheDocument();
-		for (const label of ['Owner', 'Parent agent', 'Scopes', 'Key ID', 'Description'])
+		for (const label of ['Owner', 'Parent agent', 'Key ID', 'Description'])
 			expect(facts.queryByText(label)).toBeNull();
+		// The scopes row always shows: an empty grant says so rather than vanishing.
+		expect(await facts.findByText('Requests no scopes')).toBeInTheDocument();
 
 		// The page stays the landing; the manual card has left.
 		expect(screen.getByTestId('agents-empty-landing')).toHaveAttribute('data-phase', 'arrived');
@@ -241,10 +250,101 @@ describe('Agents page — zero agents', () => {
 		expect(facts.getByText('Owner')).toBeInTheDocument();
 		expect(facts.getByText('An API key')).toBeInTheDocument();
 		expect(await facts.findByText('Key ID')).toBeInTheDocument();
-		expect(await facts.findByText('toolkits:read, executions:write')).toBeInTheDocument();
+		const scopes = within(await screen.findByRole('list', { name: 'Requested scopes' }));
+		expect(scopes.getAllByRole('listitem').map((li) => li.textContent)).toEqual([
+			'toolkits:read',
+			'executions:write (can change data)',
+		]);
 		expect(facts.getByText('Triage for the support inbox')).toBeInTheDocument();
 		expect(facts.queryByText('Self-registered from the CLI')).toBeNull();
 		expect(facts.queryByText('Parent agent')).toBeNull();
+	});
+
+	it('lists every requested scope in full and flags the ones that write or administer', async () => {
+		const requested = [
+			'apis:read',
+			'agents:write',
+			'credentials:write',
+			'org:admin',
+			...Array.from({ length: 12 }, (_, i) => `capabilities:read:${i}`),
+		];
+		worker.use(http.get('/agents/:id/scopes', () => HttpResponse.json({ scopes: requested })));
+		const { container, queryClient } = renderPage();
+		await landing();
+		await arrive('scoped-bot', queryClient);
+
+		const list = await screen.findByRole('list', { name: 'Requested scopes' });
+		// Nothing hides behind an ellipsis: every scope is its own visible badge.
+		const items = within(list).getAllByRole('listitem');
+		expect(items).toHaveLength(requested.length);
+		for (const item of items) expect(item).toBeVisible();
+		const risk = (scope: string) =>
+			within(list).getByText(scope).closest('[data-risk]')?.getAttribute('data-risk') ?? null;
+		expect(risk('agents:write')).toBe('write');
+		expect(risk('credentials:write')).toBe('write');
+		expect(risk('org:admin')).toBe('admin');
+		expect(risk('apis:read')).toBeNull();
+		expect(screen.getByTestId('requested-scopes')).toHaveTextContent(
+			'3 of these can change data or administer your organisation. Approving grants every scope listed.',
+		);
+		expect(screen.getByRole('button', { name: 'Approve scoped-bot' })).toBeEnabled();
+		await waitFor(() => checkA11y(container), { timeout: 3000 });
+	});
+
+	it('holds Approve while the requested scopes are still being read', async () => {
+		let release!: () => void;
+		const gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		worker.use(
+			http.get('/agents/:id/scopes', async () => {
+				await gate;
+				return HttpResponse.json({ scopes: ['agents:write'] });
+			}),
+		);
+		const { queryClient } = renderPage();
+		await landing();
+		await arrive('slow-bot', queryClient, {}, { scopesRead: false });
+
+		const approve = screen.getByRole('button', { name: 'Approve slow-bot' });
+		expect(approve).toBeDisabled();
+		expect(screen.getByText('Reading the scopes it requests…')).toBeInTheDocument();
+		expect(screen.getByTestId('approve-waits-for-scopes')).toBeInTheDocument();
+		// Deny needs no scopes read: refusing grants nothing.
+		expect(screen.getByRole('button', { name: 'Deny slow-bot' })).toBeEnabled();
+
+		release();
+		expect(await screen.findByText('agents:write')).toBeInTheDocument();
+		await waitFor(() => expect(approve).toBeEnabled());
+		expect(screen.queryByTestId('approve-waits-for-scopes')).toBeNull();
+	});
+
+	it('a failed scopes read keeps Approve off and retries in place', async () => {
+		let healthy = false;
+		worker.use(
+			http.get('/agents/:id/scopes', () =>
+				healthy
+					? HttpResponse.json({ scopes: [] })
+					: HttpResponse.json({ detail: 'Server error' }, { status: 500 }),
+			),
+		);
+		const user = userEvent.setup();
+		const { queryClient } = renderPage();
+		await landing();
+		await arrive('flaky-bot', queryClient, {}, { scopesRead: false });
+
+		const scopes = screen.getByTestId('requested-scopes');
+		expect(
+			await within(scopes).findByText('Could not read the scopes this agent requests.'),
+		).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Approve flaky-bot' })).toBeDisabled();
+
+		healthy = true;
+		await user.click(within(scopes).getByRole('button', { name: /Try again/ }));
+		expect(await within(scopes).findByText('Requests no scopes')).toBeInTheDocument();
+		await waitFor(() =>
+			expect(screen.getByRole('button', { name: 'Approve flaky-bot' })).toBeEnabled(),
+		);
 	});
 
 	it('approving from the card completes the stepper and suggests GitHub', async () => {
@@ -634,13 +734,13 @@ describe('Agents page — zero agents', () => {
 			},
 		]);
 		await queryClient.invalidateQueries();
-		await user.click(
-			await screen.findByRole(
-				'button',
-				{ name: 'Approve my-first-agent' },
-				{ timeout: 6000 },
-			),
+		const approve = await screen.findByRole(
+			'button',
+			{ name: 'Approve my-first-agent' },
+			{ timeout: 6000 },
 		);
+		await waitFor(() => expect(approve).toBeEnabled());
+		await user.click(approve);
 		const github = await screen.findByRole('button', { name: 'Continue with GitHub' });
 		await user.click(github);
 
@@ -693,7 +793,11 @@ describe('Agents page — resuming the first run on load', () => {
 		await landing();
 		expect(phase()).toBe('arrived');
 		const card = screen.getByTestId('arrival-card');
-		expect(within(card).getByRole('button', { name: 'Approve my-first-agent' })).toBeEnabled();
+		await waitFor(() =>
+			expect(
+				within(card).getByRole('button', { name: 'Approve my-first-agent' }),
+			).toBeEnabled(),
+		);
 		expect(within(card).getByRole('button', { name: 'Deny my-first-agent' })).toBeEnabled();
 		expect(within(screen.getByTestId('agent-facts')).getByText(id)).toBeInTheDocument();
 		expect(stepStates()).toEqual(['done', 'done', 'current']);

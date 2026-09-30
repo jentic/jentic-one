@@ -1966,7 +1966,9 @@ describe('AgentsPage — the header follows the zero-agents landing', () => {
 		expect(screen.getByRole('button', { name: 'Create your first agent' })).toBeInTheDocument();
 		expect(screen.queryByRole('button', { name: 'New agent' })).toBeNull();
 
-		await user.click(screen.getByRole('button', { name: 'Approve my-first-agent' }));
+		const approve = screen.getByRole('button', { name: 'Approve my-first-agent' });
+		await waitFor(() => expect(approve).toBeEnabled());
+		await user.click(approve);
 		await user.click(await screen.findByRole('button', { name: 'Skip for now' }));
 		await screen.findByTestId('agent-dock');
 		expect(screen.getByRole('button', { name: 'New agent' })).toBeInTheDocument();

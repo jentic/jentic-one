@@ -5,7 +5,15 @@
  */
 import { useEffect, useId, useReducer, type ReactNode } from 'react';
 import { AnimatePresence, motion, type Transition } from 'framer-motion';
-import { Check, CircleCheck, Clock, Plus, Terminal, type LucideIcon } from 'lucide-react';
+import {
+	Check,
+	CircleCheck,
+	Clock,
+	Plus,
+	Terminal,
+	TriangleAlert,
+	type LucideIcon,
+} from 'lucide-react';
 import {
 	ActorLabel,
 	ActorStatusBadge,
@@ -13,6 +21,7 @@ import {
 	Badge,
 	Button,
 	CopyButton,
+	ErrorAlert,
 	Input,
 	Label,
 	Skeleton,
@@ -31,6 +40,7 @@ import { EASE_OUT_SOFT } from '@/modules/agents/components/flat/GhostFleet';
 import { AGENT_NAME_MAX_LENGTH, agentNameError } from '@/modules/agents/lib/agentName';
 import type { FirstAgentExit, FirstAgentPhase } from '@/modules/agents/lib/firstRun';
 import { useGithubPick } from '@/modules/agents/lib/githubPick';
+import { scopeRisk, type ScopeRisk } from '@/modules/agents/lib/requestedScopes';
 import {
 	DEFAULT_REGISTER_NAME,
 	commandText,
@@ -380,6 +390,10 @@ export function AgentDetails({
 		return () => window.clearInterval(id);
 	}, [phase]);
 	const selfRegistered = agent.attribution.registeredBy === 'self';
+	// Approval makes the requested scopes live, so Approve waits until they are
+	// read and on screen.
+	const scopes = useAgentScopes(agent.id);
+	const scopesUnread = scopes.isPending || scopes.isError;
 
 	return (
 		<div data-testid="arrival-card">
@@ -403,7 +417,7 @@ export function AgentDetails({
 				}
 				badge={<ActorStatusBadge status={agent.status} />}
 			/>
-			<AgentFacts agent={agent} selfRegistered={selfRegistered} />
+			<AgentFacts agent={agent} selfRegistered={selfRegistered} scopes={scopes} />
 
 			<AnimatePresence mode="wait" initial={false}>
 				<motion.div
@@ -422,6 +436,7 @@ export function AgentDetails({
 								<Button
 									variant={ACTION_VARIANT.approve}
 									loading={approvePending}
+									disabled={scopesUnread}
 									onClick={onApprove}
 									aria-label={`${ACTION_LABEL.approve} ${agent.name}`}
 								>
@@ -437,6 +452,14 @@ export function AgentDetails({
 									{ACTION_LABEL.deny}
 								</Button>
 							</div>
+							{scopesUnread && (
+								<p
+									data-testid="approve-waits-for-scopes"
+									className="text-muted-foreground mt-2 text-xs"
+								>
+									Approve is available once the scopes it requests are read.
+								</p>
+							)}
 						</div>
 					) : (
 						<FirstApiPanel agent={agent} onExit={onExit} />
@@ -475,10 +498,16 @@ function Fact({ label, children }: { label: string; children: ReactNode }) {
  * A self-registration carries no owner, no API key and usually no scopes, so
  * most rows only show for an agent someone set up.
  */
-function AgentFacts({ agent, selfRegistered }: { agent: AgentEntity; selfRegistered: boolean }) {
+function AgentFacts({
+	agent,
+	selfRegistered,
+	scopes,
+}: {
+	agent: AgentEntity;
+	selfRegistered: boolean;
+	scopes: ReturnType<typeof useAgentScopes>;
+}) {
 	const keyInfo = useAgentApiKeyInfo(agent.hasApiKey ? agent.id : null);
-	const scopes = useAgentScopes(agent.id);
-	const scopeList = scopes.data ?? [];
 
 	return (
 		<dl
@@ -521,13 +550,93 @@ function AgentFacts({ agent, selfRegistered }: { agent: AgentEntity; selfRegiste
 					<ActorLabel actorId={agent.parentAgentId} />
 				</Fact>
 			)}
-			{scopeList.length > 0 && (
-				<Fact label="Scopes">
-					<span className="font-mono">{scopeList.join(', ')}</span>
-				</Fact>
-			)}
 			{agent.description && <Fact label="Description">{agent.description}</Fact>}
+			<RequestedScopes scopes={scopes} />
 		</dl>
+	);
+}
+
+const RISK_VARIANT: Record<ScopeRisk, 'danger' | 'warning'> = {
+	admin: 'danger',
+	write: 'warning',
+};
+
+const RISK_LABEL: Record<ScopeRisk, string> = {
+	admin: 'administers the organisation',
+	write: 'can change data',
+};
+
+/**
+ * Every scope the agent asked for, in full: approval grants all of them at
+ * once, so none may hide behind an ellipsis. Scopes that change data or
+ * administer the organisation are flagged; an unread list says so rather than
+ * reading as "no scopes".
+ */
+function RequestedScopes({ scopes }: { scopes: ReturnType<typeof useAgentScopes> }) {
+	const list = scopes.data ?? [];
+	const risky = list.filter((scope) => scopeRisk(scope) != null).length;
+	return (
+		<div data-testid="requested-scopes" className="col-span-full min-w-0">
+			<dt className="text-muted-foreground/80 text-[10px] font-medium tracking-wider uppercase">
+				Scopes
+			</dt>
+			<dd className="text-foreground/90 mt-1 text-xs">
+				{scopes.isPending ? (
+					<span aria-busy="true" className="flex flex-wrap gap-1.5">
+						<span className="sr-only">Reading the scopes it requests…</span>
+						<Skeleton className="h-5 w-24 rounded-full" />
+						<Skeleton className="h-5 w-32 rounded-full" />
+					</span>
+				) : scopes.isError ? (
+					<ErrorAlert
+						message="Could not read the scopes this agent requests."
+						onRetry={() => void scopes.refetch()}
+						retrying={scopes.isFetching}
+					/>
+				) : list.length === 0 ? (
+					'Requests no scopes'
+				) : (
+					<>
+						<ul aria-label="Requested scopes" className="flex flex-wrap gap-1.5">
+							{list.map((scope) => {
+								const risk = scopeRisk(scope);
+								return (
+									<li key={scope} className="max-w-full">
+										<Badge
+											variant={risk ? RISK_VARIANT[risk] : 'default'}
+											data-risk={risk ?? undefined}
+											className="max-w-full [overflow-wrap:anywhere]"
+										>
+											{risk && (
+												<TriangleAlert
+													className="h-3 w-3 shrink-0"
+													aria-hidden="true"
+												/>
+											)}
+											{scope}
+											{risk && (
+												<span className="sr-only">
+													{' '}
+													({RISK_LABEL[risk]})
+												</span>
+											)}
+										</Badge>
+									</li>
+								);
+							})}
+						</ul>
+						{risky > 0 && (
+							<p className="text-muted-foreground mt-1.5">
+								{risky === 1
+									? '1 of these can change data or administer your organisation.'
+									: `${risky} of these can change data or administer your organisation.`}{' '}
+								Approving grants every scope listed.
+							</p>
+						)}
+					</>
+				)}
+			</dd>
+		</div>
 	);
 }
 
