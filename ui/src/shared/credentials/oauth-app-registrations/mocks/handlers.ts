@@ -128,7 +128,7 @@ export const oauthAppRegistrationsHandlers = [
 			.filter((r) => !apiVendor || r.api_vendor === apiVendor)
 			.filter((r) => !flowKind || r.flow_kind === flowKind)
 			.map(toWire);
-		return HttpResponse.json({ data: rows });
+		return HttpResponse.json({ data: rows, has_more: false, next_cursor: null });
 	}),
 	http.post('/oauth-app-registrations', async ({ request }) => {
 		const body = (await request.json()) as {

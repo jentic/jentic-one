@@ -2127,9 +2127,11 @@ type OAuth2UpdateRequestType string
 // OAuthAppRegistrationFlowKind Which OAuth flow a registration supports.
 type OAuthAppRegistrationFlowKind string
 
-// OAuthAppRegistrationListResponse List envelope for OAuth app registrations.
+// OAuthAppRegistrationListResponse Paginated list of OAuth app registrations.
 type OAuthAppRegistrationListResponse struct {
-	Data []OAuthAppRegistrationResponse `json:"data"`
+	Data       []OAuthAppRegistrationResponse `json:"data"`
+	HasMore    bool                           `json:"has_more"`
+	NextCursor *string                        `json:"next_cursor,omitempty"`
 }
 
 // OAuthAppRegistrationResponse Registration as returned to admins.
@@ -3681,6 +3683,8 @@ type ListOauthAppRegistrationsParams struct {
 
 	// FlowKind Filter by OAuth flow kind.
 	FlowKind *OAuthAppRegistrationFlowKind `form:"flow_kind,omitempty" json:"flow_kind,omitempty"`
+	Cursor   *string                       `form:"cursor,omitempty" json:"cursor,omitempty"`
+	Limit    *int                          `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
 // CreateOauthAppRegistrationJSONBody defines parameters for CreateOauthAppRegistration.
@@ -6385,11 +6389,11 @@ type ClientInterface interface {
 
 	// ListOauthAppRegistrations List OAuth app registrations
 	//
-	// List OAuth application registrations visible to the caller.
+	// List OAuth application registrations with cursor-based pagination.
 	//
-	// Any authenticated caller with ``credentials:read`` sees the shared
-	// registrations they might connect through; admin-only routes gate on
-	// ``org:admin`` separately.
+	// Admin-only: the full view carries endpoints, ``created_by``, inactive
+	// rows and org-wide dependent-credential counts. Non-admins discover the
+	// shared apps they can connect through via ``GET /vendors``.
 	//
 	// Corresponds with GET /oauth-app-registrations (the `ListOauthAppRegistrations` operationId).
 	ListOauthAppRegistrations(ctx context.Context, params *ListOauthAppRegistrationsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -6430,7 +6434,7 @@ type ClientInterface interface {
 
 	// GetOauthAppRegistration Get an OAuth app registration
 	//
-	// Get an OAuth app registration by id.
+	// Get an OAuth app registration by id (admin-only, see the list endpoint).
 	//
 	// Corresponds with GET /oauth-app-registrations/{id} (the `GetOauthAppRegistration` operationId).
 	GetOauthAppRegistration(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -10615,11 +10619,11 @@ func (c *Client) UpdateNote(ctx context.Context, noteId string, params *UpdateNo
 
 // ListOauthAppRegistrations List OAuth app registrations
 //
-// List OAuth application registrations visible to the caller.
+// List OAuth application registrations with cursor-based pagination.
 //
-// Any authenticated caller with “credentials:read“ sees the shared
-// registrations they might connect through; admin-only routes gate on
-// “org:admin“ separately.
+// Admin-only: the full view carries endpoints, “created_by“, inactive
+// rows and org-wide dependent-credential counts. Non-admins discover the
+// shared apps they can connect through via “GET /vendors“.
 //
 // Corresponds with GET /oauth-app-registrations (the `ListOauthAppRegistrations` operationId).
 func (c *Client) ListOauthAppRegistrations(ctx context.Context, params *ListOauthAppRegistrationsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -10700,7 +10704,7 @@ func (c *Client) DeleteOauthAppRegistration(ctx context.Context, id string, reqE
 
 // GetOauthAppRegistration Get an OAuth app registration
 //
-// Get an OAuth app registration by id.
+// Get an OAuth app registration by id (admin-only, see the list endpoint).
 //
 // Corresponds with GET /oauth-app-registrations/{id} (the `GetOauthAppRegistration` operationId).
 func (c *Client) GetOauthAppRegistration(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -19331,6 +19335,30 @@ func NewListOauthAppRegistrationsRequest(server string, params *ListOauthAppRegi
 
 		}
 
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
 		if encoded := queryValues.Encode(); encoded != "" {
 			rawQueryFragments = append(rawQueryFragments, encoded)
 		}
@@ -23174,11 +23202,11 @@ type ClientWithResponsesInterface interface {
 
 	// ListOauthAppRegistrationsWithResponse List OAuth app registrations
 	//
-	// List OAuth application registrations visible to the caller.
+	// List OAuth application registrations with cursor-based pagination.
 	//
-	// Any authenticated caller with ``credentials:read`` sees the shared
-	// registrations they might connect through; admin-only routes gate on
-	// ``org:admin`` separately.
+	// Admin-only: the full view carries endpoints, ``created_by``, inactive
+	// rows and org-wide dependent-credential counts. Non-admins discover the
+	// shared apps they can connect through via ``GET /vendors``.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -23223,7 +23251,7 @@ type ClientWithResponsesInterface interface {
 
 	// GetOauthAppRegistrationWithResponse Get an OAuth app registration
 	//
-	// Get an OAuth app registration by id.
+	// Get an OAuth app registration by id (admin-only, see the list endpoint).
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -34851,6 +34879,8 @@ type RotateOauthAppRegistrationSecretHTTPResp struct {
 	ApplicationproblemJSON403 *ProblemDetail
 	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
 	ApplicationproblemJSON404 *ProblemDetail
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *ProblemDetail
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *ProblemDetail
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -34882,6 +34912,11 @@ func (r RotateOauthAppRegistrationSecretHTTPResp) GetApplicationproblemJSON403()
 // GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
 func (r RotateOauthAppRegistrationSecretHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
 	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r RotateOauthAppRegistrationSecretHTTPResp) GetApplicationproblemJSON409() *ProblemDetail {
+	return r.ApplicationproblemJSON409
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
@@ -40943,11 +40978,11 @@ func (c *ClientWithResponses) UpdateNoteWithResponse(ctx context.Context, noteId
 
 // ListOauthAppRegistrationsWithResponse List OAuth app registrations
 //
-// List OAuth application registrations visible to the caller.
+// List OAuth application registrations with cursor-based pagination.
 //
-// Any authenticated caller with “credentials:read“ sees the shared
-// registrations they might connect through; admin-only routes gate on
-// “org:admin“ separately.
+// Admin-only: the full view carries endpoints, “created_by“, inactive
+// rows and org-wide dependent-credential counts. Non-admins discover the
+// shared apps they can connect through via “GET /vendors“.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -41016,7 +41051,7 @@ func (c *ClientWithResponses) DeleteOauthAppRegistrationWithResponse(ctx context
 
 // GetOauthAppRegistrationWithResponse Get an OAuth app registration
 //
-// Get an OAuth app registration by id.
+// Get an OAuth app registration by id (admin-only, see the list endpoint).
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -51205,6 +51240,13 @@ func ParseRotateOauthAppRegistrationSecretHTTPResp(rsp *http.Response) (*RotateO
 			return nil, err
 		}
 		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest ProblemDetail

@@ -153,12 +153,14 @@ func (MeAgent) RequiredFields() []string {
 func (MeUser) RequiredFields() []string {
 	return []string{"admin", "email", "id", "must_change_password", "name", "scopes", "status"}
 }
-func (NoAuthCreateRequest) RequiredFields() []string              { return []string{"api", "name", "type"} }
-func (NoteApiReference) RequiredFields() []string                 { return []string{"name", "vendor", "version"} }
-func (NoteCreateRequest) RequiredFields() []string                { return []string{"body", "resource"} }
-func (OAuth2CreateRequest) RequiredFields() []string              { return []string{"api", "name", "type"} }
-func (OAuth2UpdateRequest) RequiredFields() []string              { return []string{"type"} }
-func (OAuthAppRegistrationListResponse) RequiredFields() []string { return []string{"data"} }
+func (NoAuthCreateRequest) RequiredFields() []string { return []string{"api", "name", "type"} }
+func (NoteApiReference) RequiredFields() []string    { return []string{"name", "vendor", "version"} }
+func (NoteCreateRequest) RequiredFields() []string   { return []string{"body", "resource"} }
+func (OAuth2CreateRequest) RequiredFields() []string { return []string{"api", "name", "type"} }
+func (OAuth2UpdateRequest) RequiredFields() []string { return []string{"type"} }
+func (OAuthAppRegistrationListResponse) RequiredFields() []string {
+	return []string{"data", "has_more"}
+}
 func (OAuthAppRegistrationResponse) RequiredFields() []string {
 	return []string{"api_vendor", "catalog_api_id", "client_id", "created_at", "created_by", "dependent_credential_count", "display_name", "flow_kind", "has_client_secret", "id", "is_active", "name", "secret_last_rotated_at", "updated_at"}
 }

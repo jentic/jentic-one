@@ -2587,6 +2587,7 @@ components:
       title: InstanceIdentityResponse
       type: object
     IntegrationsConnectRequest:
+      additionalProperties: false
       properties:
         agent_id:
           anyOf:
@@ -3263,15 +3264,24 @@ components:
       title: OAuthAppRegistrationFlowKind
       type: string
     OAuthAppRegistrationListResponse:
-      description: List envelope for OAuth app registrations.
+      description: Paginated list of OAuth app registrations.
       properties:
         data:
           items:
             $ref: '#/components/schemas/OAuthAppRegistrationResponse'
           title: Data
           type: array
+        has_more:
+          title: Has More
+          type: boolean
+        next_cursor:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Next Cursor
       required:
       - data
+      - has_more
       title: OAuthAppRegistrationListResponse
       type: object
     OAuthAppRegistrationResponse:
@@ -16312,11 +16322,11 @@ paths:
   /oauth-app-registrations:
     get:
       description: |-
-        List OAuth application registrations visible to the caller.
+        List OAuth application registrations with cursor-based pagination.
 
-        Any authenticated caller with ``credentials:read`` sees the shared
-        registrations they might connect through; admin-only routes gate on
-        ``org:admin`` separately.
+        Admin-only: the full view carries endpoints, ``created_by``, inactive
+        rows and org-wide dependent-credential counts. Non-admins discover the
+        shared apps they can connect through via ``GET /vendors``.
       operationId: listOauthAppRegistrations
       parameters:
       - description: Filter by vendor slug.
@@ -16348,6 +16358,23 @@ paths:
           - type: 'null'
           description: Filter by OAuth flow kind.
           title: Flow Kind
+      - in: query
+        name: cursor
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Cursor
+      - in: query
+        name: limit
+        required: false
+        schema:
+          default: 50
+          maximum: 200
+          minimum: 1
+          title: Limit
+          type: integer
       responses:
         '200':
           content:
@@ -16552,7 +16579,7 @@ paths:
       tags:
       - OAuth App Registrations
     get:
-      description: Get an OAuth app registration by id.
+      description: Get an OAuth app registration by id (admin-only, see the list endpoint).
       operationId: getOauthAppRegistration
       parameters:
       - in: path
@@ -16757,6 +16784,13 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Not Found
+        '409':
+          content:
+            application/problem+json:
+              example: *id008
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Conflict
         '422':
           content:
             application/problem+json:

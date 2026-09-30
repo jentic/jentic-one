@@ -61,9 +61,11 @@ class OAuthAppRegistrationResponse(BaseModel):
 
 
 class OAuthAppRegistrationListResponse(BaseModel):
-    """List envelope for OAuth app registrations."""
+    """Paginated list of OAuth app registrations."""
 
     data: list[OAuthAppRegistrationResponse]
+    has_more: bool
+    next_cursor: str | None = None
 
 
 class AuthorizationCodeRegistrationCreateRequest(BaseModel):

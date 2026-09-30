@@ -178,6 +178,16 @@ def test_connect_maps_ambiguous_vendor_to_400() -> None:
     assert resp.json()["type"].endswith("ambiguous_vendor")
 
 
+def test_connect_rejects_unknown_fields() -> None:
+    """A typo'd pin (e.g. ``oauth_app_id``) must 422, not silently go unpinned."""
+    svc = AsyncMock(spec=ConnectSessionService)
+    app = _build_app(svc=svc, identity=_USER_IDENTITY)
+    with TestClient(app) as client:
+        resp = client.post("/integrations:connect", json={"vendor": "gh", "oauth_app_id": "oar_1"})
+    assert resp.status_code == 422
+    svc.create_session.assert_not_called()
+
+
 def test_connect_returns_session_id_and_poll_token() -> None:
     # The UI + agents both depend on this response shape — session_id
     # is the URL pivot for confirm/status, and poll_token is the

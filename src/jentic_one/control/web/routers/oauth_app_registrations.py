@@ -99,7 +99,7 @@ async def create_oauth_app_registration(
 
 @router.get("/oauth-app-registrations", summary="List OAuth app registrations")
 async def list_oauth_app_registrations(
-    identity: Identity = get_current_identity(required_permissions=["credentials:read"]),
+    identity: Identity = get_current_identity(required_permissions=[ORG_ADMIN]),
     svc: OAuthAppRegistrationService = Depends(get_oauth_app_registration_service),
     api_vendor: str | None = Query(default=None, description="Filter by vendor slug."),
     include_inactive: bool = Query(
@@ -109,17 +109,27 @@ async def list_oauth_app_registrations(
     flow_kind: OAuthAppRegistrationFlowKind | None = Query(
         default=None, description="Filter by OAuth flow kind."
     ),
+    cursor: str | None = None,
+    limit: int = Query(default=50, ge=1, le=200),
 ) -> OAuthAppRegistrationListResponse:
-    """List OAuth application registrations visible to the caller.
+    """List OAuth application registrations with cursor-based pagination.
 
-    Any authenticated caller with ``credentials:read`` sees the shared
-    registrations they might connect through; admin-only routes gate on
-    ``org:admin`` separately.
+    Admin-only: the full view carries endpoints, ``created_by``, inactive
+    rows and org-wide dependent-credential counts. Non-admins discover the
+    shared apps they can connect through via ``GET /vendors``.
     """
-    views = await svc.list_all(api_vendor=api_vendor, include_inactive=include_inactive)
-    if flow_kind is not None:
-        views = [v for v in views if v.flow_kind == flow_kind]
-    return OAuthAppRegistrationListResponse(data=[_to_response(v) for v in views])
+    views, has_more, next_cursor = await svc.list_page(
+        api_vendor=api_vendor,
+        flow_kind=flow_kind.value if flow_kind is not None else None,
+        include_inactive=include_inactive,
+        cursor=cursor,
+        limit=limit,
+    )
+    return OAuthAppRegistrationListResponse(
+        data=[_to_response(v) for v in views],
+        has_more=has_more,
+        next_cursor=next_cursor,
+    )
 
 
 @router.get(
@@ -129,10 +139,10 @@ async def list_oauth_app_registrations(
 )
 async def get_oauth_app_registration(
     id: str,
-    identity: Identity = get_current_identity(required_permissions=["credentials:read"]),
+    identity: Identity = get_current_identity(required_permissions=[ORG_ADMIN]),
     svc: OAuthAppRegistrationService = Depends(get_oauth_app_registration_service),
 ) -> OAuthAppRegistrationResponse:
-    """Get an OAuth app registration by id."""
+    """Get an OAuth app registration by id (admin-only, see the list endpoint)."""
     view = await svc.get(id)
     return _to_response(view)
 
@@ -171,7 +181,7 @@ async def update_oauth_app_registration(
 @router.post(
     "/oauth-app-registrations/{id}:rotate-secret",
     summary="Rotate the client secret",
-    responses=not_found(),
+    responses=with_responses(not_found(), conflict()),
 )
 async def rotate_oauth_app_registration_secret(
     id: str,

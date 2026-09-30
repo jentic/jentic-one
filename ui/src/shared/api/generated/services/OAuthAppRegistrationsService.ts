@@ -15,11 +15,11 @@ import { request as __request } from '../core/request';
 export class OAuthAppRegistrationsService {
     /**
      * List OAuth app registrations
-     * List OAuth application registrations visible to the caller.
+     * List OAuth application registrations with cursor-based pagination.
      *
-     * Any authenticated caller with ``credentials:read`` sees the shared
-     * registrations they might connect through; admin-only routes gate on
-     * ``org:admin`` separately.
+     * Admin-only: the full view carries endpoints, ``created_by``, inactive
+     * rows and org-wide dependent-credential counts. Non-admins discover the
+     * shared apps they can connect through via ``GET /vendors``.
      * @returns OAuthAppRegistrationListResponse Successful Response
      * @throws ApiError
      */
@@ -27,6 +27,8 @@ export class OAuthAppRegistrationsService {
         apiVendor,
         includeInactive = false,
         flowKind,
+        cursor,
+        limit = 50,
     }: {
         /**
          * Filter by vendor slug.
@@ -40,6 +42,8 @@ export class OAuthAppRegistrationsService {
          * Filter by OAuth flow kind.
          */
         flowKind?: (OAuthAppRegistrationFlowKind | null),
+        cursor?: (string | null),
+        limit?: number,
     }): CancelablePromise<OAuthAppRegistrationListResponse> {
         return __request(OpenAPI, {
             method: 'GET',
@@ -48,6 +52,8 @@ export class OAuthAppRegistrationsService {
                 'api_vendor': apiVendor,
                 'include_inactive': includeInactive,
                 'flow_kind': flowKind,
+                'cursor': cursor,
+                'limit': limit,
             },
             errors: {
                 400: `Bad Request`,
@@ -122,7 +128,7 @@ export class OAuthAppRegistrationsService {
     }
     /**
      * Get an OAuth app registration
-     * Get an OAuth app registration by id.
+     * Get an OAuth app registration by id (admin-only, see the list endpoint).
      * @returns OAuthAppRegistrationResponse Successful Response
      * @throws ApiError
      */
@@ -210,6 +216,7 @@ export class OAuthAppRegistrationsService {
                 401: `Unauthorized`,
                 403: `Forbidden`,
                 404: `Not Found`,
+                409: `Conflict`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,

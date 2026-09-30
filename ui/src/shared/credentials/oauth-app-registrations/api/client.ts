@@ -47,27 +47,32 @@ export function isInUseConflict(error: unknown): error is ApiError {
 	return body?.error === IN_USE_CONFLICT_CODE || body?.code === IN_USE_CONFLICT_CODE;
 }
 
-export function listRegistrations(
-	params: ListRegistrationsParams = {},
-): Promise<OAuthAppRegistrationResponse> {
-	// Return shape kept broad — the generator returns the envelope for list()
-	// but our repository unwraps it to the .data array for callers. Keeping
-	// this file simple: expose the raw call and let hooks unwrap.
-	return OAuthAppRegistrationsService.listOauthAppRegistrations({
-		apiVendor: params.apiVendor ?? undefined,
-		includeInactive: params.includeInactive ?? false,
-		flowKind: params.flowKind ?? undefined,
-	}).then((r) => r as unknown as OAuthAppRegistrationResponse);
-}
+/** Server-side page cap for `GET /oauth-app-registrations`. */
+const LIST_PAGE_LIMIT = 200;
 
-export function fetchRegistrations(
+/**
+ * Every registration matching `params`, following `next_cursor` until the
+ * server reports no more pages. The admin management table renders the
+ * whole set, and an org has a handful of shared apps, so walking pages here
+ * keeps the hooks simple.
+ */
+export async function fetchRegistrations(
 	params: ListRegistrationsParams = {},
 ): Promise<OAuthAppRegistrationResponse[]> {
-	return OAuthAppRegistrationsService.listOauthAppRegistrations({
-		apiVendor: params.apiVendor ?? undefined,
-		includeInactive: params.includeInactive ?? false,
-		flowKind: params.flowKind ?? undefined,
-	}).then((r) => r.data);
+	const rows: OAuthAppRegistrationResponse[] = [];
+	let cursor: string | undefined;
+	do {
+		const page = await OAuthAppRegistrationsService.listOauthAppRegistrations({
+			apiVendor: params.apiVendor ?? undefined,
+			includeInactive: params.includeInactive ?? false,
+			flowKind: params.flowKind ?? undefined,
+			cursor,
+			limit: LIST_PAGE_LIMIT,
+		});
+		rows.push(...page.data);
+		cursor = page.has_more ? (page.next_cursor ?? undefined) : undefined;
+	} while (cursor);
+	return rows;
 }
 
 export function getRegistration(id: string): Promise<OAuthAppRegistrationResponse> {

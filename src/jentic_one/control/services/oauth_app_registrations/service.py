@@ -28,6 +28,7 @@ from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_b
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.models.audit import AuditReason
+from jentic_one.shared.pagination import decode_cursor_str, encode_cursor
 from jentic_one.shared.url_validation import validate_upstream_url
 
 
@@ -150,25 +151,38 @@ class OAuthAppRegistrationService:
             )
         return _project(registration, dependent_credential_count=count)
 
-    async def list_all(
+    async def list_page(
         self,
         *,
         api_vendor: str | None = None,
+        flow_kind: str | None = None,
         include_inactive: bool = False,
-    ) -> list[OAuthAppRegistrationView]:
+        cursor: str | None = None,
+        limit: int = 50,
+    ) -> tuple[list[OAuthAppRegistrationView], bool, str | None]:
+        """List registrations. Returns ``(data, has_more, next_cursor)``."""
+        decoded_cursor = decode_cursor_str(cursor) if cursor is not None else None
         async with self._ctx.control_db.session() as session:
-            rows = await OAuthAppRegistrationRepository.list_all(
+            rows = await OAuthAppRegistrationRepository.list_page(
                 session,
                 api_vendor=api_vendor,
+                flow_kind=flow_kind,
                 include_inactive=include_inactive,
+                cursor=decoded_cursor,
+                limit=limit + 1,
             )
-            counts = {
-                row.id: await OAuthAppRegistrationRepository.count_dependent_credentials(
-                    session, row.id
-                )
-                for row in rows
-            }
-        return [_project(row, dependent_credential_count=counts[row.id]) for row in rows]
+            has_more = len(rows) > limit
+            if has_more:
+                rows = rows[:limit]
+            counts = await OAuthAppRegistrationRepository.dependent_credential_counts(
+                session, [row.id for row in rows]
+            )
+        next_cursor = None
+        if has_more and rows:
+            last = rows[-1]
+            next_cursor = encode_cursor(last.created_at, last.id)
+        views = [_project(row, dependent_credential_count=counts.get(row.id, 0)) for row in rows]
+        return views, has_more, next_cursor
 
     async def update(
         self,

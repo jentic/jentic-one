@@ -35,7 +35,11 @@ describe('SharedOAuthAppsSection', () => {
 
 	it('empty state fires onAddCredential — no legacy "go to credentials" nav', async () => {
 		// Override the seeded list with an empty payload so the EmptyState branch renders.
-		worker.use(http.get('/oauth-app-registrations', () => HttpResponse.json({ data: [] })));
+		worker.use(
+			http.get('/oauth-app-registrations', () =>
+				HttpResponse.json({ data: [], has_more: false, next_cursor: null }),
+			),
+		);
 
 		const onAddCredential = vi.fn();
 		renderWithProviders(<SharedOAuthAppsSection onAddCredential={onAddCredential} />);

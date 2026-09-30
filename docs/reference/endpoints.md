@@ -110,7 +110,7 @@ _Total endpoints: **180**._
 | GET | `/vendors` | `capabilities:read` | agent | List verified vendors |
 | GET | `/vendors/{vendor_key}/auth-capabilities` | `capabilities:read` | agent | Get a vendor's SSO capabilities |
 
-## Operator-facing (typically a human operator / admin) (45)
+## Operator-facing (typically a human operator / admin) (47)
 
 
 ### `actors`
@@ -199,8 +199,10 @@ _Total endpoints: **180**._
 
 | Method | Path | Scope(s) | Typical caller | Summary |
 |---|---|---|---|---|
+| GET | `/oauth-app-registrations` | `org:admin` | operator | List OAuth app registrations |
 | POST | `/oauth-app-registrations` | `org:admin` | operator | Register a shared OAuth application |
 | DELETE | `/oauth-app-registrations/{id}` | `org:admin` | operator | Delete an OAuth app registration |
+| GET | `/oauth-app-registrations/{id}` | `org:admin` | operator | Get an OAuth app registration |
 | PATCH | `/oauth-app-registrations/{id}` | `org:admin` | operator | Update an OAuth app registration |
 | POST | `/oauth-app-registrations/{id}:rotate-secret` | `org:admin` | operator | Rotate the client secret |
 
@@ -218,7 +220,7 @@ _Total endpoints: **180**._
 | POST | `/users/{user_id}:enable` | `users:write` | operator | Enable User |
 | POST | `/users/{user_id}:reissue-invite` | `users:write` | operator | Reissue Invite |
 
-## Any authenticated actor (73)
+## Any authenticated actor (71)
 
 
 ### `admin`
@@ -337,13 +339,6 @@ _Total endpoints: **180**._
 | POST | `/oauth/approval/decision` | `oauth-clients:write` | any | Approve or deny a pending client inline (approval-pending page) |
 | POST | `/oauth/introspect` | _any authenticated_ | any | Introspect Endpoint |
 | POST | `/oauth/revoke` | _any authenticated_ | any | Revoke Endpoint _(Dual-arm (RFC 7009): form-encoded requests authenticate by OAuth client_id lineage binding (public clients, auth method 'none' — the token is revoked only if it was issued to the supplied client_id); JSON requests keep the platform bearer-token contract.)_ |
-
-### `oauth-app-registrations`
-
-| Method | Path | Scope(s) | Typical caller | Summary |
-|---|---|---|---|---|
-| GET | `/oauth-app-registrations` | `credentials:read` | any | List OAuth app registrations |
-| GET | `/oauth-app-registrations/{id}` | `credentials:read` | any | Get an OAuth app registration |
 
 ### `oauth-grants`
 

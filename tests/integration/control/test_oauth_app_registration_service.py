@@ -202,7 +202,7 @@ async def test_get_returns_dependent_credential_count(
 
 
 @pytest.mark.usefixtures("clean_registrations")
-async def test_list_all_filters_by_vendor_and_include_inactive(
+async def test_list_page_filters_by_vendor_and_include_inactive(
     integration_context: Context,
 ) -> None:
     svc = OAuthAppRegistrationService(integration_context)
@@ -233,17 +233,69 @@ async def test_list_all_filters_by_vendor_and_include_inactive(
     # Deactivate one row.
     await svc.update(a.id, is_active=False, identity=_ADMIN)
 
-    all_active = await svc.list_all()
+    all_active, _, _ = await svc.list_page()
     all_active_ids = {r.id for r in all_active}
     assert b.id in all_active_ids
     assert a.id not in all_active_ids  # deactivated
 
-    with_inactive = await svc.list_all(include_inactive=True)
+    with_inactive, _, _ = await svc.list_page(include_inactive=True)
     with_inactive_ids = {r.id for r in with_inactive}
     assert {a.id, b.id}.issubset(with_inactive_ids)
 
-    only_gmail = await svc.list_all(api_vendor="googleapis-com", include_inactive=True)
+    only_gmail, _, _ = await svc.list_page(api_vendor="googleapis-com", include_inactive=True)
     assert [r.id for r in only_gmail] == [a.id]
+
+
+@pytest.mark.usefixtures("clean_registrations")
+async def test_list_page_walks_cursor_and_batches_dependent_counts(
+    integration_context: Context,
+) -> None:
+    svc = OAuthAppRegistrationService(integration_context)
+    created = [
+        await svc.create_authorization_code(
+            name=f"App {i}",
+            api_vendor="v",
+            catalog_api_id="v/api",
+            display_name="V",
+            client_id=f"cid{i}",
+            client_secret="s",
+            authorize_url="https://ex/a",
+            token_url="https://ex/t",
+            default_scopes=None,
+            identity=_ADMIN,
+        )
+        for i in range(3)
+    ]
+    async with integration_context.control_db.transaction() as session:
+        for n, reg in enumerate(created[:2], start=1):
+            for _ in range(n):
+                credential = await CredentialRepository.create(
+                    session,
+                    type="oauth2_authorization_code",
+                    name="user cred",
+                    api_vendor="v",
+                    api_name="v/api",
+                    catalog_api_id="v/api",
+                    created_by="usr_alice",
+                    provider="direct_oauth2",
+                    state="connected",
+                )
+                await CredentialRepository.set_oauth_app_registration(
+                    session, credential.id, registration_id=reg.id
+                )
+
+    first, has_more, cursor = await svc.list_page(limit=2)
+    assert has_more is True
+    assert cursor is not None
+    rest, has_more_after, cursor_after = await svc.list_page(cursor=cursor, limit=2)
+    assert has_more_after is False
+    assert cursor_after is None
+
+    seen = first + rest
+    assert sorted(v.id for v in seen) == sorted(r.id for r in created)
+    assert len({v.id for v in seen}) == 3
+    counts = {v.id: v.dependent_credential_count for v in seen}
+    assert counts == {created[0].id: 1, created[1].id: 2, created[2].id: 0}
 
 
 @pytest.mark.usefixtures("clean_registrations")

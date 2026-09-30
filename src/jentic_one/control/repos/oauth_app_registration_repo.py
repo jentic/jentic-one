@@ -140,6 +140,38 @@ class OAuthAppRegistrationRepository:
         return list(result.scalars().all())
 
     @staticmethod
+    async def list_page(
+        session: AsyncSession,
+        *,
+        api_vendor: str | None = None,
+        flow_kind: str | None = None,
+        include_inactive: bool = False,
+        cursor: tuple[dt.datetime, str] | None = None,
+        limit: int = 50,
+    ) -> list[OAuthAppRegistration]:
+        """List registrations paginated by (created_at DESC, id DESC)."""
+        stmt = select(OAuthAppRegistration).order_by(
+            OAuthAppRegistration.created_at.desc(), OAuthAppRegistration.id.desc()
+        )
+        if api_vendor is not None:
+            stmt = stmt.where(OAuthAppRegistration.api_vendor == api_vendor)
+        if flow_kind is not None:
+            stmt = stmt.where(OAuthAppRegistration.flow_kind == flow_kind)
+        if not include_inactive:
+            stmt = stmt.where(OAuthAppRegistration.is_active.is_(True))
+        if cursor is not None:
+            cursor_ts, cursor_id = cursor
+            stmt = stmt.where(
+                (OAuthAppRegistration.created_at < cursor_ts)
+                | (
+                    (OAuthAppRegistration.created_at == cursor_ts)
+                    & (OAuthAppRegistration.id < cursor_id)
+                )
+            )
+        result = await session.execute(stmt.limit(limit))
+        return list(result.scalars().all())
+
+    @staticmethod
     async def list_active_for_vendor(
         session: AsyncSession,
         *,
@@ -256,6 +288,20 @@ class OAuthAppRegistrationRepository:
         )
         result = await session.execute(stmt)
         return int(result.scalar() or 0)
+
+    @staticmethod
+    async def dependent_credential_counts(
+        session: AsyncSession, registration_ids: list[str]
+    ) -> dict[str, int]:
+        """Return ``{registration_id: credential_count}`` in one query (0s omitted)."""
+        if not registration_ids:
+            return {}
+        result = await session.execute(
+            select(Credential.oauth_app_registration_id, func.count())
+            .where(Credential.oauth_app_registration_id.in_(registration_ids))
+            .group_by(Credential.oauth_app_registration_id)
+        )
+        return {str(row[0]): int(row[1]) for row in result.fetchall()}
 
     @staticmethod
     async def delete(session: AsyncSession, registration_id: str) -> bool:

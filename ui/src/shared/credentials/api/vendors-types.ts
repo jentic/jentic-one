@@ -130,10 +130,10 @@ export interface ConnectRequest {
 	 */
 	name?: string | null;
 	/**
-	 * Optional pin to a specific admin-registered OAuth app. Required when
-	 * the vendor has multiple active registrations and the caller wants to
-	 * disambiguate; falls back to the most-recently-updated active row
-	 * otherwise.
+	 * Optional pin to a specific admin-registered OAuth app. Without it the
+	 * server uses the platform config entry, else the vendor's single active
+	 * registration — several matching registrations is a 400
+	 * `ambiguous_vendor`, so picker cards for registrations always pin.
 	 */
 	oauth_app_registration_id?: string | null;
 	agent_id?: string | null;

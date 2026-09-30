@@ -4,9 +4,11 @@
 /* eslint-disable */
 import type { OAuthAppRegistrationResponse } from './OAuthAppRegistrationResponse';
 /**
- * List envelope for OAuth app registrations.
+ * Paginated list of OAuth app registrations.
  */
 export type OAuthAppRegistrationListResponse = {
     data: Array<OAuthAppRegistrationResponse>;
+    has_more: boolean;
+    next_cursor?: (string | null);
 };
 

@@ -36,6 +36,7 @@ from jentic_one.control.web.app import get_exception_handlers
 from jentic_one.control.web.deps import get_oauth_app_registration_service
 from jentic_one.control.web.routers import oauth_app_registrations as router_module
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.pagination import InvalidCursorError
 from jentic_one.shared.web import deps as shared_deps
 
 _ADMIN_IDENTITY = Identity(
@@ -288,25 +289,53 @@ def test_get_maps_not_found_to_404() -> None:
     assert resp.json()["type"] == "oauth_app_registration_not_found"
 
 
-def test_list_is_readable_by_credentials_read_only() -> None:
-    """Reads gate on ``credentials:read`` — no ``org:admin`` needed."""
+def test_list_returns_paginated_envelope() -> None:
     svc = AsyncMock(spec=OAuthAppRegistrationService)
-    svc.list_all = AsyncMock(return_value=[_mk_view()])
-    app = _build_app(svc=svc, identity=_READER_IDENTITY)
+    svc.list_page = AsyncMock(return_value=([_mk_view()], True, "cursor-abc"))
+    app = _build_app(svc=svc)
     with TestClient(app) as client:
-        resp = client.get("/oauth-app-registrations")
+        resp = client.get(
+            "/oauth-app-registrations",
+            params={"flow_kind": "authorization_code", "limit": 1, "cursor": "cursor-prev"},
+        )
     assert resp.status_code == 200
     body = resp.json()
     assert len(body["data"]) == 1
+    assert body["has_more"] is True
+    assert body["next_cursor"] == "cursor-abc"
+    call = svc.list_page.await_args
+    assert call is not None
+    assert call.kwargs["flow_kind"] == "authorization_code"
+    assert call.kwargs["cursor"] == "cursor-prev"
+    assert call.kwargs["limit"] == 1
 
 
-def test_get_is_readable_by_credentials_read_only() -> None:
+def test_list_maps_invalid_cursor_to_400() -> None:
     svc = AsyncMock(spec=OAuthAppRegistrationService)
-    svc.get = AsyncMock(return_value=_mk_view())
+    svc.list_page = AsyncMock(side_effect=InvalidCursorError("Invalid pagination cursor"))
+    app = _build_app(svc=svc)
+    with TestClient(app) as client:
+        resp = client.get("/oauth-app-registrations", params={"cursor": "not-base64"})
+    assert resp.status_code == 400
+
+
+def test_list_refused_for_non_admin() -> None:
+    """The full view is admin-only; non-admins discover shared apps via ``/vendors``."""
+    svc = AsyncMock(spec=OAuthAppRegistrationService)
+    app = _build_app(svc=svc, identity=_READER_IDENTITY)
+    with TestClient(app) as client:
+        resp = client.get("/oauth-app-registrations")
+    assert resp.status_code == 403
+    svc.list_page.assert_not_called()
+
+
+def test_get_refused_for_non_admin() -> None:
+    svc = AsyncMock(spec=OAuthAppRegistrationService)
     app = _build_app(svc=svc, identity=_READER_IDENTITY)
     with TestClient(app) as client:
         resp = client.get("/oauth-app-registrations/oar_test")
-    assert resp.status_code == 200
+    assert resp.status_code == 403
+    svc.get.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -406,3 +435,12 @@ def test_delete_refused_for_non_admin() -> None:
         resp = client.delete("/oauth-app-registrations/oar_test")
     assert resp.status_code == 403
     svc.delete.assert_not_called()
+
+
+def test_rotate_secret_declares_404_and_409_in_openapi() -> None:
+    """Device-flow rows raise 409 on rotate — the spec must say so for clients."""
+    app = _build_app(svc=AsyncMock(spec=OAuthAppRegistrationService))
+    responses = app.openapi()["paths"]["/oauth-app-registrations/{id}:rotate-secret"]["post"][
+        "responses"
+    ]
+    assert {"404", "409"}.issubset(responses)

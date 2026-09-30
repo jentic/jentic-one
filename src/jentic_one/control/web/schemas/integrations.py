@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from jentic_one.control.web.schemas.permission_rules import PermissionRuleSchema
 
@@ -68,6 +68,10 @@ class VendorListResponse(BaseModel):
 
 
 class IntegrationsConnectRequest(BaseModel):
+    # Reject unknown fields: a misspelt ``oauth_app_registration_id`` must not
+    # silently fall through to unpinned source resolution.
+    model_config = ConfigDict(extra="forbid")
+
     vendor: str = Field(description="Vendor registry key (e.g. 'github')")
     # Optional user-facing label for the resulting credential. Defaults to
     # the vendor's display name when omitted. Lets a user distinguish
@@ -76,10 +80,9 @@ class IntegrationsConnectRequest(BaseModel):
     name: str | None = Field(default=None, max_length=255)
     # Optional pin to a specific admin-registered OAuth app. When set, the
     # connect session mints tokens through this registration; when omitted,
-    # the service picks the most-recently-updated active DB registration
-    # (or falls back to the config-shipped vendor entry). Required when the
-    # user picked one of multiple registrations for the same vendor from
-    # the picker.
+    # the config-shipped vendor entry is used if it offers the requested
+    # flow, else the vendor's single matching active registration (more
+    # than one → 400 ``ambiguous_vendor``).
     oauth_app_registration_id: str | None = Field(default=None, max_length=30)
     # Required for USER/SA callers, ignored for AGENT callers.
     agent_id: str | None = Field(default=None)
