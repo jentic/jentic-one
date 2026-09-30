@@ -13,6 +13,7 @@ import { setToken } from '@/shared/api';
 import { clearAllToasts, Toaster } from '@/shared/ui';
 import { Link, Route, Routes, useNavigate } from 'react-router';
 import ApiDetailPage from '@/modules/workspace/pages/ApiDetailPage';
+import { AuthProvider } from '@/shared/auth/AuthContext';
 import { makeMockCredential, resetCredentialsStore } from '@/shared/credentials/mocks/handlers';
 
 /** See WorkspacePage.test for why we settle the PageHeader entrance animation. */
@@ -524,6 +525,39 @@ describe('ApiDetailPage', () => {
 				expect(screen.queryByTestId('hub-access-add-credential')).not.toBeInTheDocument();
 				expect(screen.queryByTestId('hub-access-bind-agent')).not.toBeInTheDocument();
 			});
+		});
+
+		it('lays the Overview out: Who can use it across, then Notes | Calls', async () => {
+			// Calls are admin-only; the default `/users/me` mock is an org:admin
+			// (served for its mock token).
+			setToken('mock-access-token');
+			renderWithProviders(
+				<AuthProvider>
+					<ApiDetailPage />
+				</AuthProvider>,
+				{ route: '/library/workspace/stripe/stripe-api/2024-01-01', path: PATH },
+			);
+
+			const blocks = await screen.findByTestId('hub-overview-blocks');
+			// Who can use it spans the Overview, Agents and Credentials in columns.
+			const access = within(blocks).getByTestId('hub-access');
+			expect(access.parentElement).toBe(blocks);
+			expect(await within(access).findByTestId('hub-access-columns')).toHaveClass(
+				'md:grid-cols-2',
+			);
+			// Then the pair: Calls first in DOM (the narrow order), Notes moved
+			// left on wide screens.
+			const pair = within(blocks).getByTestId('hub-overview-pair');
+			expect(pair).toHaveClass('lg:grid-cols-2', 'items-stretch');
+			const usage = await within(pair).findByTestId('hub-usage');
+			const notes = await within(pair).findByTestId('hub-notes');
+			expect(usage.compareDocumentPosition(notes) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+				Node.DOCUMENT_POSITION_FOLLOWING,
+			);
+			expect(notes).toHaveClass('lg:order-first');
+			expect(access.compareDocumentPosition(pair) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+				Node.DOCUMENT_POSITION_FOLLOWING,
+			);
 		});
 
 		it('binds an existing agent in place and the Agents list refreshes', async () => {

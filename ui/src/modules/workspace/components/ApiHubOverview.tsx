@@ -52,7 +52,7 @@ import {
 import { ROUTE_PATHS } from '@/shared/app/routes';
 import { useAgentStreamOptional } from '@/shared/lib';
 import { timeAgo } from '@/shared/lib/utils';
-import type { SelectedApi } from '@/shared/credentials/api';
+import { initialApiFor } from '@/shared/credentials/lib/initialApiFor';
 import {
 	CreateCredentialFlow,
 	type CreatedCredentialInfo,
@@ -85,15 +85,17 @@ function HubCard({
 	action,
 	children,
 	testId,
+	className,
 }: {
 	title: string;
 	icon: React.ReactNode;
 	action?: React.ReactNode;
 	children: React.ReactNode;
 	testId?: string;
+	className?: string;
 }) {
 	return (
-		<Card data-testid={testId}>
+		<Card data-testid={testId} className={className}>
 			<CardHeader className="flex items-center justify-between gap-2 py-3">
 				<CardTitle as="h2" className="flex items-center gap-2 text-base">
 					<span className="text-muted-foreground" aria-hidden="true">
@@ -143,17 +145,14 @@ function AccessCard({ api }: { api: WorkspaceApi }) {
 			),
 		[setSearchParams],
 	);
-	const initialApi = useMemo<SelectedApi>(
-		() => ({
-			source: 'local',
-			vendor: api.api.vendor,
-			name: api.api.name,
-			version: api.api.version,
-			apiId: api.catalogApiId ?? undefined,
-			registered: true,
-			securitySchemeTypes: api.securitySchemes,
-			label: workspaceApiDisplayTitle(api),
-		}),
+	const initialApi = useMemo(
+		() =>
+			initialApiFor({
+				ref: api.api,
+				catalogApiId: api.catalogApiId,
+				securitySchemes: api.securitySchemes,
+				label: workspaceApiDisplayTitle(api),
+			}),
 		[api],
 	);
 	const { afterCreate, deviceDialog } = useConnectAfterCreate();
@@ -223,8 +222,11 @@ function AccessCard({ api }: { api: WorkspaceApi }) {
 						</div>
 					)
 				) : (
-					<div className="space-y-3">
-						<div>
+					<div
+						className="grid grid-cols-1 gap-4 md:grid-cols-2 md:gap-6"
+						data-testid="hub-access-columns"
+					>
+						<div className="min-w-0">
 							<div className="mb-1 flex items-center justify-between gap-2">
 								<p className="text-muted-foreground text-xs tracking-wider uppercase">
 									Agents
@@ -295,7 +297,7 @@ function AccessCard({ api }: { api: WorkspaceApi }) {
 								</p>
 							)}
 						</div>
-						<div>
+						<div className="min-w-0">
 							<p className="text-muted-foreground mb-1 text-xs tracking-wider uppercase">
 								Credentials
 							</p>
@@ -376,7 +378,7 @@ function AccessCard({ api }: { api: WorkspaceApi }) {
 	);
 }
 
-function UsageCard({ api }: { api: WorkspaceApi }) {
+function UsageCard({ api, className }: { api: WorkspaceApi; className?: string }) {
 	const usage = useApiUsageWeek();
 	if (!usage.available && !usage.isLoading) return null;
 	const row = usage.byApi.get(apiUsageKeyFor(api.api)) ?? null;
@@ -387,6 +389,7 @@ function UsageCard({ api }: { api: WorkspaceApi }) {
 			title="Calls, last 7 days"
 			icon={<Activity className="h-4 w-4" />}
 			testId="hub-usage"
+			className={className}
 			action={
 				<AppLink
 					href={ROUTE_PATHS.monitorExecutions()}
@@ -414,12 +417,17 @@ function UsageCard({ api }: { api: WorkspaceApi }) {
 	);
 }
 
-function NotesCard({ apiKey }: { apiKey: ApiKey }) {
+function NotesCard({ apiKey, className }: { apiKey: ApiKey; className?: string }) {
 	const notes = useApiNotes(apiKey);
 	if (notes.isError) return null;
 	const rows = notes.data?.items ?? [];
 	return (
-		<HubCard title="Notes" icon={<NotebookPen className="h-4 w-4" />} testId="hub-notes">
+		<HubCard
+			title="Notes"
+			icon={<NotebookPen className="h-4 w-4" />}
+			testId="hub-notes"
+			className={className}
+		>
 			{notes.isPending ? (
 				<Skeleton className="h-10 w-full" />
 			) : rows.length === 0 ? (
@@ -484,17 +492,26 @@ function RecentActivityCard({ api }: { api: WorkspaceApi }) {
 	);
 }
 
+/**
+ * "Who can use it" spans the Overview (its Agents and Credentials side by side
+ * on wide screens), then Notes | Calls as an equal-height pair, then Recent
+ * activity. Narrow screens stack one column: Who can use it, Calls, Notes —
+ * DOM order is the narrow reading order; Notes moves left on wide screens. A
+ * pair that loses a card (Calls are admin-only; Notes hide on a failed read)
+ * lets the survivor take the row.
+ */
 export function ApiHubOverview({ api }: { api: WorkspaceApi }) {
 	return (
-		<div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-2">
-			<div className="space-y-4">
-				<AccessCard api={api} />
-				<UsageCard api={api} />
+		<div className="space-y-4" data-testid="hub-overview-blocks">
+			<AccessCard api={api} />
+			<div
+				className="grid grid-cols-1 items-stretch gap-4 lg:grid-cols-2"
+				data-testid="hub-overview-pair"
+			>
+				<UsageCard api={api} className="lg:only:col-span-2" />
+				<NotesCard apiKey={api.api} className="lg:order-first lg:only:col-span-2" />
 			</div>
-			<div className="space-y-4">
-				<NotesCard apiKey={api.api} />
-				<RecentActivityCard api={api} />
-			</div>
+			<RecentActivityCard api={api} />
 		</div>
 	);
 }
