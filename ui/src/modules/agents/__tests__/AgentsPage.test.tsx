@@ -1823,15 +1823,15 @@ describe('AgentsPage — Add APIs: Back from the setup queue to the tray', () =>
 			trigger.focus();
 			const tip = await screen.findByRole('tooltip');
 			expect(tip).toHaveTextContent(
-				'This agent has 2 credentials for Stripe. It chooses one per call with the Jentic-Credential-Id header; without it, calls return the credentials to pick from.',
+				'This agent has 2 credentials for Stripe. Unless one is scoped more narrowly, each call must name one with the Jentic-Credential-Id header; without it, the call is refused and lists the credentials to choose from.',
 			);
 			expect(trigger).toHaveAttribute('aria-describedby', tip.id);
 			await checkA11y(document.body);
 
-			// The binding's sidebar says the same in one quiet line.
+			// The binding's sidebar explains the choice at more length in one quiet line.
 			await user.click(screen.getAllByRole('button', { name: 'Manage Stripe access' })[0]);
 			expect(await screen.findByTestId('multi-account-note')).toHaveTextContent(
-				'This agent has 2 credentials for Stripe.',
+				'This agent has 2 credentials for Stripe. A narrower one (for example, pinned to a version) is used automatically; otherwise each call must name one with the Jentic-Credential-Id header, or it is refused and lists the options. These rules apply only when this credential is the one chosen.',
 			);
 		});
 
