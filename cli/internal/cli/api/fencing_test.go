@@ -78,11 +78,11 @@ func TestFencing_ContextListIsFencedInAgentMode(t *testing.T) {
 	}
 }
 
-// TestFencing_ServiceAccountModeRunsAsAgent pins 14 BC-12: the retired
-// service-account mode is a deprecated alias of agent. It is fenced exactly
-// like agent, and the deprecation notice goes to stderr as a JSON slog line
-// (13 §1: stdout stays reserved for the single JSON document).
-func TestFencing_ServiceAccountModeRunsAsAgent(t *testing.T) {
+// TestFencing_RetiredServiceAccountModeFailsClosed pins the 14 BC-12 removal:
+// the retired service-account alias is now an ordinary unknown mode, so it
+// fails closed to the fenced AgentUX (impl/3.2 §2) — never the unfenced human
+// path — and no longer emits a deprecation notice.
+func TestFencing_RetiredServiceAccountModeFailsClosed(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		env  string
@@ -96,41 +96,18 @@ func TestFencing_ServiceAccountModeRunsAsAgent(t *testing.T) {
 
 			app := testApp(t)
 			root := newAPIRootCmd(app.App)
-			out := new(bytes.Buffer)
-			root.SetOut(out)
+			root.SetOut(new(bytes.Buffer))
 			root.SetErr(new(bytes.Buffer))
 			root.SetArgs(tc.args)
 
 			err := root.Execute()
 			var coded *ux.CodedError
 			if !errors.As(err, &coded) || coded.Code != ux.CodeFenced {
-				t.Fatalf("service-account mode must be fenced like agent, got %v", err)
+				t.Fatalf("service-account mode must fail closed to fenced agent, got %v", err)
 			}
-			stderr := app.Err.(*bytes.Buffer).String()
-			for _, want := range []string{`"msg":"deprecated mode; running in agent mode"`, `"code":"DEPRECATED_MODE"`, `"mode":"service-account"`, `"replacement":"agent"`, `"actionable_step":"use --mode agent`} {
-				if !strings.Contains(stderr, want) {
-					t.Errorf("stderr missing %s:\n%s", want, stderr)
-				}
-			}
-			if strings.Contains(out.String(), "deprecated") {
-				t.Errorf("deprecation notice leaked onto stdout: %q", out.String())
+			if s := app.Err.(*bytes.Buffer).String(); strings.Contains(s, "DEPRECATED_MODE") {
+				t.Errorf("the retired alias must not warn as deprecated any more:\n%s", s)
 			}
 		})
-	}
-}
-
-// TestFencing_AgentModeHasNoDeprecationNotice: canonical agent mode stays quiet.
-func TestFencing_AgentModeHasNoDeprecationNotice(t *testing.T) {
-	t.Setenv("JENTIC_MODE", "agent")
-
-	app := testApp(t)
-	root := newAPIRootCmd(app.App)
-	root.SetOut(new(bytes.Buffer))
-	root.SetErr(new(bytes.Buffer))
-	root.SetArgs([]string{"reset"})
-	_ = root.Execute()
-
-	if s := app.Err.(*bytes.Buffer).String(); strings.Contains(s, "deprecated mode") {
-		t.Errorf("agent mode must not warn:\n%s", s)
 	}
 }

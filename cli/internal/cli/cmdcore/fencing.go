@@ -2,7 +2,6 @@ package cmdcore
 
 import (
 	"context"
-	"log/slog"
 	"os"
 	"time"
 
@@ -77,13 +76,12 @@ func installInterceptor(app *App, root *cobra.Command) {
 			// The embedded ResolvedState must be non-nil: commands that reach
 			// clictx.GetControlClient on this degraded state would otherwise
 			// nil-deref (panic, runtime exit 2 — colliding with ExitDenied).
-			fallbackMode, fallbackExplicit, fallbackDeprecated := clictx.ResolveModeLadder(flagValue(cmd, "mode"), "")
+			fallbackMode, fallbackExplicit := clictx.ResolveModeExplicit(flagValue(cmd, "mode"), "")
 			state = &clictx.ActiveState{
-				ResolvedState:  &sdkconfig.ResolvedState{},
-				Mode:           fallbackMode,
-				ModeExplicit:   fallbackExplicit,
-				DeprecatedMode: fallbackDeprecated,
-				ThemeName:      "no-color",
+				ResolvedState: &sdkconfig.ResolvedState{},
+				Mode:          fallbackMode,
+				ModeExplicit:  fallbackExplicit,
+				ThemeName:     "no-color",
 			}
 		}
 
@@ -118,16 +116,6 @@ func installInterceptor(app *App, root *cobra.Command) {
 		// later log line — including the SDK's via the default logger — carries
 		// the mode-appropriate, secret-scrubbed handler.
 		setupSlog(app, state.Mode, boolFlag(cmd, "verbose"))
-
-		// The retired service-account mode runs as agent (same AgentUX). Warn on
-		// stderr only, so stdout stays one JSON document (13 §1).
-		if state.DeprecatedMode != "" {
-			slog.Warn("deprecated mode; running in agent mode",
-				"code", "DEPRECATED_MODE",
-				"mode", state.DeprecatedMode,
-				"replacement", clictx.ModeAgent,
-				"actionable_step", "use --mode agent or JENTIC_MODE=agent; for a persisted context, set mode: agent in config.yaml")
-		}
 
 		// 4. FENCING (guardrail; the enforced boundary is server-side scope + OS
 		// isolation). Block a fenced management command in a fenced mode.

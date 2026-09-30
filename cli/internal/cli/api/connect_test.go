@@ -339,8 +339,8 @@ func TestWhoami_RendersAgentVariant(t *testing.T) {
 }
 
 func TestWhoami_RendersNonAgentVariantsVerbatim(t *testing.T) {
-	// The contract that separates whoami from getMe: a user (or
-	// service-account) token must get its own /me variant rendered, never the
+	// The contract that separates whoami from getMe: a user token must get
+	// its own /me variant rendered, never the
 	// wrong-discriminator refusal the agent-only data commands raise.
 	withXDG(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -355,30 +355,6 @@ func TestWhoami_RendersNonAgentVariantsVerbatim(t *testing.T) {
 		t.Fatalf("whoami (user token): %v\n%s", err, out)
 	}
 	for _, want := range []string{"usr_7", "op@example.com", `"user"`} {
-		if !strings.Contains(out, want) {
-			t.Errorf("whoami output missing %q\n---\n%s", want, out)
-		}
-	}
-}
-
-func TestWhoami_RendersServiceAccountVariant(t *testing.T) {
-	// The third /me discriminator (MeServiceAccount): whoami must render it
-	// verbatim too — its live scopes vs token_scopes split is exactly the
-	// "re-mint to pick up a grant" signal the caller reads (#673).
-	withXDG(t)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"type":"service_account","id":"sva_9","name":"ci-runner","status":"active",
-			"scopes":["apis:read","credentials:connect"],"token_scopes":["apis:read"],
-			"registered_by":"usr_7","approved_by":"usr_1"}`))
-	}))
-	defer srv.Close()
-
-	out, err := runConnectTree(t, srv.URL, "whoami")
-	if err != nil {
-		t.Fatalf("whoami (service-account token): %v\n%s", err, out)
-	}
-	for _, want := range []string{"sva_9", "ci-runner", `"service_account"`, "credentials:connect", "token_scopes"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("whoami output missing %q\n---\n%s", want, out)
 		}

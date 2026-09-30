@@ -2171,10 +2171,6 @@ type ServicesConfig struct {
 
 	// RetryMax corresponds to the JSON schema field "retry_max".
 	RetryMax int `json:"retry_max,omitempty,omitzero" yaml:"retry_max,omitempty" mapstructure:"retry_max,omitempty"`
-
-	// ServiceAccountSweepMinStampAgeHours corresponds to the JSON schema field
-	// "service_account_sweep_min_stamp_age_hours".
-	ServiceAccountSweepMinStampAgeHours int `json:"service_account_sweep_min_stamp_age_hours,omitempty,omitzero" yaml:"service_account_sweep_min_stamp_age_hours,omitempty" mapstructure:"service_account_sweep_min_stamp_age_hours,omitempty"`
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
@@ -2196,9 +2192,6 @@ func (j *ServicesConfig) UnmarshalJSON(value []byte) error {
 	}
 	if v, ok := raw["retry_max"]; !ok || v == nil {
 		plain.RetryMax = 3
-	}
-	if v, ok := raw["service_account_sweep_min_stamp_age_hours"]; !ok || v == nil {
-		plain.ServiceAccountSweepMinStampAgeHours = 24
 	}
 	*j = ServicesConfig(plain)
 	return nil

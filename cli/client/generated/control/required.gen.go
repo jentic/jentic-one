@@ -144,9 +144,6 @@ func (McpConfigRegistrationResponse) RequiredFields() []string {
 func (MeAgent) RequiredFields() []string {
 	return []string{"id", "name", "scopes", "status", "token_scopes"}
 }
-func (MeServiceAccount) RequiredFields() []string {
-	return []string{"id", "name", "registered_by", "scopes", "status", "token_scopes"}
-}
 func (MeUser) RequiredFields() []string {
 	return []string{"admin", "email", "id", "must_change_password", "name", "scopes", "status"}
 }

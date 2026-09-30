@@ -20,17 +20,14 @@ import (
 
 // Defines values for ActorType.
 const (
-	ActorTypeAgent          ActorType = "agent"
-	ActorTypeServiceAccount ActorType = "service_account"
-	ActorTypeUser           ActorType = "user"
+	ActorTypeAgent ActorType = "agent"
+	ActorTypeUser  ActorType = "user"
 )
 
 // Valid indicates whether the value is a known member of the ActorType enum.
 func (e ActorType) Valid() bool {
 	switch e {
 	case ActorTypeAgent:
-		return true
-	case ActorTypeServiceAccount:
 		return true
 	case ActorTypeUser:
 		return true
@@ -462,21 +459,6 @@ const (
 func (e MeAgentType) Valid() bool {
 	switch e {
 	case MeAgentTypeAgent:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for MeServiceAccountType.
-const (
-	MeServiceAccountTypeServiceAccount MeServiceAccountType = "service_account"
-)
-
-// Valid indicates whether the value is a known member of the MeServiceAccountType enum.
-func (e MeServiceAccountType) Valid() bool {
-	switch e {
-	case MeServiceAccountTypeServiceAccount:
 		return true
 	default:
 		return false
@@ -919,11 +901,12 @@ type ActorSummaryResponse struct {
 	// Phase-6b scope-data sweep; read paths must tolerate the string without
 	// round-tripping it through this enum.
 	//
-	// ``service_account`` is deserialization-only (theme-8 Phase 2): the
-	// service-account surface is gone and no issuance path produces it, but
-	// stored token rows, grant rows, audit/execution records, and telemetry
-	// history carry the value, and the Phase-1 resolver fallback still resolves
-	// unmigrated ``sak_`` keys as it. Deletion is a Phase-4/5 decision.
+	// ``service_account`` is retired the same way (theme-8 Phase 4 dropped the
+	// service-account tables and deleted the member). Historical audit rows,
+	// execution records, telemetry history and control-DB actor-id columns
+	// (``connect_sessions.initiator_actor_id``, ``credentials.created_by``)
+	// still carry the string or ``sva_`` ids; read paths use
+	// :func:`actor_type_label_from_id` or treat the string as opaque.
 	ActorType ActorType `json:"actor_type"`
 	CreatedAt time.Time `json:"created_at"`
 	Id        string    `json:"id"`
@@ -939,11 +922,12 @@ type ActorSummaryResponse struct {
 // Phase-6b scope-data sweep; read paths must tolerate the string without
 // round-tripping it through this enum.
 //
-// “service_account“ is deserialization-only (theme-8 Phase 2): the
-// service-account surface is gone and no issuance path produces it, but
-// stored token rows, grant rows, audit/execution records, and telemetry
-// history carry the value, and the Phase-1 resolver fallback still resolves
-// unmigrated “sak_“ keys as it. Deletion is a Phase-4/5 decision.
+// “service_account“ is retired the same way (theme-8 Phase 4 dropped the
+// service-account tables and deleted the member). Historical audit rows,
+// execution records, telemetry history and control-DB actor-id columns
+// (“connect_sessions.initiator_actor_id“, “credentials.created_by“)
+// still carry the string or “sva_“ ids; read paths use
+// :func:`actor_type_label_from_id` or treat the string as opaque.
 type ActorType string
 
 // AgentCreateRequest Request body for creating an agent manually.
@@ -1922,25 +1906,6 @@ type MeAgent struct {
 
 // MeAgentType defines model for MeAgent.Type.
 type MeAgentType string
-
-// MeServiceAccount Identity response for a (retired) service-account actor.
-//
-// Served only to callers whose unmigrated “sak_“/“jntc_live_“ key
-// resolved through the Phase-1 SA-table fallback (theme 8). Deleted with the
-// fallback in Phase 4.
-type MeServiceAccount struct {
-	ApprovedBy   *string               `json:"approved_by,omitempty"`
-	Id           string                `json:"id"`
-	Name         string                `json:"name"`
-	RegisteredBy string                `json:"registered_by"`
-	Scopes       []string              `json:"scopes"`
-	Status       string                `json:"status"`
-	TokenScopes  []string              `json:"token_scopes"`
-	Type         *MeServiceAccountType `json:"type,omitempty"`
-}
-
-// MeServiceAccountType defines model for MeServiceAccount.Type.
-type MeServiceAccountType string
 
 // MeUser Identity response for a user actor.
 type MeUser struct {
@@ -4402,40 +4367,6 @@ func (t *GetMe200JSONResponseBody) MergeMeAgent(v MeAgent) error {
 	return err
 }
 
-// AsMeServiceAccount returns the union data inside the GetMe200JSONResponseBody as a MeServiceAccount
-func (t GetMe200JSONResponseBody) AsMeServiceAccount() (MeServiceAccount, error) {
-	var body MeServiceAccount
-	err := json.Unmarshal(t.union, &body)
-	return body, err
-}
-
-// FromMeServiceAccount overwrites any union data inside the GetMe200JSONResponseBody as the provided MeServiceAccount
-func (t *GetMe200JSONResponseBody) FromMeServiceAccount(v MeServiceAccount) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-	b, err = runtime.JSONMerge(b, []byte(`{"type":"service_account"}`))
-	t.union = b
-	return err
-}
-
-// MergeMeServiceAccount performs a merge with any union data inside the GetMe200JSONResponseBody, using the provided MeServiceAccount
-func (t *GetMe200JSONResponseBody) MergeMeServiceAccount(v MeServiceAccount) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-	b, err = runtime.JSONMerge(b, []byte(`{"type":"service_account"}`))
-	if err != nil {
-		return err
-	}
-
-	merged, err := runtime.JSONMerge(t.union, b)
-	t.union = merged
-	return err
-}
-
 func (t GetMe200JSONResponseBody) Discriminator() (string, error) {
 	var discriminator struct {
 		Discriminator string `json:"type"`
@@ -4452,8 +4383,6 @@ func (t GetMe200JSONResponseBody) ValueByDiscriminator() (interface{}, error) {
 	switch discriminator {
 	case "agent":
 		return t.AsMeAgent()
-	case "service_account":
-		return t.AsMeServiceAccount()
 	case "user":
 		return t.AsMeUser()
 	default:
