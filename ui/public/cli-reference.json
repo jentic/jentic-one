@@ -52,7 +52,7 @@
             {
               "name": "mode",
               "type": "string",
-              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+              "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
             },
             {
               "name": "name",
@@ -134,7 +134,7 @@
             {
               "name": "mode",
               "type": "string",
-              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+              "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
             },
             {
               "name": "name",
@@ -181,7 +181,7 @@
             {
               "name": "mode",
               "type": "string",
-              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+              "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
             },
             {
               "name": "theme",
@@ -206,7 +206,7 @@
             {
               "name": "mode",
               "type": "string",
-              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+              "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
             },
             {
               "name": "theme",
@@ -250,7 +250,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account (default human)"
+                  "usage": "Interaction mode: human|agent (default human)"
                 },
                 {
                   "name": "theme",
@@ -281,7 +281,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "theme",
@@ -307,7 +307,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "theme",
@@ -330,7 +330,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "theme",
@@ -355,7 +355,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "theme",
@@ -388,7 +388,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "theme",
@@ -422,7 +422,7 @@
             {
               "name": "mode",
               "type": "string",
-              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+              "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
             },
             {
               "name": "theme",
@@ -463,7 +463,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "theme",
@@ -494,7 +494,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "theme",
@@ -517,7 +517,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "theme",
@@ -551,7 +551,7 @@
             {
               "name": "mode",
               "type": "string",
-              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+              "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
             },
             {
               "name": "theme",
@@ -591,7 +591,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "theme",
@@ -622,7 +622,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "theme",
@@ -646,7 +646,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "name",
@@ -675,7 +675,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "theme",
@@ -703,7 +703,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "theme",
@@ -737,7 +737,7 @@
             {
               "name": "mode",
               "type": "string",
-              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+              "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
             },
             {
               "name": "theme",
@@ -762,7 +762,7 @@
             {
               "name": "mode",
               "type": "string",
-              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+              "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
             },
             {
               "name": "purge-legacy",
@@ -800,7 +800,7 @@
             {
               "name": "mode",
               "type": "string",
-              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+              "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
             },
             {
               "name": "theme",
@@ -841,7 +841,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "registered",
@@ -894,7 +894,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "registered",
@@ -941,7 +941,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "tag",
@@ -975,7 +975,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "no-promote",
@@ -1035,7 +1035,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "theme",
@@ -1058,7 +1058,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "theme",
@@ -1085,7 +1085,7 @@
             {
               "name": "mode",
               "type": "string",
-              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+              "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
             },
             {
               "name": "theme",
@@ -1129,7 +1129,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "theme",
@@ -1169,7 +1169,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "theme",
@@ -1213,7 +1213,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "state",
@@ -1263,7 +1263,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "revision",
@@ -1297,7 +1297,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "revision",
@@ -1325,7 +1325,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "theme",
@@ -1348,7 +1348,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "theme",
@@ -1374,7 +1374,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "theme",
@@ -1404,7 +1404,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "out",
@@ -1456,7 +1456,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "name",
@@ -1514,7 +1514,7 @@
             {
               "name": "mode",
               "type": "string",
-              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+              "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
             },
             {
               "name": "scope",
@@ -1546,7 +1546,7 @@
             {
               "name": "mode",
               "type": "string",
-              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+              "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
             },
             {
               "name": "theme",
@@ -1580,7 +1580,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "theme",
@@ -1608,7 +1608,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "theme",
@@ -1635,7 +1635,7 @@
             {
               "name": "mode",
               "type": "string",
-              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+              "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
             },
             {
               "name": "reason",
@@ -1713,7 +1713,7 @@
             {
               "name": "mode",
               "type": "string",
-              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+              "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
             },
             {
               "name": "query",
@@ -1756,7 +1756,7 @@
             {
               "name": "mode",
               "type": "string",
-              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+              "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
             },
             {
               "name": "revision",
@@ -1851,7 +1851,7 @@
             {
               "name": "mode",
               "type": "string",
-              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+              "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
             },
             {
               "name": "path",
@@ -1899,7 +1899,7 @@
             {
               "name": "mode",
               "type": "string",
-              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+              "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
             },
             {
               "name": "theme",
@@ -1950,7 +1950,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "output",
@@ -1992,7 +1992,7 @@
             {
               "name": "mode",
               "type": "string",
-              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+              "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
             },
             {
               "name": "theme",
@@ -2021,7 +2021,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "theme",
@@ -2089,7 +2089,7 @@
             {
               "name": "mode",
               "type": "string",
-              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+              "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
             },
             {
               "name": "query",
@@ -2135,7 +2135,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "theme",
@@ -2164,7 +2164,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "theme",
@@ -2191,7 +2191,7 @@
             {
               "name": "mode",
               "type": "string",
-              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+              "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
             },
             {
               "name": "theme",
@@ -2239,7 +2239,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "operator",
@@ -2292,7 +2292,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "theme",
@@ -2334,7 +2334,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "operator",
@@ -2392,7 +2392,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "operator",
@@ -2464,7 +2464,7 @@
             {
               "name": "mode",
               "type": "string",
-              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+              "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
             },
             {
               "name": "no-allow-dir",
@@ -2532,7 +2532,7 @@
             {
               "name": "mode",
               "type": "string",
-              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+              "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
             },
             {
               "name": "theme",
@@ -2563,7 +2563,7 @@
             {
               "name": "mode",
               "type": "string",
-              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+              "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
             },
             {
               "name": "theme",
@@ -2662,7 +2662,7 @@
             {
               "name": "mode",
               "type": "string",
-              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+              "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
             },
             {
               "name": "read-only",
@@ -2713,7 +2713,7 @@
             {
               "name": "mode",
               "type": "string",
-              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+              "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
             },
             {
               "name": "theme",
@@ -2736,7 +2736,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "theme",
@@ -2760,7 +2760,7 @@
                     {
                       "name": "mode",
                       "type": "string",
-                      "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                      "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                     },
                     {
                       "name": "theme",
@@ -2805,7 +2805,7 @@
                         {
                           "name": "mode",
                           "type": "string",
-                          "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                          "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                         },
                         {
                           "name": "project-id",
@@ -2845,7 +2845,7 @@
                         {
                           "name": "mode",
                           "type": "string",
-                          "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                          "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                         },
                         {
                           "name": "theme",
@@ -2874,7 +2874,7 @@
                         {
                           "name": "mode",
                           "type": "string",
-                          "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                          "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                         },
                         {
                           "name": "theme",
@@ -2894,7 +2894,7 @@
           "path": "jentic theme",
           "use": "theme \u003cdark|light|no-color\u003e",
           "short": "Set the persistent color theme",
-          "long": "theme persists the global color theme in ~/.config/jentic/config.yaml.\nOverride per-invocation with --theme or $JENTIC_THEME. Agent and\nservice-account modes always use no-color regardless of this setting.",
+          "long": "theme persists the global color theme in ~/.config/jentic/config.yaml.\nOverride per-invocation with --theme or $JENTIC_THEME. Agent mode\nalways uses no-color regardless of this setting.",
           "group_title": "Administration",
           "flags": [
             {
@@ -2905,7 +2905,7 @@
             {
               "name": "mode",
               "type": "string",
-              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+              "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
             },
             {
               "name": "theme",

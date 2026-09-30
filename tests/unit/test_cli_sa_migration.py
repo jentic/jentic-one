@@ -162,3 +162,31 @@ def test_verify_admin_scope_findings_are_informational(
     err = capsys.readouterr().err
     assert "verify PASSED" in err
     assert "REVIEW (informational, does not fail verify): 2 admin-level grant(s)" in err
+
+
+def test_digest_mismatch_refusal_points_at_the_report_lines() -> None:
+    """#1416: a genuine digest mismatch names where the failing ids are."""
+    message = cli._sa_acknowledge_message(_verify_result(digest_mismatch_count=2))
+    assert "REFUSED" in message
+    assert "2 digest mismatch(es) need operator repair" in message
+    assert "digest_mismatch report lines" in message
+
+
+def test_superseded_digests_are_informational(capsys: pytest.CaptureFixture[str]) -> None:
+    """#1416: successors rotated/archived after migration print a NOTE with the
+    sweep hint but never fail the verify."""
+    result = _verify_result()
+    result.superseded_digest_count = 1
+    result.findings.append({"category": "successor_digest_superseded", "informational": True})
+    svc = MagicMock()
+    svc.verify = AsyncMock(return_value=result)
+
+    with _patched_service(svc):
+        rc = cli.main(["migrate-service-accounts", "--verify"])
+
+    assert rc == 0
+    assert result.finding_count == 0
+    err = capsys.readouterr().err
+    assert "verify PASSED" in err
+    assert "NOTE (informational, does not fail verify): 1 successor agent(s)" in err
+    assert "--sweep-migrated" in err

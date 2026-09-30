@@ -8,9 +8,9 @@ import (
 	"github.com/jentic/jentic-one/cli/internal/theme"
 )
 
-// AgentUX is the ruthlessly strict machine mode shared by `agent` and
-// `service-account` (impl/3.1 §0): never prompts, no color, one JSON document per
-// Render on stdout, structured error envelope on stderr.
+// AgentUX is the ruthlessly strict machine mode behind `agent` (and its
+// deprecated alias `service-account`, impl/3.1 §0): never prompts, no color, one
+// JSON document per Render on stdout, structured error envelope on stderr.
 type AgentUX struct {
 	theme theme.Palette
 	// assumeYes mirrors the global --yes. AgentUX cannot prompt, so this is the ONLY

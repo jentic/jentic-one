@@ -28,7 +28,7 @@ func StdoutIsTerminal() bool {
 
 // JSONOrPretty returns true when the caller should emit JSON output:
 //   - --json was explicitly set, or
-//   - the resolved mode is a fenced machine mode (agent/service-account), or
+//   - the resolved mode is a fenced machine mode (agent), or
 //   - mode is EXPLICITLY human → pretty, even piped (UX-5), or
 //   - otherwise: stdout is not a TTY (agent friendly by default).
 //
