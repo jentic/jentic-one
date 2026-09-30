@@ -18,14 +18,11 @@ from jentic_one.broker.core.exceptions import (
     ErrorOrigin,
     OperationNotFoundError,
     UpstreamTimeoutError,
-    action_denied_directive,
     ambiguous_credential_binding_directive,
-    ambiguous_toolkit_directive,
     credential_identity_mismatch_directive,
     direct_action_denied_directive,
     direct_credential_identity_mismatch_directive,
     no_credential_binding_directive,
-    no_toolkit_binding_directive,
     switch_toolkit_directive,
 )
 from jentic_one.broker.core.headers import JenticHeader
@@ -50,10 +47,6 @@ def test_directive_factories_emit_known_strategies() -> None:
     in lock-step until the contract is a shared OpenAPI schema (review P1-1)."""
     directives = [
         switch_toolkit_directive(503),
-        no_toolkit_binding_directive(
-            vendor="acme", name="widgets", version="1.0.0", toolkit_serves_api=True
-        ),
-        ambiguous_toolkit_directive(["tk_a", "tk_b"]),
         credential_identity_mismatch_directive(
             mismatch=IdentityMismatch(
                 expected_vendor="acme",
@@ -65,7 +58,6 @@ def test_directive_factories_emit_known_strategies() -> None:
                 would_match_if_normalized=False,
             )
         ),
-        action_denied_directive(),
         no_credential_binding_directive(
             vendor="acme", name="widgets", version="1.0.0", api_served=True
         ),
@@ -150,25 +142,6 @@ def test_no_credential_binding_directive_registry_vendor_suggests_connect() -> N
     assert "bind" in served.human_readable_instruction
 
 
-def test_no_toolkit_binding_directive_registry_vendor_suggests_connect() -> None:
-    """The flag-off toolkit twin carries the same agent-initiable leg."""
-    unserved = no_toolkit_binding_directive(
-        vendor="github.com",
-        name="api.github.com",
-        version="1.0.0",
-        toolkit_serves_api=False,
-        connect_vendor="github",
-    )
-    assert unserved.parameters["suggested_command"] == "jentic connect github"
-    assert "jentic connect github" in unserved.human_readable_instruction
-
-    off_registry = no_toolkit_binding_directive(
-        vendor="acme", name="widgets", version="1.0.0", toolkit_serves_api=False
-    )
-    assert "suggested_command" not in off_registry.parameters
-    assert "operator" in off_registry.human_readable_instruction
-
-
 def test_ambiguous_credential_binding_directive_disambiguates_by_header() -> None:
     """The direct-path 409 twin retries via the Jentic-Credential-Id header.
 
@@ -181,15 +154,6 @@ def test_ambiguous_credential_binding_directive_disambiguates_by_header() -> Non
     assert d.parameters["candidates"] == ["cred_a", "cred_b"]
     assert d.parameters["headers"] == {"Jentic-Credential-Id": "cred_a"}
     assert "Jentic-Credential-Name" in d.human_readable_instruction
-
-
-def test_ambiguous_toolkit_suggested_command_is_runnable() -> None:
-    """The disambiguation command must be copy-pasteable — not a template with a
-    literal ellipsis the CLI would print verbatim (review P3-1)."""
-    d = ambiguous_toolkit_directive(["tk_a", "tk_b"])
-    cmd = d.parameters["suggested_command"]
-    assert "…" not in cmd
-    assert "Jentic-Toolkit-Id=tk_a" in cmd
 
 
 def test_credential_identity_mismatch_directive_has_no_fabricated_command() -> None:

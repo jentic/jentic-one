@@ -2443,8 +2443,6 @@ type ExecuteDeleteHTTPResp200Headers struct {
 	JenticCredentialName *string
 	JenticExecutionId    *string
 	JenticOperation      *string
-	// Deprecated: this header has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	JenticToolkitId      *string
 	JenticUpstreamStatus *int
 	PreferenceApplied    *string
 	Traceparent          *string
@@ -2457,11 +2455,9 @@ type ExecuteDeleteHTTPResp202Headers struct {
 	JenticApiVendor    *string
 	JenticExecutionId  *string
 	JenticOperation    *string
-	// Deprecated: this header has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	JenticToolkitId   *string
-	PreferenceApplied *string
-	Traceparent       *string
-	Tracestate        *string
+	PreferenceApplied  *string
+	Traceparent        *string
+	Tracestate         *string
 }
 
 // ExecuteDeleteHTTPResp429Headers the declared response headers of an HTTP 429 response for ExecuteDelete
@@ -2617,8 +2613,6 @@ type ExecuteGetHTTPResp200Headers struct {
 	JenticCredentialName *string
 	JenticExecutionId    *string
 	JenticOperation      *string
-	// Deprecated: this header has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	JenticToolkitId      *string
 	JenticUpstreamStatus *int
 	PreferenceApplied    *string
 	Traceparent          *string
@@ -2631,11 +2625,9 @@ type ExecuteGetHTTPResp202Headers struct {
 	JenticApiVendor    *string
 	JenticExecutionId  *string
 	JenticOperation    *string
-	// Deprecated: this header has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	JenticToolkitId   *string
-	PreferenceApplied *string
-	Traceparent       *string
-	Tracestate        *string
+	PreferenceApplied  *string
+	Traceparent        *string
+	Tracestate         *string
 }
 
 // ExecuteGetHTTPResp429Headers the declared response headers of an HTTP 429 response for ExecuteGet
@@ -2791,8 +2783,6 @@ type ExecuteHeadHTTPResp200Headers struct {
 	JenticCredentialName *string
 	JenticExecutionId    *string
 	JenticOperation      *string
-	// Deprecated: this header has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	JenticToolkitId      *string
 	JenticUpstreamStatus *int
 	PreferenceApplied    *string
 	Traceparent          *string
@@ -2805,11 +2795,9 @@ type ExecuteHeadHTTPResp202Headers struct {
 	JenticApiVendor    *string
 	JenticExecutionId  *string
 	JenticOperation    *string
-	// Deprecated: this header has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	JenticToolkitId   *string
-	PreferenceApplied *string
-	Traceparent       *string
-	Tracestate        *string
+	PreferenceApplied  *string
+	Traceparent        *string
+	Tracestate         *string
 }
 
 // ExecuteHeadHTTPResp429Headers the declared response headers of an HTTP 429 response for ExecuteHead
@@ -2965,8 +2953,6 @@ type ExecuteOptionsHTTPResp200Headers struct {
 	JenticCredentialName *string
 	JenticExecutionId    *string
 	JenticOperation      *string
-	// Deprecated: this header has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	JenticToolkitId      *string
 	JenticUpstreamStatus *int
 	PreferenceApplied    *string
 	Traceparent          *string
@@ -2979,11 +2965,9 @@ type ExecuteOptionsHTTPResp202Headers struct {
 	JenticApiVendor    *string
 	JenticExecutionId  *string
 	JenticOperation    *string
-	// Deprecated: this header has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	JenticToolkitId   *string
-	PreferenceApplied *string
-	Traceparent       *string
-	Tracestate        *string
+	PreferenceApplied  *string
+	Traceparent        *string
+	Tracestate         *string
 }
 
 // ExecuteOptionsHTTPResp429Headers the declared response headers of an HTTP 429 response for ExecuteOptions
@@ -3139,8 +3123,6 @@ type ExecutePatchHTTPResp200Headers struct {
 	JenticCredentialName *string
 	JenticExecutionId    *string
 	JenticOperation      *string
-	// Deprecated: this header has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	JenticToolkitId      *string
 	JenticUpstreamStatus *int
 	PreferenceApplied    *string
 	Traceparent          *string
@@ -3153,11 +3135,9 @@ type ExecutePatchHTTPResp202Headers struct {
 	JenticApiVendor    *string
 	JenticExecutionId  *string
 	JenticOperation    *string
-	// Deprecated: this header has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	JenticToolkitId   *string
-	PreferenceApplied *string
-	Traceparent       *string
-	Tracestate        *string
+	PreferenceApplied  *string
+	Traceparent        *string
+	Tracestate         *string
 }
 
 // ExecutePatchHTTPResp429Headers the declared response headers of an HTTP 429 response for ExecutePatch
@@ -3313,8 +3293,6 @@ type ExecutePostHTTPResp200Headers struct {
 	JenticCredentialName *string
 	JenticExecutionId    *string
 	JenticOperation      *string
-	// Deprecated: this header has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	JenticToolkitId      *string
 	JenticUpstreamStatus *int
 	PreferenceApplied    *string
 	Traceparent          *string
@@ -3327,11 +3305,9 @@ type ExecutePostHTTPResp202Headers struct {
 	JenticApiVendor    *string
 	JenticExecutionId  *string
 	JenticOperation    *string
-	// Deprecated: this header has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	JenticToolkitId   *string
-	PreferenceApplied *string
-	Traceparent       *string
-	Tracestate        *string
+	PreferenceApplied  *string
+	Traceparent        *string
+	Tracestate         *string
 }
 
 // ExecutePostHTTPResp429Headers the declared response headers of an HTTP 429 response for ExecutePost
@@ -3487,8 +3463,6 @@ type ExecutePutHTTPResp200Headers struct {
 	JenticCredentialName *string
 	JenticExecutionId    *string
 	JenticOperation      *string
-	// Deprecated: this header has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	JenticToolkitId      *string
 	JenticUpstreamStatus *int
 	PreferenceApplied    *string
 	Traceparent          *string
@@ -3501,11 +3475,9 @@ type ExecutePutHTTPResp202Headers struct {
 	JenticApiVendor    *string
 	JenticExecutionId  *string
 	JenticOperation    *string
-	// Deprecated: this header has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	JenticToolkitId   *string
-	PreferenceApplied *string
-	Traceparent       *string
-	Tracestate        *string
+	PreferenceApplied  *string
+	Traceparent        *string
+	Tracestate         *string
 }
 
 // ExecutePutHTTPResp429Headers the declared response headers of an HTTP 429 response for ExecutePut
@@ -4104,13 +4076,6 @@ func ParseExecuteDeleteHTTPResp(rsp *http.Response) (*ExecuteDeleteHTTPResp, err
 			}
 			headers.JenticOperation = &value
 		}
-		if values := rsp.Header.Values("Jentic-Toolkit-Id"); len(values) > 0 {
-			var value string
-			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Toolkit-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			}
-			headers.JenticToolkitId = &value
-		}
 		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
 			var value int
 			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
@@ -4169,13 +4134,6 @@ func ParseExecuteDeleteHTTPResp(rsp *http.Response) (*ExecuteDeleteHTTPResp, err
 				return nil, err
 			}
 			headers.JenticOperation = &value
-		}
-		if values := rsp.Header.Values("Jentic-Toolkit-Id"); len(values) > 0 {
-			var value string
-			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Toolkit-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			}
-			headers.JenticToolkitId = &value
 		}
 		if values := rsp.Header.Values("Preference-Applied"); len(values) > 0 {
 			var value string
@@ -4390,13 +4348,6 @@ func ParseExecuteGetHTTPResp(rsp *http.Response) (*ExecuteGetHTTPResp, error) {
 			}
 			headers.JenticOperation = &value
 		}
-		if values := rsp.Header.Values("Jentic-Toolkit-Id"); len(values) > 0 {
-			var value string
-			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Toolkit-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			}
-			headers.JenticToolkitId = &value
-		}
 		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
 			var value int
 			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
@@ -4455,13 +4406,6 @@ func ParseExecuteGetHTTPResp(rsp *http.Response) (*ExecuteGetHTTPResp, error) {
 				return nil, err
 			}
 			headers.JenticOperation = &value
-		}
-		if values := rsp.Header.Values("Jentic-Toolkit-Id"); len(values) > 0 {
-			var value string
-			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Toolkit-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			}
-			headers.JenticToolkitId = &value
 		}
 		if values := rsp.Header.Values("Preference-Applied"); len(values) > 0 {
 			var value string
@@ -4676,13 +4620,6 @@ func ParseExecuteHeadHTTPResp(rsp *http.Response) (*ExecuteHeadHTTPResp, error) 
 			}
 			headers.JenticOperation = &value
 		}
-		if values := rsp.Header.Values("Jentic-Toolkit-Id"); len(values) > 0 {
-			var value string
-			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Toolkit-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			}
-			headers.JenticToolkitId = &value
-		}
 		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
 			var value int
 			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
@@ -4741,13 +4678,6 @@ func ParseExecuteHeadHTTPResp(rsp *http.Response) (*ExecuteHeadHTTPResp, error) 
 				return nil, err
 			}
 			headers.JenticOperation = &value
-		}
-		if values := rsp.Header.Values("Jentic-Toolkit-Id"); len(values) > 0 {
-			var value string
-			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Toolkit-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			}
-			headers.JenticToolkitId = &value
 		}
 		if values := rsp.Header.Values("Preference-Applied"); len(values) > 0 {
 			var value string
@@ -4962,13 +4892,6 @@ func ParseExecuteOptionsHTTPResp(rsp *http.Response) (*ExecuteOptionsHTTPResp, e
 			}
 			headers.JenticOperation = &value
 		}
-		if values := rsp.Header.Values("Jentic-Toolkit-Id"); len(values) > 0 {
-			var value string
-			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Toolkit-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			}
-			headers.JenticToolkitId = &value
-		}
 		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
 			var value int
 			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
@@ -5027,13 +4950,6 @@ func ParseExecuteOptionsHTTPResp(rsp *http.Response) (*ExecuteOptionsHTTPResp, e
 				return nil, err
 			}
 			headers.JenticOperation = &value
-		}
-		if values := rsp.Header.Values("Jentic-Toolkit-Id"); len(values) > 0 {
-			var value string
-			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Toolkit-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			}
-			headers.JenticToolkitId = &value
 		}
 		if values := rsp.Header.Values("Preference-Applied"); len(values) > 0 {
 			var value string
@@ -5248,13 +5164,6 @@ func ParseExecutePatchHTTPResp(rsp *http.Response) (*ExecutePatchHTTPResp, error
 			}
 			headers.JenticOperation = &value
 		}
-		if values := rsp.Header.Values("Jentic-Toolkit-Id"); len(values) > 0 {
-			var value string
-			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Toolkit-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			}
-			headers.JenticToolkitId = &value
-		}
 		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
 			var value int
 			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
@@ -5313,13 +5222,6 @@ func ParseExecutePatchHTTPResp(rsp *http.Response) (*ExecutePatchHTTPResp, error
 				return nil, err
 			}
 			headers.JenticOperation = &value
-		}
-		if values := rsp.Header.Values("Jentic-Toolkit-Id"); len(values) > 0 {
-			var value string
-			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Toolkit-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			}
-			headers.JenticToolkitId = &value
 		}
 		if values := rsp.Header.Values("Preference-Applied"); len(values) > 0 {
 			var value string
@@ -5534,13 +5436,6 @@ func ParseExecutePostHTTPResp(rsp *http.Response) (*ExecutePostHTTPResp, error) 
 			}
 			headers.JenticOperation = &value
 		}
-		if values := rsp.Header.Values("Jentic-Toolkit-Id"); len(values) > 0 {
-			var value string
-			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Toolkit-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			}
-			headers.JenticToolkitId = &value
-		}
 		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
 			var value int
 			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
@@ -5599,13 +5494,6 @@ func ParseExecutePostHTTPResp(rsp *http.Response) (*ExecutePostHTTPResp, error) 
 				return nil, err
 			}
 			headers.JenticOperation = &value
-		}
-		if values := rsp.Header.Values("Jentic-Toolkit-Id"); len(values) > 0 {
-			var value string
-			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Toolkit-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			}
-			headers.JenticToolkitId = &value
 		}
 		if values := rsp.Header.Values("Preference-Applied"); len(values) > 0 {
 			var value string
@@ -5820,13 +5708,6 @@ func ParseExecutePutHTTPResp(rsp *http.Response) (*ExecutePutHTTPResp, error) {
 			}
 			headers.JenticOperation = &value
 		}
-		if values := rsp.Header.Values("Jentic-Toolkit-Id"); len(values) > 0 {
-			var value string
-			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Toolkit-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			}
-			headers.JenticToolkitId = &value
-		}
 		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
 			var value int
 			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
@@ -5885,13 +5766,6 @@ func ParseExecutePutHTTPResp(rsp *http.Response) (*ExecutePutHTTPResp, error) {
 				return nil, err
 			}
 			headers.JenticOperation = &value
-		}
-		if values := rsp.Header.Values("Jentic-Toolkit-Id"); len(values) > 0 {
-			var value string
-			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Toolkit-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			}
-			headers.JenticToolkitId = &value
 		}
 		if values := rsp.Header.Values("Preference-Applied"); len(values) > 0 {
 			var value string

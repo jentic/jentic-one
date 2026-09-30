@@ -140,7 +140,6 @@ class ExecutionHandler:
                     api_name=api_name or "",
                     api_version=api_version or "",
                     operation_id=payload.get("operation_id"),
-                    toolkit_id=payload.get("toolkit_id"),
                     credential_id=payload.get("credential_id"),
                     server_variables=server_variables,
                     server_variables_unresolved=server_variables_unresolved,
@@ -166,8 +165,7 @@ class ExecutionHandler:
         signing = None
         if self._credential_injector is not None and api_vendor:
             # The injection boundary is the one the run-time re-authorization
-            # just derived (the caller's currently bound credentials on the
-            # direct path, the selected toolkit's on the toolkit path) — never
+            # just derived (the caller's currently bound credentials) — never
             # the enqueue-time snapshot in the payload. An empty boundary
             # resolves nothing (fail closed), never the tenant-wide set.
             injection = await self._credential_injector.inject(

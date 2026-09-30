@@ -281,12 +281,12 @@ def test_identity_dependency_recognition_is_qualname_scoped() -> None:
     """
     # The genuine identity dependency is recognised, with its scope/actor read off.
     real_dep = get_current_identity(
-        required_permissions=["agents:read"], require_actor_type=ActorType.SERVICE_ACCOUNT
+        required_permissions=["agents:read"], require_actor_type=ActorType.AGENT
     ).dependency
     is_identity, perms, actor = _closure_values(real_dep)
     assert is_identity is True
     assert perms == ["agents:read"]
-    assert actor is ActorType.SERVICE_ACCOUNT
+    assert actor is ActorType.AGENT
 
     # An impostor closing over identically-named freevars is NOT the identity dep.
     def _make_impostor() -> object:

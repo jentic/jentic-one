@@ -47,6 +47,12 @@ class ExecutionRecord(AuditableMixin, AdminBase):
     # idempotency fingerprint, tracestate, repeated-failure keying, lifecycle
     # events) move to the credential axis together.
     toolkit_id: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    # Denormalized historical name for ``toolkit_id`` (theme-5 Phase 6b): the
+    # control ``toolkits`` table it used to be resolved from at read time is
+    # dropped. Backfilled by the Phase-6a flattening job pre-drop; NULL for
+    # rows whose toolkit was already deleted (exactly what the read-time
+    # resolver reported for them) and for all direct-binding executions.
+    toolkit_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     trace_id: Mapped[str] = mapped_column(String(32), nullable=False)
     started_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
     duration_ms: Mapped[int | None] = mapped_column(BigInteger, nullable=True)

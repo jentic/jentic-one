@@ -10,11 +10,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy import delete, text
 
 from jentic_one.admin.core.schema.agent_credential_bindings import AgentCredentialBinding
-from jentic_one.admin.core.schema.agent_toolkit_bindings import AgentToolkitBinding
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.invite_tokens import InviteToken
-from jentic_one.admin.core.schema.service_account_credentials import ServiceAccountCredential
-from jentic_one.admin.core.schema.service_accounts import ServiceAccount
 from jentic_one.admin.core.schema.user_permission_grants import UserPermissionGrant
 from jentic_one.admin.core.schema.user_secrets import UserSecret
 from jentic_one.admin.core.schema.users import User
@@ -22,16 +19,15 @@ from jentic_one.admin.repos import (
     ActorScopeGrantRepository,
     AgentCredentialBindingRepository,
     AgentRepository,
-    AgentToolkitBindingRepository,
     UserPermissionGrantRepository,
     UserRepository,
     UserSecretRepository,
 )
 from jentic_one.admin.services._support.passwords import hash_password
 from jentic_one.admin.services._support.tokens import issue_jwt
-from jentic_one.auth.services.crypto import hash_secret
 from jentic_one.auth.services.token_service import TokenService
 from jentic_one.auth.web.app import create_app
+from jentic_one.shared.auth.api_key_resolver import RETIRED_SERVICE_ACCOUNT_KEY_DETAIL
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import ActorType, InviteState
 from tests.web.conftest import noop_lifespan
@@ -40,13 +36,6 @@ pytestmark = pytest.mark.integration
 
 ADMIN_EMAIL = "me-test-admin@test.local"
 OWNER_EMAIL = "me-test-owner@test.local"
-
-# A real toolkit (control DB) the agent is bound to — /me must resolve its name
-# (issue #686). ``tk_me_orphan`` is a binding with no toolkit row, exercising the
-# graceful name=None path.
-NAMED_TOOLKIT_ID = "tk_me_named"
-NAMED_TOOLKIT_NAME = "Design news radar"
-ORPHAN_TOOLKIT_ID = "tk_me_orphan"
 
 # A real credential (control DB) the agent is directly bound to (theme 5
 # phase 1) — /me must resolve its name and served API. ``cred_me_orphan`` is a
@@ -117,7 +106,6 @@ async def admin_user_id(web_context: Context) -> AsyncGenerator[str, None]:
         )
         await session.execute(delete(UserSecret).where(UserSecret.user_id == user.id))
         await session.execute(delete(Agent).where(Agent.owner_id == user.id))
-        await session.execute(delete(ServiceAccount).where(ServiceAccount.owner_id == user.id))
         await session.execute(delete(User).where(User.id == user.id))
         await session.commit()
 
@@ -159,7 +147,6 @@ async def owner_user_id(web_context: Context) -> AsyncGenerator[str, None]:
         )
         await session.execute(delete(UserSecret).where(UserSecret.user_id == user.id))
         await session.execute(delete(Agent).where(Agent.owner_id == user.id))
-        await session.execute(delete(ServiceAccount).where(ServiceAccount.owner_id == user.id))
         await session.execute(delete(User).where(User.id == user.id))
         await session.commit()
 
@@ -179,14 +166,8 @@ async def approved_agent_id(
             created_by="usr_test",
         )
         await AgentRepository.set_approval(session, agent.id, approved_by=admin_user_id)
-        await AgentToolkitBindingRepository.bind(
-            session, agent_id=agent.id, toolkit_id=NAMED_TOOLKIT_ID, created_by="usr_test"
-        )
-        await AgentToolkitBindingRepository.bind(
-            session, agent_id=agent.id, toolkit_id=ORPHAN_TOOLKIT_ID, created_by="usr_test"
-        )
         # Direct credential bindings (theme 5 phase 1): one resolvable, one
-        # orphaned — mirrors the named/orphan toolkit pair above.
+        # orphaned — exercising both the named and graceful name=None paths.
         await AgentCredentialBindingRepository.bind(
             session, agent_id=agent.id, credential_id=NAMED_CREDENTIAL_ID, created_by="usr_test"
         )
@@ -203,19 +184,10 @@ async def approved_agent_id(
             granted_by=admin_user_id,
             created_by="usr_test",
         )
-    # The toolkit name lives in the control DB; seed a real row so /me can resolve
-    # NAMED_TOOLKIT_ID → its name (issue #686). ORPHAN_TOOLKIT_ID has no row.
+    # The credential name lives in the control DB; seed a real row so /me can
+    # resolve NAMED_CREDENTIAL_ID → its name. Raw SQL keeps this file free of
+    # control-ORM imports. ORPHAN_CREDENTIAL_ID has no row.
     async with ctx.control_db.session() as session:
-        await session.execute(
-            text(
-                "INSERT INTO toolkits (id, name, created_by) "
-                "VALUES (:id, :name, :created_by) ON CONFLICT DO NOTHING"
-            ),
-            {"id": NAMED_TOOLKIT_ID, "name": NAMED_TOOLKIT_NAME, "created_by": owner_user_id},
-        )
-        # Same for the credential row backing the direct binding; raw SQL keeps
-        # this file free of control-ORM imports (same convention as toolkits).
-        # ORPHAN_CREDENTIAL_ID has no row.
         await session.execute(
             text(
                 "INSERT INTO credentials "
@@ -234,77 +206,15 @@ async def approved_agent_id(
 
     async with ctx.admin_db.session() as session:
         await session.execute(
-            delete(AgentToolkitBinding).where(AgentToolkitBinding.agent_id == agent.id)
-        )
-        await session.execute(
             delete(AgentCredentialBinding).where(AgentCredentialBinding.agent_id == agent.id)
         )
         await ActorScopeGrantRepository.revoke_all(session, agent.id)
         await session.execute(delete(Agent).where(Agent.id == agent.id))
         await session.commit()
     async with ctx.control_db.session() as session:
-        await session.execute(text("DELETE FROM toolkits WHERE id = :id"), {"id": NAMED_TOOLKIT_ID})
         await session.execute(
             text("DELETE FROM credentials WHERE id = :id"), {"id": NAMED_CREDENTIAL_ID}
         )
-        await session.commit()
-
-
-# An unmigrated service account's API key (theme-8 Phase 2): the SA surface is
-# gone, but until the Phase-4 drop the resolver's SA-table fallback still
-# resolves an unmigrated ``sak_`` key as the SA, and /me must answer for it.
-UNMIGRATED_SAK_KEY = "sak_me_unmigrated_fallback_key"
-
-
-@pytest.fixture()
-async def approved_sa_id(
-    web_context: Context, owner_user_id: str, admin_user_id: str
-) -> AsyncGenerator[str, None]:
-    """An active, unmigrated SA with a ``sak_`` digest and one live grant.
-
-    Seeded through the ORM directly — the SA repositories were deleted with the
-    surface; the models survive until the Phase-4 drop.
-    """
-    ctx = web_context
-    async with ctx.admin_db.transaction() as session:
-        sa = ServiceAccount(
-            name="me-test-sa",
-            owner_id=owner_user_id,
-            registered_by=owner_user_id,
-            approved_by=admin_user_id,
-            description="SA for /me tests",
-            status="active",
-            created_by="usr_test",
-        )
-        session.add(sa)
-        await session.flush()
-        session.add(
-            ServiceAccountCredential(
-                service_account_id=sa.id,
-                api_key_hash=hash_secret(UNMIGRATED_SAK_KEY),
-                created_by="usr_test",
-            )
-        )
-        # A live scope grant — /me must reflect current grants (#673).
-        await ActorScopeGrantRepository.grant(
-            session,
-            actor_id=sa.id,
-            actor_type="service_account",
-            scope="capabilities:read",
-            granted_by=admin_user_id,
-            created_by="usr_test",
-        )
-        sa_id = sa.id
-    yield sa_id
-
-    async with ctx.admin_db.session() as session:
-        await ActorScopeGrantRepository.revoke_all(session, sa_id)
-        await session.execute(
-            delete(ServiceAccountCredential).where(
-                ServiceAccountCredential.service_account_id == sa_id
-            )
-        )
-        await session.execute(delete(ServiceAccount).where(ServiceAccount.id == sa_id))
         await session.commit()
 
 
@@ -349,7 +259,7 @@ def test_me_agent(web_context: Context, approved_agent_id: str) -> None:
         web_context,
         approved_agent_id,
         "agent@internal",
-        ["toolkits:execute"],
+        ["capabilities:execute"],
         actor_type="agent",
     )
     app = _build_app(web_context)
@@ -365,19 +275,11 @@ def test_me_agent(web_context: Context, approved_agent_id: str) -> None:
     # not the token's baked-in scopes — this is the #673 fix. token_scopes
     # carries the presented token's view so a stale-grant gap is detectable.
     assert body["scopes"] == ["capabilities:read"]
-    assert body["token_scopes"] == ["toolkits:execute"]
+    assert body["token_scopes"] == ["capabilities:execute"]
     assert body["parent_agent_id"] is None
     assert body["approved_by"] is not None
-    bindings = {b["toolkit_id"]: b for b in body["toolkit_bindings"]}
-    assert len(bindings) == 2
-    # The bound toolkit's human-readable name is resolved from the control DB so
-    # the agent can map the opaque id to a name (issue #686)…
-    assert bindings[NAMED_TOOLKIT_ID]["name"] == NAMED_TOOLKIT_NAME
-    # …while a binding whose toolkit row is absent degrades gracefully to null
-    # rather than failing the whole response.
-    assert bindings[ORPHAN_TOOLKIT_ID]["name"] is None
-    # Direct credential bindings (theme 5 phase 1) mirror the same contract:
-    # resolvable name + served API for the real credential…
+    # Direct credential bindings (theme 5 phase 1): resolvable name + served
+    # API for the real credential…
     cred_bindings = {b["credential_id"]: b for b in body["credential_bindings"]}
     assert len(cred_bindings) == 2
     named = cred_bindings[NAMED_CREDENTIAL_ID]
@@ -428,60 +330,29 @@ async def test_me_agent_opaque_token_surfaces_minted_scopes(
     assert body["scopes"] == ["capabilities:read"]
 
 
-def test_me_service_account_fallback_resolved_key(
-    web_context: Context, approved_sa_id: str, owner_user_id: str
-) -> None:
-    """Theme-8 Phase 2 (M-1): an unmigrated ``sak_`` key resolves through the
-    SA-table fallback, and /me answers coherently from the shared raw-SQL read
-    (the deleted ``ServiceAccountService`` is not involved)."""
-    app = _build_app(web_context)
-    with TestClient(app, headers={"Authorization": f"Bearer {UNMIGRATED_SAK_KEY}"}) as client:
-        resp = client.get("/me")
-    assert resp.status_code == 200, resp.text
-    body = resp.json()
-    assert body["type"] == "service_account"
-    assert body["id"] == approved_sa_id
-    assert body["name"] == "me-test-sa"
-    assert body["status"] == "active"
-    # `scopes` = live grants; `token_scopes` = what the resolver loaded for the
-    # key (the same live grants on the API-key path).
-    assert body["scopes"] == ["capabilities:read"]
-    assert body["token_scopes"] == ["capabilities:read"]
-    assert body["registered_by"] == owner_user_id
-    assert body["approved_by"] is not None
-
-
-def test_me_service_account_jwt_subject(
-    web_context: Context, approved_sa_id: str, owner_user_id: str
-) -> None:
-    """A (historical) ``sva_`` JWT subject still gets a coherent /me answer."""
+def test_me_retired_service_account_subject_is_401(web_context: Context) -> None:
+    """Theme-8 Phase 4: a (historical) ``sva_`` JWT subject fails closed (401),
+    never a 500 — ``service_account`` is no longer an actor type."""
     token = _make_token(
-        web_context,
-        approved_sa_id,
-        "sa@internal",
-        ["registry:read"],
-        actor_type="service_account",
-    )
-    app = _build_app(web_context)
-    with TestClient(app, headers={"Authorization": f"Bearer {token}"}) as client:
-        resp = client.get("/me")
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["type"] == "service_account"
-    assert body["id"] == approved_sa_id
-    assert body["scopes"] == ["capabilities:read"]
-    assert body["token_scopes"] == ["registry:read"]
-
-
-def test_me_service_account_row_gone_is_401(web_context: Context) -> None:
-    """An ``sva_`` subject with no row fails closed (401), never a 500."""
-    token = _make_token(
-        web_context, "sva_me_missing_row", "sa@internal", [], actor_type="service_account"
+        web_context, "sva_me_retired", "sa@internal", [], actor_type="service_account"
     )
     app = _build_app(web_context)
     with TestClient(app, headers={"Authorization": f"Bearer {token}"}) as client:
         resp = client.get("/me")
     assert resp.status_code == 401
+
+
+def test_me_retired_sak_key_is_401_with_the_retirement_detail(web_context: Context) -> None:
+    """0.41: every ``sak_`` key is refused (401) with a detail naming the
+    retirement and the ``jak_`` replacement."""
+    app = _build_app(web_context)
+    with TestClient(
+        app,
+        headers={"Authorization": "Bearer sak_me_no_successor_key"},  # pragma: allowlist secret
+    ) as client:
+        resp = client.get("/me")
+    assert resp.status_code == 401
+    assert resp.json()["detail"] == RETIRED_SERVICE_ACCOUNT_KEY_DETAIL
 
 
 def test_me_unauthenticated(web_context: Context) -> None:

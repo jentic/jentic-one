@@ -36,7 +36,6 @@ class JenticHeader(StrEnum):
     """Response header names the broker adds to every proxied response."""
 
     EXECUTION_ID = "Jentic-Execution-Id"
-    TOOLKIT_ID = "Jentic-Toolkit-Id"
     OPERATION = "Jentic-Operation"
     API_VENDOR = "Jentic-Api-Vendor"
     # The credential the broker resolved and used for this execution (#740). The
@@ -48,8 +47,7 @@ class JenticHeader(StrEnum):
     # used — broker-origin failures before credential resolution carry neither.
     # Note: ``Jentic-Credential-Name`` is *also* a request header that clients
     # send inbound to disambiguate ambiguous resolution — the outbound response
-    # header shares the name intentionally (same convention as
-    # ``Jentic-Toolkit-Id``, which is both request and response).
+    # header shares the name intentionally.
     CREDENTIAL_ID = "Jentic-Credential-Id"
     CREDENTIAL_NAME = "Jentic-Credential-Name"
     UPSTREAM_STATUS = "Jentic-Upstream-Status"
@@ -126,6 +124,9 @@ BROKER_CONSUMED_HEADERS: frozenset[str] = frozenset(
         "prefer",
         "idempotency-key",
         "jentic-revision",
+        # Retired request header: no longer read, but still stripped so an old
+        # client's value is never forwarded to a third-party upstream. Kept
+        # through the toolkit deprecation window (no earlier than 2026-12-01).
         "jentic-toolkit-id",
         "x-jentic-api-key",
         "jentic-credential-name",

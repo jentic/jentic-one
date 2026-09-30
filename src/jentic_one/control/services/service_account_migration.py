@@ -1,17 +1,29 @@
-"""Theme-8 Phase 1 — the service-account → agent migration job.
+"""Theme-8 — the service-account → agent migration and retirement.
 
 Converts every service account into a successor **agent** (copy-then-sweep,
-N1): the SA's stored scope grants, toolkit/credential bindings, and API-key
-digest are COPIED onto a raw-SQL-minted successor agent, the SA's opaque
+N1): the SA's stored scope grants, credential bindings, and API-key
+digest are COPIED onto a raw-SQL-minted successor agent (the digest only
+matters for a retired ``jntc_live_`` toolkit key the theme-5 retirement
+converted into the SA — ``sak_`` keys stopped authenticating in 0.41 and the
+resolver refuses them by prefix), the SA's opaque
 sessions are revoked (H-1), and the row is stamped
 (``migrated_to_actor_id`` + ``migrated_at``) — all in one admin transaction
-per SA, with per-SA audit rows under the system actor (F4). The SA-side
-originals stay live until the deferred :meth:`sweep` so old-image pods keep
-resolving migrated keys through a rolling upgrade (H-B). The control-DB
-half — the ``toolkit_keys`` re-stamp and the copy of the ``sva_``-keyed
-per-binding inline permission rules (H2) — runs in its own transaction after
-the admin commit, is idempotent, and is retried on every ``already_migrated``
-re-run; a control-DB failure is reported as a ``failed`` row (L1).
+per SA, with per-SA audit rows under the system actor (F4). The control-DB
+half — the copy of the ``sva_``-keyed per-binding inline permission rules
+(H2) — runs in its own transaction BEFORE the admin one, keyed on the
+successor id planned for it: rules on a binding that does not exist yet are
+inert, so a failed admin step grants nothing (the pre-copied rows are then
+discarded), and the copy only ever lands on bindings this run creates. A
+control-DB failure is reported as a ``failed`` row before anything is
+written on the admin side (L1); the next run migrates the row afresh.
+
+**No resurrection of removed access.** Nothing is ever copied onto an
+existing successor grant, binding, or binding rule list: an operator may have
+narrowed it on purpose (a binding emptied of rules, a scope removed), and the
+data cannot tell "removed" from "never copied". Where the retirement
+therefore leaves something uncopied it reports a WARNING line (service
+account, successor, what was not copied) in the retirement summary so the
+operator can re-grant it.
 
 Disposition (OQ-1, rev 5): ``active`` → full migration (successor
 ``active``); ``disabled`` → full migration (successor ``disabled``, NF-2);
@@ -21,36 +33,40 @@ value ``skipped``). Successor creation is raw SQL — never
 ``DEFAULT_AGENT_SCOPES``; a zero-grant SA must yield a zero-grant
 successor).
 
-Idempotency: the stamp short-circuits re-runs, so the boot job runs on every
-start (like theme-5 key retirement) and catches SAs created during the
-window (until Phase 2 removed ``POST /service-accounts``, F5). Concurrency: one
-admin transaction per SA (``BEGIN IMMEDIATE`` on SQLite), a pg advisory-lock
+**Retirement (theme-8 Phase 4).** :meth:`ServiceAccountMigrationService.retire`
+is the only entry point: the migration runner (``python -m
+jentic_one.migrations.run``) calls it on a full upgrade, after the admin DB
+reaches ``d1e2f3a4b5c6`` and before it applies the ``e2f3a4b5c6d7`` drop. It
+migrates whatever is still unstamped, copies onto earlier successors any SA
+grant or binding created after their stamp that the successor never held
+(the audit trail shows no removal of it from the successor), **verifies**
+(every SA stamped, no failed row, grant and binding twins present, exact
+inline-rule parity for this run's migrations) and only on a clean
+verification sweeps the SA-side originals and deletes the remaining
+``sva_``-keyed control-DB rules. It then WARNS (log line + the runner's
+stdout) with every service account → successor agent id, because the
+accounts' ``sak_`` keys no longer work. A failed verification
+raises :class:`ServiceAccountRetirementError` naming every failing SA before
+anything is swept; every step is idempotent, so a re-run after the fix is
+safe.
+
+Concurrency: the retirement holds a control-DB run lock; each SA migrates in
+one admin transaction (``BEGIN IMMEDIATE`` on SQLite), with a pg advisory-lock
 fast path, an in-transaction stamp re-check, and — the real backstop — the
 ``uq_agent_credentials_api_key_hash`` unique partial index: a losing
 double-mint fails its whole transaction and is reported, never a partial
 write.
-
-The deferred :meth:`sweep` (N3) deletes the SA-keyed grant/binding rows
-(and, in the control DB, the ``sva_``-keyed inline permission rules), NULLs
-the SA-side digest, revokes any SA sessions minted since the migration, and
-archives the row — gated on a minimum stamp
-age (``services.service_account_sweep_min_stamp_age_hours``) as the
-full-fleet-rollout proxy; ``--sweep-migrated`` overrides. :meth:`verify`
-runs the acceptance queries; ``--verify --acknowledge`` writes the
-``service_account_migration_acks`` sentinel row the Phase-4 drops require
-(the toolkit-flattening precedent), only when verification passed in the
-same invocation.
 """
 
 from __future__ import annotations
 
 import datetime as dt
-from dataclasses import asdict, dataclass, field
+from collections.abc import Collection, Iterable, Mapping
+from dataclasses import asdict, dataclass, field, replace
 from typing import Any
 
 import structlog
 
-from jentic_one import __version__
 from jentic_one.control.repos.agent_permission_rule_repo import AgentPermissionRuleRepository
 from jentic_one.control.repos.service_account_migration_repo import (
     ADMIN_LEVEL_SCOPES,
@@ -58,6 +74,7 @@ from jentic_one.control.repos.service_account_migration_repo import (
     SYSTEM_ACTOR,
     ServiceAccountMigrationRepository,
 )
+from jentic_one.control.services.run_lock import SA_RETIREMENT_LOCK_KEY, hold_run_lock
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.errors import DatabaseIntegrityError
@@ -73,7 +90,19 @@ logger = structlog.get_logger(__name__)
 #: authenticated actors); the audit read surface treats the column as an
 #: opaque string.
 _AUDIT_ACTOR_TYPE = "system:job"
+#: Kept from the 0.40 job so every migration audit row — boot job, CLI, or
+#: this retirement — answers the same ``actor_id`` query.
 _AUDIT_ACTOR_ID = "migrate-service-accounts"
+
+#: Outcomes of :meth:`ServiceAccountMigrationService.run` that created a
+#: successor in THIS run (its copies are verified exactly, not just for gaps).
+_MIGRATED_NOW = frozenset({"migrated", "migrated-disabled"})
+
+_RETIREMENT_RERUN_STEP = (
+    "Nothing was swept or dropped. Fix the listed rows, then re-run "
+    "`python -m jentic_one.migrations.run` (safe to repeat). See 'Upgrading to "
+    "0.41.0' in docs/development/releasing.md."
+)
 
 
 #: Report-field → log-key renames. The central redactor
@@ -81,14 +110,12 @@ _AUDIT_ACTOR_ID = "migrate-service-accounts"
 #: ``credential``, or ``_token`` — which would hide the operator signal
 #: (OQ-1: who still holds client_credentials) behind ``***REDACTED***``. The
 #: redaction rule prescribes renaming false positives rather than weakening
-#: the redactor, so the structured-log lines use these non-matching keys;
-#: the JSONL report (not redacted) keeps the dataclass field names stable.
+#: the redactor, so the structured-log lines use these non-matching keys.
 _LOG_KEY_RENAMES: dict[str, str] = {
     "had_client_secret": "cc_holder",
     "credential_binding_count": "cred_binding_count",
     "access_tokens_revoked": "access_revoked_count",
     "refresh_tokens_revoked": "refresh_revoked_count",
-    "unrevoked_token_count": "unrevoked_session_count",
 }
 
 
@@ -96,11 +123,6 @@ def _log_fields(fields: dict[str, Any]) -> dict[str, Any]:
     """Rename redactor-matching report keys for a structured-log line."""
     return {_LOG_KEY_RENAMES.get(key, key): value for key, value in fields.items()}
 
-
-_VERIFY_SUMMARY_CATEGORY = "verify_summary"
-#: Informational ``verify`` finding: an admin-level grant the migration
-#: carried onto a successor agent. Never fails the verification.
-_SUCCESSOR_ADMIN_SCOPE_CATEGORY = "successor_admin_scope"
 
 _ADMIN_SCOPE_REVIEW_STEP = (
     "Review whether the successor agent should keep this scope; if not, remove it "
@@ -126,63 +148,68 @@ class _ServiceAccountVanishedError(Exception):
 
 
 @dataclass(frozen=True)
+class RetirementProblem:
+    """One reason a service account blocks the retirement."""
+
+    service_account_id: str
+    reason: str
+
+
+class ServiceAccountRetirementError(Exception):
+    """The pre-drop verification failed; nothing was swept or dropped."""
+
+    def __init__(self, problems: Iterable[RetirementProblem]) -> None:
+        self.problems: tuple[RetirementProblem, ...] = tuple(problems)
+        self.service_account_ids: tuple[str, ...] = tuple(
+            sorted({p.service_account_id for p in self.problems})
+        )
+        details = "; ".join(f"{p.service_account_id}: {p.reason}" for p in self.problems)
+        super().__init__(
+            "Refusing to retire the service accounts (theme-8 Phase 4): "
+            f"{len(self.service_account_ids)} service account(s) failed verification "
+            f"({', '.join(self.service_account_ids)}) — {details}. {_RETIREMENT_RERUN_STEP}"
+        )
+
+
+@dataclass(frozen=True)
 class ServiceAccountMigrationOutcome:
-    """One JSONL report line: what happened to one service account."""
+    """What happened to one service account (one structured-log line)."""
 
     service_account_id: str
     outcome: str  # migrated | migrated-disabled | skipped-non-active |
     #             # already_migrated | failed
     successor_agent_id: str | None = None
-    #: The count fields are what this run copied/revoked — or, under
-    #: ``--diff-only``, what it WOULD (same source queries). ``None`` means
-    #: "not computed": the ``--diff-only`` preview of an already-stamped row,
-    #: whose re-run copies nothing new but whose historical counts are not
-    #: reconstructed — never a misleading zero.
-    stored_scope_count: int | None = 0
-    toolkit_binding_count: int | None = 0
-    credential_binding_count: int | None = 0
+    #: What this run copied/revoked.
+    stored_scope_count: int = 0
+    credential_binding_count: int = 0
     #: Control-DB ``agent_permission_rules`` rows copied sva_ → agnt_ (H2).
-    permission_rule_count: int | None = 0
-    access_tokens_revoked: int | None = 0
-    refresh_tokens_revoked: int | None = 0
-    #: OQ-1 — operators get the client-credentials holder list before Phase 2
-    #: kills the grant.
+    permission_rule_count: int = 0
+    access_tokens_revoked: int = 0
+    refresh_tokens_revoked: int = 0
+    #: OQ-1 — the SA held a client secret (client_credentials): that grant
+    #: does not carry over to the successor.
     had_client_secret: bool = False
-    #: OQ-5 (report-only in Phase 1): the successor agent is visible to
-    #: ``owner:agents:read`` holders via ``parent_actor_id=owner_id``, where
-    #: the SA was governed by ``owner:service-accounts:read``. The note also
-    #: names the other behaviour changes an operator must review per SA:
-    #: (a) control-DB objects ``created_by`` the ``sva_`` id are NOT
-    #: re-attributed, so the successor loses owner-scoped access to them;
-    #: (b) with ``parent_actor_id=owner`` any copied ``owner:*`` delegation
-    #: scope now widens to the owner's resources; (c) migrated ``sak_``
-    #: callers now act as an agent — ``POST /oauth/mint`` is gone (404),
-    #: ``/integrations:connect`` refuses
-    #: ``agent_id`` in the body, and an agent-initiated connect session
-    #: cannot be confirmed by the agent itself (``_forbid_self_confirm``).
+    #: OQ-5: the successor agent is visible to ``owner:agents:read`` holders
+    #: via ``parent_actor_id=owner_id``, where the SA was governed by
+    #: ``owner:service-accounts:read``. The note also names the other
+    #: behaviour changes an operator must review per SA: (a) control-DB
+    #: objects ``created_by`` the ``sva_`` id are NOT re-attributed, so the
+    #: successor loses owner-scoped access to them; (b) with
+    #: ``parent_actor_id=owner`` any copied ``owner:*`` delegation scope now
+    #: widens to the owner's resources; (c) ``sak_`` keys no longer
+    #: authenticate (0.41): callers need a ``jak_`` key for the successor,
+    #: and as an agent ``POST /oauth/mint`` is gone (404),
+    #: ``/integrations:connect`` refuses ``agent_id`` in the body, and an
+    #: agent-initiated connect session cannot be confirmed by the agent itself
+    #: (``_forbid_self_confirm``).
     owner_visibility_note: str | None = None
     reason: str | None = None
-    #: The scope names copied onto the successor (or, under ``--diff-only``,
-    #: that WOULD be) — ``None`` when not computed (see the count fields).
-    copied_scopes: tuple[str, ...] | None = ()
+    #: The scope names copied onto the successor.
+    copied_scopes: tuple[str, ...] = ()
     #: The admin-level subset of ``copied_scopes`` (``ADMIN_LEVEL_SCOPES``),
     #: each with the SA grant's ORIGINAL ``granted_by`` (the successor's twin
     #: is stamped with the job's system actor). Informational: the grants are
     #: carried over unchanged; the operator reviews them.
-    admin_level_scopes: tuple[dict[str, Any], ...] | None = ()
-
-
-@dataclass(frozen=True)
-class _PreviewCounts:
-    """What a real run would copy/revoke for one unstamped SA (``--diff-only``)."""
-
-    stored_scopes: int = 0
-    toolkit_bindings: int = 0
-    credential_bindings: int = 0
-    permission_rules: int = 0
-    access_tokens: int = 0
-    refresh_tokens: int = 0
-    copied_scopes: tuple[str, ...] = ()
     admin_level_scopes: tuple[dict[str, Any], ...] = ()
 
 
@@ -191,115 +218,173 @@ class SweepOutcome:
     """Result of one sweep pass."""
 
     swept: list[str] = field(default_factory=list)
-    skipped_young: int = 0
-    #: Opaque SA sessions revoked by the sweep (M1) — client-credentials
-    #: holders can mint fresh SA sessions until the row is archived.
+    #: Opaque SA sessions revoked by the sweep (M1).
     access_tokens_revoked: int = 0
     refresh_tokens_revoked: int = 0
     #: Control-DB ``sva_``-keyed inline rules deleted (H2).
     permission_rules_deleted: int = 0
-    #: Per-SA JSONL report lines (``--sweep-migrated --report``), one per
-    #: swept row, in sweep order.
-    rows: list[dict[str, Any]] = field(default_factory=list)
-
-    def report_lines(self, *, ignore_age_gate: bool) -> list[dict[str, Any]]:
-        """The sweep's JSONL report: one ``sweep_row`` per SA + a summary."""
-        return [
-            *self.rows,
-            {
-                "category": "sweep_summary",
-                "swept": len(self.swept),
-                "skipped_young": self.skipped_young,
-                "access_tokens_revoked": self.access_tokens_revoked,
-                "refresh_tokens_revoked": self.refresh_tokens_revoked,
-                "permission_rules_deleted": self.permission_rules_deleted,
-                "ignore_age_gate": ignore_age_gate,
-                "tool_version": __version__,
-            },
-        ]
 
 
 @dataclass
-class VerificationResult:
-    """Result of the acceptance queries (W9)."""
+class RetirementOutcome:
+    """What :meth:`ServiceAccountMigrationService.retire` did."""
 
-    passed: bool
-    unstamped_count: int
-    grant_twin_missing_count: int
-    unrevoked_token_count: int
-    digest_mismatch_count: int
-    post_stamp_mutation_count: int
-    #: Criterion 6 (H2): ``sva_``-keyed inline-rule bindings whose successor
-    #: twin holds a different rule count. Not persisted on the ack row (the
-    #: sentinel is only written when every count is zero).
-    inline_rule_mismatch_count: int = 0
-    #: Informational (never gates ``passed``): admin-level grants the
-    #: migration carried onto successor agents, one ``successor_admin_scope``
-    #: report line each.
-    successor_admin_scope_count: int = 0
-    #: JSONL report lines. The first is always the ``verify_summary`` line
-    #: (the run's counts + tool version) — report context, not a finding.
-    findings: list[dict[str, Any]] = field(default_factory=list)
-    acknowledged: bool = False
+    #: ``no_tables`` (already dropped — nothing to do) | ``retired``
+    action: str
+    migrated: int = 0
+    skipped: int = 0
+    already_migrated: int = 0
+    #: Twins copied onto earlier successors for SA rows created after their stamp.
+    post_stamp_grants_copied: int = 0
+    post_stamp_bindings_copied: int = 0
+    #: Inline rules copied onto those post-stamp binding twins.
+    post_stamp_permission_rules_copied: int = 0
+    swept: int = 0
+    access_tokens_revoked: int = 0
+    refresh_tokens_revoked: int = 0
+    permission_rules_deleted: int = 0
+    #: Control-DB ``sva_`` rules left behind by ``sva_`` ids with no SA row.
+    orphan_permission_rules_deleted: int = 0
+    #: Every retired service account → its successor agent id (``None``: a
+    #: skip-stamped account, which got no successor). Ids only, never secrets.
+    successors: dict[str, str | None] = field(default_factory=dict)
+    #: One line per grant, binding, or binding rule list NOT copied to a
+    #: successor because that could have resurrected removed access — the
+    #: operator re-grants what is still needed. Ids and scope names only.
+    warnings: list[str] = field(default_factory=list)
 
-    @property
-    def finding_count(self) -> int:
-        """Report lines that are actual findings — the summary and the
-        informational review lines (``successor_admin_scope``) excluded, so a
-        clean verify records 0 on the acknowledgement row."""
-        return sum(
-            1
-            for f in self.findings
-            if f.get("category") != _VERIFY_SUMMARY_CATEGORY and not f.get("informational")
-        )
 
-    @property
-    def only_sweep_healable_failures(self) -> bool:
-        """True when the verify failed only on criteria the sweep heals.
+@dataclass(frozen=True)
+class RetirementWarning:
+    """Something the retirement deliberately did not copy to a successor."""
 
-        Unrevoked SA sessions (criterion 3 — the sweep revokes them; a
-        migrate re-run of a stamped row does not) and inline-rule mismatches
-        on unswept rows (criterion 6 — the sweep re-copies, then drops the
-        ``sva_`` rows). Any other failing criterion needs the migration
-        itself (or operator repair), not the sweep.
-        """
+    service_account_id: str
+    successor_agent_id: str
+    #: e.g. ``scope grant 'x'`` / ``credential binding cred_…``.
+    not_copied: str
+    reason: str
+
+    def line(self) -> str:
         return (
-            not self.passed
-            and self.unstamped_count == 0
-            and self.grant_twin_missing_count == 0
-            and self.digest_mismatch_count == 0
-            and self.post_stamp_mutation_count == 0
+            f"{self.service_account_id}: {self.not_copied}: NOT copied to successor agent "
+            f"{self.successor_agent_id} ({self.reason}); re-grant it if the agent still needs it"
         )
+
+
+#: The operator warning printed (and logged) after a retirement that retired
+#: at least one service account.
+SAK_KEYS_RETIRED_WARNING = (
+    "service-account (sak_) keys no longer authenticate: each service account "
+    "below was migrated to the listed successor agent. Mint a jak_ key for that "
+    "agent and switch its callers to it. (A retired jntc_live_ toolkit key that "
+    "had been converted into one of these accounts keeps working, as the "
+    "successor agent, until at least 2026-12-01.)"
+)
+
+
+def rule_parity_problems(
+    counts: Mapping[tuple[str, str], int],
+    successor_of: Mapping[str, str],
+    migrated_now: Iterable[str],
+) -> list[RetirementProblem]:
+    """Exact inline-rule parity for every SA migrated in THIS run.
+
+    ``counts`` is ``{(actor_id, credential_id): rule count}`` over the SA and
+    successor ids. The copy started from an empty successor, so it must hold
+    the same count per binding. SAs stamped by an earlier run are not checked
+    here (see :func:`rule_parity_warnings`): the operator may have edited the
+    successor's list since.
+    """
+    exact = set(migrated_now)
+    problems: list[RetirementProblem] = []
+    for (actor_id, credential_id), n in sorted(counts.items()):
+        successor = successor_of.get(actor_id)
+        if successor is None or actor_id not in exact:
+            continue  # a successor-side row, skip-stamped / unknown, or earlier run
+        held = counts.get((successor, credential_id), 0)
+        if held != n:
+            problems.append(
+                RetirementProblem(
+                    actor_id,
+                    f"successor {successor} holds {held} inline permission rule(s) for "
+                    f"credential {credential_id}, expected {n}",
+                )
+            )
+    return problems
+
+
+def rule_parity_warnings(
+    counts: Mapping[tuple[str, str], int],
+    successor_of: Mapping[str, str],
+    migrated_now: Iterable[str],
+    *,
+    skip: Collection[tuple[str, str]] = (),
+) -> list[RetirementWarning]:
+    """SA bindings (earlier runs) whose successor holds NO inline rules.
+
+    Not re-copied: an empty successor list may have been emptied on purpose,
+    and nothing records whether it was. Reported so the operator can decide.
+    ``skip`` holds ``(sa_id, credential_id)`` pairs already reported.
+    """
+    exact = set(migrated_now)
+    warnings: list[RetirementWarning] = []
+    for (actor_id, credential_id), n in sorted(counts.items()):
+        successor = successor_of.get(actor_id)
+        if successor is None or actor_id in exact or (actor_id, credential_id) in skip:
+            continue
+        if counts.get((successor, credential_id), 0) == 0:
+            warnings.append(
+                RetirementWarning(
+                    actor_id,
+                    successor,
+                    f"{n} inline permission rule(s) for credential {credential_id}",
+                    "the successor's rule list for that binding is empty, possibly on purpose",
+                )
+            )
+    return warnings
+
+
+@dataclass
+class _PostStampCopy:
+    """What :meth:`ServiceAccountMigrationService._copy_post_stamp_rows` did."""
+
+    grants: int = 0
+    bindings: int = 0
+    rules: int = 0
+    withheld: list[RetirementWarning] = field(default_factory=list)
+    #: ``(kind, sa_id, scope|credential_id)`` of every withheld row.
+    _keys: set[tuple[str, str, str]] = field(default_factory=set)
+
+    def withhold(self, warning: RetirementWarning, key: tuple[str, str, str]) -> None:
+        self.withheld.append(warning)
+        self._keys.add(key)
+
+    @property
+    def withheld_keys(self) -> frozenset[tuple[str, str, str]]:
+        return frozenset(self._keys)
 
 
 class ServiceAccountMigrationService:
-    """Orchestrates the migration, sweep, and verify passes."""
+    """Orchestrates the migration, the sweep, and the pre-drop retirement."""
 
     def __init__(self, ctx: Context) -> None:
         self._ctx = ctx
 
-    async def run(self, *, diff_only: bool = False) -> list[ServiceAccountMigrationOutcome]:
-        """Migrate every service account; return one outcome per SA.
+    async def tables_present(self) -> bool:
+        """Whether the service-account tables still exist (pre-Phase-4 drop)."""
+        async with self._ctx.admin_db.session() as session:
+            return await ServiceAccountMigrationRepository.tables_present(session)
 
-        ``diff_only`` evaluates dispositions and prints the report without
-        writing anything (the flattening ``--diff-only`` precedent).
-        """
+    async def run(self) -> list[ServiceAccountMigrationOutcome]:
+        """Migrate every service account; return one outcome per SA."""
         async with self._ctx.admin_db.session() as session:
             rows = await ServiceAccountMigrationRepository.list_service_accounts(session)
 
         outcomes: list[ServiceAccountMigrationOutcome] = []
         for row in rows:
-            if diff_only:
-                counts = (
-                    await self._preview_counts(row) if row.migrated_to_actor_id is None else None
-                )
-                outcome = self._preview(row, counts)
-            else:
-                outcome = await self._migrate_one(row)
+            outcome = await self._migrate_one(row)
             outcomes.append(outcome)
-            logger.info(
-                "service_account_migration", diff_only=diff_only, **_log_fields(asdict(outcome))
-            )
+            logger.info("service_account_migration", **_log_fields(asdict(outcome)))
         return outcomes
 
     @staticmethod
@@ -311,95 +396,6 @@ class ServiceAccountMigrationService:
             return "migrated-disabled", ActorStatus.DISABLED.value
         return "skipped-non-active", None
 
-    async def _preview_counts(self, row: Any) -> _PreviewCounts:
-        """Read-only counts of what :meth:`_migrate_one` would copy/revoke.
-
-        Same source queries as the real copy/revoke steps (retired-scope
-        filter included). The successor does not exist yet, so every
-        ``sva_``-keyed inline rule would be copied. Skip-but-stamp rows get
-        no successor — only their token revocation is counted.
-        """
-        _label, successor_status = self._disposition(row.status)
-        scopes = toolkit_bindings = credential_bindings = rules = 0
-        grants: list[tuple[str, str | None]] = []
-        async with self._ctx.admin_db.session() as session:
-            access, refresh = await ServiceAccountMigrationRepository.count_revocable_tokens(
-                session, service_account_id=row.id
-            )
-            if successor_status is not None:
-                (
-                    scopes,
-                    toolkit_bindings,
-                    credential_bindings,
-                ) = await ServiceAccountMigrationRepository.count_copy_candidates(
-                    session, service_account_id=row.id
-                )
-                grants = await ServiceAccountMigrationRepository.list_copyable_grants(
-                    session, service_account_id=row.id
-                )
-        if successor_status is not None and self._ctx.has_db("control"):
-            async with self._ctx.control_db.session() as control_session:
-                by_binding = (
-                    await ServiceAccountMigrationRepository.count_permission_rules_by_binding(
-                        control_session, [row.id]
-                    )
-                )
-            rules = sum(by_binding.values())
-        return _PreviewCounts(
-            stored_scopes=scopes,
-            toolkit_bindings=toolkit_bindings,
-            credential_bindings=credential_bindings,
-            permission_rules=rules,
-            access_tokens=access,
-            refresh_tokens=refresh,
-            copied_scopes=tuple(scope for scope, _ in grants),
-            admin_level_scopes=_admin_level_grants(grants),
-        )
-
-    def _preview(self, row: Any, counts: _PreviewCounts | None) -> ServiceAccountMigrationOutcome:
-        """Dry-run disposition for one SA row (no writes).
-
-        ``counts`` comes from :meth:`_preview_counts`; ``None`` (always, for
-        an already-stamped row) reports the count fields as ``None`` — not
-        computed — rather than zeros.
-        """
-        if row.migrated_to_actor_id is not None:
-            return ServiceAccountMigrationOutcome(
-                service_account_id=row.id,
-                outcome="already_migrated",
-                successor_agent_id=(
-                    None if row.migrated_to_actor_id == SKIPPED_STAMP else row.migrated_to_actor_id
-                ),
-                stored_scope_count=None,
-                toolkit_binding_count=None,
-                credential_binding_count=None,
-                permission_rule_count=None,
-                access_tokens_revoked=None,
-                refresh_tokens_revoked=None,
-                had_client_secret=row.client_secret_hash is not None,
-                copied_scopes=None,
-                admin_level_scopes=None,
-            )
-        label, _successor_status = self._disposition(row.status)
-        c = counts
-        return ServiceAccountMigrationOutcome(
-            service_account_id=row.id,
-            outcome=label,
-            stored_scope_count=None if c is None else c.stored_scopes,
-            toolkit_binding_count=None if c is None else c.toolkit_bindings,
-            credential_binding_count=None if c is None else c.credential_bindings,
-            permission_rule_count=None if c is None else c.permission_rules,
-            access_tokens_revoked=None if c is None else c.access_tokens,
-            refresh_tokens_revoked=None if c is None else c.refresh_tokens,
-            had_client_secret=row.client_secret_hash is not None,
-            reason=None if label != "skipped-non-active" else f"status={row.status}",
-            owner_visibility_note=(
-                self._visibility_note(row) if label != "skipped-non-active" else None
-            ),
-            copied_scopes=None if c is None else c.copied_scopes,
-            admin_level_scopes=None if c is None else c.admin_level_scopes,
-        )
-
     @staticmethod
     def _visibility_note(row: Any) -> str:
         """Per-SA review note — see the field comment on ``owner_visibility_note``."""
@@ -408,91 +404,112 @@ class ServiceAccountMigrationService:
             f" parent_actor_id={row.owner_id} (OQ-5, report-only); any copied owner:*"
             f" scope now also reaches that owner's resources; control-DB objects"
             f" created_by {row.id} are not re-attributed (the successor loses"
-            f" owner-scoped access to them); sak_ callers now act as an agent:"
-            f" POST /oauth/mint is gone (404), /integrations:connect refuses agent_id"
+            f" owner-scoped access to them); sak_ keys no longer authenticate"
+            f" (0.41) — callers need a jak_ key for the successor, and as an"
+            f" agent: POST /oauth/mint is gone (404), /integrations:connect refuses agent_id"
             f" in the body, and agent-initiated connect sessions cannot be"
             f" self-confirmed"
         )
 
-    async def _sync_control(self, service_account_id: str, agent_id: str) -> int:
-        """Idempotent control-DB half of one SA migration; returns rules copied.
+    async def _precopy_rules(self, service_account_id: str, agent_id: str) -> int:
+        """Control-DB half of one SA migration, BEFORE the admin transaction.
 
-        One control transaction: re-stamp ``toolkit_keys.migrated_actor_id``
-        (M-E) and copy the ``sva_``-keyed per-binding inline permission
-        rules onto the successor (H2). Called after the admin commit on
-        fresh migrations AND on every ``already_migrated`` re-run (M1): the
-        two DBs cannot share a transaction, so a crash between them would
-        otherwise lose this step forever behind the stamp short-circuit.
+        Copies the ``sva_``-keyed per-binding inline permission rules (H2)
+        onto the successor id planned for this run. (The M-E
+        ``toolkit_keys.migrated_actor_id`` re-stamp was deleted with that
+        table in theme-5 Phase 6b.) The two DBs cannot share a transaction;
+        copying first means the rules can only ever land on bindings the
+        admin transaction is about to create — a crash in between leaves
+        inert rows keyed on an agent id that never came to exist, never a
+        successor whose rules were lost or re-copied later.
         """
         if not self._ctx.has_db("control"):
             return 0
         async with self._ctx.control_db.transaction() as control_session:
-            await ServiceAccountMigrationRepository.restamp_toolkit_keys(
-                control_session, service_account_id=service_account_id, agent_id=agent_id
-            )
             return await ServiceAccountMigrationRepository.copy_permission_rules(
                 control_session, service_account_id=service_account_id, agent_id=agent_id
             )
 
-    async def _try_sync_control(
-        self, service_account_id: str, agent_id: str
-    ) -> tuple[int, str | None]:
-        """L1: a control-DB failure is a row outcome, never a run abort.
+    async def _discard_precopied_rules(self, agent_id: str) -> None:
+        """Best-effort delete of rules pre-copied for a successor never created.
 
-        Returns ``(rules_copied, failure_reason)``. The admin side has
-        already committed; the next run heals via the ``already_migrated``
-        path, which re-runs this step.
+        Inert either way (no agent, no binding carries that id) — a failure is
+        logged, never raised.
         """
         try:
-            return await self._sync_control(service_account_id, agent_id), None
+            async with self._ctx.control_db.transaction() as control_session:
+                await AgentPermissionRuleRepository.delete_for_agent(control_session, agent_id)
         except Exception as exc:
             logger.warning(
-                "service_account_migration_control_sync_failed",
-                service_account_id=service_account_id,
-                successor_agent_id=agent_id,
+                "service_account_migration_precopy_discard_failed",
+                planned_agent_id=agent_id,
                 error=str(exc),
                 error_type=type(exc).__name__,
-                actionable_step=(
-                    "The admin-side migration committed; re-run "
-                    "`jentic_one migrate-service-accounts` to retry the control-DB step."
-                ),
             )
-            return 0, f"control_sync_error:{type(exc).__name__}"
 
     async def _migrate_one(self, row: Any) -> ServiceAccountMigrationOutcome:
-        """Copy → revoke → stamp → audit, one admin transaction; then the
-        control-DB step (toolkit-key re-stamp + inline-rule copy; separate,
-        idempotent, after the admin commit)."""
+        """Control-DB inline-rule pre-copy, then copy → revoke → stamp → audit
+        in one admin transaction."""
         if row.migrated_to_actor_id is not None:
-            # M1: the control-DB step runs AFTER the admin commit, so a
-            # crash between the two loses it — re-run it (idempotent) on the
-            # already_migrated path instead of short-circuiting past it.
-            rules_copied = 0
-            sync_error: str | None = None
-            if row.migrated_to_actor_id != SKIPPED_STAMP:
-                rules_copied, sync_error = await self._try_sync_control(
-                    row.id, row.migrated_to_actor_id
-                )
+            # Nothing to redo: the control-DB rule copy ran before the stamp
+            # committed. Re-copying onto the existing successor could refill a
+            # rule list the operator emptied on purpose.
             return ServiceAccountMigrationOutcome(
                 service_account_id=row.id,
-                outcome="failed" if sync_error is not None else "already_migrated",
-                permission_rule_count=rules_copied,
-                reason=sync_error,
+                outcome="already_migrated",
                 successor_agent_id=(
                     None if row.migrated_to_actor_id == SKIPPED_STAMP else row.migrated_to_actor_id
                 ),
                 had_client_secret=row.client_secret_hash is not None,
             )
 
-        # H1: disposition, digest, owner, and name are derived from the row
-        # re-read INSIDE the per-SA transaction (below), never from the
-        # ``run()`` snapshot — a disable or key rotation landing between the
-        # list and this transaction must be reflected in the successor.
+        # Control DB first (L1): pre-copy the inline rules onto the planned
+        # successor id. A failure here is a row outcome with nothing written
+        # on the admin side; the next run migrates the row afresh.
+        planned_id = ServiceAccountMigrationRepository.new_successor_agent_id()
+        try:
+            rules_copied = await self._precopy_rules(row.id, planned_id)
+        except Exception as exc:
+            logger.warning(
+                "service_account_migration_control_sync_failed",
+                service_account_id=row.id,
+                error=str(exc),
+                error_type=type(exc).__name__,
+                actionable_step=(
+                    "Nothing was written for this service account; re-run "
+                    "`python -m jentic_one.migrations.run` once the control DB is reachable."
+                ),
+            )
+            return ServiceAccountMigrationOutcome(
+                service_account_id=row.id,
+                outcome="failed",
+                had_client_secret=row.client_secret_hash is not None,
+                reason=f"control_sync_error:{type(exc).__name__}",
+            )
+
+        outcome = await self._migrate_admin(row, planned_id)
+        if outcome.successor_agent_id != planned_id:
+            # No successor was created under the planned id (skip
+            # disposition, concurrent winner, rolled-back transaction): the
+            # pre-copied rules are orphaned — inert, but tidy them up.
+            if rules_copied:
+                await self._discard_precopied_rules(planned_id)
+            return outcome
+        return replace(outcome, permission_rule_count=rules_copied)
+
+    async def _migrate_admin(self, row: Any, planned_id: str) -> ServiceAccountMigrationOutcome:
+        """Copy → revoke → stamp → audit for one SA, one admin transaction.
+
+        H1: disposition, digest, owner, and name are derived from the row
+        re-read INSIDE the per-SA transaction, never from the ``run()``
+        snapshot — a disable or key rotation landing between the list and
+        this transaction must be reflected in the successor.
+        """
         current: Any = row
         label = "failed"
         successor_status: str | None = None
         agent_id: str | None = None
-        stored_scopes = toolkit_bindings = credential_bindings = 0
+        stored_scopes = credential_bindings = 0
         copied: list[tuple[str, str | None]] = []
         access_revoked = refresh_revoked = 0
 
@@ -500,9 +517,9 @@ class ServiceAccountMigrationService:
             async with self._ctx.admin_db.transaction() as session:
                 await ServiceAccountMigrationRepository.acquire_migration_lock(session, row.id)
                 # Stamp time is taken only once the lock is held: rows the
-                # previous holder committed while we waited (key-retirement
-                # binds) predate the stamp and must not read as post-stamp
-                # mutations in verify criterion 5.
+                # previous holder committed while we waited predate the stamp
+                # and must not read as post-stamp mutations in verify
+                # criterion 5.
                 now = dt.datetime.now(dt.UTC)
                 # In-transaction re-read (FOR UPDATE OF sa on pg; SQLite holds
                 # the BEGIN IMMEDIATE write lock). It serialises with the
@@ -527,15 +544,13 @@ class ServiceAccountMigrationService:
                         owner_id=current.owner_id,
                         status=successor_status,
                         api_key_hash=current.api_key_hash,
+                        agent_id=planned_id,
                     )
                     copied = await ServiceAccountMigrationRepository.copy_scope_grants(
                         session, service_account_id=row.id, agent_id=agent_id
                     )
                     stored_scopes = len(copied)
-                    (
-                        toolkit_bindings,
-                        credential_bindings,
-                    ) = await ServiceAccountMigrationRepository.copy_bindings(
+                    credential_bindings = await ServiceAccountMigrationRepository.copy_bindings(
                         session, service_account_id=row.id, agent_id=agent_id
                     )
 
@@ -654,12 +669,6 @@ class ServiceAccountMigrationService:
                 reason=f"error:{type(exc).__name__}",
             )
 
-        # Control DB (separate, idempotent, after the admin commit): re-stamp
-        # toolkit_keys.migrated_actor_id so key revocation keeps disabling the
-        # right actor (M-E; the W8 retarget keeps set_actor_status meaningful)
-        # and copy the per-binding inline rules (H2). A failure here is a row
-        # outcome (L1); a crash between the admin commit and this call is
-        # healed by the M1 re-run on the already_migrated path.
         admin_level = _admin_level_grants(copied)
         for grant in admin_level:
             # Committed above: one WARNING per admin-level grant the successor
@@ -674,24 +683,13 @@ class ServiceAccountMigrationService:
                 actionable_step=_ADMIN_SCOPE_REVIEW_STEP,
             )
 
-        rules_copied = 0
-        sync_error = None
-        if agent_id is not None:
-            rules_copied, sync_error = await self._try_sync_control(current.id, agent_id)
-
-        reason: str | None = None
-        if sync_error is not None:
-            reason = sync_error
-        elif label == "skipped-non-active":
-            reason = f"status={current.status}"
+        reason = f"status={current.status}" if label == "skipped-non-active" else None
         return ServiceAccountMigrationOutcome(
             service_account_id=current.id,
-            outcome="failed" if sync_error is not None else label,
+            outcome=label,
             successor_agent_id=agent_id,
             stored_scope_count=stored_scopes,
-            toolkit_binding_count=toolkit_bindings,
             credential_binding_count=credential_bindings,
-            permission_rule_count=rules_copied,
             access_tokens_revoked=access_revoked,
             refresh_tokens_revoked=refresh_revoked,
             had_client_secret=current.client_secret_hash is not None,
@@ -705,57 +703,32 @@ class ServiceAccountMigrationService:
 
     # ------------------------------------------------------------------ sweep
 
-    async def sweep(self, *, ignore_age_gate: bool = False) -> SweepOutcome:
+    async def sweep(self) -> SweepOutcome:
         """W3 — delete SA-keyed originals for stamped rows, archive the SA.
 
-        The automatic arm (boot) honours the N3 age gate
-        (``services.service_account_sweep_min_stamp_age_hours``; ``0``
-        disables the gate, a negative value disables the automatic arm
-        entirely — the caller checks that). ``ignore_age_gate`` is the
-        ``--sweep-migrated`` operator override for uniform fleets.
-
-        Per SA, one admin transaction deletes the SA-keyed originals,
-        revokes every outstanding opaque SA session (M1 — client-credentials
-        holders can keep minting SA sessions until the row is archived, and
-        verify criterion 3 would otherwise wait out the refresh TTL), and
-        archives the row. A control-DB pass then deletes the ``sva_``-keyed
-        inline permission rules (H2) for every stamped SA passing the same
-        gate — including rows whose admin side a previous, interrupted sweep
-        already finished.
-
-        Note (E4): ``skipped_young`` comes from a second, non-atomic
-        ``list_sweepable`` query — a row stamped between the two queries can
-        skew the count by one. Accepted: the count is informational only.
+        Called only by :meth:`retire`, after a clean verification. Per SA, one
+        admin transaction deletes the SA-keyed grant and binding rows, NULLs
+        the SA-side digest, revokes every outstanding opaque SA session (M1),
+        and archives the row. A control-DB pass then deletes the
+        ``sva_``-keyed inline permission rules (H2) for every stamped SA —
+        including rows whose admin side a previous, interrupted sweep already
+        finished.
         """
-        age_hours = self._ctx.config.services.service_account_sweep_min_stamp_age_hours
-        stamped_before: dt.datetime | None = None
-        if not ignore_age_gate and age_hours > 0:
-            stamped_before = dt.datetime.now(dt.UTC) - dt.timedelta(hours=age_hours)
-
         async with self._ctx.admin_db.session() as session:
-            rows = await ServiceAccountMigrationRepository.list_sweepable(
-                session, stamped_before=stamped_before
-            )
-            all_stamped = await ServiceAccountMigrationRepository.list_sweepable(
-                session, stamped_before=None
-            )
+            rows = await ServiceAccountMigrationRepository.list_sweepable(session)
             # Snapshotted up-front with ``rows`` so the control pass never
             # reaches a row stamped after the admin pass was planned.
-            gated_stamps = await ServiceAccountMigrationRepository.list_stamped(
-                session, stamped_before=stamped_before
-            )
+            stamps = await ServiceAccountMigrationRepository.list_stamped(session)
 
-        outcome = SweepOutcome(skipped_young=len(all_stamped) - len(rows))
+        outcome = SweepOutcome()
         for row in rows:
             async with self._ctx.admin_db.transaction() as session:
                 archived = await ServiceAccountMigrationRepository.sweep_service_account(
                     session, service_account_id=row.id
                 )
-                # M1: the sweep is the kill lever for client-credentials
-                # holders during the window — revoke whatever SA sessions
-                # they minted since the migration-time revoke, in the same
-                # transaction that archives the row (after which the grant
-                # refuses them: non-active SAs cannot authenticate).
+                # M1: revoke whatever SA sessions were minted since the
+                # migration-time revoke, in the same transaction that archives
+                # the row (after which the grant refuses them).
                 (
                     access_revoked,
                     refresh_revoked,
@@ -795,47 +768,28 @@ class ServiceAccountMigrationService:
             outcome.swept.append(row.id)
             outcome.access_tokens_revoked += access_revoked
             outcome.refresh_tokens_revoked += refresh_revoked
-            outcome.rows.append(
-                {
-                    "category": "sweep_row",
-                    "service_account_id": row.id,
-                    "successor_agent_id": (
-                        None
-                        if row.migrated_to_actor_id == SKIPPED_STAMP
-                        else row.migrated_to_actor_id
-                    ),
-                    "archived": archived,
-                    "access_tokens_revoked": access_revoked,
-                    "refresh_tokens_revoked": refresh_revoked,
-                }
-            )
             logger.info(
                 "service_account_migration_swept",
                 service_account_id=row.id,
                 successor_agent_id=(
                     None if row.migrated_to_actor_id == SKIPPED_STAMP else row.migrated_to_actor_id
                 ),
+                archived=archived,
                 access_revoked_count=access_revoked,
                 refresh_revoked_count=refresh_revoked,
             )
 
-        # Control DB (H2): the sva_-keyed inline rules. Runs after the admin
-        # pass so old-image pods keep the SA arm's rules until the SA row is
-        # archived; idempotent (a re-run only finds rows a crash left). The
-        # successor twin is ensured first (binding-level idempotent copy), so
-        # a migration whose control step failed (L1) and was never healed
-        # does not lose its rules to the sweep.
-        if self._ctx.has_db("control") and gated_stamps:
+        # Control DB (H2): the sva_-keyed inline rules, after the admin pass.
+        # Nothing is copied here: the successor's rules were copied before its
+        # stamp committed, and re-copying onto an existing successor binding
+        # could refill a list emptied on purpose (the retirement reports any
+        # empty successor binding as a WARNING before the sweep runs).
+        if self._ctx.has_db("control") and stamps:
             async with self._ctx.control_db.transaction() as control_session:
                 holders = await ServiceAccountMigrationRepository.list_service_account_rule_holders(
                     control_session
                 )
-                for sa_id in sorted(holders & gated_stamps.keys()):
-                    successor = gated_stamps[sa_id]
-                    if successor != SKIPPED_STAMP:
-                        await ServiceAccountMigrationRepository.copy_permission_rules(
-                            control_session, service_account_id=sa_id, agent_id=successor
-                        )
+                for sa_id in sorted(holders & stamps.keys()):
                     outcome.permission_rules_deleted += (
                         await AgentPermissionRuleRepository.delete_for_agent(control_session, sa_id)
                     )
@@ -843,163 +797,317 @@ class ServiceAccountMigrationService:
         logger.info(
             "service_account_migration_sweep_run",
             swept=len(outcome.swept),
-            skipped_young=outcome.skipped_young,
             access_revoked_count=outcome.access_tokens_revoked,
             refresh_revoked_count=outcome.refresh_tokens_revoked,
             permission_rules_deleted=outcome.permission_rules_deleted,
-            ignore_age_gate=ignore_age_gate,
         )
         return outcome
 
-    # ----------------------------------------------------------------- verify
+    # ------------------------------------------------------------- retirement
 
-    async def verify(self, *, acknowledge: bool = False) -> VerificationResult:
-        """W9 — the acceptance queries; optionally write the Phase-4 gate row.
+    async def retire(self) -> RetirementOutcome:
+        """Migrate, verify, then sweep every service account — the pre-drop step.
 
-        The sentinel is written only when ``acknowledge`` is set AND this
-        verification passed — never from any other code path (the
-        ``toolkit_flattening_acks`` precedent). It is necessary but not
-        sufficient: the Phase-4 drop migration re-verifies at drop time
-        (F5 x M-C).
+        Needs the admin and control DBs. Order is load-bearing: nothing is
+        swept or deleted until the verification passed, so a refusal leaves
+        every SA-side original in place and a re-run (after the fix) is safe.
 
-        Criterion 6 (H2) is cross-DB: for every fully-migrated SA, each
-        ``(sva_, credential)`` binding still holding inline rules in the
-        control DB must have a successor twin with the same rule count.
-        After the sweep the ``sva_`` rows are gone, so swept rows pass.
+        1. :meth:`run` — migrate every unstamped SA (earlier ones are left
+           alone).
+        2. Copy onto earlier successors any SA grant or binding created after
+           the stamp, with the binding's inline rules — only where the
+           successor has no counterpart and the audit trail shows it never
+           lost one (removed scope, purged binding). A successor that is
+           archived or gone gets nothing. Everything withheld becomes a
+           WARNING line; nothing an operator removed is resurrected.
+        3. Verify: no failed row, nothing unstamped, grant and binding twins
+           present (withheld rows excepted), exact inline-rule parity for this
+           run's migrations. Any problem raises
+           :class:`ServiceAccountRetirementError`. An earlier successor binding
+           with no inline rules is a WARNING, never re-copied. (There is no
+           API-key digest parity check: ``sak_`` keys stop working in 0.41
+           whatever the successor's credential row holds.)
+        4. :meth:`sweep`, then delete the ``sva_`` rules no SA row owns.
+        5. WARN with every service account → successor agent id
+           (:data:`SAK_KEYS_RETIRED_WARNING`) and every withheld copy.
 
-        Note (E4): the counts run in one session per DB but WITHOUT a snapshot
-        transaction — writes landing between the queries can make the set
-        internally inconsistent. Accepted: Phase 4 re-verifies at drop time,
-        and the sentinel is only advisory until then.
+        Raises:
+            ServiceAccountRetirementError: the verification failed.
         """
-        now = dt.datetime.now(dt.UTC)
-        async with self._ctx.admin_db.session() as session:
-            unstamped = await ServiceAccountMigrationRepository.count_unstamped(session)
-            twin_missing = await ServiceAccountMigrationRepository.count_grant_twin_missing(session)
-            unrevoked = await ServiceAccountMigrationRepository.count_unrevoked_tokens(
-                session, now=now
+        if not await self.tables_present():
+            return RetirementOutcome(action="no_tables")
+        async with hold_run_lock(self._ctx, SA_RETIREMENT_LOCK_KEY):
+            outcomes = await self.run()
+            migrated_now = {o.service_account_id for o in outcomes if o.outcome in _MIGRATED_NOW}
+            post_stamp = await self._copy_post_stamp_rows(migrated_now)
+            problems, rule_warnings = await self._verification_problems(
+                outcomes, migrated_now, withheld=post_stamp.withheld_keys
             )
-            digest_mismatch = await ServiceAccountMigrationRepository.count_digest_mismatches(
-                session
-            )
-            post_stamp = await ServiceAccountMigrationRepository.count_post_stamp_mutations(session)
-            migrated_pairs = await ServiceAccountMigrationRepository.list_migrated_pairs(session)
-            admin_grants = await ServiceAccountMigrationRepository.list_successor_admin_grants(
-                session
-            )
-        rule_mismatch = await self._count_inline_rule_mismatches(migrated_pairs)
-
-        result = VerificationResult(
-            passed=(
-                unstamped == 0
-                and twin_missing == 0
-                and unrevoked == 0
-                and digest_mismatch == 0
-                and post_stamp == 0
-                and rule_mismatch == 0
-            ),
-            unstamped_count=unstamped,
-            grant_twin_missing_count=twin_missing,
-            unrevoked_token_count=unrevoked,
-            digest_mismatch_count=digest_mismatch,
-            post_stamp_mutation_count=post_stamp,
-            inline_rule_mismatch_count=rule_mismatch,
-            successor_admin_scope_count=len(admin_grants),
-        )
-        result.findings.append(
-            {
-                "category": _VERIFY_SUMMARY_CATEGORY,
-                "passed": result.passed,
-                "unstamped_count": unstamped,
-                "grant_twin_missing_count": twin_missing,
-                "unrevoked_token_count": unrevoked,
-                "digest_mismatch_count": digest_mismatch,
-                "post_stamp_mutation_count": post_stamp,
-                "inline_rule_mismatch_count": rule_mismatch,
-                "successor_admin_scope_count": len(admin_grants),
-                "tool_version": __version__,
-            }
-        )
-        for grant in admin_grants:
-            result.findings.append(
-                {
-                    "category": _SUCCESSOR_ADMIN_SCOPE_CATEGORY,
-                    "agent_id": grant.agent_id,
-                    "agent_name": grant.agent_name,
-                    "owner_id": grant.owner_id,
-                    "status": grant.status,
-                    "scope": grant.scope,
-                    "informational": True,
-                    "actionable_step": _ADMIN_SCOPE_REVIEW_STEP,
-                }
-            )
-        logger.info(
-            "service_account_migration_verify",
-            passed=result.passed,
-            unstamped_count=unstamped,
-            grant_twin_missing_count=twin_missing,
-            unrevoked_session_count=unrevoked,
-            digest_mismatch_count=digest_mismatch,
-            post_stamp_mutation_count=post_stamp,
-            inline_rule_mismatch_count=rule_mismatch,
-            successor_admin_scope_count=len(admin_grants),
-        )
-        if admin_grants:
-            logger.warning(
-                "service_account_migration_verify_admin_scopes",
-                successor_admin_scope_count=len(admin_grants),
-                actionable_step=(
-                    "Informational — does not fail verify. Review the "
-                    f"{_SUCCESSOR_ADMIN_SCOPE_CATEGORY} report lines."
-                ),
-            )
-
-        if acknowledge and result.passed:
-            async with self._ctx.admin_db.transaction() as session:
-                ack_id = await ServiceAccountMigrationRepository.record_acknowledgement(
-                    session,
-                    acknowledged_at=now,
-                    unstamped_count=unstamped,
-                    grant_twin_missing_count=twin_missing,
-                    unrevoked_token_count=unrevoked,
-                    digest_mismatch_count=digest_mismatch,
-                    post_stamp_mutation_count=post_stamp,
-                    report_finding_count=result.finding_count,
-                    tool_version=__version__,
+            if problems:
+                error = ServiceAccountRetirementError(problems)
+                logger.error(
+                    "service_account_retirement_refused",
+                    service_account_ids=list(error.service_account_ids),
+                    problem_count=len(error.problems),
+                    actionable_step=_RETIREMENT_RERUN_STEP,
                 )
-            result.acknowledged = True
-            logger.info("service_account_migration_acknowledged", ack_id=ack_id)
-        elif acknowledge:
+                raise error
+            async with self._ctx.admin_db.session() as session:
+                stamps = await ServiceAccountMigrationRepository.list_stamped(session)
+            swept = await self.sweep()
+            orphans = 0
+            async with self._ctx.control_db.transaction() as control_session:
+                orphans = await ServiceAccountMigrationRepository.delete_service_account_rules(
+                    control_session
+                )
+        result = RetirementOutcome(
+            action="retired",
+            migrated=len(migrated_now),
+            skipped=sum(1 for o in outcomes if o.outcome == "skipped-non-active"),
+            already_migrated=sum(1 for o in outcomes if o.outcome == "already_migrated"),
+            post_stamp_grants_copied=post_stamp.grants,
+            post_stamp_bindings_copied=post_stamp.bindings,
+            post_stamp_permission_rules_copied=post_stamp.rules,
+            swept=len(swept.swept),
+            access_tokens_revoked=swept.access_tokens_revoked,
+            refresh_tokens_revoked=swept.refresh_tokens_revoked,
+            permission_rules_deleted=swept.permission_rules_deleted,
+            orphan_permission_rules_deleted=orphans,
+            successors={
+                sa_id: None if stamp == SKIPPED_STAMP else stamp
+                for sa_id, stamp in sorted(stamps.items())
+            },
+            warnings=[w.line() for w in (*post_stamp.withheld, *rule_warnings)],
+        )
+        logger.info("service_account_retirement_done", **_log_fields(asdict(result)))
+        for warning in (*post_stamp.withheld, *rule_warnings):
             logger.warning(
-                "service_account_migration_acknowledge_refused",
-                detail="verification failed; sentinel not written",
+                "service_account_retirement_not_copied",
+                service_account_id=warning.service_account_id,
+                successor_agent_id=warning.successor_agent_id,
+                not_copied=warning.not_copied,
+                why=warning.reason,
+                actionable_step="Re-grant it on the successor agent if it still needs it.",
+            )
+        if result.successors:
+            logger.warning(
+                "service_account_keys_retired",
+                service_account_count=len(result.successors),
+                successors=result.successors,
+                actionable_step=SAK_KEYS_RETIRED_WARNING,
             )
         return result
 
-    async def _count_inline_rule_mismatches(self, migrated_pairs: list[tuple[str, str]]) -> int:
-        """Criterion 6: sva_ bindings with rules whose successor twin count differs."""
-        if not migrated_pairs or not self._ctx.has_db("control"):
-            return 0
-        actor_ids = [sa_id for sa_id, _ in migrated_pairs] + [a for _, a in migrated_pairs]
-        async with self._ctx.control_db.session() as control_session:
-            counts = await ServiceAccountMigrationRepository.count_permission_rules_by_binding(
-                control_session, actor_ids
+    async def _copy_post_stamp_rows(self, migrated_now: set[str]) -> _PostStampCopy:
+        """Twin onto earlier successors the SA grants/bindings created post-stamp.
+
+        A post-stamp SA row never had a twin, but the successor may have held
+        the same scope or binding on its own and lost it since; the audit trail
+        records both removal paths (see
+        :meth:`ServiceAccountMigrationRepository.list_successor_removals`), and
+        such a row is withheld, as is anything for an archived or missing
+        successor. The binding twins' inline rules are copied first, in the
+        control DB (inert until the admin transaction below creates the
+        binding), then one admin transaction writes the twins and one GRANT
+        audit row per successor that gained anything.
+        """
+        result = _PostStampCopy()
+        async with self._ctx.admin_db.session() as session:
+            grant_gaps = [
+                g
+                for g in await ServiceAccountMigrationRepository.list_grant_twin_gaps(session)
+                if g.post_stamp and g.service_account_id not in migrated_now
+            ]
+            binding_gaps = [
+                b
+                for b in await ServiceAccountMigrationRepository.list_binding_twin_gaps(session)
+                if b.post_stamp and b.service_account_id not in migrated_now
+            ]
+            successor_ids = {g.successor_agent_id for g in (*grant_gaps, *binding_gaps)}
+            statuses = await ServiceAccountMigrationRepository.list_agent_statuses(
+                session, successor_ids
             )
-        successor_of = dict(migrated_pairs)
-        mismatches = 0
-        for (actor_id, credential_id), n in counts.items():
-            successor = successor_of.get(actor_id)
-            if successor is None:
-                continue  # a successor-side row, or a non-migrated actor
-            if counts.get((successor, credential_id), 0) != n:
-                mismatches += 1
-        return mismatches
+            (
+                removed_scopes,
+                purged_bindings,
+            ) = await ServiceAccountMigrationRepository.list_successor_removals(
+                session, successor_ids
+            )
+
+        def _unusable(agent_id: str) -> str | None:
+            status = statuses.get(agent_id)
+            if status is None:
+                return "the successor agent no longer exists"
+            if status == ActorStatus.ARCHIVED:
+                return "the successor agent is archived"
+            return None
+
+        grants_to_copy = []
+        for g in grant_gaps:
+            why = _unusable(g.successor_agent_id)
+            if why is None and (g.successor_agent_id, g.scope) in removed_scopes:
+                why = "the audit log shows this scope was removed from the successor"
+            if why is None:
+                grants_to_copy.append(g)
+            else:
+                result.withhold(
+                    RetirementWarning(
+                        g.service_account_id, g.successor_agent_id, f"scope grant {g.scope!r}", why
+                    ),
+                    ("grant", g.service_account_id, str(g.scope)),
+                )
+        bindings_to_copy = []
+        for b in binding_gaps:
+            why = _unusable(b.successor_agent_id)
+            if why is None and (b.successor_agent_id, b.credential_id) in purged_bindings:
+                why = "the audit log shows this binding was purged from the successor"
+            if why is None:
+                bindings_to_copy.append(b)
+            else:
+                result.withhold(
+                    RetirementWarning(
+                        b.service_account_id,
+                        b.successor_agent_id,
+                        f"credential binding {b.credential_id} (and its inline rules)",
+                        why,
+                    ),
+                    ("binding", b.service_account_id, str(b.credential_id)),
+                )
+
+        if bindings_to_copy:
+            by_pair: dict[tuple[str, str], list[str]] = {}
+            for b in bindings_to_copy:
+                by_pair.setdefault((b.service_account_id, b.successor_agent_id), []).append(
+                    str(b.credential_id)
+                )
+            async with self._ctx.control_db.transaction() as control_session:
+                for (sa_id, agent_id), credential_ids in sorted(by_pair.items()):
+                    result.rules += await ServiceAccountMigrationRepository.copy_permission_rules(
+                        control_session,
+                        service_account_id=sa_id,
+                        agent_id=agent_id,
+                        credential_ids=credential_ids,
+                    )
+
+        async with self._ctx.admin_db.transaction() as session:
+            copied: dict[tuple[str, str], dict[str, list[str]]] = {}
+            for gap in grants_to_copy:
+                if await ServiceAccountMigrationRepository.copy_grant_twin(
+                    session, agent_id=gap.successor_agent_id, scope=gap.scope
+                ):
+                    result.grants += 1
+                    key = (gap.service_account_id, gap.successor_agent_id)
+                    copied.setdefault(key, {"scopes": [], "bindings": []})["scopes"].append(
+                        str(gap.scope)
+                    )
+            for gap in bindings_to_copy:
+                if await ServiceAccountMigrationRepository.copy_binding_twin(
+                    session, agent_id=gap.successor_agent_id, source=gap
+                ):
+                    result.bindings += 1
+                    key = (gap.service_account_id, gap.successor_agent_id)
+                    copied.setdefault(key, {"scopes": [], "bindings": []})["bindings"].append(
+                        str(gap.credential_id)
+                    )
+            for (sa_id, agent_id), rows in sorted(copied.items()):
+                await record_audit(
+                    session,
+                    action=AuditAction.GRANT,
+                    target_type=AuditTargetType.AGENT,
+                    target_id=agent_id,
+                    actor_type=_AUDIT_ACTOR_TYPE,
+                    actor_id=_AUDIT_ACTOR_ID,
+                    after={
+                        "service_account_id": sa_id,
+                        "copied_scopes": rows["scopes"],
+                        "copied_credential_ids": rows["bindings"],
+                    },
+                    reason="theme8_sa_retirement_post_stamp_copy",
+                    origin=Origin.SYSTEM.value,
+                )
+                logger.info(
+                    "service_account_retirement_post_stamp_copy",
+                    service_account_id=sa_id,
+                    successor_agent_id=agent_id,
+                    copied_scopes=rows["scopes"],
+                    copied_binding_count=len(rows["bindings"]),
+                )
+        return result
+
+    async def _verification_problems(
+        self,
+        outcomes: list[ServiceAccountMigrationOutcome],
+        migrated_now: set[str],
+        *,
+        withheld: frozenset[tuple[str, str, str]] = frozenset(),
+    ) -> tuple[list[RetirementProblem], list[RetirementWarning]]:
+        """The pre-sweep acceptance checks, plus the non-blocking rule warnings.
+
+        No problems means the drop may proceed. ``withheld`` holds the
+        ``(kind, sa_id, scope|credential_id)`` post-stamp rows deliberately not
+        copied (already reported as warnings), so they are not problems.
+        """
+        problems = [
+            RetirementProblem(o.service_account_id, f"migration failed ({o.reason})")
+            for o in outcomes
+            if o.outcome == "failed"
+        ]
+        failed = {p.service_account_id for p in problems}
+        async with self._ctx.admin_db.session() as session:
+            unstamped = await ServiceAccountMigrationRepository.list_unstamped_ids(session)
+            grant_gaps = await ServiceAccountMigrationRepository.list_grant_twin_gaps(session)
+            binding_gaps = await ServiceAccountMigrationRepository.list_binding_twin_gaps(session)
+            pairs = await ServiceAccountMigrationRepository.list_migrated_pairs(session)
+        problems += [
+            RetirementProblem(sa_id, "not migrated") for sa_id in unstamped if sa_id not in failed
+        ]
+        # For an SA stamped by an earlier run only post-stamp rows count: the
+        # others were copied at stamp time and may since have been removed
+        # from the successor on purpose.
+        problems += [
+            RetirementProblem(
+                g.service_account_id,
+                f"successor {g.successor_agent_id} lacks the scope grant {g.scope!r}",
+            )
+            for g in grant_gaps
+            if (g.service_account_id in migrated_now or g.post_stamp)
+            and ("grant", g.service_account_id, str(g.scope)) not in withheld
+        ]
+        problems += [
+            RetirementProblem(
+                b.service_account_id,
+                f"successor {b.successor_agent_id} lacks the binding for credential "
+                f"{b.credential_id}",
+            )
+            for b in binding_gaps
+            if (b.service_account_id in migrated_now or b.post_stamp)
+            and ("binding", b.service_account_id, str(b.credential_id)) not in withheld
+        ]
+        warnings: list[RetirementWarning] = []
+        if pairs:
+            actor_ids = [sa_id for sa_id, _ in pairs] + [agent_id for _, agent_id in pairs]
+            async with self._ctx.control_db.session() as control_session:
+                counts = await ServiceAccountMigrationRepository.count_permission_rules_by_binding(
+                    control_session, actor_ids
+                )
+            successor_of = dict(pairs)
+            problems += rule_parity_problems(counts, successor_of, migrated_now)
+            # A withheld binding is already reported, rules included.
+            skip = {(sa, cred) for kind, sa, cred in withheld if kind == "binding"}
+            warnings = rule_parity_warnings(counts, successor_of, migrated_now, skip=skip)
+        return problems, warnings
 
 
 __all__ = [
+    "SAK_KEYS_RETIRED_WARNING",
     "SYSTEM_ACTOR",
+    "RetirementOutcome",
+    "RetirementProblem",
+    "RetirementWarning",
     "ServiceAccountMigrationOutcome",
     "ServiceAccountMigrationService",
+    "ServiceAccountRetirementError",
     "SweepOutcome",
-    "VerificationResult",
+    "rule_parity_problems",
+    "rule_parity_warnings",
 ]

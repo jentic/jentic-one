@@ -21,7 +21,7 @@ cd "$PROJECT_ROOT"
 
 # Dev config. `make dev` exports this too, but set a default so the script is
 # self-contained when run directly — a raw `uv run python -m jentic_one` /
-# alembic invocation otherwise fails with a missing `databases` field.
+# migrations invocation otherwise fails with a missing `databases` field.
 export JENTIC_CONFIG_FILE="${JENTIC_CONFIG_FILE:-config/local.yaml}"
 
 COMPOSE_FILE="docker/local-setup/docker-compose.yaml"
@@ -53,15 +53,9 @@ db_reachable() {
 if db_reachable; then
     echo "==> Postgres already reachable — skipping fixtures start."
     echo "==> Ensuring migrations are up to date…"
-    migration_failed=0
-    for name in registry control admin; do
-        if ! uv run alembic -n "$name" upgrade head; then
-            echo "    ERROR: $name migration failed"
-            migration_failed=1
-        fi
-    done
-    if [ "$migration_failed" -ne 0 ]; then
-        echo "ERROR: One or more migrations failed. See output above." >&2
+    # The full runner (ordering + cross-database upgrade steps), as setup.sh.
+    if ! uv run python -m jentic_one.migrations.run; then
+        echo "ERROR: Migrations failed. See output above." >&2
         exit 1
     fi
 else

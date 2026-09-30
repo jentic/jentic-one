@@ -33,6 +33,13 @@ def test_broker_consumed_stripped() -> None:
     assert out["X-Keep"] == "1"
 
 
+def test_retired_toolkit_header_not_forwarded_upstream() -> None:
+    """Old clients still send ``Jentic-Toolkit-Id``; it is ignored and never leaks."""
+    out = forward_headers({"Jentic-Toolkit-Id": "tk_old", "X-Keep": "1"}, {})
+    assert "jentic-toolkit-id" not in {k.lower() for k in out}
+    assert out["X-Keep"] == "1"
+
+
 def test_spoofable_forwarding_headers_stripped() -> None:
     out = forward_headers(
         {

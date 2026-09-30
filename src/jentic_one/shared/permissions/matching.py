@@ -1,8 +1,8 @@
-"""Toolkit permission-rule path matching (single source of truth).
+"""Permission-rule path matching (single source of truth).
 
 Rules are authored on the credentials API
 (``control/web/schemas/permission_rules.py``) and enforced on a second
-surface (``broker/repos/rule_evaluator.py``). This module is the one place
+surface (``broker/repos/agent_rule_evaluator.py``). This module is the one place
 that knows how a ``(path, match_mode)`` pair is validated at save time and
 how it matches an inbound request path at enforce time, so the surfaces
 cannot drift. (The access-request API was a third surface until theme 7

@@ -24,11 +24,12 @@ import (
 	sdkconfig "github.com/jentic/jentic-one/cli/client/config"
 )
 
-// Canonical mode strings (14 BC-9; mirrored in client/config Context.Mode docs).
+// Canonical mode strings (impl/3.1 §0, 14 BC-12; mirrored in client/config Context.Mode docs).
+// The retired `service-account` alias is gone (14 BC-12 removal): it is now an
+// unknown mode like any other and fails closed to AgentUX in the interceptor.
 const (
-	ModeHuman          = "human"
-	ModeAgent          = "agent"
-	ModeServiceAccount = "service-account"
+	ModeHuman = "human"
+	ModeAgent = "agent"
 )
 
 // ActiveState is the CLI's resolved view of the world: the SDK's UX-free
@@ -38,7 +39,8 @@ const (
 type ActiveState struct {
 	*sdkconfig.ResolvedState
 
-	// Mode is the resolved canonical mode ("human"/"agent"/"service-account").
+	// Mode is the resolved mode ("human"/"agent"; any other value is unknown and
+	// fails closed to agent in the root interceptor).
 	Mode string
 	// ModeExplicit records whether Mode came from an explicit source (--mode,
 	// $JENTIC_MODE, or the persisted context mode) rather than the ladder's
@@ -51,9 +53,9 @@ type ActiveState struct {
 	ThemeName string
 }
 
-// IsMachine reports whether this is a fenced machine mode (agent or
-// service-account) rather than a human session — the single canonical
-// "is machine mode?" predicate the CLI keys off. Any non-human mode counts:
+// IsMachine reports whether this is a fenced machine mode (agent) rather than
+// a human session — the single canonical "is machine mode?" predicate the CLI
+// keys off. Any non-human mode counts:
 // unknown modes fail closed to agent at Audience construction (root
 // interceptor), so treating "not human" as machine matches that fail-closed
 // posture. Output rendering (JSONOrPretty), progress-line suppression

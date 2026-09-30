@@ -11,7 +11,6 @@ from sqlalchemy import delete
 
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.invite_tokens import InviteToken
-from jentic_one.admin.core.schema.service_accounts import ServiceAccount
 from jentic_one.admin.core.schema.user_permission_grants import UserPermissionGrant
 from jentic_one.admin.core.schema.user_secrets import UserSecret
 from jentic_one.admin.core.schema.users import User
@@ -72,7 +71,6 @@ async def admin_user_id(web_context: Context) -> AsyncGenerator[str, None]:
         )
         await session.execute(delete(UserSecret).where(UserSecret.user_id == user.id))
         await session.execute(delete(Agent).where(Agent.owner_id == user.id))
-        await session.execute(delete(ServiceAccount).where(ServiceAccount.owner_id == user.id))
         await session.execute(delete(User).where(User.id == user.id))
         await session.commit()
 
@@ -115,7 +113,6 @@ async def owner_user_id(web_context: Context) -> AsyncGenerator[str, None]:
         )
         await session.execute(delete(UserSecret).where(UserSecret.user_id == user.id))
         await session.execute(delete(Agent).where(Agent.owner_id == user.id))
-        await session.execute(delete(ServiceAccount).where(ServiceAccount.owner_id == user.id))
         await session.execute(delete(User).where(User.id == user.id))
         await session.commit()
 

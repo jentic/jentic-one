@@ -2,7 +2,8 @@
 
 Backs the server-host change guard: a catalog re-import or a promote that
 changes an API's server hosts is held for operator review only when the API
-has stored credentials that some agent (or legacy toolkit) is bound to,
+has stored credentials that some agent is bound to (direct agent bindings
+are the only binding form since theme-5 Phase 6b dropped the toolkit tables),
 because only then does the host change redirect where a stored secret is sent.
 
 Registry, control and admin are **separate databases**, and the registry
@@ -27,11 +28,6 @@ _COVERING_CREDENTIALS = text(
     f"SELECT c.id FROM credentials c WHERE {credential_coverage_where()} ORDER BY c.id"
 )
 
-# control DB — legacy toolkit bindings to those credentials.
-_TOOLKIT_BOUND = text(
-    "SELECT 1 FROM toolkit_credential_bindings WHERE credential_id IN :credential_ids LIMIT 1"
-).bindparams(bindparam("credential_ids", expanding=True))
-
 # admin DB — direct agent bindings to those credentials.
 _AGENT_BOUND = text(
     "SELECT 1 FROM agent_credential_bindings WHERE credential_id IN :credential_ids LIMIT 1"
@@ -52,14 +48,6 @@ class CredentialBindingPresenceRepository:
             )
         ).all()
         return [row[0] for row in rows]
-
-    @staticmethod
-    async def any_toolkit_binding(session: AsyncSession, *, credential_ids: list[str]) -> bool:
-        """True when a legacy toolkit binds any of the credentials (**control** DB session)."""
-        if not credential_ids:
-            return False
-        row = (await session.execute(_TOOLKIT_BOUND, {"credential_ids": credential_ids})).first()
-        return row is not None
 
     @staticmethod
     async def any_agent_binding(session: AsyncSession, *, credential_ids: list[str]) -> bool:

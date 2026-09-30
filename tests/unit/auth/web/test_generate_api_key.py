@@ -1,4 +1,4 @@
-"""Unit tests for :generate-api-key endpoints (agents and service accounts)."""
+"""Unit tests for the agent :generate-api-key endpoint."""
 
 from __future__ import annotations
 

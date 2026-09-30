@@ -109,7 +109,6 @@ class _ControlCleanup:
 
     credential_ids: list[str] = field(default_factory=list)
     deactivated: int = 0
-    removed_toolkit_bindings: list[tuple[str, str]] = field(default_factory=list)
 
 
 class ApiService:
@@ -234,9 +233,8 @@ class ApiService:
         """Delete an API and retire the credential access tied to it.
 
         After the registry delete commits, the control credentials stored for
-        the exact API identity are deactivated (#643), the legacy toolkit
-        bindings to them are removed, and every agent binding to them is
-        suspended with reason ``api_deleted`` (#1168). Re-importing
+        the exact API identity are deactivated (#643) and every agent binding
+        to them is suspended with reason ``api_deleted`` (#1168). Re-importing
         a spec under the same ``(vendor, name, version)`` therefore never
         silently re-adopts the old bindings and permission rules: an owner
         restores each one deliberately with the binding ``:resume`` action
@@ -266,10 +264,10 @@ class ApiService:
             before={"vendor": vendor, "name": name, "version": version},
             after={
                 "deactivated_credentials": control.deactivated,
-                "removed_toolkit_bindings": [
-                    {"toolkit_id": toolkit_id, "credential_id": credential_id}
-                    for toolkit_id, credential_id in control.removed_toolkit_bindings
-                ],
+                # Deprecated: always empty since theme-5 Phase 6b dropped the
+                # toolkit tables. Kept so the audit ``after`` shape is stable
+                # for readers of historical and new rows alike.
+                "removed_toolkit_bindings": [],
                 "suspended_bindings": suspended,
             },
             origin=identity.origin.value,
@@ -282,8 +280,7 @@ class ApiService:
 
         Collects the ids of every credential stored for the exact API identity
         (active or not, so their agent bindings can be suspended), deactivates
-        the active ones, and removes the legacy toolkit bindings to all of
-        them, in one control transaction.
+        the active ones, in one control transaction.
 
         Cross-DB and best-effort: the registry delete has already committed, and
         the two databases cannot share a transaction (no 2PC). Deactivating (not
@@ -313,16 +310,7 @@ class ApiService:
                         session, api_vendor=vendor, api_name=name, api_version=version
                     )
                 )
-                removed = await (
-                    ControlCredentialBoundaryRepository.remove_toolkit_bindings_for_credentials(
-                        session, credential_ids=credential_ids
-                    )
-                )
-                return _ControlCleanup(
-                    credential_ids=credential_ids,
-                    deactivated=deactivated,
-                    removed_toolkit_bindings=removed,
-                )
+                return _ControlCleanup(credential_ids=credential_ids, deactivated=deactivated)
         except Exception:
             logger.warning(
                 "control_credential_deactivation_failed",

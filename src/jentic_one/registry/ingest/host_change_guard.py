@@ -41,7 +41,7 @@ def may_approve_host_change(permissions: list[str] | None) -> bool:
 
 
 async def api_has_bound_credentials(ctx: Context, *, vendor: str, name: str, version: str) -> bool:
-    """True when any credential covering the API is bound to an agent or toolkit.
+    """True when any credential covering the API is bound to an agent.
 
     Fails closed: if this process cannot reach the control or admin database,
     or a lookup errors, the API is treated as bound so the change is held.
@@ -53,12 +53,8 @@ async def api_has_bound_credentials(ctx: Context, *, vendor: str, name: str, ver
             credential_ids = await CredentialBindingPresenceRepository.covering_credential_ids(
                 session, vendor=vendor, name=name, version=version
             )
-            if not credential_ids:
-                return False
-            if await CredentialBindingPresenceRepository.any_toolkit_binding(
-                session, credential_ids=credential_ids
-            ):
-                return True
+        if not credential_ids:
+            return False
         if not ctx.is_db_allowed("admin"):
             return True
         async with ctx.admin_db.session() as session:

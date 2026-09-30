@@ -63,7 +63,6 @@ def test_actor_type_enum_values() -> None:
     for actor_type, label in [
         (ActorType.USER, "user"),
         (ActorType.AGENT, "agent"),
-        (ActorType.SERVICE_ACCOUNT, "service_account"),
     ]:
         view = _make_view(actor_type=actor_type)
         resp = ActorSummaryResponse(

@@ -159,8 +159,8 @@ func TestExecuteCmdDeniedSurfacesDirectiveAndExits2(t *testing.T) {
 		w.Header().Set("Jentic-Error-Origin", "broker")
 		w.WriteHeader(http.StatusForbidden)
 		_, _ = w.Write([]byte(`{
-			"type": "no_toolkit_binding",
-			"title": "No toolkit binding for this API",
+			"type": "no_credential_binding",
+			"title": "No credential binding for this API",
 			"status": 403,
 			"error_origin": "broker",
 			"agent_directive": {

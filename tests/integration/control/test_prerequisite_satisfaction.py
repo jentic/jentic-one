@@ -1,10 +1,8 @@
 """Integration tests for the cross-DB predicates on ``PrerequisiteRepository``.
 
 ``get_agent_credential_binding`` answers "does a direct agent↔credential
-binding exist?" (it backs the per-binding permission endpoints);
-``agent_bound_to_any_toolkit`` survives for toolkit consumers outside the
-removed access-request flow (theme 7) until the toolkit tables go (theme-5
-Phase 6b). All run against a real admin DB.
+binding exist?" (it backs the per-binding permission endpoints). All run
+against a real admin DB.
 """
 
 from __future__ import annotations
@@ -25,16 +23,12 @@ _OWNER_ID = "usr_satisfaction_owner"
 
 @pytest.fixture()
 async def seed_admin_rows(admin_db: DatabaseSession) -> AsyncGenerator[None, None]:
-    """Seed an agent bound to one toolkit and holding one scope grant."""
+    """Seed an agent holding one (suspended) credential binding."""
 
     async def _cleanup() -> None:
         async with admin_db.session() as session:
             await session.execute(
                 text("DELETE FROM actor_scope_grants WHERE actor_id = :aid"),
-                {"aid": _AGENT_ID},
-            )
-            await session.execute(
-                text("DELETE FROM agent_toolkit_bindings WHERE agent_id = :aid"),
                 {"aid": _AGENT_ID},
             )
             await session.execute(
@@ -55,13 +49,6 @@ async def seed_admin_rows(admin_db: DatabaseSession) -> AsyncGenerator[None, Non
         )
         await session.execute(
             text(
-                "INSERT INTO agent_toolkit_bindings (id, agent_id, toolkit_id) "
-                "VALUES ('atb_satisfaction_1', :aid, 'tk_satisfaction_bound')"
-            ),
-            {"aid": _AGENT_ID},
-        )
-        await session.execute(
-            text(
                 "INSERT INTO agent_credential_bindings (id, agent_id, credential_id, suspended) "
                 "VALUES ('acb_satisfaction_1', :aid, 'cred_satisfaction_bound', true)"
             ),
@@ -70,30 +57,6 @@ async def seed_admin_rows(admin_db: DatabaseSession) -> AsyncGenerator[None, Non
         await session.commit()
     yield
     await _cleanup()
-
-
-async def test_agent_bound_to_any_toolkit(admin_db: DatabaseSession, seed_admin_rows: None) -> None:
-    """Bound to any candidate → True; disjoint candidates → False; empty → False."""
-    async with admin_db.session() as session:
-        assert await PrerequisiteRepository.agent_bound_to_any_toolkit(
-            session, agent_id=_AGENT_ID, toolkit_ids=["tk_satisfaction_bound"]
-        )
-        # A multi-candidate probe (an ambiguous reference) matches on any hit.
-        assert await PrerequisiteRepository.agent_bound_to_any_toolkit(
-            session,
-            agent_id=_AGENT_ID,
-            toolkit_ids=["tk_satisfaction_other", "tk_satisfaction_bound"],
-        )
-        assert not await PrerequisiteRepository.agent_bound_to_any_toolkit(
-            session, agent_id=_AGENT_ID, toolkit_ids=["tk_satisfaction_other"]
-        )
-        # Empty candidate list short-circuits without querying.
-        assert not await PrerequisiteRepository.agent_bound_to_any_toolkit(
-            session, agent_id=_AGENT_ID, toolkit_ids=[]
-        )
-        assert not await PrerequisiteRepository.agent_bound_to_any_toolkit(
-            session, agent_id="agnt_satisfaction_absent", toolkit_ids=["tk_satisfaction_bound"]
-        )
 
 
 async def test_get_agent_credential_binding(

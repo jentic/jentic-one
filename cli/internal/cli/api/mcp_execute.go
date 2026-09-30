@@ -395,7 +395,7 @@ func classifyTransportErr(err error) error {
 // intact — a struct projection would silently drop unknown future fields),
 // retryable: false — re-sending the same call cannot succeed until access
 // changes. next_tool forks on the problem+json type (theme-7 Phase 1b):
-// provisioning-shaped denials (no_credential_binding / no_toolkit_binding /
+// provisioning-shaped denials (no_credential_binding /
 // credential_not_provisioned) point at request_connection — the agent can
 // start the credential-provisioning leg itself — while everything else
 // (action_denied, credential_identity_mismatch, unknown types) keeps whoami
@@ -418,8 +418,8 @@ func (s *mcpServer) executeDenialError(ctx context.Context, denial *agentops.Den
 
 // provisioningProblemTypes are the problem+json types whose recovery
 // request_connection can start (theme-7 Phase 1b): a missing credential
-// binding where nothing is provisioned (no_credential_binding; the flag-off
-// toolkit path's no_toolkit_binding twin) and a resolved-but-unprovisioned
+// binding where nothing is provisioned (no_credential_binding) and a
+// resolved-but-unprovisioned
 // credential (credential_not_provisioned, 424). Everything else — notably
 // action_denied (a permission rule forbids the op; connecting a fresh
 // credential must NOT be taught as a way around it),
@@ -427,8 +427,11 @@ func (s *mcpServer) executeDenialError(ctx context.Context, denial *agentops.Den
 // the credential), and any unknown type — keeps whoami.
 var provisioningProblemTypes = map[string]bool{
 	"no_credential_binding":      true,
-	"no_toolkit_binding":         true,
 	"credential_not_provisioned": true,
+	// Retired with the toolkit path in 0.41 (theme-5 Phase 6b), but a 0.40.x
+	// server on its legacy flag-off toolkit path still emits it — this CLI
+	// may talk to one mid-upgrade, so keep treating it as provisioning-shaped.
+	"no_toolkit_binding": true,
 }
 
 // denialNextTool picks the recovery pointer for a broker denial, keyed on the

@@ -9,8 +9,9 @@
  * every status so a disabled agent's key trail remains auditable.
  *
  * Successor agents minted by the theme-8 service-account migration carry the
- * retired account's key digest (`sak_…` / `jntc_live_…` plaintexts keep
- * authenticating). Rotating or revoking replaces that single credential row,
+ * retired account's key digest. Only a converted `jntc_live_…` toolkit key
+ * still authenticates through it (`sak_…` keys were retired in 0.41 and are
+ * refused). Rotating or revoking replaces that single credential row,
  * so the confirms warn that the migrated key ends for good while it is still
  * the current one (the migration-created credential row was never rotated).
  */

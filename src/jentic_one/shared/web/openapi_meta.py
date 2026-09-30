@@ -191,8 +191,8 @@ JWKS, then RFC 7523 JWT-bearer assertions exchanged at
 
   | Prefix | Resource | Notes |
   |---|---|---|
-  | `tk_` | Toolkit ID | Retired (theme-5 Phase 5b): the toolkit management surface is gone. Ids still appear in stored records (bindings, audit) until the tables retire in Phase 6b. |
-  | `ck_` | Toolkit-key record | Retired (theme-5 Phase 4): no new keys are issued and the key-management routes are gone (Phase 5b). Each surviving plaintext authenticates as the agent it was migrated to. |
+  | `tk_` | Toolkit ID | Retired (theme-5): the toolkit surface and its tables are gone (Phase 6b). Ids still appear in historical records (execution attribution, audit). |
+  | `ck_` | Toolkit-key record | Retired (theme-5): key records are gone with the toolkit tables (Phase 6b). Ids survive only in audit history. |
   | `cred_` | Credential ID | |
   | `exec_` | Execution record | Returned in the `Jentic-Execution-Id` response header on every brokered call. |
   | `job_` | Async job | UUIDs also accepted on inputs for backward compatibility. |
@@ -204,7 +204,8 @@ JWKS, then RFC 7523 JWT-bearer assertions exchanged at
   | `areq_` | Access request (retired) | Retired (theme 7): the access-request flow is gone. Ids still appear in stored audit/event records. |
   | `note_` | Note | ULID-shaped. Free-form annotation attached to a registry resource — see the `Notes` tag. |
   | `ovr_` | Overlay | ULID-shaped. OpenAPI Overlay 1.0 document attached to an `Api` aggregate — see the `Overlays` tag. |
-  | `jntc_live_` | Plaintext toolkit API key value (retired) | Never issued anymore (issuance died in Phase 4, the management routes in Phase 5b). A surviving value keeps authenticating — as its migrated agent — for the deprecation window; rotate holders to agent (`jak_`) keys. |
+  | `jntc_live_` | Plaintext toolkit API key value (retired) | Never issued anymore. A value migrated before Phase 6b keeps authenticating — as its successor agent — until the deprecation window closes (no earlier than 2026-12-01); rotate holders to the successor agent's `jak_` key. |
+  | `sak_` | Plaintext service-account API key value (retired) | Retired in 0.41: refused with `401` (the detail names the retirement). Each service account was migrated to an agent; mint a `jak_` key for that agent. |
 
   Surfaces still being designed (agent identity, OAuth brokers)
   will add their own prefixes when they land.
@@ -556,9 +557,8 @@ OPENAPI_TAGS: list[dict[str, str]] = [
     {
         "name": "Identity",
         "description": (
-            "Identity introspection for the calling principal (human, agent, or service "
-            "account) — `GET /me` returns the resolved subject, scopes, and permissions behind "
-            "the presented token."
+            "Identity introspection for the calling principal (human or agent) — `GET /me` "
+            "returns the resolved subject, scopes, and permissions behind the presented token."
         ),
     },
     {

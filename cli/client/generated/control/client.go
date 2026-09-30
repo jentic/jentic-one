@@ -20,17 +20,14 @@ import (
 
 // Defines values for ActorType.
 const (
-	ActorTypeAgent          ActorType = "agent"
-	ActorTypeServiceAccount ActorType = "service_account"
-	ActorTypeUser           ActorType = "user"
+	ActorTypeAgent ActorType = "agent"
+	ActorTypeUser  ActorType = "user"
 )
 
 // Valid indicates whether the value is a known member of the ActorType enum.
 func (e ActorType) Valid() bool {
 	switch e {
 	case ActorTypeAgent:
-		return true
-	case ActorTypeServiceAccount:
 		return true
 	case ActorTypeUser:
 		return true
@@ -468,21 +465,6 @@ func (e MeAgentType) Valid() bool {
 	}
 }
 
-// Defines values for MeServiceAccountType.
-const (
-	MeServiceAccountTypeServiceAccount MeServiceAccountType = "service_account"
-)
-
-// Valid indicates whether the value is a known member of the MeServiceAccountType enum.
-func (e MeServiceAccountType) Valid() bool {
-	switch e {
-	case MeServiceAccountTypeServiceAccount:
-		return true
-	default:
-		return false
-	}
-}
-
 // Defines values for MeUserType.
 const (
 	MeUserTypeUser MeUserType = "user"
@@ -910,40 +892,20 @@ type ActorListResponse struct {
 type ActorSummaryResponse struct {
 	Active bool `json:"active"`
 
-	// ActorType Type of authenticated actor.
+	// ActorType Type of authenticated actor: a human user or an agent.
 	//
-	// ``toolkit`` is retired (theme-5 Phase 4): toolkit keys resolve as the
-	// agents the key-retirement job created, so no code path mints a
-	// toolkit identity. Persisted ``actor_type='toolkit'`` strings survive in
-	// historical rows (events, audit entries, execution records) until the
-	// Phase-6b scope-data sweep; read paths must tolerate the string without
-	// round-tripping it through this enum.
-	//
-	// ``service_account`` is deserialization-only (theme-8 Phase 2): the
-	// service-account surface is gone and no issuance path produces it, but
-	// stored token rows, grant rows, audit/execution records, and telemetry
-	// history carry the value, and the Phase-1 resolver fallback still resolves
-	// unmigrated ``sak_`` keys as it. Deletion is a Phase-4/5 decision.
+	// Historical records may carry older actor-type values that are no longer
+	// issued; treat unrecognised values as opaque labels.
 	ActorType ActorType `json:"actor_type"`
 	CreatedAt time.Time `json:"created_at"`
 	Id        string    `json:"id"`
 	Name      string    `json:"name"`
 }
 
-// ActorType Type of authenticated actor.
+// ActorType Type of authenticated actor: a human user or an agent.
 //
-// “toolkit“ is retired (theme-5 Phase 4): toolkit keys resolve as the
-// agents the key-retirement job created, so no code path mints a
-// toolkit identity. Persisted “actor_type='toolkit'“ strings survive in
-// historical rows (events, audit entries, execution records) until the
-// Phase-6b scope-data sweep; read paths must tolerate the string without
-// round-tripping it through this enum.
-//
-// “service_account“ is deserialization-only (theme-8 Phase 2): the
-// service-account surface is gone and no issuance path produces it, but
-// stored token rows, grant rows, audit/execution records, and telemetry
-// history carry the value, and the Phase-1 resolver fallback still resolves
-// unmigrated “sak_“ keys as it. Deletion is a Phase-4/5 decision.
+// Historical records may carry older actor-type values that are no longer
+// issued; treat unrecognised values as opaque labels.
 type ActorType string
 
 // AgentCreateRequest Request body for creating an agent manually.
@@ -1759,10 +1721,11 @@ type GovernedHostsResponse struct {
 
 // GroupBy Grouping dimension for usage statistics.
 //
-// “TOOLKIT“ is deprecated (theme-5 Phase 5b) and will be removed one
-// release later, with the toolkit tables (Phase 6b): execution records
-// carry a “credential_id“ since Phase 2 and the direct-binding path
-// writes no “toolkit_id“, so “CREDENTIAL“ is the replacement axis.
+// “TOOLKIT“ is a legacy axis: it groups over the surviving
+// “execution_records.toolkit_id“ attribution column, which nothing writes
+// since the toolkit path was deleted (theme-5 Phase 6b). It stays so
+// historical dashboards keep working; “CREDENTIAL“ is the live
+// consumer axis (execution records carry “credential_id“ since Phase 2).
 type GroupBy string
 
 // HealthResponse Health check response for the admin surface.
@@ -1916,31 +1879,11 @@ type MeAgent struct {
 	Scopes             []string                  `json:"scopes"`
 	Status             string                    `json:"status"`
 	TokenScopes        []string                  `json:"token_scopes"`
-	ToolkitBindings    []ToolkitBindingEntry     `json:"toolkit_bindings"`
 	Type               *MeAgentType              `json:"type,omitempty"`
 }
 
 // MeAgentType defines model for MeAgent.Type.
 type MeAgentType string
-
-// MeServiceAccount Identity response for a (retired) service-account actor.
-//
-// Served only to callers whose unmigrated “sak_“/“jntc_live_“ key
-// resolved through the Phase-1 SA-table fallback (theme 8). Deleted with the
-// fallback in Phase 4.
-type MeServiceAccount struct {
-	ApprovedBy   *string               `json:"approved_by,omitempty"`
-	Id           string                `json:"id"`
-	Name         string                `json:"name"`
-	RegisteredBy string                `json:"registered_by"`
-	Scopes       []string              `json:"scopes"`
-	Status       string                `json:"status"`
-	TokenScopes  []string              `json:"token_scopes"`
-	Type         *MeServiceAccountType `json:"type,omitempty"`
-}
-
-// MeServiceAccountType defines model for MeServiceAccount.Type.
-type MeServiceAccountType string
 
 // MeUser Identity response for a user actor.
 type MeUser struct {
@@ -1960,7 +1903,7 @@ type MeUserType string
 // NoAuthCreateRequest Create request for no_auth credentials.
 //
 // A no-auth credential carries no secret — it represents "this API is called
-// without authentication". It still exists as a credential row so a toolkit
+// without authentication". It still exists as a credential row so an agent
 // binding (and its permission rules) can hang off it, and the broker resolves
 // it as a no-op auth (see broker credential resolver / injection).
 type NoAuthCreateRequest struct {
@@ -2979,7 +2922,7 @@ type SecuritySchemeResponse struct {
 	Type             string                        `json:"type"`
 }
 
-// ServedApiRef An API served by a toolkit's bound credential, keyed by its stored identity.
+// ServedApiRef An API served by an agent's bound credential, keyed by its stored identity.
 //
 // Distinct from “APIReference“ on purpose: this carries the *stored* credential
 // identity, where “api_name“/“api_version“ may be NULL (the "covers all
@@ -3058,14 +3001,6 @@ type TokenResponse struct {
 	// Scope Space-delimited effective scopes of the minted access token (RFC 6749 §3.3), computed the way the platform's resolvers enforce them (live scope grants ∩ client ceiling ∩ consent-grant scopes for agent tokens), so the granted set may be narrower than requested and clients must not assume they got what they asked for. Present on every response whose token carries at least one scope; OMITTED (never the ABNF-invalid empty string) only when the effective set is empty — reachable solely on legs where the client requested no scopes at the token endpoint (the token request carries no scope parameter, and consent fails closed on an empty intersection).
 	Scope     *string `json:"scope,omitempty"`
 	TokenType *string `json:"token_type,omitempty"`
-}
-
-// ToolkitBindingEntry Toolkit binding summary for the /me response.
-type ToolkitBindingEntry struct {
-	BoundAt   time.Time       `json:"bound_at"`
-	Name      *string         `json:"name,omitempty"`
-	Serves    *[]ServedApiRef `json:"serves,omitempty"`
-	ToolkitId string          `json:"toolkit_id"`
 }
 
 // TopOperation Aggregated execution counts for a single operation.
@@ -4410,40 +4345,6 @@ func (t *GetMe200JSONResponseBody) MergeMeAgent(v MeAgent) error {
 	return err
 }
 
-// AsMeServiceAccount returns the union data inside the GetMe200JSONResponseBody as a MeServiceAccount
-func (t GetMe200JSONResponseBody) AsMeServiceAccount() (MeServiceAccount, error) {
-	var body MeServiceAccount
-	err := json.Unmarshal(t.union, &body)
-	return body, err
-}
-
-// FromMeServiceAccount overwrites any union data inside the GetMe200JSONResponseBody as the provided MeServiceAccount
-func (t *GetMe200JSONResponseBody) FromMeServiceAccount(v MeServiceAccount) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-	b, err = runtime.JSONMerge(b, []byte(`{"type":"service_account"}`))
-	t.union = b
-	return err
-}
-
-// MergeMeServiceAccount performs a merge with any union data inside the GetMe200JSONResponseBody, using the provided MeServiceAccount
-func (t *GetMe200JSONResponseBody) MergeMeServiceAccount(v MeServiceAccount) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-	b, err = runtime.JSONMerge(b, []byte(`{"type":"service_account"}`))
-	if err != nil {
-		return err
-	}
-
-	merged, err := runtime.JSONMerge(t.union, b)
-	t.union = merged
-	return err
-}
-
 func (t GetMe200JSONResponseBody) Discriminator() (string, error) {
 	var discriminator struct {
 		Discriminator string `json:"type"`
@@ -4460,8 +4361,6 @@ func (t GetMe200JSONResponseBody) ValueByDiscriminator() (interface{}, error) {
 	switch discriminator {
 	case "agent":
 		return t.AsMeAgent()
-	case "service_account":
-		return t.AsMeServiceAccount()
 	case "user":
 		return t.AsMeUser()
 	default:
@@ -5712,7 +5611,8 @@ type ClientInterface interface {
 	// List agents directly bound to a credential with cursor-based pagination.
 	//
 	// The reverse lookup for the credential-detail "Agents" view (theme 5
-	// phase 1) — the direct-binding mirror of ``GET /toolkits/{id}/agents``.
+	// phase 1) — the direct-binding successor of the removed
+	// ``GET /toolkits/{id}/agents``.
 	// Suspended bindings are included with their flag set.
 	//
 	// Corresponds with GET /credentials/{credential_id}/agents (the `ListCredentialAgents` operationId).
@@ -9381,7 +9281,8 @@ func (c *Client) UpdateCredential(ctx context.Context, credentialId string, body
 // List agents directly bound to a credential with cursor-based pagination.
 //
 // The reverse lookup for the credential-detail "Agents" view (theme 5
-// phase 1) — the direct-binding mirror of “GET /toolkits/{id}/agents“.
+// phase 1) — the direct-binding successor of the removed
+// “GET /toolkits/{id}/agents“.
 // Suspended bindings are included with their flag set.
 //
 // Corresponds with GET /credentials/{credential_id}/agents (the `ListCredentialAgents` operationId).
@@ -21854,7 +21755,8 @@ type ClientWithResponsesInterface interface {
 	// List agents directly bound to a credential with cursor-based pagination.
 	//
 	// The reverse lookup for the credential-detail "Agents" view (theme 5
-	// phase 1) — the direct-binding mirror of ``GET /toolkits/{id}/agents``.
+	// phase 1) — the direct-binding successor of the removed
+	// ``GET /toolkits/{id}/agents``.
 	// Suspended bindings are included with their flag set.
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -38714,7 +38616,8 @@ func (c *ClientWithResponses) UpdateCredentialWithResponse(ctx context.Context, 
 // List agents directly bound to a credential with cursor-based pagination.
 //
 // The reverse lookup for the credential-detail "Agents" view (theme 5
-// phase 1) — the direct-binding mirror of “GET /toolkits/{id}/agents“.
+// phase 1) — the direct-binding successor of the removed
+// “GET /toolkits/{id}/agents“.
 // Suspended bindings are included with their flag set.
 //
 // Returns a wrapper object for the known response body format(s).

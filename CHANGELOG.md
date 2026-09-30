@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.40.1](https://github.com/jentic/jentic-one/compare/v0.40.0...v0.40.1) (2026-09-29)
+
+
+### Bug Fixes
+
+* **broker:** match credentials on the request's resolved server variables ([#1486](https://github.com/jentic/jentic-one/issues/1486)) ([9fd4879](https://github.com/jentic/jentic-one/commit/9fd48798538e286a1b29a47e77b7ec2abc6e1db6))
+* **broker:** re-check agent and credential authorization when a queued execution runs ([#1478](https://github.com/jentic/jentic-one/issues/1478)) ([8360645](https://github.com/jentic/jentic-one/commit/83606456f405c86ac0eb4657f6ad3a956a7ecde4))
+* **cli:** run the MCP service account from a root-owned binary copy ([#1482](https://github.com/jentic/jentic-one/issues/1482)) ([e096956](https://github.com/jentic/jentic-one/commit/e09695639a8f9b3ad3975b7d14ef56bca8c95a97))
+* **control:** store connect-session poll tokens hashed ([#1477](https://github.com/jentic/jentic-one/issues/1477)) ([0381126](https://github.com/jentic/jentic-one/commit/03811268bce8c032e569822f6a0c616ce7798b17))
+* **helm:** mount only the app secrets each surface reads ([#1484](https://github.com/jentic/jentic-one/issues/1484)) ([3eda549](https://github.com/jentic/jentic-one/commit/3eda549698cde57bf118a460632ce70ce1f294aa))
+* **registry:** derive vendors from the registrable domain using the Public Suffix List ([#1483](https://github.com/jentic/jentic-one/issues/1483)) ([0c240b4](https://github.com/jentic/jentic-one/commit/0c240b47f11e982534d9a84047422a289e0c6775))
+* **registry:** hold server-host changes on credential-bound APIs for review ([#1488](https://github.com/jentic/jentic-one/issues/1488)) ([60a1b61](https://github.com/jentic/jentic-one/commit/60a1b616c38de528444c54ebf92efe14d2bcefe7))
+* **registry:** index URLs per revision and serve only live revisions ([#1487](https://github.com/jentic/jentic-one/issues/1487)) ([4d6b8a9](https://github.com/jentic/jentic-one/commit/4d6b8a99219c88228ba98a357a8f8c255f313b2d))
+* **registry:** return the canonical API name from inspect ([#1480](https://github.com/jentic/jentic-one/issues/1480)) ([d649879](https://github.com/jentic/jentic-one/commit/d649879fc34e1c30ea3c23495967e7f7cceb1927))
+* **registry:** suspend agent credential bindings when their API is deleted ([#1485](https://github.com/jentic/jentic-one/issues/1485)) ([5ce38ae](https://github.com/jentic/jentic-one/commit/5ce38ae4e411f24e7d6e52e49ef1934391116f89))
+
 ## [0.40.0](https://github.com/jentic/jentic-one/compare/v0.39.0...v0.40.0) (2026-09-29)
 
 

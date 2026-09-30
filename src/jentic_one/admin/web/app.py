@@ -27,8 +27,9 @@ from jentic_one.admin.web.routers import (
 )
 from jentic_one.shared.auth.api_key_resolver import (
     AGENT_API_KEY_PREFIX,
-    SERVICE_ACCOUNT_API_KEY_PREFIX,
+    RETIRED_SERVICE_ACCOUNT_KEY_DETAIL,
     ApiKeyResolver,
+    is_retired_service_account_key,
 )
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
@@ -92,9 +93,14 @@ def _make_verifier(ctx: Context) -> Any:
     api_key_resolver = ApiKeyResolver(ctx.admin_db)
 
     async def _verify(token: str, request: Request) -> Identity:
-        if token.startswith(AGENT_API_KEY_PREFIX) or token.startswith(
-            SERVICE_ACCOUNT_API_KEY_PREFIX
-        ):
+        if is_retired_service_account_key(token):
+            await api_key_resolver.resolve(token)  # logs the refusal; never resolves
+            raise Unauthorized(
+                detail=RETIRED_SERVICE_ACCOUNT_KEY_DETAIL,
+                instance=request.url.path,
+                type="unauthorized",
+            )
+        if token.startswith(AGENT_API_KEY_PREFIX):
             resolved = await api_key_resolver.resolve(token)
             if resolved is None or not resolved.active:
                 raise Unauthorized(

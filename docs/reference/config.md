@@ -81,7 +81,6 @@ Service-level settings (immutable after boot).
 | `services.request_timeout_s` | number | `30.0` | `JENTIC__SERVICES__REQUEST_TIMEOUT_S` |  |
 | `services.retry_max` | integer | `3` | `JENTIC__SERVICES__RETRY_MAX` |  |
 | `services.retry_backoff_s` | number | `1.0` | `JENTIC__SERVICES__RETRY_BACKOFF_S` |  |
-| `services.service_account_sweep_min_stamp_age_hours` | integer | `24` | `JENTIC__SERVICES__SERVICE_ACCOUNT_SWEEP_MIN_STAMP_AGE_HOURS` |  |
 
 ## `worker`
 
@@ -210,7 +209,6 @@ Broker surface configuration.
 | `broker.toolkit_cache_ttl_s` | number | `3.0` | `JENTIC__BROKER__TOOLKIT_CACHE_TTL_S` |  |
 | `broker.rule_cache_ttl_s` | number | `3.0` | `JENTIC__BROKER__RULE_CACHE_TTL_S` |  |
 | `broker.rule_cache_max_entries` | integer | `5000` | `JENTIC__BROKER__RULE_CACHE_MAX_ENTRIES` |  |
-| `broker.direct_bindings_enabled` | boolean | `true` | `JENTIC__BROKER__DIRECT_BINDINGS_ENABLED` |  |
 | `broker.jobs_api_base_url` | string \| null | `null` | `JENTIC__BROKER__JOBS_API_BASE_URL` |  |
 | `broker.jwt_secret` | string (secret) \| null | `null` | `JENTIC__BROKER__JWT_SECRET` |  |
 | `broker.jwt_verification.audience` | string \| null | `null` | `JENTIC__BROKER__JWT_VERIFICATION__AUDIENCE` |  |

@@ -216,16 +216,13 @@ def classify_denial(status: int, headers: httpx.Headers, body: bytes) -> ToolErr
 
 #: The problem+json ``type`` values whose recovery request_connection can
 #: start (theme-7 Phase 1b): a missing credential binding where nothing is
-#: provisioned yet (``no_credential_binding``; the flag-off toolkit path's
-#: ``no_toolkit_binding`` twin) and a resolved-but-unprovisioned credential
+#: provisioned yet (``no_credential_binding``) and a resolved-but-unprovisioned credential
 #: (``credential_not_provisioned``, 424). Everything else — ``action_denied``
 #: (a permission rule forbids the op; connecting a fresh credential must NOT
 #: be taught as a way around it), ``credential_identity_mismatch`` (an
 #: operator fixes the credential), ``credential_undecryptable`` (operator
 #: re-adds it), and any unknown type — keeps ``whoami``.
-_PROVISIONING_PROBLEM_TYPES = frozenset(
-    {"no_credential_binding", "no_toolkit_binding", "credential_not_provisioned"}
-)
+_PROVISIONING_PROBLEM_TYPES = frozenset({"no_credential_binding", "credential_not_provisioned"})
 
 
 def _denial_next_tool(problem_type: str, directive: dict[str, Any] | None) -> str:

@@ -1,11 +1,12 @@
 """Repository for agent-credential-binding permission rule operations (theme 5 phase 1).
 
-The direct-binding analogue of ``ToolkitPermissionRepository``, with one
+The direct-binding analogue of the deleted toolkit-era
+``ToolkitPermissionRepository`` (theme-5 Phase 6b), with one
 deliberate semantic difference: there is **no vendor pooling**. A binding's
 rules are a single ordered list keyed ``(agent_id, credential_id)`` —
 first-match-wins over exactly the rules attached to that binding. (Toolkit
-rules pool across same-vendor bindings because the broker's toolkit query
-joins through the binding table; the per-binding model exists to remove
+rules pooled across same-vendor bindings because the broker's toolkit query
+joined through the binding table; the per-binding model exists to remove
 that ambiguity.)
 """
 

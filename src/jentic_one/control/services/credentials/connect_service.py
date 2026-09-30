@@ -99,7 +99,12 @@ class ConnectService:
         # narrow the type for mypy.
         assert created_by is not None
 
-        actor_type = ActorType(state.actor_type) if state.actor_type else ActorType.USER
+        try:
+            actor_type = ActorType(state.actor_type) if state.actor_type else ActorType.USER
+        except ValueError as exc:
+            # A state signed for a retired actor type (e.g. ``service_account``,
+            # theme-8 Phase 4): that actor can no longer own a credential.
+            raise ConnectFlowError(f"Unsupported actor_type in state: {state.actor_type}") from exc
         try:
             provider = self._ctx.providers.get(state.provider)
             result = await provider.complete_connect(self._ctx, state=state, callback=callback)

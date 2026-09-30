@@ -55,9 +55,9 @@ cross-surface needs are met three ways:
   the in-process seams (for example `InProcessRegistryResolver`, which lets
   the broker resolve operations without importing `jentic_one.registry`).
 - **Raw SQL at a named seam** — when the control plane must touch admin-DB
-  rows (the toolkit-key retirement job mints successor agents; credential
+  rows (the service-account migration mints successor agents; credential
   effects bind credentials to agents),
-  [`control/repos/key_retirement_repo.py`](../../src/jentic_one/control/repos/key_retirement_repo.py) and
+  [`control/repos/service_account_migration_repo.py`](../../src/jentic_one/control/repos/service_account_migration_repo.py) and
   [`control/repos/effects_repo.py`](../../src/jentic_one/control/repos/effects_repo.py) use raw SQL rather than importing admin's
   ORM models. The [worked example below](#a-request-layer-by-layer) traces
   the cross-database boundary in action.

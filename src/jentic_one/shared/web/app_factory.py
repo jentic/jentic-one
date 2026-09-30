@@ -18,10 +18,6 @@ from opentelemetry.instrumentation.asyncpg import AsyncPGInstrumentor
 from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
 
 from jentic_one import __version__
-from jentic_one.control.services.key_retirement import KeyRetirementService
-from jentic_one.control.services.service_account_migration import (
-    ServiceAccountMigrationService,
-)
 from jentic_one.registry.services.import_service import ImportHandler
 from jentic_one.shared.catalog import CatalogAutoImportProtocol
 from jentic_one.shared.context import Context
@@ -271,135 +267,6 @@ def _start_catalog_update_scanner(
     return scanner, task
 
 
-async def _run_key_retirement(ctx: Context) -> None:
-    """One-shot toolkit-key auto-migration at boot (theme-5 Phase 4).
-
-    An upgrade must not silently break headless ``jntc_live_`` callers: the
-    resolver that served them is gone, so every resolvable key needs its
-    successor agent before the first request. The migration runner already
-    performs the job as an upgrade step; this boot run is the safety net for a
-    process that starts without a fresh migration. The job is idempotent
-    (stamped keys short-circuit) and holds a cross-process run lock, so every
-    replica running it at once is safe and a cheap no-op after the first.
-    Best-effort: a failure is loud in the logs but never blocks
-    boot (nor the SA migration sequenced after it) — the
-    ``retire-toolkit-keys`` CLI (with ``--owner`` for unresolvable creators)
-    is the recovery path.
-    """
-    try:
-        outcomes = await KeyRetirementService(ctx).run()
-    except Exception:
-        _logger.exception("toolkit_key_retirement_startup_failed")
-        return
-    failed = sum(1 for o in outcomes if o.action == "failed")
-    if failed:
-        _logger.error(
-            "toolkit_key_retirement_keys_failed",
-            count=failed,
-            actionable_step="Fix the logged error, then run `jentic_one retire-toolkit-keys`.",
-        )
-    unresolved = sum(1 for o in outcomes if o.reason == "owner_unresolved")
-    if unresolved:
-        _logger.warning(
-            "toolkit_key_retirement_owner_unresolved",
-            count=unresolved,
-            actionable_step=(
-                "Run `jentic_one retire-toolkit-keys --owner <admin-email>` "
-                "to migrate the remaining keys."
-            ),
-        )
-
-
-async def _run_service_account_migration(ctx: Context) -> None:
-    """One-shot service-account → agent migration at boot (theme-8 Phase 1).
-
-    Loud-but-non-blocking on failure — the ``migrate-service-accounts`` CLI
-    is the recovery path. Re-runs are cheap no-ops (stamp short-circuit),
-    which is also what catches SA rows left over from before the upgrade
-    (the ``/service-accounts`` write surface was removed in theme-8 Phase 2).
-    After the migration
-    pass the boot arm triggers the **age-gated** automatic sweep (N3) — never
-    the ungated sweep; a negative configured stamp age disables the automatic
-    sweep arm entirely.
-    """
-    _logger.info("service_account_migration_task_started")
-    svc = ServiceAccountMigrationService(ctx)
-    try:
-        outcomes = await svc.run()
-    except Exception:
-        _logger.exception("service_account_migration_startup_failed")
-        return
-    failed = sum(1 for o in outcomes if o.outcome == "failed")
-    if failed:
-        _logger.warning(
-            "service_account_migration_rows_failed",
-            count=failed,
-            actionable_step=(
-                "Run `jentic_one migrate-service-accounts` and inspect the "
-                "JSONL report for the failing rows."
-            ),
-        )
-    if ctx.config.services.service_account_sweep_min_stamp_age_hours < 0:
-        return
-    try:
-        await svc.sweep()
-    except Exception:
-        _logger.exception("service_account_migration_sweep_failed")
-
-
-def _start_boot_migrations(ctx: Context, enabled_apps: set[str]) -> asyncio.Task[None] | None:
-    """Run the boot-time identity migrations as ONE sequenced one-shot task.
-
-    Key retirement first, then the SA → agent migration — never concurrently.
-    Key retirement may reuse an unstamped pre-theme-8 SA crash remnant as a
-    key's successor and bind ``sva_``-keyed rows onto it; the SA migration
-    copies an SA's bindings onto its successor agent and stamps the SA.
-    Running them as independent tasks let those binds land *after* the
-    migration had already copied + stamped the remnant, so the successor
-    missed them and ``verify`` (post-stamp mutations) failed until the sweep.
-    Sequencing makes the in-process order deterministic: the migration always
-    sees the remnant's final binding set. (The repo-level row lock in
-    ``KeyRetirementRepository.find_successor_by_name`` serialises the admin-DB
-    binds against a second replica or an operator CLI run. The control-DB
-    ``toolkit_keys`` stamp is written in a later transaction, so a concurrent
-    migration landing in that gap leaves the key pointing at the stamped
-    ``sva_`` id until the next migration run's ``already_migrated`` re-stamp
-    heals it.)
-
-    Both jobs keep their own failure isolation: each step logs and swallows
-    its own errors, so a failing key retirement never prevents the migration.
-    Gate on the control surface owning the tables plus both DBs being
-    reachable (identical for both jobs, so combined and standalone-control
-    deployments start the pair together; broker-only never does).
-    """
-    if "control" not in enabled_apps:
-        return None
-    if not (ctx.has_db("control") and ctx.has_db("admin")):
-        return None
-
-    async def _run() -> None:
-        await _run_key_retirement(ctx)
-        await _run_service_account_migration(ctx)
-
-    task = asyncio.create_task(_run())
-    _logger.info("toolkit_key_retirement_task_started")
-    return task
-
-
-async def _stop_one_shot(task: asyncio.Task[None] | None) -> None:
-    """Cancel-and-await a one-shot startup task at shutdown.
-
-    Normally the task finished long ago and this is a no-op; on a very fast
-    boot→shutdown (tests, crashed sibling) the cancel keeps teardown from
-    leaking a pending task warning.
-    """
-    if task is None:
-        return
-    task.cancel()
-    with contextlib.suppress(asyncio.CancelledError):
-        await task
-
-
 async def _stop_catalog_update_scanner(
     handle: tuple[CatalogUpdateScanner, asyncio.Task[None]] | None,
 ) -> None:
@@ -636,7 +503,6 @@ def create_surface_app(
             )
             scanner_task = _start_expiry_scanner(ctx, enabled_apps)
             catalog_scanner_task = _start_catalog_update_scanner(ctx, enabled_apps)
-            boot_migrations_task = _start_boot_migrations(ctx, enabled_apps)
             connect_poll_task = _start_connect_poll_scanner(
                 ctx,
                 enabled_apps,
@@ -653,7 +519,6 @@ def create_surface_app(
                 gate = getattr(app.state, "broker_admission_gate", None)
                 if gate is not None and hasattr(gate, "start_draining"):
                     gate.start_draining()
-                await _stop_one_shot(boot_migrations_task)
                 await _stop_connect_poll_scanner(connect_poll_task)
                 await _stop_catalog_update_scanner(catalog_scanner_task)
                 await _stop_expiry_scanner(scanner_task)
@@ -756,7 +621,6 @@ def create_combined_app(
             worker_task = _start_worker(ctx, set(apps))
             scanner_task = _start_expiry_scanner(ctx, set(apps))
             catalog_scanner_task = _start_catalog_update_scanner(ctx, set(apps))
-            boot_migrations_task = _start_boot_migrations(ctx, set(apps))
             connect_poll_task = _start_connect_poll_scanner(
                 ctx,
                 set(apps),
@@ -765,7 +629,6 @@ def create_combined_app(
             try:
                 yield
             finally:
-                await _stop_one_shot(boot_migrations_task)
                 await _stop_connect_poll_scanner(connect_poll_task)
                 await _stop_catalog_update_scanner(catalog_scanner_task)
                 await _stop_expiry_scanner(scanner_task)

@@ -36,9 +36,10 @@ async def record_execution(
 ) -> str:
     """Persist a terminal execution record. Returns the record ID.
 
-    ``toolkit_id`` is nullable-legacy (theme-5 Phase 2): the legacy toolkit
-    path records its mediating toolkit; direct-binding executions pass ``None``
-    (their consumer attribution is ``credential_id``).
+    ``toolkit_id`` is nullable-legacy: the toolkit path (deleted in theme-5
+    Phase 6b) recorded its mediating toolkit; every execution now passes
+    ``None`` (its consumer attribution is ``credential_id``). Historical rows
+    keep theirs.
     """
     if status not in tuple(ExecutionStatus):
         raise ValueError(f"Only terminal statuses allowed, got: {status!r}")

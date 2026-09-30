@@ -567,12 +567,12 @@ async def test_resolve_missing_agent_row_fails_closed(
 
 @patch("jentic_one.auth.services.token_service.ActorScopeGrantRepository")
 @patch("jentic_one.auth.services.token_service.AccessTokenRepository")
-async def test_resolve_service_account_token_is_always_inactive(
+async def test_resolve_residual_service_account_token_fails_closed(
     mock_at_repo: MagicMock,
     mock_grant_repo: MagicMock,
 ) -> None:
-    """Theme-8 Phase 2 (M-3): ``_actor_is_active`` refuses ``service_account``
-    explicitly — no SA row is consulted, and the answer is never True."""
+    """Theme-8 Phase 4: ``service_account`` is no longer an actor type. A
+    residual token row carrying it resolves to nothing (never raises)."""
     ctx = _make_ctx()
     at_row = _make_access_token_row(actor_id="sva_x", actor_type="service_account")
     mock_at_repo.get_by_hash = AsyncMock(return_value=at_row)
@@ -581,8 +581,7 @@ async def test_resolve_service_account_token_is_always_inactive(
     svc = TokenService(ctx)
     resolved = await svc.resolve_access_token("at_satoken")
 
-    assert resolved is not None
-    assert resolved.active is False
+    assert resolved is None
 
 
 @patch("jentic_one.auth.services.token_service.UserRepository")
