@@ -331,6 +331,86 @@ async def test_update_device_flow_rejects_auth_code_only_fields(
 
 
 @pytest.mark.usefixtures("clean_registrations")
+@pytest.mark.parametrize(
+    ("field", "url"),
+    [
+        ("authorize_url", "http://idp.example.com/authorize"),
+        ("token_url", "https://169.254.169.254/token"),
+        ("token_url", "https://127.0.0.1/token"),
+    ],
+)
+async def test_create_authorization_code_rejects_unsafe_urls(
+    integration_context: Context, field: str, url: str
+) -> None:
+    svc = OAuthAppRegistrationService(integration_context)
+    urls = {"authorize_url": "https://ex/a", "token_url": "https://ex/t", field: url}
+    with pytest.raises(InvalidOAuthAppRegistrationInputError, match=field):
+        await svc.create_authorization_code(
+            name="AC",
+            api_vendor="v",
+            catalog_api_id="v/api",
+            display_name="V",
+            client_id="cid",
+            client_secret="s",
+            default_scopes=None,
+            identity=_ADMIN,
+            **urls,
+        )
+
+
+@pytest.mark.usefixtures("clean_registrations")
+async def test_create_device_authorization_rejects_unsafe_urls(
+    integration_context: Context,
+) -> None:
+    svc = OAuthAppRegistrationService(integration_context)
+    with pytest.raises(InvalidOAuthAppRegistrationInputError, match="authorization_endpoint"):
+        await svc.create_device_authorization(
+            name="DA",
+            api_vendor="v",
+            catalog_api_id="v/api",
+            display_name="V",
+            client_id="cid",
+            authorization_endpoint="https://10.0.0.1/device/code",
+            token_endpoint="https://ex/t",
+            default_scopes=None,
+            identity=_ADMIN,
+        )
+
+
+@pytest.mark.usefixtures("clean_registrations")
+@pytest.mark.parametrize(
+    ("field", "url"),
+    [
+        ("token_endpoint", "http://ex/t"),
+        ("authorization_endpoint", "https://localhost/d"),
+    ],
+)
+async def test_update_rejects_unsafe_urls(
+    integration_context: Context, field: str, url: str
+) -> None:
+    svc = OAuthAppRegistrationService(integration_context)
+    reg = await svc.create_device_authorization(
+        name="DA",
+        api_vendor="v",
+        catalog_api_id="v/api",
+        display_name="V",
+        client_id="cid",
+        authorization_endpoint="https://ex/d",
+        token_endpoint="https://ex/t",
+        default_scopes=None,
+        identity=_ADMIN,
+    )
+    with pytest.raises(InvalidOAuthAppRegistrationInputError, match=field):
+        if field == "token_endpoint":
+            await svc.update(reg.id, token_endpoint=url, identity=_ADMIN)
+        else:
+            await svc.update(reg.id, authorization_endpoint=url, identity=_ADMIN)
+    unchanged = await svc.get(reg.id)
+    assert unchanged.authorization_endpoint == "https://ex/d"
+    assert unchanged.token_endpoint == "https://ex/t"
+
+
+@pytest.mark.usefixtures("clean_registrations")
 async def test_rotate_client_secret_updates_secret_and_timestamp(
     integration_context: Context,
 ) -> None:

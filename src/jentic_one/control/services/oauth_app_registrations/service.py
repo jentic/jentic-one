@@ -28,6 +28,7 @@ from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_b
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.models.audit import AuditReason
+from jentic_one.shared.url_validation import validate_upstream_url
 
 
 class OAuthAppRegistrationService:
@@ -50,6 +51,8 @@ class OAuthAppRegistrationService:
         default_scopes: list[str] | None,
         identity: Identity,
     ) -> OAuthAppRegistrationView:
+        authorize_url = _validate_endpoint_url("authorize_url", authorize_url)
+        token_url = _validate_endpoint_url("token_url", token_url)
         encrypted = self._ctx.encryption.encrypt(client_secret)
         async with self._ctx.control_db.transaction() as session:
             registration = await OAuthAppRegistrationRepository.create_authorization_code(
@@ -99,6 +102,10 @@ class OAuthAppRegistrationService:
         default_scopes: list[str] | None,
         identity: Identity,
     ) -> OAuthAppRegistrationView:
+        authorization_endpoint = _validate_endpoint_url(
+            "authorization_endpoint", authorization_endpoint
+        )
+        token_endpoint = _validate_endpoint_url("token_endpoint", token_endpoint)
         async with self._ctx.control_db.transaction() as session:
             registration = await OAuthAppRegistrationRepository.create_device_authorization(
                 session,
@@ -177,6 +184,12 @@ class OAuthAppRegistrationService:
         is_active: bool | None = None,
         identity: Identity,
     ) -> OAuthAppRegistrationView:
+        authorize_url = _validate_optional_endpoint_url("authorize_url", authorize_url)
+        token_url = _validate_optional_endpoint_url("token_url", token_url)
+        authorization_endpoint = _validate_optional_endpoint_url(
+            "authorization_endpoint", authorization_endpoint
+        )
+        token_endpoint = _validate_optional_endpoint_url("token_endpoint", token_endpoint)
         async with self._ctx.control_db.transaction() as session:
             registration = await OAuthAppRegistrationRepository.get_by_id(session, registration_id)
             if registration is None:
@@ -319,6 +332,24 @@ class OAuthAppRegistrationService:
             before=before,
             origin=identity.origin.value,
         )
+
+
+def _validate_endpoint_url(field: str, value: str) -> str:
+    """Require an https URL that passes the upstream SSRF guard.
+
+    These endpoints receive client credentials and authorization codes, so
+    plain http and private/metadata targets are refused at write time.
+    """
+    if not value.strip().lower().startswith("https://"):
+        raise InvalidOAuthAppRegistrationInputError(f"Invalid {field}: must use https")
+    try:
+        return validate_upstream_url(value)
+    except ValueError as exc:
+        raise InvalidOAuthAppRegistrationInputError(f"Invalid {field}: {exc}") from exc
+
+
+def _validate_optional_endpoint_url(field: str, value: str | None) -> str | None:
+    return None if value is None else _validate_endpoint_url(field, value)
 
 
 def _project(
