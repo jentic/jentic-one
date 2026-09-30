@@ -42,6 +42,7 @@ import {
 	useAgentScopes,
 	type AgentEntity,
 } from '@/modules/agents/api';
+import { DuplicateNameHint } from '@/modules/agents/components/DuplicateNameHint';
 import { EASE_OUT_SOFT } from '@/modules/agents/components/flat/GhostFleet';
 import { AGENT_NAME_MAX_LENGTH, agentNameError } from '@/modules/agents/lib/agentName';
 import type { FirstAgentExit, FirstAgentPhase } from '@/modules/agents/lib/firstRun';
@@ -49,14 +50,15 @@ import { useGithubPick } from '@/modules/agents/lib/githubPick';
 import { useRegisterTarget } from '@/modules/agents/lib/useRegisterTarget';
 import { scopeRisk, type ScopeRisk } from '@/modules/agents/lib/requestedScopes';
 import {
-	DEFAULT_REGISTER_NAME,
 	commandText,
 	registerCommandTokens,
+	type CommandToken,
 	type CommandTone,
 } from '@/modules/agents/lib/registerCommand';
 
-/** Where the flow is shown: the landing's card, or the New agent panel (narrower,
- * and its tab already says the route is recommended). */
+/** Where the flow is shown: the landing's card (which marks the route
+ * recommended), or the New agent panel (narrower, where it is one of two tabs
+ * and carries no such mark). */
 export type RegisterSurface = 'landing' | 'panel';
 
 /** Card header: glyph, title, one line, trailing badge. The title takes focus
@@ -106,26 +108,45 @@ const TONE_CLASS: Record<CommandTone, string | undefined> = {
 	placeholder: 'text-muted-foreground',
 };
 
+/** The command's words, a flag held together with its value, so a wrapped
+ * command never splits `--name` from the name. */
+function commandWordGroups(tokens: CommandToken[]): CommandToken[][] {
+	const groups: CommandToken[][] = [];
+	for (const token of tokens) {
+		const last = groups[groups.length - 1];
+		if (last && last.length === 1 && last[0].tone === 'flag' && token.tone !== 'flag') {
+			last.push(token);
+		} else {
+			groups.push([token]);
+		}
+	}
+	return groups;
+}
+
 export function RegisterCommand({
 	titleId,
 	name,
 	onNameChange,
+	commandName,
+	duplicateOf,
 	surface = 'landing',
 	inputRef,
 }: {
 	titleId: string;
 	name: string;
 	onNameChange: (name: string) => void;
+	/** The name the command registers with (the suggestion while `name` is blank). */
+	commandName: string;
+	/** The existing agent name `name` duplicates, or `null`. */
+	duplicateOf: string | null;
 	surface?: RegisterSurface;
 	inputRef?: RefObject<HTMLInputElement | null>;
 }) {
 	const inputId = useId();
+	const hintId = `${inputId}-duplicate`;
 	const nameError = agentNameError(name);
 	const target = useRegisterTarget();
-	const tokens = registerCommandTokens({
-		...target,
-		name: nameError ? DEFAULT_REGISTER_NAME : name.trim(),
-	});
+	const tokens = registerCommandTokens({ ...target, name: commandName });
 
 	return (
 		<div>
@@ -166,8 +187,13 @@ export function RegisterCommand({
 						maxLength={AGENT_NAME_MAX_LENGTH}
 						spellCheck={false}
 						autoComplete="off"
+						// Only while shown: an explicit `undefined` would drop the error's own link.
+						{...(duplicateOf && !nameError ? { 'aria-describedby': hintId } : {})}
 						className="h-[34px] font-mono text-[13px]"
 					/>
+					{duplicateOf && !nameError && (
+						<DuplicateNameHint id={hintId} existing={duplicateOf} />
+					)}
 				</div>
 			</div>
 
@@ -195,10 +221,19 @@ export function RegisterCommand({
 					className="text-foreground/90 px-3.5 py-3 font-mono text-[13px] leading-relaxed [overflow-wrap:anywhere] whitespace-pre-wrap"
 				>
 					<span className="text-success select-none">$</span>
-					{tokens.map((token, i) => (
+					{commandWordGroups(tokens).map((group, i) => (
 						<span key={i}>
 							{' '}
-							<span className={TONE_CLASS[token.tone]}>{token.text}</span>
+							{/* A line breaks only between groups; a group wider than the
+							    whole line (a long URL) still breaks inside. */}
+							<span className="inline-block max-w-full">
+								{group.map((token, j) => (
+									<span key={j}>
+										{j > 0 && ' '}
+										<span className={TONE_CLASS[token.tone]}>{token.text}</span>
+									</span>
+								))}
+							</span>
 						</span>
 					))}
 				</pre>
@@ -342,17 +377,21 @@ export function Stepper({
 }: {
 	phase: FirstAgentPhase;
 	reducedMotion: boolean;
-	/** The panel is too narrow for four columns at any viewport: it keeps two. */
+	/** The landing goes to four columns on a `sm` viewport; the panel goes by its
+	 * own width (its host is an `@container`), so a narrow sheet keeps two. */
 	surface?: RegisterSurface;
 }) {
-	const twoColumns = surface === 'panel';
+	const inPanel = surface === 'panel';
 	const states = STEP_STATES[phase];
 	const fills = SEGMENT_FILL[phase];
 	return (
 		<ol
 			aria-label="Registration progress"
 			data-testid="register-stepper"
-			className={cn('mt-4 grid grid-cols-2 gap-x-3 gap-y-4', !twoColumns && 'sm:grid-cols-4')}
+			className={cn(
+				'mt-4 grid grid-cols-2 gap-x-3 gap-y-4',
+				inPanel ? '@[32rem]:grid-cols-4' : 'sm:grid-cols-4',
+			)}
 		>
 			{STEPS.map(({ icon: Icon, title, detail }, i) => {
 				const state = states[i];
@@ -376,7 +415,8 @@ export function Stepper({
 								aria-hidden="true"
 								className={cn(
 									'bg-border absolute top-3.5 right-[calc(100%+6px)] h-px w-[calc(100%-28px)] overflow-hidden',
-									i === 2 && (twoColumns ? 'hidden' : 'hidden sm:block'),
+									i === 2 &&
+										(inPanel ? 'hidden @[32rem]:block' : 'hidden sm:block'),
 								)}
 							>
 								<motion.span

@@ -7,7 +7,7 @@
  * every `agent.*` event, and while the stream is down or lagging the roster is
  * polled every few seconds as the fallback — only while the panel is open on
  * its register tab and has no approved agent yet. Every opening starts fresh:
- * a new opening time and roster snapshot, nothing tracked, the default name.
+ * a new opening time and roster snapshot, nothing tracked, and a fresh name suggestion.
  */
 import { useEffect, useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
@@ -19,9 +19,8 @@ import {
 	type useApproveAgent,
 	type useDenyAgent,
 } from '@/modules/agents/api';
-import { agentNameError } from '@/modules/agents/lib/agentName';
-import { DEFAULT_REGISTER_NAME } from '@/modules/agents/lib/registerCommand';
 import { FIRST_AGENT_POLL_MS } from '@/modules/agents/lib/useFirstAgentLanding';
+import { useRegisterName } from '@/modules/agents/lib/useRegisterName';
 import { derivePanelArrival } from '@/modules/agents/lib/registerPanel';
 
 const NO_AGENTS: AgentEntity[] = [];
@@ -39,7 +38,6 @@ export function useRegisterPanel({ open, active, approve, deny }: RegisterPanelO
 	const [openedAt, setOpenedAt] = useState(() => Date.now());
 	const [knownAtOpen, setKnownAtOpen] = useState<ReadonlySet<string>>(() => new Set());
 	const [trackedId, setTrackedId] = useState<string | null>(null);
-	const [registerName, setRegisterName] = useState(DEFAULT_REGISTER_NAME);
 	// The phase the poll was last gated on (the roster is read below it).
 	const [approved, setApproved] = useState(false);
 	const stream = useAgentStreamOptional();
@@ -55,6 +53,13 @@ export function useRegisterPanel({ open, active, approve, deny }: RegisterPanelO
 		() => query.data?.pages.flatMap((p) => p.entities) ?? NO_AGENTS,
 		[query.data],
 	);
+	const names = useMemo(() => agents.map((a) => a.name), [agents]);
+	const rosterRead = !query.isPending && (!query.hasNextPage || query.isError);
+	// Whether the command was on screen as of the last render: the phase is
+	// derived from the command's name below, so the name reads the phase back.
+	const [listening, setListening] = useState(true);
+	// "my-agent" over a fleet, "my-first-agent" in an org with no agent at all.
+	const nameDraft = useRegisterName({ names, rosterRead, listening });
 
 	// Reset during render on the opening itself, so the first frame of a new
 	// opening never shows the last one's agent.
@@ -65,11 +70,11 @@ export function useRegisterPanel({ open, active, approve, deny }: RegisterPanelO
 			setOpenedAt(Date.now());
 			setKnownAtOpen(new Set(agents.map((a) => a.id)));
 			setTrackedId(null);
-			setRegisterName(DEFAULT_REGISTER_NAME);
+			nameDraft.reset();
 		}
 	}
 
-	const commandName = agentNameError(registerName) ? DEFAULT_REGISTER_NAME : registerName.trim();
+	const { commandName } = nameDraft;
 	const deniedId = deny.isSuccess ? (deny.variables?.id ?? null) : null;
 	const view = derivePanelArrival({
 		agents,
@@ -82,6 +87,7 @@ export function useRegisterPanel({ open, active, approve, deny }: RegisterPanelO
 	const agent = open ? view.agent : null;
 	const phase = open ? view.phase : 'listening';
 	if ((phase === 'approved') !== approved) setApproved(phase === 'approved');
+	if ((phase === 'listening') !== listening) setListening(phase === 'listening');
 
 	const agentId = agent?.id ?? null;
 	useEffect(() => {
@@ -107,10 +113,14 @@ export function useRegisterPanel({ open, active, approve, deny }: RegisterPanelO
 		phase,
 		morePending: open ? view.morePending : 0,
 		approving,
-		registerName,
-		setRegisterName,
+		registerName: nameDraft.name,
+		setRegisterName: nameDraft.setName,
 		/** The name the displayed command registers with. */
 		commandName,
+		/** The existing agent name the typed one duplicates, or `null`. */
+		registerNameDuplicateOf: nameDraft.duplicateOf,
+		/** Every agent name in the org, for the create form's duplicate hint. */
+		names,
 		/** Whether the roster poll is running (the stream's fallback). */
 		polling,
 	};

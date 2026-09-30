@@ -1,10 +1,10 @@
 import { test, expect, type Page } from '@playwright/test';
 
 /**
- * The New agent panel (mocked). Over an existing fleet, "New agent" opens on
- * "Register from the CLI": an agent that registers after the panel opened is
- * approved and handed its first API there, and the panel closes onto the fleet
- * with it selected.
+ * The New agent panel (mocked). "New agent" opens on "Create here"; over an
+ * existing fleet, its "Register from the CLI" tab takes an agent that registers
+ * after the panel opened, approves it and hands it its first API, and the panel
+ * closes onto the fleet with it selected.
  */
 async function login(page: Page) {
 	await page.goto('/app/');
@@ -23,10 +23,20 @@ test('an existing fleet registers another agent from the New agent panel', async
 	await page.getByRole('button', { name: 'New agent' }).click();
 	const panel = page.getByRole('dialog', { name: 'New agent' });
 	await expect(panel).toBeVisible();
-	await expect(panel.getByRole('tab', { name: /Register from the CLI/ })).toHaveAttribute(
-		'aria-selected',
-		'true',
-	);
+	const createTab = panel.getByRole('tab', { name: 'Create here' });
+	const registerTab = panel.getByRole('tab', { name: 'Register from the CLI' });
+	await expect(createTab).toHaveAttribute('aria-selected', 'true');
+	await expect(panel.getByLabel('Name', { exact: true })).toBeFocused();
+	await expect(panel.getByText('Recommended')).toHaveCount(0);
+	// The two routes split the bar in equal halves.
+	const [a, b] = await Promise.all([createTab.boundingBox(), registerTab.boundingBox()]);
+	expect(Math.abs((a?.width ?? 0) - (b?.width ?? -1))).toBeLessThan(1);
+
+	await registerTab.click();
+	await expect(registerTab).toHaveAttribute('aria-selected', 'true');
+	await expect(panel.getByLabel('Agent name')).toBeFocused();
+	// The fleet already holds names; the suggestion is one none of them has.
+	await expect(panel.getByLabel('Agent name')).toHaveValue('my-agent');
 	// The seeded fleet's pending agents were there before the panel: not arrivals.
 	await expect(panel.getByTestId('register-status')).toContainText('Listening for new agents…');
 	await panel.getByLabel('Agent name').fill('research-bot');

@@ -61,7 +61,7 @@ export type { SegmentedToggleOption } from '@/shared/ui/SegmentedToggle';
 export { StatCard } from '@/shared/ui/StatCard';
 export type { StatAccent } from '@/shared/ui/StatCard';
 export { TabNav } from '@/shared/ui/TabNav';
-export type { TabNavOption } from '@/shared/ui/TabNav';
+export type { TabNavChangeSource, TabNavOption } from '@/shared/ui/TabNav';
 
 export { Kbd } from '@/shared/ui/Kbd';
 

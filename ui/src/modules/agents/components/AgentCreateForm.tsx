@@ -8,11 +8,16 @@
  * authenticate but every call it makes fails, so "created" is not a finished
  * state. `Create empty` stays available, de-emphasised, for reserving an identity.
  */
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { Button, Input, Label, Textarea } from '@/shared/ui';
 import { useCreateAgent, type AgentEntity } from '@/modules/agents/api';
+import { DuplicateNameHint } from '@/modules/agents/components/DuplicateNameHint';
 import { InitialScopesField } from '@/modules/agents/components/InitialScopesField';
-import { AGENT_NAME_MAX_LENGTH, agentNameError } from '@/modules/agents/lib/agentName';
+import {
+	AGENT_NAME_MAX_LENGTH,
+	agentNameError,
+	duplicateAgentName,
+} from '@/modules/agents/lib/agentName';
 
 export interface AgentCreateFormOptions {
 	/** Whether the hosting surface is open — transient errors clear on each open. */
@@ -105,8 +110,17 @@ export function useAgentCreateForm({
 
 export type AgentCreateFormState = ReturnType<typeof useAgentCreateForm>;
 
-/** The intro line and the form's fields. */
-export function AgentCreateFields({ form }: { form: AgentCreateFormState }) {
+/** The intro line and the form's fields. `existingNames` (the org's agents,
+ * archived ones included) flags a name another agent already has. */
+export function AgentCreateFields({
+	form,
+	existingNames = [],
+}: {
+	form: AgentCreateFormState;
+	existingNames?: readonly string[];
+}) {
+	const hintId = useId();
+	const duplicateOf = form.error ? null : duplicateAgentName(existingNames, form.name);
 	return (
 		<div className="space-y-4">
 			<p className="text-muted-foreground text-sm">
@@ -123,7 +137,10 @@ export function AgentCreateFields({ form }: { form: AgentCreateFormState }) {
 					placeholder="e.g. inbox-triage-bot"
 					error={form.error ?? undefined}
 					maxLength={AGENT_NAME_MAX_LENGTH}
+					// Only while shown: an explicit `undefined` would drop the error's own link.
+					{...(duplicateOf ? { 'aria-describedby': hintId } : {})}
 				/>
+				{duplicateOf && <DuplicateNameHint id={hintId} existing={duplicateOf} />}
 			</div>
 			<div className="space-y-1.5">
 				<Label htmlFor="agent-description">Description</Label>

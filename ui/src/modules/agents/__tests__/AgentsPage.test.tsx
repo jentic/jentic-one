@@ -79,11 +79,14 @@ function renderPage(route = '/', { withAuth = false }: { withAuth?: boolean } = 
 	return renderWithProviders(withAuth ? <AuthProvider>{ui}</AuthProvider> : ui, { route });
 }
 
-/** Open the New agent panel over the fleet and switch to its "Create here" tab. */
+/** Open the New agent panel over the fleet, on its "Create here" tab. */
 async function openCreateHere(user: ReturnType<typeof userEvent.setup>): Promise<HTMLElement> {
 	await user.click(screen.getByRole('button', { name: 'New agent' }));
 	const sheet = await screen.findByRole('dialog', { name: 'New agent' });
-	await user.click(within(sheet).getByRole('tab', { name: 'Create here' }));
+	expect(within(sheet).getByRole('tab', { name: 'Create here' })).toHaveAttribute(
+		'aria-selected',
+		'true',
+	);
 	return sheet;
 }
 
@@ -1120,7 +1123,7 @@ describe('AgentsPage — flat agents surface', () => {
 		expect(screen.queryByTestId('agent-dock')).not.toBeInTheDocument();
 
 		// The header's create button steps back for a fresh org; it opens the panel
-		// on "Create here", beside the landing's own register card.
+		// on "Create here", as it always does.
 		const create = screen.getByRole('button', { name: 'New agent' });
 		expect(create).toHaveAttribute('data-emphasis', 'secondary');
 		await user.click(create);

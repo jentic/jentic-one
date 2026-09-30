@@ -30,6 +30,8 @@ test('a fresh workspace finishes its first agent inside the landing', async ({ p
 
 	const landing = page.getByTestId('agents-empty-landing');
 	await expect(landing).toBeVisible();
+	// No agent has ever existed here: the suggestion is the first agent's.
+	await expect(page.getByLabel('Agent name')).toHaveValue('my-first-agent');
 	await page.getByLabel('Agent name').fill('research-bot');
 	await expect(page.getByTestId('register-command')).toContainText('--name research-bot');
 

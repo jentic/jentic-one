@@ -1,7 +1,7 @@
 /**
  * The New agent panel over an existing fleet: one sheet, two routes in as tabs
- * — "Register from the CLI" (the default, and recommended) and "Create here".
- * The register tab listens for an agent that registers after the panel
+ * — "Create here" (first, and where every opening starts) and "Register from
+ * the CLI". The register tab listens for an agent that registers after the panel
  * opened, then approves it and hands it its first API, closing onto the fleet
  * with it selected.
  */
@@ -58,6 +58,14 @@ async function openPanel(user: User) {
 	return screen.findByRole('dialog', { name: 'New agent' });
 }
 
+/** The panel opened, then switched to "Register from the CLI" once it settles. */
+async function openRegister(user: User) {
+	const sheet = await openPanel(user);
+	await user.click(registerTab());
+	await waitFor(() => expect(within(sheet).getByLabelText('Agent name')).toHaveFocus());
+	return sheet;
+}
+
 /** What `jentic register` leaves behind; invalidating is what the stream does. */
 async function register(queryClient: QueryClientLike, ...names: string[]) {
 	const ids = names.map((name) => selfRegisterAgent(name));
@@ -97,28 +105,50 @@ describe('Agents page — the New agent panel over a fleet', () => {
 		resetAgentsStore();
 	});
 
-	it('opens on "Register from the CLI", marked recommended, listening', async () => {
+	it('opens on "Create here", the first tab, with its name focused', async () => {
 		const user = userEvent.setup();
 		renderPage();
 		const sheet = await openPanel(user);
 
+		const tabs = within(sheet).getAllByRole('tab');
+		expect(tabs.map((t) => t.textContent)).toEqual(['Create here', 'Register from the CLI']);
+		expect(createTab()).toHaveAttribute('aria-selected', 'true');
+		expect(registerTab()).toHaveAttribute('aria-selected', 'false');
+		// No tag on either route.
+		expect(registerTab()).toHaveAccessibleName('Register from the CLI');
+		expect(within(sheet).queryByText('Recommended')).toBeNull();
+		expect(within(sheet).getByRole('tabpanel')).toHaveAttribute(
+			'aria-labelledby',
+			createTab().id,
+		);
+		// The register pane waits, mounted but hidden and out of reach.
+		const registerPane = within(sheet).getByTestId('new-agent-panel-register');
+		expect(registerPane).toHaveAttribute('data-state', 'inactive');
+		expect(registerPane).toHaveAttribute('inert');
+		expect(registerPane).not.toBeVisible();
+		await waitFor(() => expect(within(sheet).getByLabelText('Name')).toHaveFocus());
+		await waitFor(() => checkA11y(sheet), { timeout: 3000 });
+	});
+
+	it('"Register from the CLI" shows the command, listening', async () => {
+		const user = userEvent.setup();
+		renderPage();
+		const sheet = await openRegister(user);
+
 		expect(registerTab()).toHaveAttribute('aria-selected', 'true');
-		expect(registerTab()).toHaveAccessibleName('Register from the CLI Recommended');
-		expect(createTab()).toHaveAttribute('aria-selected', 'false');
-		const tabpanel = within(sheet).getByRole('tabpanel');
-		expect(tabpanel).toHaveAttribute('aria-labelledby', registerTab().id);
+		expect(within(sheet).getByRole('tabpanel')).toHaveAttribute(
+			'aria-labelledby',
+			registerTab().id,
+		);
 		expect(
 			within(sheet).getByRole('heading', { name: 'Let your agent register itself' }),
 		).toBeInTheDocument();
-		expect(within(sheet).getByTestId('register-command')).toHaveTextContent(
-			/--name my-first-agent$/,
-		);
+		// Over a fleet the suggestion is "my-agent" (no agent has it).
+		expect(within(sheet).getByTestId('register-command')).toHaveTextContent(/--name my-agent$/);
 		expect(within(sheet).getByTestId('register-stepper')).toBeInTheDocument();
 		expect(within(sheet).getByTestId('cli-install-hint')).toBeInTheDocument();
 		expect(status()).toHaveTextContent('Listening for new agents…');
 		expect(status()).toHaveAttribute('aria-live', 'polite');
-		// Its focus lands on the command's name.
-		await waitFor(() => expect(within(sheet).getByLabelText('Agent name')).toHaveFocus());
 		await waitFor(() => checkA11y(sheet), { timeout: 3000 });
 	});
 
@@ -127,27 +157,103 @@ describe('Agents page — the New agent panel over a fleet', () => {
 		renderPage();
 		const sheet = await openPanel(user);
 
-		await user.click(createTab());
-		expect(createTab()).toHaveAttribute('aria-selected', 'true');
-		expect(within(sheet).getByLabelText('Name')).toBeInTheDocument();
-		expect(within(sheet).getByRole('button', { name: 'Create and add APIs' })).toBeVisible();
-		expect(within(sheet).queryByTestId('register-command')).toBeNull();
-
-		createTab().focus();
-		await user.keyboard('{ArrowLeft}');
+		await user.click(registerTab());
 		expect(registerTab()).toHaveAttribute('aria-selected', 'true');
-		expect(registerTab()).toHaveFocus();
-		expect(within(sheet).getByTestId('register-command')).toBeInTheDocument();
-		expect(within(sheet).queryByRole('button', { name: 'Create and add APIs' })).toBeNull();
-		await user.keyboard('{End}');
+		await waitFor(() => expect(within(sheet).getByTestId('register-command')).toBeVisible());
+		await waitFor(() =>
+			expect(
+				within(sheet).getByRole('button', { name: 'Create and add APIs', hidden: true }),
+			).not.toBeVisible(),
+		);
+
+		registerTab().focus();
+		await user.keyboard('{ArrowLeft}');
 		expect(createTab()).toHaveAttribute('aria-selected', 'true');
+		// Arrow keys keep focus on the tab list, as the tabs pattern expects.
+		expect(createTab()).toHaveFocus();
+		expect(within(sheet).getByLabelText('Name')).toBeInTheDocument();
+		await waitFor(() =>
+			expect(within(sheet).getByTestId('register-command')).not.toBeVisible(),
+		);
+		expect(within(sheet).getByRole('button', { name: 'Create and add APIs' })).toBeVisible();
+		expect(createTab()).toHaveFocus();
+		await user.keyboard('{End}');
+		expect(registerTab()).toHaveAttribute('aria-selected', 'true');
+	});
+
+	it('splits the tab bar in equal halves', async () => {
+		const user = userEvent.setup();
+		renderPage();
+		await openPanel(user);
+		const [create, register] = [createTab(), registerTab()];
+		expect(create).toHaveClass('flex-1', 'basis-0', 'justify-center');
+		expect(register).toHaveClass('flex-1', 'basis-0', 'justify-center');
+		await waitFor(() => {
+			const a = create.getBoundingClientRect().width;
+			expect(a).toBeGreaterThan(0);
+			expect(Math.abs(a - register.getBoundingClientRect().width)).toBeLessThan(1);
+		});
+	});
+
+	it('slides between tabs in the direction of travel, then focuses the new tab’s field', async () => {
+		const user = userEvent.setup();
+		renderPage();
+		const sheet = await openPanel(user);
+		await waitFor(() => expect(within(sheet).getByLabelText('Name')).toHaveFocus());
+		const pane = (value: string) => within(sheet).getByTestId(`new-agent-panel-${value}`);
+		const offsetX = (value: string) =>
+			new DOMMatrix(getComputedStyle(pane(value)).transform).m41;
+		const opacity = (value: string) => Number(getComputedStyle(pane(value)).opacity);
+		// Both panes stay mounted: the register pane waits to the right.
+		expect(offsetX('register')).toBe(32);
+
+		await user.click(registerTab());
+		// Mid-slide both panes show; the leaving one is already out of reach.
+		await waitFor(() => {
+			expect(offsetX('register')).toBeGreaterThan(0);
+			expect(offsetX('register')).toBeLessThan(32);
+		});
+		expect(opacity('create')).toBeGreaterThan(0);
+		expect(pane('create')).toHaveAttribute('inert');
+		expect(within(sheet).getAllByRole('tabpanel')).toHaveLength(1);
+		// Toward the later tab: the old pane leaves to the left.
+		expect(offsetX('create')).toBeLessThan(0);
+
+		await waitFor(() => expect(pane('create')).not.toBeVisible());
+		expect(offsetX('create')).toBe(-32);
+		expect(offsetX('register')).toBe(0);
+		await waitFor(() => expect(within(sheet).getByLabelText('Agent name')).toHaveFocus());
+
+		await user.click(createTab());
+		// Back: the create pane enters from the left, the register one leaves right.
+		await waitFor(() => {
+			expect(offsetX('create')).toBeLessThan(0);
+			expect(offsetX('create')).toBeGreaterThan(-32);
+		});
+		expect(offsetX('register')).toBeGreaterThan(0);
+		await waitFor(() => expect(pane('register')).not.toBeVisible());
+		await waitFor(() => expect(within(sheet).getByLabelText('Name')).toHaveFocus());
+	});
+
+	it('with reduced motion, switches tabs instantly and focuses the new field', async () => {
+		const user = userEvent.setup();
+		renderWithProviders(
+			<MotionConfig reducedMotion="always">
+				<AgentsPage />
+			</MotionConfig>,
+		);
+		const sheet = await openPanel(user);
+		await user.click(registerTab());
+		const create = within(sheet).getByTestId('new-agent-panel-create');
+		await waitFor(() => expect(create).not.toBeVisible(), { timeout: 100 });
+		expect(within(sheet).getByTestId('new-agent-panel-register')).toBeVisible();
+		await waitFor(() => expect(within(sheet).getByLabelText('Agent name')).toHaveFocus());
 	});
 
 	it('"Create here" creates the agent and flows into its APIs as before', async () => {
 		const user = userEvent.setup();
 		renderPage();
 		const sheet = await openPanel(user);
-		await user.click(createTab());
 		await user.type(within(sheet).getByLabelText('Name'), 'hand-made');
 		await user.click(within(sheet).getByRole('button', { name: 'Create and add APIs' }));
 
@@ -174,7 +280,7 @@ describe('Agents page — the New agent panel over a fleet', () => {
 		]);
 		const user = userEvent.setup();
 		const { queryClient } = renderPage();
-		await openPanel(user);
+		await openRegister(user);
 		await queryClient.invalidateQueries();
 
 		// The seed's own pending agents and the earlier one: none is an arrival.
@@ -182,22 +288,20 @@ describe('Agents page — the New agent panel over a fleet', () => {
 		expect(within(panel()).queryByTestId('arrival-card')).toBeNull();
 		expect(status()).toHaveTextContent('Listening for new agents…');
 
-		await register(queryClient, 'my-first-agent');
+		await register(queryClient, 'my-agent');
 		const card = await arrival();
-		expect(within(card).getByRole('heading', { name: 'my-first-agent' })).toBeInTheDocument();
+		expect(within(card).getByRole('heading', { name: 'my-agent' })).toBeInTheDocument();
 		expect(card).toHaveTextContent(/Registered just now/);
 		// Nor are the older ones counted as waiting beside it.
 		expect(within(card).queryByTestId('more-pending')).toBeNull();
 		expect(within(card).queryByTestId('arrival-warnings')).toBeNull();
-		expect(status()).toHaveTextContent(
-			'my-first-agent just registered · awaiting your approval',
-		);
+		expect(status()).toHaveTextContent('my-agent just registered · awaiting your approval');
 	});
 
 	it('of several arrivals, picks the one carrying the typed name and counts the rest', async () => {
 		const user = userEvent.setup();
 		const { queryClient } = renderPage();
-		const sheet = await openPanel(user);
+		const sheet = await openRegister(user);
 		const input = within(sheet).getByLabelText('Agent name');
 		await user.clear(input);
 		await user.type(input, 'research-bot');
@@ -216,18 +320,18 @@ describe('Agents page — the New agent panel over a fleet', () => {
 	it('flags an arrival whose name differs from the command', async () => {
 		const user = userEvent.setup();
 		const { queryClient } = renderPage();
-		await openPanel(user);
+		await openRegister(user);
 		await register(queryClient, 'someone-else');
 		const card = await arrival();
 		expect(within(card).getByTestId('arrival-name-warning')).toHaveTextContent(
-			'It registered as someone-else, not my-first-agent',
+			'It registered as someone-else, not my-agent',
 		);
 	});
 
 	it('approve → first API → "Continue with GitHub" opens its credential step over the fleet', async () => {
 		const user = userEvent.setup();
 		const { queryClient } = renderPage();
-		await openPanel(user);
+		await openRegister(user);
 		const [id] = await register(queryClient, 'my-first-agent');
 		const firstApi = await approveArrival(user, 'my-first-agent');
 
@@ -260,7 +364,7 @@ describe('Agents page — the New agent panel over a fleet', () => {
 	it('"Skip for now" closes onto the fleet with the agent selected', async () => {
 		const user = userEvent.setup();
 		const { queryClient } = renderPage();
-		await openPanel(user);
+		await openRegister(user);
 		const [id] = await register(queryClient, 'my-first-agent');
 		const firstApi = await approveArrival(user, 'my-first-agent');
 
@@ -279,7 +383,7 @@ describe('Agents page — the New agent panel over a fleet', () => {
 	it('denying the arrival returns to listening, keeping the typed name', async () => {
 		const user = userEvent.setup();
 		const { queryClient } = renderPage();
-		const sheet = await openPanel(user);
+		const sheet = await openRegister(user);
 		const input = within(sheet).getByLabelText('Agent name');
 		await user.clear(input);
 		await user.type(input, 'research-bot');
@@ -306,7 +410,11 @@ describe('Agents page — the New agent panel over a fleet', () => {
 		await screen.findByTestId('agent-dock');
 		expect(pollIntervals(queryClient)).not.toContain(FIRST_AGENT_POLL_MS);
 
+		// Open on "Create here": no poll.
 		await openPanel(user);
+		await new Promise((r) => setTimeout(r, 100));
+		expect(pollIntervals(queryClient)).not.toContain(FIRST_AGENT_POLL_MS);
+		await user.click(registerTab());
 		await waitFor(() => expect(pollIntervals(queryClient)).toContain(FIRST_AGENT_POLL_MS));
 		await user.click(createTab());
 		await waitFor(() => expect(pollIntervals(queryClient)).not.toContain(FIRST_AGENT_POLL_MS));
@@ -321,7 +429,7 @@ describe('Agents page — the New agent panel over a fleet', () => {
 	it('closing mid-flow leaves the arrival pending in the fleet, and reopening starts fresh', async () => {
 		const user = userEvent.setup();
 		const { queryClient } = renderPage();
-		const sheet = await openPanel(user);
+		const sheet = await openRegister(user);
 		const input = within(sheet).getByLabelText('Agent name');
 		await user.clear(input);
 		await user.type(input, 'research-bot');
@@ -337,22 +445,77 @@ describe('Agents page — the New agent panel over a fleet', () => {
 		await waitFor(() => expect(banner).toHaveTextContent('and 2 more waiting'));
 
 		const reopened = await openPanel(user);
-		expect(registerTab()).toHaveAttribute('aria-selected', 'true');
+		expect(createTab()).toHaveAttribute('aria-selected', 'true');
+		await user.click(registerTab());
 		expect(within(reopened).queryByTestId('arrival-card')).toBeNull();
 		expect(status()).toHaveTextContent('Listening for new agents…');
-		expect(within(reopened).getByLabelText('Agent name')).toHaveValue('my-first-agent');
+		expect(within(reopened).getByLabelText('Agent name')).toHaveValue('my-agent');
 	});
 
-	it('each opening starts on the register tab, and "n" opens it too', async () => {
+	it('each opening starts on "Create here", and "n" opens it too', async () => {
 		const user = userEvent.setup();
 		renderPage();
-		await openPanel(user);
-		await user.click(createTab());
-		await user.click(within(panel()).getByRole('button', { name: 'Cancel' }));
+		await openRegister(user);
+		await user.click(within(panel()).getByRole('button', { name: 'Close' }));
 		await waitFor(() => expect(screen.queryByRole('dialog', { name: 'New agent' })).toBeNull());
+		// Focus back on the trigger, as a closed sheet leaves it.
+		await waitFor(() =>
+			expect(screen.getByRole('button', { name: 'New agent' })).toHaveFocus(),
+		);
 
 		await user.keyboard('n');
-		await screen.findByRole('dialog', { name: 'New agent' });
-		expect(registerTab()).toHaveAttribute('aria-selected', 'true');
+		const sheet = await screen.findByRole('dialog', { name: 'New agent' });
+		expect(createTab()).toHaveAttribute('aria-selected', 'true');
+		await waitFor(() => expect(within(sheet).getByLabelText('Name')).toHaveFocus());
+	});
+
+	it('never suggests a name another agent has, archived or rejected ones included', async () => {
+		seedExtraAgents([
+			{ id: 'agnt_old_1', name: 'my-agent', status: 'archived' },
+			{ id: 'agnt_old_2', name: 'My-Agent-2', status: 'rejected' },
+		]);
+		const user = userEvent.setup();
+		renderPage();
+		const sheet = await openRegister(user);
+		await waitFor(() =>
+			expect(within(sheet).getByLabelText('Agent name')).toHaveValue('my-agent-3'),
+		);
+		expect(within(sheet).getByTestId('register-command')).toHaveTextContent(
+			/--name my-agent-3$/,
+		);
+		expect(within(sheet).queryByTestId('agent-name-duplicate')).toBeNull();
+	});
+
+	it('hints, without blocking, when the typed name is another agent’s', async () => {
+		const user = userEvent.setup();
+		renderPage();
+		const sheet = await openRegister(user);
+		const input = within(sheet).getByLabelText('Agent name');
+		await user.clear(input);
+		await user.type(input, 'Support-Agent');
+		const hint = within(sheet).getByTestId('agent-name-duplicate');
+		expect(hint).toHaveTextContent(
+			'An agent named support-agent already exists — pick a different name so you can tell them apart.',
+		);
+		expect(input).toHaveAccessibleDescription(hint.textContent ?? '');
+		expect(input).not.toHaveAttribute('aria-invalid');
+		// The command still carries it: the backend accepts a duplicate.
+		expect(within(sheet).getByTestId('register-command')).toHaveTextContent(
+			/--name Support-Agent$/,
+		);
+		await user.type(input, '-2');
+		expect(within(sheet).queryByTestId('agent-name-duplicate')).toBeNull();
+
+		// "Create here" hints the same way.
+		await user.click(createTab());
+		const name = within(sheet).getByLabelText('Name');
+		await waitFor(() => expect(name).toHaveFocus());
+		await user.type(name, 'legacy-scraper');
+		expect(within(sheet).getByTestId('agent-name-duplicate')).toHaveTextContent(
+			'An agent named legacy-scraper already exists',
+		);
+		expect(within(sheet).getByRole('button', { name: 'Create and add APIs' })).toBeEnabled();
+		await user.clear(name);
+		expect(within(sheet).queryByTestId('agent-name-duplicate')).toBeNull();
 	});
 });

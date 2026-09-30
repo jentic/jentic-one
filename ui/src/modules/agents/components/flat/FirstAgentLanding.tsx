@@ -60,6 +60,10 @@ interface FirstAgentLandingProps {
 	/** The name typed in the register card. */
 	registerName: string;
 	onRegisterNameChange: (name: string) => void;
+	/** The name the displayed command registers with. */
+	commandName: string;
+	/** The existing agent name the typed one duplicates, or `null`. */
+	registerNameDuplicateOf: string | null;
 	/** The name an arrival should carry (the command's), or null when this
 	 * session never showed the command. */
 	expectedName: string | null;
@@ -85,6 +89,8 @@ export function FirstAgentLanding({
 	onExit,
 	registerName,
 	onRegisterNameChange,
+	commandName,
+	registerNameDuplicateOf,
 	expectedName,
 	morePending,
 	onShowFleet,
@@ -129,6 +135,8 @@ export function FirstAgentLanding({
 						onExit={onExit}
 						registerName={registerName}
 						onRegisterNameChange={onRegisterNameChange}
+						commandName={commandName}
+						registerNameDuplicateOf={registerNameDuplicateOf}
 						expectedName={expectedName}
 						morePending={morePending}
 						onShowFleet={onShowFleet}

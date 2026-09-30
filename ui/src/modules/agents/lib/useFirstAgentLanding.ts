@@ -25,8 +25,8 @@ import {
 	type useDenyAgent,
 } from '@/modules/agents/api';
 import { EASE_OUT_SOFT } from '@/modules/agents/components/flat/GhostFleet';
-import { agentNameError } from '@/modules/agents/lib/agentName';
-import { DEFAULT_REGISTER_NAME } from '@/modules/agents/lib/registerCommand';
+import { FIRST_AGENT_NAME } from '@/modules/agents/lib/agentName';
+import { useRegisterName } from '@/modules/agents/lib/useRegisterName';
 import {
 	approvedCandidate,
 	deriveLanding,
@@ -130,8 +130,16 @@ export function useFirstAgentLanding({
 
 	// The name typed in the register card. Held here, so a denied agent's return
 	// to listening keeps it and the New agent panel's manual form starts from it.
-	const [registerName, setRegisterName] = useState(DEFAULT_REGISTER_NAME);
-	const commandName = agentNameError(registerName) ? DEFAULT_REGISTER_NAME : registerName.trim();
+	const names = useMemo(() => agents.map((a) => a.name), [agents]);
+	// The landing is up only while the org has no live fleet: its suggestion is
+	// always "my-first-agent" (numbered past any archived or denied namesake).
+	const nameDraft = useRegisterName({
+		names,
+		rosterRead,
+		base: FIRST_AGENT_NAME,
+		listening: phase !== 'arrived' && phase !== 'approved',
+	});
+	const { commandName } = nameDraft;
 	// Whether this session showed the command at all. A mount that resumes
 	// straight into an arrival never did, so there is no typed name to hold the
 	// arrival against.
@@ -246,10 +254,12 @@ export function useFirstAgentLanding({
 		/** The org's denied and archived agents, counted, while the card listens. */
 		history: phase === 'listening' ? historySummary(agents) : null,
 		approving,
-		registerName,
-		setRegisterName,
+		registerName: nameDraft.name,
+		setRegisterName: nameDraft.setName,
 		/** The name the displayed command registers with. */
 		commandName,
+		/** The existing agent name the typed one duplicates, or `null`. */
+		registerNameDuplicateOf: nameDraft.duplicateOf,
 		/** The name an arrival is expected to carry: the command's, once this
 		 * session has shown it; otherwise unknown. */
 		expectedName: commandShown ? commandName : null,

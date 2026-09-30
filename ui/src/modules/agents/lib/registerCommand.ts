@@ -7,9 +7,6 @@
  * quoting rule and the flags are defined once.
  */
 
-/** The name the first-run snippet suggests. */
-export const DEFAULT_REGISTER_NAME = 'my-first-agent';
-
 /** Characters a POSIX shell passes through unquoted and unexpanded. */
 const SHELL_SAFE = /^[A-Za-z0-9._/:@-]+$/;
 

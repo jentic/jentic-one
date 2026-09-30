@@ -1102,6 +1102,31 @@ describe('Agents page — resuming the first run on load', () => {
 			{ id: 'agnt_a3', name: 'my-first-agent', status: 'archived' },
 		]);
 
+	it('suggests a name no archived agent has, and hints at a typed namesake', async () => {
+		seedArchived();
+		seedExtraAgents([{ id: 'agnt_a4', name: 'my-first-agent', status: 'archived' }]);
+		const user = userEvent.setup();
+		renderPage();
+		await landing();
+
+		const input = screen.getByLabelText('Agent name');
+		expect(input).toHaveValue('my-first-agent-2');
+		await waitFor(() =>
+			expect(screen.getByTestId('register-command')).toHaveTextContent(
+				/--name my-first-agent-2$/,
+			),
+		);
+		expect(screen.queryByTestId('agent-name-duplicate')).toBeNull();
+
+		await user.clear(input);
+		await user.type(input, 'gamma-bot');
+		expect(screen.getByTestId('agent-name-duplicate')).toHaveTextContent(
+			'An agent named gamma-bot already exists — pick a different name so you can tell them apart.',
+		);
+		await user.type(input, '-v2');
+		expect(screen.queryByTestId('agent-name-duplicate')).toBeNull();
+	});
+
 	it('only archived agents: the landing counts them, with a link to the fleet', async () => {
 		seedArchived();
 		const { container } = renderPage();

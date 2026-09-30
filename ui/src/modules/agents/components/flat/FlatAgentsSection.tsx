@@ -252,16 +252,11 @@ export function FlatAgentsSection({
 	// Rendered by every branch below: the header's "New agent" flips `createOpen`
 	// from outside, and a loading roster would otherwise swallow the click. The
 	// lifecycle confirms serve the landing, the panel and the fleet.
-	//
-	// The panel opens on "Create here" while the landing is up: the landing's own
-	// card already is the register route, so the panel adds the other one. Over
-	// the fleet it opens on "Register from the CLI", the recommended route.
 	const overlays = (
 		<>
 			<NewAgentPanel
 				open={createOpen}
 				onClose={() => setCreateOpen(false)}
-				initialTab={landingShown ? 'create' : 'register'}
 				onCreated={handleAgentCreated}
 				initialName={landingShown ? landing.commandName : undefined}
 				approve={approve}
@@ -340,6 +335,8 @@ export function FlatAgentsSection({
 					onExit={landing.exit}
 					registerName={landing.registerName}
 					onRegisterNameChange={landing.setRegisterName}
+					commandName={landing.commandName}
+					registerNameDuplicateOf={landing.registerNameDuplicateOf}
 					expectedName={landing.expectedName}
 					morePending={landing.morePending}
 					onShowFleet={landing.showFleet}
