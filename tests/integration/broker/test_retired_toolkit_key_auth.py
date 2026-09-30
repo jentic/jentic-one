@@ -1,22 +1,20 @@
-"""Integration tests for retired ``jntc_live_`` toolkit-key authentication.
+"""Integration tests for retired ``jntc_live_`` / ``sak_`` key authentication.
 
-Theme-5 Phase 4 seeded the digest into a service account; theme-8 Phase 1
-makes the resolver **agent-first**: once the SA→agent migration lands the
-digest in ``agent_credentials.api_key_hash``, the unchanged plaintext
-resolves as the successor *agent*. Until then the SA fallback serves it
-identically (with the ``service_account_fallback_resolve`` WARNING plus the
-theme-5 deprecation warning). Seeds the admin DB accordingly and asserts both
-arms, plus the rejection paths (disabled actors, unknown keys). The
-retirement job and ``toolkit_keys`` are gone since Phase 6b, but acceptance
-of already-migrated plaintexts stays until the published deprecation date
-(no earlier than 2026-12-01).
+The theme-5 and theme-8 migrations copied each retired key's SHA-256 digest
+onto its successor agent (``agent_credentials.api_key_hash``), so the
+unchanged plaintext resolves as that *agent*. Theme-8 Phase 4 dropped the
+service-account tables and with them the SA fallback: a retired key whose
+digest no agent holds fails closed. Seeds the admin DB accordingly and asserts
+the agent arm, the deprecation warnings, and the rejection paths (inactive
+successor, unknown key). Acceptance of ``jntc_live_`` plaintexts stays until
+the published deprecation date (no earlier than 2026-12-01).
 """
 
 from __future__ import annotations
 
 import hashlib
 import secrets
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 
 import pytest
 import structlog
@@ -40,10 +38,13 @@ def _retired_toolkit_key() -> str:
     return f"jntc_live_{secrets.token_hex(16)}"
 
 
+def _retired_service_account_key() -> str:
+    """A ``sak_`` plaintext in the retired service-account key shape."""
+    return f"sak_{secrets.token_hex(16)}"
+
+
 _OWNER = "usr_rtka_owner"
-_ACTIVE_SA = "sva_rtka_active"
-_DISABLED_SA = "sva_rtka_disabled"
-_ACTIVE_AGENT = "agnt_rtka_active"
+_AGENT = "agnt_rtka_active"
 
 
 @pytest.fixture()
@@ -53,28 +54,12 @@ async def clean_tables(admin_db: DatabaseSession) -> AsyncGenerator[None, None]:
     async def _cleanup() -> None:
         async with admin_db.session() as session:
             await session.execute(
-                text(
-                    "DELETE FROM actor_scope_grants "
-                    "WHERE actor_id IN ('sva_rtka_active', 'sva_rtka_disabled',"
-                    " 'agnt_rtka_active')"
-                )
+                text("DELETE FROM actor_scope_grants WHERE actor_id = :id"), {"id": _AGENT}
             )
             await session.execute(
-                text("DELETE FROM agent_credentials WHERE agent_id = 'agnt_rtka_active'")
+                text("DELETE FROM agent_credentials WHERE agent_id = :id"), {"id": _AGENT}
             )
-            await session.execute(text("DELETE FROM agents WHERE id = 'agnt_rtka_active'"))
-            await session.execute(
-                text(
-                    "DELETE FROM service_account_credentials "
-                    "WHERE service_account_id IN ('sva_rtka_active', 'sva_rtka_disabled')"
-                )
-            )
-            await session.execute(
-                text(
-                    "DELETE FROM service_accounts "
-                    "WHERE id IN ('sva_rtka_active', 'sva_rtka_disabled')"
-                )
-            )
+            await session.execute(text("DELETE FROM agents WHERE id = :id"), {"id": _AGENT})
             await session.execute(text("DELETE FROM users WHERE id = :owner"), {"owner": _OWNER})
             await session.commit()
 
@@ -83,19 +68,11 @@ async def clean_tables(admin_db: DatabaseSession) -> AsyncGenerator[None, None]:
     await _cleanup()
 
 
-async def _seed_service_account(
-    admin_db: DatabaseSession,
-    *,
-    service_account_id: str,
-    status: str = "active",
-) -> str:
-    """Seed a service account carrying a retired key's digest; return the plaintext.
-
-    Mirrors what the retirement job writes: the ``jntc_live_`` plaintext's
-    SHA-256 digest lands in ``service_account_credentials.api_key_hash`` and
-    the account holds exactly ``capabilities:execute``.
-    """
-    plaintext = _retired_toolkit_key()
+async def _seed_successor(
+    admin_db: DatabaseSession, *, plaintext: str, status: str = "active"
+) -> None:
+    """Land the plaintext's digest on a successor agent holding the execute scope —
+    what the theme-5 flatten / theme-8 migration wrote."""
     api_key_hash = hashlib.sha256(plaintext.encode()).hexdigest()
     async with admin_db.session() as session:
         await session.execute(
@@ -107,165 +84,88 @@ async def _seed_service_account(
         )
         await session.execute(
             text(
-                "INSERT INTO service_accounts "
-                "(id, name, owner_id, registered_by, status, created_by) "
+                "INSERT INTO agents (id, name, owner_id, registered_by, status, created_by) "
                 "VALUES (:id, :name, :owner, 'system:test', :status, 'system:test')"
             ),
-            {
-                "id": service_account_id,
-                "name": f"toolkit-key:{service_account_id}",
-                "owner": _OWNER,
-                "status": status,
-            },
-        )
-        await session.execute(
-            text(
-                "INSERT INTO service_account_credentials "
-                "(id, service_account_id, api_key_hash, created_by) "
-                "VALUES (:id, :sa_id, :hash, 'system:test')"
-            ),
-            {"id": f"sac_{service_account_id}", "sa_id": service_account_id, "hash": api_key_hash},
-        )
-        await session.execute(
-            text(
-                "INSERT INTO actor_scope_grants (id, actor_id, actor_type, scope, created_by) "
-                "VALUES (:id, :actor_id, 'service_account', :scope, 'system:test')"
-            ),
-            {
-                "id": f"asg_{service_account_id}",
-                "actor_id": service_account_id,
-                "scope": BROKER_EXECUTE_SCOPE,
-            },
-        )
-        await session.commit()
-    return plaintext
-
-
-async def _seed_agent_successor(admin_db: DatabaseSession, *, plaintext: str) -> None:
-    """Land the plaintext's digest in ``agent_credentials`` — what the theme-8
-    migration job (or the retargeted retirement job) writes for a successor."""
-    api_key_hash = hashlib.sha256(plaintext.encode()).hexdigest()
-    async with admin_db.session() as session:
-        await session.execute(
-            text(
-                "INSERT INTO agents (id, name, owner_id, registered_by, status, created_by) "
-                "VALUES (:id, :name, :owner, 'system:test', 'active', 'system:test')"
-            ),
-            {"id": _ACTIVE_AGENT, "name": f"toolkit-key:{_ACTIVE_AGENT}", "owner": _OWNER},
+            {"id": _AGENT, "name": f"toolkit-key:{_AGENT}", "owner": _OWNER, "status": status},
         )
         await session.execute(
             text(
                 "INSERT INTO agent_credentials (id, agent_id, api_key_hash, created_by) "
                 "VALUES (:id, :agent_id, :hash, 'system:test')"
             ),
-            {"id": f"agc_{_ACTIVE_AGENT}", "agent_id": _ACTIVE_AGENT, "hash": api_key_hash},
+            {"id": f"agc_{_AGENT}", "agent_id": _AGENT, "hash": api_key_hash},
         )
         await session.execute(
             text(
                 "INSERT INTO actor_scope_grants (id, actor_id, actor_type, scope, created_by) "
                 "VALUES (:id, :actor_id, 'agent', :scope, 'system:test')"
             ),
-            {
-                "id": f"asg_{_ACTIVE_AGENT}",
-                "actor_id": _ACTIVE_AGENT,
-                "scope": BROKER_EXECUTE_SCOPE,
-            },
+            {"id": f"asg_{_AGENT}", "actor_id": _AGENT, "scope": BROKER_EXECUTE_SCOPE},
         )
         await session.commit()
 
 
-async def test_migrated_retired_key_resolves_to_agent_identity(
-    admin_db: DatabaseSession, clean_tables: None
+@pytest.mark.parametrize(
+    ("make_key", "event"),
+    [
+        pytest.param(_retired_toolkit_key, "deprecated_toolkit_key_used", id="jntc_live_"),
+        pytest.param(
+            _retired_service_account_key, "deprecated_service_account_key_used", id="sak_"
+        ),
+    ],
+)
+async def test_retired_key_resolves_to_successor_agent(
+    admin_db: DatabaseSession, clean_tables: None, make_key: Callable[[], str], event: str
 ) -> None:
-    """Theme-8 Phase 1: once the digest lives on an agent, the agent arm wins —
-    even while the SA-side twin is still live (copy-then-sweep window)."""
-    plaintext = await _seed_service_account(admin_db, service_account_id=_ACTIVE_SA)
-    await _seed_agent_successor(admin_db, plaintext=plaintext)
+    """The unchanged plaintext resolves as the successor agent, and each
+    resolve logs the prefix's deprecation WARNING naming that agent."""
+    plaintext = make_key()
+    await _seed_successor(admin_db, plaintext=plaintext)
 
     resolver = ApiKeyResolver(admin_db)
     with structlog.testing.capture_logs() as logs:
         identity = await resolver.resolve(plaintext)
 
     assert identity is not None
-    assert identity.sub == _ACTIVE_AGENT
+    assert identity.sub == _AGENT
     assert identity.actor_type is ActorType.AGENT
     assert identity.permissions == [BROKER_EXECUTE_SCOPE]
-    # No fallback — the agent arm served it. The theme-5 deprecation signal
-    # still fires (M3: the caller is presenting a retired jntc_live_ form),
-    # now naming the successor agent.
-    assert not [log for log in logs if log["event"] == "service_account_fallback_resolve"]
-    deprecations = [log for log in logs if log["event"] == "deprecated_toolkit_key_used"]
-    assert len(deprecations) == 1 and deprecations[0]["log_level"] == "warning"
-    assert deprecations[0]["agent_id"] == _ACTIVE_AGENT
-
-
-async def test_unmigrated_retired_key_fallback_logs_migration_warning(
-    admin_db: DatabaseSession, clean_tables: None
-) -> None:
-    """An unmigrated key resolves via the SA fallback and logs the theme-8
-    fallback WARNING alongside the theme-5 deprecation warning."""
-    plaintext = await _seed_service_account(admin_db, service_account_id=_ACTIVE_SA)
-
-    resolver = ApiKeyResolver(admin_db)
-    with structlog.testing.capture_logs() as logs:
-        identity = await resolver.resolve(plaintext)
-
-    assert identity is not None
-    assert identity.actor_type is ActorType.SERVICE_ACCOUNT
-    fallbacks = [log for log in logs if log["event"] == "service_account_fallback_resolve"]
-    assert len(fallbacks) == 1
-    assert fallbacks[0]["log_level"] == "warning"
-    assert fallbacks[0]["service_account_id"] == _ACTIVE_SA
-
-
-async def test_retired_key_resolves_to_service_account_identity(
-    admin_db: DatabaseSession, clean_tables: None
-) -> None:
-    plaintext = await _seed_service_account(admin_db, service_account_id=_ACTIVE_SA)
-
-    resolver = ApiKeyResolver(admin_db)
-    identity = await resolver.resolve(plaintext)
-
-    assert identity is not None
-    assert identity.sub == _ACTIVE_SA
-    assert identity.actor_type is ActorType.SERVICE_ACCOUNT
-    assert identity.permissions == [BROKER_EXECUTE_SCOPE]
     assert identity.active is True
+    warnings = [log for log in logs if log["event"] == event]
+    assert len(warnings) == 1 and warnings[0]["log_level"] == "warning"
+    assert warnings[0]["agent_id"] == _AGENT
 
 
-async def test_retired_key_resolve_logs_deprecation_warning(
+async def test_retired_key_with_inactive_successor_fails_closed(
     admin_db: DatabaseSession, clean_tables: None
 ) -> None:
-    """A successful jntc_live_ resolve is the operator's migration signal."""
-    plaintext = await _seed_service_account(admin_db, service_account_id=_ACTIVE_SA)
+    """A suspended successor agent (the operator kill lever) must not authenticate."""
+    plaintext = _retired_toolkit_key()
+    await _seed_successor(admin_db, plaintext=plaintext, status="suspended")
 
     resolver = ApiKeyResolver(admin_db)
     with structlog.testing.capture_logs() as logs:
-        identity = await resolver.resolve(plaintext)
-
-    assert identity is not None
-    warnings = [log for log in logs if log["event"] == "deprecated_toolkit_key_used"]
-    assert len(warnings) == 1
-    assert warnings[0]["log_level"] == "warning"
-    assert warnings[0]["service_account_id"] == _ACTIVE_SA
+        assert await resolver.resolve(plaintext) is None
+    closed = [log for log in logs if log["event"] == "migrated_key_fail_closed"]
+    assert len(closed) == 1 and closed[0]["agent_id"] == _AGENT
 
 
-async def test_disabled_service_account_resolves_to_none(
-    admin_db: DatabaseSession, clean_tables: None
-) -> None:
-    """A disabled successor account (revoked/deleted key) must not authenticate."""
-    plaintext = await _seed_service_account(
-        admin_db, service_account_id=_DISABLED_SA, status="disabled"
-    )
-
-    resolver = ApiKeyResolver(admin_db)
-    assert await resolver.resolve(plaintext) is None
-
-
+@pytest.mark.parametrize(
+    "plaintext",
+    [
+        pytest.param("jntc_live_does_not_exist", id="jntc_live_"),
+        pytest.param("sak_does_not_exist", id="sak_"),  # pragma: allowlist secret
+    ],
+)
 async def test_unknown_retired_key_resolves_to_none(
-    admin_db: DatabaseSession, clean_tables: None
+    admin_db: DatabaseSession, clean_tables: None, plaintext: str
 ) -> None:
-    await _seed_service_account(admin_db, service_account_id=_ACTIVE_SA)
+    """No agent holds the digest (never migrated, or rotated): fail closed —
+    there is no service-account fallback after theme-8 Phase 4."""
+    await _seed_successor(admin_db, plaintext=_retired_toolkit_key())
 
     resolver = ApiKeyResolver(admin_db)
-    assert await resolver.resolve("jntc_live_does_not_exist") is None
+    with structlog.testing.capture_logs() as logs:
+        assert await resolver.resolve(plaintext) is None
+    assert [log for log in logs if log["event"] == "retired_key_unresolved"]

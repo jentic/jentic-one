@@ -21,9 +21,9 @@ value ``skipped``). Successor creation is raw SQL — never
 ``DEFAULT_AGENT_SCOPES``; a zero-grant SA must yield a zero-grant
 successor).
 
-Idempotency: the stamp short-circuits re-runs, so the boot job runs on every
-start and catches SAs created during the
-window (until Phase 2 removed ``POST /service-accounts``, F5). Concurrency: one
+Idempotency: the stamp short-circuits re-runs, so the job is safe to re-run
+(the boot trigger was removed in theme-8 Phase 4; the
+``migrate-service-accounts`` CLI is the only entry point). Concurrency: one
 admin transaction per SA (``BEGIN IMMEDIATE`` on SQLite), a pg advisory-lock
 fast path, an in-transaction stamp re-check, and — the real backstop — the
 ``uq_agent_credentials_api_key_hash`` unique partial index: a losing
@@ -33,9 +33,8 @@ write.
 The deferred :meth:`sweep` (N3) deletes the SA-keyed grant/binding rows
 (and, in the control DB, the ``sva_``-keyed inline permission rules), NULLs
 the SA-side digest, revokes any SA sessions minted since the migration, and
-archives the row — gated on a minimum stamp
-age (``services.service_account_sweep_min_stamp_age_hours``) as the
-full-fleet-rollout proxy; ``--sweep-migrated`` overrides. :meth:`verify`
+archives the row (operator-invoked via ``--sweep-migrated``; theme-8
+Phase 4 removed the boot job and its age-gated automatic arm). :meth:`verify`
 runs the acceptance queries; ``--verify --acknowledge`` writes the
 ``service_account_migration_acks`` sentinel row the Phase-4 drops require
 (the toolkit-flattening precedent), only when verification passed in the
@@ -207,7 +206,6 @@ class SweepOutcome:
     """Result of one sweep pass."""
 
     swept: list[str] = field(default_factory=list)
-    skipped_young: int = 0
     #: Opaque SA sessions revoked by the sweep (M1) — client-credentials
     #: holders can mint fresh SA sessions until the row is archived.
     access_tokens_revoked: int = 0
@@ -218,18 +216,16 @@ class SweepOutcome:
     #: swept row, in sweep order.
     rows: list[dict[str, Any]] = field(default_factory=list)
 
-    def report_lines(self, *, ignore_age_gate: bool) -> list[dict[str, Any]]:
+    def report_lines(self) -> list[dict[str, Any]]:
         """The sweep's JSONL report: one ``sweep_row`` per SA + a summary."""
         return [
             *self.rows,
             {
                 "category": "sweep_summary",
                 "swept": len(self.swept),
-                "skipped_young": self.skipped_young,
                 "access_tokens_revoked": self.access_tokens_revoked,
                 "refresh_tokens_revoked": self.refresh_tokens_revoked,
                 "permission_rules_deleted": self.permission_rules_deleted,
-                "ignore_age_gate": ignore_age_gate,
                 "tool_version": __version__,
             },
         ]
@@ -297,6 +293,11 @@ class ServiceAccountMigrationService:
 
     def __init__(self, ctx: Context) -> None:
         self._ctx = ctx
+
+    async def tables_present(self) -> bool:
+        """Whether the service-account tables still exist (pre-Phase-4 drop)."""
+        async with self._ctx.admin_db.session() as session:
+            return await ServiceAccountMigrationRepository.tables_present(session)
 
     async def run(self, *, diff_only: bool = False) -> list[ServiceAccountMigrationOutcome]:
         """Migrate every service account; return one outcome per SA.
@@ -713,47 +714,32 @@ class ServiceAccountMigrationService:
 
     # ------------------------------------------------------------------ sweep
 
-    async def sweep(self, *, ignore_age_gate: bool = False) -> SweepOutcome:
+    async def sweep(self) -> SweepOutcome:
         """W3 — delete SA-keyed originals for stamped rows, archive the SA.
 
-        The automatic arm (boot) honours the N3 age gate
-        (``services.service_account_sweep_min_stamp_age_hours``; ``0``
-        disables the gate, a negative value disables the automatic arm
-        entirely — the caller checks that). ``ignore_age_gate`` is the
-        ``--sweep-migrated`` operator override for uniform fleets.
+        Operator-invoked only (``--sweep-migrated``): theme-8 Phase 4 removed
+        the boot job and its age-gated automatic arm, and with it the
+        ``services.service_account_sweep_min_stamp_age_hours`` setting. The
+        sweep is kept on the Phase-4 image as the remediation step the drop
+        migration names when it refuses on unswept rows.
 
         Per SA, one admin transaction deletes the SA-keyed originals,
-        revokes every outstanding opaque SA session (M1 — client-credentials
-        holders can keep minting SA sessions until the row is archived, and
-        verify criterion 3 would otherwise wait out the refresh TTL), and
-        archives the row. A control-DB pass then deletes the ``sva_``-keyed
-        inline permission rules (H2) for every stamped SA passing the same
-        gate — including rows whose admin side a previous, interrupted sweep
-        already finished.
-
-        Note (E4): ``skipped_young`` comes from a second, non-atomic
-        ``list_sweepable`` query — a row stamped between the two queries can
-        skew the count by one. Accepted: the count is informational only.
+        revokes every outstanding opaque SA session (M1), and archives the
+        row. A control-DB pass then deletes the ``sva_``-keyed inline
+        permission rules (H2) for every stamped SA — including rows whose
+        admin side a previous, interrupted sweep already finished.
         """
-        age_hours = self._ctx.config.services.service_account_sweep_min_stamp_age_hours
-        stamped_before: dt.datetime | None = None
-        if not ignore_age_gate and age_hours > 0:
-            stamped_before = dt.datetime.now(dt.UTC) - dt.timedelta(hours=age_hours)
-
         async with self._ctx.admin_db.session() as session:
             rows = await ServiceAccountMigrationRepository.list_sweepable(
-                session, stamped_before=stamped_before
-            )
-            all_stamped = await ServiceAccountMigrationRepository.list_sweepable(
                 session, stamped_before=None
             )
             # Snapshotted up-front with ``rows`` so the control pass never
             # reaches a row stamped after the admin pass was planned.
             gated_stamps = await ServiceAccountMigrationRepository.list_stamped(
-                session, stamped_before=stamped_before
+                session, stamped_before=None
             )
 
-        outcome = SweepOutcome(skipped_young=len(all_stamped) - len(rows))
+        outcome = SweepOutcome()
         for row in rows:
             async with self._ctx.admin_db.transaction() as session:
                 archived = await ServiceAccountMigrationRepository.sweep_service_account(
@@ -851,11 +837,9 @@ class ServiceAccountMigrationService:
         logger.info(
             "service_account_migration_sweep_run",
             swept=len(outcome.swept),
-            skipped_young=outcome.skipped_young,
             access_revoked_count=outcome.access_tokens_revoked,
             refresh_revoked_count=outcome.refresh_tokens_revoked,
             permission_rules_deleted=outcome.permission_rules_deleted,
-            ignore_age_gate=ignore_age_gate,
         )
         return outcome
 

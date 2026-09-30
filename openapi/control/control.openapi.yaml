@@ -103,15 +103,15 @@ components:
         Phase-6b scope-data sweep; read paths must tolerate the string without
         round-tripping it through this enum.
 
-        ``service_account`` is deserialization-only (theme-8 Phase 2): the
-        service-account surface is gone and no issuance path produces it, but
-        stored token rows, grant rows, audit/execution records, and telemetry
-        history carry the value, and the Phase-1 resolver fallback still resolves
-        unmigrated ``sak_`` keys as it. Deletion is a Phase-4/5 decision.
+        ``service_account`` is retired the same way (theme-8 Phase 4 dropped the
+        service-account tables and deleted the member). Historical audit rows,
+        execution records, telemetry history and control-DB actor-id columns
+        (``connect_sessions.initiator_actor_id``, ``credentials.created_by``)
+        still carry the string or ``sva_`` ids; read paths use
+        :func:`actor_type_label_from_id` or treat the string as opaque.
       enum:
       - user
       - agent
-      - service_account
       title: ActorType
       type: string
     AgentCreateRequest:
@@ -2747,55 +2747,6 @@ components:
       - scopes
       - token_scopes
       title: MeAgent
-      type: object
-    MeServiceAccount:
-      description: |-
-        Identity response for a (retired) service-account actor.
-
-        Served only to callers whose unmigrated ``sak_``/``jntc_live_`` key
-        resolved through the Phase-1 SA-table fallback (theme 8). Deleted with the
-        fallback in Phase 4.
-      properties:
-        approved_by:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Approved By
-        id:
-          title: Id
-          type: string
-        name:
-          title: Name
-          type: string
-        registered_by:
-          title: Registered By
-          type: string
-        scopes:
-          items:
-            type: string
-          title: Scopes
-          type: array
-        status:
-          title: Status
-          type: string
-        token_scopes:
-          items:
-            type: string
-          title: Token Scopes
-          type: array
-        type:
-          const: service_account
-          default: service_account
-          title: Type
-          type: string
-      required:
-      - id
-      - name
-      - status
-      - scopes
-      - token_scopes
-      - registered_by
-      title: MeServiceAccount
       type: object
     MeUser:
       description: Identity response for a user actor.
@@ -15322,13 +15273,11 @@ paths:
                 discriminator:
                   mapping:
                     agent: '#/components/schemas/MeAgent'
-                    service_account: '#/components/schemas/MeServiceAccount'
                     user: '#/components/schemas/MeUser'
                   propertyName: type
                 oneOf:
                 - $ref: '#/components/schemas/MeUser'
                 - $ref: '#/components/schemas/MeAgent'
-                - $ref: '#/components/schemas/MeServiceAccount'
                 title: Response Getme
           description: Successful Response
         '400':
@@ -18957,7 +18906,7 @@ tags:
   name: Permissions
 - description: Operational endpoints for service health and platform tooling. Not part of any bounded context — surfaced here so orchestrators and load balancers have a stable probe target.
   name: System
-- description: Identity introspection for the calling principal (human, agent, or service account) — `GET /me` returns the resolved subject, scopes, and permissions behind the presented token.
+- description: Identity introspection for the calling principal (human or agent) — `GET /me` returns the resolved subject, scopes, and permissions behind the presented token.
   name: Identity
 - description: Agent actors — autonomous principals that call the Broker. Covers the agent lifecycle (list, read, approve / deny, enable / disable, archive) and the credentials directly bound to each agent.
   name: Agents

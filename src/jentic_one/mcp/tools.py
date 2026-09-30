@@ -43,14 +43,7 @@ from jentic_one.admin.services.job_service import JobService
 from jentic_one.admin.services.schemas.jobs import JobView
 from jentic_one.admin.services.user_service import UserService
 from jentic_one.auth.services.agent_service import AgentService
-from jentic_one.auth.services.legacy_service_account_identity_service import (
-    LegacyServiceAccountIdentityService,
-)
-from jentic_one.auth.web.routers.identity import (
-    _resolve_agent,
-    _resolve_service_account,
-    _resolve_user,
-)
+from jentic_one.auth.web.routers.identity import _resolve_agent, _resolve_user
 from jentic_one.control.services.integrations.connect_session_service import (
     ConnectSessionService,
 )
@@ -301,10 +294,6 @@ async def handle_whoami(env: CallEnv, arguments: dict[str, Any]) -> mcp_types.Ca
             me: Any = await _resolve_user(request, env.identity, UserService(env.ctx))
         elif sub.startswith("agnt_"):
             me = await _resolve_agent(request, env.identity, AgentService(env.ctx))
-        elif sub.startswith("sva_"):
-            me = await _resolve_service_account(
-                request, env.identity, LegacyServiceAccountIdentityService(env.ctx)
-            )
         else:
             raise ToolError(
                 CODE_NOT_AUTHENTICATED,

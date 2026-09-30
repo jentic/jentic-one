@@ -1,57 +1,38 @@
-"""Unified API-key resolver — resolves jak_/sak_ (and retired jntc_live_) keys to Identity."""
+"""Unified API-key resolver — resolves jak_ (and retired sak_/jntc_live_) keys to Identity."""
 
 from __future__ import annotations
 
 import enum
 import hashlib
 from dataclasses import dataclass
-from typing import Any
 
 import structlog
 from sqlalchemy import text
 
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.db import DatabaseSession
-from jentic_one.shared.metrics import get_meter
 from jentic_one.shared.models import ActorType
 
 logger = structlog.get_logger(__name__)
 
-_meter = get_meter("jentic_one.auth")
-#: Theme-8 Phase 1: a ``sak_``/``jntc_live_`` key resolved through the SA
-#: fallback arm (not yet migrated). Operator metric (OTel), not phone-home
-#: telemetry. Trending to zero is the sweep-readiness signal.
-_fallback_resolve_counter = _meter.create_counter(
-    "auth_service_account_fallback_resolves",
-    description=(
-        "API-key resolves served by the service-account fallback arm "
-        "(theme-8 Phase 1: key not yet migrated to its successor agent)"
-    ),
-)
-
 AGENT_API_KEY_PREFIX = "jak_"
-SERVICE_ACCOUNT_API_KEY_PREFIX = "sak_"
+# Theme-8 Phase 4 dropped the service-account tables. A ``sak_`` key keeps
+# authenticating as its successor agent: the Phase-1 migration copied its
+# SHA-256 lookup digest into ``agent_credentials`` and this resolver matches by
+# digest, not by prefix. The prefix is DEPRECATED (see
+# ``docs/development/releasing.md``); each successful resolve logs a warning
+# naming the successor agent.
+RETIRED_SERVICE_ACCOUNT_KEY_PREFIX = "sak_"
 # Theme-5 Phase 4 (key retirement): a retired toolkit key's plaintext keeps
-# authenticating — as the actor the retirement job created for it (its
-# successor agent once theme-8 migrated it) — because the job copied the key's
-# SHA-256 lookup digest into the credential table and this resolver matches by
-# digest, not by prefix. Acceptance needs no toolkit table, so it outlives the
-# Phase-6b drops (which removed the retirement job itself). The prefix is
-# DEPRECATED (see ``docs/development/releasing.md``): each successful resolve
-# logs a warning naming the actor; acceptance ends no earlier than 2026-12-01.
+# authenticating as its successor agent for the same reason (digest copied into
+# ``agent_credentials``). The prefix is DEPRECATED (see
+# ``docs/development/releasing.md``): each successful resolve logs a warning
+# naming the actor; acceptance ends no earlier than 2026-12-01.
 RETIRED_TOOLKIT_KEY_PREFIX = "jntc_live_"
 
 
 class _AgentArm(enum.Enum):
-    """Non-identity outcomes of the agent-side digest lookup.
-
-    The distinction matters on the ``sak_``/``jntc_live_`` arm (H1): a digest
-    that EXISTS in ``agent_credentials`` but belongs to an inactive agent must
-    FAIL CLOSED — the successor agent is the operator's kill lever during the
-    coexistence window, and falling through to the still-active SA row would
-    resurrect the key the operator just cut. The inactive outcome is
-    :class:`_InactiveAgent` (it carries the agent id for the WARNING).
-    """
+    """Non-identity outcome of the agent-side digest lookup."""
 
     MISS = "miss"  # digest not present in agent_credentials
 
@@ -67,31 +48,16 @@ class _InactiveAgent:
     agent_id: str
 
 
-#: Mirrors ``control.repos.service_account_migration_repo.SKIPPED_STAMP``
-#: (shared must not import control): the stamp on a skip-but-stamp SA
-#: (pending/rejected/archived at migration time) — no successor exists.
-_SKIPPED_STAMP = "skipped"
-
-
 class ApiKeyResolver:
-    """Resolves API keys to an Identity by prefix-dispatched DB lookup.
+    """Resolves API keys to an Identity by digest lookup in ``agent_credentials``.
 
     - ``jak_`` keys query ``agent_credentials`` joined to ``agents``.
-    - ``sak_`` and ``jntc_live_`` (deprecated) keys are **agent-first**
-      (theme-8 Phase 1, H-2): the migration job copies each service account's
-      key digest into ``agent_credentials``, so a migrated key resolves as
-      its successor agent. The SA fallback is consulted only on a genuine
-      digest MISS on the agent arm; a digest-hit on an inactive agent fails
-      closed, and a stamped SA row (``migrated_to_actor_id`` non-null) is
-      never a valid identity source — so disabling the successor or revoking
-      its key both cut the old plaintext (H1, the operator kill levers).
-      Keys not yet migrated miss the agent lookup and
-      fall back to ``service_account_credentials`` joined to
-      ``service_accounts`` — each fallback hit logs a WARNING and bumps the
-      ``auth_service_account_fallback_resolves`` OTel counter (trending to
-      zero is the sweep-readiness signal). Never a hard repoint: the boot
-      migration job is fire-and-forget and old-image pods must keep serving
-      migrated keys through a rolling upgrade.
+    - ``sak_`` and ``jntc_live_`` keys (both retired, both deprecated) go
+      through the same lookup: the theme-8 / theme-5 migrations copied each
+      retired key's digest onto its successor agent, so the key resolves as
+      that agent. There is no fallback (theme-8 Phase 4 dropped the
+      service-account tables): a digest miss, or a hit on an inactive agent,
+      fails closed with a WARNING naming the next step.
 
     Implements ``TokenResolverProtocol`` (via ``resolve_access_token``) so it
     can be wrapped by ``CachedTokenValidator``.
@@ -105,108 +71,66 @@ class ApiKeyResolver:
         return await self.resolve(token)
 
     async def resolve(self, raw_key: str) -> Identity | None:
-        """Hash the key and look it up in the appropriate credential table."""
+        """Hash the key and look it up in ``agent_credentials``."""
         if raw_key.startswith(AGENT_API_KEY_PREFIX):
             return await self._resolve_agent(raw_key)
-        if raw_key.startswith(SERVICE_ACCOUNT_API_KEY_PREFIX) or raw_key.startswith(
-            RETIRED_TOOLKIT_KEY_PREFIX
-        ):
-            # Agent-first (H-2): a migrated key's digest lives in
-            # agent_credentials, so it resolves as its successor agent.
-            arm = await self._lookup_agent(raw_key)
-            if isinstance(arm, Identity):
-                if raw_key.startswith(RETIRED_TOOLKIT_KEY_PREFIX):
-                    # M3: the theme-5 6b removal-readiness signal must not go
-                    # dark after migration — WARN on the agent arm too, one
-                    # per resolve, naming the successor now serving the key.
-                    logger.warning(
-                        "deprecated_toolkit_key_used",
-                        agent_id=arm.sub,
-                        actionable_step=(
-                            "Rotate this caller to its successor agent's jak_ "
-                            "key; jntc_live_ acceptance ends no earlier than "
-                            "2026-12-01 (see docs/development/releasing.md)."
-                        ),
-                    )
-                return arm
-            if isinstance(arm, _InactiveAgent):
-                # H1: the digest EXISTS on the agent side — the successor is
-                # the authoritative identity and it is disabled/archived.
-                # FAIL CLOSED; never consult the SA fallback (it would
-                # resurrect the key the operator just cut).
-                logger.warning(
-                    "migrated_key_fail_closed",
-                    reason="successor_inactive",
-                    agent_id=arm.agent_id,
-                    actionable_step=(
-                        "This key's successor agent is not active; re-enable "
-                        "the agent (or mint it a fresh jak_ key) if this cut "
-                        "was unintended."
-                    ),
-                )
-                return None
-            # Genuine digest MISS on the agent arm: consult the SA fallback.
-            sa_row = await self._lookup_service_account_row(raw_key)
-            if sa_row is not None and sa_row.migrated_to_actor_id is not None:
-                # H1: a stamped SA is never a valid identity source — the
-                # successor's digest was NULLed (key revoked/rotated) or the
-                # row was skip-but-stamped. FAIL CLOSED regardless of SA
-                # status: the SA surface is gone, so nothing can kill the
-                # key through the SA row and this arm must not keep it alive.
-                skip_stamped = sa_row.migrated_to_actor_id == _SKIPPED_STAMP
-                logger.warning(
-                    "migrated_key_fail_closed",
-                    reason="stamped_service_account",
-                    service_account_id=sa_row.service_account_id,
-                    successor_agent_id=None if skip_stamped else sa_row.migrated_to_actor_id,
-                    actionable_step=(
-                        (
-                            "This key's account was not active at migration "
-                            "time, so it was stamped without a successor agent "
-                            "and its key no longer authenticates; register an "
-                            "agent (with its own jak_ key) if access should resume."
-                        )
-                        if skip_stamped
-                        else (
-                            "This key's account is migrated and its successor "
-                            "agent no longer carries the digest; mint the "
-                            "successor a fresh jak_ key if access should resume."
-                        )
-                    ),
-                )
-                return None
-            identity = await self._identity_from_sa_row(sa_row)
-            if identity is not None:
-                # WARNING + counter (L-C): pod-local stdout is not alertable.
-                logger.warning(
-                    "service_account_fallback_resolve",
-                    service_account_id=identity.sub,
-                    actionable_step=(
-                        "This key's account is not yet migrated; run "
-                        "`jentic_one migrate-service-accounts` (or wait for the "
-                        "boot job) so it resolves as its successor agent."
-                    ),
-                )
-                _fallback_resolve_counter.add(1, {"actor_type": ActorType.SERVICE_ACCOUNT.value})
-                if raw_key.startswith(RETIRED_TOOLKIT_KEY_PREFIX):
-                    # WARNING (not info): this stays the theme-5 6b migration
-                    # signal — each line names a caller still presenting a
-                    # retired key form.
-                    logger.warning(
-                        "deprecated_toolkit_key_used",
-                        service_account_id=identity.sub,
-                        actionable_step=(
-                            "Rotate this caller to its successor agent's jak_ key "
-                            "(run `jentic_one migrate-service-accounts` if not yet "
-                            "migrated); jntc_live_ acceptance ends no earlier than "
-                            "2026-12-01 (see docs/development/releasing.md)."
-                        ),
-                    )
-            return identity
+        if raw_key.startswith(RETIRED_TOOLKIT_KEY_PREFIX):
+            return await self._resolve_retired(
+                raw_key,
+                event="deprecated_toolkit_key_used",
+                deadline_note="jntc_live_ acceptance ends no earlier than 2026-12-01",
+            )
+        if raw_key.startswith(RETIRED_SERVICE_ACCOUNT_KEY_PREFIX):
+            return await self._resolve_retired(
+                raw_key,
+                event="deprecated_service_account_key_used",
+                deadline_note="sak_ acceptance is deprecated",
+            )
+        return None
+
+    async def _resolve_retired(
+        self, raw_key: str, *, event: str, deadline_note: str
+    ) -> Identity | None:
+        """Retired-prefix arm: resolve as the successor agent, or fail closed."""
+        arm = await self._lookup_agent(raw_key)
+        if isinstance(arm, Identity):
+            # One WARNING per resolve, naming the successor now serving the
+            # key: the removal-readiness signal for the retired prefix.
+            logger.warning(
+                event,
+                agent_id=arm.sub,
+                actionable_step=(
+                    "Rotate this caller to its successor agent's jak_ key; "
+                    f"{deadline_note} (see docs/development/releasing.md)."
+                ),
+            )
+            return arm
+        if isinstance(arm, _InactiveAgent):
+            # The successor is the authoritative identity and it is
+            # disabled/archived: fail closed (the operator kill lever).
+            logger.warning(
+                "migrated_key_fail_closed",
+                reason="successor_inactive",
+                agent_id=arm.agent_id,
+                actionable_step=(
+                    "This key's successor agent is not active; re-enable "
+                    "the agent (or mint it a fresh jak_ key) if this cut "
+                    "was unintended."
+                ),
+            )
+            return None
+        logger.warning(
+            "retired_key_unresolved",
+            actionable_step=(
+                "This retired key has no successor agent (it was never "
+                "migrated, or its successor's key was revoked or rotated); "
+                "register an agent and use its jak_ key."
+            ),
+        )
         return None
 
     async def _resolve_agent(self, raw_key: str) -> Identity | None:
-        """``jak_`` arm: miss and inactive are both a plain None (no fallback)."""
+        """``jak_`` arm: miss and inactive are both a plain None."""
         arm = await self._lookup_agent(raw_key)
         return arm if isinstance(arm, Identity) else None
 
@@ -232,42 +156,6 @@ class ApiKeyResolver:
             actor_type=ActorType.AGENT,
             permissions=permissions,
             parent_actor_id=row.owner_id,
-            active=True,
-        )
-
-    async def _resolve_service_account(self, raw_key: str) -> Identity | None:
-        """The pre-theme-8 SA arm, stamp-blind — kept as the old-image-pod
-        simulation for rolling-upgrade tests (H-B); ``resolve`` itself applies
-        the H1 stamp check on the fallback."""
-        row = await self._lookup_service_account_row(raw_key)
-        return await self._identity_from_sa_row(row)
-
-    async def _lookup_service_account_row(self, raw_key: str) -> Any:
-        """The SA credential/row lookup (with the theme-8 stamp), or None."""
-        key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
-        stmt = text(
-            "SELECT sa.id AS service_account_id, sa.status, sa.migrated_to_actor_id"
-            " FROM service_account_credentials sac"
-            " JOIN service_accounts sa ON sa.id = sac.service_account_id"
-            " WHERE sac.api_key_hash = :key_hash"
-        )
-        async with self._admin_db.session() as session:
-            return (await session.execute(stmt, {"key_hash": key_hash})).one_or_none()
-
-    async def _identity_from_sa_row(self, row: Any) -> Identity | None:
-        """Old SA-arm identity rules (active-only), stamp-blind."""
-        if row is None:
-            return None
-        if row.status != "active":
-            return None
-
-        permissions = await self._load_permissions(
-            row.service_account_id, ActorType.SERVICE_ACCOUNT
-        )
-        return Identity(
-            sub=row.service_account_id,
-            actor_type=ActorType.SERVICE_ACCOUNT,
-            permissions=permissions,
             active=True,
         )
 

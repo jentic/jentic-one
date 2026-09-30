@@ -35,8 +35,8 @@ import {
 /** Subtle, human-friendly noun for each actor type. Keyed by the wire string
  * (not the enum) because historical rows persist the retired
  * `actor_type='toolkit'` / `'service_account'` — the enum no longer carries
- * (or will soon drop) them, but read paths must still label them rather than
- * round-trip them through `ActorType`. */
+ * them, but read paths must still label them rather than round-trip them
+ * through `ActorType`. */
 const ACTOR_TYPE_LABEL: Record<string, string> = {
 	[ActorType.USER]: 'User',
 	[ActorType.AGENT]: 'Agent',

@@ -13,16 +13,16 @@ class ActorType(StrEnum):
     Phase-6b scope-data sweep; read paths must tolerate the string without
     round-tripping it through this enum.
 
-    ``service_account`` is deserialization-only (theme-8 Phase 2): the
-    service-account surface is gone and no issuance path produces it, but
-    stored token rows, grant rows, audit/execution records, and telemetry
-    history carry the value, and the Phase-1 resolver fallback still resolves
-    unmigrated ``sak_`` keys as it. Deletion is a Phase-4/5 decision.
+    ``service_account`` is retired the same way (theme-8 Phase 4 dropped the
+    service-account tables and deleted the member). Historical audit rows,
+    execution records, telemetry history and control-DB actor-id columns
+    (``connect_sessions.initiator_actor_id``, ``credentials.created_by``)
+    still carry the string or ``sva_`` ids; read paths use
+    :func:`actor_type_label_from_id` or treat the string as opaque.
     """
 
     USER = "user"
     AGENT = "agent"
-    SERVICE_ACCOUNT = "service_account"
 
 
 class Origin(StrEnum):
@@ -54,20 +54,44 @@ def origin_or_none(value: str | None) -> Origin | None:
 _PREFIX_TO_ACTOR_TYPE: dict[str, ActorType] = {
     "usr_": ActorType.USER,
     "agnt_": ActorType.AGENT,
-    "sva_": ActorType.SERVICE_ACCOUNT,
 }
+
+#: Id prefix of the retired service-account actor (theme 8) and the
+#: ``actor_type`` string its historical rows carry. Not an ActorType member:
+#: it can never be an identity again, only a label on residual rows.
+RETIRED_SERVICE_ACCOUNT_ID_PREFIX = "sva_"
+RETIRED_SERVICE_ACCOUNT_ACTOR_TYPE = "service_account"
 
 
 def actor_type_from_id(actor_id: str) -> ActorType:
-    """Derive ActorType from a prefixed KSUID (e.g. ``usr_...``, ``agnt_...``, ``sva_...``)."""
+    """Derive ActorType from a prefixed KSUID (``usr_...`` or ``agnt_...``).
+
+    Raises ``ValueError`` on any other prefix, including the retired
+    ``sva_``; callers labelling historical rows use
+    :func:`actor_type_label_from_id` instead.
+    """
     for prefix, actor_type in _PREFIX_TO_ACTOR_TYPE.items():
         if actor_id.startswith(prefix):
             return actor_type
     raise ValueError(f"Cannot derive ActorType from id={actor_id!r}: unrecognised prefix")
 
 
+def actor_type_label_from_id(actor_id: str) -> str:
+    """Actor-type string for a persisted actor id, tolerant of retired ids.
+
+    Theme-8 Phase 4 (L4): control-DB columns such as
+    ``connect_sessions.initiator_actor_id`` and ``credentials.created_by``
+    keep ``sva_`` ids from before the service-account migration. Those map
+    to the retired ``"service_account"`` label (never an identity) instead of
+    raising; any other unrecognised prefix still raises ``ValueError``.
+    """
+    if actor_id.startswith(RETIRED_SERVICE_ACCOUNT_ID_PREFIX):
+        return RETIRED_SERVICE_ACCOUNT_ACTOR_TYPE
+    return actor_type_from_id(actor_id).value
+
+
 class ActorStatus(StrEnum):
-    """Lifecycle status shared by agents and service accounts."""
+    """Lifecycle status of an agent."""
 
     PENDING = "pending"
     ACTIVE = "active"
@@ -77,7 +101,7 @@ class ActorStatus(StrEnum):
 
 
 class ActorVerb(StrEnum):
-    """Lifecycle transition verbs for agents and service accounts."""
+    """Lifecycle transition verbs for agents."""
 
     APPROVE = "approve"
     DENY = "deny"

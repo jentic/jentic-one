@@ -37,6 +37,9 @@ class _FakeContext:
 
 @contextmanager
 def _patched_service(svc: MagicMock) -> Iterator[None]:
+    if not isinstance(svc.tables_present, AsyncMock):
+        # Pre-drop by default; the post-drop no-op test sets False explicitly.
+        svc.tables_present = AsyncMock(return_value=True)
     with (
         patch.object(cli, "load_config", return_value=MagicMock()),
         patch.object(cli, "configure_logging"),
@@ -83,13 +86,37 @@ def test_sweep_migrated_writes_the_report(tmp_path: Path) -> None:
         rc = cli.main(["migrate-service-accounts", "--sweep-migrated", "--report", str(report)])
 
     assert rc == 0
-    svc.sweep.assert_awaited_once_with(ignore_age_gate=True)
+    svc.sweep.assert_awaited_once_with()
     lines = [json.loads(line) for line in report.read_text().splitlines()]
     assert lines[0] == {"category": "sweep_row", "service_account_id": "sva_1"}
     summary = lines[-1]
     assert summary["category"] == "sweep_summary"
     assert (summary["swept"], summary["permission_rules_deleted"]) == (1, 3)
-    assert summary["ignore_age_gate"] is True
+    assert "ignore_age_gate" not in summary
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["migrate-service-accounts"],
+        ["migrate-service-accounts", "--sweep-migrated"],
+        ["migrate-service-accounts", "--verify", "--acknowledge"],
+    ],
+)
+def test_noop_once_the_tables_are_dropped(
+    argv: list[str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Theme-8 Phase 4: after the drop migration the job has nothing to act on."""
+    svc = MagicMock()
+    svc.tables_present = AsyncMock(return_value=False)
+
+    with _patched_service(svc):
+        rc = cli.main(argv)
+
+    assert rc == 0
+    assert "already dropped" in capsys.readouterr().err
+    svc.sweep.assert_not_called()
+    svc.verify.assert_not_called()
 
 
 @pytest.mark.parametrize(

@@ -1,9 +1,10 @@
 """ServiceAccountMigrationAck ORM model — the theme-8 Phase-1 acknowledgement sentinel.
 
-Theme-8 Phase 4's drop migrations destroy the service-account tables
-(``service_accounts``, ``service_account_credentials``) and the resolver's SA
-fallback arm. That is only safe once an operator has run the Phase-1
-service-account → agent migration against the *production* data, its
+Theme-8 Phase 4's drop migration (``e2f3a4b5c6d7``) destroys the
+service-account tables (``service_accounts``, ``service_account_credentials``),
+and that release removes the resolver's SA fallback arm. That is only safe
+once an operator has run the Phase-1 service-account → agent migration
+against the *production* data, its
 verification queries passed (zero unstamped rows, grant-twin parity, zero
 unrevoked live SA tokens, digest parity, no post-stamp mutation), and the
 operator explicitly acknowledged the result. This table records exactly that:
@@ -12,8 +13,9 @@ migrate-service-accounts --verify --acknowledge`` and only when the
 verification passed in that same invocation (the ``toolkit_flattening_acks``
 precedent — ``control/core/schema/toolkit_flattening_acks.py``).
 
-Phase 4's drop migrations must check this table directly and **raise** — not
-skip — when it is empty (guard-and-raise). It lives in the **admin** DB (plan
+The drop migration checks this table directly and **raises** — never skips —
+when it is empty and service-account rows remain (guard-and-raise). The table
+outlives the drop as upgrade evidence. It lives in the **admin** DB (plan
 M-B) so the drop migration reads it in the same database it drops from — no
 theme-5-style cross-DB proxy. The sentinel is necessary but not sufficient:
 Phase 4 re-runs the verification at drop time (F5 x M-C), so the row carries

@@ -23,7 +23,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import func, select, text
+from sqlalchemy import func, inspect, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -104,6 +104,13 @@ _SUCCESSOR_SUPERSEDED_PREDICATE = (
     "(a.id IS NOT NULL AND (a.status = 'archived'"
     " OR (ac.rotated_at IS NOT NULL AND sa.migrated_at IS NOT NULL"
     " AND ac.rotated_at > sa.migrated_at)))"
+)
+
+#: Criterion 4 as one statement. The theme-8 Phase-4 drop migration
+#: (``e2f3a4b5c6d7``) carries a verbatim copy — pinned equal by
+#: ``tests/unit/control/test_drop_service_accounts_sql.py``.
+DIGEST_MISMATCH_SQL = (
+    _SUCCESSOR_DIGEST_DRIFT_SQL + f" AND NOT {_SUCCESSOR_SUPERSEDED_PREDICATE}" + " ORDER BY sa.id"
 )
 
 _SELECT_SERVICE_ACCOUNT_SQL = (
@@ -195,6 +202,17 @@ class ServiceAccountMigrationRepository:
     ``list_service_account_rule_holders``, ``count_permission_rules_by_binding``)
     must be called with a **control** session; everything else is admin.
     """
+
+    @staticmethod
+    async def tables_present(session: AsyncSession) -> bool:
+        """Whether the admin DB still has the ``service_accounts`` table.
+
+        Theme-8 Phase 4 drops it; the CLI probes first so a post-drop run is
+        a clean no-op rather than a SQL error.
+        """
+        return await session.run_sync(
+            lambda sync_session: inspect(sync_session.connection()).has_table("service_accounts")
+        )
 
     @staticmethod
     async def acquire_migration_lock(session: AsyncSession, service_account_id: str) -> None:
@@ -720,13 +738,7 @@ class ServiceAccountMigrationRepository:
 
         Rows: ``service_account_id, successor_agent_id``.
         """
-        rows = await session.execute(
-            text(
-                _SUCCESSOR_DIGEST_DRIFT_SQL
-                + f" AND NOT {_SUCCESSOR_SUPERSEDED_PREDICATE}"
-                + " ORDER BY sa.id"
-            )
-        )
+        rows = await session.execute(text(DIGEST_MISMATCH_SQL))
         return list(rows.all())
 
     @staticmethod

@@ -44,8 +44,8 @@ class MeUser(BaseModel):
     status: str
     # For users `scopes` stays the token's permissions: users re-authenticate
     # interactively, so the token view is effectively live (no long-lived
-    # programmatic token to drift from grants the way agents/service accounts
-    # have — see #673).
+    # programmatic token to drift from grants the way agents' tokens do — see
+    # #673).
     scopes: list[str]
     must_change_password: bool
 
@@ -72,28 +72,4 @@ class MeAgent(BaseModel):
     credential_bindings: list[CredentialBindingEntry] = []
 
 
-class MeServiceAccount(BaseModel):
-    """Identity response for a (retired) service-account actor.
-
-    Served only to callers whose unmigrated ``sak_``/``jntc_live_`` key
-    resolved through the Phase-1 SA-table fallback (theme 8). Deleted with the
-    fallback in Phase 4.
-    """
-
-    type: Literal["service_account"] = "service_account"
-    id: str
-    name: str
-    status: str
-    # Live grants from `actor_scope_grants` (same source of truth as agents), so
-    # whoami reflects an approved grant immediately regardless of when the token
-    # was minted (#673).
-    scopes: list[str]
-    # Scopes baked into the presented bearer token at mint time. A strict subset
-    # of `scopes` means a grant has landed that the current token can't yet
-    # exercise; the caller should re-mint to pick it up.
-    token_scopes: list[str]
-    registered_by: str
-    approved_by: str | None = None
-
-
-MeResponse = Annotated[MeUser | MeAgent | MeServiceAccount, Discriminator("type")]
+MeResponse = Annotated[MeUser | MeAgent, Discriminator("type")]

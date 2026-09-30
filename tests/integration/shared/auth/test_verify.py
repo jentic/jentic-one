@@ -3,7 +3,7 @@ import pytest
 from jentic_one.admin.core.permissions import ORG_ADMIN
 from jentic_one.admin.services.permission_service import PermissionService
 from jentic_one.shared.auth.identity import Identity
-from jentic_one.shared.auth.tokens import issue_jwt
+from jentic_one.shared.auth.tokens import InvalidTokenError, issue_jwt
 from jentic_one.shared.auth.verify import verify_token
 from jentic_one.shared.context import Context
 
@@ -68,21 +68,17 @@ async def test_verify_token_resolves_agent_parent_permissions(ctx: Context) -> N
 
 
 @pytest.mark.asyncio
-async def test_verify_token_resolves_service_account_permissions(ctx: Context) -> None:
-    # Currently returns empty array per our stub
+async def test_verify_token_refuses_retired_service_account_actor_type(ctx: Context) -> None:
+    """``service_account`` is no longer an ``ActorType`` (theme-8 Phase 4), so a
+    validly-signed JWT claiming it fails closed as an unknown actor type."""
     secret = "test-secret"
-    sa_id = "sa_token_test_1"
     claims = {
-        "sub": sa_id,
+        "sub": "sva_token_test_1",
         "email": "",
         "actor_type": "service_account",
         "scopes": ["system:metrics"],
     }
     token = issue_jwt(claims=claims, secret=secret, ttl_seconds=3600)
 
-    identity = await verify_token(token, secret=secret, ctx=ctx)
-
-    assert identity.sub == sa_id
-    assert identity.actor_type == "service_account"
-    assert "system:metrics" in identity.permissions
-    assert identity.parent_permissions == []
+    with pytest.raises(InvalidTokenError, match="unknown actor_type"):
+        await verify_token(token, secret=secret, ctx=ctx)

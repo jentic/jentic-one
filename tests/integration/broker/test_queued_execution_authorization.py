@@ -18,7 +18,6 @@ from sqlalchemy import delete, update
 from jentic_one.admin.core.schema.actor_scope_grants import ActorScopeGrant
 from jentic_one.admin.core.schema.agent_credential_bindings import AgentCredentialBinding
 from jentic_one.admin.core.schema.agents import Agent
-from jentic_one.admin.core.schema.service_accounts import ServiceAccount
 from jentic_one.admin.core.schema.users import User
 from jentic_one.broker.core.setup import build_queued_execution_authorizer
 from jentic_one.broker.repos.actor_status import ActorStatusResolver
@@ -47,7 +46,6 @@ async def clean_tables(integration_context: Context) -> AsyncGenerator[None, Non
         async with ctx.admin_db.session() as session:
             await session.execute(delete(AgentCredentialBinding))
             await session.execute(delete(ActorScopeGrant))
-            await session.execute(delete(ServiceAccount))
             await session.execute(delete(Agent))
             await session.commit()
         async with ctx.control_db.session() as session:
@@ -284,58 +282,22 @@ async def test_actor_status_resolver_reads_user_and_agent_rows(
             await session.commit()
 
 
-async def test_actor_status_resolver_serves_unmigrated_service_accounts_only(
+async def test_actor_status_resolver_refuses_retired_service_account_actors(
     integration_context: Context, clean_tables: None
 ) -> None:
-    """An unmigrated service account still executes through the ``sak_`` /
-    ``jntc_live_`` fallback on the sync path, so its queued jobs must too; a
-    migrated (stamped) or inactive one must not."""
+    """Theme-8 Phase 4: a job queued under a (retired) service account can
+    never run — no liveness row exists to vouch for it, and a leftover
+    ``service_account`` grant row confers nothing."""
     ctx = integration_context
-    owner = User(email="sa-owner@example.com", first_name="S", last_name="Owner", active=True)
     async with ctx.admin_db.session() as session:
-        session.add(owner)
-        await session.flush()
-        live = ServiceAccount(
-            name="live-sa", owner_id=owner.id, registered_by=owner.id, status="active"
-        )
-        stamped = ServiceAccount(
-            name="stamped-sa",
-            owner_id=owner.id,
-            registered_by=owner.id,
-            status="active",
-            migrated_to_actor_id="agnt_successor",
-        )
-        suspended = ServiceAccount(
-            name="suspended-sa", owner_id=owner.id, registered_by=owner.id, status="suspended"
-        )
-        session.add_all([live, stamped, suspended])
-        await session.flush()
         session.add(
             ActorScopeGrant(
-                actor_id=live.id, actor_type="service_account", scope=BROKER_EXECUTE_SCOPE
+                actor_id="sva_queued", actor_type="service_account", scope=BROKER_EXECUTE_SCOPE
             )
         )
         await session.commit()
-        owner_id, live_id, stamped_id, suspended_id = owner.id, live.id, stamped.id, suspended.id
     resolver = ActorStatusResolver(ctx.admin_db)
-    try:
-        assert await resolver.is_active(actor_id=live_id, actor_type="service_account") is True
-        assert await resolver.is_active(actor_id=stamped_id, actor_type="service_account") is False
-        assert (
-            await resolver.is_active(actor_id=suspended_id, actor_type="service_account") is False
-        )
-        assert await resolver.holds_scope(
-            actor_id=live_id, actor_type="service_account", scope=BROKER_EXECUTE_SCOPE
-        )
-        assert not await resolver.holds_scope(
-            actor_id=stamped_id, actor_type="service_account", scope=BROKER_EXECUTE_SCOPE
-        )
-        # User scopes ride on the user's own token; there is no grant row to re-read.
-        assert await resolver.holds_scope(
-            actor_id=owner_id, actor_type="user", scope=BROKER_EXECUTE_SCOPE
-        )
-    finally:
-        async with ctx.admin_db.session() as session:
-            await session.execute(delete(ServiceAccount).where(ServiceAccount.owner_id == owner_id))
-            await session.execute(delete(User).where(User.id == owner_id))
-            await session.commit()
+    assert await resolver.is_active(actor_id="sva_queued", actor_type="service_account") is False
+    assert not await resolver.holds_scope(
+        actor_id="sva_queued", actor_type="service_account", scope=BROKER_EXECUTE_SCOPE
+    )

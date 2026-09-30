@@ -42,9 +42,6 @@ async def resolve_permissions_for_actor(
             parent_permissions = view.effective
         else:
             logger.warning("Agent token missing parent_actor_id")
-    # ActorType.SERVICE_ACCOUNT (retired, theme-8 Phase 2) deliberately resolves
-    # no DB permissions: the old dispatch hit a stub that always returned an
-    # empty view, and nothing issues SA tokens any more.
 
     return permissions, parent_permissions
 

@@ -556,9 +556,8 @@ OPENAPI_TAGS: list[dict[str, str]] = [
     {
         "name": "Identity",
         "description": (
-            "Identity introspection for the calling principal (human, agent, or service "
-            "account) — `GET /me` returns the resolved subject, scopes, and permissions behind "
-            "the presented token."
+            "Identity introspection for the calling principal (human or agent) — `GET /me` "
+            "returns the resolved subject, scopes, and permissions behind the presented token."
         ),
     },
     {

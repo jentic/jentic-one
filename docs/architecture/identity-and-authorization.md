@@ -26,15 +26,17 @@ Two former actor kinds are retired, and their existing plaintexts keep
 working through the deprecation window (see the
 [release runbook](../development/releasing.md)):
 
-- **`service_account`** — removed in theme 8. A startup migration converts
-  each service account into a successor agent, carrying over its grants,
-  bindings, and API-key digest, so an existing `sak_` plaintext keeps
-  authenticating as the successor agent. Until an account is migrated (and
-  until the service-account tables are dropped), its key still resolves
-  through a service-account fallback, as the service account itself. No new
-  `sak_` keys are issued;
-  the `/service-accounts` API, `POST /oauth/mint`, and the
-  `client_credentials` grant are gone.
+- **`service_account`** — removed in theme 8. The Phase-1 migration
+  converted each service account into a successor agent, carrying over its
+  grants, bindings, and API-key digest, so an existing `sak_` plaintext keeps
+  authenticating as the successor agent. The service-account tables are
+  dropped in 0.41 (theme-8 Phase 4), so there is no service-account fallback:
+  an unmigrated `sak_` key is refused. No new `sak_` keys are issued; the
+  `/service-accounts` API, `POST /oauth/mint`, and the `client_credentials`
+  grant are gone. `service_account` is no longer an `ActorType` value.
+  Leftover `service_account` token rows fail closed on every path, and
+  historical `sva_` ids in audit and event rows are labelled, never
+  resolved.
 - **`toolkit`** — on 0.40.x a startup migration turned each `jntc_live_`
   toolkit key into a successor agent (it minted a service account before
   theme 8, and those service accounts migrate like any other). The toolkit

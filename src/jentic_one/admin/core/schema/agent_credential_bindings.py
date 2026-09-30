@@ -15,14 +15,14 @@ from jentic_one.shared.db.ids import generate_ksuid
 class AgentCredentialBinding(AuditableMixin, AdminBase):
     """Direct binding between a broker-executing actor and a credential.
 
-    ``agent_id`` holds the id of the actor the binding authorizes — an agent
-    (``agnt_…``) or, since theme-5 Phase 4 (key retirement), a service account
-    (``sva_…``) migrated from a ``jntc_live_`` toolkit key. The two actor
-    kinds live in sibling tables, so the column carries no FK; lifecycle
-    cleanup is application-level (``AgentService.delete`` removes an agent's
-    bindings; service accounts archive rather than hard-delete). The column
-    keeps its historical name — every consumer (broker derivation SQL, repos,
-    the Phase-6a flattening queries) keys on it.
+    ``agent_id`` holds the id of the agent (``agnt_…``) the binding
+    authorizes. Before theme 8 it could also hold a service-account id
+    (``sva_…``); the theme-8 migration re-keyed those onto successor agents
+    and its sweep deleted the originals, and the Phase-4 drop refuses to run
+    while any remain. The column carries no FK (it predates that cleanup);
+    lifecycle cleanup is application-level (``AgentService.delete`` removes
+    an agent's bindings). Every consumer (broker derivation SQL, repos) keys
+    on it.
 
     ``credential_id`` references a row in the control database, so it is a
     plain string column with no FK (cross-DB reference — same pattern as

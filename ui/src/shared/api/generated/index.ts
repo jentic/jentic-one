@@ -101,7 +101,6 @@ export type { McpConfigRegistrationRequest } from './models/McpConfigRegistratio
 export type { McpConfigRegistrationResponse } from './models/McpConfigRegistrationResponse';
 export { McpConfigRuntime } from './models/McpConfigRuntime';
 export type { MeAgent } from './models/MeAgent';
-export type { MeServiceAccount } from './models/MeServiceAccount';
 export type { MeUser } from './models/MeUser';
 export type { NoAuthCreateRequest } from './models/NoAuthCreateRequest';
 export type { NoteApiReference } from './models/NoteApiReference';

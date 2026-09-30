@@ -54,8 +54,9 @@ class InProcessTokenResolver:
             " CASE t.actor_type"
             "  WHEN 'agent' THEN"
             "   (SELECT a.status FROM agents a WHERE a.id = t.actor_id)"
-            # Service-account sessions are retired (theme 8): fail closed
-            # regardless of the row, matching ``TokenService._actor_is_active``.
+            # Service-account sessions are retired (theme 8; the tables were
+            # dropped in Phase 4). Kept as an explicit fail-closed arm: a
+            # bare deletion would drop a residual row into ELSE 'active'.
             "  WHEN 'service_account' THEN 'retired'"
             "  WHEN 'user' THEN"
             "   (SELECT CASE WHEN u.active THEN 'active' ELSE 'disabled' END"
@@ -89,14 +90,11 @@ class InProcessTokenResolver:
 
             permissions = _as_scope_list(row.scopes)
 
-            # Long-lived agent/SA tokens (is_ephemeral=False) resolve scopes live
+            # Long-lived agent tokens (is_ephemeral=False) resolve scopes live
             # from actor_scope_grants so scope edits take effect immediately.
             # Ephemeral minted tokens keep their downscoped snapshot; user tokens
             # do not draw scopes from actor_scope_grants.
-            if not row.is_ephemeral and row.actor_type in (
-                ActorType.AGENT.value,
-                ActorType.SERVICE_ACCOUNT.value,
-            ):
+            if not row.is_ephemeral and row.actor_type == ActorType.AGENT.value:
                 grants = await session.execute(
                     text(
                         "SELECT scope FROM actor_scope_grants"
@@ -128,6 +126,13 @@ class InProcessTokenResolver:
             grant_scopes = set(_as_scope_list(row.oauth_grant_scopes))
             permissions = [s for s in permissions if s in grant_scopes]
 
+        try:
+            actor_type = ActorType(row.actor_type)
+        except ValueError:
+            # A retired actor type (``toolkit``, ``service_account``) on a
+            # residual row: not an identity any more. Fail closed.
+            return None
+
         active = (
             revoked_at is None
             and expires_at > now
@@ -137,7 +142,7 @@ class InProcessTokenResolver:
         )
         return Identity(
             sub=row.actor_id,
-            actor_type=ActorType(row.actor_type),
+            actor_type=actor_type,
             permissions=permissions,
             expires_at=expires_at,
             active=active,

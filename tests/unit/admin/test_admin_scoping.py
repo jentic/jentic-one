@@ -6,7 +6,6 @@ import pytest
 
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.jobs import Job
-from jentic_one.admin.core.schema.service_accounts import ServiceAccount
 from jentic_one.admin.core.schema.users import User
 from jentic_one.admin.scoping.filters import build_access_filters
 from jentic_one.shared.auth.identity import Identity
@@ -103,13 +102,6 @@ def test_agent_with_scope_but_no_parent_returns_single_filter() -> None:
     compiled = filters[0].compile(compile_kwargs={"literal_binds": True})
     sql = str(compiled)
     assert "agent_1" in sql
-
-
-def test_service_account_model_is_no_longer_scoped() -> None:
-    """Theme-8 Phase 2: ServiceAccount left the scoping map (no reads remain)."""
-    identity = _identity(sub="user_7", permissions=[])
-    with pytest.raises(ValueError, match="Unknown model"):
-        build_access_filters(identity, ServiceAccount)
 
 
 def test_user_model_returns_self_scope_filter() -> None:

@@ -28,7 +28,7 @@ from jentic_one.auth.web.routers import (
 )
 from jentic_one.shared.auth.api_key_resolver import (
     AGENT_API_KEY_PREFIX,
-    SERVICE_ACCOUNT_API_KEY_PREFIX,
+    RETIRED_SERVICE_ACCOUNT_KEY_PREFIX,
     ApiKeyResolver,
 )
 from jentic_one.shared.auth.identity import Identity
@@ -108,9 +108,9 @@ def make_superset_verifier(ctx: Context) -> Any:
     """Build the full-taxonomy token verifier for combined/standalone apps.
 
     Resolves every platform token shape a signed-in caller can present:
-    agent API keys (``jak_``, plus legacy ``sak_``/``jntc_live_`` plaintexts
-    that resolve as their successor agents once migrated, or through the
-    service-account fallback until then), opaque ``at_`` access
+    agent API keys (``jak_``, plus retired ``sak_`` plaintexts that resolve
+    as their successor agents; a retired ``jntc_live_`` key is accepted only
+    by the broker), opaque ``at_`` access
     tokens (DB-resolved, live permissions), and HS256 web-session JWTs. This is
     the verifier a combined-app assembler should install so admin/enterprise
     routes accept ``at_`` regardless of surface ordering — the auth surface's
@@ -125,7 +125,7 @@ def _make_auth_verifier(ctx: Context) -> Any:
 
     async def _verify(token: str, request: Request) -> Identity:
         if token.startswith(AGENT_API_KEY_PREFIX) or token.startswith(
-            SERVICE_ACCOUNT_API_KEY_PREFIX
+            RETIRED_SERVICE_ACCOUNT_KEY_PREFIX
         ):
             resolved = await api_key_resolver.resolve(token)
             if resolved is None or not resolved.active:

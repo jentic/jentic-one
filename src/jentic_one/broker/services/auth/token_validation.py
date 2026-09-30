@@ -55,10 +55,8 @@ _ALLOWED_ALGS: frozenset[str] = frozenset({"HS256"})
 # The self-contained-JWT path may only assert this actor type (jentic-one#868;
 # theme-8 Phase 1, F3). USER identities have a DB-backed credential form
 # (opaque tokens) and must never enter the broker via a bare signed claim.
-# SERVICE_ACCOUNT was removed in Phase 1 of the SA→agent migration: this path
-# builds Identity from claim-supplied scopes with no DB read, so an SA claim
-# would sail past the grant migration and token revocation for the whole
-# coexistence window — a trusted issuer now vouches for AGENT, nothing else.
+# A trusted issuer vouches for AGENT, nothing else (the retired
+# ``service_account`` claim is refused as an unknown actor type).
 _ALLOWED_ACTOR_TYPES: frozenset[ActorType] = frozenset({ActorType.AGENT})
 
 # Cap on attacker-influenced string fields written to the log stream, so a
@@ -232,13 +230,12 @@ class DualTokenValidator:
 def _is_api_key(value: str) -> bool:
     """Check whether a credential string is a prefixed API key.
 
-    ``jntc_live_`` is the retired toolkit-key form (theme-5 Phase 4): the
-    retirement job migrated each key's digest onto an actor, and
-    ``ApiKeyResolver`` resolves the unchanged plaintext **agent-first**
-    (theme-8 Phase 1) — as the successor agent once migrated, else through
-    the service-account fallback (logging a deprecation warning). Keys not
-    migrated before the Phase-6b drops (which removed the retirement job)
-    resolve to nothing → 401.
+    ``jntc_live_`` (toolkit, theme 5) and ``sak_`` (service account, theme 8)
+    are retired key forms: their digests were migrated onto successor agents,
+    and ``ApiKeyResolver`` resolves the unchanged plaintext as that agent
+    (logging a deprecation warning). There is no fallback since theme-8
+    Phase 4 dropped the service-account tables: an unmigrated key resolves
+    to nothing → 401.
     """
     return value.startswith("jak_") or value.startswith("sak_") or value.startswith("jntc_live_")
 

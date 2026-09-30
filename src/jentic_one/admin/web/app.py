@@ -27,7 +27,7 @@ from jentic_one.admin.web.routers import (
 )
 from jentic_one.shared.auth.api_key_resolver import (
     AGENT_API_KEY_PREFIX,
-    SERVICE_ACCOUNT_API_KEY_PREFIX,
+    RETIRED_SERVICE_ACCOUNT_KEY_PREFIX,
     ApiKeyResolver,
 )
 from jentic_one.shared.auth.identity import Identity
@@ -93,7 +93,7 @@ def _make_verifier(ctx: Context) -> Any:
 
     async def _verify(token: str, request: Request) -> Identity:
         if token.startswith(AGENT_API_KEY_PREFIX) or token.startswith(
-            SERVICE_ACCOUNT_API_KEY_PREFIX
+            RETIRED_SERVICE_ACCOUNT_KEY_PREFIX
         ):
             resolved = await api_key_resolver.resolve(token)
             if resolved is None or not resolved.active:

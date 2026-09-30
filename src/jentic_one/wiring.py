@@ -98,7 +98,8 @@ class InProcessCatalogAutoImporter:
 
     Actor attribution: the ``initiator_actor_id`` is threaded through as the
     identity ``sub`` and its ``actor_type`` is derived from the id prefix
-    (``usr_`` / ``agnt_`` / ``sva_``), so audit + job telemetry attribute the
+    (``usr_`` / ``agnt_``; any other prefix, such as a residual retired
+    ``sva_`` id, falls back to ``user``), so audit + job telemetry attribute the
     (re-)import to whoever finished the connect. The service method itself
     does not enforce ``catalog:import`` scope; the router does, and we do not
     go through the router.

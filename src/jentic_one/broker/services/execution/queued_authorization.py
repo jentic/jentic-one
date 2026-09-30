@@ -7,9 +7,9 @@ before any credential is resolved:
 
 1. the enqueuing actor must still be active (the sync path's token-resolution
    check, answered from the actor row since the worker holds no token);
-2. an agent or service account must still hold the execute scope (the sync
-   path's ``require_execute_scope``, answered from the live grant rows those
-   actors' credentials resolve their scopes from);
+2. an agent must still hold the execute scope (the sync path's
+   ``require_execute_scope``, answered from the live grant rows an agent's
+   credentials resolve their scopes from);
 3. the actor's bindings for the API are re-derived, so a removed or
    suspended binding (or a disabled credential) no longer resolves;
 4. the binding's permission rules are re-evaluated for the operation.

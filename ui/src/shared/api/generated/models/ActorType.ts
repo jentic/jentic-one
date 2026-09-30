@@ -12,14 +12,14 @@
  * Phase-6b scope-data sweep; read paths must tolerate the string without
  * round-tripping it through this enum.
  *
- * ``service_account`` is deserialization-only (theme-8 Phase 2): the
- * service-account surface is gone and no issuance path produces it, but
- * stored token rows, grant rows, audit/execution records, and telemetry
- * history carry the value, and the Phase-1 resolver fallback still resolves
- * unmigrated ``sak_`` keys as it. Deletion is a Phase-4/5 decision.
+ * ``service_account`` is retired the same way (theme-8 Phase 4 dropped the
+ * service-account tables and deleted the member). Historical audit rows,
+ * execution records, telemetry history and control-DB actor-id columns
+ * (``connect_sessions.initiator_actor_id``, ``credentials.created_by``)
+ * still carry the string or ``sva_`` ids; read paths use
+ * :func:`actor_type_label_from_id` or treat the string as opaque.
  */
 export enum ActorType {
     USER = 'user',
     AGENT = 'agent',
-    SERVICE_ACCOUNT = 'service_account',
 }

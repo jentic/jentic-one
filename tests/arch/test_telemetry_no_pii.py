@@ -75,11 +75,16 @@ def test_actor_type_must_be_a_closed_enum_member() -> None:
     assert leaked.actor_type is None
     assert "actor_type" not in _serialise(leaked, instance_id="i", version="1.0.0")
 
-    # A valid enum member is preserved and serialised as its (dash-normalised) value.
-    sink.record(TelemetryEventName.BROKER_EXECUTION, (), ActorType.SERVICE_ACCOUNT.value)
+    # A retired actor type (theme-8 Phase 4 deleted ``service_account``) is
+    # no longer a member, so it is dropped like any other free-form string.
+    sink.record(TelemetryEventName.BROKER_EXECUTION, (), "service_account")
+    assert sink.queue.get_nowait().actor_type is None
+
+    # A valid enum member is preserved and serialised as its value.
+    sink.record(TelemetryEventName.BROKER_EXECUTION, (), ActorType.AGENT.value)
     kept = sink.queue.get_nowait()
-    assert kept.actor_type is ActorType.SERVICE_ACCOUNT
-    assert _serialise(kept, instance_id="i", version="1.0.0")["actor_type"] == "service-account"
+    assert kept.actor_type is ActorType.AGENT
+    assert _serialise(kept, instance_id="i", version="1.0.0")["actor_type"] == "agent"
 
 
 @pytest.mark.arch

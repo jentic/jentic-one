@@ -129,11 +129,10 @@
         "type": "object"
       },
       "ActorType": {
-        "description": "Type of authenticated actor.\n\n``toolkit`` is retired (theme-5 Phase 4): toolkit keys resolve as the\nagents the key-retirement job created, so no code path mints a\ntoolkit identity. Persisted ``actor_type='toolkit'`` strings survive in\nhistorical rows (events, audit entries, execution records) until the\nPhase-6b scope-data sweep; read paths must tolerate the string without\nround-tripping it through this enum.\n\n``service_account`` is deserialization-only (theme-8 Phase 2): the\nservice-account surface is gone and no issuance path produces it, but\nstored token rows, grant rows, audit/execution records, and telemetry\nhistory carry the value, and the Phase-1 resolver fallback still resolves\nunmigrated ``sak_`` keys as it. Deletion is a Phase-4/5 decision.",
+        "description": "Type of authenticated actor.\n\n``toolkit`` is retired (theme-5 Phase 4): toolkit keys resolve as the\nagents the key-retirement job created, so no code path mints a\ntoolkit identity. Persisted ``actor_type='toolkit'`` strings survive in\nhistorical rows (events, audit entries, execution records) until the\nPhase-6b scope-data sweep; read paths must tolerate the string without\nround-tripping it through this enum.\n\n``service_account`` is retired the same way (theme-8 Phase 4 dropped the\nservice-account tables and deleted the member). Historical audit rows,\nexecution records, telemetry history and control-DB actor-id columns\n(``connect_sessions.initiator_actor_id``, ``credentials.created_by``)\nstill carry the string or ``sva_`` ids; read paths use\n:func:`actor_type_label_from_id` or treat the string as opaque.",
         "enum": [
           "user",
-          "agent",
-          "service_account"
+          "agent"
         ],
         "title": "ActorType",
         "type": "string"
@@ -4201,68 +4200,6 @@
           "token_scopes"
         ],
         "title": "MeAgent",
-        "type": "object"
-      },
-      "MeServiceAccount": {
-        "description": "Identity response for a (retired) service-account actor.\n\nServed only to callers whose unmigrated ``sak_``/``jntc_live_`` key\nresolved through the Phase-1 SA-table fallback (theme 8). Deleted with the\nfallback in Phase 4.",
-        "properties": {
-          "approved_by": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Approved By"
-          },
-          "id": {
-            "title": "Id",
-            "type": "string"
-          },
-          "name": {
-            "title": "Name",
-            "type": "string"
-          },
-          "registered_by": {
-            "title": "Registered By",
-            "type": "string"
-          },
-          "scopes": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Scopes",
-            "type": "array"
-          },
-          "status": {
-            "title": "Status",
-            "type": "string"
-          },
-          "token_scopes": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Token Scopes",
-            "type": "array"
-          },
-          "type": {
-            "const": "service_account",
-            "default": "service_account",
-            "title": "Type",
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "name",
-          "status",
-          "scopes",
-          "token_scopes",
-          "registered_by"
-        ],
-        "title": "MeServiceAccount",
         "type": "object"
       },
       "MeUser": {
@@ -28042,7 +27979,6 @@
                   "discriminator": {
                     "mapping": {
                       "agent": "#/components/schemas/MeAgent",
-                      "service_account": "#/components/schemas/MeServiceAccount",
                       "user": "#/components/schemas/MeUser"
                     },
                     "propertyName": "type"
@@ -28053,9 +27989,6 @@
                     },
                     {
                       "$ref": "#/components/schemas/MeAgent"
-                    },
-                    {
-                      "$ref": "#/components/schemas/MeServiceAccount"
                     }
                   ],
                   "title": "Response Getme"
@@ -35420,7 +35353,7 @@
       "name": "System"
     },
     {
-      "description": "Identity introspection for the calling principal (human, agent, or service account) — `GET /me` returns the resolved subject, scopes, and permissions behind the presented token.",
+      "description": "Identity introspection for the calling principal (human or agent) — `GET /me` returns the resolved subject, scopes, and permissions behind the presented token.",
       "name": "Identity"
     },
     {

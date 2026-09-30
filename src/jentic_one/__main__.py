@@ -409,16 +409,25 @@ async def _migrate_service_accounts(
     Default mode migrates every SA (copy→revoke→stamp→audit; idempotent via
     the stamp) and emits one JSONL line per SA. ``--diff-only`` evaluates
     dispositions without writing. ``--sweep-migrated`` runs the W3 sweep
-    ignoring the stamp-age gate (operators who know the fleet is uniform) and
-    emits one JSONL line per swept SA plus a summary line.
+    and emits one JSONL line per swept SA plus a summary line.
     ``--verify [--acknowledge]`` runs the acceptance queries and optionally
     writes the Phase-4 gate sentinel (only on pass, same invocation).
+
+    Kept on the theme-8 Phase-4 image as the remediation tool the drop
+    migration names when it refuses; once the drop has run it is a no-op.
     """
     config = load_config()
     configure_logging(config)
 
     async with Context(config, allowed_dbs={"admin", "control"}) as ctx:
         svc = ServiceAccountMigrationService(ctx)
+        if not await svc.tables_present():
+            print(
+                "==> service-account tables already dropped (theme-8 Phase 4) — nothing to do.",
+                file=sys.stderr,
+                flush=True,
+            )
+            return 0
 
         if verify:
             result = await svc.verify(acknowledge=acknowledge)
@@ -461,8 +470,8 @@ async def _migrate_service_accounts(
             return 0 if result.passed else 1
 
         if sweep_migrated:
-            sweep = await svc.sweep(ignore_age_gate=True)
-            _write_report_lines(sweep.report_lines(ignore_age_gate=True), report_path)
+            sweep = await svc.sweep()
+            _write_report_lines(sweep.report_lines(), report_path)
             print(
                 f"==> swept {len(sweep.swept)} service account(s); revoked "
                 f"{sweep.access_tokens_revoked + sweep.refresh_tokens_revoked} SA "
@@ -693,7 +702,7 @@ def main(argv: list[str] | None = None) -> int:
         "migrate-service-accounts",
         help=(
             "Migrate service accounts to successor agents "
-            "(theme-8 Phase 1; idempotent, also runs at boot)."
+            "(theme-8 Phase 1; idempotent; a no-op once the Phase-4 drop has run)."
         ),
     )
     migrate_sas.add_argument(
@@ -710,8 +719,8 @@ def main(argv: list[str] | None = None) -> int:
         "--sweep-migrated",
         action="store_true",
         help=(
-            "Run the deferred sweep now, ignoring the stamp-age gate "
-            "(only when no old-image pods remain)."
+            "Run the deferred sweep: archive migrated service accounts and "
+            "delete their SA-keyed originals."
         ),
     )
     migrate_sas.add_argument(

@@ -3,10 +3,16 @@
 Runs ``ServiceAccountMigrationService`` against real admin (+ control)
 databases on both dialects (``JENTIC_TEST_BACKEND=sqlite`` locally, Postgres
 in CI): the copy→revoke→stamp→audit transaction, dispositions (OQ-1),
-resolver behaviour through the window (agent arm, SA fallback, post-sweep),
-the deferred sweep (W3/N3), and verify/acknowledge
-(W9). Test names lift the plan's acceptance criteria verbatim where they
-apply.
+resolver behaviour (agent arm; no SA fallback since theme-8 Phase 4), the
+deferred sweep (W3/N3), and verify/acknowledge (W9). Test names lift the
+plan's acceptance criteria verbatim where they apply.
+
+The job survives Phase 4 as the remediation tool the admin drop migration
+(``e2f3a4b5c6d7``) names when it refuses, so it runs against the pre-drop
+schema: the module downgrades the admin chain below the drop (recreating the
+two tables empty — the documented rollback shape) and re-upgrades at teardown
+through the drop's fresh-install path, since the suite leaves them empty.
+The SA ORM models are gone, so seeding is raw SQL.
 """
 
 from __future__ import annotations
@@ -15,19 +21,18 @@ import asyncio
 import datetime as dt
 import hashlib
 import json
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Iterator
 from typing import Any
 
 import pytest
 import structlog
+from alembic import command
 from sqlalchemy import text
 
 from jentic_one.admin.core.schema.access_tokens import AccessToken
 from jentic_one.admin.core.schema.agent_credentials import AgentCredential
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.refresh_tokens import RefreshToken
-from jentic_one.admin.core.schema.service_account_credentials import ServiceAccountCredential
-from jentic_one.admin.core.schema.service_accounts import ServiceAccount
 from jentic_one.admin.repos.agent_credential_repo import AgentCredentialRepository
 from jentic_one.control.core.schema.agent_permission_rules import AgentPermissionRule
 from jentic_one.control.core.schema.credentials import Credential
@@ -38,17 +43,33 @@ from jentic_one.control.services.service_account_migration import (
     ServiceAccountMigrationService,
 )
 from jentic_one.shared.auth.api_key_resolver import ApiKeyResolver
+from jentic_one.shared.config import AppConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.models import ActorType, StoredCredentialType
+from tests.integration.conftest import _alembic_config_for
 
 pytestmark = pytest.mark.integration
 
 _OWNER = "usr_t8m_owner"
 
+#: The admin revision just below the theme-8 Phase-4 drop (``e2f3a4b5c6d7``).
+_ADMIN_PRE_DROP = "d1e2f3a4b5c6"  # pragma: allowlist secret
+
+
+@pytest.fixture(scope="module")
+def service_account_tables(integration_config: AppConfig) -> Iterator[None]:
+    """Downgrade below the Phase-4 drop so the SA tables exist, then re-drop."""
+    admin_cfg = _alembic_config_for("admin", integration_config.databases.admin)
+    command.downgrade(admin_cfg, _ADMIN_PRE_DROP)
+    yield
+    command.upgrade(admin_cfg, "head")
+
 
 @pytest.fixture()
-async def clean_tables(admin_db: DatabaseSession) -> AsyncGenerator[None, None]:
+async def clean_tables(
+    admin_db: DatabaseSession, service_account_tables: None
+) -> AsyncGenerator[None, None]:
     """Remove every row this module seeds or the job creates, before and after.
 
     The job scans **every** service account, so stray rows from other modules
@@ -126,25 +147,27 @@ async def _seed_sa(
     sa_id = f"sva_t8m_{suffix}"
     now = dt.datetime.now(dt.UTC)
     async with admin_db.session() as session:
-        session.add(
-            ServiceAccount(
-                id=sa_id,
-                name=f"t8m-{suffix}",
-                owner_id=_OWNER,
-                registered_by=_OWNER,
-                status=status,
-                created_by=_OWNER,
-            )
+        await session.execute(
+            text(
+                "INSERT INTO service_accounts"
+                " (id, name, owner_id, registered_by, status, created_by)"
+                " VALUES (:id, :name, :owner, :owner, :status, :owner)"
+            ),
+            {"id": sa_id, "name": f"t8m-{suffix}", "owner": _OWNER, "status": status},
         )
-        await session.flush()
-        session.add(
-            ServiceAccountCredential(
-                id=f"sac_t8m_{suffix}",
-                service_account_id=sa_id,
-                api_key_hash=_digest(api_key_plaintext) if api_key_plaintext else None,
-                client_secret_hash=client_secret_hash,
-                created_by=_OWNER,
-            )
+        await session.execute(
+            text(
+                "INSERT INTO service_account_credentials"
+                " (id, service_account_id, api_key_hash, client_secret_hash, created_by)"
+                " VALUES (:id, :sa_id, :api_key_hash, :client_secret_hash, :owner)"
+            ),
+            {
+                "id": f"sac_t8m_{suffix}",
+                "sa_id": sa_id,
+                "api_key_hash": _digest(api_key_plaintext) if api_key_plaintext else None,
+                "client_secret_hash": client_secret_hash,
+                "owner": _OWNER,
+            },
         )
         for scope in scopes:
             await session.execute(
@@ -530,8 +553,8 @@ async def test_migrated_sak_key_authenticates_with_identical_effective_scopes_on
         api_key_plaintext=plaintext,
     )
     resolver = ApiKeyResolver(admin_db)
-    before = await resolver.resolve(plaintext)
-    assert before is not None and before.actor_type is ActorType.SERVICE_ACCOUNT
+    # Theme-8 Phase 4: no SA fallback — an unmigrated key does not resolve.
+    assert await resolver.resolve(plaintext) is None
 
     outcomes = await ServiceAccountMigrationService(integration_context).run()
     agent_id = {o.service_account_id: o for o in outcomes}[sa_id].successor_agent_id
@@ -540,49 +563,24 @@ async def test_migrated_sak_key_authenticates_with_identical_effective_scopes_on
     assert after is not None
     assert after.sub == agent_id
     assert after.actor_type is ActorType.AGENT
-    assert sorted(after.permissions) == sorted(before.permissions)
+    assert sorted(after.permissions) == ["capabilities:execute", "toolkit:read"]
 
 
-async def test_migrated_key_still_resolves_via_unmodified_sa_arm_until_sweep(
-    integration_context: Context, admin_db: DatabaseSession, seed_owner: None
-) -> None:
-    """Rolling-upgrade honesty (H-B): simulate an old-image pod by calling the
-    SA arm directly — the digest and the grant rows must still be live, with
-    FULL permissions (the rev-3 403-outage regression fence, T-6a)."""
-    plaintext = "sak_t8m_oldpod"
-    sa_id = await _seed_sa(
-        admin_db,
-        suffix="oldpod",
-        scopes=("capabilities:execute", "toolkit:read"),
-        api_key_plaintext=plaintext,
-    )
-
-    await ServiceAccountMigrationService(integration_context).run()
-
-    resolver = ApiKeyResolver(admin_db)
-    identity = await resolver._resolve_service_account(plaintext)
-    assert identity is not None
-    assert identity.sub == sa_id
-    assert sorted(identity.permissions) == ["capabilities:execute", "toolkit:read"]
-
-
-async def test_unmigrated_sak_key_resolves_identically_during_window_with_warning_and_counter(
+async def test_unmigrated_sak_key_fails_closed_with_warning(
     admin_db: DatabaseSession, seed_owner: None
 ) -> None:
+    """Theme-8 Phase 4 removed the SA fallback: an unmigrated key's digest
+    lives only in ``service_account_credentials``, so it no longer resolves."""
     plaintext = "sak_t8m_unmig"
-    sa_id = await _seed_sa(
-        admin_db, suffix="unmig", scopes=("toolkit:read",), api_key_plaintext=plaintext
-    )
+    await _seed_sa(admin_db, suffix="unmig", scopes=("toolkit:read",), api_key_plaintext=plaintext)
 
     resolver = ApiKeyResolver(admin_db)
     with structlog.testing.capture_logs() as logs:
         identity = await resolver.resolve(plaintext)
 
-    assert identity is not None
-    assert identity.sub == sa_id
-    assert identity.actor_type is ActorType.SERVICE_ACCOUNT
-    fallbacks = [log for log in logs if log["event"] == "service_account_fallback_resolve"]
-    assert len(fallbacks) == 1 and fallbacks[0]["log_level"] == "warning"
+    assert identity is None
+    unresolved = [log for log in logs if log["event"] == "retired_key_unresolved"]
+    assert len(unresolved) == 1 and unresolved[0]["log_level"] == "warning"
 
 
 async def test_disabled_sa_successor_created_disabled_and_key_dead_until_agent_enable(
@@ -643,19 +641,17 @@ async def test_disabling_the_successor_fails_closed_never_falls_back_to_active_s
     with structlog.testing.capture_logs() as logs:
         identity = await resolver.resolve(plaintext)
 
-    assert identity is None  # fail closed — never the SA fallback
+    assert identity is None  # fail closed
     fail_closed = [log for log in logs if log["event"] == "migrated_key_fail_closed"]
     assert len(fail_closed) == 1 and fail_closed[0]["reason"] == "successor_inactive"
-    # No fallback WARNING/counter: the SA arm was never consulted.
-    assert [log for log in logs if log["event"] == "service_account_fallback_resolve"] == []
 
 
-async def test_revoking_the_successor_key_fails_closed_on_stamped_sa(
+async def test_revoking_the_successor_key_fails_closed(
     integration_context: Context, admin_db: DatabaseSession, seed_owner: None
 ) -> None:
     """H1(b): revoking/rotating the successor's key NULLs the agent-side
-    digest — a genuine agent-arm miss — but the stamped SA row must refuse
-    regardless of its (still-active) status."""
+    digest — a genuine agent-arm miss — and the still-live SA-side digest
+    must not resurrect the key (there is no SA fallback)."""
     plaintext = "sak_t8m_revlever"
     sa_id = await _seed_sa(
         admin_db, suffix="revlever", scopes=("toolkit:read",), api_key_plaintext=plaintext
@@ -679,9 +675,7 @@ async def test_revoking_the_successor_key_fails_closed_on_stamped_sa(
         identity = await resolver.resolve(plaintext)
 
     assert identity is None  # the still-live SA digest must not resurrect the key
-    fail_closed = [log for log in logs if log["event"] == "migrated_key_fail_closed"]
-    assert len(fail_closed) == 1 and fail_closed[0]["reason"] == "stamped_service_account"
-    assert fail_closed[0]["service_account_id"] == sa_id
+    assert [log for log in logs if log["event"] == "retired_key_unresolved"]
 
 
 async def test_non_active_sas_are_skipped_but_stamped(
@@ -878,7 +872,7 @@ async def test_diff_only_preview_counts_match_the_real_run(
 # ---------------------------------------------------------------- W3 sweep
 
 
-async def test_sweep_age_gate_holds_fresh_stamps_and_override_sweeps(
+async def test_sweep_clears_sa_satellites_and_archives(
     integration_context: Context, admin_db: DatabaseSession, seed_owner: None
 ) -> None:
     plaintext = "sak_t8m_sweep"
@@ -893,13 +887,9 @@ async def test_sweep_age_gate_holds_fresh_stamps_and_override_sweeps(
     outcomes = {o.service_account_id: o for o in await svc.run()}
     agent_id = outcomes[sa_id].successor_agent_id
 
-    # Fresh stamp (default gate 24h): the automatic arm holds it back.
-    gated = await svc.sweep()
-    assert gated.swept == []
-    assert gated.skipped_young == 1
-
-    # Operator override ignores the gate.
-    swept = await svc.sweep(ignore_age_gate=True)
+    # Theme-8 Phase 4 removed the boot job and its stamp-age gate: the
+    # operator-run sweep acts on every stamped row, however fresh.
+    swept = await svc.sweep()
     assert swept.swept == [sa_id]
 
     # SA-keyed originals gone, digest NULLed, row archived.
@@ -927,29 +917,21 @@ async def test_sweep_age_gate_holds_fresh_stamps_and_override_sweeps(
     )
     assert len(archives) == 1
 
-    # Post-sweep: SA arm misses, agent arm still serves (T-6c).
+    # Post-sweep: the agent arm still serves (T-6c).
     resolver = ApiKeyResolver(admin_db)
-    assert await resolver._resolve_service_account(plaintext) is None
     identity = await resolver.resolve(plaintext)
     assert identity is not None and identity.sub == agent_id
 
 
-async def test_sweep_backdated_stamp_passes_age_gate_and_skip_stamp_rows_archived(
+async def test_sweep_archives_migrated_and_skip_stamp_rows(
     integration_context: Context, admin_db: DatabaseSession, seed_owner: None
 ) -> None:
     migrated = await _seed_sa(admin_db, suffix="aged", api_key_plaintext="sak_t8m_aged")
     skipped = await _seed_sa(admin_db, suffix="agedskip", status="pending")
     svc = ServiceAccountMigrationService(integration_context)
     await svc.run()
-    backdated = dt.datetime.now(dt.UTC) - dt.timedelta(hours=48)
-    async with admin_db.session() as session:
-        await session.execute(
-            text("UPDATE service_accounts SET migrated_at = :ts WHERE id IN (:a, :b)"),
-            {"ts": backdated, "a": migrated, "b": skipped},
-        )
-        await session.commit()
 
-    outcome = await svc.sweep()  # automatic (gated) arm
+    outcome = await svc.sweep()
 
     assert set(outcome.swept) == {migrated, skipped}
     statuses = await _rows(
@@ -979,7 +961,7 @@ async def test_pre_archived_stamped_sa_is_swept_and_sweep_is_idempotent(
     outcomes = {o.service_account_id: o for o in await svc.run()}
     assert outcomes[sa_id].outcome == "skipped-non-active"
 
-    first = await svc.sweep(ignore_age_gate=True)
+    first = await svc.sweep()
     assert sa_id in first.swept
 
     # Satellites gone, digest NULLed, status still archived.
@@ -1005,7 +987,7 @@ async def test_pre_archived_stamped_sa_is_swept_and_sweep_is_idempotent(
     assert archives == []
 
     # Idempotent: nothing left to sweep on the second pass.
-    second = await svc.sweep(ignore_age_gate=True)
+    second = await svc.sweep()
     assert sa_id not in second.swept
 
 
@@ -1018,8 +1000,8 @@ async def test_repeated_sweeps_write_exactly_one_archive_audit_row(
     svc = ServiceAccountMigrationService(integration_context)
     await svc.run()
 
-    await svc.sweep(ignore_age_gate=True)
-    await svc.sweep(ignore_age_gate=True)
+    await svc.sweep()
+    await svc.sweep()
 
     archives = await _rows(
         admin_db,
@@ -1210,7 +1192,7 @@ async def test_verify_passes_after_successor_key_rotation_and_sweep_clears_the_n
     )
     assert [(a.digest_mismatch_count, a.report_finding_count) for a in acks] == [(0, 0)]
 
-    await svc.sweep(ignore_age_gate=True)
+    await svc.sweep()
     after_sweep = await svc.verify()
 
     assert after_sweep.passed is True
@@ -1494,7 +1476,7 @@ async def test_inline_permission_rules_are_copied_idempotently_verified_and_swep
     assert healed.permission_rule_count == 2
     assert await _inline_rules(control_db, agent_id) == source
 
-    swept = await svc.sweep(ignore_age_gate=True)
+    swept = await svc.sweep()
     assert swept.swept == [sa_id]
     assert swept.permission_rules_deleted == 2
     assert await _inline_rules(control_db, sa_id) == []
@@ -1503,7 +1485,7 @@ async def test_inline_permission_rules_are_copied_idempotently_verified_and_swep
     assert after_sweep.inline_rule_mismatch_count == 0
 
     # A repeated sweep finds nothing left to delete.
-    again = await svc.sweep(ignore_age_gate=True)
+    again = await svc.sweep()
     assert again.permission_rules_deleted == 0
 
 
@@ -1535,7 +1517,7 @@ async def test_sweep_ensures_the_successor_twin_before_deleting_sva_rules(
     assert await _inline_rules(control_db, agent_id) == []
 
     monkeypatch.setattr(ServiceAccountMigrationRepository, "copy_permission_rules", original)
-    swept = await svc.sweep(ignore_age_gate=True)
+    swept = await svc.sweep()
     assert swept.permission_rules_deleted == 2
     assert await _inline_rules(control_db, sa_id) == []
     assert await _inline_rules(control_db, agent_id) == source
@@ -1556,13 +1538,13 @@ async def test_sweep_deletes_inline_rules_left_by_an_interrupted_sweep(
     svc = ServiceAccountMigrationService(integration_context)
     await svc.run()
 
-    first = await svc.sweep(ignore_age_gate=True)
+    first = await svc.sweep()
     assert first.swept == [sa_id]
     assert first.permission_rules_deleted == 2
 
     # Simulate the lost control step: rules reappear, admin side is done.
     await _seed_inline_rules(control_db, sa_id, rule_credential)
-    second = await svc.sweep(ignore_age_gate=True)
+    second = await svc.sweep()
     assert second.swept == []  # nothing left on the admin side
     assert second.permission_rules_deleted == 2
     assert await _inline_rules(control_db, sa_id) == []
@@ -1615,11 +1597,11 @@ async def test_sweep_revokes_sa_sessions_minted_during_the_window(
     assert live.unrevoked_token_count == 2  # the window access + refresh pair
     assert live.only_sweep_healable_failures  # the refusal hint names the sweep
 
-    swept = await svc.sweep(ignore_age_gate=True)
+    swept = await svc.sweep()
     assert swept.swept == [sa_id]
     assert swept.access_tokens_revoked == 1
     assert swept.refresh_tokens_revoked == 1
-    row_line, summary = swept.report_lines(ignore_age_gate=True)
+    row_line, summary = swept.report_lines()
     assert row_line["service_account_id"] == sa_id
     assert (row_line["access_tokens_revoked"], row_line["refresh_tokens_revoked"]) == (1, 1)
     assert summary["category"] == "sweep_summary" and summary["swept"] == 1

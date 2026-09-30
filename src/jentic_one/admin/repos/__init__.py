@@ -14,9 +14,6 @@ from jentic_one.admin.repos.external_identity_repo import ExternalIdentityReposi
 from jentic_one.admin.repos.invite_token_repo import InviteTokenRepository
 from jentic_one.admin.repos.job_repo import JobRepository
 from jentic_one.admin.repos.job_result_repo import JobResultRepository
-from jentic_one.admin.repos.legacy_service_account_read_repo import (
-    LegacyServiceAccountReadRepository,
-)
 from jentic_one.admin.repos.monitoring_repo import MonitoringRepository
 from jentic_one.admin.repos.oauth_client_grant_repo import OAuthClientGrantRepository
 from jentic_one.admin.repos.oauth_client_repo import OAuthClientRepository
@@ -41,7 +38,6 @@ __all__ = [
     "InviteTokenRepository",
     "JobRepository",
     "JobResultRepository",
-    "LegacyServiceAccountReadRepository",
     "MonitoringRepository",
     "OAuthClientGrantRepository",
     "OAuthClientRepository",
