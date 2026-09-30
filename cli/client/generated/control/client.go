@@ -1493,12 +1493,13 @@ type CredentialBindRequest struct {
 
 // CredentialBindingEntry Direct agent↔credential binding summary for the /me response (theme 5 phase 1).
 type CredentialBindingEntry struct {
-	BoundAt      time.Time       `json:"bound_at"`
-	CredentialId string          `json:"credential_id"`
-	Name         *string         `json:"name,omitempty"`
-	RuleSetId    *string         `json:"rule_set_id,omitempty"`
-	Serves       *[]ServedApiRef `json:"serves,omitempty"`
-	Suspended    *bool           `json:"suspended,omitempty"`
+	BoundAt         time.Time       `json:"bound_at"`
+	CredentialId    string          `json:"credential_id"`
+	Name            *string         `json:"name,omitempty"`
+	RuleSetId       *string         `json:"rule_set_id,omitempty"`
+	Serves          *[]ServedApiRef `json:"serves,omitempty"`
+	Suspended       *bool           `json:"suspended,omitempty"`
+	SuspendedReason *string         `json:"suspended_reason,omitempty"`
 }
 
 // CredentialBindingListResponse List of direct credential bindings.
@@ -1508,14 +1509,15 @@ type CredentialBindingListResponse struct {
 
 // CredentialBindingResponse Direct agent↔credential binding representation in API responses.
 type CredentialBindingResponse struct {
-	AgentId      string          `json:"agent_id"`
-	BoundAt      time.Time       `json:"bound_at"`
-	CredentialId string          `json:"credential_id"`
-	Id           string          `json:"id"`
-	Name         *string         `json:"name,omitempty"`
-	RuleSetId    *string         `json:"rule_set_id,omitempty"`
-	Serves       *[]ServedApiRef `json:"serves,omitempty"`
-	Suspended    bool            `json:"suspended"`
+	AgentId         string          `json:"agent_id"`
+	BoundAt         time.Time       `json:"bound_at"`
+	CredentialId    string          `json:"credential_id"`
+	Id              string          `json:"id"`
+	Name            *string         `json:"name,omitempty"`
+	RuleSetId       *string         `json:"rule_set_id,omitempty"`
+	Serves          *[]ServedApiRef `json:"serves,omitempty"`
+	Suspended       bool            `json:"suspended"`
+	SuspendedReason *string         `json:"suspended_reason,omitempty"`
 }
 
 // CredentialCreateResponse Create response: redacted + secret shown once.
@@ -1783,7 +1785,7 @@ type InstanceIdentityResponse struct {
 	// BrokerUrl The broker (data plane) base URL a client should send `execute` traffic to, as configured by the operator (server.mcp.broker_url), with any userinfo stripped. Null when the platform cannot honestly advertise one: on a 'remote' backend a loopback-host value (the config default) describes the control plane's own machine, not an address any client can dial, so it is withheld rather than published as misleading guidance. Deployment metadata, not a secret — the broker URL is handed to every client expected to call it (issue #1249).
 	BrokerUrl *string `json:"broker_url,omitempty"`
 
-	// CanonicalBaseUrl The instance's own canonical base URL (auth.canonical_base_url), with any userinfo stripped; '' if unset.
+	// CanonicalBaseUrl The instance's own canonical base URL (auth.canonical_base_url, else server.public_base_url, else the serving bind origin), with any userinfo stripped.
 	CanonicalBaseUrl string `json:"canonical_base_url"`
 
 	// Host Host (and port, when the canonical base URL declares one) parsed from canonical_base_url; '' if unset or unparseable.
@@ -1809,12 +1811,6 @@ type IntegrationsConnectRequest struct {
 
 	// Vendor Vendor registry key (e.g. 'github')
 	Vendor string `json:"vendor"`
-}
-
-// IntrospectRequest Introspection endpoint request (form body).
-type IntrospectRequest struct {
-	Token         string  `json:"token"`
-	TokenTypeHint *string `json:"token_type_hint,omitempty"`
 }
 
 // IntrospectResponse RFC 7662 introspection response.
@@ -2561,7 +2557,9 @@ type PermissionListResponse struct {
 
 // PermissionResponse A single permission entry from the catalogue.
 type PermissionResponse struct {
-	Description       string   `json:"description"`
+	Description string `json:"description"`
+
+	// GrantableByCaller Whether the caller may grant this scope to an agent. `org:admin` callers may grant any scope; anyone else only scopes they hold or the default agent scopes, and never `org:admin` or `agents:write`.
 	GrantableByCaller bool     `json:"grantable_by_caller"`
 	Implies           []string `json:"implies"`
 	Name              string   `json:"name"`
@@ -2798,7 +2796,7 @@ type ProviderConfigSetRequest struct {
 
 // ProviderDiscoveryEntryResponse Discovery metadata for a single credential provider.
 type ProviderDiscoveryEntryResponse struct {
-	// CallbackUrl OAuth2 redirect URI for providers that require it.
+	// CallbackUrl OAuth2 redirect URI for providers that require it. When no explicit redirect_uri is configured, this is derived from the deployment's public origin (server.public_base_url or the request origin), so it reflects the exact callback the connect flow will register with the IdP. Add this URL to your OAuth app's allowed redirect URIs.
 	CallbackUrl *string `json:"callback_url,omitempty"`
 
 	// Configured Whether the provider is fully configured and operational.
@@ -3245,7 +3243,7 @@ type ListAgentsParams struct {
 
 // UnbindAgentCredentialParams defines parameters for UnbindAgentCredential.
 type UnbindAgentCredentialParams struct {
-	// Purge Default false: the binding is suspended (reversible; its permission rules survive and :resume restores access). true deletes the binding row outright.
+	// Purge Default false: the binding is suspended (reversible; its permission rules survive and :resume restores access). true deletes the binding row outright, together with its inline permission rules.
 	Purge *bool `form:"purge,omitempty" json:"purge,omitempty"`
 }
 
@@ -3575,6 +3573,18 @@ type ConsentAgentStatusParams struct {
 	St string `form:"st" json:"st"`
 }
 
+// IntrospectEndpointJSONBody defines parameters for IntrospectEndpoint.
+type IntrospectEndpointJSONBody struct {
+	Token         string  `json:"token"`
+	TokenTypeHint *string `json:"token_type_hint,omitempty"`
+}
+
+// IntrospectEndpointFormdataBody defines parameters for IntrospectEndpoint.
+type IntrospectEndpointFormdataBody struct {
+	Token         string  `form:"token" json:"token"`
+	TokenTypeHint *string `form:"token_type_hint,omitempty" json:"token_type_hint,omitempty"`
+}
+
 // TokenEndpointJSONBody defines parameters for TokenEndpoint.
 type TokenEndpointJSONBody struct {
 	Assertion    *string `json:"assertion,omitempty"`
@@ -3724,7 +3734,10 @@ type ConsentSubmitFormdataRequestBody = BodyConsentSubmit
 type ConsentAgentCreateFormdataRequestBody = BodyConsentAgentCreate
 
 // IntrospectEndpointJSONRequestBody defines body for IntrospectEndpoint for application/json ContentType.
-type IntrospectEndpointJSONRequestBody = IntrospectRequest
+type IntrospectEndpointJSONRequestBody IntrospectEndpointJSONBody
+
+// IntrospectEndpointFormdataRequestBody defines body for IntrospectEndpoint for application/x-www-form-urlencoded ContentType.
+type IntrospectEndpointFormdataRequestBody IntrospectEndpointFormdataBody
 
 // RevokeEndpointJSONRequestBody defines body for RevokeEndpoint for application/json ContentType.
 type RevokeEndpointJSONRequestBody = RevokeRequest
@@ -4884,8 +4897,8 @@ type ClientInterface interface {
 	//
 	// Directly bind a credential to an agent (theme 5 phase 1).
 	//
-	// The caller must be able to see the target credential; a credential that
-	// does not exist or is outside the caller's visibility returns 404.
+	// The caller must own the target credential (or hold ``org:admin``); a
+	// credential that does not exist or that the caller does not own returns 404.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -4896,8 +4909,8 @@ type ClientInterface interface {
 	//
 	// Directly bind a credential to an agent (theme 5 phase 1).
 	//
-	// The caller must be able to see the target credential; a credential that
-	// does not exist or is outside the caller's visibility returns 404.
+	// The caller must own the target credential (or hold ``org:admin``); a
+	// credential that does not exist or that the caller does not own returns 404.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -5284,8 +5297,9 @@ type ClientInterface interface {
 	// promotes the prior revision back to current), so it is the same operator action as
 	// confirm, not a contributor one. The overlay must be CONFIRMED, currently live, and
 	// carry a recorded superseded revision that is still restorable; otherwise a 409 is
-	// returned (``overlay_conflict`` or ``overlay_rollback_target_missing``) and nothing
-	// changes.
+	// returned (``overlay_conflict``, ``overlay_rollback_target_missing``, or
+	// ``host_owned_by_other_vendor`` when another vendor's live API now serves one of the
+	// restored revision's hosts) and nothing changes.
 	//
 	// Corresponds with POST /apis/{vendor}/{name}/{version}/overlays/{overlay_id}:rollback (the `RollbackOverlay` operationId).
 	RollbackOverlay(ctx context.Context, vendor string, name string, version string, overlayId string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -5335,6 +5349,12 @@ type ClientInterface interface {
 	// PromoteRevision Promote Revision
 	//
 	// Promote a draft revision to published, archiving the current one.
+	//
+	// If the draft declares different server hosts than the API's current (or last
+	// live) revision, or serves a host over plaintext http that was https-only, and
+	// the API has credentials bound to agents, the caller also needs
+	// ``credentials:write``; otherwise the promote is refused with 403
+	// ``host_change_requires_operator``.
 	//
 	// Corresponds with POST /apis/{vendor}/{name}/{version}/revisions/{revision_id}:promote (the `PromoteRevision` operationId).
 	PromoteRevision(ctx context.Context, vendor string, name string, version string, revisionId string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -5930,6 +5950,11 @@ type ClientInterface interface {
 	//
 	// Inspect an operation — resolve to full structural detail.
 	//
+	// `api.vendor`/`api.name`/`api.version` in the result is the canonical API
+	// reference: the identity to use in credential scopes, revision pins and
+	// other API references. `api.display_name` (optional) is a human-readable
+	// label only.
+	//
 	// Corresponds with GET /inspect (the `InspectOperation` operationId).
 	InspectOperation(ctx context.Context, params *InspectOperationParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -6440,6 +6465,14 @@ type ClientInterface interface {
 	//
 	// Introspect a token (RFC 7662).
 	//
+	// Accepts both ``application/x-www-form-urlencoded`` (the §2.1 request
+	// encoding) and JSON (the platform's own contract) bodies. Both arms
+	// require a platform bearer identity, and both answer an unknown, invalid,
+	// or expired *token value* with 200 ``{"active": false}`` (§2.2) — only a
+	// malformed request body (missing ``token``) is a 400 ``invalid_request``:
+	// Problem Details on the JSON arm, the RFC 6749 §5.2 error dialect on the
+	// form arm.
+	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /oauth/introspect (the `IntrospectEndpoint` operationId).
@@ -6449,10 +6482,35 @@ type ClientInterface interface {
 	//
 	// Introspect a token (RFC 7662).
 	//
+	// Accepts both ``application/x-www-form-urlencoded`` (the §2.1 request
+	// encoding) and JSON (the platform's own contract) bodies. Both arms
+	// require a platform bearer identity, and both answer an unknown, invalid,
+	// or expired *token value* with 200 ``{"active": false}`` (§2.2) — only a
+	// malformed request body (missing ``token``) is a 400 ``invalid_request``:
+	// Problem Details on the JSON arm, the RFC 6749 §5.2 error dialect on the
+	// form arm.
+	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /oauth/introspect (the `IntrospectEndpoint` operationId).
 	IntrospectEndpoint(ctx context.Context, body IntrospectEndpointJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// IntrospectEndpointWithFormdataBody Introspect Endpoint
+	//
+	// Introspect a token (RFC 7662).
+	//
+	// Accepts both ``application/x-www-form-urlencoded`` (the §2.1 request
+	// encoding) and JSON (the platform's own contract) bodies. Both arms
+	// require a platform bearer identity, and both answer an unknown, invalid,
+	// or expired *token value* with 200 ``{"active": false}`` (§2.2) — only a
+	// malformed request body (missing ``token``) is a 400 ``invalid_request``:
+	// Problem Details on the JSON arm, the RFC 6749 §5.2 error dialect on the
+	// form arm.
+	//
+	// Takes a body of the `application/x-www-form-urlencoded` content type.
+	//
+	// Corresponds with POST /oauth/introspect (the `IntrospectEndpoint` operationId).
+	IntrospectEndpointWithFormdataBody(ctx context.Context, body IntrospectEndpointFormdataRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RevokeEndpointWithBody Revoke Endpoint
 	//
@@ -7728,8 +7786,8 @@ func (c *Client) ListAgentCredentials(ctx context.Context, agentId string, reqEd
 //
 // Directly bind a credential to an agent (theme 5 phase 1).
 //
-// The caller must be able to see the target credential; a credential that
-// does not exist or is outside the caller's visibility returns 404.
+// The caller must own the target credential (or hold “org:admin“); a
+// credential that does not exist or that the caller does not own returns 404.
 //
 // Takes any type of body and a specified content type.
 //
@@ -7750,8 +7808,8 @@ func (c *Client) BindAgentCredentialWithBody(ctx context.Context, agentId string
 //
 // Directly bind a credential to an agent (theme 5 phase 1).
 //
-// The caller must be able to see the target credential; a credential that
-// does not exist or is outside the caller's visibility returns 404.
+// The caller must own the target credential (or hold “org:admin“); a
+// credential that does not exist or that the caller does not own returns 404.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -8498,8 +8556,9 @@ func (c *Client) ConfirmOverlay(ctx context.Context, vendor string, name string,
 // promotes the prior revision back to current), so it is the same operator action as
 // confirm, not a contributor one. The overlay must be CONFIRMED, currently live, and
 // carry a recorded superseded revision that is still restorable; otherwise a 409 is
-// returned (“overlay_conflict“ or “overlay_rollback_target_missing“) and nothing
-// changes.
+// returned (“overlay_conflict“, “overlay_rollback_target_missing“, or
+// “host_owned_by_other_vendor“ when another vendor's live API now serves one of the
+// restored revision's hosts) and nothing changes.
 //
 // Corresponds with POST /apis/{vendor}/{name}/{version}/overlays/{overlay_id}:rollback (the `RollbackOverlay` operationId).
 func (c *Client) RollbackOverlay(ctx context.Context, vendor string, name string, version string, overlayId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -8619,6 +8678,12 @@ func (c *Client) ArchiveRevision(ctx context.Context, vendor string, name string
 // PromoteRevision Promote Revision
 //
 // Promote a draft revision to published, archiving the current one.
+//
+// If the draft declares different server hosts than the API's current (or last
+// live) revision, or serves a host over plaintext http that was https-only, and
+// the API has credentials bound to agents, the caller also needs
+// “credentials:write“; otherwise the promote is refused with 403
+// “host_change_requires_operator“.
 //
 // Corresponds with POST /apis/{vendor}/{name}/{version}/revisions/{revision_id}:promote (the `PromoteRevision` operationId).
 func (c *Client) PromoteRevision(ctx context.Context, vendor string, name string, version string, revisionId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -9784,6 +9849,11 @@ func (c *Client) GetHealth(ctx context.Context, reqEditors ...RequestEditorFn) (
 //
 // Inspect an operation — resolve to full structural detail.
 //
+// `api.vendor`/`api.name`/`api.version` in the result is the canonical API
+// reference: the identity to use in credential scopes, revision pins and
+// other API references. `api.display_name` (optional) is a human-readable
+// label only.
+//
 // Corresponds with GET /inspect (the `InspectOperation` operationId).
 func (c *Client) InspectOperation(ctx context.Context, params *InspectOperationParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewInspectOperationRequest(c.Server, params)
@@ -10654,6 +10724,14 @@ func (c *Client) ConsentAgentStatus(ctx context.Context, params *ConsentAgentSta
 //
 // Introspect a token (RFC 7662).
 //
+// Accepts both “application/x-www-form-urlencoded“ (the §2.1 request
+// encoding) and JSON (the platform's own contract) bodies. Both arms
+// require a platform bearer identity, and both answer an unknown, invalid,
+// or expired *token value* with 200 “{"active": false}“ (§2.2) — only a
+// malformed request body (missing “token“) is a 400 “invalid_request“:
+// Problem Details on the JSON arm, the RFC 6749 §5.2 error dialect on the
+// form arm.
+//
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /oauth/introspect (the `IntrospectEndpoint` operationId).
@@ -10673,11 +10751,46 @@ func (c *Client) IntrospectEndpointWithBody(ctx context.Context, contentType str
 //
 // Introspect a token (RFC 7662).
 //
+// Accepts both “application/x-www-form-urlencoded“ (the §2.1 request
+// encoding) and JSON (the platform's own contract) bodies. Both arms
+// require a platform bearer identity, and both answer an unknown, invalid,
+// or expired *token value* with 200 “{"active": false}“ (§2.2) — only a
+// malformed request body (missing “token“) is a 400 “invalid_request“:
+// Problem Details on the JSON arm, the RFC 6749 §5.2 error dialect on the
+// form arm.
+//
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /oauth/introspect (the `IntrospectEndpoint` operationId).
 func (c *Client) IntrospectEndpoint(ctx context.Context, body IntrospectEndpointJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewIntrospectEndpointRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// IntrospectEndpointWithFormdataBody Introspect Endpoint
+//
+// Introspect a token (RFC 7662).
+//
+// Accepts both “application/x-www-form-urlencoded“ (the §2.1 request
+// encoding) and JSON (the platform's own contract) bodies. Both arms
+// require a platform bearer identity, and both answer an unknown, invalid,
+// or expired *token value* with 200 “{"active": false}“ (§2.2) — only a
+// malformed request body (missing “token“) is a 400 “invalid_request“:
+// Problem Details on the JSON arm, the RFC 6749 §5.2 error dialect on the
+// form arm.
+//
+// Takes a body of the `application/x-www-form-urlencoded` content type.
+//
+// Corresponds with POST /oauth/introspect (the `IntrospectEndpoint` operationId).
+func (c *Client) IntrospectEndpointWithFormdataBody(ctx context.Context, body IntrospectEndpointFormdataRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewIntrospectEndpointRequestWithFormdataBody(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -19095,6 +19208,17 @@ func NewIntrospectEndpointRequest(server string, body IntrospectEndpointJSONRequ
 	return NewIntrospectEndpointRequestWithBody(server, "application/json", bodyReader)
 }
 
+// NewIntrospectEndpointRequestWithFormdataBody calls the generic IntrospectEndpoint builder with application/x-www-form-urlencoded body
+func NewIntrospectEndpointRequestWithFormdataBody(server string, body IntrospectEndpointFormdataRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	bodyStr, err := runtime.MarshalForm(body, nil)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = strings.NewReader(bodyStr.Encode())
+	return NewIntrospectEndpointRequestWithBody(server, "application/x-www-form-urlencoded", bodyReader)
+}
+
 // NewIntrospectEndpointRequestWithBody constructs an http.Request for the IntrospectEndpoint method, with any body, and a specified content type
 func NewIntrospectEndpointRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
@@ -20819,8 +20943,8 @@ type ClientWithResponsesInterface interface {
 	//
 	// Directly bind a credential to an agent (theme 5 phase 1).
 	//
-	// The caller must be able to see the target credential; a credential that
-	// does not exist or is outside the caller's visibility returns 404.
+	// The caller must own the target credential (or hold ``org:admin``); a
+	// credential that does not exist or that the caller does not own returns 404.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -20831,8 +20955,8 @@ type ClientWithResponsesInterface interface {
 	//
 	// Directly bind a credential to an agent (theme 5 phase 1).
 	//
-	// The caller must be able to see the target credential; a credential that
-	// does not exist or is outside the caller's visibility returns 404.
+	// The caller must own the target credential (or hold ``org:admin``); a
+	// credential that does not exist or that the caller does not own returns 404.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -21253,8 +21377,9 @@ type ClientWithResponsesInterface interface {
 	// promotes the prior revision back to current), so it is the same operator action as
 	// confirm, not a contributor one. The overlay must be CONFIRMED, currently live, and
 	// carry a recorded superseded revision that is still restorable; otherwise a 409 is
-	// returned (``overlay_conflict`` or ``overlay_rollback_target_missing``) and nothing
-	// changes.
+	// returned (``overlay_conflict``, ``overlay_rollback_target_missing``, or
+	// ``host_owned_by_other_vendor`` when another vendor's live API now serves one of the
+	// restored revision's hosts) and nothing changes.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -21318,6 +21443,12 @@ type ClientWithResponsesInterface interface {
 	// PromoteRevisionWithResponse Promote Revision
 	//
 	// Promote a draft revision to published, archiving the current one.
+	//
+	// If the draft declares different server hosts than the API's current (or last
+	// live) revision, or serves a host over plaintext http that was https-only, and
+	// the API has credentials bound to agents, the caller also needs
+	// ``credentials:write``; otherwise the promote is refused with 403
+	// ``host_change_requires_operator``.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -21983,6 +22114,11 @@ type ClientWithResponsesInterface interface {
 	//
 	// Inspect an operation — resolve to full structural detail.
 	//
+	// `api.vendor`/`api.name`/`api.version` in the result is the canonical API
+	// reference: the identity to use in credential scopes, revision pins and
+	// other API references. `api.display_name` (optional) is a human-readable
+	// label only.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /inspect (the `InspectOperation` operationId).
@@ -22529,6 +22665,14 @@ type ClientWithResponsesInterface interface {
 	//
 	// Introspect a token (RFC 7662).
 	//
+	// Accepts both ``application/x-www-form-urlencoded`` (the §2.1 request
+	// encoding) and JSON (the platform's own contract) bodies. Both arms
+	// require a platform bearer identity, and both answer an unknown, invalid,
+	// or expired *token value* with 200 ``{"active": false}`` (§2.2) — only a
+	// malformed request body (missing ``token``) is a 400 ``invalid_request``:
+	// Problem Details on the JSON arm, the RFC 6749 §5.2 error dialect on the
+	// form arm.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /oauth/introspect (the `IntrospectEndpoint` operationId).
@@ -22538,10 +22682,35 @@ type ClientWithResponsesInterface interface {
 	//
 	// Introspect a token (RFC 7662).
 	//
+	// Accepts both ``application/x-www-form-urlencoded`` (the §2.1 request
+	// encoding) and JSON (the platform's own contract) bodies. Both arms
+	// require a platform bearer identity, and both answer an unknown, invalid,
+	// or expired *token value* with 200 ``{"active": false}`` (§2.2) — only a
+	// malformed request body (missing ``token``) is a 400 ``invalid_request``:
+	// Problem Details on the JSON arm, the RFC 6749 §5.2 error dialect on the
+	// form arm.
+	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /oauth/introspect (the `IntrospectEndpoint` operationId).
 	IntrospectEndpointWithResponse(ctx context.Context, body IntrospectEndpointJSONRequestBody, reqEditors ...RequestEditorFn) (*IntrospectEndpointHTTPResp, error)
+
+	// IntrospectEndpointWithFormdataBodyWithResponse Introspect Endpoint
+	//
+	// Introspect a token (RFC 7662).
+	//
+	// Accepts both ``application/x-www-form-urlencoded`` (the §2.1 request
+	// encoding) and JSON (the platform's own contract) bodies. Both arms
+	// require a platform bearer identity, and both answer an unknown, invalid,
+	// or expired *token value* with 200 ``{"active": false}`` (§2.2) — only a
+	// malformed request body (missing ``token``) is a 400 ``invalid_request``:
+	// Problem Details on the JSON arm, the RFC 6749 §5.2 error dialect on the
+	// form arm.
+	//
+	// Takes a body of the `application/x-www-form-urlencoded` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /oauth/introspect (the `IntrospectEndpoint` operationId).
+	IntrospectEndpointWithFormdataBodyWithResponse(ctx context.Context, body IntrospectEndpointFormdataRequestBody, reqEditors ...RequestEditorFn) (*IntrospectEndpointHTTPResp, error)
 
 	// RevokeEndpointWithBodyWithResponse Revoke Endpoint
 	//
@@ -35670,6 +35839,10 @@ type DeleteUserHTTPResp struct {
 	ApplicationproblemJSON401 *ProblemDetail
 	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
 	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *ProblemDetail
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *ProblemDetail
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -35691,6 +35864,16 @@ func (r DeleteUserHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
 // GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
 func (r DeleteUserHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
 	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r DeleteUserHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r DeleteUserHTTPResp) GetApplicationproblemJSON409() *ProblemDetail {
+	return r.ApplicationproblemJSON409
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
@@ -35914,6 +36097,10 @@ type SetUserPermissionsHTTPResp struct {
 	ApplicationproblemJSON401 *ProblemDetail
 	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
 	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *ProblemDetail
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *ProblemDetail
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -35940,6 +36127,16 @@ func (r SetUserPermissionsHTTPResp) GetApplicationproblemJSON401() *ProblemDetai
 // GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
 func (r SetUserPermissionsHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
 	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r SetUserPermissionsHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r SetUserPermissionsHTTPResp) GetApplicationproblemJSON409() *ProblemDetail {
+	return r.ApplicationproblemJSON409
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
@@ -35995,6 +36192,10 @@ type DisableUserHTTPResp struct {
 	ApplicationproblemJSON401 *ProblemDetail
 	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
 	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *ProblemDetail
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *ProblemDetail
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -36016,6 +36217,16 @@ func (r DisableUserHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
 // GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
 func (r DisableUserHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
 	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r DisableUserHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r DisableUserHTTPResp) GetApplicationproblemJSON409() *ProblemDetail {
+	return r.ApplicationproblemJSON409
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
@@ -37124,8 +37335,8 @@ func (c *ClientWithResponses) ListAgentCredentialsWithResponse(ctx context.Conte
 //
 // Directly bind a credential to an agent (theme 5 phase 1).
 //
-// The caller must be able to see the target credential; a credential that
-// does not exist or is outside the caller's visibility returns 404.
+// The caller must own the target credential (or hold “org:admin“); a
+// credential that does not exist or that the caller does not own returns 404.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -37142,8 +37353,8 @@ func (c *ClientWithResponses) BindAgentCredentialWithBodyWithResponse(ctx contex
 //
 // Directly bind a credential to an agent (theme 5 phase 1).
 //
-// The caller must be able to see the target credential; a credential that
-// does not exist or is outside the caller's visibility returns 404.
+// The caller must own the target credential (or hold “org:admin“); a
+// credential that does not exist or that the caller does not own returns 404.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -37780,8 +37991,9 @@ func (c *ClientWithResponses) ConfirmOverlayWithResponse(ctx context.Context, ve
 // promotes the prior revision back to current), so it is the same operator action as
 // confirm, not a contributor one. The overlay must be CONFIRMED, currently live, and
 // carry a recorded superseded revision that is still restorable; otherwise a 409 is
-// returned (“overlay_conflict“ or “overlay_rollback_target_missing“) and nothing
-// changes.
+// returned (“overlay_conflict“, “overlay_rollback_target_missing“, or
+// “host_owned_by_other_vendor“ when another vendor's live API now serves one of the
+// restored revision's hosts) and nothing changes.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -37887,6 +38099,12 @@ func (c *ClientWithResponses) ArchiveRevisionWithResponse(ctx context.Context, v
 // PromoteRevisionWithResponse Promote Revision
 //
 // Promote a draft revision to published, archiving the current one.
+//
+// If the draft declares different server hosts than the API's current (or last
+// live) revision, or serves a host over plaintext http that was https-only, and
+// the API has credentials bound to agents, the caller also needs
+// “credentials:write“; otherwise the promote is refused with 403
+// “host_change_requires_operator“.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -38894,6 +39112,11 @@ func (c *ClientWithResponses) GetHealthWithResponse(ctx context.Context, reqEdit
 //
 // Inspect an operation — resolve to full structural detail.
 //
+// `api.vendor`/`api.name`/`api.version` in the result is the canonical API
+// reference: the identity to use in credential scopes, revision pins and
+// other API references. `api.display_name` (optional) is a human-readable
+// label only.
+//
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /inspect (the `InspectOperation` operationId).
@@ -39656,6 +39879,14 @@ func (c *ClientWithResponses) ConsentAgentStatusWithResponse(ctx context.Context
 //
 // Introspect a token (RFC 7662).
 //
+// Accepts both “application/x-www-form-urlencoded“ (the §2.1 request
+// encoding) and JSON (the platform's own contract) bodies. Both arms
+// require a platform bearer identity, and both answer an unknown, invalid,
+// or expired *token value* with 200 “{"active": false}“ (§2.2) — only a
+// malformed request body (missing “token“) is a 400 “invalid_request“:
+// Problem Details on the JSON arm, the RFC 6749 §5.2 error dialect on the
+// form arm.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /oauth/introspect (the `IntrospectEndpoint` operationId).
@@ -39671,11 +39902,42 @@ func (c *ClientWithResponses) IntrospectEndpointWithBodyWithResponse(ctx context
 //
 // Introspect a token (RFC 7662).
 //
+// Accepts both “application/x-www-form-urlencoded“ (the §2.1 request
+// encoding) and JSON (the platform's own contract) bodies. Both arms
+// require a platform bearer identity, and both answer an unknown, invalid,
+// or expired *token value* with 200 “{"active": false}“ (§2.2) — only a
+// malformed request body (missing “token“) is a 400 “invalid_request“:
+// Problem Details on the JSON arm, the RFC 6749 §5.2 error dialect on the
+// form arm.
+//
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /oauth/introspect (the `IntrospectEndpoint` operationId).
 func (c *ClientWithResponses) IntrospectEndpointWithResponse(ctx context.Context, body IntrospectEndpointJSONRequestBody, reqEditors ...RequestEditorFn) (*IntrospectEndpointHTTPResp, error) {
 	rsp, err := c.IntrospectEndpoint(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseIntrospectEndpointHTTPResp(rsp)
+}
+
+// IntrospectEndpointWithFormdataBodyWithResponse Introspect Endpoint
+//
+// Introspect a token (RFC 7662).
+//
+// Accepts both “application/x-www-form-urlencoded“ (the §2.1 request
+// encoding) and JSON (the platform's own contract) bodies. Both arms
+// require a platform bearer identity, and both answer an unknown, invalid,
+// or expired *token value* with 200 “{"active": false}“ (§2.2) — only a
+// malformed request body (missing “token“) is a 400 “invalid_request“:
+// Problem Details on the JSON arm, the RFC 6749 §5.2 error dialect on the
+// form arm.
+//
+// Takes a body of the `application/x-www-form-urlencoded` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /oauth/introspect (the `IntrospectEndpoint` operationId).
+func (c *ClientWithResponses) IntrospectEndpointWithFormdataBodyWithResponse(ctx context.Context, body IntrospectEndpointFormdataRequestBody, reqEditors ...RequestEditorFn) (*IntrospectEndpointHTTPResp, error) {
+	rsp, err := c.IntrospectEndpointWithFormdataBody(ctx, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -50884,6 +51146,20 @@ func ParseDeleteUserHTTPResp(rsp *http.Response) (*DeleteUserHTTPResp, error) {
 		}
 		response.ApplicationproblemJSON403 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest ProblemDetail
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -51088,6 +51364,20 @@ func ParseSetUserPermissionsHTTPResp(rsp *http.Response) (*SetUserPermissionsHTT
 		}
 		response.ApplicationproblemJSON403 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest ProblemDetail
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -51151,6 +51441,20 @@ func ParseDisableUserHTTPResp(rsp *http.Response) (*DisableUserHTTPResp, error) 
 			return nil, err
 		}
 		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest ProblemDetail

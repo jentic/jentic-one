@@ -123,16 +123,17 @@ async def test_replace_scopes(mock_agent_repo: MagicMock, mock_scope_repo: Magic
     ctx = _make_ctx()
     agent = _mock_agent()
     mock_agent_repo.get_by_id = AsyncMock(return_value=agent)
+    mock_scope_repo.list_for_actor = AsyncMock(return_value=[])
     mock_scope_repo.revoke_all = AsyncMock(return_value=2)
     mock_scope_repo.grant = AsyncMock()
 
     svc = AgentService(ctx)
-    result = await svc.replace_scopes("agnt_test1", ["new:scope"], identity=_identity())
+    result = await svc.replace_scopes("agnt_test1", ["capabilities:read"], identity=_identity())
 
-    assert result == ["new:scope"]
+    assert result == ["capabilities:read"]
     mock_scope_repo.revoke_all.assert_called_once()
     mock_scope_repo.grant.assert_called_once()
-    assert mock_scope_repo.grant.call_args.kwargs["scope"] == "new:scope"
+    assert mock_scope_repo.grant.call_args.kwargs["scope"] == "capabilities:read"
 
 
 @patch("jentic_one.auth.services.agent_service.ActorScopeGrantRepository")
@@ -143,6 +144,7 @@ async def test_replace_scopes_empty_clears_all(
     ctx = _make_ctx()
     agent = _mock_agent()
     mock_agent_repo.get_by_id = AsyncMock(return_value=agent)
+    mock_scope_repo.list_for_actor = AsyncMock(return_value=[])
     mock_scope_repo.revoke_all = AsyncMock(return_value=2)
 
     svc = AgentService(ctx)

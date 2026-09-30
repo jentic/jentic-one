@@ -18,6 +18,7 @@ from jentic_one.admin.repos.agent_repo import AgentRepository
 from jentic_one.auth.core.claim import get_claim_token_minter
 from jentic_one.auth.services.errors import InvalidGrantError, RegistrationAccessDeniedError
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
+from jentic_one.shared.config import resolved_auth_base_url
 from jentic_one.shared.context import Context
 from jentic_one.shared.events import emit_event_best_effort
 from jentic_one.shared.models import ActorType
@@ -132,16 +133,16 @@ class RegistrationService:
                 agent.claim_token_hash = _hash_rat(claim_plain)
                 agent.claim_expires_at = datetime.now(UTC) + timedelta(seconds=claim_ttl)
                 await session.flush()
-            if scope:
-                for scope_value in list(dict.fromkeys(scope.split())):
-                    await ActorScopeGrantRepository.grant(
-                        session,
-                        actor_id=agent.id,
-                        actor_type=ActorType.AGENT,
-                        scope=scope_value,
-                        granted_by=None,
-                        created_by="dcr",
-                    )
+            requested_scopes = list(dict.fromkeys(scope.split())) if scope else []
+            for scope_value in requested_scopes:
+                await ActorScopeGrantRepository.grant(
+                    session,
+                    actor_id=agent.id,
+                    actor_type=ActorType.AGENT,
+                    scope=scope_value,
+                    granted_by=None,
+                    created_by="dcr",
+                )
             await record_audit(
                 session,
                 action=AuditAction.REGISTER,
@@ -149,7 +150,11 @@ class RegistrationService:
                 target_id=agent.id,
                 actor_type=ActorType.AGENT,
                 actor_id=agent.id,
-                after={"name": client_name, "status": agent.status},
+                after={
+                    "name": client_name,
+                    "status": agent.status,
+                    "scopes": requested_scopes,
+                },
                 reason="dynamic client registration",
                 origin=None,
             )
@@ -177,7 +182,7 @@ class RegistrationService:
         # The RAT is generated above so its plaintext stays stable across a retry.
         agent = await self._ctx.admin_db.run_in_transaction(_write)
 
-        base_url = self._ctx.config.auth.canonical_base_url
+        base_url = resolved_auth_base_url(self._ctx.config)
         return RegisterResult(
             client_id=agent.id,
             registration_access_token=rat_plain,

@@ -34,6 +34,14 @@ export {
 } from '@/shared/lib/scopes';
 
 export { fetchActorDirectory } from '@/shared/lib/actorDirectory';
+
+// The shell scrolls `<main>`, not the window: read and drive page scroll here.
+export {
+	SHELL_SCROLL_ID,
+	shellScroller,
+	shellScrollRoot,
+	shellScrollTop,
+} from '@/shared/lib/shellScroll';
 export {
 	SERVICE_ACCOUNT_SUCCESSOR_REGISTRAR,
 	RETIRED_SERVICE_ACCOUNT_ACTOR_TYPE,
@@ -43,11 +51,6 @@ export {
 	holdsMigratedServiceAccountKey,
 } from '@/shared/lib/retiredActors';
 
-// Canonical per-severity event icon — the single source of truth shared by
-// Monitor's Events tab and the Dashboard's "Needs attention" card so the same
-// event reads identically in both surfaces.
-export { eventSeverityIcon } from '@/shared/lib/eventSeverity';
-
 // Narrow, module-consumable slices of the agent-stream data layer (NOT the
 // rail's React components): the HAL-link id parser (so Monitor's Events
 // drill-in and the rail parse links with the same rules) and the
@@ -55,6 +58,21 @@ export { eventSeverityIcon } from '@/shared/lib/eventSeverity';
 // the rail's in-memory copy when the shell's stream is mounted, and no-op in
 // tests/embedded surfaces where it isn't).
 export { idFromLink, useAgentStreamOptional } from '@/shared/lib/agentStream';
+
+// The event → UI adaptation and its wording helpers, so Monitor's Activity
+// feed reads an event exactly the way the rail and toasts do (same kind
+// label, same day separators, same "where does this lead" destination).
+export {
+	adaptEvent,
+	primaryDestinationFor,
+	STREAM_KIND_LABEL,
+	formatStreamDayLabel,
+	formatStreamTime,
+	streamDayKey,
+	isFailureSeverity,
+	isRetiredEventType,
+} from '@/shared/lib/agentStream';
+export type { StreamEvent, StreamKind, StreamSeverity } from '@/shared/lib/agentStream';
 
 // API-identity display helpers — one humanising rule applied everywhere a
 // machine identity (`api_id` / `api_vendor` / `api_name`) needs to render as a
@@ -66,4 +84,5 @@ export {
 	titleFromApiId,
 	apiRefDisplayName,
 	apiIdentityTuple,
+	formatApiVersion,
 } from '@/shared/lib/api-display';

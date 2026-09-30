@@ -148,6 +148,9 @@ export interface CredentialBindingEntity {
 	/** True when the binding is soft-suspended (reversible cut-off): the row
 	 * and its rules survive, but the broker excludes it until resumed. */
 	suspended: boolean;
+	/** Why the binding is suspended: null for a manual pause, `api_deleted`
+	 * when the API its credential serves was deleted. */
+	suspendedReason: string | null;
 	/** Shared rule set this binding points at; null = inline rules apply.
 	 * Read-only here — rule-set management is out of scope for this phase. */
 	ruleSetId: string | null;
@@ -173,6 +176,9 @@ export interface AgentBindableCredential {
 	 * preferred friendly-title source. */
 	catalogApiId: string | null;
 	provider: string | null;
+	/** The credential's owner (creator). Only the owner — or an `org:admin` —
+	 * may bind it, so the picker hides the rest (e.g. enterprise shares). */
+	createdBy: string | null;
 }
 
 /** A stored permission rule on a direct binding (includes system fields). */

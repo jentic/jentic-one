@@ -6,6 +6,7 @@ from fastapi import FastAPI, Request
 
 from jentic_one.broker.core.token_validation import CachedTokenValidator
 from jentic_one.broker.repos import (
+    ActorStatusResolver,
     AgentRuleEvaluator,
     ApiKeyResolver,
     CredentialBindingResolver,
@@ -20,6 +21,9 @@ from jentic_one.broker.services.auth import (
     JwtTokenValidator,
     JwtVerifier,
     TokenVerifier,
+)
+from jentic_one.broker.services.execution.queued_authorization import (
+    QueuedExecutionAuthorizer,
 )
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.jwt_verification import TrustedIssuerVerifier
@@ -97,3 +101,22 @@ def install_broker_auth(app: FastAPI, ctx: Context) -> None:
         return await triple.validate(token)
 
     app.state.verify_token = _verify_token
+
+
+def build_queued_execution_authorizer(ctx: Context) -> QueuedExecutionAuthorizer:
+    """Build the worker-time re-authorizer for queued executions.
+
+    Same resolver and evaluator classes the sync execute route uses, but
+    **uncached** (no caching deriver wrapper, zero rule-cache TTL): a queued job
+    is re-checked against the authorization state at the moment it runs, not a
+    verdict cached around the time it was enqueued. The cost is a handful of
+    reads per async job, which is negligible next to the upstream call.
+    """
+    return QueuedExecutionAuthorizer(
+        ctx,
+        actor_status=ActorStatusResolver(ctx.admin_db),
+        deriver=ToolkitBindingResolver(ctx.admin_db, ctx.control_db),
+        rule_evaluator=RuleEvaluator(ctx.control_db, cache_ttl_seconds=0),
+        credential_deriver=CredentialBindingResolver(ctx.admin_db, ctx.control_db),
+        agent_rule_evaluator=AgentRuleEvaluator(ctx.control_db, cache_ttl_seconds=0),
+    )

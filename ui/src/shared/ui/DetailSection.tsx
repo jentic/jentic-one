@@ -26,7 +26,7 @@ export interface DetailSectionProps {
 	title: ReactNode;
 	/**
 	 * Leading glyph for the heading (`h-4 w-4`), rendered in the same muted
-	 * icon medallion the dashboard sections use — one grammar everywhere.
+	 * icon medallion the detail sections use — one grammar everywhere.
 	 */
 	icon?: ReactNode;
 	/** Extra inline content next to the title (e.g. a "Keys blocked" pill). */

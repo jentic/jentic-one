@@ -1,6 +1,15 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { motion, type Variants } from 'framer-motion';
-import { ChevronRight, Loader2, PencilLine, Search, SearchX, Sparkles, Zap } from 'lucide-react';
+import {
+	Check,
+	ChevronRight,
+	Loader2,
+	PencilLine,
+	Search,
+	SearchX,
+	Sparkles,
+	Zap,
+} from 'lucide-react';
 import {
 	AgentBadge,
 	Badge,
@@ -12,7 +21,10 @@ import {
 } from '@/shared/ui';
 import { useDebouncedValue } from '@/shared/hooks';
 import { apiRefDisplayName } from '@/shared/lib';
+import { cn } from '@/shared/lib/utils';
+import { apiRefKey } from '@/shared/credentials/lib/apiIdentity';
 import {
+	apiRowToSelected,
 	useApis,
 	useCatalog,
 	useVendors,
@@ -23,8 +35,9 @@ import {
 } from '@/shared/credentials/api';
 
 /**
- * Step 1 of the guided add-credential flow — a debounced search over the
- * combined "workspace + public catalog" API surface.
+ * A debounced search over the combined "workspace + public catalog" API
+ * surface. Used single-select by the guided add-credential flow (a pick is the
+ * commit) and multi-select by the agents surface's Add-APIs tray.
  *
  * Self-contained: owns its own input state, debounce, autofocus, and data
  * fetching. Parents only handle `onSelect` and the "Enter manually" escape.
@@ -36,16 +49,33 @@ import {
  *    types something (the catalog manifest is 10k+ entries).
  */
 export interface ApiPickerProps {
+	/** A row was activated: the commit in single-select, a toggle in multi-select. */
 	onSelect: (api: SelectedApi) => void;
 	/**
 	 * User picked a verified vendor (agent-driven SSO / device-flow path) — the
 	 * caller should switch to the vendor connect flow instead of building the
 	 * credential form. The picker sits above this by design: verified vendors
 	 * are the "one-click sign-in" path; API + manual entry are the fallback.
+	 * Omit (e.g. in multi-select mode) to hide the verified section.
 	 */
 	onVendorSelect?: (vendor: VendorSummary) => void;
-	/** Escape hatch — drop into the legacy free-text API reference form. */
-	onManualEntry: () => void;
+	/** Escape hatch — drop into the legacy free-text API reference form.
+	 *  Omit to hide the affordance (the tray offers spec upload instead). */
+	onManualEntry?: () => void;
+	/** Multi-select mode: the `apiRefKey`s currently picked. Passing this — even
+	 * empty — switches rows from drill-in buttons to checkboxes. */
+	selectedKeys?: ReadonlySet<string>;
+	/** Rows that cannot be picked, by `apiRefKey`. */
+	disabledKeys?: ReadonlySet<string>;
+	/** Short badge explaining why a `disabledKeys` row is out (e.g. "Already added");
+	 * a function labels each row by its `apiRefKey`. */
+	disabledLabel?: string | ((key: string) => string | undefined);
+	/** The search box, for a host that must move focus there itself (e.g. a sheet
+	 * re-opened without remounting the picker). */
+	searchInputRef?: RefObject<HTMLInputElement | null>;
+	/** Rendered in the no-results state, the one moment the operator has proved the
+	 * API they want isn't here. The tray passes its spec upload. */
+	emptyAction?: ReactNode;
 }
 
 /** Stagger the result rows in so a fresh search feels responsive, not janky. */
@@ -59,60 +89,21 @@ const ROW_VARIANTS: Variants = {
 	show: { opacity: 1, y: 0, transition: { duration: 0.18, ease: 'easeOut' } },
 };
 
-function localToSelected(row: ApiResponse): SelectedApi {
-	const ref = row.api;
-	// Friendly primary line: explicit display_name, else the persisted catalog
-	// slug (`nytimes.com/article_search` → `Article Search`), else the legacy
-	// vendor/name humanisation — the exact case #631 flags on the credentials
-	// page's "Add credential" picker.
-	const label = apiRefDisplayName({
-		displayName: row.display_name,
-		catalogApiId: row.catalog_api_id,
-		vendor: ref.vendor,
-		name: ref.name,
-	});
-	return {
-		source: 'local',
-		vendor: ref.vendor,
-		name: ref.name,
-		version: ref.version,
-		apiId: row.catalog_api_id ?? undefined,
-		securitySchemeTypes: row.security_schemes ?? [],
-		label,
-	};
-}
-
 function catalogToSelected(entry: CatalogEntryResponse): SelectedApi {
-	// Catalog `api_id` is a flat slug (e.g. "stripe.com"). We split path-like
-	// entries into vendor/name; otherwise we fall back to using the slug as
-	// both. Version isn't on the catalog entry, so we default to "1.0.0".
+	// The identity a catalog import registers: vendor is the entry's `vendor`, and
+	// name is the WHOLE `api_id` (`abstractapi.com/ip-geolocation-api`), which the
+	// backend slugs to `abstractapi-com-ip-geolocation-api`. A credential saved
+	// from this pick must carry that same identity — the broker only finds a
+	// credential whose name matches the registered API's — so this mirrors the
+	// import rather than splitting the slug itself.
 	//
-	// Row label: the friendly title, via the same shared helper the workspace
-	// rows use — so the same API can't read `github.com` in the catalog
-	// section and `Github.Com` in the "in your workspace" section of this one
-	// picker. The label is derived from the SAME `vendor`/`name` the row
-	// stores as its identity, so the displayed title and the vendor/name tuple
-	// (and thus the credential's default saved name) can never drift.
-	//
-	// `vendor`/`name` resolve from the server-supplied `entry.vendor` first (the
-	// canonical, dedup-stable field), then off the `api_id` slug
-	// (`domain[/sub-api]`) and the `path` segments as fallbacks. A bare vendor
-	// like `github` renders through the shared humanise helper (`github` →
-	// `Github`); a sub-API segment promotes to `Article Search`. The
-	// create-credential dialog's Name field pre-fills from this label.
-	// `vendor` prefers the server-supplied `entry.vendor` (canonical, and what
-	// the workspace rows dedup against — an entry `{api_id:'github.com',
-	// vendor:'github'}` must resolve to `github`, not `github.com`, so it dedups
-	// against a workspace `github/main` row and doesn't drift the persisted
-	// vendor). It falls back to the `api_id` slug parts, then the `path`
-	// segments, and finally the raw slug. `name` promotes a sub-API segment when
-	// present, else `main`.
+	// The label reads from `api_id` through the shared helper the workspace rows
+	// use, so one API never titles two ways in this picker. Version isn't on the
+	// catalog entry; a credential leaves it unpinned anyway.
 	const slug = entry.api_id;
-	const slugParts = slug.split('/').filter(Boolean);
-	const pathParts = (entry.path ?? slug).split('/').filter(Boolean);
-	const vendor = entry.vendor ?? slugParts[0] ?? pathParts[0] ?? slug;
-	const name = slugParts[1] ?? pathParts[1] ?? 'main';
-	const version = pathParts[2] ?? '1.0.0';
+	const vendor = entry.vendor ?? slug.split('/')[0] ?? slug;
+	const name = slug;
+	const version = '1.0.0';
 	return {
 		source: 'catalog',
 		vendor,
@@ -125,14 +116,26 @@ function catalogToSelected(entry: CatalogEntryResponse): SelectedApi {
 	};
 }
 
-export function ApiPicker({ onSelect, onVendorSelect, onManualEntry }: ApiPickerProps) {
+export function ApiPicker({
+	onSelect,
+	onVendorSelect,
+	onManualEntry,
+	selectedKeys,
+	disabledKeys,
+	disabledLabel,
+	emptyAction,
+	searchInputRef,
+}: ApiPickerProps) {
 	const [query, setQuery] = useState('');
 	const debouncedQuery = useDebouncedValue(query, 250);
-	const inputRef = useRef<HTMLInputElement>(null);
+	const ownInputRef = useRef<HTMLInputElement>(null);
+	const inputRef = searchInputRef ?? ownInputRef;
 
+	// Focus on mount. The ref is stable (a host's ref object, or our own), so this
+	// still runs once.
 	useEffect(() => {
 		inputRef.current?.focus();
-	}, []);
+	}, [inputRef]);
 
 	const apisQuery = useApis({});
 	const catalogQuery = useCatalog(debouncedQuery);
@@ -186,18 +189,13 @@ export function ApiPicker({ onSelect, onVendorSelect, onManualEntry }: ApiPicker
 
 	const catalogRows = useMemo(() => {
 		if (!debouncedQuery.trim()) return [];
-		// Hide catalog entries that already match a workspace API to avoid
-		// duplicate-looking rows. We must compare on the SAME derived key shape:
-		// `catalogToSelected` splits the catalog `path`/`api_id` slug into
-		// vendor/name, so we key both sides on that resolved `vendor/name` (a raw
-		// `e.path` like "stripe.com/main/1.0.0" would never match "stripe/main").
-		const localKeys = new Set(
-			localRows.map((r) => `${r.api.vendor}/${r.api.name}`.toLowerCase()),
+		// Hide catalog entries already imported into the workspace, so one API
+		// never lists twice. Both sides key in slug form: a workspace row stores
+		// `abstractapi-com`, the catalog entry says `abstractapi.com`.
+		const localKeys = new Set(localRows.map((r) => apiRefKey(r.api)));
+		return (catalogQuery.data?.data ?? []).filter(
+			(e) => !localKeys.has(apiRefKey(catalogToSelected(e))),
 		);
-		return (catalogQuery.data?.data ?? []).filter((e) => {
-			const sel = catalogToSelected(e);
-			return !localKeys.has(`${sel.vendor}/${sel.name}`.toLowerCase());
-		});
 	}, [catalogQuery.data, debouncedQuery, localRows]);
 
 	const isSearching = catalogQuery.isFetching && !!debouncedQuery.trim();
@@ -217,6 +215,11 @@ export function ApiPicker({ onSelect, onVendorSelect, onManualEntry }: ApiPicker
 		localRows.length === 0 &&
 		!error;
 
+	// Presence, not emptiness, switches the rows into checkbox mode.
+	const selection: RowSelection | undefined = selectedKeys
+		? { selectedKeys, disabledKeys, disabledLabel }
+		: undefined;
+
 	return (
 		<div className="space-y-4">
 			<div className="flex items-center gap-2">
@@ -234,14 +237,16 @@ export function ApiPicker({ onSelect, onVendorSelect, onManualEntry }: ApiPicker
 						<Loader2 className="text-muted-foreground absolute top-1/2 right-3 h-4 w-4 -translate-y-1/2 animate-spin" />
 					)}
 				</div>
-				<button
-					type="button"
-					onClick={onManualEntry}
-					className="text-muted-foreground hover:text-foreground hover:bg-muted/60 inline-flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs transition-colors"
-				>
-					<PencilLine className="h-3.5 w-3.5" />
-					Enter manually
-				</button>
+				{onManualEntry && (
+					<button
+						type="button"
+						onClick={onManualEntry}
+						className="text-muted-foreground hover:text-foreground hover:bg-muted/60 inline-flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs transition-colors"
+					>
+						<PencilLine className="h-3.5 w-3.5" />
+						Enter manually
+					</button>
+				)}
 			</div>
 
 			{error && <ErrorAlert message={error} />}
@@ -285,7 +290,7 @@ export function ApiPicker({ onSelect, onVendorSelect, onManualEntry }: ApiPicker
 								key={`${row.api.vendor}/${row.api.name}/${row.api.version}`}
 								variants={ROW_VARIANTS}
 							>
-								<LocalApiRow row={row} onSelect={onSelect} />
+								<LocalApiRow row={row} onSelect={onSelect} selection={selection} />
 							</motion.li>
 						))}
 					</motion.ul>
@@ -299,8 +304,11 @@ export function ApiPicker({ onSelect, onVendorSelect, onManualEntry }: ApiPicker
 					</SectionHeading>
 					{localRows.length === 0 && (
 						<p className="text-muted-foreground/80 mb-2 text-xs">
-							Picking a catalog API imports it into your workspace as part of saving
-							this credential.
+							{/* Multi-select hosts save no credential here, and they
+							    tally the import count themselves. */}
+							{selection
+								? 'Picking a catalog API imports it into your workspace.'
+								: 'Picking a catalog API imports it into your workspace as part of saving this credential.'}
 						</p>
 					)}
 					<motion.ul
@@ -311,7 +319,11 @@ export function ApiPicker({ onSelect, onVendorSelect, onManualEntry }: ApiPicker
 					>
 						{catalogRows.slice(0, 20).map((entry) => (
 							<motion.li key={entry.api_id} variants={ROW_VARIANTS}>
-								<CatalogRow entry={entry} onSelect={onSelect} />
+								<CatalogRow
+									entry={entry}
+									onSelect={onSelect}
+									selection={selection}
+								/>
 							</motion.li>
 						))}
 					</motion.ul>
@@ -322,7 +334,17 @@ export function ApiPicker({ onSelect, onVendorSelect, onManualEntry }: ApiPicker
 				<EmptyState
 					icon={<SearchX className="h-8 w-8" />}
 					title="No APIs found"
-					description={`Nothing matched "${debouncedQuery}". Try a different search, or enter an API manually.`}
+					// Only offer what this host actually has: a picker without
+					// manual entry and without an upload can only suggest a
+					// different search, and promising either would be a lie.
+					description={`Nothing matched "${debouncedQuery}". Try a different search${
+						emptyAction
+							? ', or add it from its OpenAPI spec.'
+							: onManualEntry
+								? ', or enter an API manually.'
+								: '.'
+					}`}
+					action={emptyAction}
 				/>
 			)}
 
@@ -353,83 +375,161 @@ function SectionHeading({ id, children }: { id: string; children: React.ReactNod
 	);
 }
 
-function LocalApiRow({
-	row,
+/** Multi-select wiring, threaded from the props of the same name. */
+interface RowSelection {
+	selectedKeys: ReadonlySet<string>;
+	disabledKeys?: ReadonlySet<string>;
+	disabledLabel?: ApiPickerProps['disabledLabel'];
+}
+
+/**
+ * One result row. Single-select rows are drill-in buttons; multi-select rows
+ * ARE the checkbox — `role="checkbox"` on the row itself, because the row owns
+ * the click and nesting the `Checkbox` primitive would put a `<button>` inside
+ * a `<button>`. Hence the presentational tick below rather than the primitive.
+ */
+function PickerRow({
+	api,
+	badgeKey,
+	meta,
+	trailing,
+	source,
 	onSelect,
+	selection,
 }: {
-	row: ApiResponse;
+	api: SelectedApi;
+	badgeKey: string;
+	/** The machine-identity line under the title. */
+	meta: ReactNode;
+	/** Row-specific trailing content (auth badges, "Imported"). */
+	trailing?: ReactNode;
+	source: 'local' | 'catalog';
 	onSelect: (api: SelectedApi) => void;
+	selection?: RowSelection;
 }) {
-	const selected = localToSelected(row);
-	const badgeKey = `${selected.vendor}/${selected.name}`;
+	const key = apiRefKey(api);
+	const checked = selection ? selection.selectedKeys.has(key) : undefined;
+	const blocked = selection?.disabledKeys?.has(key) ?? false;
+	const blockedLabel =
+		typeof selection?.disabledLabel === 'function'
+			? selection.disabledLabel(key)
+			: selection?.disabledLabel;
 	return (
 		<button
 			type="button"
-			onClick={(): void => onSelect(selected)}
+			role={selection ? 'checkbox' : undefined}
+			aria-checked={selection ? checked : undefined}
+			disabled={blocked}
+			onClick={(): void => onSelect(api)}
 			data-testid="picker-row"
-			data-source="local"
-			className="group hover:border-primary/50 bg-background hover:bg-muted/40 border-border flex w-full items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition-all hover:shadow-sm"
+			data-source={source}
+			className={cn(
+				'group border-border bg-background flex w-full items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition-all',
+				blocked
+					? 'cursor-not-allowed opacity-60'
+					: 'hover:border-primary/50 hover:bg-muted/40 hover:shadow-sm',
+				checked && 'border-primary/60 bg-primary/5',
+			)}
 		>
-			<AgentBadge id={badgeKey} name={selected.label} kind="API" size="sm" />
+			{selection && <TickBox checked={!!checked} />}
+			<AgentBadge id={badgeKey} name={api.label} kind="API" size="sm" />
 			<div className="min-w-0 flex-1">
 				<span className="text-foreground block truncate text-sm font-medium">
-					{selected.label}
+					{api.label}
 				</span>
-				<p className="text-muted-foreground mt-0.5 truncate font-mono text-xs">
-					{selected.vendor}/{selected.name}@{selected.version}
-				</p>
+				<p className="text-muted-foreground mt-0.5 truncate font-mono text-xs">{meta}</p>
 			</div>
-			{selected.securitySchemeTypes && selected.securitySchemeTypes.length > 0 && (
-				<div className="flex shrink-0 gap-1">
-					{selected.securitySchemeTypes.slice(0, 2).map((t) => (
-						<Badge key={t} variant="default" className="text-[10px]">
-							{prettySchemeType(t)}
-						</Badge>
-					))}
-				</div>
+			{blocked && blockedLabel ? (
+				<Badge variant="default" className="shrink-0 text-[10px]">
+					{blockedLabel}
+				</Badge>
+			) : (
+				trailing
 			)}
-			<ChevronRight className="text-muted-foreground group-hover:text-foreground h-4 w-4 shrink-0 transition-colors" />
+			{!selection && (
+				<ChevronRight className="text-muted-foreground group-hover:text-foreground h-4 w-4 shrink-0 transition-colors" />
+			)}
 		</button>
+	);
+}
+
+/** The tick, drawn to match the `Checkbox` primitive's box. */
+function TickBox({ checked }: { checked: boolean }) {
+	return (
+		<span
+			aria-hidden="true"
+			className={cn(
+				'flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors',
+				checked ? 'border-primary bg-primary' : 'border-border border-2',
+			)}
+		>
+			{checked && <Check className="text-primary-foreground h-3 w-3" />}
+		</span>
+	);
+}
+
+function LocalApiRow({
+	row,
+	onSelect,
+	selection,
+}: {
+	row: ApiResponse;
+	onSelect: (api: SelectedApi) => void;
+	selection?: RowSelection;
+}) {
+	const api = apiRowToSelected(row);
+	const schemes = api.securitySchemeTypes ?? [];
+	return (
+		<PickerRow
+			api={api}
+			badgeKey={`${api.vendor}/${api.name}`}
+			meta={`${api.vendor}/${api.name}@${api.version}`}
+			source="local"
+			onSelect={onSelect}
+			selection={selection}
+			trailing={
+				schemes.length > 0 && (
+					<div className="flex shrink-0 gap-1">
+						{schemes.slice(0, 2).map((t) => (
+							<Badge key={t} variant="default" className="text-[10px]">
+								{prettySchemeType(t)}
+							</Badge>
+						))}
+					</div>
+				)
+			}
+		/>
 	);
 }
 
 function CatalogRow({
 	entry,
 	onSelect,
+	selection,
 }: {
 	entry: CatalogEntryResponse;
 	onSelect: (api: SelectedApi) => void;
+	selection?: RowSelection;
 }) {
-	const selected = catalogToSelected(entry);
-	const badgeKey = `catalog:${selected.apiId ?? selected.label}`;
+	const api = catalogToSelected(entry);
 	return (
-		<button
-			type="button"
-			onClick={(): void => onSelect(selected)}
-			data-testid="picker-row"
-			data-source="catalog"
-			className="group hover:border-primary/50 bg-background hover:bg-muted/40 border-border flex w-full items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition-all hover:shadow-sm"
-		>
-			<AgentBadge id={badgeKey} name={selected.label} kind="API" size="sm" />
-			<div className="min-w-0 flex-1">
-				<span className="text-foreground block truncate text-sm font-medium">
-					{selected.label}
-				</span>
-				<p className="text-muted-foreground mt-0.5 truncate font-mono text-xs">
-					{/* The full machine identity (`nytimes.com/books`), not just the
-					    vendor: two entries whose sub-segments humanise identically must
-					    stay distinguishable, and the user can verify exactly which
-					    api_id a pick will import. */}
-					{selected.apiId}
-				</p>
-			</div>
-			{entry.registered && (
-				<Badge variant="success" className="shrink-0 text-[10px]">
-					Imported
-				</Badge>
-			)}
-			<ChevronRight className="text-muted-foreground group-hover:text-foreground h-4 w-4 shrink-0 transition-colors" />
-		</button>
+		<PickerRow
+			api={api}
+			badgeKey={`catalog:${api.apiId ?? api.label}`}
+			// The full machine identity, not just the vendor: two entries whose
+			// sub-segments humanise identically must stay distinguishable.
+			meta={api.apiId}
+			source="catalog"
+			onSelect={onSelect}
+			selection={selection}
+			trailing={
+				entry.registered && (
+					<Badge variant="success" className="shrink-0 text-[10px]">
+						Imported
+					</Badge>
+				)
+			}
+		/>
 	);
 }
 

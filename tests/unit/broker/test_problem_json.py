@@ -29,7 +29,8 @@ from jentic_one.broker.core.exceptions import (
     switch_toolkit_directive,
 )
 from jentic_one.broker.core.headers import JenticHeader
-from jentic_one.broker.web.errors import STATUS_BY_ERROR, handle_broker_error, problem_response
+from jentic_one.broker.core.problem import STATUS_BY_ERROR
+from jentic_one.broker.web.errors import handle_broker_error, problem_response
 from jentic_one.shared.broker.protocols import IdentityMismatch
 
 

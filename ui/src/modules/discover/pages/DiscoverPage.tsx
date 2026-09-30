@@ -19,6 +19,7 @@ import { ROUTES } from '@/shared/app/routes';
 import { DiscoverToolbar } from '@/modules/discover/components/DiscoverToolbar';
 import { DiscoveryGrid } from '@/modules/discover/components/DiscoveryGrid';
 import { ApiDetailSheet } from '@/modules/discover/components/ApiDetailSheet';
+import { shellScroller } from '@/shared/lib';
 import { DiscoverStatusRow } from '@/modules/discover/components/DiscoverStatusRow';
 import { useDebouncedValue } from '@/modules/discover/lib/useDebouncedValue';
 import {
@@ -69,7 +70,7 @@ export default function DiscoverPage() {
 		}
 		prevQueryRef.current = debouncedQuery;
 		prevFilterRef.current = filter;
-		window.scrollTo({ top: 0, left: 0 });
+		shellScroller().scrollTo({ top: 0, left: 0 });
 	}, [debouncedQuery, filter]);
 
 	function handleOpen(entity: DiscoveryEntity) {

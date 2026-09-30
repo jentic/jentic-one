@@ -23,7 +23,7 @@ async function login(page: Page): Promise<void> {
 	await page.getByLabel('Email').fill('admin@local');
 	await page.getByRole('textbox', { name: 'Password' }).fill('password');
 	await page.getByRole('button', { name: 'Sign in' }).click();
-	await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible();
+	await expect(page.getByRole('heading', { name: 'Agents', exact: true })).toBeVisible();
 }
 
 test.describe('#601 — OAuthPopupReturn close-blocked affordance', () => {
@@ -154,6 +154,6 @@ test.describe('#594 — voluntary change password from the user menu', () => {
 		const cancel = page.getByRole('button', { name: 'Cancel' });
 		await expect(cancel).toBeVisible();
 		await cancel.click();
-		await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible();
+		await expect(page.getByRole('heading', { name: 'Agents', exact: true })).toBeVisible();
 	});
 });

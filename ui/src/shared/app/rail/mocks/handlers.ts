@@ -23,6 +23,8 @@ interface EventRow {
 	acknowledged_at: string | null;
 	acknowledged_by: string | null;
 	trace_id: string | null;
+	actor_id?: string | null;
+	actor_type?: string | null;
 	data: Record<string, unknown>;
 	_links: {
 		self: string;
@@ -53,6 +55,13 @@ function seed(
 
 let events: EventRow[] = [];
 
+/** Append rail events to the current store. Resets with `resetRailEventsStore()`. */
+export function seedRailEvents(
+	rows: Array<Partial<EventRow> & Pick<EventRow, 'event_id' | 'type' | 'severity' | 'summary'>>,
+): void {
+	for (const over of rows) events.push(seed(over));
+}
+
 export function resetRailEventsStore(): void {
 	events = [
 		seed({
@@ -64,6 +73,8 @@ export function resetRailEventsStore(): void {
 			requires_action: true,
 			created_at: ago(8),
 			trace_id: 'tr_1',
+			actor_id: 'invoice-bot',
+			actor_type: 'agent',
 			data: { trace_id: 'tr_1', execution_id: 'exec_1', toolkit_id: 'slack' },
 			_links: { self: '/events/evt_exec_failed_1', execution: '/executions/exec_1' },
 		}),
@@ -73,6 +84,8 @@ export function resetRailEventsStore(): void {
 			severity: 'info',
 			summary: 'Import completed: petstore',
 			created_at: ago(27),
+			actor_id: 'usr_admin_1',
+			actor_type: 'user',
 			data: { job_id: 'job_1' },
 			_links: { self: '/events/evt_import_done_1', job: '/jobs/job_1' },
 		}),
@@ -83,6 +96,8 @@ export function resetRailEventsStore(): void {
 			summary: 'Execution completed: github.repos.list',
 			created_at: ago(36),
 			trace_id: 'tr_2',
+			actor_id: 'support-triage',
+			actor_type: 'agent',
 			data: { trace_id: 'tr_2', execution_id: 'exec_2' },
 			_links: { self: '/events/evt_exec_done_1', execution: '/executions/exec_2' },
 		}),
@@ -99,13 +114,17 @@ export const railEventsHandlers = [
 		// Honour the same filters the real backend applies so the Monitor Events
 		// tab's severity/status controls visibly narrow the list in mocked (Mode A)
 		// dev — not just against a real backend (issue #617). The rail itself never
-		// sends these params (it filters client-side), so unfiltered rail behaviour
-		// is unchanged.
+		// sends these params except the Activity lens's actor pair, so unfiltered
+		// rail behaviour is unchanged.
 		const severities = url.searchParams.getAll('severity');
 		const eventTypes = url.searchParams.getAll('event_type');
 		const requiresAction = url.searchParams.get('requires_action');
 		const acknowledged = url.searchParams.get('acknowledged');
+		const actorId = url.searchParams.get('actor_id');
+		const actorType = url.searchParams.get('actor_type');
 		const filtered = events.filter((e) => {
+			if (actorId && e.actor_id !== actorId) return false;
+			if (actorType && e.actor_type !== actorType) return false;
 			if (severities.length && !severities.includes(e.severity)) return false;
 			if (eventTypes.length && !eventTypes.includes(e.type)) return false;
 			if (requiresAction != null && String(e.requires_action) !== requiresAction)

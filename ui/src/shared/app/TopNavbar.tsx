@@ -1,5 +1,7 @@
 import { BookText } from 'lucide-react';
 import { NavTabs } from '@/shared/app/NavTabs';
+import { NotificationsMenu } from '@/shared/app/NotificationsMenu';
+import { ActivityDrawerButton } from '@/shared/app/rail/ActivityDrawer';
 import { ROUTES } from '@/shared/app/routes';
 import { UserMenu } from '@/shared/app/UserMenu';
 import { AppLink } from '@/shared/ui/AppLink';
@@ -19,6 +21,9 @@ function DocsLink() {
 	return (
 		<AppLink
 			href={ROUTES.docs}
+			// /docs renders outside the shell, so a transition would snapshot a header
+			// with no counterpart and blink it out.
+			data-no-transition
 			// Accessible name starts with the visible label (WCAG 2.5.3 "Label
 			// in Name") so voice-control users saying "click Docs" match it.
 			aria-label="Docs — API reference"
@@ -32,14 +37,19 @@ function DocsLink() {
 }
 
 /**
- * Fixed top navigation bar: logo + desktop nav tabs (left) and the docs link +
- * user menu (right). The tab strip is hidden below `md`, where the
- * `BottomNavbar` takes over.
+ * Fixed top navigation bar: logo + desktop nav tabs (left) and, on the right,
+ * the Activity drawer button (below `xl` only — the docked rail replaces it
+ * from there — and only where the rail exists at all), the Notifications
+ * bell, the docs link and the user menu. The tab strip is hidden below `md`,
+ * where the `BottomNavbar` takes over.
  */
-export function TopNavbar() {
+export function TopNavbar({ showActivity = true }: { showActivity?: boolean }) {
 	return (
 		<header
 			data-top-navbar
+			// Its own view-transition layer: the bar stays put while pages
+			// cross-fade underneath it.
+			style={{ viewTransitionName: 'app-header' }}
 			className="border-border bg-background/95 supports-[backdrop-filter]:bg-background/60 fixed top-0 right-0 left-0 z-50 border-b backdrop-blur"
 		>
 			<div className="flex h-12 items-center justify-between px-4">
@@ -69,8 +79,10 @@ export function TopNavbar() {
 					</nav>
 				</div>
 
-				{/* Right: docs + user menu */}
+				{/* Right: activity (below xl) + notifications + docs + user menu */}
 				<div className="flex shrink-0 items-center gap-2 pl-4">
+					{showActivity && <ActivityDrawerButton className="xl:hidden" />}
+					<NotificationsMenu />
 					<DocsLink />
 					<div className="bg-border h-4 w-px shrink-0" aria-hidden="true" />
 					<UserMenu />

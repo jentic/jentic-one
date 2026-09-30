@@ -168,6 +168,10 @@ _LIST_AGENT_IDS = text("SELECT id FROM agents")
 
 _LIST_SERVICE_ACCOUNT_IDS = text("SELECT id FROM service_accounts")
 
+_LIST_AGENT_OWNERS = text("SELECT id, owner_id FROM agents")
+
+_LIST_SERVICE_ACCOUNT_OWNERS = text("SELECT id, owner_id FROM service_accounts")
+
 _LIST_SCOPES_FOR_ACTORS = text(
     "SELECT actor_id, scope FROM actor_scope_grants ORDER BY actor_id, scope"
 )
@@ -215,6 +219,15 @@ class FlatteningAdminRepository:
         agents = (await session.execute(_LIST_AGENT_IDS)).scalars().all()
         service_accounts = (await session.execute(_LIST_SERVICE_ACCOUNT_IDS)).scalars().all()
         return {str(i) for i in agents} | {str(i) for i in service_accounts}
+
+    @staticmethod
+    async def list_actor_owners(session: AsyncSession) -> dict[str, str | None]:
+        """``{actor_id: owner_id}`` for every agent and service account."""
+        owners: dict[str, str | None] = {}
+        for stmt in (_LIST_AGENT_OWNERS, _LIST_SERVICE_ACCOUNT_OWNERS):
+            for row in (await session.execute(stmt)).all():
+                owners[str(row.id)] = str(row.owner_id) if row.owner_id is not None else None
+        return owners
 
     @staticmethod
     async def list_scopes_by_actor(session: AsyncSession) -> dict[str, list[str]]:

@@ -135,3 +135,30 @@ def test_finding_count_excludes_the_verify_summary() -> None:
     assert result.finding_count == 0
     result.findings.append({"category": "some_finding"})
     assert result.finding_count == 1
+
+
+def test_finding_count_excludes_informational_review_lines() -> None:
+    """Admin-level carry-over lines are reported, but a passing verify still
+    records 0 findings on the acknowledgement row."""
+    result = _verify_result()
+    result.findings.append({"category": "successor_admin_scope", "informational": True})
+    assert result.finding_count == 0
+
+
+def test_verify_admin_scope_findings_are_informational(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Admin-level grants carried onto successors print a REVIEW line but
+    never turn a passing verify into a failing exit code."""
+    result = _verify_result()
+    result.successor_admin_scope_count = 2
+    svc = MagicMock()
+    svc.verify = AsyncMock(return_value=result)
+
+    with _patched_service(svc):
+        rc = cli.main(["migrate-service-accounts", "--verify"])
+
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "verify PASSED" in err
+    assert "REVIEW (informational, does not fail verify): 2 admin-level grant(s)" in err

@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import hashlib
+import json
 from collections.abc import AsyncGenerator
 from typing import Any
 
@@ -521,7 +522,9 @@ async def test_unexpected_row_error_is_isolated_and_the_loop_continues(
 
     original = ServiceAccountMigrationRepository.copy_scope_grants
 
-    async def _poisoned_copy(session: Any, *, service_account_id: str, agent_id: str) -> int:
+    async def _poisoned_copy(
+        session: Any, *, service_account_id: str, agent_id: str
+    ) -> list[tuple[str, str | None]]:
         if service_account_id == poisoned:
             raise RuntimeError("simulated malformed row")
         return await original(session, service_account_id=service_account_id, agent_id=agent_id)
@@ -1720,3 +1723,111 @@ async def test_control_db_failure_is_a_row_outcome_not_a_run_abort(
     healed = {o.service_account_id: o for o in await svc.run()}
     assert healed[poisoned].outcome == "already_migrated"
     assert healed[poisoned].reason is None
+
+
+# ------------------------------------------------- admin-level grant reporting
+
+
+async def test_admin_level_grant_is_carried_over_and_reported_not_stripped(
+    integration_context: Context, admin_db: DatabaseSession, seed_owner: None
+) -> None:
+    """An SA holding ``org:admin`` keeps it on its successor (the grant copy is
+    unchanged), and the carry-over is reported: preview + run report line,
+    one WARNING per admin-level grant, the scope names in the GRANT audit
+    row, and an informational ``verify`` finding that does not fail it."""
+    sa_id = await _seed_sa(
+        admin_db,
+        suffix="admin",
+        scopes=("capabilities:execute", "org:admin"),
+        api_key_plaintext="sak_t8m_admin",
+    )
+    plain_sa = await _seed_sa(
+        admin_db, suffix="plain", scopes=("capabilities:execute",), api_key_plaintext="sak_t8m_pl"
+    )
+    svc = ServiceAccountMigrationService(integration_context)
+    expected_admin = ({"scope": "org:admin", "original_granted_by": _OWNER},)
+
+    preview = {o.service_account_id: o for o in await svc.run(diff_only=True)}
+    assert preview[sa_id].admin_level_scopes == expected_admin
+    assert preview[sa_id].copied_scopes == ("capabilities:execute", "org:admin")
+    assert preview[plain_sa].admin_level_scopes == ()
+
+    with structlog.testing.capture_logs() as logs:
+        outcomes = {o.service_account_id: o for o in await svc.run()}
+
+    outcome = outcomes[sa_id]
+    assert outcome.outcome == "migrated"
+    assert outcome.stored_scope_count == 2
+    assert outcome.copied_scopes == ("capabilities:execute", "org:admin")
+    assert outcome.admin_level_scopes == expected_admin
+    assert outcomes[plain_sa].admin_level_scopes == ()
+    agent_id = outcome.successor_agent_id
+    assert agent_id is not None
+
+    # Nothing stripped: the successor holds org:admin exactly as the SA did.
+    grants = await _rows(
+        admin_db,
+        "SELECT scope FROM actor_scope_grants WHERE actor_id = :id AND actor_type = 'agent'",
+        {"id": agent_id},
+    )
+    assert {r.scope for r in grants} == {"capabilities:execute", "org:admin"}
+
+    warnings = [
+        log for log in logs if log["event"] == "service_account_migration_admin_scope_copied"
+    ]
+    assert len(warnings) == 1
+    (warning,) = warnings
+    assert warning["log_level"] == "warning"
+    assert warning["service_account_id"] == sa_id
+    assert warning["successor_agent_id"] == agent_id
+    assert warning["owner_id"] == _OWNER
+    assert warning["scope"] == "org:admin"
+    assert warning["original_granted_by"] == _OWNER
+    assert not any(v == "sak_t8m_admin" for log in logs for v in log.values())
+
+    (audit,) = await _rows(
+        admin_db,
+        "SELECT after FROM audit_entries WHERE actor_id = 'migrate-service-accounts'"
+        " AND action = 'grant' AND target_id = :id",
+        {"id": agent_id},
+    )
+    after = json.loads(audit.after) if isinstance(audit.after, str) else audit.after
+    assert after == {
+        "copied_scope_count": 2,
+        "copied_scopes": ["capabilities:execute", "org:admin"],
+        "admin_level_scopes": ["org:admin"],
+    }
+
+    result = await svc.verify()
+    assert result.passed, result.findings[0]
+    assert result.successor_admin_scope_count == 1
+    (finding,) = [f for f in result.findings if f["category"] == "successor_admin_scope"]
+    assert finding["agent_id"] == agent_id
+    assert finding["agent_name"] == f"service-account:{sa_id}"
+    assert finding["owner_id"] == _OWNER
+    assert finding["scope"] == "org:admin"
+    assert finding["informational"] is True
+    assert result.findings[0]["successor_admin_scope_count"] == 1
+
+    # Informational only: acknowledgement is still granted on a passing verify,
+    # and the review lines do not count as findings on the gate row.
+    acked = await svc.verify(acknowledge=True)
+    assert acked.acknowledged
+    (ack,) = await _rows(
+        admin_db, "SELECT report_finding_count FROM service_account_migration_acks", {}
+    )
+    assert ack.report_finding_count == 0
+
+    # A scope an operator re-grants themselves is no longer "carried over".
+    async with admin_db.session() as session:
+        await session.execute(
+            text(
+                "UPDATE actor_scope_grants SET granted_by = :by"
+                " WHERE actor_id = :id AND scope = 'org:admin'"
+            ),
+            {"by": _OWNER, "id": agent_id},
+        )
+        await session.commit()
+    regranted = await svc.verify()
+    assert regranted.successor_admin_scope_count == 0
+    assert not [f for f in regranted.findings if f["category"] == "successor_admin_scope"]

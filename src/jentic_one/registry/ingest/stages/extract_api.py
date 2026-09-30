@@ -5,10 +5,20 @@ from __future__ import annotations
 import uuid
 from typing import ClassVar
 
+from jentic_one.registry.core.server_hosts import (
+    hosts_from_servers,
+    hosts_from_spec,
+    needs_review,
+)
 from jentic_one.registry.ingest.exc import DuplicateRevisionError
 from jentic_one.registry.ingest.pipeline.ctx import PipelineContext
 from jentic_one.registry.ingest.stages.base import BasePipelineStage
-from jentic_one.registry.repos import ApiRepository, ApiRevisionRepository, OverlayRepository
+from jentic_one.registry.repos import (
+    ApiRepository,
+    ApiRevisionRepository,
+    OverlayRepository,
+    ServerRepository,
+)
 from jentic_one.shared.models import ORIGIN_OVERLAY, ApiRevisionSourceType
 
 
@@ -38,7 +48,8 @@ class CreateRevisionStage(BasePipelineStage):
     _requires: ClassVar[dict[str, type]] = {"api_id": uuid.UUID}
     # Only ``revision_id`` is a *mandatory* output. This stage also conditionally
     # produces ``superseded_revision_id`` (overlay materialize that replaced a current
-    # revision) — deliberately NOT declared here, since ``_produces`` keys are asserted
+    # revision) and ``held_host_change`` (a guarded catalog revision kept as a draft)
+    # — deliberately NOT declared here, since ``_produces`` keys are asserted
     # present for every run; the ingestor reads that one via the non-raising ctx.get().
     _produces: ClassVar[dict[str, type]] = {"revision_id": uuid.UUID}
 
@@ -74,6 +85,28 @@ class CreateRevisionStage(BasePipelineStage):
             existing = await ApiRevisionRepository.get_by_digest(ctx.session, api_id, spec_digest)
             if existing is not None:
                 raise DuplicateRevisionError()
+        if spec.origin is not None and spec.origin != ORIGIN_OVERLAY and spec.guard_host_change:
+            held = await self._held_host_change(ctx, api_id)
+            if held is not None:
+                # Server-host change guard: this catalog revision would change where the
+                # API's bound credentials are sent, and the caller is not an operator.
+                # Keep it as a DRAFT (origin preserved, nothing archived) so the current
+                # revision stays live until an operator promotes it. See
+                # ``registry/ingest/host_change_guard.py``.
+                revision = await ApiRevisionRepository.create_draft(
+                    ctx.session,
+                    api_id=api_id,
+                    origin=spec.origin,
+                    spec_digest=spec_digest,
+                    source_type=spec.source_type or ApiRevisionSourceType.UNKNOWN,
+                    source_url=spec.source_url,
+                    source_filename=spec.source_filename,
+                    submitted_by=spec.submitted_by,
+                    created_by=ctx.created_by,
+                )
+                ctx.produce("held_host_change", held, dict)
+                ctx.produce("revision_id", revision.id, uuid.UUID)
+                return
         if spec.origin is not None:
             if spec.origin == ORIGIN_OVERLAY:
                 # A materialized overlay must supersede whatever revision is currently
@@ -177,6 +210,27 @@ class CreateRevisionStage(BasePipelineStage):
                 created_by=ctx.created_by,
             )
         ctx.produce("revision_id", revision.id, uuid.UUID)
+
+    @staticmethod
+    async def _held_host_change(
+        ctx: PipelineContext, api_id: uuid.UUID
+    ) -> dict[str, list[str]] | None:
+        """``{"current_hosts", "new_hosts"}`` when the spec needs host review, else None.
+
+        Compares the new spec's server origins against the API's current revision,
+        or its most recently live revision when nothing is current (so archiving the
+        current revision first does not skip the check). Review is needed when the
+        host set changes or a host moves to plaintext ``http`` (``needs_review``).
+        An API that has never had a live revision has nothing to redirect.
+        """
+        baseline = await ApiRevisionRepository.host_baseline_revision_id(ctx.session, api_id)
+        if baseline is None:
+            return None
+        current = hosts_from_servers(await ServerRepository.list_url_specs(ctx.session, baseline))
+        new = hosts_from_spec(ctx.specification.content)
+        if not needs_review(current, new):
+            return None
+        return {"current_hosts": sorted(current), "new_hosts": sorted(new)}
 
     @staticmethod
     async def _is_self_rematerialize(

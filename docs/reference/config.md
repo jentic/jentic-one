@@ -116,6 +116,7 @@ File logging sink (in addition to stdout).
 | `logging.file_name` | string | `"app.log"` | `JENTIC__LOGGING__FILE_NAME` |  |
 | `logging.file_max_bytes` | integer | `10485760` | `JENTIC__LOGGING__FILE_MAX_BYTES` |  |
 | `logging.file_backup_count` | integer | `5` | `JENTIC__LOGGING__FILE_BACKUP_COUNT` |  |
+| `logging.http_wire_trace` | boolean | `false` | `JENTIC__LOGGING__HTTP_WIRE_TRACE` | Let the outbound wire-trace DEBUG loggers (httpcore, hpack) through when the log level is DEBUG. Off by default: those lines can quote outbound header values and request paths with their query strings, including injected credentials, unredacted. Not safe for production; enable only for short-lived local debugging. |
 
 ## `server`
 
@@ -132,6 +133,7 @@ HTTP server settings.
 | `server.mcp.oauth.enabled` | boolean | `false` | `JENTIC__SERVER__MCP__OAUTH__ENABLED` |  |
 | `server.mcp.oauth.auto_approve_clients` | boolean | `false` | `JENTIC__SERVER__MCP__OAUTH__AUTO_APPROVE_CLIENTS` |  |
 | `server.mcp.oauth.registration_gc_days` | integer | `90` | `JENTIC__SERVER__MCP__OAUTH__REGISTRATION_GC_DAYS` |  |
+| `server.public_base_url` | string | `""` | `JENTIC__SERVER__PUBLIC_BASE_URL` |  |
 
 ## `observability`
 
@@ -256,7 +258,7 @@ Broker surface configuration.
 | `broker.idempotency.ttl_s` | number | `86400.0` | `JENTIC__BROKER__IDEMPOTENCY__TTL_S` |  |
 | `broker.idempotency.pending_ttl_s` | number | `35.0` | `JENTIC__BROKER__IDEMPOTENCY__PENDING_TTL_S` |  |
 | `broker.idempotency.max_response_bytes` | integer | `262144` | `JENTIC__BROKER__IDEMPOTENCY__MAX_RESPONSE_BYTES` |  |
-| `broker.egress.allowed_private_subnets` | list of string | — | `JENTIC__BROKER__EGRESS__ALLOWED_PRIVATE_SUBNETS` | CIDRs exempted from the private-IP egress block (e.g. `["10.50.0.0/16"]`). The cloud-metadata IPs (169.254.169.254 / fd00:ec2::254) are never exempted, even when a listed range covers them. Accepts a YAML list or a comma-separated string. |
+| `broker.egress.allowed_private_subnets` | list of string | — | `JENTIC__BROKER__EGRESS__ALLOWED_PRIVATE_SUBNETS` | CIDRs exempted from the private-IP egress block (e.g. `["10.50.0.0/16"]`). The cloud-metadata and platform-credential IPs (e.g. 169.254.169.254, 169.254.170.2, fd00:ec2::254, 100.100.100.200) are never exempted, even when a listed range covers them. Accepts a YAML list or a comma-separated string. |
 | `broker.egress.allowed_internal_domains` | list of string | — | `JENTIC__BROKER__EGRESS__ALLOWED_INTERNAL_DOMAINS` | Domain suffixes (e.g. `[".svc.cluster.local"]`) whose resolved private IP is permitted. The resolved IP must still fall in an allowed subnet. Accepts a YAML list or a comma-separated string. |
 | `broker.egress.dns_pinning_enabled` | boolean | `true` | `JENTIC__BROKER__EGRESS__DNS_PINNING_ENABLED` | Pin the outbound connection to the IP validated at connect time, closing the DNS-rebinding TOCTOU between pre-request validation and the runner's own resolution. Disable only to debug egress issues. |
 
@@ -276,7 +278,7 @@ Spec ingestion settings (fetch limits, timeouts, egress policy).
 | `ingest.max_spec_bytes` | integer | `26214400` | `JENTIC__INGEST__MAX_SPEC_BYTES` |  |
 | `ingest.fetch_timeout_s` | number | `30.0` | `JENTIC__INGEST__FETCH_TIMEOUT_S` |  |
 | `ingest.max_redirects` | integer | `5` | `JENTIC__INGEST__MAX_REDIRECTS` |  |
-| `ingest.egress.allowed_private_subnets` | list of string | — | `JENTIC__INGEST__EGRESS__ALLOWED_PRIVATE_SUBNETS` | CIDRs exempted from the private-IP egress block (e.g. `["10.50.0.0/16"]`). The cloud-metadata IPs (169.254.169.254 / fd00:ec2::254) are never exempted, even when a listed range covers them. Accepts a YAML list or a comma-separated string. |
+| `ingest.egress.allowed_private_subnets` | list of string | — | `JENTIC__INGEST__EGRESS__ALLOWED_PRIVATE_SUBNETS` | CIDRs exempted from the private-IP egress block (e.g. `["10.50.0.0/16"]`). The cloud-metadata and platform-credential IPs (e.g. 169.254.169.254, 169.254.170.2, fd00:ec2::254, 100.100.100.200) are never exempted, even when a listed range covers them. Accepts a YAML list or a comma-separated string. |
 | `ingest.egress.allowed_internal_domains` | list of string | — | `JENTIC__INGEST__EGRESS__ALLOWED_INTERNAL_DOMAINS` | Domain suffixes (e.g. `[".svc.cluster.local"]`) whose resolved private IP is permitted. The resolved IP must still fall in an allowed subnet. Accepts a YAML list or a comma-separated string. |
 | `ingest.egress.dns_pinning_enabled` | boolean | `true` | `JENTIC__INGEST__EGRESS__DNS_PINNING_ENABLED` | Pin the outbound connection to the IP validated at connect time, closing the DNS-rebinding TOCTOU between pre-request validation and the runner's own resolution. Disable only to debug egress issues. |
 
@@ -307,7 +309,7 @@ Credentials subsystem configuration.
 | `credentials.encryption.entries.<n>.material_file` | string \| null | `null` | `JENTIC__CREDENTIALS__ENCRYPTION__ENTRIES__<N>__MATERIAL_FILE` | Path to a regular file holding the base64-encoded key material (docker/k8s secret mount, systemd LoadCredential path). |
 | `credentials.providers` | map of DirectOAuth2ProviderConfig \| PipedreamProviderConfig | — | `JENTIC__CREDENTIALS__PROVIDERS` |  |
 | `credentials.providers.<name>.kind` | "direct_oauth2" \| "pipedream" | `"direct_oauth2"` | `JENTIC__CREDENTIALS__PROVIDERS__<NAME>__KIND` |  |
-| `credentials.providers.<name>.redirect_uri` | string | *required* | `JENTIC__CREDENTIALS__PROVIDERS__<NAME>__REDIRECT_URI` |  |
+| `credentials.providers.<name>.redirect_uri` | string \| null | `null` | `JENTIC__CREDENTIALS__PROVIDERS__<NAME>__REDIRECT_URI` |  |
 | `credentials.providers.<name>.default_scopes` | list of string | — | `JENTIC__CREDENTIALS__PROVIDERS__<NAME>__DEFAULT_SCOPES` |  |
 | `credentials.providers.<name>.expiry_skew_seconds` | integer | `60` | `JENTIC__CREDENTIALS__PROVIDERS__<NAME>__EXPIRY_SKEW_SECONDS` |  |
 | `credentials.providers.<name>.authorize_extra_params` | map of string | — | `JENTIC__CREDENTIALS__PROVIDERS__<NAME>__AUTHORIZE_EXTRA_PARAMS` |  |

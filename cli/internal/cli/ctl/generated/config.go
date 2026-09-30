@@ -851,19 +851,18 @@ type DirectOAuth2ProviderConfig struct {
 	Kind string `json:"kind,omitempty,omitzero" yaml:"kind,omitempty" mapstructure:"kind,omitempty"`
 
 	// RedirectUri corresponds to the JSON schema field "redirect_uri".
-	RedirectUri string `json:"redirect_uri" yaml:"redirect_uri" mapstructure:"redirect_uri"`
+	RedirectUri interface{} `json:"redirect_uri,omitempty,omitzero" yaml:"redirect_uri,omitempty" mapstructure:"redirect_uri,omitempty"`
 }
 
 type DirectOAuth2ProviderConfigAuthorizeExtraParams map[string]string
+
+type DirectOAuth2ProviderConfigRedirectUri_0 *string
 
 // UnmarshalJSON implements json.Unmarshaler.
 func (j *DirectOAuth2ProviderConfig) UnmarshalJSON(value []byte) error {
 	var raw map[string]interface{}
 	if err := json.Unmarshal(value, &raw); err != nil {
 		return err
-	}
-	if _, ok := raw["redirect_uri"]; raw != nil && !ok {
-		return fmt.Errorf("field redirect_uri in DirectOAuth2ProviderConfig: required")
 	}
 	type Plain DirectOAuth2ProviderConfig
 	var plain Plain
@@ -899,9 +898,9 @@ type EgressConfig struct {
 	AllowedInternalDomains []string `json:"allowed_internal_domains,omitempty,omitzero" yaml:"allowed_internal_domains,omitempty" mapstructure:"allowed_internal_domains,omitempty"`
 
 	// CIDRs exempted from the private-IP egress block (e.g. ``["10.50.0.0/16"]``).
-	// The cloud-metadata IPs (169.254.169.254 / fd00:ec2::254) are never exempted,
-	// even when a listed range covers them. Accepts a YAML list or a comma-separated
-	// string.
+	// The cloud-metadata and platform-credential IPs (e.g. 169.254.169.254,
+	// 169.254.170.2, fd00:ec2::254, 100.100.100.200) are never exempted, even when a
+	// listed range covers them. Accepts a YAML list or a comma-separated string.
 	AllowedPrivateSubnets []string `json:"allowed_private_subnets,omitempty,omitzero" yaml:"allowed_private_subnets,omitempty" mapstructure:"allowed_private_subnets,omitempty"`
 
 	// Pin the outbound connection to the IP validated at connect time, closing the
@@ -1386,6 +1385,13 @@ type LoggingConfig struct {
 
 	// FileName corresponds to the JSON schema field "file_name".
 	FileName string `json:"file_name,omitempty,omitzero" yaml:"file_name,omitempty" mapstructure:"file_name,omitempty"`
+
+	// Let the outbound wire-trace DEBUG loggers (httpcore, hpack) through when the
+	// log level is DEBUG. Off by default: those lines can quote outbound header
+	// values and request paths with their query strings, including injected
+	// credentials, unredacted. Not safe for production; enable only for short-lived
+	// local debugging.
+	HttpWireTrace bool `json:"http_wire_trace,omitempty,omitzero" yaml:"http_wire_trace,omitempty" mapstructure:"http_wire_trace,omitempty"`
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
@@ -1413,6 +1419,9 @@ func (j *LoggingConfig) UnmarshalJSON(value []byte) error {
 	}
 	if v, ok := raw["file_name"]; !ok || v == nil {
 		plain.FileName = "app.log"
+	}
+	if v, ok := raw["http_wire_trace"]; !ok || v == nil {
+		plain.HttpWireTrace = false
 	}
 	*j = LoggingConfig(plain)
 	return nil
@@ -2092,6 +2101,9 @@ type ServerConfig struct {
 	// Port corresponds to the JSON schema field "port".
 	Port int `json:"port,omitempty,omitzero" yaml:"port,omitempty" mapstructure:"port,omitempty"`
 
+	// PublicBaseUrl corresponds to the JSON schema field "public_base_url".
+	PublicBaseUrl string `json:"public_base_url,omitempty,omitzero" yaml:"public_base_url,omitempty" mapstructure:"public_base_url,omitempty"`
+
 	// Reload corresponds to the JSON schema field "reload".
 	Reload bool `json:"reload,omitempty,omitzero" yaml:"reload,omitempty" mapstructure:"reload,omitempty"`
 }
@@ -2145,6 +2157,9 @@ func (j *ServerConfig) UnmarshalJSON(value []byte) error {
 	}
 	if v, ok := raw["port"]; !ok || v == nil {
 		plain.Port = 8000
+	}
+	if v, ok := raw["public_base_url"]; !ok || v == nil {
+		plain.PublicBaseUrl = ""
 	}
 	if v, ok := raw["reload"]; !ok || v == nil {
 		plain.Reload = false

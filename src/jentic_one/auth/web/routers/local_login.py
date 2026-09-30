@@ -664,6 +664,15 @@ async def session_continue_endpoint(
     Every failure after authentication is the same generic 400: an invalid
     blob must not let the caller learn anything about the client or the flow.
     """
+    # Only first-party session credentials qualify: a login JWT or an access
+    # token the platform issued to itself. A token issued to an OAuth client
+    # (``oauth_client_id`` / ``oauth_grant_id`` set) carries only what that
+    # client was consented for, so it is refused before any state is read and
+    # cannot be exchanged for a first-party session.
+    if identity.oauth_client_id is not None or identity.oauth_grant_id is not None:
+        logger.warning("oauth_session_continue_rejected", reason="client_bound_token")
+        raise InvalidGrantError(_SESSION_CONTINUE_REJECTED)
+
     try:
         params = _verify_login_state(body.state, ctx)
     except InvalidGrantError:

@@ -16,11 +16,9 @@ export {
 	useOverlayActions,
 	useSnoozeCatalogUpdate,
 	useDeleteApi,
-	useImportSpec,
 	useReimportFromCatalog,
 	workspaceKeys,
 } from '@/modules/workspace/api/hooks';
-export type { UseImportSpec } from '@/modules/workspace/api/hooks';
 export type { UseApiOperations, UsePagedList } from '@/modules/workspace/api/hooks';
 
 export { WorkspaceApiError } from '@/modules/workspace/api/client';

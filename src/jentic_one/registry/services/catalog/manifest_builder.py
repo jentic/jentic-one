@@ -16,6 +16,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from jentic_one.shared.vendor_domain import vendor_from_api_id
+
 # api_id is parsed out of an apis.json `include[].url` of the shape
 # .../apis/openapi/{domain}/{sub}/{version}/apis.json
 _INCLUDE_URL_RE = re.compile(r"/apis/openapi/([^/]+)/([^/]+)/([^/]+)/apis\.json")
@@ -54,13 +56,20 @@ class ManifestEntry:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ManifestEntry:
-        """Rehydrate from a snapshot-blob dict (tolerant of missing optionals)."""
+        """Rehydrate from a snapshot-blob dict (tolerant of missing optionals).
+
+        ``vendor`` is re-derived from ``api_id`` rather than read back from the
+        blob: it is a pure function of the id, so a snapshot persisted by an older
+        derivation (e.g. one that collapsed ``finage.co.uk`` to ``co.uk``) is
+        served with the current vendor without waiting for a manifest refresh.
+        """
+        api_id = data["api_id"]
         return cls(
-            api_id=data["api_id"],
+            api_id=api_id,
             path=data.get("path") or "",
             spec_url=data.get("spec_url"),
             github_url=data.get("github_url") or "",
-            vendor=data.get("vendor"),
+            vendor=vendor_from_api_id(api_id),
         )
 
 
@@ -101,30 +110,11 @@ def parse_apis_json(data: dict[str, Any]) -> list[ManifestEntry]:
                 path=path,
                 spec_url=spec_url,
                 github_url=github_tree_url(path),
-                vendor=extract_vendor(api_id),
+                vendor=vendor_from_api_id(api_id),
             )
         )
     entries.sort(key=lambda e: e.api_id)
     return entries
-
-
-def extract_vendor(api_id: str) -> str | None:
-    """Reduce an api_id to its registrable-domain vendor for dedup/coverage.
-
-    ``api.stripe.com`` → ``stripe.com``; ``slack.com/api`` → ``slack.com``;
-    a bare ``stripe`` stays ``stripe``. Mirrors mini's ``extract_vendor`` intent
-    (eTLD+1-ish) without a public-suffix dependency: take the host portion before
-    the first slash and keep the last two dotted labels.
-    """
-    if not api_id:
-        return None
-    host = api_id.split("/", 1)[0].strip().lower()
-    if not host:
-        return None
-    labels = [label for label in host.split(".") if label]
-    if len(labels) <= 2:
-        return ".".join(labels) if labels else None
-    return ".".join(labels[-2:])
 
 
 # ── search / scoring (pure) ──────────────────────────────────────────────────

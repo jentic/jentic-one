@@ -16,6 +16,7 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
+from jentic_one.registry.ingest.host_change_guard import may_approve_host_change
 from jentic_one.registry.repos.api_repo import ApiRepository
 from jentic_one.registry.repos.revision_repo import ApiRevisionRepository
 from jentic_one.registry.repos.url_index_repo import UrlIndexRepository
@@ -63,6 +64,9 @@ class RegistryService:
             operation_id=hit.operation_id,
             api=api,
             path_params=hit.path_params,
+            server_variables=hit.server_variables,
+            server_variable_defaults=hit.server_variable_defaults,
+            server_variables_unresolved=hit.server_variables_unresolved,
         )
 
     async def resolve_revision_pin(
@@ -82,6 +86,8 @@ class RegistryService:
         - unknown API / malformed label / no such revision → ``UNKNOWN`` (→ 422),
         - ``archived`` revision → ``ARCHIVED`` (→ 422; resurrect by re-promoting),
         - unpublished ``draft`` not owned by the caller → ``FORBIDDEN`` (→ 403),
+        - ``draft`` held for server-host review, for a caller without
+          ``credentials:write`` (even its submitter) → ``FORBIDDEN`` (→ 403),
         - ``published`` revision, or an owned ``draft`` → ``RESOLVED``.
 
         Ownership of a ``draft`` is decided by ``submitted_by == identity.sub`` —
@@ -102,8 +108,15 @@ class RegistryService:
         if revision.state == ApiRevisionState.ARCHIVED:
             return RevisionPinResult(RevisionPinOutcome.ARCHIVED)
 
-        if revision.state == ApiRevisionState.DRAFT and revision.submitted_by != identity.sub:
-            return RevisionPinResult(RevisionPinOutcome.FORBIDDEN)
+        if revision.state == ApiRevisionState.DRAFT:
+            # A draft with an origin is an import held for server-host review
+            # (``registry/ingest/host_change_guard.py``): only an operator who could
+            # promote it may route through it, not the agent that submitted it.
+            if revision.origin is not None:
+                if not may_approve_host_change(identity.permissions):
+                    return RevisionPinResult(RevisionPinOutcome.FORBIDDEN)
+            elif revision.submitted_by != identity.sub:
+                return RevisionPinResult(RevisionPinOutcome.FORBIDDEN)
 
         return RevisionPinResult(RevisionPinOutcome.RESOLVED, revision_id=revision_id)
 

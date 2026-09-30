@@ -427,3 +427,26 @@ async def test_unreachable_broker_envelope_carries_no_dangling_pointer(broker) -
     assert payload["error_code"] == "TRANSPORT_ERROR"
     assert payload["retryable"] is True
     assert "next_tool" not in payload
+
+
+async def test_transport_error_envelope_carries_exception_class_not_message(broker) -> None:
+    """The transport exception text can quote request material verbatim (an
+    illegal-header message carries the header value), so the agent sees only
+    the exception class — never the message."""
+    marker = "Illegal header value b'Bearer jak_test\\r\\nX-Injected: 1'"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.LocalProtocolError(marker)
+
+    broker(handler)
+    env = make_env("http://127.0.0.1:8100")
+    result = await dispatch_tool_call(env, "execute", {"operation_id": "POST:/v1/pets"})
+    assert result.is_error
+
+    payload = decode_tool_json(result)
+    rendered = json.dumps(payload)
+    assert payload["error_code"] == "TRANSPORT_ERROR"
+    assert payload["error"].startswith("transport error (LocalProtocolError)")
+    assert "jak_test" not in rendered
+    assert "Illegal header value" not in rendered
+    assert payload["retryable"] is False

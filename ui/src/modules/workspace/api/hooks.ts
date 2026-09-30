@@ -24,8 +24,6 @@ import {
 	getApi,
 	getApiSpec,
 	getRevisionSpec,
-	getJob,
-	importSources,
 	listApis,
 	listOperations,
 	listOverlays,
@@ -41,11 +39,13 @@ import type {
 	ApiOperation,
 	ApiRevision,
 	CursorPage,
-	ImportSource,
-	JobStatus,
 	Overlay,
 	WorkspaceApi,
 } from '@/modules/workspace/api/types';
+// The job poll is shared with the spec import (which is itself shared, so the
+// Add-APIs tray can upload a spec) — one loop, two callers, one reading of the
+// backend's terminal-status vocabulary.
+import { jobSucceeded, pollJobToTerminal } from '@/shared/credentials/api';
 import { sharedQueryKeys } from '@/shared/api';
 
 /** Stable query-key roots so callers/tests can target invalidation precisely. */
@@ -538,72 +538,6 @@ export function useDeleteApi() {
 	});
 }
 
-const JOB_POLL_INTERVAL_MS = 1500;
-const JOB_POLL_TIMEOUT_MS = 60_000;
-const TERMINAL_STATUSES = new Set(['succeeded', 'failed', 'cancelled', 'error']);
-
-export interface UseImportSpec {
-	importSpec: (sources: ImportSource[]) => Promise<JobStatus>;
-	isImporting: boolean;
-}
-
-/**
- * Enqueue a spec import via `POST /apis` and poll the job to a terminal state.
- *
- * Import is async: 202 returns a job id, then we poll `/jobs/{id}` until
- * `succeeded`/`failed`. On success we invalidate the workspace list so the new
- * API materializes; on failure we surface the job's `error` (e.g. the backend
- * embeddings-extra gap verified against the live backend). The dialog awaits
- * the returned `JobStatus` so it can keep the form open + show the error on a
- * failed job, per the dialog state-lifecycle convention.
- */
-export function useImportSpec(): UseImportSpec {
-	const queryClient = useQueryClient();
-	const [isImporting, setIsImporting] = useState(false);
-	const activeRef = useRef(true);
-
-	// Flip the guard on unmount so an in-flight poll loop stops touching state
-	// (and breaks out at the next interval) instead of warning post-unmount.
-	useEffect(() => {
-		activeRef.current = true;
-		return () => {
-			activeRef.current = false;
-		};
-	}, []);
-
-	const importSpec = useCallback(
-		async (sources: ImportSource[]): Promise<JobStatus> => {
-			setIsImporting(true);
-			try {
-				const job = await importSources(sources);
-				const deadline = Date.now() + JOB_POLL_TIMEOUT_MS;
-				let status: JobStatus = { jobId: job.jobId, status: job.status, error: null };
-
-				while (!TERMINAL_STATUSES.has(status.status) && Date.now() < deadline) {
-					await new Promise((resolve) => setTimeout(resolve, JOB_POLL_INTERVAL_MS));
-					if (!activeRef.current) break;
-					status = await getJob(job.jobId);
-				}
-
-				if (status.status === 'succeeded') {
-					toast({
-						variant: 'success',
-						title: 'API imported',
-						description: `Import job ${status.jobId} completed.`,
-					});
-					queryClient.invalidateQueries({ queryKey: workspaceKeys.apis() });
-				}
-				return status;
-			} finally {
-				if (activeRef.current) setIsImporting(false);
-			}
-		},
-		[queryClient],
-	);
-
-	return { importSpec, isImporting };
-}
-
 /**
  * Re-import a catalog-backed API to adopt an upstream spec update (Flow-3).
  *
@@ -613,7 +547,7 @@ export function useImportSpec(): UseImportSpec {
  * enqueues. Import is async: the 202 only means *queued*, and the new revision
  * (which clears `update_available` server-side) doesn't exist yet. Invalidating
  * on the 202 therefore re-reads the *stale* API and the "Update available" badge
- * lingers until some unrelated later refetch. So — like `useImportSpec` — we
+ * lingers until some unrelated later refetch. So — like the shared spec import — we
  * poll the job to a terminal state and only then invalidate the API's detail +
  * revision caches, so the cleared `update_available` and new revision are what
  * re-reads. We toast the queued job immediately and again on completion.
@@ -623,8 +557,9 @@ export function useReimportFromCatalog(key: ApiKey) {
 	const [isReimporting, setIsReimporting] = useState(false);
 	const activeRef = useRef(true);
 
-	// Flip the guard on unmount so an in-flight poll loop stops touching state
-	// (and breaks out at the next interval) instead of warning post-unmount.
+	// Flip the guard on unmount so ONLY the `isReimporting` write below is skipped —
+	// the poll and the invalidations must still finish, or navigating away mid-import
+	// leaves the API's detail and revision caches stale.
 	useEffect(() => {
 		activeRef.current = true;
 		return () => {
@@ -643,20 +578,18 @@ export function useReimportFromCatalog(key: ApiKey) {
 					description: `Pulling the latest spec from the public catalog (job ${job.jobId}). This can take a moment.`,
 				});
 
-				const deadline = Date.now() + JOB_POLL_TIMEOUT_MS;
-				let status: JobStatus = { jobId: job.jobId, status: job.status, error: null };
-				while (!TERMINAL_STATUSES.has(status.status) && Date.now() < deadline) {
-					await new Promise((resolve) => setTimeout(resolve, JOB_POLL_INTERVAL_MS));
-					if (!activeRef.current) break;
-					status = await getJob(job.jobId);
-				}
+				const status = await pollJobToTerminal({
+					jobId: job.jobId,
+					status: job.status,
+					error: null,
+				});
 
 				// Only invalidate once the job has actually landed the new revision;
 				// otherwise the API re-reads stale and the "Update available" badge
 				// stays lit (the bug this poll fixes). A timeout without a terminal
 				// state still invalidates as a best effort — the next fetch is at
 				// worst as stale as before.
-				if (status.status === 'succeeded') {
+				if (jobSucceeded(status)) {
 					toast({
 						variant: 'success',
 						title: 'Re-import complete',

@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
 
 from jentic_one.control.web.schemas.permission_rules import (
     PermissionRuleReadSchema,
@@ -45,6 +46,23 @@ def _validate_server_variables(v: dict[str, str] | None) -> dict[str, str] | Non
     return v
 
 
+# C0 controls (incl. CR/LF/TAB/NUL) and DEL. These values are injected verbatim
+# into upstream request headers / query parameters, where a control character is
+# either illegal (the HTTP client rejects the request) or a header-splitting
+# vector, so reject them at the edge.
+_CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def _reject_control_chars(v: str | None, info: ValidationInfo) -> str | None:
+    """Reject control characters in a value injected into an upstream request.
+
+    The message names the field only — never the value, which may be a secret.
+    """
+    if v is not None and _CONTROL_CHARS.search(v):
+        raise ValueError(f"{info.field_name} must not contain control characters")
+    return v
+
+
 # --- Create request models (per type) ---
 
 
@@ -60,6 +78,7 @@ class BearerTokenCreateRequest(BaseModel):
     token: str = Field(json_schema_extra=SENSITIVE)
 
     _check_server_variables = field_validator("server_variables")(_validate_server_variables)
+    _check_control_chars = field_validator("token")(_reject_control_chars)
 
 
 class ApiKeyCreateRequest(BaseModel):
@@ -99,6 +118,7 @@ class ApiKeyCreateRequest(BaseModel):
     field_name: str = Field(description="Header or query-parameter name carrying the key.")
 
     _check_server_variables = field_validator("server_variables")(_validate_server_variables)
+    _check_control_chars = field_validator("key", "field_name")(_reject_control_chars)
 
 
 class BasicAuthCreateRequest(BaseModel):
@@ -187,6 +207,11 @@ class Sigv4CreateRequest(BaseModel):
     aws_service: str = Field(description="Signing service, e.g. 'aoss', 'execute-api', 's3'.")
 
     _check_server_variables = field_validator("server_variables")(_validate_server_variables)
+    # Region/service ride the ``Authorization`` credential scope, so they are
+    # header material too.
+    _check_control_chars = field_validator(
+        "access_key_id", "session_token", "aws_region", "aws_service"
+    )(_reject_control_chars)
 
 
 CredentialCreateRequest = Annotated[
@@ -214,6 +239,7 @@ class BearerTokenUpdateRequest(BaseModel):
     token: str | None = Field(default=None, json_schema_extra=SENSITIVE)
 
     _check_server_variables = field_validator("server_variables")(_validate_server_variables)
+    _check_control_chars = field_validator("token")(_reject_control_chars)
 
 
 class ApiKeyUpdateRequest(BaseModel):
@@ -243,6 +269,7 @@ class ApiKeyUpdateRequest(BaseModel):
     )
 
     _check_server_variables = field_validator("server_variables")(_validate_server_variables)
+    _check_control_chars = field_validator("key", "field_name")(_reject_control_chars)
 
 
 class BasicAuthUpdateRequest(BaseModel):
@@ -290,6 +317,11 @@ class Sigv4UpdateRequest(BaseModel):
     aws_service: str | None = None
 
     _check_server_variables = field_validator("server_variables")(_validate_server_variables)
+    # Region/service ride the ``Authorization`` credential scope, so they are
+    # header material too.
+    _check_control_chars = field_validator(
+        "access_key_id", "session_token", "aws_region", "aws_service"
+    )(_reject_control_chars)
 
 
 CredentialUpdateRequest = Annotated[
@@ -474,7 +506,14 @@ class ProviderDiscoveryEntryResponse(BaseModel):
         description="Whether the provider is fully configured and operational."
     )
     callback_url: str | None = Field(
-        default=None, description="OAuth2 redirect URI for providers that require it."
+        default=None,
+        description=(
+            "OAuth2 redirect URI for providers that require it. When no explicit "
+            "redirect_uri is configured, this is derived from the deployment's "
+            "public origin (server.public_base_url or the request origin), so it "
+            "reflects the exact callback the connect flow will register with the "
+            "IdP. Add this URL to your OAuth app's allowed redirect URIs."
+        ),
     )
 
 

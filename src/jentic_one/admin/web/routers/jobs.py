@@ -69,6 +69,7 @@ async def list_jobs(
     """List jobs with optional filters."""
     page = await job_svc.list_all(
         filter=JobFilter(kind=kind, status=job_status, from_=from_, to=to),
+        identity=identity,
         cursor=cursor,
         limit=limit,
     )
@@ -87,7 +88,7 @@ async def get_job(
     job_svc: JobService = Depends(get_job_service),
 ) -> JobResponse:
     """Get a job by ID."""
-    view = await job_svc.get_by_id(job_id)
+    view = await job_svc.get_by_id(job_id, identity=identity)
     return _job_response(view, request)
 
 
@@ -98,7 +99,7 @@ async def get_job_result(
     result_svc: JobResultService = Depends(get_job_result_service),
 ) -> Response:
     """Get the result of a completed job — polymorphic by kind."""
-    view = await result_svc.get(job_id)
+    view = await result_svc.get(job_id, identity=identity)
     if view.kind == JobKind.EXECUTION and view.content_type:
         return Response(content=view.raw_body, media_type=view.content_type)
     return JSONResponse(content=view.body)

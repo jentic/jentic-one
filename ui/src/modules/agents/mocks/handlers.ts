@@ -14,15 +14,16 @@
  *
  * Also serves the platform permission catalogue (`GET /permissions`) and the
  * per-actor scope grants (`GET/PUT .../scopes`, #615). The catalogue mirrors the
- * backend's `ALL_PERMISSIONS` verbatim. Like the real actor-scope PUTs, saving
- * does NOT validate scopes against the catalogue or enforce
- * `grantable_by_caller` — only a malformed scope is rejected (422). See
+ * backend's `ALL_PERMISSIONS`. Saving rejects a malformed scope (422) and, like
+ * the backend's agent scope ceiling, a *newly added* scope the catalogue marks
+ * `grantable_by_caller: false` (403 `scope_not_grantable`). See
  * {@link validateScopes}.
  *
  * Registered additively in src/mocks/handlers.ts.
  */
 import { http, HttpResponse } from 'msw';
 import { SERVICE_ACCOUNT_SUCCESSOR_REGISTRAR } from '@/shared/lib';
+import { findMockCredential } from '@/shared/credentials/mocks/handlers';
 
 type Status = 'pending' | 'active' | 'rejected' | 'disabled' | 'archived';
 
@@ -173,11 +174,13 @@ function bindingJson(row: CredentialBindingRow) {
  * permissions.py) verbatim — same scope strings, descriptions, and `implies`
  * edges — so dev/tests exercise the real vocabulary, not invented scopes.
  *
- * `org:admin` is marked `grantable_by_caller: false` to reproduce the common
- * real case (a non-admin operator) and exercise the editor's disabled-row
- * gating; the backend additionally *hides* `org:admin` from non-admins, but we
- * keep it visible-but-disabled here so the gating path is observable in dev.
- * Every other entry is grantable, matching an operator who holds those scopes.
+ * `org:admin` and `agents:write` are marked `grantable_by_caller: false` to
+ * reproduce the common real case (a non-admin operator: the agent scope ceiling
+ * never lets a non-admin grant either, even when held) and exercise the
+ * editor's disabled-row gating; the backend additionally *hides* `org:admin`
+ * from non-admins, but we keep it visible-but-disabled here so the gating path
+ * is observable in dev. Every other entry is grantable, matching an operator
+ * who holds those scopes.
  */
 const PERMISSION_CATALOGUE: ReadonlyArray<{
 	name: string;
@@ -289,7 +292,7 @@ const PERMISSION_CATALOGUE: ReadonlyArray<{
 		name: 'agents:write',
 		description: 'Create, update, and delete agents',
 		implies: ['agents:read'],
-		grantable_by_caller: true,
+		grantable_by_caller: false,
 	},
 	{
 		name: 'agents:read',
@@ -317,10 +320,34 @@ const PERMISSION_CATALOGUE: ReadonlyArray<{
 	},
 ];
 
+/**
+ * Append extra agents to the seeded fleet (call after `resetAgentsStore`).
+ * Lets specs exercise states the default seed doesn't carry — e.g. an
+ * archived agent, which has no UI path to create quickly.
+ */
+export function seedExtraAgents(
+	rows: Array<Partial<AgentRow> & Pick<AgentRow, 'id' | 'name' | 'status'>>,
+): void {
+	agents.push(...rows.map(seedAgent));
+}
+
 export function resetAgentsStore(): void {
 	agents = [
-		seedAgent({ id: 'agnt_pending_1', name: 'inbox-triage-bot', status: 'pending' }),
-		seedAgent({ id: 'agnt_pending_2', name: 'release-notes-bot', status: 'pending' }),
+		// Distinct registration times so the pending-approval banner's
+		// "longest waiting" pick is observable: the backend serves
+		// `created_at DESC`, so `inbox-triage-bot` (oldest) is the LAST row.
+		seedAgent({
+			id: 'agnt_pending_1',
+			name: 'inbox-triage-bot',
+			status: 'pending',
+			created_at: now(-47),
+		}),
+		seedAgent({
+			id: 'agnt_pending_2',
+			name: 'release-notes-bot',
+			status: 'pending',
+			created_at: now(-12),
+		}),
 		seedAgent({
 			id: 'agnt_active_1',
 			name: 'support-agent',
@@ -397,10 +424,10 @@ export function resetAgentsStore(): void {
 			can_revoke: false,
 		},
 	];
-	// Direct credential bindings: agnt_active_1 carries one healthy binding
-	// (with a rule) and one suspended, rule-less binding — so the mocked dev
-	// card shows the resume affordance AND the zero-rules warning out of the
-	// box. Other agents have none (exercises the empty state).
+	// Direct credential bindings: agnt_active_1 carries one healthy binding (with a
+	// rule) and one suspended, rule-less one, so dev shows the resume affordance and
+	// the zero-rules warning out of the box. The vendors are split on purpose —
+	// `github` resolves against the `/apis` fixture, `slack.com` matches nothing.
 	credentialBindings = [
 		seedBinding({
 			agent_id: 'agnt_active_1',
@@ -416,7 +443,7 @@ export function resetAgentsStore(): void {
 			credential_id: 'cred_github_1',
 			name: 'GitHub PAT',
 			suspended: true,
-			serves: [{ api_vendor: 'github.com', api_name: null, api_version: null }],
+			serves: [{ api_vendor: 'github', api_name: null, api_version: null }],
 		}),
 	];
 }
@@ -469,10 +496,14 @@ export function seedOauthGrants(rows: Array<Partial<OAuthGrantRow> & { id: strin
 
 resetAgentsStore();
 
-function paginate<T extends { status: Status }>(rows: T[], url: URL) {
+function paginate<T extends { status: Status; created_at: string }>(rows: T[], url: URL) {
 	const status = url.searchParams.get('status');
 	const filtered = status ? rows.filter((r) => r.status === status) : rows;
-	return HttpResponse.json({ data: filtered, has_more: false, next_cursor: null });
+	// Backend fidelity: `list_all` orders by `created_at DESC` (newest first),
+	// so "longest waiting" is the LAST row of the page — the pending-approval
+	// banner's pick depends on this.
+	const ordered = [...filtered].sort((a, b) => b.created_at.localeCompare(a.created_at));
+	return HttpResponse.json({ data: ordered, has_more: false, next_cursor: null });
 }
 
 const APPROVE: Record<string, Status> = { pending: 'active' };
@@ -520,29 +551,44 @@ const DEFAULT_AGENT_SCOPES_MOCK = [
 	'owner:credentials:read',
 ] as const;
 
+/** Catalogue entries a (mock, non-admin) caller may not grant to an agent. */
+const NON_GRANTABLE_SCOPES = new Set(
+	PERMISSION_CATALOGUE.filter((p) => !p.grantable_by_caller).map((p) => p.name),
+);
+
 /**
- * Validate a replacement scope set the way the real backend actually does.
+ * Validate a requested scope set the way the real backend does.
  *
- * IMPORTANT: `PUT /agents/{id}/scopes` does NOT validate scopes against the catalogue and do NOT enforce
- * `grantable_by_caller`. `AgentService.replace_scopes` simply dedupes and writes
- * any string that passes the `ScopeStr` regex. (Catalogue/grantability checks
- * live only on `PUT /users/{id}/permissions`, a different endpoint.) So the only
- * rejection we reproduce here is a malformed scope → 422, matching FastAPI's
- * request-validation response. `grantable_by_caller` is purely a UI hint used to
- * disable rows in the picker, never a server-side gate for actors.
+ * - A malformed scope → 422 (the `ScopeStr` regex, via Pydantic), and more
+ *   than 100 entries → 422 (`Field(max_length=100)`).
+ * - A newly added scope the catalogue marks `grantable_by_caller: false` →
+ *   403 `scope_not_grantable` (the agent scope ceiling in
+ *   `AgentService.create` / `replace_scopes`). Scopes in `alreadyHeld` are
+ *   not re-checked, so an operator may keep or drop what an admin granted.
  *
- * The backend also caps the list at 100 entries (`list[ScopeStr] = Field(max_length=100)`),
- * which we mirror so a test that over-grants gets the same 422 the real API would.
+ * The backend additionally 422s (`unknown_scope`) a scope outside its
+ * catalogue; this mock's catalogue is a subset, so that check is not mirrored.
  */
 function validateScopes(
 	requested: string[],
-): { ok: true } | { ok: false; status: number; detail: string } {
+	alreadyHeld: readonly string[] = [],
+): { ok: true } | { ok: false; status: number; detail: string; type?: string } {
 	if (requested.length > 100) {
 		return { ok: false, status: 422, detail: 'Too many scopes (max 100).' };
 	}
 	for (const s of requested) {
 		if (!SCOPE_PATTERN.test(s)) {
 			return { ok: false, status: 422, detail: `Invalid scope: ${s}` };
+		}
+	}
+	for (const s of requested) {
+		if (NON_GRANTABLE_SCOPES.has(s) && !alreadyHeld.includes(s)) {
+			return {
+				ok: false,
+				status: 403,
+				type: 'scope_not_grantable',
+				detail: `Scope '${s}' cannot be granted by the caller`,
+			};
 		}
 	}
 	return { ok: true };
@@ -978,7 +1024,10 @@ export const agentsHandlers = [
 		if (Array.isArray(body.scopes) && body.scopes.length > 0) {
 			const check = validateScopes(body.scopes);
 			if (!check.ok) {
-				return HttpResponse.json({ detail: check.detail }, { status: check.status });
+				return HttpResponse.json(
+					{ type: check.type, detail: check.detail },
+					{ status: check.status },
+				);
 			}
 		}
 		const row = seedAgent({
@@ -1092,9 +1141,12 @@ export const agentsHandlers = [
 		if (!row) return new HttpResponse(null, { status: 404 });
 		const body = (await request.json().catch(() => ({}))) as { scopes?: string[] };
 		const requested = Array.isArray(body.scopes) ? body.scopes : [];
-		const check = validateScopes(requested);
+		const check = validateScopes(requested, actorScopes[row.id] ?? []);
 		if (!check.ok) {
-			return HttpResponse.json({ detail: check.detail }, { status: check.status });
+			return HttpResponse.json(
+				{ type: check.type, detail: check.detail },
+				{ status: check.status },
+			);
 		}
 		actorScopes[row.id] = [...new Set(requested)];
 		return HttpResponse.json({ scopes: actorScopes[row.id] });
@@ -1158,7 +1210,14 @@ export const agentsHandlers = [
 		return new HttpResponse(null, { status: 204 });
 	}),
 
-	// ---- Direct agent↔credential bindings (theme 5 phase 5a) ----
+	// ---- Direct agent↔credential bindings ----
+	// A credential delete CASCADES to the bindings table, so this mirrors the cascade
+	// into THIS module's store and falls through (undefined) to the credentials
+	// store's own DELETE handler — agents registers first in src/mocks/handlers.ts.
+	http.delete('/credentials/:cid', ({ params }) => {
+		credentialBindings = credentialBindings.filter((b) => b.credential_id !== params.cid);
+		return undefined;
+	}),
 	http.get('/agents/:id/credentials', ({ params }) => {
 		const agent = agents.find((a) => a.id === params.id);
 		if (!agent) return new HttpResponse(null, { status: 404 });
@@ -1187,11 +1246,24 @@ export const agentsHandlers = [
 				{ status: 409 },
 			);
 		}
+		// The backend enriches a live binding from its credential: its name, and the
+		// API scope it serves. Only a deleted credential leaves both empty.
+		const credential = findMockCredential(body.credential_id);
 		const row = seedBinding({
 			id: genId('acb'),
 			agent_id: params.id as string,
 			credential_id: body.credential_id,
 			bound_at: now(),
+			name: credential?.name ?? null,
+			serves: credential
+				? [
+						{
+							api_vendor: credential.api.vendor,
+							api_name: credential.api.name ?? null,
+							api_version: credential.api.version || null,
+						},
+					]
+				: [],
 		});
 		credentialBindings.push(row);
 		// The phase-1 bind creates the binding with ZERO rules (default deny);

@@ -11,6 +11,7 @@ from typing import Any
 
 import structlog
 from fastapi import APIRouter, FastAPI, Request, Response
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, RedirectResponse
 from jentic.problem_details import ProblemDetailException, problem_detail_exception_handler
 from opentelemetry.instrumentation.asyncpg import AsyncPGInstrumentor
@@ -43,6 +44,7 @@ from jentic_one.shared.tracing import instrument_inbound_app
 from jentic_one.shared.web.agent_discovery import get_agent_discovery_router
 from jentic_one.shared.web.auth import API_KEY_HEADER
 from jentic_one.shared.web.container import AppContainer
+from jentic_one.shared.web.errors import request_validation_error_handler
 from jentic_one.shared.web.instance_identity import get_instance_router
 from jentic_one.shared.web.openapi_meta import (
     fastapi_metadata_kwargs,
@@ -141,6 +143,7 @@ def _start_worker(
     *,
     upstream_executor: Any | None = None,
     credential_injector: Any | None = None,
+    execution_authorizer: Any | None = None,
 ) -> tuple[WorkerLoop, asyncio.Task[None]] | None:
     """Start the background worker if the admin DB is available.
 
@@ -164,6 +167,10 @@ def _start_worker(
     response enrichment, single ``executions`` persistence) and resolves
     credentials before the call. Without it the execution handler is not
     registered (a surface with no broker has no upstream calls to run).
+    ``execution_authorizer`` is the broker's run-time re-authorizer: every
+    queued execution is re-checked with the sync route's policy before any
+    credential is resolved (the handler refuses a credential injector without
+    one).
 
     Returns the ``(worker, task)`` pair so the lifespan can **drain** the worker
     (let the in-flight job finish or be reclaimed) before tearing the shared
@@ -184,6 +191,7 @@ def _start_worker(
                 executor=upstream_executor,
                 upstream_timeout_s=ctx.config.broker.upstream_timeout_s,
                 credential_injector=credential_injector,
+                execution_authorizer=execution_authorizer,
                 egress=ctx.config.broker.egress,
                 security_config=ctx.config.security,
             ),
@@ -268,9 +276,12 @@ async def _run_key_retirement(ctx: Context) -> None:
 
     An upgrade must not silently break headless ``jntc_live_`` callers: the
     resolver that served them is gone, so every resolvable key needs its
-    successor agent before the first request. The job is idempotent (stamped
-    keys short-circuit), so running it on every boot is a cheap no-op after
-    the first. Best-effort: a failure is loud in the logs but never blocks
+    successor agent before the first request. The migration runner already
+    performs the job as an upgrade step; this boot run is the safety net for a
+    process that starts without a fresh migration. The job is idempotent
+    (stamped keys short-circuit) and holds a cross-process run lock, so every
+    replica running it at once is safe and a cheap no-op after the first.
+    Best-effort: a failure is loud in the logs but never blocks
     boot (nor the SA migration sequenced after it) — the
     ``retire-toolkit-keys`` CLI (with ``--owner`` for unresolvable creators)
     is the recovery path.
@@ -280,6 +291,13 @@ async def _run_key_retirement(ctx: Context) -> None:
     except Exception:
         _logger.exception("toolkit_key_retirement_startup_failed")
         return
+    failed = sum(1 for o in outcomes if o.action == "failed")
+    if failed:
+        _logger.error(
+            "toolkit_key_retirement_keys_failed",
+            count=failed,
+            actionable_step="Fix the logged error, then run `jentic_one retire-toolkit-keys`.",
+        )
     unresolved = sum(1 for o in outcomes if o.reason == "owner_unresolved")
     if unresolved:
         _logger.warning(
@@ -614,6 +632,7 @@ def create_surface_app(
                 enabled_apps,
                 upstream_executor=getattr(app.state, "broker_upstream_executor", None),
                 credential_injector=getattr(app.state, "broker_credential_injector", None),
+                execution_authorizer=getattr(app.state, "broker_execution_authorizer", None),
             )
             scanner_task = _start_expiry_scanner(ctx, enabled_apps)
             catalog_scanner_task = _start_catalog_update_scanner(ctx, enabled_apps)
@@ -703,6 +722,7 @@ def create_surface_app(
         installer(app, ctx)
     app.add_middleware(RequestIDMiddleware)
     app.add_exception_handler(ProblemDetailException, spa_aware_problem_detail_handler)  # type: ignore[arg-type]
+    app.add_exception_handler(RequestValidationError, request_validation_error_handler)  # type: ignore[arg-type]
     attach_http_observability(app)
     install_openapi_metadata(app)
     return app
@@ -776,6 +796,7 @@ def create_combined_app(
             reason="only the broker catch-all reads this hook and the combined app has no broker",
         )
     root.add_exception_handler(ProblemDetailException, spa_aware_problem_detail_handler)  # type: ignore[arg-type]
+    root.add_exception_handler(RequestValidationError, request_validation_error_handler)  # type: ignore[arg-type]
 
     @root.get(
         "/health",

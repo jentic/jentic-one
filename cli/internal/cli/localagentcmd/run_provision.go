@@ -42,9 +42,10 @@ func (a *Cmd) ensureAgentBinary(ctx context.Context, cmd *cobra.Command, opts *r
 	case localagent.BinaryOnPath:
 		return nil
 	case localagent.BinaryFoundOffPath:
-		// Installed at a known location but not resolvable by the login shell —
-		// put ~/.local/bin on the agent's PATH and carry on, rather than erroring.
-		fmt.Fprintln(a.Out, theme.Infof("%s is installed for %s but not on its PATH — adding ~/.local/bin ...", desc.Binary, agentUser))
+		// Installed at a known location (typically the agent's ~/.local/bin,
+		// which the probe's fixed PATH does not include) — make sure the
+		// profile export the confined login shell relies on is present and
+		// carry on. The export is idempotent, so this is quiet on every run.
 		return a.ensureLocalBinOnPath(agentUser)
 	case localagent.BinaryMissing:
 		return a.provisionBinary(ctx, cmd, opts, agentUser, desc)

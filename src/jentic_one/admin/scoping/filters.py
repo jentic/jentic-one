@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import or_
+from sqlalchemy import or_, select
 from sqlalchemy.sql.elements import ColumnElement
 
 from jentic_one.admin.core.schema.agents import Agent
+from jentic_one.admin.core.schema.jobs import Job
 from jentic_one.admin.core.schema.users import User
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.scopes import OWNER_AGENTS_READ
@@ -17,6 +18,7 @@ ORG_ADMIN = "org:admin"
 _OWNER_MODELS: dict[type[Any], Any] = {
     Agent: Agent.owner_id,
     User: User.id,
+    Job: Job.created_by,
 }
 
 _ID_MODELS: dict[type[Any], Any] = {
@@ -27,6 +29,11 @@ _DELEGATION_SCOPES: dict[type[Any], str] = {
     Agent: OWNER_AGENTS_READ,
 }
 
+# Models whose owner column records the acting subject (a user *or* an agent).
+# The human owner of an agent is accountable for what it does, so a row created
+# by one of the caller's agents is visible to the caller as well.
+_OWNED_AGENT_ACTOR_MODELS: frozenset[type[Any]] = frozenset({Job})
+
 
 def build_access_filters(identity: Identity, model: type[Any]) -> list[ColumnElement[bool]]:
     """Build SQLAlchemy filter expressions scoping queries to the caller's visibility.
@@ -35,6 +42,8 @@ def build_access_filters(identity: Identity, model: type[Any]) -> list[ColumnEle
     1. org:admin -> no restriction (empty list).
     2. Agent with delegation scope + parent_actor_id -> OR filter (owner or delegator).
     3. Otherwise -> owner == self OR id == self (self-access for agents).
+    4. Models in ``_OWNED_AGENT_ACTOR_MODELS`` (e.g. ``Job``) additionally admit
+       rows created by an agent the caller owns (``Agent.owner_id == sub``).
 
     Raises ValueError for an unknown model or empty sub.
     """
@@ -59,6 +68,10 @@ def build_access_filters(identity: Identity, model: type[Any]) -> list[ColumnEle
             and identity.parent_actor_id is not None
         ):
             conditions.append(col == identity.parent_actor_id)
+
+        if model in _OWNED_AGENT_ACTOR_MODELS:
+            owned_agent_ids = select(Agent.id).where(Agent.owner_id == identity.sub)
+            conditions.append(col.in_(owned_agent_ids))
 
         return [or_(*conditions)]
 

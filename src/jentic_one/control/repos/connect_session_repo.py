@@ -30,7 +30,7 @@ class ConnectSessionRepository:
         initiator_actor_id: str,
         state: str,
         resolved_flow: str,
-        poll_token: str,
+        poll_token_hash: str,
         requested_scopes: list[str] | None = None,
         requested_permission_rules: list[dict[str, Any]] | None = None,
         preferred_flow: str | None = None,
@@ -44,7 +44,7 @@ class ConnectSessionRepository:
             initiator_actor_id=initiator_actor_id,
             state=state,
             resolved_flow=resolved_flow,
-            poll_token=poll_token,
+            poll_token_hash=poll_token_hash,
             requested_scopes=requested_scopes or [],
             requested_permission_rules=requested_permission_rules or [],
             preferred_flow=preferred_flow,
@@ -97,12 +97,6 @@ class ConnectSessionRepository:
         stmt = stmt.limit(limit + 1)
         result = await session.execute(stmt)
         return list(result.scalars().all())
-
-    @staticmethod
-    async def get_by_poll_token(session: AsyncSession, poll_token: str) -> ConnectSession | None:
-        stmt = select(ConnectSession).where(ConnectSession.poll_token == poll_token)
-        result = await session.execute(stmt)
-        return result.scalar_one_or_none()
 
     @staticmethod
     async def get_live_by_credential(

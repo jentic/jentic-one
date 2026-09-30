@@ -136,6 +136,10 @@ inspect_operation {"operation_id": "GET:https://sheets.googleapis.com/v4/spreads
 Always inspect before you execute — the contract names the parameters and
 the security requirements you'll propose rules against.
 
+The result's `api.vendor`/`api.name`/`api.version` is the canonical API
+reference — copy those into credential scopes, revision pins and other API
+references. `api.display_name`, when present, is a human-readable label only.
+
 ## Step 5 — execute
 
 Call `execute` — or `execute_read` for any pure GET/HEAD read (**prefer

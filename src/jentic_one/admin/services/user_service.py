@@ -5,12 +5,18 @@ from __future__ import annotations
 from jentic_one.admin.core.permissions import IMPLICATION_MAP, compute_effective
 from jentic_one.admin.repos import (
     AuditRepository,
+    ExternalIdentityRepository,
     InviteTokenRepository,
     UserPermissionGrantRepository,
     UserRepository,
     UserSecretRepository,
 )
 from jentic_one.admin.services._support.pagination import Page, decode_cursor, encode_cursor
+from jentic_one.admin.services._support.user_management import (
+    ensure_can_change_email,
+    ensure_can_manage,
+    ensure_not_last_active_admin,
+)
 from jentic_one.admin.services.errors import (
     ConflictError,
     EmailAlreadyExistsError,
@@ -256,6 +262,15 @@ class UserService:
                 "last_name": user.last_name,
             }
 
+            email_changed = (
+                payload.email is not None and payload.email.lower() != user.email.lower()
+            )
+            if email_changed:
+                permission_sets = await UserPermissionGrantRepository.get_permission_sets(
+                    session, [user_id, identity.sub]
+                )
+                ensure_can_change_email(user_id, identity, permission_sets)
+
             if payload.email is not None:
                 existing = await UserRepository.get_by_email(session, payload.email)
                 if existing is not None and existing.id != user_id:
@@ -268,6 +283,12 @@ class UserService:
                 first_name=payload.first_name,
                 last_name=payload.last_name,
             )
+
+            # External IdP links were established against the previous email;
+            # drop them so the account is only reachable via the new address.
+            links_removed = 0
+            if email_changed:
+                links_removed = await ExternalIdentityRepository.delete_for_user(session, user_id)
 
             after = {
                 "email": payload.email if payload.email is not None else user.email,
@@ -288,6 +309,9 @@ class UserService:
                 actor_id=identity.sub,
                 before=before,
                 after=after,
+                reason=(
+                    f"removed {links_removed} external identity link(s)" if links_removed else None
+                ),
             )
             audit_events_counter.add(
                 1, {"action": AuditAction.UPDATE, "target_type": AuditTargetType.USER}
@@ -300,12 +324,18 @@ class UserService:
             user = await UserRepository.get_by_id(session, user_id)
             if user is None:
                 raise UserNotFoundError(user_id)
+            permission_sets = await UserPermissionGrantRepository.get_permission_sets(
+                session, [user_id, identity.sub]
+            )
+            ensure_can_manage(user_id, identity, permission_sets)
+            await ensure_not_last_active_admin(session, user_id)
             await UserRepository.update(
                 session,
                 user_id,
                 email=f"deleted-{user_id}@local",
                 active=False,
             )
+            await ExternalIdentityRepository.delete_for_user(session, user_id)
             await AuditRepository.record(
                 session,
                 action=AuditAction.DELETE,
@@ -320,6 +350,14 @@ class UserService:
 
     async def disable(self, user_id: str, *, identity: Identity) -> bool:
         async with self._ctx.admin_db.transaction() as session:
+            user = await UserRepository.get_by_id(session, user_id)
+            if user is None:
+                raise UserNotFoundError(user_id)
+            permission_sets = await UserPermissionGrantRepository.get_permission_sets(
+                session, [user_id, identity.sub]
+            )
+            ensure_can_manage(user_id, identity, permission_sets)
+            await ensure_not_last_active_admin(session, user_id)
             await UserRepository.disable(session, user_id)
             await AuditRepository.record(
                 session,
@@ -336,6 +374,12 @@ class UserService:
 
     async def enable(self, user_id: str, *, identity: Identity) -> bool:
         async with self._ctx.admin_db.transaction() as session:
+            if await UserRepository.get_by_id(session, user_id) is None:
+                raise UserNotFoundError(user_id)
+            permission_sets = await UserPermissionGrantRepository.get_permission_sets(
+                session, [user_id, identity.sub]
+            )
+            ensure_can_manage(user_id, identity, permission_sets)
             await UserRepository.enable(session, user_id)
             await AuditRepository.record(
                 session,
@@ -353,8 +397,12 @@ class UserService:
     async def reissue_invite(self, user_id: str, *, identity: Identity) -> InviteIssued:
         async with self._ctx.admin_db.session() as session:
             user = await UserRepository.get_by_id(session, user_id)
-        if user is None:
-            raise UserNotFoundError(user_id)
+            if user is None:
+                raise UserNotFoundError(user_id)
+            permission_sets = await UserPermissionGrantRepository.get_permission_sets(
+                session, [user_id, identity.sub]
+            )
+            ensure_can_manage(user_id, identity, permission_sets)
         if user.invite_state == InviteState.REDEEMED:
             raise ConflictError("Cannot reissue invite for a user who has already redeemed")
 

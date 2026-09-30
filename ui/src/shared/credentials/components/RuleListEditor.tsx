@@ -557,6 +557,7 @@ function RuleFormBody({
 						}}
 						placeholder="/repos"
 						autoComplete="off"
+						aria-label="Path pattern"
 						role="combobox"
 						aria-expanded={showDropdown}
 						aria-autocomplete="list"
@@ -592,6 +593,7 @@ function RuleFormBody({
 					)}
 				</div>
 				<select
+					aria-label="Path match mode"
 					value={draft.matchMode}
 					onChange={(e): void =>
 						onChange({

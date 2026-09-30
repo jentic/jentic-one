@@ -110,13 +110,25 @@ export function BottomNavbar() {
 	// desktop's divided placement rather than burning a scarce tile slot.
 	const primaryItems = allItems.filter((i) => !i.secondary);
 	const secondaryItems = allItems.filter((i) => i.secondary);
-	const primary = primaryItems.slice(0, TILE_LIMIT - 1);
-	const overflow = [...primaryItems.slice(TILE_LIMIT - 1), ...secondaryItems];
+	// "More" costs a slot, so only reserve one when something overflows: with
+	// no secondary items and at most TILE_LIMIT primaries, everything is a tile
+	// (never a sheet holding a single item).
+	const tileCount =
+		secondaryItems.length === 0 && primaryItems.length <= TILE_LIMIT
+			? TILE_LIMIT
+			: TILE_LIMIT - 1;
+	const primary = primaryItems.slice(0, tileCount);
+	const overflow = [...primaryItems.slice(tileCount), ...secondaryItems];
 	const overflowActive = overflow.some((item) => isNavItemActive(item, pathname));
 
 	return (
 		<>
-			<nav className="border-border bg-background/95 supports-[backdrop-filter]:bg-background/60 fixed right-0 bottom-0 left-0 z-50 border-t backdrop-blur md:hidden">
+			<nav
+				// Its own view-transition layer, like the top bar: it holds still
+				// while pages fade underneath instead of blinking out with them.
+				style={{ viewTransitionName: 'app-bottom-nav' }}
+				className="border-border bg-background/95 supports-[backdrop-filter]:bg-background/60 fixed right-0 bottom-0 left-0 z-50 border-t backdrop-blur md:hidden"
+			>
 				<div className="flex h-16 items-stretch">
 					{primary.map((item) => (
 						<BottomTile

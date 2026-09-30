@@ -13,7 +13,7 @@ acknowledged by this migration is recoverable from ``acknowledgement_note``,
 but re-opening them would resurrect the phantom alerts.
 
 Revision ID: f1a2b3c4d5e7
-Revises: b9d0e1f2a3b4
+Revises: 5c7e2a9d4f16
 Create Date: 2026-09-23
 
 """
@@ -24,7 +24,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "f1a2b3c4d5e7"  # pragma: allowlist secret
-down_revision: str | None = "b9d0e1f2a3b4"  # pragma: allowlist secret
+down_revision: str | None = "5c7e2a9d4f16"  # pragma: allowlist secret
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

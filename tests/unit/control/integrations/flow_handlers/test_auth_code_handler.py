@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import base64
 import os
+import socket
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 from urllib.parse import parse_qs, urlparse
@@ -38,6 +39,7 @@ from jentic_one.shared.config import (
     EncryptionConfig,
     EncryptionKey,
     PipedreamProviderConfig,
+    ServerConfig,
     VendorAuthorizationCodeFlowConfig,
 )
 from jentic_one.shared.context import Context
@@ -46,13 +48,16 @@ _KEY_MATERIAL = base64.b64encode(os.urandom(32)).decode()
 _STATE_SECRET = "test-state-secret"  # pragma: allowlist secret
 
 
-def _make_context(*, with_direct_oauth2_provider: bool = True) -> Context:
+def _make_context(
+    *, with_direct_oauth2_provider: bool = True, public_base_url: str = ""
+) -> Context:
     providers: dict[str, DirectOAuth2ProviderConfig | PipedreamProviderConfig] = {}
     if with_direct_oauth2_provider:
         providers["direct_oauth2"] = DirectOAuth2ProviderConfig(
             redirect_uri="https://app.example.com/credentials/oauth/callback",
         )
     cfg = AppConfig(
+        server=ServerConfig(public_base_url=public_base_url),
         databases=DatabasesConfig(
             registry=DatabaseConfig(backend="sqlite", path=":memory:"),
             admin=DatabaseConfig(backend="sqlite", path=":memory:"),
@@ -150,15 +155,18 @@ async def test_begin_omits_scope_when_no_confirmed_scopes() -> None:
 
 
 @pytest.mark.asyncio()
-async def test_begin_raises_when_direct_oauth2_redirect_uri_unconfigured() -> None:
-    # The auth-code handler shares the platform redirect_uri with
-    # DirectOAuth2Provider — one URL whitelisted at the vendor for
-    # both entry points. Failing loud if that config is missing beats
-    # silently emitting an authorize URL with no redirect_uri.
-    ctx = _make_context(with_direct_oauth2_provider=False)
+async def test_begin_derives_redirect_uri_from_public_base_url_when_unconfigured() -> None:
+    # No explicit direct_oauth2.redirect_uri: the handler derives the same
+    # callback the web connect endpoint does (server.public_base_url + path),
+    # and the exchange replays it byte-identically.
+    ctx = _make_context(
+        with_direct_oauth2_provider=False, public_base_url="https://jentic.example.com"
+    )
     handler = AuthCodeFlowHandler(ctx)
-    with pytest.raises(RuntimeError, match="redirect_uri must be configured"):
-        await handler.begin(_row(), flow=_flow(), confirmed_scopes=[])
+    result = await handler.begin(_row(), flow=_flow(), confirmed_scopes=[])
+    assert isinstance(result, AuthCodeBeginResult)
+    q = parse_qs(urlparse(result.authorize_url).query)
+    assert q["redirect_uri"] == ["https://jentic.example.com/credentials/oauth/callback"]
 
 
 @pytest.mark.asyncio()
@@ -289,3 +297,84 @@ async def test_complete_from_callback_raises_when_no_access_token() -> None:
         mock_client_cls.return_value = mock_client
         with pytest.raises(AuthCodeExchangeError, match="no access_token"):
             await handler.complete_from_callback(_row(), code="c")
+
+
+def _occ_for(ctx: Context, token_url: str) -> MagicMock:
+    occ = MagicMock()
+    occ.client_id = "app-client"
+    occ.encrypted_client_secret = ctx.encryption.encrypt("app-secret")
+    occ.token_url = token_url
+    return occ
+
+
+def _addrinfo(ip: str) -> list[tuple[object, ...]]:
+    family = socket.AF_INET6 if ":" in ip else socket.AF_INET
+    return [(family, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", (ip, 0))]
+
+
+_GET_BY_CREDENTIAL = (
+    "jentic_one.control.services.integrations.flow_handlers.auth_code."
+    "OAuthClientCredentialRepository.get_by_credential"
+)
+
+
+@pytest.mark.asyncio()
+async def test_complete_from_callback_refuses_unsafe_token_url() -> None:
+    # A tampered token_url pointing at a blocked address is refused before any
+    # HTTP client is built, so the client secret is never sent.
+    ctx = _make_context()
+    handler = AuthCodeFlowHandler(ctx)
+    occ = _occ_for(ctx, "http://127.0.0.1/token")
+    with (
+        patch(_GET_BY_CREDENTIAL, new_callable=AsyncMock, return_value=occ),
+        patch("httpx.AsyncClient") as mock_client_cls,
+    ):
+        with pytest.raises(AuthCodeExchangeError, match="unsafe upstream URL"):
+            await handler.complete_from_callback(_row(), code="c")
+        mock_client_cls.assert_not_called()
+
+
+@pytest.mark.asyncio()
+async def test_complete_from_callback_refuses_token_host_rebinding_at_connect() -> None:
+    # Pre-flight validation sees a public address; the connect-time resolution
+    # answers with a blocked one. The pinned transport refuses before sending.
+    ctx = _make_context()
+    handler = AuthCodeFlowHandler(ctx)
+    occ = _occ_for(ctx, "https://idp.example.com/token")
+    answers = iter([_addrinfo("93.184.216.34"), _addrinfo("169.254.169.254")])
+    sent = AsyncMock()
+    with (
+        patch(_GET_BY_CREDENTIAL, new_callable=AsyncMock, return_value=occ),
+        patch.object(socket, "getaddrinfo", side_effect=lambda *_a, **_k: next(answers)),
+        patch.object(httpx.AsyncHTTPTransport, "handle_async_request", sent),
+        pytest.raises(AuthCodeExchangeError, match="unsafe upstream URL"),
+    ):
+        await handler.complete_from_callback(_row(), code="c")
+    sent.assert_not_awaited()
+
+
+@pytest.mark.asyncio()
+async def test_complete_from_callback_connects_to_the_validated_address() -> None:
+    # The happy path goes through the strict pinned transport: the request is
+    # sent to the resolved public IP while Host and TLS SNI keep the vendor name.
+    ctx = _make_context()
+    handler = AuthCodeFlowHandler(ctx)
+    occ = _occ_for(ctx, "https://idp.example.com/token")
+    seen: list[httpx.Request] = []
+
+    async def _send(_self: httpx.AsyncHTTPTransport, request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"access_token": "at_ok"}, request=request)
+
+    with (
+        patch(_GET_BY_CREDENTIAL, new_callable=AsyncMock, return_value=occ),
+        patch.object(socket, "getaddrinfo", return_value=_addrinfo("93.184.216.34")),
+        patch.object(httpx.AsyncHTTPTransport, "handle_async_request", _send),
+    ):
+        tokens = await handler.complete_from_callback(_row(), code="c")
+
+    assert tokens.access_token == "at_ok"
+    assert len(seen) == 1
+    assert seen[0].url.host == "93.184.216.34"
+    assert seen[0].headers["Host"] == "idp.example.com"
+    assert seen[0].extensions["sni_hostname"] == "idp.example.com"

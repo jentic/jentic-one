@@ -85,14 +85,68 @@ Operator-facing changes shipped by the theme-5 (toolkit removal) release —
 read this before rolling it out. Each active window below is also tracked in
 the Deprecations table.
 
+- **The migration run performs the toolkit → direct-binding cutover.** On
+  this release the broker authorizes on direct agent↔credential bindings by
+  default (`broker.direct_bindings_enabled: true`), so every toolkit-bound
+  agent needs its direct bindings **before** the new version serves traffic.
+  `python -m jentic_one.migrations.run` does that itself: once every database
+  is at head it runs two one-shot upgrade steps and prints one
+  `==> upgrade step <name>: <action>` line (plus a JSON summary) for each —
+  1. `theme5_retire_toolkit_keys` migrates every resolvable `jntc_live_`
+     key to a service account (see the next bullet);
+  2. `theme5_flatten_toolkits` derives a direct binding, carrying the pair's
+     rules, for every `(agent, credential)` pair reachable through a toolkit
+     (the `flatten-toolkits` job below). It runs **once per install** and is
+     recorded in the control DB's `upgrade_steps` table, so a later upgrade
+     never re-creates a binding you have since removed. It is skipped when a
+     verified flatten is already acknowledged.
+
+  Nothing extra to run on Helm (the pre-upgrade migrate hook), `jenticctl
+  update`, or a hand-run migration. **Only a failed flatten blocks the
+  upgrade**: the runner exits `4` so the new version never starts without
+  its bindings; fix the logged cause and re-run (it is idempotent and not
+  recorded until it completes). A key-retirement problem never blocks — it
+  prints a `==> WARNING` line naming the recovery command, and the control
+  plane retries the job at every boot. To get past a step deliberately,
+  `--skip-upgrade-step <name>` defers that one step to the next full
+  migration run (`--skip-upgrade-steps` defers both); on Helm set
+  `migrate.extraArgs`, e.g. `["--skip-upgrade-step",
+  "theme5_flatten_toolkits"]` — and then run `flatten-toolkits` yourself
+  before serving traffic. Read the summary: `created_default_deny` counts
+  pairs bound with **no** allow rule (conflicting toolkit rules, or a
+  rule-less pair) and is also printed as a warning — the rest of the
+  `flatten-toolkits` report categories are counted under `findings`; run
+  `jentic_one flatten-toolkits --diff-only --report report.jsonl` to get the
+  full lines for review.
+- **Toolkit changes during a rolling upgrade are not flattened.** Helm (and
+  any rolling deploy) migrates while the previous version still serves: a
+  toolkit, toolkit binding, or agent–toolkit binding created on the old
+  version *after* the migration's flatten has no direct binding on the new
+  one, and the migration never flattens a second time. Freeze toolkit edits
+  for the rollout, or re-run `jentic_one flatten-toolkits` once the new
+  version is live (idempotent: it only adds the missing pairs).
 - **`jntc_live_` toolkit keys are retired; migration to `sak_` is automatic.**
-  No new keys are issued. Run `jentic_one retire-toolkit-keys` once: every
-  existing key digest is migrated to a service account, and the **unchanged
-  plaintext keeps authenticating** for the deprecation window — as that
-  service account, and as its successor agent once the theme-8 migration
-  runs. Watch `deprecated_toolkit_key_used` WARNING logs to find holders still
-  presenting the old key form, and rotate them to the successor agent's `jak_`
-  key (`sak_` keys can no longer be issued).
+  No new keys are issued. The migration run (and every control-plane boot)
+  migrates every existing key digest to a service account, and the
+  **unchanged plaintext keeps authenticating** for the deprecation window —
+  as that service account, and as its successor agent once the theme-8
+  migration runs. Keys with no resolvable owner are skipped and
+  reported (a `==> WARNING` line on the migration run): **their holders stop
+  authenticating** until you run `jentic_one retire-toolkit-keys --owner
+  <admin-email>`. The job writes a `migrated_actor_id` stamp on each
+  `toolkit_keys` row and creates the service accounts and their bindings; a
+  0.39.x rollback ignores all three. Watch `deprecated_toolkit_key_used`
+  WARNING logs to find holders still presenting the old key form, and rotate
+  them to the successor agent's `jak_` key (`sak_` keys can no longer be
+  issued).
+- **Docker images run as uid `10001`** (was `999`), so kubelet can verify
+  `runAsNonRoot`. Anything the container writes must be writable by that uid:
+  `jenticctl` re-owns its SQLite data volume automatically on `update` and
+  `start`; for a hand-run `docker run` with a SQLite volume, run
+  `docker run --rm --user 0:0 --entrypoint chown -v <volume>:/data <image>
+  -R 10001:10001 /data` once before starting the new version (the symptom
+  otherwise is `attempt to write a readonly database`). Postgres installs are
+  unaffected.
 - **The toolkit management surface is gone.** All `/toolkits/*` and
   `/agents/{id}/toolkits*` routes now return `404`. The `toolkits:read`,
   `toolkits:write`, and `owner:toolkits:read` scopes are retired: no route
@@ -117,14 +171,16 @@ the Deprecations table.
   adopt the credential headers now.
 - **Toolkit tables are still present.** The stored toolkit rows (bindings,
   keys) survive this release; they are dropped in Phase 6b. Before that
-  release you must run the Phase 6a export/flatten/acknowledge runbook below
+  release you must complete the Phase 6a verify/acknowledge runbook below
   — the Phase-6b drop migrations refuse to run until the acknowledgement is
-  on record.
+  on record. The acknowledgement is never automatic.
 
 ### Phase 6a runbook: export, flatten, verify, acknowledge
 
 Run these against **production data** (all commands read/write the live
-control + admin databases configured for the process). Order matters.
+control + admin databases configured for the process). Order matters. The
+migration run already performed the flatten (step 3) once; the remaining
+steps are what stands between you and Phase 6b.
 
 1. **Export first**: `jentic_one export-toolkits --out toolkit-export.json`.
    The file captures all five legacy tables (`toolkits`, `toolkit_keys`,
@@ -133,7 +189,9 @@ control + admin databases configured for the process). Order matters.
    embeds key hash digests — store it like a secrets backup.
 2. *(Optional)* preview: `jentic_one flatten-toolkits --diff-only --report
    preview.jsonl` writes the report without touching either database.
-3. **Flatten**: `jentic_one flatten-toolkits --report flatten.jsonl`. Every
+3. **Flatten** (already done once by the migration run — re-run it if
+   toolkits changed on the old version during the rollout):
+   `jentic_one flatten-toolkits --report flatten.jsonl`. Every
    `(agent, credential)` pair reachable through a toolkit gains a direct
    binding carrying the pair's rules. Read the report: `rule_conflict` lines
    are pairs whose toolkit paths disagreed — they were bound **default-deny**
@@ -311,6 +369,95 @@ run the Phase-1 migration (above) first — the boot job still does it.
   matches any endpoint (agents are the only machine actor — filter with
   `--actor agent`).
 
+## Reviewing grants and bindings carried over by the upgrade
+
+The theme-5 and theme-8 upgrade steps preserve access exactly: nothing is
+stripped. Two kinds of carried-over access are worth a deliberate review
+after the upgrade:
+
+- **Admin-level scopes on successor agents.** A migrated service account's
+  grants are copied verbatim onto its `service-account:<sva_ id>` successor
+  agent, including admin-level scopes (`org:admin`, `users:write`,
+  `agents:write`, `credentials:write`, `config:write`,
+  `oauth-clients:write`).
+- **Cross-owner credential bindings.** A binding created by flattening or
+  key retirement where the credential's creator is neither the agent's owner
+  nor the agent itself (or where either side is unrecorded).
+
+Where the upgrade reports them (all informational — none fails a step,
+`--verify`, or `--acknowledge`; no secret material is logged):
+
+| Source | What it emits |
+| ------ | ------------- |
+| `migrate-service-accounts` (boot job or CLI) | `copied_scopes` and `admin_level_scopes` per SA in the `--report` JSONL (also on `--diff-only`), a `==> REVIEW` line, one `service_account_migration_admin_scope_copied` WARNING per admin-level grant, and the copied scope names in the migration's grant audit row. |
+| `migrate-service-accounts --verify` | One `successor_admin_scope` report line per admin-level grant still held from the migration, `successor_admin_scope_count` in the summary, and a `==> REVIEW` line. |
+| Toolkit flattening (upgrade step or `flatten-toolkits`) | `cross_owner_binding` findings in the report (run and `--verify`), a `toolkit_flattening_cross_owner_binding` WARNING per binding, and an `==> WARNING` line from the upgrade step. |
+| Toolkit key retirement (upgrade step or boot) | `cross_owner_credential_ids` in the step outcome, a `toolkit_key_retirement_cross_owner_binding` WARNING per binding, and an `==> WARNING` line from the upgrade step. |
+
+The same state can be listed at any time with read-only queries.
+
+**Successor agents holding admin-level grants** (admin DB; on Postgres
+run it with the admin connection's `schema_name` — `admin` in the shipped
+configs — on the `search_path`, or prefix the tables with it):
+
+```sql
+SELECT a.id, a.name, a.owner_id, a.status, g.scope, g.granted_by
+FROM actor_scope_grants g
+JOIN agents a ON a.id = g.actor_id
+WHERE g.actor_type = 'agent'
+  AND a.name LIKE 'service-account:%'
+  AND g.scope IN ('org:admin', 'users:write', 'agents:write',
+                  'credentials:write', 'config:write', 'oauth-clients:write')
+ORDER BY a.id, g.scope;
+```
+
+`granted_by = 'system:theme8-sa-migration'` marks a grant the migration
+copied; any other grantor means someone has granted it since.
+
+**Bindings whose credential creator differs from the agent owner.** The
+bindings live in the admin DB and the credential creators in the control
+DB, so on SQLite (one file per surface) this is two queries. On Postgres,
+when the admin and control connections share one database (the shipped
+configs, schemas `admin` and `control` — substitute your `schema_name`
+values), it is one join; if they point at separate databases, use the
+two-query form.
+
+```sql
+-- Postgres, shared database: one query across the admin and control schemas
+SELECT b.agent_id, a.name, a.owner_id, b.credential_id, c.created_by
+FROM admin.agent_credential_bindings b
+JOIN admin.agents a ON a.id = b.agent_id
+LEFT JOIN control.credentials c ON c.id = b.credential_id
+WHERE c.created_by IS NULL
+   OR a.owner_id IS NULL
+   OR c.created_by NOT IN (a.owner_id, a.id)
+ORDER BY b.agent_id, b.credential_id;
+```
+
+```sql
+-- step 1 (admin DB): every binding with its agent's owner
+SELECT b.agent_id, a.name, a.owner_id, b.credential_id
+FROM agent_credential_bindings b
+JOIN agents a ON a.id = b.agent_id
+ORDER BY b.agent_id;
+
+-- step 2 (control DB): the creators of those credentials
+SELECT id, created_by FROM credentials WHERE id IN ('cred_…', …);
+```
+
+Flag a step-1 row when its credential's `created_by` (step 2) is missing or
+is neither the row's `owner_id` nor its `agent_id`.
+
+**What to do.** Expected rows need no action — the upgrade kept the access
+the old model already allowed. For an unexpected one:
+
+- narrow the agent's scopes with `PUT /agents/{agent_id}/scopes` (the body
+  is the full scope set to keep), or disable the agent while you decide;
+- remove a binding with
+  `DELETE /agents/{agent_id}/credentials/{credential_id}`.
+
+Both are ordinary, audited mutations.
+
 ## Deprecations
 
 Active deprecation windows are registered here (the named channel) and
@@ -320,7 +467,7 @@ runtime signal an operator can watch, and the earliest removal point.
 
 | Deprecated | Since | Runtime signal | Removal |
 | ---------- | ----- | -------------- | ------- |
-| `jntc_live_` toolkit API keys (theme-5 Phase 4). No new keys are issued (`POST /toolkits/{id}/keys` → `410 toolkit_keys_retired`); run `jentic_one retire-toolkit-keys` so existing plaintexts keep authenticating as their migrated service accounts (as their successor **agents** once theme-8 Phase 1 migrates them), then rotate holders to the successor's key. | The first release carrying theme-5 Phase 4 (opened 2026-09-11). | `deprecated_toolkit_key_used` WARNING log lines — one per resolve, naming the actor (service account, or successor agent after theme-8 migration) still presenting the retired key form. | The theme-5 toolkit-surface deletion release (Phase 5b), no earlier than **2026-12-01**. |
+| `jntc_live_` toolkit API keys (theme-5 Phase 4). No new keys are issued (`POST /toolkits/{id}/keys` → `410 toolkit_keys_retired`); the migration run migrates existing keys (`jentic_one retire-toolkit-keys --owner <admin-email>` for any it skipped as ownerless) so existing plaintexts keep authenticating as their migrated service accounts (as their successor **agents** once theme-8 Phase 1 migrates them), then rotate holders to the successor's key. | The first release carrying theme-5 Phase 4 (opened 2026-09-11). | `deprecated_toolkit_key_used` WARNING log lines — one per resolve, naming the actor (service account, or successor agent after theme-8 migration) still presenting the retired key form. | The theme-5 toolkit-surface deletion release (Phase 5b), no earlier than **2026-12-01**. |
 | Service accounts (theme-8 Phase 1). Every SA is auto-migrated to a successor agent; the migrated `sak_`/`jntc_live_` plaintext keeps authenticating — as that agent. The SA management surface, `POST /oauth/mint` and the `client_credentials` grant were removed in theme-8 Phase 2, and broker JWTs may no longer assert `actor_type=service_account`. Rotate holders to the successor agent's `jak_` key. | The first release carrying theme-8 Phase 1. | `service_account_fallback_resolve` WARNING log lines and the `auth_service_account_fallback_resolves` OTel counter — one per resolve still served by the SA fallback arm. | Surface removed in theme-8 Phase 2; Phase 4 drops the tables (gated on the `--verify --acknowledge` sentinel). |
 
 

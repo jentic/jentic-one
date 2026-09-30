@@ -22,6 +22,7 @@ from jentic_one.control.services.credentials.providers.base import (
 from jentic_one.control.services.credentials.providers.direct_oauth2 import InvalidGrantError
 from jentic_one.control.services.credentials.schemas.provision import OAuthTokenView
 from jentic_one.shared.context import Context
+from jentic_one.shared.redaction import redact_value
 
 logger = structlog.get_logger(__name__)
 
@@ -185,13 +186,18 @@ class TokenRefresher:
             )
             raise RefreshInvalidGrantError(resolved.credential_id) from exc
         except (httpx.TimeoutException, httpx.ConnectError, ProviderError) as exc:
+            # The exception text (httpx transport message, IdP error body) can
+            # quote request material, so only its class reaches the caller; the
+            # server-side log keeps a redacted copy for diagnosis. ``from None``
+            # keeps the raw message out of any traceback rendered downstream.
             logger.warning(
                 "refresh_transient_error",
                 credential_id=resolved.credential_id,
                 provider=resolved.provider,
-                error=str(exc),
+                error_type=type(exc).__name__,
+                error=redact_value(str(exc)),
             )
-            raise RefreshTransientError(resolved.credential_id, str(exc)) from exc
+            raise RefreshTransientError(resolved.credential_id, type(exc).__name__) from None
 
         return _RefreshOutcome(
             access_token=result.access_token,

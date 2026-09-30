@@ -16,6 +16,7 @@ ID_TOKEN_TTL_SECONDS = 3600
 def issue_id_token(
     config: AuthConfig,
     *,
+    issuer: str,
     sub: str,
     email: str,
     aud: str,
@@ -32,8 +33,6 @@ def issue_id_token(
     private_key = load_es256_private_key(active_key_config)
 
     now = datetime.now(UTC)
-    issuer = config.canonical_base_url.rstrip("/") if config.canonical_base_url else ""
-
     payload: dict[str, Any] = {
         "iss": issuer,
         "sub": sub,

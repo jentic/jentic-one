@@ -111,12 +111,51 @@ def test_update_success(authed_client: TestClient, admin_user_id: str) -> None:
     assert resp.json()["first_name"] == "Updated"
 
 
-def test_disable_and_enable(authed_client: TestClient, admin_user_id: str) -> None:
-    resp = authed_client.post(f"/users/{admin_user_id}:disable")
+def test_disable_and_enable(authed_client: TestClient, managed_user_id: str) -> None:
+    # Target a separate user: disabling the caller could hit the
+    # last-active-org:admin guard depending on what else is in the database.
+    resp = authed_client.post(f"/users/{managed_user_id}:disable")
     assert resp.status_code == 204
 
-    resp = authed_client.post(f"/users/{admin_user_id}:enable")
+    resp = authed_client.post(f"/users/{managed_user_id}:enable")
     assert resp.status_code == 204
+
+
+def test_users_write_cannot_change_admin_email(
+    unauthed_client: TestClient, web_context: Context, admin_user_id: str, managed_user_id: str
+) -> None:
+    """A users:write holder without the target's permissions gets a 403."""
+
+    async def _grant() -> None:
+        async with web_context.admin_db.transaction() as session:
+            await UserPermissionGrantRepository.set_permissions(
+                session,
+                managed_user_id,
+                permissions={"users:read", "users:write"},
+                granted_by=None,
+                created_by="usr_test",
+            )
+
+    asyncio.get_event_loop().run_until_complete(_grant())
+    config = web_context.config.admin.auth
+    claims = {
+        "sub": managed_user_id,
+        "email": "web-managed@test.local",
+        "actor_type": "user",
+        "must_change_password": False,
+    }
+    token = issue_jwt(claims, config.jwt_secret.get_secret_value(), config.jwt_ttl_seconds)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    resp = unauthed_client.patch(
+        f"/users/{admin_user_id}", json={"email": "web-other@test.local"}, headers=headers
+    )
+    assert resp.status_code == 403
+    assert resp.json()["type"] == "user_management_forbidden"
+
+    resp = unauthed_client.post(f"/users/{admin_user_id}:disable", headers=headers)
+    assert resp.status_code == 403
+    assert resp.json()["type"] == "user_management_forbidden"
 
 
 def test_invite_state_filter(authed_client: TestClient, admin_user_id: str) -> None:

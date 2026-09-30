@@ -71,7 +71,7 @@ from jentic_one.admin.services.errors import UserNotFoundError
 from jentic_one.admin.services.oauth_client_service import OAuthClientService
 from jentic_one.admin.services.schemas.oauth_clients import OAuthClientView
 from jentic_one.admin.services.user_service import UserService
-from jentic_one.auth.core.idp import IdpClaims
+from jentic_one.auth.core.idp import IdpClaims, parse_email_verified
 from jentic_one.auth.services.agent_service import AgentService
 from jentic_one.auth.services.authorize_service import AgentConsentOption, AuthorizeService
 from jentic_one.auth.services.errors import (
@@ -122,6 +122,7 @@ from jentic_one.shared.auth.permission_catalog import (
     CREDENTIALS_WRITE,
     compute_implies_transitive,
 )
+from jentic_one.shared.config import effective_auth_base_url
 from jentic_one.shared.context import Context
 from jentic_one.shared.db import DatabaseIntegrityError
 from jentic_one.shared.models import ActorStatus, ActorType
@@ -1103,7 +1104,7 @@ def _render_approval_pending_page(
         resume_params["nonce"] = nonce
     resume_url = f"/authorize?{urlencode(resume_params)}"
 
-    base_url = ctx.config.auth.canonical_base_url.rstrip("/") or str(request.base_url).rstrip("/")
+    base_url = effective_auth_base_url(ctx.config).rstrip("/") or str(request.base_url).rstrip("/")
     queue_url = f"{base_url}{_APPROVAL_QUEUE_SPA_PATH}"
 
     page_config = {
@@ -1234,7 +1235,7 @@ async def authorize_endpoint(
                 redirect_uri, "invalid_scope", state, "requested scopes exceed allowlist"
             )
 
-    callback_uri = _callback_uri(request, ctx.config.auth.canonical_base_url)
+    callback_uri = _callback_uri(request, effective_auth_base_url(ctx.config))
 
     state_payload: dict[str, str | None] = {
         "client_id": client_id,
@@ -1505,7 +1506,7 @@ async def oauth_callback(
     nonce = params.get("nonce")
     original_state = params.get("original_state")
 
-    callback_uri = _callback_uri(request, ctx.config.auth.canonical_base_url)
+    callback_uri = _callback_uri(request, effective_auth_base_url(ctx.config))
 
     oauth_client = await get_cached_oauth_client(request, client_id or "", ctx)
     if oauth_client is not None and not client_gate_passes(oauth_client):
@@ -1659,7 +1660,7 @@ def _claims_from_params(params: dict[str, object]) -> IdpClaims | None:
     return IdpClaims(
         external_subject=str(claims_data.get("external_subject") or ""),
         email=str(claims_data.get("email") or ""),
-        email_verified=bool(claims_data.get("email_verified") or False),
+        email_verified=parse_email_verified(claims_data.get("email_verified")),
         first_name=str(claims_data.get("first_name") or ""),
         last_name=str(claims_data.get("last_name") or ""),
     )
@@ -1886,7 +1887,7 @@ def _render_agent_awaiting_page(
     user_email = str(params.get("user_email") or "unknown")
     status_state = _mint_agent_status_state(ctx, consent_token=consent_token, agent_id=agent_id)
 
-    base_url = ctx.config.auth.canonical_base_url.rstrip("/") or str(request.base_url).rstrip("/")
+    base_url = effective_auth_base_url(ctx.config).rstrip("/") or str(request.base_url).rstrip("/")
     agents_url = f"{base_url}{_AGENTS_SPA_PATH}"
 
     page_config = {
@@ -2209,7 +2210,7 @@ async def consent_submit(
         idp_claims = IdpClaims(
             external_subject=str(claims_data.get("external_subject") or ""),
             email=str(claims_data.get("email") or ""),
-            email_verified=bool(claims_data.get("email_verified") or False),
+            email_verified=parse_email_verified(claims_data.get("email_verified")),
             first_name=str(claims_data.get("first_name") or ""),
             last_name=str(claims_data.get("last_name") or ""),
         )

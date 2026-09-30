@@ -128,10 +128,15 @@ class RefreshInvalidGrantError(RefreshError):
 
 
 class RefreshTransientError(RefreshError):
-    """The IdP returned a transient error (5xx/timeout) during refresh."""
+    """The IdP returned a transient error (5xx/timeout) during refresh.
+
+    ``detail`` is surfaced to the caller verbatim (via the broker's 502), so it
+    must never carry raw exception text — pass a safe label such as the
+    exception class name.
+    """
 
     def __init__(self, credential_id: str, detail: str = "") -> None:
         msg = f"Transient error refreshing credential '{credential_id}'"
         if detail:
-            msg += f": {detail}"
+            msg += f" ({detail})"
         super().__init__(credential_id, msg)

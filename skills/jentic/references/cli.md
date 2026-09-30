@@ -200,6 +200,10 @@ is not silent). If you passed the id from `catalog show` and it didn't
 resolve, use the `operation_id` from `search`/`apis operations`, or the
 `METHOD URL` pair that the hit's `_links.inspect` decodes to.
 
+In the JSON output, `api.vendor`/`api.name`/`api.version` is the canonical API
+reference — copy those into credential scopes, revision pins and other API
+references. `api.display_name`, when present, is a human-readable label only.
+
 ## Step 5 — execute
 
 ```

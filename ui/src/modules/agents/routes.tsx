@@ -4,7 +4,7 @@
  */
 import { useEffect } from 'react';
 import type { RouteObject } from 'react-router';
-import { Navigate } from 'react-router';
+import { Navigate, useLocation } from 'react-router';
 import { ROUTES } from '@/shared/app';
 import { toast } from '@/shared/ui';
 import AgentsPage from '@/modules/agents/pages/AgentsPage';
@@ -34,8 +34,34 @@ function RetiredServiceAccountRedirect() {
 	return <Navigate to={ROUTES.agents} replace />;
 }
 
+/**
+ * `/app/access-requests` (the retired access-request queue — theme 7, epic
+ * jentic/jentic-one#1374) redirects to Agents, where agent approvals now live,
+ * so old bookmarks land somewhere useful instead of a 404. A component for the
+ * same TDZ reason as above.
+ */
+function RetiredAccessRequestsRedirect() {
+	return <Navigate to={ROUTES.agents} replace />;
+}
+
+/**
+ * `/app/credentials` (the retired standalone Credentials page) redirects to the
+ * Agents credential inventory, where credentials now live. The query string is
+ * kept: approval links (`?approve=&poll_token=`) minted before the backend moved
+ * them to `/app/agents` still point here until they expire, and Agents opens the
+ * approval wizard from them. A component for the same TDZ reason as above.
+ */
+function RetiredCredentialsRedirect() {
+	const { search } = useLocation();
+	const params = new URLSearchParams(search);
+	params.set('credentials', '1');
+	return <Navigate to={`${ROUTES.agents}?${params}`} replace />;
+}
+
 export const agentsRoutes: RouteObject[] = [
 	{ path: 'agents', element: <AgentsPage /> },
+	{ path: 'access-requests', element: <RetiredAccessRequestsRedirect /> },
+	{ path: 'credentials', element: <RetiredCredentialsRedirect /> },
 	// Declared before `agents/:agentId` so the `service-accounts` segment is
 	// never captured as an `agentId`.
 	{ path: 'agents/service-accounts/*', element: <RetiredServiceAccountRedirect /> },

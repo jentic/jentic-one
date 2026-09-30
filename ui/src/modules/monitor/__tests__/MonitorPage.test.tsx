@@ -24,15 +24,15 @@ function LocationProbe() {
 }
 
 /**
- * MonitorPage is rendered under AuthProvider so the org:admin-gated actions
- * (cancel job, audit lens) resolve against the mocked `/users/me` admin user.
- * A seeded token makes the profile query fire.
+ * MonitorPage is rendered under AuthProvider so the org:admin-gated surfaces
+ * (Usage, the Audit log, cancel job) resolve against the mocked `/users/me`
+ * admin user. A seeded token makes the profile query fire.
  *
- * Defaults to the Executions lens (`?tab=executions`) because most of these
- * specs exercise the trace log; the Overview tab is now the implicit landing
- * lens (asserted separately) and tests that need it click into it.
+ * Defaults to the API calls source (`?show=calls`) because most of these
+ * specs exercise the trace log; the Everything feed is the implicit landing
+ * view (asserted separately).
  */
-function renderMonitor(route = '/app/monitor?tab=executions') {
+function renderMonitor(route = '/app/monitor?show=calls') {
 	return renderWithProviders(
 		<AuthProvider>
 			<MonitorPage />
@@ -43,67 +43,156 @@ function renderMonitor(route = '/app/monitor?tab=executions') {
 	);
 }
 
+function currentParams() {
+	return new URLSearchParams(screen.getByTestId('location-search').textContent ?? '');
+}
+
+/** The Breakdown table's own grouping toggle (the charts above have one each). */
+function breakdownLens(name: string) {
+	return toggle('Breakdown grouping', name);
+}
+
+/** A button inside one of the toolbar's labelled toggle groups. */
+function toggle(group: string, name: string) {
+	return within(screen.getByRole('group', { name: group })).getByRole('button', { name });
+}
+
+const MEMBER = {
+	id: '00000000-0000-0000-0000-000000000002',
+	email: 'member@local',
+	first_name: 'Member',
+	last_name: 'User',
+	active: true,
+	permissions: [],
+	must_change_password: false,
+	created_at: '2026-01-01T00:00:00Z',
+	updated_at: null,
+};
+
 describe('MonitorPage', () => {
 	beforeEach(() => {
 		setToken('mock-access-token');
 		// `/executions`, `/events`(+stream), and `/audit` are also mocked by the
-		// dashboard + Agent Rail handlers, which register earlier in the global
+		// agents + Activity rail handlers, which register earlier in the global
 		// table. Install Monitor's handlers at runtime so they take precedence
 		// for this page's requests; MSW resets runtime handlers after each test.
 		worker.use(...monitorHandlers);
 	});
 
-	it('defaults an unparametered visit to the Overview lens (#628)', async () => {
+	it('lands an admin on the Overview: stat strip, charts and the docked live panel', async () => {
 		renderMonitor('/app/monitor');
-		// With no `?tab=`, Overview is the landing lens: its health/volume
-		// content renders without any tab click. The global filter bar (list-tab
-		// only) is hidden on Overview.
 		expect(await screen.findByText('Execution Volume')).toBeInTheDocument();
-		expect(screen.getByRole('tab', { name: 'Overview' })).toHaveAttribute(
-			'aria-selected',
-			'true',
-		);
+		expect(screen.getByRole('region', { name: 'Usage at a glance' })).toBeInTheDocument();
+		expect(screen.getByRole('region', { name: 'Live activity' })).toBeInTheDocument();
+		expect(
+			screen.getByRole('button', { name: 'Expand activity to the full log' }),
+		).toBeInTheDocument();
+		expect(screen.queryByRole('group', { name: 'Activity source' })).not.toBeInTheDocument();
 	});
 
-	it('renders the Executions tab with trace rows', async () => {
+	it('expands the panel into the full log and folds it back, keeping the window', async () => {
+		const user = userEvent.setup();
+		renderMonitor('/app/monitor?days=30');
+		await screen.findByText('Execution Volume');
+
+		await user.click(screen.getByRole('button', { name: 'Expand activity to the full log' }));
+		expect(
+			await screen.findByRole('link', { name: 'Execution failed: github-api' }),
+		).toBeInTheDocument();
+		expect(toggle('Activity source', 'Everything')).toHaveAttribute('aria-pressed', 'true');
+		expect(currentParams().get('view')).toBe('activity');
+
+		// A focused source stays expanded; going back to Everything too.
+		await user.click(toggle('Activity source', 'API calls'));
+		await screen.findByText('POST /v1/charges');
+		await user.click(toggle('Activity source', 'Everything'));
+		await screen.findByRole('link', { name: 'Execution failed: github-api' });
+
+		await user.click(screen.getByRole('button', { name: 'Overview' }));
+		expect(await screen.findByText('Execution Volume')).toBeInTheDocument();
+		const params = currentParams();
+		expect(params.get('view')).toBeNull();
+		expect(params.get('show')).toBeNull();
+		expect(params.get('days')).toBe('30');
+	});
+
+	it('gives non-admins the full log only — no Overview, no usage fetch', async () => {
+		// Let the previous test's in-flight usage reads settle first, so they
+		// can't land on this test's counting handler.
+		await new Promise((resolve) => setTimeout(resolve, 250));
+		let usageCalls = 0;
+		worker.use(
+			http.get('/users/me', () => HttpResponse.json(MEMBER)),
+			http.get('/monitoring/usage', () => {
+				usageCalls += 1;
+				return new HttpResponse(null, { status: 403 });
+			}),
+		);
+		renderMonitor('/app/monitor?tab=usage');
+		expect(
+			await screen.findByRole('link', { name: 'Execution failed: github-api' }),
+		).toBeInTheDocument();
+		await waitFor(() =>
+			expect(
+				screen.queryByRole('region', { name: 'Usage at a glance' }),
+			).not.toBeInTheDocument(),
+		);
+		expect(screen.queryByRole('button', { name: 'Overview' })).not.toBeInTheDocument();
+		expect(usageCalls).toBe(0);
+	});
+
+	it('offers non-admins no Audit log source and ignores ?show=audit', async () => {
+		worker.use(http.get('/users/me', () => HttpResponse.json(MEMBER)));
+		renderMonitor('/app/monitor?show=audit');
+		await screen.findByRole('link', { name: 'Execution failed: github-api' });
+		await waitFor(() =>
+			expect(
+				within(screen.getByRole('group', { name: 'Activity source' })).queryByRole(
+					'button',
+					{ name: 'Audit log' },
+				),
+			).not.toBeInTheDocument(),
+		);
+		expect(toggle('Activity source', 'Everything')).toHaveAttribute('aria-pressed', 'true');
+	});
+
+	it('renders the API calls source with trace rows', async () => {
 		renderMonitor();
 		expect(await screen.findByText('POST /v1/charges')).toBeInTheDocument();
 		expect(screen.getByText('GET /repos/{owner}/{repo}')).toBeInTheDocument();
-		// status pills off the union (status text also appears in the filter
-		// toggle, so assert at least one occurrence).
 		expect(screen.getAllByText('Completed').length).toBeGreaterThanOrEqual(1);
 		expect(screen.getAllByText('Failed').length).toBeGreaterThanOrEqual(1);
 	});
 
-	it('filters Executions by terminal status (backend accepts only completed/failed)', async () => {
+	it('filters API calls by terminal status (backend accepts only completed/failed)', async () => {
 		const user = userEvent.setup();
 		renderMonitor();
 		await screen.findByText('GET /repos/{owner}/{repo}');
 
 		// Failed-only: the github 503 row stays, the completed charge row drops.
-		await user.click(screen.getByRole('button', { name: 'Failed' }));
+		await user.click(toggle('Status', 'Failed'));
 		await waitFor(() => {
 			expect(screen.queryByText('POST /v1/charges')).not.toBeInTheDocument();
 		});
 		expect(screen.getByText('GET /repos/{owner}/{repo}')).toBeInTheDocument();
+		expect(currentParams().get('status')).toBe('failed');
 
-		// Completed-only: the inverse.
-		await user.click(screen.getByRole('button', { name: 'Completed' }));
+		// Succeeded-only: the inverse.
+		await user.click(toggle('Status', 'Succeeded'));
 		await waitFor(() => {
 			expect(screen.queryByText('GET /repos/{owner}/{repo}')).not.toBeInTheDocument();
 		});
 		expect(screen.getByText('POST /v1/charges')).toBeInTheDocument();
+		expect(currentParams().get('status')).toBe('completed');
 	});
 
-	// --- local-MCP 2-E2 (#1188): origin filter on the executions lens -------
+	// --- local-MCP 2-E2 (#1188): origin filter on API calls ----------------
 
-	it('filters Executions by origin from the filter bar', async () => {
+	it('filters API calls by origin from the toolbar', async () => {
 		const user = userEvent.setup();
 		renderMonitor();
 		await screen.findByText('POST /v1/charges');
 
-		// The picker offers the closed origin set; selecting MCP narrows the
-		// log to the MCP-origin refund row and writes the deep-linkable param.
 		const originSelect = screen.getByRole('combobox', { name: 'Filter by origin' });
 		await user.selectOptions(originSelect, screen.getByRole('option', { name: 'MCP' }));
 
@@ -111,28 +200,25 @@ describe('MonitorPage', () => {
 		await waitFor(() => {
 			expect(screen.queryByText('POST /v1/charges')).not.toBeInTheDocument();
 		});
-		expect(screen.getByTestId('location-search').textContent).toContain('origin=mcp');
+		expect(currentParams().get('origin')).toBe('mcp');
 
-		// Back to "All origins": the full log returns, the param leaves the URL.
 		await user.selectOptions(originSelect, screen.getByRole('option', { name: 'All origins' }));
 		expect(await screen.findByText('POST /v1/charges')).toBeInTheDocument();
-		expect(screen.getByTestId('location-search').textContent).not.toContain('origin');
+		expect(currentParams().get('origin')).toBeNull();
 	});
 
-	it('honours an ?origin deep-link and drops it on a lens switch (executions-only scope)', async () => {
+	it('honours an ?origin deep-link and drops it on a source switch (calls-only scope)', async () => {
 		const user = userEvent.setup();
-		renderMonitor('/app/monitor?tab=executions&origin=mcp');
+		renderMonitor('/app/monitor?show=calls&origin=mcp');
 
-		// Pre-filtered on arrival — the deep-link contract.
 		expect(await screen.findByText('POST /v1/refunds')).toBeInTheDocument();
 		expect(screen.queryByText('POST /v1/charges')).not.toBeInTheDocument();
 
-		// No other lens supports origin, so a lens switch clears it — and the
-		// picker only renders on Executions.
-		await user.click(screen.getByRole('tab', { name: 'Events' }));
+		await user.click(toggle('Activity source', 'Everything'));
 		await waitFor(() => {
-			expect(screen.getByTestId('location-search').textContent).not.toContain('origin');
+			expect(currentParams().get('origin')).toBeNull();
 		});
+		expect(currentParams().get('show')).toBeNull();
 		expect(
 			screen.queryByRole('combobox', { name: 'Filter by origin' }),
 		).not.toBeInTheDocument();
@@ -141,121 +227,223 @@ describe('MonitorPage', () => {
 	// --- theme-5 5d: retired ?toolkit_id= deep links (scrub is deletable in 6b)
 
 	it('ignores a retired ?toolkit_id= deep link and scrubs it from the URL', async () => {
-		// Pre-5b deep links could carry `?toolkit_id=…`; the filter vocabulary
-		// dropped it when toolkits were retired. The lens must render unfiltered
-		// (no crash, no filter-state corruption) and the dead param must leave
-		// the URL on arrival while the live params survive.
-		renderMonitor('/app/monitor?tab=executions&toolkit_id=tk_0123456789abcdef&days=7');
+		renderMonitor('/app/monitor?show=calls&toolkit_id=tk_0123456789abcdef&days=7');
 
-		// The full unfiltered trace log renders — the param filtered nothing.
 		expect(await screen.findByText('POST /v1/charges')).toBeInTheDocument();
 		expect(screen.getByText('GET /repos/{owner}/{repo}')).toBeInTheDocument();
 
 		await waitFor(() => {
-			expect(screen.getByTestId('location-search').textContent).not.toContain('toolkit_id');
+			expect(currentParams().get('toolkit_id')).toBeNull();
 		});
-		// The surviving filter vocabulary is untouched by the scrub.
-		const search = screen.getByTestId('location-search').textContent;
-		expect(search).toContain('tab=executions');
-		expect(search).toContain('days=7');
+		expect(currentParams().get('show')).toBe('calls');
+		expect(currentParams().get('days')).toBe('7');
 	});
 
-	it('goes live on the Events tab without crashing on heartbeat frames', async () => {
-		const user = userEvent.setup();
-		renderMonitor();
-		await screen.findByText('POST /v1/charges');
-
-		await user.click(screen.getByRole('tab', { name: 'Events' }));
-		await screen.findByText('Execution failed: github-api');
-
+	it('connects the feed live without crashing on heartbeat frames', async () => {
+		renderMonitor('/app/monitor?view=activity');
 		// The SSE mock interleaves a heartbeat frame (no severity) with real
-		// events; clicking Go live must not throw `charAt of undefined`.
-		await user.click(screen.getByRole('button', { name: 'Go live' }));
-
-		// Stream connects and real events still render (heartbeat is dropped).
-		expect(await screen.findByText('Stop live')).toBeInTheDocument();
-		expect(screen.getByText('Execution failed: github-api')).toBeInTheDocument();
+		// events; the always-on stream must drop it rather than throw.
+		await screen.findByRole('link', { name: 'Execution failed: github-api' });
+		expect(await screen.findByText('Live')).toBeInTheDocument();
+		expect(screen.getByRole('link', { name: 'Import completed' })).toBeInTheDocument();
 	});
 
-	it('renders the Overview health strip + volume chart + breakdown from the usage endpoint (#561)', async () => {
+	it('pauses and resumes the live feed', async () => {
 		const user = userEvent.setup();
-		renderMonitor();
-		await screen.findByText('POST /v1/charges');
+		renderMonitor('/app/monitor?view=activity');
+		await screen.findByRole('link', { name: 'Execution failed: github-api' });
 
-		await user.click(screen.getByRole('tab', { name: 'Overview' }));
+		await user.click(screen.getByRole('button', { name: 'Pause' }));
+		expect(screen.getByText('Paused')).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Resume' })).toHaveAttribute(
+			'aria-pressed',
+			'true',
+		);
 
-		// HealthStrip pills + the Execution Volume chart render from the enriched
-		// usage endpoint (GET /monitoring/usage) — no more "coming soon" gate. The
-		// fixture's ~91% success rate maps to the "Degraded" health pill; the
-		// latency pill renders alongside it (fixture avg ~450ms → "Normal").
-		expect(await screen.findByText('Execution Volume')).toBeInTheDocument();
-		expect(screen.getByText('Degraded')).toBeInTheDocument();
-		expect(screen.getAllByText('Normal').length).toBeGreaterThanOrEqual(1);
-
-		// Breakdown table lists the busiest APIs (also present in the bubble
-		// chart + HealthStrip cluster, so assert at least one occurrence).
-		expect(screen.getByText('Breakdown')).toBeInTheDocument();
-		expect(screen.getAllByText('stripe-api').length).toBeGreaterThanOrEqual(1);
-		expect(screen.getAllByText('github-api').length).toBeGreaterThanOrEqual(1);
+		await user.click(screen.getByRole('button', { name: 'Resume' }));
+		expect(screen.getByRole('button', { name: 'Pause' })).toHaveAttribute(
+			'aria-pressed',
+			'false',
+		);
 	});
 
-	it('regroups the Breakdown by Agents and surfaces the Unattributed bucket', async () => {
+	it('acknowledges an action event from its feed row', async () => {
+		const user = userEvent.setup();
+		renderMonitor('/app/monitor?view=activity');
+		const row = await screen.findByRole('link', { name: 'Execution failed: github-api' });
+
+		await user.click(within(row).getByRole('button', { name: 'Acknowledge' }));
+
+		expect(await screen.findByText('Event acknowledged')).toBeInTheDocument();
+		// The ack button must not also open the row's detail sheet.
+		expect(currentParams().get('trace_id')).toBeNull();
+		expect(await within(row).findByText('Acknowledged')).toBeInTheDocument();
+	});
+
+	it('folds a run of successful calls into one expandable row', async () => {
+		const user = userEvent.setup();
+		const now = Date.now();
+		const completed = (i: number) => ({
+			_links: { self: `/events/evt_run_${i}`, execution: `/executions/exec_run_${i}` },
+			acknowledged: false,
+			acknowledged_at: null,
+			acknowledged_by: null,
+			created_at: new Date(now - i * 60_000).toISOString(),
+			data: { execution_id: `exec_run_${i}` },
+			detail: null,
+			event_id: `evt_run_${i}`,
+			requires_action: false,
+			severity: 'info',
+			summary: `Execution completed: op_${i}`,
+			trace_id: null,
+			type: 'execution.completed',
+		});
+		worker.use(
+			http.get('/events', () =>
+				HttpResponse.json({
+					data: [completed(1), completed(2), completed(3)],
+					has_more: false,
+					next_cursor: null,
+				}),
+			),
+		);
+		renderMonitor('/app/monitor?view=activity');
+
+		const run = await screen.findByRole('link', { name: /3 successful calls — expand/ });
+		expect(screen.queryByRole('link', { name: 'Execution completed: op_1' })).toBeNull();
+
+		await user.click(run);
+		expect(
+			await screen.findByRole('link', { name: 'Execution completed: op_1' }),
+		).toBeInTheDocument();
+		expect(screen.getByRole('link', { name: /3 successful calls — collapse/ })).toBeVisible();
+	});
+
+	it('renders the stat strip + volume, bubble and breakdown charts from the usage endpoint (#561)', async () => {
+		renderMonitor('/app/monitor');
+
+		expect(await screen.findByText(/Last 7 days, colored by API/)).toBeInTheDocument();
+		expect(screen.getByRole('link', { name: /^Calls/ })).toBeInTheDocument();
+		expect(screen.getByText('Success rate')).toBeInTheDocument();
+		expect(screen.getByText('p95 latency')).toBeInTheDocument();
+		expect(screen.getByRole('link', { name: /Failed/ })).toBeInTheDocument();
+
+		expect(screen.getByText('APIs active')).toBeInTheDocument();
+		expect(screen.getByRole('img', { name: /bubble chart/ })).toBeInTheDocument();
+		const breakdown = screen.getByRole('region', { name: 'Breakdown' });
+		expect(within(breakdown).getByText('stripe-api')).toBeInTheDocument();
+		expect(within(breakdown).getByText('github-api')).toBeInTheDocument();
+	});
+
+	it('links the Failed KPI to failed API calls, preserving window and actor', async () => {
+		renderMonitor('/app/monitor?days=30&actor_id=agent_billing&actor_type=agent');
+		await screen.findByText(/Last 30 days/);
+		const failed = screen.getByRole('link', { name: /Failed/ });
+		const href = new URL(failed.getAttribute('href') ?? '', 'http://x');
+		expect(href.searchParams.get('show')).toBe('calls');
+		expect(href.searchParams.get('status')).toBe('failed');
+		expect(href.searchParams.get('days')).toBe('30');
+		expect(href.searchParams.get('actor_id')).toBe('agent_billing');
+		expect(href.searchParams.get('actor_type')).toBe('agent');
+	});
+
+	it('fetches each grouping once, scoped by the actor, and nothing once expanded', async () => {
+		// Grouped reads only: the expanded log's timeline makes its own
+		// ungrouped histogram read, which isn't a Breakdown refetch.
+		const seen: URLSearchParams[] = [];
+		worker.events.on('request:start', ({ request }) => {
+			const url = new URL(request.url);
+			if (url.pathname.endsWith('/monitoring/usage') && url.searchParams.has('group_by'))
+				seen.push(url.searchParams);
+		});
+		const user = userEvent.setup();
+		renderMonitor('/app/monitor?actor_id=agent_billing&actor_type=agent');
+		await screen.findByText('Breakdown');
+		expect(seen.map((p) => p.get('group_by')).sort()).toEqual(['agent', 'api']);
+		expect(seen.every((p) => p.get('agent_id') === 'agent_billing')).toBe(true);
+
+		// Lens toggles are instant — every grouping is already loaded.
+		await user.click(breakdownLens('Agents'));
+		await user.click(screen.getByRole('button', { name: 'Expand activity to the full log' }));
+		await screen.findByRole('group', { name: 'Activity source' });
+		expect(seen).toHaveLength(2);
+		worker.events.removeAllListeners();
+	});
+
+	it('regroups the Breakdown by Agents and drills a row into filtered API calls', async () => {
 		const user = userEvent.setup();
 		renderMonitor('/app/monitor');
 		await screen.findByText('Breakdown');
 
-		// Both the bubble chart and the Breakdown carry an APIs/Credentials/Agents
-		// toggle; flip the Breakdown's (the last one). The agent grouping was
-		// prefetched, so rows swap without a spinner. Backend agent keys are
-		// mechanical "actor_type/actor_id" strings — the UI strips the type
-		// prefix for display — and NULL actor columns arrive as a null key that
-		// must surface as "Unattributed" rather than being dropped.
-		const agentToggles = screen.getAllByRole('button', { name: 'Agents' });
-		await user.click(agentToggles[agentToggles.length - 1]);
-
+		await user.click(breakdownLens('Agents'));
 		expect(await screen.findByText('agent_billing')).toBeInTheDocument();
-		expect(screen.getByText('Unattributed')).toBeInTheDocument();
+		expect(screen.getByText('Unattributed').closest('a')).toBeNull();
+
+		await user.click(screen.getByRole('row', { name: /View executions for agent_billing/ }));
+		await waitFor(() => {
+			const params = currentParams();
+			expect(params.get('show')).toBe('calls');
+			expect(params.get('actor_id')).toBe('agent_billing');
+			expect(params.get('actor_type')).toBe('agent');
+		});
 	});
 
-	it('reloads Overview stats when the window selector changes', async () => {
+	it('drills an API row into API calls filtered by that API', async () => {
 		const user = userEvent.setup();
-		renderMonitor();
-		await screen.findByText('POST /v1/charges');
-		await user.click(screen.getByRole('tab', { name: 'Overview' }));
-		await screen.findByText('Execution Volume');
+		renderMonitor('/app/monitor');
+		await screen.findByText('Breakdown');
+		await user.click(screen.getByRole('row', { name: /View executions for github-api/ }));
 
-		// Switching the window re-queries with a tighter `since` and keeps the
-		// chart mounted (subtitle reflects the wider window).
-		await user.click(screen.getByRole('button', { name: '30d' }));
-		expect(await screen.findByText(/Last 30 days, colored by/)).toBeInTheDocument();
+		expect(
+			await screen.findByRole('button', { name: /Clear API filter github\/github-api/ }),
+		).toBeInTheDocument();
+		expect(await screen.findByText('GET /repos/{owner}/{repo}')).toBeInTheDocument();
+		expect(screen.queryByText('POST /v1/charges')).not.toBeInTheDocument();
+		expect(currentParams().get('api')).toBe('github:github-api');
 
-		// The 24h window exercises the sub-day path: the mock serves recent
-		// points inside the last 24h, so the chart renders bars instead of
-		// falling into the empty state.
-		await user.click(screen.getByRole('button', { name: '24h' }));
-		expect(await screen.findByText(/Last 24 hours, colored by/)).toBeInTheDocument();
+		// Switching source drops the calls-only api filter.
+		await user.click(toggle('Activity source', 'Jobs'));
+		await waitFor(() => {
+			expect(currentParams().get('api')).toBeNull();
+		});
+	});
+
+	it('reloads the Overview when the window changes', async () => {
+		const user = userEvent.setup();
+		renderMonitor('/app/monitor');
+		await screen.findByText(/Last 7 days/);
+
+		// "All" isn't offered (the aggregate needs a bounded window).
+		expect(
+			within(screen.getByRole('group', { name: 'Time window' })).queryByRole('button', {
+				name: 'All',
+			}),
+		).not.toBeInTheDocument();
+		await user.click(toggle('Time window', '30d'));
+		expect(await screen.findByText(/Last 30 days/)).toBeInTheDocument();
+
+		await user.click(toggle('Time window', '24h'));
+		expect(await screen.findByText(/Last 24 hours/)).toBeInTheDocument();
 		expect(screen.queryByText('No executions yet')).not.toBeInTheDocument();
 	});
 
-	it('switches to the Jobs tab', async () => {
+	it('switches to the Jobs source', async () => {
 		const user = userEvent.setup();
 		renderMonitor();
 		await screen.findByText('POST /v1/charges');
 
-		await user.click(screen.getByRole('tab', { name: 'Jobs' }));
+		await user.click(toggle('Activity source', 'Jobs'));
 
-		// Two jobs share the import kind; one is an execution job.
-		expect((await screen.findAllByText('import')).length).toBeGreaterThanOrEqual(1);
-		expect(screen.getByText('execution')).toBeInTheDocument();
+		// Jobs read as sentences: kind + state.
+		expect(await screen.findByText('Import running')).toBeInTheDocument();
+		expect(screen.getByText('Execution failed')).toBeInTheDocument();
+		expect(currentParams().get('show')).toBe('jobs');
 	});
 
 	it('opens a job and surfaces the org:admin Cancel action for an active job', async () => {
 		const user = userEvent.setup();
-		renderMonitor();
-		await screen.findByText('POST /v1/charges');
-		await user.click(screen.getByRole('tab', { name: 'Jobs' }));
+		renderMonitor('/app/monitor?show=jobs');
 
-		// Wait for admin profile to resolve so the gate opens.
 		const runningRow = await screen.findByText('job_import_1');
 		await user.click(runningRow);
 
@@ -265,53 +453,35 @@ describe('MonitorPage', () => {
 		).toBeInTheDocument();
 	});
 
-	it('switches to the Events tab and acknowledges an action event', async () => {
+	it('switches to the Audit log source and shows actors', async () => {
 		const user = userEvent.setup();
 		renderMonitor();
 		await screen.findByText('POST /v1/charges');
 
-		await user.click(screen.getByRole('tab', { name: 'Events' }));
+		await user.click(toggle('Activity source', 'Audit log'));
 
-		expect(await screen.findByText('Execution failed: github-api')).toBeInTheDocument();
-		const ackButton = screen.getByRole('button', { name: 'Acknowledge' });
-		await user.click(ackButton);
-
-		expect(await screen.findByText('Event acknowledged')).toBeInTheDocument();
-	});
-
-	it('switches to the Audit tab (actor lens) and shows actors', async () => {
-		const user = userEvent.setup();
-		renderMonitor();
-		await screen.findByText('POST /v1/charges');
-
-		await user.click(screen.getByRole('tab', { name: 'Audit' }));
-
-		expect(await screen.findByText('execution.start')).toBeInTheDocument();
-		expect(screen.getByText('job.cancel')).toBeInTheDocument();
-		// Actor ids resolve to friendly names via the actor directory
-		// (user_admin → "Admin User") rather than rendering the raw id/type.
+		// Audit entries read as sentences, not raw action codes.
+		expect(await screen.findByText('Started an execution')).toBeInTheDocument();
+		expect(screen.getByText('Cancelled a job')).toBeInTheDocument();
 		expect(screen.getAllByText('Admin User').length).toBeGreaterThanOrEqual(1);
+		// The Audit log has no status axis.
+		expect(screen.queryByRole('group', { name: 'Status' })).not.toBeInTheDocument();
 	});
 
-	it('filters the Audit tab by trace_id deep-link param', async () => {
-		renderMonitor('/app/monitor?tab=audit&trace_id=trace_aaaaaaaa');
-		// Only the execution.start entry carries trace_aaaaaaaa.
-		expect(await screen.findByText('execution.start')).toBeInTheDocument();
+	it('filters the Audit log by trace_id deep-link param', async () => {
+		renderMonitor('/app/monitor?show=audit&trace_id=trace_aaaaaaaa');
+		expect(await screen.findByText('Started an execution')).toBeInTheDocument();
 		await waitFor(() => {
-			expect(screen.queryByText('job.cancel')).not.toBeInTheDocument();
+			expect(screen.queryByText('Cancelled a job')).not.toBeInTheDocument();
 		});
 	});
 
 	it('shows the trace actor read from the execution record (#375)', async () => {
 		const user = userEvent.setup();
 		renderMonitor();
-		// exec_1/exec_3 (trace_aaaaaaaa) carry actor_type "agent" on the record.
 		await user.click(await screen.findByText('POST /v1/charges'));
 
 		const sheet = await screen.findByRole('dialog');
-		// Actor renders off ExecutionResponse.actor_id resolved through the actor
-		// directory (agent_billing → "Billing Agent"), with a subtle type prefix —
-		// not the raw id or bare actor_type.
 		expect(await within(sheet).findByText(/Billing Agent/)).toBeInTheDocument();
 	});
 
@@ -321,42 +491,41 @@ describe('MonitorPage', () => {
 		expect(await screen.findByRole('alert')).toBeInTheDocument();
 	});
 
-	it('renders the global filter bar with a window toggle and actor picker on list tabs', async () => {
+	it('surfaces an error when the event feed fails', async () => {
+		worker.use(createErrorHandler('get', '/events', { status: 500 }));
+		renderMonitor('/app/monitor?view=activity');
+		expect(await screen.findByRole('alert')).toBeInTheDocument();
+	});
+
+	it('renders the toolbar with a window toggle and actor picker', async () => {
 		renderMonitor();
 		await screen.findByText('POST /v1/charges');
 
-		// Window toggle (global bar) + actor Select hydrated from /actors.
-		expect(screen.getByRole('button', { name: '7d' })).toBeInTheDocument();
-		const actorSelect = screen.getByRole('combobox', { name: 'Filter by actor' });
+		const toolbar = screen.getByRole('toolbar', { name: 'Activity filters' });
+		expect(within(toolbar).getByRole('button', { name: '7d' })).toBeInTheDocument();
+		const actorSelect = within(toolbar).getByRole('combobox', { name: 'Filter by actor' });
 		expect(actorSelect).toBeEnabled();
 		expect(await within(actorSelect).findByText(/Billing Agent/)).toBeInTheDocument();
 	});
 
-	it('hides the global filter bar on the Overview tab', async () => {
-		const user = userEvent.setup();
-		renderMonitor();
-		await screen.findByText('POST /v1/charges');
-		await user.click(screen.getByRole('tab', { name: 'Overview' }));
-		await screen.findByText('Execution Volume');
-		expect(screen.queryByRole('combobox', { name: 'Filter by actor' })).not.toBeInTheDocument();
+	it('shows the window + actor filters on the Overview too', async () => {
+		renderMonitor('/app/monitor');
+		await screen.findByText('Breakdown');
+		const toolbar = screen.getByRole('toolbar', { name: 'Monitor filters' });
+		expect(within(toolbar).getByRole('combobox', { name: 'Filter by actor' })).toBeEnabled();
 	});
 
-	it('disables the actor picker on the Jobs tab (no backend actor filter)', async () => {
-		const user = userEvent.setup();
-		renderMonitor();
-		await screen.findByText('POST /v1/charges');
-		await user.click(screen.getByRole('tab', { name: 'Jobs' }));
+	it('disables the actor picker on the Jobs source (no backend actor filter)', async () => {
+		renderMonitor('/app/monitor?show=jobs');
 		await screen.findByText('job_import_1');
 		expect(screen.getByRole('combobox', { name: 'Filter by actor' })).toBeDisabled();
 	});
 
-	it('filters executions by the selected actor', async () => {
+	it('filters API calls by the selected actor', async () => {
 		const user = userEvent.setup();
 		renderMonitor();
 		await screen.findByText('GET /repos/{owner}/{repo}');
 
-		// user_admin only owns exec_2 (the github 503) — selecting it drops the
-		// agent_billing charge row.
 		await user.selectOptions(
 			screen.getByRole('combobox', { name: 'Filter by actor' }),
 			screen.getByRole('option', { name: /Admin User/ }),
@@ -367,10 +536,9 @@ describe('MonitorPage', () => {
 		expect(screen.getByText('GET /repos/{owner}/{repo}')).toBeInTheDocument();
 	});
 
-	it('pages executions with the cursor pager (Older / Newer)', async () => {
+	it('pages API calls with the cursor pager (Older / Newer)', async () => {
 		const user = userEvent.setup();
 		renderMonitor();
-		// Page 1 holds exec_1 + exec_2 (limit 2); exec_3 is on page 2.
 		await screen.findByText('POST /v1/charges');
 		expect(screen.queryByText('POST /v1/refunds')).not.toBeInTheDocument();
 
@@ -382,38 +550,91 @@ describe('MonitorPage', () => {
 		expect(await screen.findByText('POST /v1/charges')).toBeInTheDocument();
 	});
 
-	it('preserves global filter params but clears per-tab status when switching tabs', async () => {
+	it('keeps window + actor but clears per-source status when switching source', async () => {
 		const user = userEvent.setup();
-		renderMonitor('/app/monitor?tab=executions&status=failed&days=30&actor_id=user_admin');
+		renderMonitor('/app/monitor?show=calls&status=failed&days=30&actor_id=user_admin');
 		await screen.findByText('GET /repos/{owner}/{repo}');
 
-		await user.click(screen.getByRole('tab', { name: 'Events' }));
+		await user.click(toggle('Activity source', 'Everything'));
 		await waitFor(() => {
-			expect(screen.getByRole('tab', { name: 'Events' })).toHaveAttribute(
-				'aria-selected',
-				'true',
-			);
+			expect(toggle('Activity source', 'Everything')).toHaveAttribute('aria-pressed', 'true');
 		});
 
-		// Global params survive the tab switch; per-tab status is purged.
-		const params = new URLSearchParams(screen.getByTestId('location-search').textContent ?? '');
+		const params = currentParams();
 		expect(params.get('days')).toBe('30');
 		expect(params.get('actor_id')).toBe('user_admin');
 		expect(params.get('status')).toBeNull();
+		expect(params.get('show')).toBeNull();
 	});
 
-	it('has no critical a11y violations', async () => {
+	it('keeps window + actor but drops log params when folding back to the Overview', async () => {
+		const user = userEvent.setup();
+		renderMonitor('/app/monitor?show=calls&status=failed&days=30&actor_id=user_admin');
+		await screen.findByText('GET /repos/{owner}/{repo}');
+
+		await user.click(screen.getByRole('button', { name: 'Overview' }));
+		await screen.findByText(/Last 30 days/);
+
+		const params = currentParams();
+		expect(params.get('days')).toBe('30');
+		expect(params.get('actor_id')).toBe('user_admin');
+		expect(params.get('status')).toBeNull();
+		expect(params.get('show')).toBeNull();
+	});
+
+	it('has no critical a11y violations on API calls', async () => {
 		const { container } = renderMonitor();
 		await screen.findByText('POST /v1/charges');
+		await checkA11y(container);
+	});
+
+	it('has no critical a11y violations on the Everything feed', async () => {
+		const { container } = renderMonitor('/app/monitor?view=activity');
+		await screen.findByRole('link', { name: 'Execution failed: github-api' });
 		await checkA11y(container);
 	});
 });
 
 /**
- * Cross-tab deep-linking. Every Monitor surface can pivot to another via the
- * URL param vocabulary in lib/links.ts; these cover each direction and the
- * "unknown trace" degradation (the backend stores `trace_id="unknown"` for
- * header-less runs, which must never produce a broken trace/audit link).
+ * Links from before the Activity/Usage redesign carried the five-tab
+ * vocabulary. They're rewritten in place (no history entry) on arrival.
+ */
+describe('Monitor legacy ?tab= normalization', () => {
+	beforeEach(() => {
+		setToken('mock-access-token');
+		worker.use(...monitorHandlers);
+	});
+
+	it.each([
+		['tab=overview', { tab: null, show: null, view: null }],
+		['tab=usage&lens=agents', { tab: null, view: null, lens: null }],
+		['tab=activity', { tab: null, view: 'activity' }],
+		['tab=executions&status=failed', { tab: null, show: 'calls', status: 'failed' }],
+		['tab=jobs&job_id=job_import_1', { tab: null, show: 'jobs', job_id: 'job_import_1' }],
+		[
+			'tab=audit&trace_id=trace_aaaaaaaa',
+			{ tab: null, show: 'audit', trace_id: 'trace_aaaaaaaa' },
+		],
+		[
+			'tab=events&severity=error&status=x&live=1',
+			{ tab: null, show: null, view: 'activity', severity: null, status: null, live: null },
+		],
+	])('rewrites ?%s', async (query, expected) => {
+		renderMonitor(`/app/monitor?${query}`);
+		await waitFor(() => {
+			const params = currentParams();
+			for (const [key, value] of Object.entries(expected)) {
+				expect(params.get(key), key).toBe(value);
+			}
+		});
+	});
+});
+
+/**
+ * Cross-source deep-linking. Every Monitor surface can pivot to another via
+ * the URL param vocabulary in lib/links.ts; these cover each direction and
+ * the "unknown trace" degradation (the backend stores `trace_id="unknown"`
+ * for header-less runs, which must never produce a broken trace/audit link).
  */
 describe('Monitor inter-linking', () => {
 	beforeEach(() => {
@@ -421,45 +642,50 @@ describe('Monitor inter-linking', () => {
 		worker.use(...monitorHandlers);
 	});
 
-	function currentParams() {
-		return new URLSearchParams(screen.getByTestId('location-search').textContent ?? '');
-	}
-
-	it('Executions row → trace sheet → "View in audit" carries trace_id', async () => {
+	it('API call row → trace sheet → "View in audit" carries trace_id', async () => {
 		const user = userEvent.setup();
 		renderMonitor();
 		await user.click(await screen.findByText('POST /v1/charges'));
 
-		// The sheet opens grouped by the row's real trace.
 		await screen.findByRole('link', { name: /View trace .* in the audit log/ });
 		expect(currentParams().get('trace_id')).toBe('trace_aaaaaaaa');
 
 		await user.click(screen.getByRole('link', { name: /View trace .* in the audit log/ }));
 		await waitFor(() => {
 			const params = currentParams();
-			expect(params.get('tab')).toBe('audit');
+			expect(params.get('show')).toBe('audit');
 			expect(params.get('trace_id')).toBe('trace_aaaaaaaa');
 		});
 	});
 
-	it('Executions row with unknown trace opens by execution_id, no audit link', async () => {
-		// Deep-link straight to the unknown-trace execution's sheet.
-		renderMonitor('/app/monitor?tab=executions&execution_id=exec_4');
+	it('API call with unknown trace opens by execution_id, no audit link', async () => {
+		renderMonitor('/app/monitor?show=calls&execution_id=exec_4');
 
-		// Header reads "Execution" (not "Trace") and shows the execution id.
-		expect(await screen.findByRole('heading', { name: 'exec_4' })).toBeInTheDocument();
-		expect(screen.getByText('Execution')).toBeInTheDocument();
-		// No trace-scoped audit link is offered for an unusable trace.
+		// The record leads with the operation; the raw id sits under it.
+		const dialog = await screen.findByRole('dialog');
+		expect(
+			await within(dialog).findByRole('heading', { name: 'POST /chat.postMessage' }),
+		).toBeInTheDocument();
+		expect(within(dialog).getByText('Execution')).toBeInTheDocument();
+		expect(within(dialog).getAllByText('exec_4').length).toBeGreaterThanOrEqual(1);
 		expect(
 			screen.queryByRole('link', { name: /View trace .* in the audit log/ }),
 		).not.toBeInTheDocument();
-		// And the URL never leaks the placeholder trace id.
 		expect(currentParams().get('trace_id')).toBeNull();
+	});
+
+	it('Execution deep-link with a real trace opens the trace, not "no trace recorded"', async () => {
+		renderMonitor('/app/monitor?show=calls&execution_id=exec_1');
+		expect(await screen.findByText('Trace')).toBeInTheDocument();
+		expect(screen.queryByText(/No trace recorded/)).not.toBeInTheDocument();
+		expect(
+			await screen.findByRole('link', { name: /View trace .* in the audit log/ }),
+		).toBeInTheDocument();
 	});
 
 	it('Jobs row → job sheet → "View in audit" sends target_type + target_id (no 400)', async () => {
 		const user = userEvent.setup();
-		renderMonitor('/app/monitor?tab=jobs');
+		renderMonitor('/app/monitor?show=jobs');
 		await user.click(await screen.findByText('job_import_1'));
 
 		const auditLink = await screen.findByRole('link', {
@@ -468,150 +694,121 @@ describe('Monitor inter-linking', () => {
 		await user.click(auditLink);
 		await waitFor(() => {
 			const params = currentParams();
-			expect(params.get('tab')).toBe('audit');
+			expect(params.get('show')).toBe('audit');
 			expect(params.get('target_type')).toBe('job');
 			expect(params.get('target_id')).toBe('job_import_1');
 		});
-		// The audit lens resolves the row (200, not the 400 a lone target_id gets).
-		expect(await screen.findByText('target:')).toBeInTheDocument();
-		expect(screen.getByText('job_import_1')).toBeInTheDocument();
+		const badge = (await screen.findByText('target:')).closest('span, div') as HTMLElement;
+		expect(within(badge).getByText('job_import_1')).toBeInTheDocument();
+	});
+
+	it('clears an Audit log deep-link filter from its badge', async () => {
+		const user = userEvent.setup();
+		renderMonitor('/app/monitor?show=audit&target_type=job&target_id=job_import_1');
+		await screen.findByText('target:');
+
+		await user.click(screen.getByRole('button', { name: /Clear/ }));
+		await waitFor(() => {
+			const params = currentParams();
+			expect(params.get('target_type')).toBeNull();
+			expect(params.get('target_id')).toBeNull();
+			expect(params.get('show')).toBe('audit');
+		});
+		expect(await screen.findByText('Started an execution')).toBeInTheDocument();
 	});
 
 	it('Job sheet → linked execution deep-links by execution_id', async () => {
 		const user = userEvent.setup();
-		renderMonitor('/app/monitor?tab=jobs');
-		// job_import_2 carries execution_id=exec_1.
+		renderMonitor('/app/monitor?show=jobs');
 		await user.click(await screen.findByText('job_import_2'));
 		await user.click(await screen.findByRole('link', { name: /Open execution exec_1/ }));
 		await waitFor(() => {
 			const params = currentParams();
-			expect(params.get('tab')).toBe('executions');
+			expect(params.get('show')).toBe('calls');
 			expect(params.get('execution_id')).toBe('exec_1');
 		});
 	});
 
-	it('Audit row → Executions (trace) and → Jobs (job) links round-trip', async () => {
+	it('Audit row → API calls (trace) and → Jobs (job) links round-trip', async () => {
 		const user = userEvent.setup();
-		renderMonitor('/app/monitor?tab=audit');
+		renderMonitor('/app/monitor?show=audit');
 
-		// audit_1 has a real trace → Trace link into Executions.
-		await user.click(await screen.findByRole('link', { name: /Open trace .* in Executions/ }));
+		await user.click(await screen.findByRole('link', { name: /Open trace .* in API calls/ }));
 		await waitFor(() => {
 			const params = currentParams();
-			expect(params.get('tab')).toBe('executions');
+			expect(params.get('show')).toBe('calls');
 			expect(params.get('trace_id')).toBe('trace_aaaaaaaa');
 		});
 
-		// Back to audit; audit_2 has a job → Job link into Jobs.
-		await user.click(screen.getByRole('tab', { name: 'Audit' }));
+		await user.click(toggle('Activity source', 'Audit log'));
 		await user.click(await screen.findByRole('link', { name: /Open job .* in Jobs/ }));
 		await waitFor(() => {
 			const params = currentParams();
-			expect(params.get('tab')).toBe('jobs');
+			expect(params.get('show')).toBe('jobs');
 			expect(params.get('job_id')).toBe('job_import_1');
 		});
 	});
 
-	it('switching tabs clears every per-tab deep-link param', async () => {
+	it('switching source clears every per-source deep-link param', async () => {
 		const user = userEvent.setup();
-		renderMonitor('/app/monitor?tab=audit&target_type=job&target_id=job_import_1&days=7');
+		renderMonitor('/app/monitor?show=audit&target_type=job&target_id=job_import_1&days=7');
 		await screen.findByText('target:');
 
-		await user.click(screen.getByRole('tab', { name: 'Executions' }));
+		await user.click(toggle('Activity source', 'API calls'));
 		await waitFor(() => {
 			const params = currentParams();
-			// Per-tab params purged…
 			expect(params.get('target_type')).toBeNull();
 			expect(params.get('target_id')).toBeNull();
-			// …global window preserved.
 			expect(params.get('days')).toBe('7');
 		});
 	});
 
-	it('Live event stream forwards the time-window as `since`', async () => {
-		// Capture the SSE subscription URL so we can assert the window lower-bound
-		// reaches the stream (regression: `from` was dropped on the live path).
+	it('the live stream subscribes with a `since` lower bound', async () => {
 		let streamUrl: URL | null = null;
 		worker.use(
 			http.get('/events/stream', ({ request }) => {
 				streamUrl = new URL(request.url);
-				// Empty but well-formed SSE body; the client just needs it to open.
 				return new HttpResponse(': keep-alive\n\n', {
 					headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' },
 				});
 			}),
 		);
 
-		// Open the Events tab live with an explicit 24h window.
-		renderMonitor('/app/monitor?tab=events&live=1&days=1');
+		renderMonitor('/app/monitor?view=activity&days=1');
 
 		await waitFor(() => expect(streamUrl).not.toBeNull());
-		// The 24h window is sent as the SSE `since` lower-bound.
-		expect(streamUrl!.searchParams.get('since')).toBeTruthy();
+		// Anchored at mount so a backlog-replaying stream can't resurface history.
+		const since = streamUrl!.searchParams.get('since');
+		expect(since).toBeTruthy();
+		expect(Date.now() - Date.parse(since!)).toBeLessThan(5 * 60_000);
 	});
 
-	it('Events row → clicking a failed event opens its trace detail sheet (#617)', async () => {
+	it('feed row → clicking a failed event opens its trace detail sheet (#617)', async () => {
 		const user = userEvent.setup();
-		renderMonitor('/app/monitor?tab=events');
+		renderMonitor('/app/monitor?view=activity');
 
-		// evt_1 is a failed execution event carrying trace_bbbbbbbb; the row must
-		// be clickable through to the trace sheet (the whole point of #617).
-		const row = await screen.findByRole('link', {
-			name: /Open execution for Execution failed: github-api/,
-		});
-		await user.click(row);
+		await user.click(await screen.findByRole('link', { name: 'Execution failed: github-api' }));
 
 		await waitFor(() => {
 			expect(currentParams().get('trace_id')).toBe('trace_bbbbbbbb');
 		});
-		// The trace sheet opens for that trace.
 		expect(await screen.findByRole('dialog')).toBeInTheDocument();
 	});
 
-	it('Events row → an event with no execution/trace is not clickable (#617)', async () => {
-		// evt_2 (import.completed) carries only trace_aaaaaaaa via its top-level
-		// trace_id — so it IS clickable; assert the acknowledged/info evt_2 with a
-		// stripped trace is inert by pointing the events feed at a payload with no
-		// trace at all.
-		worker.use(
-			http.get('/events', () =>
-				HttpResponse.json({
-					data: [
-						{
-							_links: { self: '/events/evt_x' },
-							acknowledged: false,
-							acknowledged_at: null,
-							acknowledged_by: null,
-							created_at: new Date().toISOString(),
-							data: {},
-							detail: 'A configuration warning with no execution.',
-							event_id: 'evt_x',
-							requires_action: false,
-							severity: 'warning',
-							summary: 'Config drift detected',
-							trace_id: null,
-							type: 'config.drift',
-						},
-					],
-					has_more: false,
-					next_cursor: null,
-				}),
-			),
-		);
-		renderMonitor('/app/monitor?tab=events');
+	it('feed row → a job event opens the job detail sheet in place', async () => {
+		const user = userEvent.setup();
+		renderMonitor('/app/monitor?view=activity');
 
-		await screen.findByText('Config drift detected');
-		// No clickable row was rendered for an event with no drill-in id.
-		expect(
-			screen.queryByRole('link', { name: /Open execution for Config drift detected/ }),
-		).not.toBeInTheDocument();
+		await user.click(await screen.findByRole('link', { name: 'Import completed' }));
+
+		await waitFor(() => {
+			expect(currentParams().get('job_id')).toBe('job_import_2');
+		});
+		expect(await screen.findByRole('dialog')).toBeInTheDocument();
+		expect(currentParams().get('show')).toBeNull();
 	});
 
-	it('Events row → a failure with only a _links.execution (no trace) opens by execution_id (#617)', async () => {
-		// The exact real-world case that regressed: the backend surfaces the
-		// linked execution ONLY as `_links.execution` (= /executions/{id}) — it is
-		// NOT stamped into `data` and there is no usable trace. The row must still
-		// be clickable and open the sheet by execution_id.
+	it('feed row → a failure with only a _links.execution (no trace) opens by execution_id (#617)', async () => {
 		const user = userEvent.setup();
 		worker.use(
 			http.get('/events', () =>
@@ -643,12 +840,11 @@ describe('Monitor inter-linking', () => {
 				}),
 			),
 		);
-		renderMonitor('/app/monitor?tab=events');
+		renderMonitor('/app/monitor?view=activity');
 
-		const row = await screen.findByRole('link', {
-			name: /Open execution for Execution failed: example-api/,
-		});
-		await user.click(row);
+		await user.click(
+			await screen.findByRole('link', { name: 'Execution failed: example-api' }),
+		);
 
 		await waitFor(() => {
 			expect(currentParams().get('execution_id')).toBe('exec_99');
@@ -656,99 +852,80 @@ describe('Monitor inter-linking', () => {
 		expect(currentParams().get('trace_id')).toBeNull();
 	});
 
-	it('rail-style deep-link (execution_id) on the Events tab opens the sheet (#617)', async () => {
-		// The rail's "View execution" now emits the underscore vocabulary; landing
-		// on the Executions tab with it must open the sheet.
-		renderMonitor('/app/monitor?tab=executions&execution_id=exec_2');
+	it('rail-style deep-link (execution_id) on API calls opens the sheet (#617)', async () => {
+		renderMonitor('/app/monitor?show=calls&execution_id=exec_2');
 		expect(await screen.findByRole('dialog')).toBeInTheDocument();
 	});
 });
 
 /**
- * Events-tab severity filter (#617). The backend honours a repeatable
- * `severity=` param; these lock in that the chips drive it and that
- * error/critical stay independent values.
+ * Everything-feed status chips. Failed maps to the backend's repeatable
+ * `severity=` (error + critical); Needs you to unacknowledged
+ * `requires_action`.
  */
-describe('Monitor Events severity filter', () => {
+describe('Monitor feed status filter', () => {
 	beforeEach(() => {
 		setToken('mock-access-token');
 		worker.use(...monitorHandlers);
 	});
 
-	function currentParams() {
-		return new URLSearchParams(screen.getByTestId('location-search').textContent ?? '');
-	}
-
-	it('selecting Error narrows the feed and writes the severity param', async () => {
+	it('Failed narrows the feed to error/critical and writes ?status=failed', async () => {
+		const seen: URLSearchParams[] = [];
+		worker.events.on('request:start', ({ request }) => {
+			const url = new URL(request.url);
+			if (url.pathname === '/events') seen.push(url.searchParams);
+		});
 		const user = userEvent.setup();
-		renderMonitor('/app/monitor?tab=events');
+		renderMonitor('/app/monitor?view=activity');
+		await screen.findByRole('link', { name: 'Import completed' });
 
-		// Both fixture events render first (error + info).
-		await screen.findByText('Execution failed: github-api');
-		await screen.findByText('Import completed');
+		await user.click(toggle('Status', 'Failed'));
 
-		await user.click(screen.getByRole('button', { name: 'Error' }));
-
-		// The URL carries severity=error and the info event drops out.
-		await waitFor(() => {
-			expect(currentParams().get('severity')).toBe('error');
-		});
-		await waitFor(() => {
-			expect(screen.queryByText('Import completed')).not.toBeInTheDocument();
-		});
-		expect(screen.getAllByText('Execution failed: github-api').length).toBeGreaterThanOrEqual(
-			1,
-		);
-	});
-
-	it('critical and error are independent chips (selecting Critical hides an error event) (#617)', async () => {
-		const user = userEvent.setup();
-		renderMonitor('/app/monitor?tab=events');
-		await screen.findByText('Execution failed: github-api');
-
-		// The fixture's failure is severity "error"; selecting ONLY Critical must
-		// therefore hide it — proving the chips don't silently coalesce (the exact
-		// confusion #617 reported). Both remain selectable together for "failures".
-		await user.click(screen.getByRole('button', { name: 'Critical' }));
-		await waitFor(() => {
-			expect(currentParams().get('severity')).toBe('critical');
-		});
-		await waitFor(() => {
-			expect(screen.queryByText('Execution failed: github-api')).not.toBeInTheDocument();
-		});
-
-		// Adding Error back brings the failure in; the param preserves canonical order.
-		await user.click(screen.getByRole('button', { name: 'Error' }));
-		await waitFor(() => {
-			expect(currentParams().get('severity')).toBe('critical,error');
-		});
+		await waitFor(() => expect(currentParams().get('status')).toBe('failed'));
 		await waitFor(() => {
 			expect(
-				screen.getAllByText('Execution failed: github-api').length,
-			).toBeGreaterThanOrEqual(1);
+				screen.queryByRole('link', { name: 'Import completed' }),
+			).not.toBeInTheDocument();
 		});
+		expect(
+			screen.getByRole('link', { name: 'Execution failed: github-api' }),
+		).toBeInTheDocument();
+		expect(seen[seen.length - 1]?.getAll('severity').sort()).toEqual(['critical', 'error']);
+		worker.events.removeAllListeners();
 	});
 
-	it('hydrates the selected severity from the URL and clears it', async () => {
+	it('Needs you shows only unacknowledged action events', async () => {
 		const user = userEvent.setup();
-		renderMonitor('/app/monitor?tab=events&severity=info');
+		renderMonitor('/app/monitor?view=activity');
+		await screen.findByRole('link', { name: 'Import completed' });
 
-		// Only the info event survives an initial severity=info deep-link.
-		await screen.findByText('Import completed');
-		expect(screen.queryByText('Execution failed: github-api')).not.toBeInTheDocument();
-		expect(screen.getByRole('button', { name: 'Info' })).toHaveAttribute(
-			'aria-pressed',
-			'true',
-		);
+		await user.click(toggle('Status', 'Needs you'));
 
-		await user.click(screen.getByRole('button', { name: 'Clear' }));
-		await waitFor(() => {
-			expect(currentParams().get('severity')).toBeNull();
-		});
+		await waitFor(() => expect(currentParams().get('status')).toBe('action'));
 		await waitFor(() => {
 			expect(
-				screen.getAllByText('Execution failed: github-api').length,
-			).toBeGreaterThanOrEqual(1);
+				screen.queryByRole('link', { name: 'Import completed' }),
+			).not.toBeInTheDocument();
 		});
+		expect(
+			screen.getByRole('link', { name: 'Execution failed: github-api' }),
+		).toBeInTheDocument();
+	});
+
+	it('an empty filtered feed offers "Show everything" and it clears the status', async () => {
+		const user = userEvent.setup();
+		worker.use(
+			http.get('/events', () =>
+				HttpResponse.json({ data: [], has_more: false, next_cursor: null }),
+			),
+		);
+		renderMonitor('/app/monitor?view=activity&status=action');
+
+		expect(await screen.findByText('Nothing matches')).toBeInTheDocument();
+		expect(toggle('Status', 'Needs you')).toHaveAttribute('aria-pressed', 'true');
+
+		await user.click(screen.getByRole('button', { name: 'Show everything' }));
+		await waitFor(() => expect(currentParams().get('status')).toBeNull());
+		expect(await screen.findByText('No activity yet')).toBeInTheDocument();
 	});
 });

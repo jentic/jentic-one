@@ -1,179 +1,256 @@
 /**
- * Executions tab — the execution trace log.
+ * API calls — the execution trace log, one source of the Activity view.
  *
- * Lists `GET /executions` newest-first in the columned execution
- * table (see ExecutionTable), filterable by lifecycle status. Status renders
- * off the UI status union (mapped from the bare wire string), never the raw
- * value, so an unknown server status degrades to a neutral pill rather than a
- * broken colour. Clicking a row opens the trace detail sheet.
+ * Lists `GET /executions` newest-first in the shared log layout (see LogList):
+ * the operation as the sentence, who called it, the API, and duration + HTTP
+ * status. The status narrowing lives in the Activity toolbar
+ * (`?status=completed|failed`); this body reads it. Status renders off the UI
+ * status union (mapped from the bare wire string), never the raw value, so an
+ * unknown server status degrades to a neutral glyph. Clicking a row opens its
+ * trace in the detail pane. The first page quietly re-polls so new calls
+ * appear without a manual refresh — unless a fixed range is being viewed.
  */
+import { useMemo } from 'react';
 import { useSearchParams } from 'react-router';
-import { Activity } from 'lucide-react';
-import { Button, EmptyState, ErrorAlert, RefreshButton, SegmentedToggle } from '@/shared/ui';
-import { useExecutions } from '@/modules/monitor/api';
-import { TraceDetailSheet } from '@/modules/monitor/components/TraceDetailSheet';
+import { Activity, ChevronRight, X } from 'lucide-react';
+import { ActorLabel, Button, EmptyState, ErrorAlert, SkeletonRows, VendorIcon } from '@/shared/ui';
+import { cn } from '@/shared/lib/utils';
+import { toExecutionStatus, useExecutions, type ExecutionResponse } from '@/modules/monitor/api';
 import { CursorPager } from '@/modules/monitor/components/CursorPager';
-import { ExecutionTable } from '@/modules/monitor/components/ExecutionTable';
+import { groupByDay, LogDay, LogList, LogRow } from '@/modules/monitor/components/LogList';
+import { LogLayout } from '@/modules/monitor/components/LogDetailPane';
+import { RecordDetail } from '@/modules/monitor/components/RecordDetail';
 import { useMonitorFilters } from '@/modules/monitor/lib/useMonitorFilters';
 import { useCursorStack } from '@/modules/monitor/lib/useCursorStack';
+import { detailKey, useLogDetail, type LogDetail } from '@/modules/monitor/lib/useLogDetail';
 import { hasTrace } from '@/modules/monitor/lib/links';
+import { formatDuration } from '@/modules/monitor/lib/format';
+import { EXECUTION_LABEL, EXECUTION_TONE } from '@/modules/monitor/lib/logVocabulary';
+import {
+	CALL_STATUS_WIRE,
+	useStatusFilter,
+	type CallStatus,
+} from '@/modules/monitor/lib/statusFilters';
 
-type StatusFilter = 'all' | 'completed' | 'failed';
+/** How often the newest page of calls re-polls (older pages stay put). */
+const CALLS_POLL_MS = 10_000;
 
-const STATUS_FILTERS: { value: StatusFilter; label: string }[] = [
-	{ value: 'all', label: 'All' },
-	{ value: 'completed', label: 'Completed' },
-	{ value: 'failed', label: 'Failed' },
-];
-
-function isStatusFilter(value: string | null): value is StatusFilter {
-	return value === 'all' || value === 'completed' || value === 'failed';
+/** A usable trace opens the whole trace; a header-less run opens just itself. */
+function detailFor(row: ExecutionResponse): LogDetail {
+	return hasTrace(row.trace_id)
+		? { kind: 'trace', id: row.trace_id }
+		: { kind: 'execution', id: row.execution_id };
 }
 
-// The backend's ExecutionStatus enum is terminal-only — it accepts exactly
-// `completed` and `failed`, and 422s on any other value (see the executions
-// router's `_TERMINAL_STATUSES` guard). There is no "running" execution to
-// filter on, so we send the exact wire value for the chosen terminal status.
-const FILTER_WIRE: Record<Exclude<StatusFilter, 'all'>, string[]> = {
-	completed: ['completed'],
-	failed: ['failed'],
-};
+function apiName(row: ExecutionResponse): string {
+	return row.api?.name ?? row.api?.host ?? 'Unknown API';
+}
+
+function httpTone(status: number): string {
+	if (status >= 500) return 'text-danger';
+	if (status >= 400) return 'text-warning';
+	return 'text-muted-foreground';
+}
 
 export function ExecutionsTab() {
 	const [searchParams, setSearchParams] = useSearchParams();
-	const statusParam = searchParams.get('status');
-	const statusFilter: StatusFilter = isStatusFilter(statusParam) ? statusParam : 'all';
-	const openTraceId = searchParams.get('trace_id');
-	const openExecutionId = searchParams.get('execution_id');
+	const { status: statusFilter, setStatus: setStatusFilter } =
+		useStatusFilter<CallStatus>('calls');
+	const { detail, open, close, docked } = useLogDetail('calls');
+	const openKey = detailKey(detail);
+	// `?api=vendor:name` — set by the Overview breakdown's drill-down.
+	const apiFilter = searchParams.get('api') || null;
 
-	const setStatusFilter = (value: StatusFilter) => {
+	const clearApiFilter = () => {
 		setSearchParams(
 			(prev) => {
 				const next = new URLSearchParams(prev);
-				if (value === 'all') next.delete('status');
-				else next.set('status', value);
+				next.delete('api');
 				return next;
 			},
 			{ replace: true },
 		);
 	};
 
-	// Open a row's detail sheet. A usable trace deep-links by `trace_id` (so the
-	// sheet can group the whole trace); a header-less run ("unknown" trace) falls
-	// back to `execution_id` so we still show that one execution.
-	const openExecution = (row: { trace_id: string | null; execution_id: string }) => {
-		setSearchParams(
-			(prev) => {
-				const next = new URLSearchParams(prev);
-				next.delete('trace_id');
-				next.delete('execution_id');
-				if (hasTrace(row.trace_id)) next.set('trace_id', row.trace_id);
-				else next.set('execution_id', row.execution_id);
-				return next;
-			},
-			{ replace: false },
-		);
-	};
-
-	const closeSheet = () => {
-		setSearchParams(
-			(prev) => {
-				const next = new URLSearchParams(prev);
-				next.delete('trace_id');
-				next.delete('execution_id');
-				return next;
-			},
-			{ replace: false },
-		);
-	};
-
-	const status = statusFilter === 'all' ? null : FILTER_WIRE[statusFilter];
+	const status = statusFilter === 'all' ? null : CALL_STATUS_WIRE[statusFilter];
 	const filters = useMonitorFilters();
 	const filterKey = JSON.stringify({
 		status,
 		from: filters.from,
+		to: filters.to,
 		actorId: filters.actorId,
 		origin: filters.origin,
+		api: apiFilter,
 	});
 	const pager = useCursorStack(filterKey);
-	const query = useExecutions({
-		status,
-		from: filters.from,
-		actorId: filters.actorId,
-		origin: filters.origin,
-		cursor: pager.cursor,
-	});
-	const rows = query.data?.data ?? [];
+	const query = useExecutions(
+		{
+			status,
+			from: filters.from,
+			to: filters.to,
+			actorId: filters.actorId,
+			origin: filters.origin,
+			api: apiFilter,
+			cursor: pager.cursor,
+		},
+		{ refetchInterval: pager.hasPrev || filters.to ? false : CALLS_POLL_MS },
+	);
+	const rows = useMemo(() => query.data?.data ?? [], [query.data]);
+	const days = useMemo(() => groupByDay(rows, (r) => Date.parse(r.started_at)), [rows]);
 	// Distinguish a still-loading first paint from a genuinely empty result so we
-	// don't flash the empty state while a filter/tab switch is in flight.
+	// don't flash the empty state while a filter/source switch is in flight.
 	const showEmpty = rows.length === 0 && !query.isLoading && !query.isFetching;
+	const narrowed = statusFilter !== 'all' || apiFilter != null || filters.range != null;
 
 	return (
-		<div className="space-y-4">
-			<div className="flex items-center justify-between gap-2">
-				<SegmentedToggle
-					options={STATUS_FILTERS}
-					value={statusFilter}
-					onChange={setStatusFilter}
-				/>
-				<RefreshButton onRefresh={() => query.refetch()} pending={query.isFetching} />
+		<LogLayout
+			detail={detail}
+			docked={docked}
+			onClose={close}
+			renderDetail={(d, frame) => <RecordDetail detail={d} frame={frame} />}
+		>
+			<div className="space-y-3">
+				{apiFilter && (
+					<div className="flex items-center gap-2">
+						<Button
+							variant="outline"
+							size="sm"
+							onClick={clearApiFilter}
+							aria-label={`Clear API filter ${apiFilter.replace(/:/g, '/')}`}
+						>
+							API: {apiFilter.replace(/:/g, '/')}
+							<X className="h-3.5 w-3.5" aria-hidden="true" />
+						</Button>
+					</div>
+				)}
+
+				{query.isError ? (
+					<ErrorAlert
+						message={
+							query.error instanceof Error
+								? query.error
+								: 'Failed to load executions.'
+						}
+						onRetry={() => query.refetch()}
+						retrying={query.isFetching}
+					/>
+				) : showEmpty ? (
+					<EmptyState
+						icon={<Activity className="h-8 w-8" />}
+						title={narrowed ? 'No matching calls' : 'No API calls yet'}
+						description={
+							narrowed
+								? 'No calls match the current filters.'
+								: 'Calls will appear here once your agents start using APIs through Jentic.'
+						}
+						action={
+							statusFilter !== 'all' ? (
+								<Button
+									variant="ghost"
+									size="sm"
+									onClick={() => setStatusFilter('all')}
+									className="text-primary hover:text-primary font-medium hover:underline"
+								>
+									Clear filter
+								</Button>
+							) : undefined
+						}
+					/>
+				) : (
+					<LogList
+						ariaLabel="Executions"
+						columns={{ actor: 'Called by', subject: 'API', detail: 'Took · HTTP' }}
+					>
+						{query.isLoading ? (
+							<SkeletonRows rows={8} className="px-4" />
+						) : (
+							days.map((day) => (
+								<LogDay key={day.key} label={day.label}>
+									{day.items.map((row) => {
+										const s = toExecutionStatus(row.status);
+										const d = detailFor(row);
+										const op = row.operation_id ?? 'Unnamed operation';
+										return (
+											<LogRow
+												key={row.execution_id}
+												tsMs={Date.parse(row.started_at)}
+												tone={EXECUTION_TONE[s]}
+												statusLabel={EXECUTION_LABEL[s]}
+												title={op}
+												mono
+												error={row.error}
+												secondary={
+													row.credential_name ??
+													row.credential_id ??
+													undefined
+												}
+												actor={
+													row.actor_id ? (
+														<ActorLabel
+															actorId={row.actor_id}
+															actorType={row.actor_type}
+														/>
+													) : (
+														row.actor_type
+													)
+												}
+												subject={
+													<>
+														<VendorIcon
+															name={apiName(row)}
+															vendor={row.api?.vendor ?? undefined}
+															size="sm"
+															className="h-4.5 w-4.5 shrink-0 rounded text-[7px]"
+														/>
+														<span className="truncate">
+															{apiName(row)}
+														</span>
+													</>
+												}
+												detail={
+													<>
+														{formatDuration(row.duration_ms)}
+														{row.http_status != null && (
+															<span
+																className={cn(
+																	'ml-2',
+																	httpTone(row.http_status),
+																)}
+															>
+																{row.http_status}
+															</span>
+														)}
+													</>
+												}
+												action={
+													<ChevronRight
+														className="text-muted-foreground/60 h-4 w-4"
+														aria-hidden="true"
+													/>
+												}
+												label={`View trace for ${op}`}
+												active={openKey === detailKey(d)}
+												onOpen={() => open(d)}
+											/>
+										);
+									})}
+								</LogDay>
+							))
+						)}
+					</LogList>
+				)}
+
+				{!query.isError && !showEmpty && (
+					<CursorPager
+						hasMore={query.data?.has_more ?? false}
+						hasPrev={pager.hasPrev}
+						onOlder={() => pager.pushNext(query.data?.next_cursor)}
+						onNewer={pager.goPrev}
+						page={pager.page}
+						loading={query.isFetching}
+					/>
+				)}
 			</div>
-
-			{query.isError ? (
-				<ErrorAlert
-					message={
-						query.error instanceof Error ? query.error : 'Failed to load executions.'
-					}
-					onRetry={() => query.refetch()}
-					retrying={query.isFetching}
-				/>
-			) : showEmpty ? (
-				<EmptyState
-					icon={<Activity className="h-8 w-8" />}
-					title={statusFilter === 'all' ? 'No executions yet' : 'No matching executions'}
-					description={
-						statusFilter === 'all'
-							? 'Execution traces will appear here once your agents start making API calls.'
-							: 'No execution traces match the current status filter.'
-					}
-					action={
-						statusFilter !== 'all' ? (
-							<Button
-								variant="ghost"
-								size="sm"
-								onClick={() => setStatusFilter('all')}
-								className="text-primary hover:text-primary font-medium hover:underline"
-							>
-								Clear filter
-							</Button>
-						) : undefined
-					}
-				/>
-			) : (
-				<ExecutionTable
-					executions={rows}
-					isLoading={query.isLoading}
-					onRowClick={openExecution}
-				/>
-			)}
-
-			{!query.isError && !showEmpty && (
-				<CursorPager
-					hasMore={query.data?.has_more ?? false}
-					hasPrev={pager.hasPrev}
-					onOlder={() => pager.pushNext(query.data?.next_cursor)}
-					onNewer={pager.goPrev}
-					page={pager.page}
-					loading={query.isFetching}
-				/>
-			)}
-
-			<TraceDetailSheet
-				traceId={openTraceId}
-				executionId={openExecutionId}
-				open={openTraceId != null || openExecutionId != null}
-				onClose={closeSheet}
-			/>
-		</div>
+		</LogLayout>
 	);
 }

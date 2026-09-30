@@ -241,6 +241,7 @@ def _credential_binding_response(view: CredentialBindingView) -> CredentialBindi
         name=view.name,
         bound_at=view.bound_at,
         suspended=view.suspended,
+        suspended_reason=view.suspended_reason,
         rule_set_id=view.rule_set_id,
         serves=view.serves,
     )
@@ -269,8 +270,8 @@ async def bind_credential(
 ) -> CredentialBindingResponse:
     """Directly bind a credential to an agent (theme 5 phase 1).
 
-    The caller must be able to see the target credential; a credential that
-    does not exist or is outside the caller's visibility returns 404.
+    The caller must own the target credential (or hold ``org:admin``); a
+    credential that does not exist or that the caller does not own returns 404.
     """
     binding = await agent_svc.bind_credential(
         agent_id, credential_id=body.credential_id, identity=identity
@@ -291,7 +292,7 @@ async def unbind_credential(
         description=(
             "Default false: the binding is suspended (reversible; its permission"
             " rules survive and :resume restores access). true deletes the"
-            " binding row outright."
+            " binding row outright, together with its inline permission rules."
         ),
     ),
     identity: Identity = get_current_identity(required_permissions=["agents:write"]),

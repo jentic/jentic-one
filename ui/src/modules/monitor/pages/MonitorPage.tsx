@@ -1,160 +1,262 @@
 /**
  * Monitor module — the observability surface for jentic-one.
  *
- * A single tabbed page with four lenses over platform activity:
- *   - Executions  the execution trace log (+ trace detail)
- *   - Jobs        the async job queue (+ job detail, cancel)
- *   - Events      platform events with a live SSE stream + acknowledge
- *   - Audit       the audit log = actor lens; deep-links into the others
+ * One page, two layouts:
  *
- * The active tab is held in the `?tab=` search param so it's deep-linkable and
- * the browser back button moves between lenses. Tabs themselves are built in
- * the per-tab todos; this page owns the shell + tab switching.
+ *   Overview   (default, org:admin) a stat strip over a split: the usage
+ *              charts on the left, the live activity stream docked on the
+ *              right. "Expand" opens the stream into the full log.
+ *   Activity   (`?view=activity`, or any `?show=`) the activity log at full
+ *              width — Everything plus the API-calls / Jobs / Audit-log
+ *              sources behind it. "Overview" folds it back into the panel.
+ *              Members only ever get this layout (usage is org:admin).
+ *
+ * Expanding and collapsing are view transitions: the docked panel and the
+ * full log share the activity stream's transition name, so the panel grows
+ * into the page (and shrinks back) instead of cutting.
+ *
+ * Links from before the redesign carried a `?tab=` vocabulary; they're
+ * rewritten on arrival (see LEGACY_TABS).
  */
+import { useEffect } from 'react';
 import { useSearchParams } from 'react-router';
-import { useEffect, type ReactNode } from 'react';
-import {
-	Activity as ActivityIcon,
-	BellRing,
-	LayoutDashboard,
-	ListTodo,
-	ScrollText,
-} from 'lucide-react';
-import { PageShell, PageHeader, PageHelp, TabNav, type TabNavOption } from '@/shared/ui';
-import { MONITOR_TABS, type MonitorTab } from '@/modules/monitor/api';
-import { OverviewTab } from '@/modules/monitor/components/OverviewTab';
-import { ExecutionsTab } from '@/modules/monitor/components/ExecutionsTab';
-import { JobsTab } from '@/modules/monitor/components/JobsTab';
-import { EventsTab } from '@/modules/monitor/components/EventsTab';
-import { AuditTab } from '@/modules/monitor/components/AuditTab';
+import { ArrowLeft, Maximize2 } from 'lucide-react';
+import { Button, CardFooter, PageShell, PageHeader, PageHelp } from '@/shared/ui';
+import { ActivityStreamPanel } from '@/shared/app/rail/ActivityStreamPanel';
+import { activityStreamVtStyle, withViewTransition } from '@/shared/app/viewTransitions';
+import { ACTIVITY_SOURCES, type ActivitySource } from '@/modules/monitor/api';
+import { ActivityView, SOURCE_SCOPED_PARAMS } from '@/modules/monitor/components/ActivityView';
 import { MonitorFilterBar } from '@/modules/monitor/components/MonitorFilterBar';
+import { MonitorOverview, type LinkBase } from '@/modules/monitor/components/MonitorOverview';
+import { RefreshControl } from '@/modules/monitor/components/RefreshControl';
+import { StatStrip, StatStripSkeleton } from '@/modules/monitor/components/StatStrip';
+import { monitorHref } from '@/modules/monitor/lib/links';
+import { DEFAULT_WINDOW, useMonitorFilters } from '@/modules/monitor/lib/useMonitorFilters';
+import { AUTO_REFRESH_MS, useUsageOverview } from '@/modules/monitor/lib/useUsageOverview';
+import { usePermission, ORG_ADMIN } from '@/modules/monitor/lib/usePermission';
 
 /**
- * Lens options — same underline TabNav grammar as the detail consoles.
- * Derived from a `Record` keyed by `MonitorTab` so adding a lens to the union
- * without wiring its label/icon fails the type-check instead of silently
- * disappearing from the UI.
+ * Pre-redesign `?tab=` values → what replaces them. `expand` opens the full
+ * log; `show` picks its source. Anything else lands on the Overview.
  */
-const TAB_META: Record<MonitorTab, { label: string; icon: ReactNode }> = {
-	overview: { label: 'Overview', icon: <LayoutDashboard className="h-4 w-4" /> },
-	executions: { label: 'Executions', icon: <ActivityIcon className="h-4 w-4" /> },
-	jobs: { label: 'Jobs', icon: <ListTodo className="h-4 w-4" /> },
-	events: { label: 'Events', icon: <BellRing className="h-4 w-4" /> },
-	audit: { label: 'Audit', icon: <ScrollText className="h-4 w-4" /> },
+const LEGACY_TABS: Record<string, { expand?: boolean; show?: ActivitySource }> = {
+	overview: {},
+	usage: {},
+	activity: { expand: true },
+	events: { expand: true },
+	executions: { show: 'calls' },
+	jobs: { show: 'jobs' },
+	audit: { show: 'audit' },
 };
 
-const TAB_OPTIONS: TabNavOption<MonitorTab>[] = MONITOR_TABS.map((tab) => ({
-	value: tab,
-	...TAB_META[tab],
-}));
+/** Params only the expanded log understands — dropped when folding it back. */
+const LOG_SCOPED_PARAMS = [...SOURCE_SCOPED_PARAMS, 'show', 'view', 'severity', 'from', 'to'];
 
-const tabId = (tab: string) => `monitor-tab-${tab}`;
-const panelId = (tab: string) => `monitor-panel-${tab}`;
+function isActivitySource(value: string | null): value is ActivitySource {
+	return value != null && (ACTIVITY_SOURCES as string[]).includes(value);
+}
 
-function isMonitorTab(value: string | null): value is MonitorTab {
-	return value != null && (MONITOR_TABS as string[]).includes(value);
+function windowLabel(days: number): string {
+	return days === 1 ? '24h' : `${days}d`;
 }
 
 export default function MonitorPage() {
 	const [searchParams, setSearchParams] = useSearchParams();
-	const tabParam = searchParams.get('tab');
-	// Overview leads the toggle and is the default landing lens — the headline
-	// usage/health view — when no `?tab=` is present. The other lenses are one
-	// click (and deep-linkable) away.
-	const activeTab: MonitorTab = isMonitorTab(tabParam) ? tabParam : 'overview';
+	const isAdmin = usePermission(ORG_ADMIN);
+	const filters = useMonitorFilters();
 
-	// Deprecation-window scrub (theme-5 5d) — DELETE IN 6b. Pre-5b deep links
-	// could carry `?toolkit_id=…`; the filter vocabulary dropped it when
-	// toolkits were retired (5b). Unknown params are already ignored by every
-	// filter reader, but `setSearchParams((prev) => …)` copies them forward on
-	// each tab/filter change, so a dead `toolkit_id` would ride along forever.
-	// Drop it once on arrival (replace: no history entry for the scrub).
+	const tabParam = searchParams.get('tab');
+	const showParam = searchParams.get('show');
+	// The Audit log is org:admin; anyone else asking for it lands on Everything.
+	const sources = isAdmin ? ACTIVITY_SOURCES : ACTIVITY_SOURCES.filter((s) => s !== 'audit');
+	const source: ActivitySource =
+		isActivitySource(showParam) && sources.includes(showParam) ? showParam : 'all';
+	const expanded = !isAdmin || searchParams.get('view') === 'activity' || source !== 'all';
+
+	const usage = useUsageOverview({ enabled: isAdmin && !expanded });
+
+	// Arrival rewrites (replace: no history entry). Legacy `?tab=` values map
+	// onto the new vocabulary; the rest are retired params.
+	//  - `toolkit_id`: deprecation-window scrub (theme-5 5d) — DELETE IN 6b.
+	//    Pre-5b deep links could carry it, and `setSearchParams((prev) => …)`
+	//    would otherwise copy it forward on every change.
+	//  - `live`: the old Events tab's opt-in; the feed is always live now.
+	//  - `lens`: the old Usage tab's breakdown lens; the charts own it now.
 	useEffect(() => {
-		if (!searchParams.has('toolkit_id')) return;
+		const legacy = tabParam ? (LEGACY_TABS[tabParam] ?? {}) : undefined;
+		const retired = ['toolkit_id', 'live', 'lens'].filter((k) => searchParams.has(k));
+		if (!legacy && retired.length === 0) return;
 		setSearchParams(
 			(prev) => {
 				const next = new URLSearchParams(prev);
-				next.delete('toolkit_id');
+				for (const k of retired) next.delete(k);
+				if (legacy) {
+					next.delete('tab');
+					if (legacy.show) next.set('show', legacy.show);
+					else if (legacy.expand) next.set('view', 'activity');
+					// The old Events tab's filters don't carry over to the feed.
+					if (tabParam === 'events') {
+						next.delete('status');
+						next.delete('severity');
+					}
+				}
 				return next;
 			},
 			{ replace: true },
 		);
-	}, [searchParams, setSearchParams]);
+	}, [tabParam, searchParams, setSearchParams]);
 
-	const setTab = (tab: string) => {
-		setSearchParams(
-			(prev) => {
-				const next = new URLSearchParams(prev);
-				next.set('tab', tab);
-				// Switching lens drops any detail-sheet / per-tab filter params
-				// that only make sense within the previous tab, so a back-and-forth
-				// doesn't reopen a stale sheet. The GLOBAL filters (days / actor_id /
-				// actor_type) are deliberately preserved across tabs.
-				for (const k of [
-					'trace_id',
-					'execution_id',
-					'job_id',
-					'status',
-					'live',
-					'target_id',
-					'target_type',
-					'cursor',
-					// Executions-only origin scope (local-MCP 2-E2); no other
-					// lens supports it, so it doesn't survive a switch.
-					'origin',
-				]) {
-					next.delete(k);
-				}
-				return next;
-			},
-			{ replace: false },
+	const setExpanded = (open: boolean) =>
+		withViewTransition(() =>
+			setSearchParams(
+				(prev) => {
+					const next = new URLSearchParams(prev);
+					// The GLOBAL filters (days / actor_id / actor_type) survive;
+					// everything the log alone understands (source, status, open
+					// sheets) is dropped so nothing stale reopens.
+					for (const k of LOG_SCOPED_PARAMS) next.delete(k);
+					if (open) next.set('view', 'activity');
+					return next;
+				},
+				{ replace: false },
+			),
 		);
+
+	// Carry the window + actor into every drill-down; the default window is
+	// implicit (no `days` param means 7d everywhere).
+	const linkBase: LinkBase = {
+		days: String(usage.days) === DEFAULT_WINDOW ? undefined : usage.days,
+		actorId: filters.actorId ?? undefined,
+		actorType: filters.actorType ?? undefined,
 	};
+	const hasData = !!usage.overview && usage.overview.totalExecutions > 0;
 
 	return (
 		<PageShell>
 			<PageHeader
 				title="Monitor"
-				subtitle="Execution traces, async jobs, platform events, and the audit log."
+				subtitle={
+					isAdmin
+						? 'How much your agents are doing, how well — and what they’re doing right now.'
+						: 'Everything your agents and the platform are doing, live.'
+				}
 				actions={
 					<PageHelp
 						title="About Monitor"
-						intro="Monitor is the observability surface for jentic-one — four lenses over what your agents and the platform are doing."
+						intro="Monitor shows what your agents and the platform are doing. The time window and actor filters apply to whatever you're looking at."
 						sections={[
+							...(isAdmin
+								? [
+										{
+											heading: 'Overview',
+											body: 'The strip up top is the window at a glance — calls, success rate, latency, failures and how many APIs saw traffic. Below it, the volume, bubble and breakdown charts show where the traffic went; one API keeps one colour across all three. Click a number or a breakdown row to jump to the matching API calls.',
+										},
+									]
+								: []),
 							{
-								heading: 'Executions & Jobs',
-								body: 'Executions is the trace log of finished API calls; Jobs is the async work queue. Click any row to open its detail sheet; admins can cancel a non-terminal job from there.',
+								heading: 'Live activity',
+								body: 'Platform events — calls, jobs, approvals, alerts — newest first, as they happen. Acknowledge alerts right from the row. On the Overview it sits docked on the right; Expand opens the full log.',
 							},
 							{
-								heading: 'Events & Audit',
-								body: 'Events streams platform events live (toggle Go live) and lets you acknowledge ones that need action. Audit is the org-admin actor log — who did what — and is where execution/job actor attribution lives.',
+								heading: 'The full log',
+								body: 'Everything is the live feed with history, pause and filters. API calls is the trace log of every call (with origin filter); Jobs is the async work queue (admins can cancel from the detail sheet); the Audit log is the org-admin record of who changed what. Click any row for its detail.',
 							},
 						]}
 					/>
 				}
 			/>
-			<TabNav<MonitorTab>
-				ariaLabel="Monitor lenses"
-				options={TAB_OPTIONS}
-				value={activeTab}
-				onChange={(tab) => setTab(tab)}
-				getTabId={tabId}
-				getControls={panelId}
-			/>
-			{activeTab !== 'overview' && <MonitorFilterBar tab={activeTab} />}
-			<div
-				role="tabpanel"
-				id={panelId(activeTab)}
-				aria-labelledby={tabId(activeTab)}
-				tabIndex={0}
-				className="focus-visible:outline-none"
-			>
-				{activeTab === 'overview' && <OverviewTab />}
-				{activeTab === 'executions' && <ExecutionsTab />}
-				{activeTab === 'jobs' && <JobsTab />}
-				{activeTab === 'events' && <EventsTab />}
-				{activeTab === 'audit' && <AuditTab />}
-			</div>
+
+			{expanded ? (
+				<div style={activityStreamVtStyle}>
+					<ActivityView
+						source={source}
+						sources={sources}
+						leading={
+							isAdmin && (
+								<Button
+									variant="ghost"
+									size="sm"
+									className="text-muted-foreground hover:text-foreground -ml-2 h-[1.875rem] gap-1.5 px-2 text-xs"
+									onClick={() => setExpanded(false)}
+								>
+									<ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
+									Overview
+								</Button>
+							)
+						}
+					/>
+				</div>
+			) : (
+				<div className="space-y-4">
+					<div
+						role="toolbar"
+						aria-label="Monitor filters"
+						className="flex flex-wrap items-center gap-2"
+					>
+						<MonitorFilterBar view="usage" />
+						<RefreshControl
+							className="ml-auto"
+							updatedAt={usage.updatedAt}
+							onRefresh={usage.refresh}
+							intervalMs={AUTO_REFRESH_MS}
+						/>
+					</div>
+
+					{usage.isLoading && <StatStripSkeleton />}
+					{hasData && usage.usage && usage.overview && (
+						<StatStrip
+							key={`${usage.days}-${linkBase.actorId ?? ''}`}
+							overview={usage.overview}
+							usage={usage.usage}
+							apis={usage.apis}
+							windowLabel={windowLabel(usage.days)}
+							callsHref={monitorHref({ show: 'calls', ...linkBase })}
+							failedHref={monitorHref({
+								show: 'calls',
+								status: 'failed',
+								...linkBase,
+							})}
+						/>
+					)}
+
+					<div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(340px,26rem)]">
+						<MonitorOverview
+							state={usage}
+							linkBase={linkBase}
+							hasActor={!!filters.actorId}
+						/>
+						<ActivityStreamPanel
+							// Sticks 1rem under the 3rem top bar and stops 1rem above the
+							// viewport's bottom edge; the log fills whatever's left.
+							className="xl:sticky xl:top-4 xl:h-[calc(100dvh-5rem)]"
+							logClassName="max-h-[480px] xl:h-full xl:max-h-none"
+							actions={
+								<Button
+									variant="ghost"
+									size="sm"
+									className="h-8 w-8 p-0"
+									aria-label="Expand activity to the full log"
+									title="Expand to the full log"
+									onClick={() => setExpanded(true)}
+								>
+									<Maximize2 className="h-4 w-4" aria-hidden="true" />
+								</Button>
+							}
+							footer={
+								<CardFooter className="py-2">
+									<button
+										type="button"
+										onClick={() => setExpanded(true)}
+										className="text-primary text-sm font-medium hover:underline"
+									>
+										Open the full log →
+									</button>
+								</CardFooter>
+							}
+						/>
+					</div>
+				</div>
+			)}
 		</PageShell>
 	);
 }

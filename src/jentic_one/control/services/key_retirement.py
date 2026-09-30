@@ -30,10 +30,10 @@ migrated — retirement never widens access — and each is a report line.
 The job logs one structured line per key (``toolkit_key_retirement``); the
 ``retire-toolkit-keys`` CLI additionally emits each outcome as JSONL on
 stdout so operators can archive the run (the Phase-6a report embeds the same
-identifiers). The combined/control server also runs the job once at startup
-(best-effort, idempotent) so an upgrade migrates resolvable keys without an
-operator step — the CLI remains the recovery path for keys needing
-``--owner``.
+identifiers). The migration runner performs the job as an upgrade step before
+the new version serves traffic, and the combined/control server also runs it
+once at startup (best-effort, idempotent) — the CLI remains the recovery path
+for keys needing ``--owner``.
 
 Lives directly under ``control/services/`` since theme-5 Phase 5b deleted the
 toolkits service package; the job itself runs until Phase 6b retires the
@@ -47,11 +47,13 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
+from jentic_one.control.repos.credential_repo import CredentialRepository
 from jentic_one.control.repos.key_retirement_repo import SYSTEM_ACTOR, KeyRetirementRepository
 from jentic_one.control.repos.permission_rule_set_repo import PermissionRuleSetRepository
 from jentic_one.control.repos.toolkit_binding_repo import ToolkitBindingRepository
 from jentic_one.control.repos.toolkit_key_repo import ToolkitKeyRepository
 from jentic_one.control.repos.toolkit_permission_repo import ToolkitPermissionRepository
+from jentic_one.control.services.run_lock import KEY_RETIREMENT_LOCK_KEY, hold_run_lock
 from jentic_one.shared.context import Context
 
 if TYPE_CHECKING:
@@ -69,14 +71,19 @@ class KeyRetirementOutcome:
     key_id: str
     toolkit_id: str
     toolkit_name: str
-    action: str  # migrated | already_migrated | skipped
-    reason: str | None = None  # revoked | toolkit_inactive | no_lookup_hash | owner_unresolved
+    action: str  # migrated | already_migrated | skipped | failed
+    #: revoked | toolkit_inactive | no_lookup_hash | owner_unresolved | error
+    reason: str | None = None
     #: The successor actor id — ``agnt_`` for runs since theme-8 Phase 1;
     #: pre-theme-8 stamps (already_migrated lines) may still carry ``sva_``
     #: until the SA→agent migration job re-stamps them.
     successor_actor_id: str | None = None
     bound_credential_ids: tuple[str, ...] = ()
     rule_less_credential_ids: tuple[str, ...] = ()
+    #: Bound credentials whose creator is not the successor's owner — the
+    #: toolkit path never compared the two. Informational: the bindings are
+    #: kept (legitimate toolkit sharing produces them too); one WARNING each.
+    cross_owner_credential_ids: tuple[str, ...] = ()
 
 
 #: Report-field → log-key renames: ``credential`` is a redactor key substring
@@ -85,6 +92,7 @@ class KeyRetirementOutcome:
 _LOG_KEY_RENAMES: dict[str, str] = {
     "bound_credential_ids": "bound_cred_ids",
     "rule_less_credential_ids": "rule_less_cred_ids",
+    "cross_owner_credential_ids": "cross_owner_cred_ids",
 }
 
 
@@ -110,7 +118,19 @@ class KeyRetirementService:
         self._ctx = ctx
 
     async def run(self, *, fallback_owner_email: str | None = None) -> list[KeyRetirementOutcome]:
-        """Retire every resolvable toolkit key; return one outcome per key."""
+        """Retire every resolvable toolkit key; return one outcome per key.
+
+        The run holds the key-retirement run lock: the job runs at boot on
+        every control replica, from the migration runner, and from the CLI,
+        and its find-then-create of the successor account is only safe when
+        runs never interleave. The key list is read under the lock, so a run
+        that waited sees the previous run's stamps and reports those keys
+        ``already_migrated``.
+
+        A key that raises is reported ``failed`` (reason ``error``) and the
+        run continues with the next key — one bad row must not strand every
+        key after it. Its partial writes are re-runnable by construction.
+        """
         fallback_owner_id: str | None = None
         if fallback_owner_email is not None:
             async with self._ctx.admin_db.session() as admin_session:
@@ -122,13 +142,28 @@ class KeyRetirementService:
                 raise ValueError(msg)
 
         outcomes: list[KeyRetirementOutcome] = []
-        async with self._ctx.control_db.session() as control_session:
-            keys = await ToolkitKeyRepository.list_all_with_toolkits(control_session)
+        async with hold_run_lock(self._ctx, KEY_RETIREMENT_LOCK_KEY):
+            async with self._ctx.control_db.session() as control_session:
+                keys = await ToolkitKeyRepository.list_all_with_toolkits(control_session)
 
-        for key, toolkit in keys:
-            outcome = await self._retire_key(key, toolkit, fallback_owner_id=fallback_owner_id)
-            outcomes.append(outcome)
-            logger.info("toolkit_key_retirement", **_log_fields(outcome))
+            for key, toolkit in keys:
+                try:
+                    outcome = await self._retire_key(
+                        key, toolkit, fallback_owner_id=fallback_owner_id
+                    )
+                except Exception:
+                    logger.exception(
+                        "toolkit_key_retirement_key_failed", key_id=key.id, toolkit_id=toolkit.id
+                    )
+                    outcome = KeyRetirementOutcome(
+                        key_id=key.id,
+                        toolkit_id=toolkit.id,
+                        toolkit_name=toolkit.name,
+                        action="failed",
+                        reason="error",
+                    )
+                outcomes.append(outcome)
+                logger.info("toolkit_key_retirement", **_log_fields(outcome))
         return outcomes
 
     async def _retire_key(
@@ -179,6 +214,9 @@ class KeyRetirementService:
         # re-runnable state, never a bound actor whose rules are missing.
         async with self._ctx.control_db.transaction() as control_session:
             pairs = await self._load_credential_pairs(control_session, toolkit.id)
+            creators = await CredentialRepository.get_creators_by_ids(
+                control_session, [credential_id for credential_id, _ in pairs]
+            )
             rule_sets: dict[str, str | None] = {}
             rule_less: list[str] = []
             for credential_id, rules in pairs:
@@ -221,6 +259,28 @@ class KeyRetirementService:
         async with self._ctx.control_db.transaction() as control_session:
             await ToolkitKeyRepository.stamp_migrated_actor(control_session, key.id, successor_id)
 
+        cross_owner = tuple(
+            credential_id
+            for credential_id in rule_sets
+            if creators.get(credential_id) is None
+            or creators[credential_id] not in (owner_id, successor_id)
+        )
+        for credential_id in cross_owner:
+            # ``credential`` is a redactor key substring — renamed for the log line.
+            logger.warning(
+                "toolkit_key_retirement_cross_owner_binding",
+                key_id=key.id,
+                toolkit_id=toolkit.id,
+                successor_actor_id=successor_id,
+                owner_id=owner_id,
+                cred_id=credential_id,
+                cred_created_by=creators.get(credential_id),
+                actionable_step=(
+                    "Review the binding; if unexpected, remove it with "
+                    "`DELETE /agents/{agent_id}/credentials/{credential_id}`."
+                ),
+            )
+
         return KeyRetirementOutcome(
             key_id=key.id,
             toolkit_id=toolkit.id,
@@ -229,6 +289,7 @@ class KeyRetirementService:
             successor_actor_id=successor_id,
             bound_credential_ids=tuple(rule_sets),
             rule_less_credential_ids=tuple(rule_less),
+            cross_owner_credential_ids=cross_owner,
         )
 
     @staticmethod

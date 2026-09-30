@@ -23,8 +23,11 @@ from jentic_one.admin.web.schemas.users import (
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.models import InviteState
 from jentic_one.shared.web import get_current_identity
+from jentic_one.shared.web.openapi_responses import conflict, not_found, with_responses
 
 router = APIRouter()
+
+_LAST_ADMIN = "The user is the last active org:admin"
 
 
 def _user_response(view: UserView) -> UserResponse:
@@ -122,7 +125,11 @@ async def update_user(
     return _user_response(view)
 
 
-@router.delete("/users/{user_id}", status_code=204)
+@router.delete(
+    "/users/{user_id}",
+    status_code=204,
+    responses=with_responses(not_found(), conflict(_LAST_ADMIN)),
+)
 async def delete_user(
     user_id: str,
     identity: Identity = get_current_identity(required_permissions=["users:write"]),
@@ -139,7 +146,11 @@ async def delete_user(
     return Response(status_code=204)
 
 
-@router.post("/users/{user_id}:disable", status_code=204)
+@router.post(
+    "/users/{user_id}:disable",
+    status_code=204,
+    responses=with_responses(not_found(), conflict(_LAST_ADMIN)),
+)
 async def disable_user(
     user_id: str,
     identity: Identity = get_current_identity(required_permissions=["users:write"]),

@@ -7,8 +7,13 @@ package localagentcmd
 // (macOS/Linux only): a dedicated per-runtime service user
 // (`_jentic-<runtime>` — `_` prefix, system uid, no login shell, 0700 state
 // dir) owns the context's key material; the entry becomes
-// `sudo -n -H -u <user> /abs/jentic mcp --context <name>`, matched by an
-// argv-pinned NOPASSWD sudoers line.
+// `sudo -n -H -u <user> /usr/local/libexec/jentic/jentic mcp --context <name>`,
+// matched by an argv-pinned NOPASSWD sudoers line. Both name a ROOT-OWNED
+// copy of the running binary (localagent.ServiceBinaryPath), never the
+// operator's own install — the operator uid can rewrite that file, and the
+// sudoers line runs whatever sits at the pinned path as the service uid. The
+// copy is (re)installed root-side on every isolation run whose binary differs,
+// so upgrading jentic and re-running `jentic setup` refreshes it.
 //
 // The CONTAINER rung (§3.7.5's ecosystem-normal variant) is deliberately NOT
 // automated here: no published CLI image exists yet (2-E4 owns publishing
@@ -47,6 +52,17 @@ import (
 // the rung by hand; nothing is rewritten automatically (see the file comment).
 const containerRecipePointer = "Prefer a container? The manual recipe is docs/security/same-host/mcp-same-host-hardening.md (Recipe 3)."
 
+// runningBinaryPath is the fully resolved path of the running jentic binary —
+// the SOURCE the root-owned service copy is installed from. The real file
+// (symlinks followed), so the copy is exactly the binary doing the setup.
+func runningBinaryPath() (string, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	return filepath.EvalSymlinks(exe)
+}
+
 // offerMCPIsolation runs the optional isolation step over the entries that
 // were just written. interactive gates the whole step: a non-interactive run
 // (--yes, pipes, agent sessions) must never trigger a sudo prompt, so it only
@@ -65,7 +81,7 @@ func (a *Cmd) offerMCPIsolation(ctx context.Context, outcomes []mcpcfg.Outcome, 
 	}
 
 	ctxName := activeContextName()
-	binPath, err := mcpcfg.StableBinaryPath()
+	src, err := runningBinaryPath()
 	if ctxName == "" || err != nil {
 		return // registerMCPEntries already reported the gap
 	}
@@ -81,6 +97,13 @@ func (a *Cmd) offerMCPIsolation(ctx context.Context, outcomes []mcpcfg.Outcome, 
 	if _, err := exec.LookPath("docker"); err == nil {
 		fmt.Fprintln(a.Out, theme.Dim.Render(containerRecipePointer))
 	}
+	// An earlier isolation run left a root-owned copy that no longer matches
+	// this binary (jentic was upgraded since): isolating below refreshes it.
+	if installed, current := localagent.ServiceBinaryState(src); installed && !current {
+		fmt.Fprintln(a.Out, theme.Dimf(
+			"The root-owned jentic copy isolated entries run (%s) differs from this jentic; isolating an entry refreshes it.",
+			localagent.ServiceBinaryPath()))
+	}
 
 	// One shared context can only be MOVED once: the operator-side key
 	// removal is offered AFTER the last runtime, never inside the loop —
@@ -88,7 +111,7 @@ func (a *Cmd) offerMCPIsolation(ctx context.Context, outcomes []mcpcfg.Outcome, 
 	// keyless service account while still printing success.
 	isolatedAny := false
 	for _, out := range outcomes {
-		isolated, err := a.isolateSudoShim(ctx, out.Runtime, binPath, ctxName)
+		isolated, err := a.isolateSudoShim(ctx, out.Runtime, src, ctxName)
 		if err != nil {
 			if errors.Is(err, huh.ErrUserAborted) {
 				fmt.Fprintln(a.Out, theme.Dim.Render("MCP isolation cancelled."))
@@ -131,13 +154,19 @@ func (a *Cmd) confirmIsolation(_ mcpcfg.Runtime, title, description string) (boo
 // explicit consent above, with stdio wired to the terminal so the sudo
 // password prompt is visible — never unattended. Ordering is load-bearing:
 // home creation (root-side, 0700, no operator grant) → context export via
-// `sudo install` (the operator never needs access to the home) → the sudoers
-// rule → the entry rewrite, so a failure at any step leaves the working
-// non-isolated entry in place.
-func (a *Cmd) isolateSudoShim(ctx context.Context, rt mcpcfg.Runtime, binPath, ctxName string) (bool, error) {
+// `sudo install` (the operator never needs access to the home) → the
+// root-owned binary copy → the sudoers rule → the entry rewrite, so a failure
+// at any step leaves the working non-isolated entry in place. src is the
+// operator's running jentic binary: it is only ever the SOURCE of the
+// root-owned copy — the rule and the entry name localagent.ServiceBinaryPath.
+func (a *Cmd) isolateSudoShim(ctx context.Context, rt mcpcfg.Runtime, src, ctxName string) (bool, error) {
 	serviceUser := localagent.ServiceUserName(string(rt))
 	homeDir := localagent.ServiceHomeDir(serviceUser)
+	binPath := localagent.ServiceBinaryPath()
 	if err := localagent.ValidateAccount(serviceUser, homeDir); err != nil {
+		return false, err
+	}
+	if err := localagent.ValidateServiceBinarySource(src); err != nil {
 		return false, err
 	}
 	if err := localagent.ValidateMcpSudoersInputs(binPath, ctxName); err != nil {
@@ -146,8 +175,9 @@ func (a *Cmd) isolateSudoShim(ctx context.Context, rt mcpcfg.Runtime, binPath, c
 
 	accepted, err := a.confirmIsolation(rt,
 		fmt.Sprintf("Isolate the %s entry behind service user %s? (requires sudo)", rt, serviceUser),
-		"Creates a no-login system account owning the context's key material, adds one NOPASSWD "+
-			"sudoers line pinned to exactly `jentic mcp --context "+ctxName+"`, and rewrites the entry as a sudo shim.")
+		"Creates a no-login system account owning the context's key material, installs a root-owned copy of "+
+			"jentic at "+binPath+", adds one NOPASSWD sudoers line pinned to exactly `"+binPath+
+			" mcp --context "+ctxName+"`, and rewrites the entry as a sudo shim.")
 	if err != nil {
 		return false, err
 	}
@@ -187,12 +217,14 @@ func (a *Cmd) isolateSudoShim(ctx context.Context, rt mcpcfg.Runtime, binPath, c
 	}
 
 	// 2+3. The ordered privileged plan: home creation (when needed), the
-	//    root-side export installs, then the argv-pinned NOPASSWD line (one
-	//    source user → one target user → exactly the pinned command, on the
-	//    same visudo-validated drop-in plumbing as the launch rule;
-	//    RemoveSudoersCmd — wired into `jentic reset` — reverses it).
+	//    root-side export installs, the root-owned binary copy (a no-op when
+	//    it already matches src; refreshed after an upgrade), then the
+	//    argv-pinned NOPASSWD line (one source user → one target user →
+	//    exactly the pinned command, on the same visudo-validated drop-in
+	//    plumbing as the launch rule; RemoveSudoersCmd and
+	//    RemoveServiceBinaryCmd — wired into `jentic reset` — reverse them).
 	rule := localagent.McpSudoersRule(currentOperator(), serviceUser, binPath, ctxName)
-	for i, step := range sudoShimPrivilegedSteps(!exists, serviceUser, homeDir, staging, mat, rule) {
+	for i, step := range sudoShimPrivilegedSteps(!exists, serviceUser, homeDir, staging, src, mat, rule) {
 		c := step.Cmd
 		c.Stdout, c.Stderr = a.Out, a.Err
 		if err := c.Run(); err != nil {
@@ -214,16 +246,20 @@ func (a *Cmd) isolateSudoShim(ctx context.Context, rt mcpcfg.Runtime, binPath, c
 
 // sudoShimPrivilegedSteps assembles the ordered privileged plan for one
 // runtime's sudo-shim isolation: account + home creation (when the account is
-// new) → context export via root-side `sudo install` → the sudoers rule LAST
-// (the NOPASSWD line must never exist before the material it grants access to
-// is in place). Enumerated so the ordering is assertable in tests without
-// sudo.
-func sudoShimPrivilegedSteps(createAccount bool, serviceUser, homeDir, staging string, mat *exportMaterial, rule string) []localagent.AccountStep {
+// new) → context export via root-side `sudo install` → the root-owned copy of
+// src the rule pins → the sudoers rule LAST (the NOPASSWD line must never
+// exist before the material and the binary it grants access to are in
+// place). Enumerated so the ordering is assertable in tests without sudo.
+func sudoShimPrivilegedSteps(createAccount bool, serviceUser, homeDir, staging, src string, mat *exportMaterial, rule string) []localagent.AccountStep {
 	var steps []localagent.AccountStep
 	if createAccount {
 		steps = append(steps, localagent.CreateServiceAccountCmds(serviceUser, homeDir)...)
 	}
 	steps = append(steps, localagent.ExportInstallCmds(serviceUser, homeDir, staging, mat.relDirs, mat.relFiles())...)
+	steps = append(steps, localagent.AccountStep{
+		What: "install the root-owned jentic copy at " + localagent.ServiceBinaryPath(),
+		Cmd:  localagent.InstallServiceBinaryCmd(src),
+	})
 	steps = append(steps, localagent.AccountStep{
 		What: "install the sudoers rule",
 		Cmd:  localagent.InstallSudoersRuleCmd(rule),

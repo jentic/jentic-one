@@ -58,9 +58,11 @@ def _ctx(
     *,
     account_linking_base_url: str | None = None,
     vendors: VendorRegistryConfig | None = None,
+    public_base_url: str = "",
 ) -> MagicMock:
     ctx = MagicMock()
     ctx.config.broker.account_linking_base_url = account_linking_base_url
+    ctx.config.server.public_base_url = public_base_url
     # A real (default-empty) registry: the 424 arm reverse-maps the API onto
     # a connect key, and a bare MagicMock would explode the .entries scan.
     ctx.config.vendors = vendors or VendorRegistryConfig()
@@ -246,6 +248,23 @@ async def test_not_provisioned_off_registry_keeps_operator_prose(
 
 
 @pytest.mark.asyncio
+async def test_not_provisioned_ignores_public_base_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # server.public_base_url names this deployment, not an account-linking UI:
+    # it must not synthesize a provisioning_url (the path would 404 here).
+    _patch_resolver(monkeypatch, ResolveNotProvisioned("stripe", "", ""))
+
+    with pytest.raises(CredentialNotProvisionedError) as exc:
+        await CredentialService(
+            _ctx(account_linking_base_url=None, public_base_url="https://gw.example.com")
+        ).inject(api_vendor="stripe", api_name="", api_version="", identity=_IDENTITY)
+
+    params = exc.value.directive.parameters  # type: ignore[union-attr]
+    assert "provisioning_url" not in params
+
+
+@pytest.mark.asyncio
 async def test_ambiguous_maps_to_409(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_resolver(monkeypatch, AmbiguousCredentialError("stripe", "", "", 2))
 
@@ -283,6 +302,8 @@ async def test_refresh_transient_maps_to_502_upstream(monkeypatch: pytest.Monkey
         )
     assert exc.value.type == "refresh_transient_error"
     assert exc.value.origin == ErrorOrigin.UPSTREAM
+    assert exc.value.__cause__ is None
+    assert exc.value.__suppress_context__ is True
 
 
 @pytest.mark.asyncio

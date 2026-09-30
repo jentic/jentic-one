@@ -1,9 +1,9 @@
 /**
  * ToastHost — transient toast surface driven by the live agent stream. Pops the
  * latest stream event as a toast when it matches the operator's chosen scope,
- * auto-dismisses after a TTL, and is pinned to the bottom-right (matching the
- * platform toaster) — shifted left of the rail at `xl+` so the two never
- * overlap. Mounted by the shell alongside `AgentRail`.
+ * auto-dismisses after a TTL, and stacks with the platform toaster in the
+ * shell's toast region, which places both. Mounted by the shell alongside
+ * `AgentRail`.
  */
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
@@ -16,8 +16,6 @@ import {
 	isFailureSeverity,
 	matchesToastScope,
 	primaryDestinationFor,
-	RAIL_COLLAPSE_CHANGE_EVENT,
-	RAIL_COLLAPSED_STORAGE_KEY,
 	readToastScope,
 	severityStripeClass,
 	STREAM_KIND_LABEL,
@@ -27,15 +25,6 @@ import {
 } from '@/shared/lib/agentStream';
 import type { InlineActionSpec, StreamEvent, ToastScope } from '@/shared/lib/agentStream';
 import { cn } from '@/shared/lib/utils';
-
-function readRailCollapsed(): boolean {
-	if (typeof window === 'undefined') return false;
-	try {
-		return window.localStorage.getItem(RAIL_COLLAPSED_STORAGE_KEY) === '1';
-	} catch {
-		return false;
-	}
-}
 
 const TOAST_TTL_MS = 6000;
 const MAX_TOASTS = 3;
@@ -51,7 +40,6 @@ export function ToastHost() {
 	const navigate = useNavigate();
 	const [toasts, setToasts] = useState<Toast[]>([]);
 	const [scope, setScope] = useState<ToastScope>(() => readToastScope());
-	const [railCollapsed, setRailCollapsed] = useState<boolean>(() => readRailCollapsed());
 	// Ids the operator has EXPLICITLY dismissed. The insert effect re-runs on
 	// every `scope` change with the same `latest`; without this a failure toast
 	// the operator closed would silently re-appear when scope flips, because the
@@ -68,24 +56,18 @@ export function ToastHost() {
 	// inside the window to polite so AT users hear one interruption, not N.
 	const lastAssertiveAtRef = useRef(0);
 
-	// React to scope + rail-collapse changes (same-tab CustomEvent + cross-tab StorageEvent)
+	// React to scope changes (same-tab CustomEvent + cross-tab StorageEvent)
 	useEffect(() => {
 		function onScope() {
 			setScope(readToastScope());
 		}
-		function onCollapse() {
-			setRailCollapsed(readRailCollapsed());
-		}
 		function onStorage(e: StorageEvent) {
 			if (e.key === TOAST_SCOPE_STORAGE_KEY) setScope(readToastScope());
-			if (e.key === RAIL_COLLAPSED_STORAGE_KEY) setRailCollapsed(readRailCollapsed());
 		}
 		window.addEventListener(TOAST_SCOPE_CHANGE_EVENT, onScope);
-		window.addEventListener(RAIL_COLLAPSE_CHANGE_EVENT, onCollapse);
 		window.addEventListener('storage', onStorage);
 		return () => {
 			window.removeEventListener(TOAST_SCOPE_CHANGE_EVENT, onScope);
-			window.removeEventListener(RAIL_COLLAPSE_CHANGE_EVENT, onCollapse);
 			window.removeEventListener('storage', onStorage);
 		};
 	}, []);
@@ -149,21 +131,10 @@ export function ToastHost() {
 		}
 	}
 
-	// Below xl the rail is hidden → toasts at right-4. At xl+ the rail occupies
-	// the right side (288px open, 40px collapsed) → shift toasts left of it.
-	const xlOffset = railCollapsed ? 'xl:right-14' : 'xl:right-[19rem]';
-
 	if (toasts.length === 0) return null;
 
 	return (
-		<div
-			className={cn(
-				'pointer-events-none fixed right-4 bottom-4 z-[60] flex w-80 flex-col-reverse gap-2',
-				xlOffset,
-			)}
-			role="region"
-			aria-label="Agent notifications"
-		>
+		<div className="flex flex-col-reverse gap-2" role="region" aria-label="Agent notifications">
 			{toasts.map((toast) => (
 				<ToastCard
 					key={toast.id}

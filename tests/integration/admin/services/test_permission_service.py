@@ -32,7 +32,7 @@ from jentic_one.admin.services.permission_service import PermissionService
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import InviteState
-from jentic_one.shared.scopes import RETIRED_SCOPES
+from jentic_one.shared.scopes import DEFAULT_AGENT_SCOPES, RETIRED_SCOPES
 
 pytestmark = pytest.mark.integration
 
@@ -131,6 +131,39 @@ async def test_list_catalogue_includes_org_admin_for_admin(
     entries = await service.list_catalogue(admin_user)
     names = [e.name for e in entries]
     assert ORG_ADMIN in names
+
+
+async def test_list_catalogue_grantable_follows_agent_scope_ceiling(
+    integration_context: Context, regular_user: str, admin_user: str
+) -> None:
+    """``grantable_by_caller`` mirrors what ``POST /agents`` accepts from the caller.
+
+    The regular user holds ``users:write`` (+ implied ``users:read``); add
+    ``agents:write`` so the admin-only exclusion is exercised on a held scope.
+    """
+    async with integration_context.admin_db.session() as session:
+        await UserPermissionGrantRepository.set_permissions(
+            session,
+            regular_user,
+            permissions={USERS_WRITE, "agents:write"},
+            granted_by=None,
+            created_by="usr_test",
+        )
+        await session.commit()
+    service = PermissionService(integration_context)
+
+    grantable = {e.name: e.grantable_by_caller for e in await service.list_catalogue(regular_user)}
+    assert grantable["agents:write"] is False
+    assert grantable[USERS_WRITE] is True
+    assert grantable[USERS_READ] is True
+    assert grantable["agents:read"] is True
+    for scope in DEFAULT_AGENT_SCOPES:
+        assert grantable[scope] is True, scope
+    assert grantable[EVENTS_WRITE] is False
+    assert grantable[CREDENTIALS_WRITE] is False
+
+    admin_view = await service.list_catalogue(admin_user)
+    assert all(e.grantable_by_caller for e in admin_view)
 
 
 async def test_validate_grants_unknown_permission(

@@ -9,6 +9,8 @@
 // a Section's fields/summary, and map it in render.go.
 package install
 
+import "strings"
+
 // Runtime paths the user can install onto.
 const (
 	RuntimeSource = "source" // run from source (uv) on the host
@@ -89,8 +91,8 @@ type Draft struct {
 	MetricsExporter string
 	TracingExporter string
 
-	// Auth (maps to AppConfig.auth). AuthBaseURL overrides canonical_base_url;
-	// when empty it is derived from the server binding.
+	// Auth (maps to server.public_base_url). AuthBaseURL overrides the public
+	// origin; when empty it is derived from the server binding.
 	AuthBaseURL string
 
 	// SSO / external IdP. When SSOEnabled, the config gains an auth.idp block
@@ -252,8 +254,9 @@ func (d *Draft) BrokerURL() string {
 	return "http://" + host + ":" + port
 }
 
-// CanonicalBaseURL is the auth canonical_base_url: the explicit override when
-// set, otherwise the URL derived from the server binding.
+// CanonicalBaseURL is the deployment's public base URL: the explicit override
+// when set, otherwise the URL derived from the server binding. It is what the
+// wizard shows and what `jentic register --url` should target.
 func (d *Draft) CanonicalBaseURL() string {
 	if d.AuthBaseURL != "" {
 		return d.AuthBaseURL
@@ -261,8 +264,43 @@ func (d *Draft) CanonicalBaseURL() string {
 	return d.BaseURL()
 }
 
-// OAuthCallbackURL returns the redirect URI for the direct_oauth2 credential
-// provider, derived from the canonical base URL and the control surface callback path.
-func (d *Draft) OAuthCallbackURL() string {
-	return d.CanonicalBaseURL() + "/credentials/oauth/callback"
+// backendDerivedBaseURL mirrors the backend's bind_origin (shared/config.py)
+// for the server block this draft renders: http://{host}:{port}, with the
+// all-interfaces bind reported as 127.0.0.1. Under Docker the in-container
+// bind is always 0.0.0.0 (see toConfig), so the backend derives 127.0.0.1.
+func (d *Draft) backendDerivedBaseURL() string {
+	host := d.ServerHost
+	if d.IsDocker() || host == "" || host == "0.0.0.0" {
+		host = "127.0.0.1"
+	}
+	port := d.ServerPort
+	if port == "" {
+		port = "8000"
+	}
+	return "http://" + host + ":" + port
+}
+
+// PublicBaseURL is the server.public_base_url to render, or "" to leave it
+// unset. It is written only when the backend cannot derive the right origin on
+// its own — an explicit override, or a Docker install published on a
+// non-loopback host the container cannot see. Leaving it unset keeps every
+// derived URL (OAuth callback, issuer, token audience, SPA login callback)
+// tracking server.port, so a later port change needs no other edit.
+func (d *Draft) PublicBaseURL() string {
+	if base := d.CanonicalBaseURL(); !sameLoopbackOrigin(base, d.backendDerivedBaseURL()) {
+		return base
+	}
+	return ""
+}
+
+// sameLoopbackOrigin reports whether a and b are the same URL, treating the
+// loopback aliases 127.0.0.1 and localhost as one host — a browser reaches
+// the backend's derived 127.0.0.1 origin as either, and the backend accepts
+// both, so pinning public_base_url for a `localhost` answer would needlessly
+// freeze the port.
+func sameLoopbackOrigin(a, b string) bool {
+	norm := func(s string) string {
+		return strings.Replace(s, "://localhost:", "://127.0.0.1:", 1)
+	}
+	return norm(a) == norm(b)
 }

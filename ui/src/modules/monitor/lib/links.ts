@@ -2,18 +2,20 @@
  * Deep-link helpers for the Monitor module.
  *
  * Monitor is a single page (`ROUTES.monitor`, rendered at `/app/monitor`) whose
- * entire view state — active tab, open detail sheet, and per-tab filters — lives
+ * entire view state — active view, source, open detail sheet, and filters — lives
  * in the URL search params so every lens is shareable, bookmarkable, and
  * back-button friendly. These helpers are the one place that knows the param
  * vocabulary:
  *
- *   tab        overview | executions | jobs | events | audit
- *   trace_id   Executions: open the trace detail sheet for this trace
- *   execution_id Executions: open the detail sheet for a single execution
+ *   view       overview (default, omitted) | activity — the expanded log
+ *   show       Activity source: all (default, omitted) | calls | jobs | audit;
+ *              any value implies the expanded log
+ *   trace_id   open the trace detail sheet for this trace (any source; the
+ *              audit log reads it as a filter instead)
+ *   execution_id open the detail sheet for a single execution
  *              (fallback when the row has no usable trace)
- *   job_id     Jobs: open the job detail sheet for this job
- *   status     Executions/Jobs: active status filter (the UI filter value)
- *   live       Events: "1" when the live SSE stream is on
+ *   job_id     open the job detail sheet for this job
+ *   status     per-source status filter (the UI filter value)
  *   target_id  Audit: filter by target (carried from a detail sheet's "View in audit")
  *   target_type Audit: the target's type, required alongside target_id
  *   days       Global: trailing time-window selection (1 | 7 | 30)
@@ -24,10 +26,10 @@
  * query strings (and so cross-references always carry their id).
  *
  * Cross-module callers (the agents console) can't import this module;
- * they build the executions-lens subset via `ROUTE_PATHS.monitorExecutions`
+ * they build the API-calls subset via `ROUTE_PATHS.monitorExecutions`
  * in `shared/app/routes.ts` — keep the param names above in lockstep with it.
  */
-import type { MonitorTab } from '@/modules/monitor/api';
+import type { ActivitySource, MonitorView } from '@/modules/monitor/api';
 import { ROUTES } from '@/shared/app';
 
 /**
@@ -41,12 +43,12 @@ export function hasTrace(traceId: string | null | undefined): traceId is string 
 }
 
 export interface MonitorLinkParams {
-	tab?: MonitorTab;
+	view?: MonitorView;
+	show?: ActivitySource;
 	traceId?: string;
 	executionId?: string;
 	jobId?: string;
 	status?: string;
-	live?: boolean;
 	targetType?: string;
 	targetId?: string;
 	actorId?: string;
@@ -54,16 +56,18 @@ export interface MonitorLinkParams {
 	days?: number;
 }
 
-/** Build a Monitor href with the given lens + deep-link params. */
+/** Build a Monitor href with the given view/source + deep-link params. */
 export function monitorHref(params: MonitorLinkParams): string {
 	const q = new URLSearchParams();
-	if (params.tab) q.set('tab', params.tab);
+	// Defaults stay out of the URL so the canonical Monitor link is bare.
+	if (params.view === 'activity' && (!params.show || params.show === 'all'))
+		q.set('view', 'activity');
+	if (params.show && params.show !== 'all') q.set('show', params.show);
 	// Never emit a placeholder trace id — it would deep-link to nothing.
 	if (hasTrace(params.traceId)) q.set('trace_id', params.traceId);
 	if (params.executionId) q.set('execution_id', params.executionId);
 	if (params.jobId) q.set('job_id', params.jobId);
 	if (params.status && params.status !== 'all') q.set('status', params.status);
-	if (params.live) q.set('live', '1');
 	if (params.targetType) q.set('target_type', params.targetType);
 	if (params.targetId) q.set('target_id', params.targetId);
 	if (params.actorId) q.set('actor_id', params.actorId);

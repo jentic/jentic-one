@@ -67,6 +67,9 @@ class CredentialBindingView(BaseModel):
     bound_at: datetime
     # Reversible per-consumer cut-off: excluded from derivation, rules kept.
     suspended: bool = False
+    # Why the binding is suspended: None for a manual suspension,
+    # ``api_deleted`` when the API its credential serves was deleted.
+    suspended_reason: str | None = None
     # Shared permission rule set the binding points at (control DB, Q-04).
     # None means the binding's inline rules apply.
     rule_set_id: str | None = None

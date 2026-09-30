@@ -12,7 +12,7 @@ call-sites get identical problem+json semantics.
 from __future__ import annotations
 
 import uuid
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 
 import structlog
 
@@ -81,6 +81,8 @@ class CredentialService:
         allowed_credential_ids: Collection[str] | None = None,
         trace_id: str | None = None,
         preresolved: ResolvedCredential | None = None,
+        request_server_variables: Mapping[str, str] | None = None,
+        server_variables_unresolved: bool = False,
     ) -> InjectedAuth:
         """Resolve + inject the credential for the API tuple.
 
@@ -123,6 +125,8 @@ class CredentialService:
                 credential_name=credential_name,
                 credential_id=credential_id,
                 allowed_credential_ids=allowed_credential_ids,
+                request_server_variables=request_server_variables,
+                server_variables_unresolved=server_variables_unresolved,
             )
         )
         try:
@@ -241,9 +245,12 @@ class CredentialService:
                 ),
             ) from exc
         except RefreshTransientError as exc:
+            # ``str(exc)`` is the credential id + exception class only (the
+            # refresher never forwards raw exception text); ``from None`` keeps
+            # any chained provider/transport error out of rendered tracebacks.
             raise CredentialRefreshTransientError(
                 detail=str(exc), type="refresh_transient_error", origin=ErrorOrigin.UPSTREAM
-            ) from exc
+            ) from None
 
     async def select(
         self,
@@ -255,6 +262,8 @@ class CredentialService:
         credential_name: str | None = None,
         credential_id: str | None = None,
         allowed_credential_ids: Collection[str] | None = None,
+        request_server_variables: Mapping[str, str] | None = None,
+        server_variables_unresolved: bool = False,
     ) -> ResolvedCredential | None:
         """Resolve-only credential selection — no refresh, decrypt, or audit.
 
@@ -277,6 +286,8 @@ class CredentialService:
             credential_name=credential_name,
             credential_id=credential_id,
             allowed_credential_ids=allowed_credential_ids,
+            request_server_variables=request_server_variables,
+            server_variables_unresolved=server_variables_unresolved,
         )
 
     async def _resolve_mapped(
@@ -287,6 +298,8 @@ class CredentialService:
         credential_name: str | None,
         credential_id: str | None,
         allowed_credential_ids: Collection[str] | None,
+        request_server_variables: Mapping[str, str] | None = None,
+        server_variables_unresolved: bool = False,
     ) -> ResolvedCredential:
         """Resolve via ``CredentialResolver``, mapping errors to the broker taxonomy.
 
@@ -301,6 +314,8 @@ class CredentialService:
                 credential_name=credential_name,
                 credential_id=credential_id,
                 allowed_credential_ids=allowed_credential_ids,
+                request_server_variables=request_server_variables,
+                server_variables_unresolved=server_variables_unresolved,
             )
         except CredentialNotProvisionedError as exc:
             await self._emit_credential_failure(

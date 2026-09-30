@@ -36,10 +36,15 @@ Bindings reachable only through **inactive** toolkits are live access on the
 legacy path (``toolkits.active`` never gated bound agents) — they are
 migrated like any other pair AND reported loudly, never skipped.
 
-Operator-invoked only (``jentic_one flatten-toolkits``): unlike the Phase-4
-key retirement there is no startup one-shot, because Phase 6b's drops are
-gated on an explicit operator acknowledgement (``--verify --acknowledge``
-writes the ``toolkit_flattening_acks`` sentinel row 6b's migrations check).
+Run once automatically by the migration runner as an upgrade step
+(``control/services/upgrade_steps.py``), so an upgrade lands with every
+toolkit-reachable pair already bound directly — the broker's default
+direct-binding path would otherwise authorize none of them. The operator CLI
+(``jentic_one flatten-toolkits``) stays for previews, re-runs after toolkit
+changes made on an older version mid-rollout, and verification. The Phase-6b
+acknowledgement is never automatic: the drops stay gated on an explicit
+operator ``--verify --acknowledge`` (which writes the ``toolkit_flattening_acks``
+sentinel row 6b's migrations check).
 """
 
 from __future__ import annotations
@@ -70,6 +75,10 @@ logger = structlog.get_logger(__name__)
 #: ``ActorType`` (jobs are not authenticated actors); the audit read surface
 #: treats the column as an opaque string.
 _AUDIT_ACTOR_TYPE = "system:job"
+
+#: Report category for a derived pair whose credential creator is neither the
+#: agent's owner nor the agent itself. Informational: the binding is kept.
+CROSS_OWNER_BINDING_CATEGORY = "cross_owner_binding"
 
 #: The only scope a converted ``jntc_live_`` holder should carry (Phase 4).
 _EXECUTE_SCOPE = "capabilities:execute"
@@ -171,6 +180,7 @@ class _Snapshot:
     actor_ids: set[str]
     existing_pairs: dict[tuple[str, str], str | None]
     scopes_by_actor: dict[str, list[str]]
+    actor_owners: dict[str, str | None] = field(default_factory=dict)
 
 
 @dataclass
@@ -235,6 +245,7 @@ class ToolkitFlatteningService:
                 admin_session
             )
             scopes_by_actor = await FlatteningAdminRepository.list_scopes_by_actor(admin_session)
+            actor_owners = await FlatteningAdminRepository.list_actor_owners(admin_session)
 
         toolkit_map = {t.id: t for t in toolkits}
         credential_map = {c.id: c for c in credentials}
@@ -270,6 +281,7 @@ class ToolkitFlatteningService:
             actor_ids=actor_ids,
             existing_pairs=existing_pairs,
             scopes_by_actor=scopes_by_actor,
+            actor_owners=actor_owners,
         )
 
     @staticmethod
@@ -401,6 +413,48 @@ class ToolkitFlatteningService:
                     )
 
     @staticmethod
+    def _cross_owner_finding(
+        pair: _DerivedPair, snapshot: _Snapshot, findings: list[Finding]
+    ) -> None:
+        """Report a pair whose credential was not created by the agent's owner.
+
+        The toolkit path never compared the two, so flattening can hand an
+        agent a direct binding to a credential its owner did not create.
+        Legitimate toolkit sharing produces these too, so the binding is kept
+        (never dropped) and reported for the operator to review.
+        """
+        credential = snapshot.credentials.get(pair.credential_id)
+        creator = credential.created_by if credential is not None else None
+        owner = snapshot.actor_owners.get(pair.agent_id)
+        if creator is not None and creator in (owner, pair.agent_id):
+            return
+        detail = {
+            "agent_id": pair.agent_id,
+            "agent_owner_id": owner,
+            "credential_id": pair.credential_id,
+            "credential_created_by": creator,
+            "via_toolkit_ids": sorted(p.toolkit_id for p in pair.paths),
+            "note": (
+                "direct binding to a credential the agent's owner did not create; kept — "
+                "review it and unbind if unexpected"
+            ),
+        }
+        findings.append(Finding(CROSS_OWNER_BINDING_CATEGORY, detail))
+        # ``credential`` is a redactor key substring — renamed for the log line.
+        logger.warning(
+            "toolkit_flattening_cross_owner_binding",
+            agent_id=pair.agent_id,
+            agent_owner_id=owner,
+            cred_id=pair.credential_id,
+            cred_created_by=creator,
+            via_toolkit_ids=detail["via_toolkit_ids"],
+            actionable_step=(
+                "Review the binding; if unexpected, remove it with "
+                "`DELETE /agents/{agent_id}/credentials/{credential_id}`."
+            ),
+        )
+
+    @staticmethod
     def _pair_findings(pair: _DerivedPair, findings: list[Finding]) -> None:
         """Conflict / drift / inactive-path report lines for one pair."""
         for path in pair.paths:
@@ -466,6 +520,7 @@ class ToolkitFlatteningService:
         for key in sorted(pairs):
             pair = pairs[key]
             self._pair_findings(pair, result.findings)
+            self._cross_owner_finding(pair, snapshot, result.findings)
             if key in snapshot.existing_pairs:
                 result.already_present += 1
             else:
@@ -602,6 +657,8 @@ class ToolkitFlatteningService:
         self._hygiene_findings(snapshot, findings)
         pairs = self._derive_pairs(snapshot, findings)
 
+        for key in sorted(pairs):
+            self._cross_owner_finding(pairs[key], snapshot, findings)
         missing = [key for key in sorted(pairs) if key not in snapshot.existing_pairs]
         for agent_id, credential_id in missing:
             pair = pairs[(agent_id, credential_id)]

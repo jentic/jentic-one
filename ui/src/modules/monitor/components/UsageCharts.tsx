@@ -1,7 +1,7 @@
 /**
  * "Execution Volume" card — built on the
  * enriched usage endpoint (jentic-one-internal#561): an SVG stacked bar chart
- * colored per entity, with the APIs / Credentials / Agents grouping toggle, an
+ * colored per entity, with the APIs / Agents grouping toggle, an
  * interactive legend (hovering a chip or segment dims the rest), y-axis
  * gridlines, and a per-segment hover tooltip.
  *
@@ -54,7 +54,6 @@ interface Bar {
 
 const LENS_NOUNS: Record<UsageLens, string> = {
 	apis: 'API',
-	credentials: 'credential',
 	agents: 'agent',
 };
 
@@ -226,12 +225,11 @@ interface UsageChartsProps {
 	/** API-grouped response (also carries the aggregate buckets/window). */
 	usage: UsageResponse;
 	apis: EntityUsageRow[];
-	credentials: EntityUsageRow[];
 	agents: EntityUsageRow[];
 	className?: string;
 }
 
-export function UsageCharts({ usage, apis, credentials, agents, className }: UsageChartsProps) {
+export function UsageCharts({ usage, apis, agents, className }: UsageChartsProps) {
 	const containerRef = useRef<HTMLDivElement>(null);
 	const [width, setWidth] = useState(700);
 	const [lens, setLens] = useState<UsageLens>('apis');
@@ -254,7 +252,7 @@ export function UsageCharts({ usage, apis, credentials, agents, className }: Usa
 		return () => observer.disconnect();
 	}, []);
 
-	const rows = lens === 'apis' ? apis : lens === 'credentials' ? credentials : agents;
+	const rows = lens === 'apis' ? apis : agents;
 	const palette = lensPalette(lens);
 	const windowSeconds = usage.until - usage.since;
 
@@ -309,7 +307,6 @@ export function UsageCharts({ usage, apis, credentials, agents, className }: Usa
 				<SegmentedToggle
 					options={[
 						{ value: 'apis', label: 'APIs' },
-						{ value: 'credentials', label: 'Credentials' },
 						{ value: 'agents', label: 'Agents' },
 					]}
 					value={lens}

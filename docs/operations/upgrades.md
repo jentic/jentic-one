@@ -16,11 +16,26 @@ The contract is the same on every install shape; only the commands differ.
    or the compose file's `migrate` service. Appending `--check` inspects
    without modifying: it prints an
    `OVERALL current|uninitialized|pending` verdict and exits non-zero unless
-   `OVERALL current`, so scripts can branch on it.
+   `OVERALL current`, so scripts can branch on it. A full run (all databases,
+   no `--target`) also performs the release's one-shot **upgrade steps** —
+   data changes that span databases, such as the toolkit → direct-binding
+   cutover — and prints an `==> upgrade step <name>: <action>` line for each.
+   A step that leaves blocking work undone exits `4`: fix the logged cause
+   and re-run before starting the new version (`--skip-upgrade-step <name>`
+   defers one step deliberately; on Helm, via `migrate.extraArgs`).
+   Non-blocking follow-ups print as `==> WARNING` lines — read them. The run
+   lock these steps take is a Postgres session-level advisory lock, so point
+   the migration at the database directly, not through a transaction-mode
+   pooler (pgbouncer `pool_mode=transaction`).
 4. **Restart both roles** (app and broker) on the new version — don't run
    them split across releases.
 5. **Keep the CLIs on the same release** as the server:
    `jenticctl update` updates the binaries and checks the stack.
+6. **Review what the upgrade carried over.** The upgrade steps keep
+   existing access intact and report, rather than remove, admin-level grants
+   copied onto successor agents and cross-owner credential bindings — see
+   [Reviewing grants and bindings carried over by the upgrade](../development/releasing.md#reviewing-grants-and-bindings-carried-over-by-the-upgrade)
+   for the read-only audit queries.
 
 Rolling *back* the app version is supported only together with restoring the
 matching pre-upgrade snapshot — old code on a newer schema is not a supported

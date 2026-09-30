@@ -3,6 +3,7 @@ package auth
 import (
 	"crypto/ed25519"
 	"encoding/base64"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -230,5 +231,62 @@ func TestTokenEndpoint(t *testing.T) {
 	}
 	if _, err := tokenEndpoint("http://evil.example"); err == nil {
 		t.Error("tokenEndpoint on insecure host should error")
+	}
+}
+
+func TestAttachAuth_OnlyOnBaseOrigin(t *testing.T) {
+	creds := Credentials{BaseURL: "https://ctl.example/api", InjectedBearerToken: "at_x"}
+	cases := map[string]bool{
+		"https://ctl.example/api/things": true,
+		"https://CTL.example:443/other":  true,
+		"https://ctl.example:8443/api":   false,
+		"https://other.example/api":      false,
+		"https://sub.ctl.example/api":    false,
+		"http://localhost/api":           false,
+	}
+	for raw, want := range cases {
+		u, err := url.Parse(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req := &http.Request{URL: u, Header: http.Header{}}
+		err = AttachAuth(creds, req)
+		if got := err == nil; got != want {
+			t.Errorf("AttachAuth(%s) ok = %v (err %v), want %v", raw, got, err, want)
+		}
+		if !want && req.Header.Get("Authorization") != "" {
+			t.Errorf("AttachAuth(%s) set Authorization despite refusing", raw)
+		}
+	}
+	// No BaseURL: no origin restriction (the transport guard still applies).
+	u, _ := url.Parse("https://any.example/x")
+	if err := AttachAuth(Credentials{InjectedBearerToken: "at_x"}, &http.Request{URL: u, Header: http.Header{}}); err != nil {
+		t.Errorf("AttachAuth without BaseURL: %v", err)
+	}
+}
+
+func TestSameOrigin(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want bool
+	}{
+		{"https://h.example", "https://h.example:443/x", true},
+		{"http://127.0.0.1:8080", "http://127.0.0.1:8080/y", true},
+		{"http://127.0.0.1:8080", "http://127.0.0.1:8081", false},
+		{"http://h.example", "https://h.example", false},
+		{"https://h.example", "https://h.example.evil", false},
+		{"https://h.example", "https://H.EXAMPLE/", true},
+		{"https://[::1]", "https://[::1]:443/x", true},
+		{"http://[::1]:8080", "http://[::1]:8081", false},
+		{"http://[::1]", "http://[::2]", false},
+		{"https://h.example", "https://sub.h.example", false},
+		{"https://h.example", "/relative", false},
+	}
+	for _, c := range cases {
+		a, _ := url.Parse(c.a)
+		b, _ := url.Parse(c.b)
+		if got := SameOrigin(a, b); got != c.want {
+			t.Errorf("SameOrigin(%s, %s) = %v, want %v", c.a, c.b, got, c.want)
+		}
 	}
 }

@@ -1,5 +1,5 @@
 import type { ComponentType } from 'react';
-import { Compass, Bot, LayoutDashboard, LayoutGrid, KeyRound, Activity } from 'lucide-react';
+import { Compass, Bot, LayoutGrid, Activity } from 'lucide-react';
 
 /**
  * A primary-navigation entry. `order` (not array position) controls placement,
@@ -35,15 +35,14 @@ export interface NavItem {
  * line per module and collision-free across parallel PRs. Do NOT reorder; bump
  * `order` if you need to move an item.
  *
- * `to` values are root-relative to the router basename (`/app`); the Dashboard
- * is the basename index (`/`, → `/app`).
+ * `to` values are root-relative to the router basename (`/app`). There is no
+ * entry for the basename index (`/`, → `/app`): it redirects to Agents, the
+ * home surface, which is why Agents sorts first. Monitor sorts last.
  */
 export const navItems: NavItem[] = [
-	{ id: 'dashboard', label: 'Dashboard', to: '/', order: 10, icon: LayoutDashboard },
 	{ id: 'discover', label: 'Discover APIs', to: '/discover', order: 20, icon: Compass },
 	{ id: 'workspace', label: 'Workspace', to: '/workspace', order: 30, icon: LayoutGrid },
-	{ id: 'credentials', label: 'Credentials', to: '/credentials', order: 50, icon: KeyRound },
-	{ id: 'agents', label: 'Agents', to: '/agents', order: 60, icon: Bot },
+	{ id: 'agents', label: 'Agents', to: '/agents', order: 5, icon: Bot },
 	{ id: 'monitor', label: 'Monitor', to: '/monitor', order: 70, icon: Activity },
 	// NOTE: the docs portal ("API Reference", /docs) deliberately does NOT live
 	// in this registry. It's reference material, not a product destination, so
@@ -85,9 +84,9 @@ export function visibleNavItems(items: NavItem[], permissions: readonly string[]
 
 /**
  * Whether a nav item is "active" for the given pathname. `pathname` is the
- * router's basename-relative location (react-router strips `/app`), so the
- * Dashboard root is `/`; it matches exactly while every other item matches by
- * prefix so nested routes (e.g. `/discover/123`) keep their tab highlighted.
+ * router's basename-relative location (react-router strips `/app`). An item
+ * at the root (`/`) matches exactly — none ships today, but a downstream
+ * `extraNavItems` entry may — while every other item matches by prefix so nested routes (e.g. `/discover/123`) keep their tab highlighted.
  */
 export function isNavItemActive(item: NavItem, pathname: string): boolean {
 	if (item.to === '/') return pathname === '/';

@@ -23,6 +23,7 @@ from jentic_one.shared.config import (
     ConfigError,
     ConnectConfig,
     CredentialsConfig,
+    DirectOAuth2ProviderConfig,
     EgressConfig,
     EncryptionConfig,
     EncryptionKey,
@@ -30,10 +31,16 @@ from jentic_one.shared.config import (
     RuntimeConfig,
     SigningKeyConfig,
     TelemetryConfig,
+    _apps_for_secret_guard,
     _csv_to_list,
     _deep_merge,
     _env_overrides,
+    bind_origin,
+    check_public_url_consistency,
+    effective_auth_base_url,
+    has_spa_platform_client,
     load_config,
+    resolved_auth_base_url,
 )
 
 
@@ -103,6 +110,13 @@ def test_env_coerces_int(config_file: Path):
     with patch.dict(os.environ, env, clear=False):
         config = load_config(config_file)
     assert config.databases.registry.port == 9999
+
+
+def test_http_wire_trace_defaults_off_and_env_enables(config_file: Path):
+    assert load_config(config_file).logging.http_wire_trace is False
+    with patch.dict(os.environ, {"JENTIC__LOGGING__HTTP_WIRE_TRACE": "true"}, clear=False):
+        config = load_config(config_file)
+    assert config.logging.http_wire_trace is True
 
 
 def test_env_coerces_float(config_file: Path):
@@ -354,6 +368,97 @@ def test_explicit_connect_state_secret_accepted_in_production():
     with patch.dict(os.environ, {"JENTIC_ENV": "production"}, clear=False):
         cfg = ConnectConfig(state_secret=SecretStr("a-real-generated-state-secret"))
     assert cfg.state_secret.get_secret_value() == "a-real-generated-state-secret"
+
+
+_ALL_GUARDED = {
+    "JENTIC__ADMIN__AUTH__JWT_SECRET": "admin.auth.jwt_secret",
+    "JENTIC__ADMIN__INVITE__PEPPER": "admin.invite.pepper",
+    "JENTIC__CREDENTIALS__CONNECT__STATE_SECRET": "credentials.connect.state_secret",
+}
+
+
+@pytest.mark.parametrize(
+    ("apps", "required"),
+    [
+        # Mirrors the Helm chart's per-surface mounts (charts/common _app-secrets.tpl).
+        ("broker", set()),
+        ("registry", {"JENTIC__ADMIN__AUTH__JWT_SECRET"}),
+        (
+            "control",
+            {"JENTIC__ADMIN__AUTH__JWT_SECRET", "JENTIC__CREDENTIALS__CONNECT__STATE_SECRET"},
+        ),
+        ("admin,auth", {"JENTIC__ADMIN__AUTH__JWT_SECRET", "JENTIC__ADMIN__INVITE__PEPPER"}),
+        # Auth issues session JWTs and derives its flow keys from the JWT secret.
+        ("auth", {"JENTIC__ADMIN__AUTH__JWT_SECRET"}),
+        ("registry,admin,control,auth", set(_ALL_GUARDED)),
+        # An unaudited (e.g. extension) surface keeps the guard strict.
+        ("broker,enterprise-thing", set(_ALL_GUARDED)),
+    ],
+)
+def test_production_guard_requires_only_secrets_enabled_surfaces_read(
+    config_file: Path, apps: str, required: set[str]
+):
+    """In production each standalone surface needs only the secrets it reads.
+
+    Every required secret missing on its own is a boot error naming the field;
+    with all required secrets present the config loads, and the secrets the
+    surfaces never read are a per-process random value, never empty.
+    """
+    for missing in required:
+        env = {"JENTIC_ENV": "production", "JENTIC__APPS": apps}
+        env |= {k: "a-real-generated-secret" for k in required if k != missing}
+        with (
+            patch.dict(os.environ, env, clear=False),
+            pytest.raises(ConfigError, match=_ALL_GUARDED[missing].replace(".", r"\.")),
+        ):
+            load_config(config_file)
+
+    env = {"JENTIC_ENV": "production", "JENTIC__APPS": apps}
+    env |= dict.fromkeys(required, "a-real-generated-secret")
+    with patch.dict(os.environ, env, clear=False):
+        config = load_config(config_file)
+    values = {
+        "JENTIC__ADMIN__AUTH__JWT_SECRET": config.admin.auth.jwt_secret,
+        "JENTIC__ADMIN__INVITE__PEPPER": config.admin.invite.pepper,
+        "JENTIC__CREDENTIALS__CONNECT__STATE_SECRET": config.credentials.connect.state_secret,
+    }
+    for key, value in values.items():
+        secret = value.get_secret_value()
+        if key in required:
+            assert secret == "a-real-generated-secret"
+        else:
+            assert secret.strip()
+            assert secret != "a-real-generated-secret"
+
+
+@pytest.mark.parametrize("raw", [[], "registry", ["registry", 1], {"registry": True}])
+def test_production_guard_stays_strict_for_unreadable_apps(raw: object):
+    """An apps value the guard cannot read as surface names keeps it strict."""
+    assert _apps_for_secret_guard(raw) is None
+
+
+def test_production_guard_default_apps_require_every_secret(config_file: Path):
+    """No ``apps`` override means the combined default, which reads all three."""
+    env = {"JENTIC_ENV": "production"}
+    with (
+        patch.dict(os.environ, env, clear=False),
+        pytest.raises(ConfigError, match=r"admin\.auth\.jwt_secret"),
+    ):
+        os.environ.pop("JENTIC__APPS", None)
+        load_config(config_file)
+
+
+def test_production_guard_stays_strict_outside_load_config(config_file: Path):
+    """Direct model construction has no surface context and so stays strict.
+
+    A relaxed load (standalone broker) must not leak its surface set into
+    later validation in the same process.
+    """
+    env = {"JENTIC_ENV": "production", "JENTIC__APPS": "broker"}
+    with patch.dict(os.environ, env, clear=False):
+        load_config(config_file)
+        with pytest.raises(ConfigError, match=r"admin\.invite\.pepper"):
+            AdminInviteConfig()
 
 
 _LOCAL_DEV_KEY_SEC1 = """\
@@ -1032,6 +1137,368 @@ def test_egress_empty_string_produces_empty_list():
 def test_csv_to_list_rejects_non_string_non_list():
     with pytest.raises(TypeError, match="expected list or comma-separated string"):
         _csv_to_list(123)
+
+
+# --- server.public_base_url + derived-URL consolidation (issue #818) ---------
+
+
+def _min_dbs() -> dict[str, Any]:
+    return {
+        "registry": {"name": "reg"},
+        "admin": {"name": "admin"},
+        "control": {"name": "ctrl"},
+    }
+
+
+def _load(tmp_path: Path, extra: dict[str, Any]) -> AppConfig:
+    data: dict[str, Any] = {"databases": _min_dbs(), **extra}
+    path = tmp_path / "cfg.yaml"
+    path.write_text(yaml.safe_dump(data))
+    return load_config(path)
+
+
+def test_public_base_url_default_empty(tmp_path: Path):
+    config = _load(tmp_path, {})
+    assert config.server.public_base_url == ""
+
+
+def test_public_base_url_from_yaml(tmp_path: Path):
+    config = _load(tmp_path, {"server": {"public_base_url": "https://jentic.example.com/"}})
+    # normalized: trailing slash stripped
+    assert config.server.public_base_url == "https://jentic.example.com"
+
+
+def test_public_base_url_env_override(tmp_path: Path):
+    with patch.dict(os.environ, {"JENTIC__SERVER__PUBLIC_BASE_URL": "http://127.0.0.1:8020"}):
+        config = _load(tmp_path, {})
+    assert config.server.public_base_url == "http://127.0.0.1:8020"
+
+
+def test_public_base_url_rejects_userinfo(tmp_path: Path):
+    with pytest.raises(ConfigError):
+        _load(tmp_path, {"server": {"public_base_url": "http://user:pw@host"}})
+
+
+def test_redirect_uri_now_optional(tmp_path: Path):
+    config = _load(
+        tmp_path,
+        {"credentials": {"providers": {"direct_oauth2": {"kind": "direct_oauth2"}}}},
+    )
+    pc = config.credentials.providers["direct_oauth2"]
+    assert isinstance(pc, DirectOAuth2ProviderConfig)
+    assert pc.redirect_uri is None
+
+
+def test_effective_auth_base_url_precedence(tmp_path: Path):
+    # explicit auth canonical wins over public_base_url
+    config = _load(
+        tmp_path,
+        {
+            "server": {"public_base_url": "https://public.example.com"},
+            "auth": {"canonical_base_url": "https://auth.example.com"},
+        },
+    )
+    assert effective_auth_base_url(config) == "https://auth.example.com"
+
+    # public_base_url alone flows through
+    config = _load(tmp_path, {"server": {"public_base_url": "https://public.example.com"}})
+    assert effective_auth_base_url(config) == "https://public.example.com"
+
+    # both unset ≡ empty (today's behaviour)
+    config = _load(tmp_path, {})
+    assert effective_auth_base_url(config) == ""
+
+
+def test_check_public_url_consistency(tmp_path: Path):
+    # unset fields self-derive → no mismatch
+    config = _load(tmp_path, {"server": {"host": "127.0.0.1", "port": 8020}})
+    assert check_public_url_consistency(config) == []
+
+    # loopback-equivalent explicit URL against a 0.0.0.0 bind → no mismatch
+    config = _load(
+        tmp_path,
+        {
+            "server": {"host": "0.0.0.0", "port": 8020},
+            "auth": {"canonical_base_url": "http://127.0.0.1:8020"},
+        },
+    )
+    assert check_public_url_consistency(config) == []
+
+    # port mismatch against the serving bind → exactly one entry
+    config = _load(
+        tmp_path,
+        {
+            "server": {"host": "127.0.0.1", "port": 8020},
+            "auth": {"canonical_base_url": "http://127.0.0.1:8000"},
+        },
+    )
+    mismatches = check_public_url_consistency(config)
+    assert len(mismatches) == 1
+    assert mismatches[0].field == "auth.canonical_base_url"
+
+    # public_base_url explains the origin → no mismatch even when it differs
+    # from the bind
+    config = _load(
+        tmp_path,
+        {
+            "server": {
+                "host": "0.0.0.0",
+                "port": 8020,
+                "public_base_url": "https://gw.example.com",
+            },
+            "auth": {"canonical_base_url": "https://gw.example.com"},
+        },
+    )
+    assert check_public_url_consistency(config) == []
+
+
+def test_check_public_url_consistency_excludes_provider_redirect_uri(tmp_path: Path):
+    # A provider redirect_uri override that legitimately differs from the public
+    # origin (split-origin gateway/NodePort) must NOT be flagged — otherwise the
+    # reference Helm deployment fires a false positive on every boot.
+    config = _load(
+        tmp_path,
+        {
+            "server": {"public_base_url": "http://localhost:8000"},
+            "credentials": {
+                "providers": {
+                    "direct_oauth2": {
+                        "kind": "direct_oauth2",
+                        "redirect_uri": "http://127.0.0.1:30080/credentials/oauth/callback",
+                    }
+                }
+            },
+        },
+    )
+    assert check_public_url_consistency(config) == []
+
+
+def test_check_public_url_consistency_never_crashes_on_bad_port(tmp_path: Path):
+    # An out-of-range port must be rejected at config load (ValueError), not
+    # crash the consistency check at startup — the "warn, don't crash" contract.
+    with pytest.raises(ConfigError):
+        _load(tmp_path, {"auth": {"canonical_base_url": "http://h:99999"}})
+
+
+@pytest.mark.parametrize(
+    ("host", "port", "expected"),
+    [
+        ("0.0.0.0", 8000, "http://127.0.0.1:8000"),
+        ("::", 8020, "http://127.0.0.1:8020"),
+        ("127.0.0.1", 8020, "http://127.0.0.1:8020"),
+        ("localhost", 9000, "http://localhost:9000"),
+        ("::1", 8000, "http://[::1]:8000"),
+        ("10.0.0.5", 8000, "http://10.0.0.5:8000"),
+    ],
+)
+def test_bind_origin(tmp_path: Path, host: str, port: int, expected: str):
+    config = _load(tmp_path, {"server": {"host": host, "port": port}})
+    assert bind_origin(config) == expected
+
+
+def test_resolved_auth_base_url_falls_back_to_bind(tmp_path: Path):
+    # Request-less consumers (issuer, JWT-Bearer audience, DCR) follow the port
+    # with nothing pinned — the #818 any-port contract.
+    config = _load(tmp_path, {"server": {"host": "127.0.0.1", "port": 8020}})
+    assert effective_auth_base_url(config) == ""
+    assert resolved_auth_base_url(config) == "http://127.0.0.1:8020"
+
+    config = _load(
+        tmp_path,
+        {"server": {"host": "127.0.0.1", "port": 8020, "public_base_url": "https://x.example"}},
+    )
+    assert resolved_auth_base_url(config) == "https://x.example"
+
+
+def _spa_redirects(config: AppConfig) -> list[str]:
+    return next(
+        pc.redirect_uris for pc in config.auth.platform_clients if pc.client_id == "jentic-one-spa"
+    )
+
+
+def test_spa_platform_client_derived_from_loopback_bind(tmp_path: Path):
+    config = _load(tmp_path, {"server": {"host": "127.0.0.1", "port": 8020}})
+    assert _spa_redirects(config) == [
+        "http://127.0.0.1:8020/app/auth/callback",
+        "http://localhost:8020/app/auth/callback",
+    ]
+
+
+def test_spa_platform_client_derived_from_public_base_url(tmp_path: Path):
+    config = _load(tmp_path, {"server": {"public_base_url": "https://jentic.example.com"}})
+    assert _spa_redirects(config) == ["https://jentic.example.com/app/auth/callback"]
+
+
+def test_spa_platform_client_explicit_wins(tmp_path: Path):
+    explicit = {"client_id": "jentic-one-spa", "redirect_uris": ["https://spa.example/cb"]}
+    config = _load(
+        tmp_path,
+        {
+            "server": {"public_base_url": "https://jentic.example.com"},
+            "auth": {"platform_clients": [explicit]},
+        },
+    )
+    assert _spa_redirects(config) == ["https://spa.example/cb"]
+
+
+def test_spa_platform_client_skipped_for_plain_http_lan_bind(tmp_path: Path):
+    # Platform redirect URIs refuse plain http off localhost; config must still
+    # load (SPA login then needs an explicit https public_base_url).
+    config = _load(tmp_path, {"server": {"host": "10.0.0.5", "port": 8000}})
+    assert not any(pc.client_id == "jentic-one-spa" for pc in config.auth.platform_clients)
+
+
+def test_check_public_url_consistency_flags_loopback_public_url_on_wrong_port(tmp_path: Path):
+    # The #818 repro: a loopback bind on 8020 with public_base_url still pinned
+    # to :8000 — every derived URL is unreachable.
+    config = _load(
+        tmp_path,
+        {"server": {"host": "127.0.0.1", "port": 8020, "public_base_url": "http://127.0.0.1:8000"}},
+    )
+    mismatches = check_public_url_consistency(config)
+    assert [m.field for m in mismatches] == ["server.public_base_url"]
+    assert mismatches[0].expected == "http://127.0.0.1:8020"
+
+
+def test_check_public_url_consistency_flags_stale_loopback_redirect_uri(tmp_path: Path):
+    config = _load(
+        tmp_path,
+        {
+            "server": {"host": "127.0.0.1", "port": 8020},
+            "credentials": {
+                "providers": {
+                    "direct_oauth2": {
+                        "kind": "direct_oauth2",
+                        "redirect_uri": "http://127.0.0.1:8000/credentials/oauth/callback",
+                    }
+                }
+            },
+        },
+    )
+    mismatches = check_public_url_consistency(config)
+    assert [m.field for m in mismatches] == ["credentials.providers.direct_oauth2.redirect_uri"]
+
+
+def test_check_public_url_consistency_loopback_check_skips_all_interfaces_bind(tmp_path: Path):
+    # A 0.0.0.0 bind can sit behind a port mapping / NodePort that legitimately
+    # fronts it on another loopback port — no warning.
+    config = _load(
+        tmp_path,
+        {"server": {"host": "0.0.0.0", "port": 8000, "public_base_url": "http://localhost:30080"}},
+    )
+    assert check_public_url_consistency(config) == []
+
+
+def test_check_public_url_consistency_loopback_check_ignores_non_loopback_urls(tmp_path: Path):
+    # A loopback bind behind a same-host reverse proxy serving a real hostname.
+    config = _load(
+        tmp_path,
+        {
+            "server": {
+                "host": "127.0.0.1",
+                "port": 8000,
+                "public_base_url": "https://jentic.example.com",
+            }
+        },
+    )
+    assert check_public_url_consistency(config) == []
+
+
+def test_check_public_url_consistency_skips_overrides_on_all_interfaces_bind(tmp_path: Path):
+    # No public_base_url + a 0.0.0.0 bind: the public origin is unknowable
+    # (proxy / ingress), so a correctly-proxied override must not be flagged.
+    config = _load(
+        tmp_path,
+        {
+            "server": {"host": "0.0.0.0", "port": 8000},
+            "auth": {"canonical_base_url": "https://jentic.example.com"},
+            "control": {"access_requests": {"canonical_base_url": "https://jentic.example.com"}},
+        },
+    )
+    assert check_public_url_consistency(config) == []
+
+
+def test_check_public_url_consistency_ignores_broker_urls(tmp_path: Path):
+    # The broker's jobs/account-linking URLs name other services' origins.
+    config = _load(
+        tmp_path,
+        {
+            "server": {"host": "127.0.0.1", "port": 8000},
+            "broker": {
+                "jobs_api_base_url": "https://api.example.com",
+                "account_linking_base_url": "https://console.example.com",
+            },
+        },
+    )
+    assert check_public_url_consistency(config) == []
+
+
+def test_redirect_uri_kept_byte_identical(tmp_path: Path):
+    # The IdP exact-matches the registered redirect URI: no slash stripping,
+    # and a query string is legal (RFC 6749 §3.1.2).
+    for uri in (
+        "https://app.example.com/credentials/oauth/callback/",
+        "https://app.example.com/credentials/oauth/callback?tenant=a",
+    ):
+        config = _load(
+            tmp_path,
+            {
+                "credentials": {
+                    "providers": {"direct_oauth2": {"kind": "direct_oauth2", "redirect_uri": uri}}
+                }
+            },
+        )
+        pc = config.credentials.providers["direct_oauth2"]
+        assert isinstance(pc, DirectOAuth2ProviderConfig)
+        assert pc.redirect_uri == uri
+
+
+@pytest.mark.parametrize(
+    "uri",
+    [
+        "https://app.example.com/cb#frag",
+        "ftp://app.example.com/cb",
+        "https://user:pw@app.example.com/cb",
+        "https://app.example.com:99999/cb",
+    ],
+)
+def test_redirect_uri_rejects_invalid(tmp_path: Path, uri: str):
+    with pytest.raises(ConfigError):
+        _load(
+            tmp_path,
+            {
+                "credentials": {
+                    "providers": {"direct_oauth2": {"kind": "direct_oauth2", "redirect_uri": uri}}
+                }
+            },
+        )
+
+
+@pytest.mark.parametrize("host", ["localhost", "0.0.0.0"])
+def test_spa_platform_client_registers_both_loopback_aliases(tmp_path: Path, host: str):
+    # A local browser reaches the process as 127.0.0.1 or localhost whichever
+    # alias the bind names.
+    config = _load(tmp_path, {"server": {"host": host, "port": 8020}})
+    redirects = _spa_redirects(config)
+    assert "http://127.0.0.1:8020/app/auth/callback" in redirects
+    assert "http://localhost:8020/app/auth/callback" in redirects
+    assert len(redirects) == len(set(redirects))
+
+
+def test_has_spa_platform_client(tmp_path: Path):
+    assert has_spa_platform_client(_load(tmp_path, {"server": {"host": "127.0.0.1"}}))
+    assert not has_spa_platform_client(_load(tmp_path, {"server": {"host": "10.0.0.5"}}))
+
+
+def test_shipped_local_configs_follow_the_port(monkeypatch: pytest.MonkeyPatch):
+    # Guards against re-pinning :8000 in the shipped local configs.
+    monkeypatch.setenv("JENTIC__SERVER__PORT", "8020")
+    root = Path(__file__).resolve().parents[2]
+    for name in ("local.yaml", "local-sqlite.yaml"):
+        config = load_config(root / "config" / name)
+        assert resolved_auth_base_url(config) == "http://127.0.0.1:8020", name
+        assert "http://127.0.0.1:8020/app/auth/callback" in _spa_redirects(config), name
+        assert check_public_url_consistency(config) == [], name
 
 
 def test_telemetry_host_os_defaults_to_none():

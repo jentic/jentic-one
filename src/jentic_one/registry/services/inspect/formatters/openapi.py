@@ -45,10 +45,18 @@ def render_openapi_yaml(result: OperationInspectResult) -> str:
             security.append({auth.type: []})
         operation["security"] = security
 
+    # ``info.title`` is a human-facing field, so lead with the label when there
+    # is one, but keep the canonical ``vendor/name`` reference alongside it
+    # (mirrors the markdown formatter) so a reader can still copy the identity.
+    api_ref = f"{result.api.vendor}/{result.api.name}"
+    title = api_ref
+    if result.api.display_name and result.api.display_name != result.api.name:
+        title = f"{result.api.display_name} ({api_ref})"
+
     spec: dict[str, Any] = {
         "openapi": "3.1.0",
         "info": {
-            "title": f"{result.api.vendor}/{result.api.name}",
+            "title": title,
             "version": result.api.version,
         },
         "paths": {path_key: {result.method.lower(): operation}},

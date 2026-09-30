@@ -13,7 +13,7 @@ from urllib.parse import urlencode
 
 import httpx
 
-from jentic_one.auth.core.idp.adapter import IdpClaims
+from jentic_one.auth.core.idp.adapter import IdpClaims, parse_email_verified
 from jentic_one.shared.config import IdpConfig
 
 
@@ -98,7 +98,7 @@ class OidcAdapter:
             email=str(userinfo.get("email", "")),
             first_name=str(userinfo.get("given_name", "")),
             last_name=str(userinfo.get("family_name", "")),
-            email_verified=bool(userinfo.get("email_verified", False)),
+            email_verified=parse_email_verified(userinfo.get("email_verified")),
         )
 
 

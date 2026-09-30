@@ -143,6 +143,15 @@ class CredentialRepository:
         return {row.id: row.name for row in result}
 
     @staticmethod
+    async def get_creators_by_ids(session: AsyncSession, ids: list[str]) -> dict[str, str | None]:
+        """Batch-resolve credential IDs to their ``created_by`` (missing ids omitted)."""
+        if not ids:
+            return {}
+        stmt = select(Credential.id, Credential.created_by).where(Credential.id.in_(ids))
+        result = await session.execute(stmt)
+        return {row.id: row.created_by for row in result}
+
+    @staticmethod
     async def delete(session: AsyncSession, credential_id: str) -> bool:
         credential = await session.get(Credential, credential_id)
         if credential is None:

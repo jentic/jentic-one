@@ -1,4 +1,5 @@
-import { Badge } from '@/shared/ui';
+import { Cloud, KeyRound, LockOpen, LogIn, Ticket, UserRound, type LucideIcon } from 'lucide-react';
+import { Tag } from '@/shared/ui';
 import {
 	CredentialType,
 	CREDENTIAL_TYPE_LABELS,
@@ -6,13 +7,13 @@ import {
 	type Credential,
 } from '@/shared/credentials/api';
 
-const VARIANT: Record<CredentialType, 'default' | 'success' | 'warning' | 'pending'> = {
-	[CredentialType.BEARER_TOKEN]: 'default',
-	[CredentialType.API_KEY]: 'success',
-	[CredentialType.BASIC]: 'warning',
-	[CredentialType.OAUTH2]: 'pending',
-	[CredentialType.NO_AUTH]: 'default',
-	[CredentialType.SIGV4]: 'success',
+const ICON: Record<CredentialType, LucideIcon> = {
+	[CredentialType.BEARER_TOKEN]: Ticket,
+	[CredentialType.API_KEY]: KeyRound,
+	[CredentialType.BASIC]: UserRound,
+	[CredentialType.OAUTH2]: LogIn,
+	[CredentialType.NO_AUTH]: LockOpen,
+	[CredentialType.SIGV4]: Cloud,
 };
 
 const OAUTH_GRANT_LABEL: Record<string, string> = {
@@ -21,18 +22,21 @@ const OAUTH_GRANT_LABEL: Record<string, string> = {
 	device_code: 'Device Code',
 };
 
+type CredentialTypeBadgeProps = { type: CredentialType } | { credential: Credential };
+
 /**
- * Small pill labelling a credential's auth type with a stable colour. For
- * OAuth 2.0 credentials, appends the grant variant (Device Code / Auth Code
- * / Client Credentials) so the picker/list disambiguates them at a glance.
+ * Neutral tag that names a credential's auth type; the icon tells the types
+ * apart. Given the whole credential, an OAuth 2.0 tag also names its grant
+ * (Device Code / Authorization Code / Client Credentials) so two OAuth
+ * credentials for one API are told apart at a glance.
  */
-export function CredentialTypeBadge({ credential }: { credential: Credential }) {
-	const { type } = credential;
+export function CredentialTypeBadge(props: CredentialTypeBadgeProps) {
+	const type = 'credential' in props ? props.credential.type : props.type;
 	let label = CREDENTIAL_TYPE_LABELS[type] ?? type;
-	if (type === CredentialType.OAUTH2) {
-		const grant = credentialDetails(credential).grant_type;
+	if ('credential' in props && type === CredentialType.OAUTH2) {
+		const grant = credentialDetails(props.credential).grant_type;
 		const suffix = grant ? OAUTH_GRANT_LABEL[grant] : undefined;
 		if (suffix) label = `${label} · ${suffix}`;
 	}
-	return <Badge variant={VARIANT[type] ?? 'default'}>{label}</Badge>;
+	return <Tag icon={ICON[type]}>{label}</Tag>;
 }

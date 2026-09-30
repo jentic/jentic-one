@@ -56,6 +56,54 @@ func TestMigrateArgsDisablesTTY(t *testing.T) {
 	}
 }
 
+func TestDataVolumeOwnershipArgs(t *testing.T) {
+	got := strings.Join(dataVolumeOwnershipArgs("/home/u/.jentic/docker-compose.yaml"), " ")
+
+	// A root one-shot on the app service (it owns the volume mount), no deps,
+	// re-owning the data dir to the images' numeric runtime uid.
+	want := "compose -p " + composeProjectName + " -f /home/u/.jentic/docker-compose.yaml run --rm -T " +
+		"--no-deps --user 0:0 --entrypoint chown " + composeServiceApp +
+		" -R 10001:10001 " + containerDataDir
+	if got != want {
+		t.Errorf("dataVolumeOwnershipArgs =\n  %q\nwant\n  %q", got, want)
+	}
+}
+
+func TestComposeUsesSQLiteVolume(t *testing.T) {
+	dir := t.TempDir()
+	for _, tc := range []struct {
+		name   string
+		render func(d *Draft)
+		want   bool
+	}{
+		{"sqlite", func(d *Draft) { d.DBBackend = BackendSQLite }, true},
+		{"postgres", func(d *Draft) {
+			d.DBBackend = BackendPostgres
+			d.PGPassword = "pw"
+		}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := NewDraft()
+			d.RuntimePath = RuntimeDocker
+			tc.render(d)
+			out, err := RenderCompose(d, composeConfigFor("/home/u/.jentic"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(dir, tc.name+".yaml")
+			if err := os.WriteFile(path, out, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if got := composeUsesSQLiteVolume(path); got != tc.want {
+				t.Errorf("composeUsesSQLiteVolume(%s) = %v, want %v", tc.name, got, tc.want)
+			}
+		})
+	}
+	if composeUsesSQLiteVolume(filepath.Join(dir, "missing.yaml")) {
+		t.Error("an unreadable compose file must read as no SQLite volume")
+	}
+}
+
 func TestRenderComposeSQLite(t *testing.T) {
 	d := NewDraft()
 	d.DBBackend = BackendSQLite
@@ -74,7 +122,7 @@ func TestRenderComposeSQLite(t *testing.T) {
 		AppImageTag,
 		"JENTIC_CONFIG_FILE: " + containerConfigPath,
 		"JENTIC__APPS: registry,admin",
-		// The model cache must be redirected to a writable dir (uid 999's $HOME
+		// The model cache must be redirected to a writable dir (uid 10001's $HOME
 		// is not writable) or the ingest embedding stage dies with EACCES.
 		"HF_HOME: /tmp/hf-cache",
 		"SENTENCE_TRANSFORMERS_HOME: /tmp/hf-cache",
@@ -229,7 +277,7 @@ func TestWriteComposeArtifactsModes(t *testing.T) {
 		}
 	}
 	// Read by the postgres container's uid (999), not the host user.
-	// Written by the app/broker containers as uid 999.
+	// Written by the app/broker containers as uid 10001.
 	assertMode(cfg.LogsHostDir, 0o777)
 	// Only the docker CLI (host user) reads the compose file; keep it private.
 	assertMode(cfg.ComposePath, 0o600)

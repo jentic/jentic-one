@@ -30,7 +30,7 @@ test('auth: log in and persist storageState for the e2e project', async ({ page 
 	// Land on the authenticated shell — confirms the JWT is in place before we
 	// snapshot storage.
 	await expect(page).toHaveURL(/\/app/);
-	await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible();
+	await expect(page.getByRole('heading', { name: 'Agents', exact: true })).toBeVisible();
 
 	ensureAuthDir();
 	const state = await page.context().storageState({ path: STORAGE_STATE_PATH });

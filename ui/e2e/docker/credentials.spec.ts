@@ -17,16 +17,16 @@ import {
  * control surface envelope-encrypts secrets, and a missing keyset makes POST
  * /credentials 500. Verified live: POST /credentials -> 201 with the keyset.
  */
-test('credentials list renders the empty state on a clean backend', async ({ page }) => {
+test('the credential inventory opens from the Agents header on a clean backend', async ({
+	page,
+}) => {
 	const errors = captureConsoleErrors(page);
 
-	await page.goto('/app');
-	await page
-		.getByRole('navigation', { name: 'Primary' })
-		.getByRole('link', { name: 'Credentials' })
-		.click();
+	// The inventory lives on Agents (no standalone page): its header opens it.
+	await page.goto('/app/agents');
+	await page.getByRole('button', { name: 'Credentials', exact: true }).click();
 
-	await expect(page.getByRole('heading', { name: 'Credentials' })).toBeVisible();
+	await expect(page.getByRole('dialog', { name: 'Credentials', exact: true })).toBeVisible();
 
 	expect(errors, `unexpected console errors:\n${errors.join('\n')}`).toEqual([]);
 });
@@ -34,8 +34,8 @@ test('credentials list renders the empty state on a clean backend', async ({ pag
 test('create a bearer credential via the wizard and see it in the list', async ({ page }) => {
 	const name = `e2e bearer ${uniqueSuffix()}`;
 
-	await page.goto('/app/credentials');
-	await expect(page.getByRole('heading', { name: 'Credentials' })).toBeVisible();
+	await page.goto('/app/agents?credentials=1');
+	await expect(page.getByRole('dialog', { name: 'Credentials', exact: true })).toBeVisible();
 
 	await page.getByRole('button', { name: 'Add credential' }).click();
 
@@ -63,7 +63,7 @@ test('a credential created via the API can be deleted from the UI', async ({ pag
 	const name = `e2e-del-${uniqueSuffix()}`;
 	await createBearerCredential(request, name);
 
-	await page.goto('/app/credentials');
+	await page.goto('/app/agents?credentials=1');
 	await expect(page.getByRole('heading', { name })).toBeVisible();
 
 	// The card exposes an explicit per-credential delete control (aria-labelled),
@@ -95,7 +95,7 @@ test('a credential created via the API can be deleted from the UI', async ({ pag
 test('create an api_key credential via the wizard (manual entry)', async ({ page }) => {
 	const name = `e2e apikey ${uniqueSuffix()}`;
 
-	await page.goto('/app/credentials');
+	await page.goto('/app/agents?credentials=1');
 	await page.getByRole('button', { name: 'Add credential' }).click();
 	await expect(page.getByRole('heading', { name: 'Add credential' })).toBeVisible();
 	await page.getByRole('button', { name: /Enter manually/i }).click();
@@ -108,7 +108,11 @@ test('create an api_key credential via the wizard (manual entry)', async ({ page
 	await page.getByRole('radio', { name: 'API key' }).click();
 
 	await page.getByPlaceholder('Production API key').fill(name);
-	await page.getByLabel('API key', { exact: true }).fill('sk-e2e-apikey');
+	// Scoped to the wizard: the inventory behind it has an "API key" type filter.
+	await page
+		.getByRole('dialog', { name: /^Add credential/ })
+		.getByLabel('API key', { exact: true })
+		.fill('sk-e2e-apikey');
 	await page.getByPlaceholder('X-Api-Key').fill('X-Api-Key');
 	await page.getByRole('button', { name: 'Create credential' }).click();
 
@@ -121,7 +125,7 @@ test('create an api_key credential via the wizard (manual entry)', async ({ page
 test('create a basic-auth credential via the wizard (manual entry)', async ({ page }) => {
 	const name = `e2e basic ${uniqueSuffix()}`;
 
-	await page.goto('/app/credentials');
+	await page.goto('/app/agents?credentials=1');
 	await page.getByRole('button', { name: 'Add credential' }).click();
 	await page.getByRole('button', { name: /Enter manually/i }).click();
 
@@ -144,7 +148,7 @@ test('create an oauth2 (client-credentials) credential via the wizard (manual en
 }) => {
 	const name = `e2e oauth2 ${uniqueSuffix()}`;
 
-	await page.goto('/app/credentials');
+	await page.goto('/app/agents?credentials=1');
 	await page.getByRole('button', { name: 'Add credential' }).click();
 	await page.getByRole('button', { name: /Enter manually/i }).click();
 

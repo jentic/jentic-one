@@ -88,7 +88,6 @@ export { GroupBy } from './models/GroupBy';
 export type { HealthResponse } from './models/HealthResponse';
 export { InstanceIdentityResponse } from './models/InstanceIdentityResponse';
 export type { IntegrationsConnectRequest } from './models/IntegrationsConnectRequest';
-export type { IntrospectRequest } from './models/IntrospectRequest';
 export type { IntrospectResponse } from './models/IntrospectResponse';
 export type { InviteIssuedResponse } from './models/InviteIssuedResponse';
 export { InviteState } from './models/InviteState';

@@ -7,7 +7,7 @@
  * deprecation window (phase 5d → 6b) those paths land here instead of the
  * router's not-found catch-all: they redirect to the Agents page — the
  * binding-management home that replaced toolkits — and surface a one-time
- * dismissible toast pointing at the per-agent Access tab.
+ * dismissible toast pointing at the per-agent binding surface.
  *
  * The `tk_…` id on detail deep links is NOT resolved (the toolkit endpoints
  * were deleted in 5b; there is nothing to look it up against), and the query
@@ -41,7 +41,7 @@ function ToolkitsRetiredRedirect() {
 			id: 'toolkits-retired',
 			title: 'Toolkits were retired',
 			description:
-				'Access is now managed per agent — open an agent and use its Access tab to manage bound credentials.',
+				'Access is now managed per agent — select an agent on the Agents page and manage its APIs and bound credentials there.',
 			durationMs: 10000,
 		});
 	}, []);

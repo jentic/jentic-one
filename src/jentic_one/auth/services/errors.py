@@ -132,6 +132,34 @@ class InvalidOwnerError(AuthServiceError):
         self.owner_id = owner_id
 
 
+class UnknownScopeError(AuthServiceError):
+    """Raised when a scope to grant to an agent is not in the permission catalogue."""
+
+    def __init__(self, scope: str) -> None:
+        super().__init__(f"Scope '{scope}' is not a known permission")
+        self.scope = scope
+
+
+class ScopeNotGrantableError(AuthServiceError):
+    """Raised when the caller may not grant a scope to an agent.
+
+    A caller without ``org:admin`` may only grant scopes it holds itself (plus
+    the default agent baseline), and never ``org:admin`` or ``agents:write``.
+    """
+
+    def __init__(self, scope: str) -> None:
+        super().__init__(f"Scope '{scope}' cannot be granted by the caller")
+        self.scope = scope
+
+
+class OwnerTransferForbiddenError(AuthServiceError):
+    """Raised when a caller without ``org:admin`` tries to change an agent's owner."""
+
+    def __init__(self, agent_id: str) -> None:
+        super().__init__(f"Changing the owner of agent '{agent_id}' requires org:admin")
+        self.agent_id = agent_id
+
+
 class ClaimTokenInvalidError(AuthServiceError):
     """Raised when an agent-ownership claim token is missing, wrong, or expired."""
 
@@ -233,6 +261,21 @@ class InvalidRevocationRequestError(AuthServiceError):
     ONLY error arm of the revocation endpoint's form-encoded path: a request
     missing the required ``token`` parameter. Invalid, unknown, foreign, and
     already-revoked tokens are deliberately NOT errors (200 no-op, no oracle).
+    """
+
+    def __init__(self, reason: str = "token is required") -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+class InvalidIntrospectionRequestError(AuthServiceError):
+    """Raised when an RFC 7662 introspection request body is malformed.
+
+    Maps to 400 ``invalid_request`` (RFC 7662 §2.1: a request missing the
+    required ``token`` parameter answers 400) on both the form-encoded and
+    JSON arms of ``POST /oauth/introspect``. Whether the *token* is invalid,
+    unknown, or expired is never an error — that verdict is the RFC 7662 §2.2
+    ``{"active": false}`` response body.
     """
 
     def __init__(self, reason: str = "token is required") -> None:

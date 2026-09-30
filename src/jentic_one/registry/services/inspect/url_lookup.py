@@ -4,18 +4,31 @@ from __future__ import annotations
 
 import re
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
+import structlog
+
 from jentic_one.registry.core.schema.operation_url_index import OperationURLIndex
-from jentic_one.registry.core.url_index import count_segments, normalise_host, normalize_path
+from jentic_one.registry.core.url_index import (
+    URL_INDEX_FORMAT_MARKER,
+    ServerVariableMatch,
+    build_server_index_entries,
+    count_segments,
+    normalise_host,
+    normalize_path,
+    resolve_server_variable_groups,
+)
+from jentic_one.registry.repos.operation_repo import OperationRepository
 from jentic_one.registry.repos.url_index_repo import UrlIndexRepository
 from jentic_one.registry.services.errors import (
     AmbiguousMatchError,
     MethodNotAllowedError,
     TooManyCandidatesError,
 )
+
+logger = structlog.get_logger(__name__)
 
 MAX_CANDIDATES = 500
 
@@ -30,13 +43,27 @@ class URLLookupResult:
     operation_id: str
     path_params: dict[str, str]
     query_params: dict[str, Any]
+    # Concrete server-variable values present in the request URL, and the
+    # declared defaults of variables the URL left as a ``{name}`` placeholder.
+    server_variables: dict[str, str] = field(default_factory=dict)
+    server_variable_defaults: dict[str, str] = field(default_factory=dict)
+    # True when the matched row's server-variable values could not be
+    # determined (a row indexed before server-variable capture whose server is
+    # not among the operation's stored servers). Credential selection then
+    # fails closed for credentials scoped by ``server_variables``.
+    server_variables_unresolved: bool = False
 
 
 @dataclass
 class _RankedMatch:
     operation_id: str
+    revision_id: uuid.UUID
     path_params: dict[str, str]
     specificity_key: tuple[bool, int, int, int]
+    server_variables: dict[str, str] = field(default_factory=dict)
+    server_variable_defaults: dict[str, str] = field(default_factory=dict)
+    server_variables_unresolved: bool = False
+    row: OperationURLIndex | None = None
 
 
 class URLLookupService:
@@ -50,8 +77,11 @@ class URLLookupService:
     ) -> URLLookupResult | None:
         """Resolve a full URL to the matching operation.
 
-        When revision_id is None, searches across all revisions (uses the
-        globally-unique URL index entries).
+        When ``revision_id`` is None, only each API's live revision
+        (``current_revision_id``) is searched — drafts, archived and superseded
+        revisions never serve an unpinned lookup. Passing ``revision_id`` (a
+        ``Jentic-Revision`` pin) searches exactly that revision, whatever its
+        state; callers gate which revisions may be pinned.
         """
         parsed = urlparse(url)
         scheme = parsed.scheme or "https"
@@ -80,6 +110,9 @@ class URLLookupService:
                     operation_id=result.operation_id,
                     path_params=result.path_params,
                     query_params=query_params,
+                    server_variables=result.server_variables,
+                    server_variable_defaults=result.server_variable_defaults,
+                    server_variables_unresolved=result.server_variables_unresolved,
                 )
 
         if revision_id is not None:
@@ -122,14 +155,14 @@ class URLLookupService:
                     if c.host_regex and re.fullmatch(c.host_regex, host, re.IGNORECASE)
                 ]
         else:
-            candidates = await UrlIndexRepository.lookup_by_host_any_revision(
+            candidates = await UrlIndexRepository.lookup_by_host_live(
                 self._session,
                 method=method,
                 host=host,
                 segment_count=segment_count,
             )
             if not candidates:
-                regex_candidates = await UrlIndexRepository.lookup_by_host_regex_any_revision(
+                regex_candidates = await UrlIndexRepository.lookup_by_host_regex_live(
                     self._session,
                     method=method,
                     segment_count=segment_count,
@@ -146,7 +179,49 @@ class URLLookupService:
         if len(candidates) > MAX_CANDIDATES:
             raise TooManyCandidatesError()
 
-        return self._match_and_rank(candidates, path)
+        ranked = self._match_and_rank(candidates, path, host)
+        is_legacy_row = (
+            ranked is not None
+            and ranked.row is not None
+            and URL_INDEX_FORMAT_MARKER not in ranked.row.path_regex
+        )
+        if ranked is not None and is_legacy_row:
+            await self._resolve_legacy_server_variables(ranked, host=host, path=path)
+        return ranked
+
+    async def _resolve_legacy_server_variables(
+        self, ranked: _RankedMatch, *, host: str, path: str
+    ) -> None:
+        """Derive the server-variable values of a row indexed before capture groups.
+
+        Such a row was built from the operation's defaults-expanded server URL,
+        so its regexes carry no server-variable groups and the match alone says
+        nothing about the request's variable values. They are re-derived here
+        by rebuilding the operation's stored servers with the current builder
+        (exactly what a re-ingest would index) and matching the request
+        against those entries. If none matches — the row's server is not among
+        the stored ones — the match is flagged ``server_variables_unresolved``
+        so credential selection fails closed for scoped credentials.
+        """
+        row = ranked.row
+        assert row is not None
+        operations = await OperationRepository.get_by_ids(self._session, {row.operation_id})
+        derived: ServerVariableMatch | None = None
+        if operations:
+            operation = operations[0]
+            servers = operation.servers or operation.version_servers
+            derived = _match_rebuilt_servers(servers, operation.path, host=host, path=path)
+        if derived is None:
+            logger.debug(
+                "url_index_server_variables_unresolved",
+                operation_id=row.operation_id,
+                revision_id=str(row.revision_id),
+            )
+            ranked.server_variables_unresolved = True
+            return
+        ranked.path_params = derived.path_params
+        ranked.server_variables = derived.values
+        ranked.server_variable_defaults = derived.defaults
 
     async def _check_method_not_allowed(
         self,
@@ -188,13 +263,25 @@ class URLLookupService:
             raise MethodNotAllowedError(sorted(matching_methods))
 
     @staticmethod
-    def _match_and_rank(candidates: list[OperationURLIndex], path: str) -> _RankedMatch | None:
+    def _match_and_rank(
+        candidates: list[OperationURLIndex], path: str, host: str = ""
+    ) -> _RankedMatch | None:
         matches: list[_RankedMatch] = []
         for candidate in candidates:
             match = re.fullmatch(candidate.path_regex, path)
             if not match:
                 continue
-            path_params = match.groupdict()
+            host_groups: dict[str, str | None] = {}
+            if candidate.host_regex and host:
+                host_match = re.fullmatch(candidate.host_regex, host, re.IGNORECASE)
+                if host_match is not None:
+                    host_groups = host_match.groupdict()
+            # Server-variable groups carry the request's concrete values; they
+            # are split out so they never surface as operation path params.
+            resolved = resolve_server_variable_groups(host_groups, match.groupdict())
+            if resolved is None:
+                continue
+            path_params = resolved.path_params
             is_parameterized = bool(candidate.param_names)
             template_parts = candidate.path_template.strip("/").split("/")
             literal_count = sum(1 for p in template_parts if not p.startswith("{"))
@@ -215,19 +302,51 @@ class URLLookupService:
             matches.append(
                 _RankedMatch(
                     operation_id=candidate.operation_id,
+                    revision_id=candidate.revision_id,
                     path_params=path_params,
                     specificity_key=specificity_key,
+                    server_variables=resolved.values,
+                    server_variable_defaults=resolved.defaults,
+                    row=candidate,
                 )
             )
 
         if not matches:
             return None
 
+        # ``sort`` is stable, so equally specific matches keep the candidate order.
+        # Unpinned candidates arrive most-recently-live revision first (see
+        # ``UrlIndexRepository.lookup_by_host_live``): when two live revisions
+        # (e.g. two versions of one vendor's API) serve the same URL, the newest
+        # wins, as it did before the index was scoped per revision. Ambiguity is
+        # only an error *within* the winning revision — its own spec is at fault.
         matches.sort(key=lambda m: m.specificity_key)
+        best = matches[0]
+        tied = [
+            m
+            for m in matches
+            if m.specificity_key == best.specificity_key and m.revision_id == best.revision_id
+        ]
+        if len(tied) > 1:
+            raise AmbiguousMatchError(len(tied))
 
-        if len(matches) > 1 and matches[0].specificity_key == matches[1].specificity_key:
-            raise AmbiguousMatchError(
-                sum(1 for m in matches if m.specificity_key == matches[0].specificity_key)
+        return best
+
+
+def _match_rebuilt_servers(
+    servers: list[Any], operation_path: str, *, host: str, path: str
+) -> ServerVariableMatch | None:
+    """Match a request against the index entries the current builder makes for *servers*."""
+    for server in servers:
+        expansion = build_server_index_entries(server.url, server.variables, operation_path)
+        for entry in expansion.entries:
+            host_match = entry.host_regex.fullmatch(host)
+            path_match = entry.path_regex.fullmatch(path)
+            if host_match is None or path_match is None:
+                continue
+            resolved = resolve_server_variable_groups(
+                host_match.groupdict(), path_match.groupdict()
             )
-
-        return matches[0]
+            if resolved is not None:
+                return resolved
+    return None

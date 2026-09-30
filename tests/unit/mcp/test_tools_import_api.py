@@ -144,7 +144,7 @@ class _FakeJobService:
     def __init__(self, ctx: Any) -> None:
         self._ctx = ctx
 
-    async def get_by_id(self, job_id: str) -> JobView:
+    async def get_by_id(self, job_id: str, *, identity: Identity) -> JobView:
         assert job_id == "job_9"
         if _FakeJobService.poll_error is not None:
             raise _FakeJobService.poll_error
@@ -162,7 +162,7 @@ class _FakeJobResultService:
     def __init__(self, ctx: Any) -> None:
         self._ctx = ctx
 
-    async def get(self, job_id: str) -> JobResultView:
+    async def get(self, job_id: str, *, identity: Identity) -> JobResultView:
         if _FakeJobResultService.error is not None:
             raise _FakeJobResultService.error
         return JobResultView(
@@ -354,7 +354,7 @@ async def test_hung_poll_trips_the_hard_ceiling_and_maps_to_the_poll_failure_arm
     monkeypatch.setattr(tools_mod, "_IMPORT_WAIT_BUDGET_SECONDS", 0.01)
     monkeypatch.setattr(tools_mod, "_IMPORT_WAIT_GRACE_SECONDS", 0.02)
 
-    async def _hang(self: Any, job_id: str) -> JobView:
+    async def _hang(self: Any, job_id: str, *, identity: Identity) -> JobView:
         await asyncio.Event().wait()  # never set — a poll that never returns
         raise AssertionError("unreachable")
 

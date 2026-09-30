@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { type ReactNode } from 'react';
 import { motion } from 'framer-motion';
-import { Button } from '@/shared/ui/Button';
+import { ExpandableText } from '@/shared/ui/ExpandableText';
 import { cn } from '@/shared/lib/utils';
 
 interface PageHeaderProps {
@@ -39,20 +39,6 @@ export function PageHeader({
 	animated = true,
 	className,
 }: PageHeaderProps) {
-	const [expanded, setExpanded] = useState(false);
-	const [clamped, setClamped] = useState(false);
-	const subtitleRef = useRef<HTMLParagraphElement | null>(null);
-
-	useEffect(() => {
-		const el = subtitleRef.current;
-		if (!el) return;
-		const check = () => setClamped(el.scrollHeight > el.clientHeight);
-		check();
-		const ro = new ResizeObserver(check);
-		ro.observe(el);
-		return () => ro.disconnect();
-	}, [subtitle, expanded]);
-
 	const content = (
 		<div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
 			<div className="flex min-w-0 basis-full items-start gap-3 sm:flex-1 sm:basis-0">
@@ -63,25 +49,11 @@ export function PageHeader({
 					</h1>
 					{subtitle && (
 						<div className="mt-0.5">
-							<p
-								ref={subtitleRef}
-								className={cn(
-									'text-muted-foreground text-sm',
-									!expanded && 'line-clamp-2',
-								)}
-							>
+							{/* A subtitle is free text: two lines, then on request
+							    the rest (`ExpandableText`). */}
+							<ExpandableText lines={2} className="text-muted-foreground text-sm">
 								{subtitle}
-							</p>
-							{(clamped || expanded) && (
-								<Button
-									variant="ghost"
-									size="sm"
-									onClick={() => setExpanded((v) => !v)}
-									className="text-muted-foreground hover:text-foreground mt-0.5 h-auto px-0 py-0 text-xs font-medium"
-								>
-									{expanded ? 'Show less' : 'Show more'}
-								</Button>
-							)}
+							</ExpandableText>
 						</div>
 					)}
 				</div>

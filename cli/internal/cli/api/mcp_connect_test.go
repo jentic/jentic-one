@@ -161,6 +161,40 @@ func TestMCPRelay_ForwardsCallerBearer(t *testing.T) {
 	}
 }
 
+// TestMCPRelay_DoesNotFollowRedirects pins that the relay stays on its
+// endpoint: a redirect to another origin is surfaced as a JSON-RPC error and
+// the other origin never receives the frame or the caller's bearer.
+func TestMCPRelay_DoesNotFollowRedirects(t *testing.T) {
+	var otherHits atomic.Int32
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		otherHits.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{}}`))
+	}))
+	t.Cleanup(other.Close)
+	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, other.URL+mcpHTTPPath, http.StatusTemporaryRedirect)
+	}))
+	t.Cleanup(daemon.Close)
+
+	t.Setenv(mcpBearerEnv, "at_shortlived")
+	relay, err := newMCPRelay(&mcpRelayOptions{url: daemon.URL}, io.Discard, discardLogger())
+	if err != nil {
+		t.Fatalf("newMCPRelay: %v", err)
+	}
+	out := &lineRecorder{}
+	relay.out = out
+	relay.relayFrame(context.Background(), []byte(`{"jsonrpc":"2.0","id":1,"method":"ping"}`))
+
+	if n := otherHits.Load(); n != 0 {
+		t.Errorf("redirect target was contacted %d times, want 0", n)
+	}
+	lines := out.lines()
+	if len(lines) != 1 || !strings.Contains(lines[0], `"error"`) || !strings.Contains(lines[0], "307") {
+		t.Errorf("relayed frames = %v, want one synthesized error naming the 307", lines)
+	}
+}
+
 // TestMCPRelay_SynthesizesErrorForFailedRequest pins recovery: a daemon
 // failure resolves the pending request with a JSON-RPC error (same id),
 // never a hung call; a failed notification produces no frame.

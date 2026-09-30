@@ -27,15 +27,24 @@ from jentic_one.control.repos.oauth_client_credential_repo import (
     OAuthClientCredentialRepository,
 )
 from jentic_one.control.services.credentials.schemas.connect import ConnectState
-from jentic_one.control.services.credentials.state import encode_state, generate_nonce
+from jentic_one.control.services.credentials.state import (
+    OAUTH_CALLBACK_PATH,
+    encode_state,
+    generate_nonce,
+)
 from jentic_one.control.services.integrations.errors import ConnectSessionServiceError
 from jentic_one.control.services.integrations.flow_handlers.base import (
     AuthCodeBeginResult,
     BeginResult,
     SuccessTokens,
 )
-from jentic_one.shared.config import VendorAuthorizationCodeFlowConfig, VendorFlowConfig
+from jentic_one.shared.config import (
+    VendorAuthorizationCodeFlowConfig,
+    VendorFlowConfig,
+    bind_origin,
+)
 from jentic_one.shared.context import Context
+from jentic_one.shared.egress import build_strict_pinned_transport
 from jentic_one.shared.models.actors import actor_type_from_id
 from jentic_one.shared.models.credentials import StoredCredentialType
 from jentic_one.shared.url_validation import validate_upstream_url
@@ -177,12 +186,19 @@ class AuthCodeFlowHandler:
         except ValueError as exc:
             raise AuthCodeExchangeError(f"unsafe upstream URL: {exc}") from exc
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(
-                safe_url,
-                data=payload,
-                headers={"Accept": "application/json"},
-            )
+        try:
+            async with httpx.AsyncClient(
+                timeout=30.0, transport=build_strict_pinned_transport()
+            ) as client:
+                response = await client.post(
+                    safe_url,
+                    data=payload,
+                    headers={"Accept": "application/json"},
+                )
+        except ValueError as exc:
+            # Raised by the pinning transport: the host re-resolved to a blocked
+            # address or did not resolve at all.
+            raise AuthCodeExchangeError(f"unsafe upstream URL: {exc}") from exc
         if response.status_code != 200:
             # Keep the raw body out of ``str(exc)`` — this string lands
             # verbatim in ``terminal_detail`` on the session row (persisted)
@@ -223,19 +239,19 @@ class AuthCodeFlowHandler:
         )
 
     def _redirect_uri(self) -> str:
-        """Resolve the platform redirect URI from provider config.
+        """Resolve the platform redirect URI, the same one standalone connect uses.
 
-        Reuses the ``credentials.providers.direct_oauth2.redirect_uri`` that
-        the existing DirectOAuth2Provider registers with vendors, so the
-        vendor OAuth app only ever needs one redirect_uri whitelisted for
-        both entry points (connect-session flow and standalone credential
-        connect). Falls back to a sensible local default when unconfigured
-        — matches DirectOAuth2Provider's own posture.
+        An explicit ``credentials.providers.direct_oauth2.redirect_uri`` wins,
+        so the vendor OAuth app only ever needs one redirect_uri whitelisted
+        for both entry points (connect-session flow and standalone credential
+        connect). Otherwise it derives from ``server.public_base_url`` (else
+        the serving bind), as the web connect endpoint does; there's no request
+        here to take an origin from. Deterministic, so the token exchange
+        replays exactly what the authorize request sent (RFC 6749 §4.1.3).
         """
         provider_cfg = self._ctx.config.credentials.providers.get("direct_oauth2")
-        if provider_cfg is None or not hasattr(provider_cfg, "redirect_uri"):
-            raise RuntimeError(
-                "credentials.providers.direct_oauth2.redirect_uri must be configured for "
-                "the authorization_code connect flow"
-            )
-        return provider_cfg.redirect_uri
+        configured = getattr(provider_cfg, "redirect_uri", None)
+        if configured:
+            return str(configured)
+        config = self._ctx.config
+        return f"{config.server.public_base_url or bind_origin(config)}{OAUTH_CALLBACK_PATH}"

@@ -18,6 +18,7 @@ from jentic_one.auth.services.errors import (
     CredentialNotVisibleError,
     InvalidClientMetadataError,
     InvalidGrantError,
+    InvalidIntrospectionRequestError,
     InvalidOwnerError,
     InvalidRevocationRequestError,
     InvalidTransitionError,
@@ -25,8 +26,11 @@ from jentic_one.auth.services.errors import (
     OAuthGrantAccessDeniedError,
     OAuthGrantNotFoundError,
     OperationNotSupportedError,
+    OwnerTransferForbiddenError,
     RateLimitExceededError,
     RegistrationAccessDeniedError,
+    ScopeNotGrantableError,
+    UnknownScopeError,
 )
 from jentic_one.shared.db.errors import DatabaseUnavailableError
 from jentic_one.shared.metrics import get_meter
@@ -47,6 +51,7 @@ _ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     ClaimTokenInvalidError: (400, "invalid_claim_token"),
     InvalidGrantError: (400, "invalid_grant"),
     InvalidClientMetadataError: (400, "invalid_client_metadata"),
+    InvalidIntrospectionRequestError: (400, "invalid_request"),
     InvalidOwnerError: (422, "invalid_owner"),
     InvalidRevocationRequestError: (400, "invalid_request"),
     InvalidTransitionError: (409, "invalid_transition"),
@@ -59,6 +64,9 @@ _ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     RateLimitExceededError: (429, "rate_limit_exceeded"),
     RegistrationAccessDeniedError: (401, "registration_access_denied"),
     OperationNotSupportedError: (403, "operation_not_supported"),
+    OwnerTransferForbiddenError: (403, "owner_transfer_forbidden"),
+    ScopeNotGrantableError: (403, "scope_not_grantable"),
+    UnknownScopeError: (422, "unknown_scope"),
 }
 
 

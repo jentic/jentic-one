@@ -20,6 +20,7 @@ from jentic_one.admin.web.schemas.permissions import (
 from jentic_one.admin.web.schemas.users import UserResponse
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.web import get_current_identity
+from jentic_one.shared.web.openapi_responses import conflict, not_found, with_responses
 
 router = APIRouter()
 
@@ -44,7 +45,13 @@ async def list_permissions(
     )
 
 
-@router.put("/users/{user_id}/permissions")
+@router.put(
+    "/users/{user_id}/permissions",
+    responses=with_responses(
+        not_found(),
+        conflict("Would remove org:admin from the last active org:admin"),
+    ),
+)
 async def set_user_permissions(
     user_id: str,
     body: SetPermissionsRequest,

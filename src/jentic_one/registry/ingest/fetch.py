@@ -46,6 +46,11 @@ class InlineSource(BaseModel):
     #: Authorized-supersede flag (A4b): a catalog re-import allowed to replace a live
     #: confirmed overlay. Set only by the scope-checked enqueue path.
     supersede_active: bool = False
+    #: Operator approval for a server-host change (``credentials:write``): lets a
+    #: catalog re-import that changes the API's server hosts become current even
+    #: when the API has bound credentials. Server-set only, by the scope-checked
+    #: ``CatalogService.import_entry``; no client ingest schema exposes it.
+    host_change_approved: bool = False
     #: Overlay-only: the id of the overlay being (re-)materialized. Propagated to the
     #: ingest spec so ``CreateRevisionStage`` can distinguish a re-materialize of the same
     #: overlay (keep the clean-base ``superseded_revision_id``) from a stacked confirm of a
@@ -72,6 +77,11 @@ class UrlSource(BaseModel):
     #: confirmed overlay (the current revision is then overlay-origin, so the stage must
     #: archive every active revision). Set only by the scope-checked enqueue path.
     supersede_active: bool = False
+    #: Operator approval for a server-host change (``credentials:write``): lets a
+    #: catalog re-import that changes the API's server hosts become current even
+    #: when the API has bound credentials. Server-set only, by the scope-checked
+    #: ``CatalogService.import_entry``; no client ingest schema exposes it.
+    host_change_approved: bool = False
 
 
 IngestSource = Annotated[UrlSource | InlineSource, Field(discriminator="type")]
@@ -310,5 +320,6 @@ async def load_specification(
         catalog_api_id=source.catalog_api_id,
         overlay_base_digest=getattr(source, "overlay_base_digest", None),
         supersede_active=source.supersede_active,
+        host_change_approved=source.host_change_approved,
         overlay_id=getattr(source, "overlay_id", None),
     )

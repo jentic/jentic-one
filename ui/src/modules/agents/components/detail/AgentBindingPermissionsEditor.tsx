@@ -1,14 +1,19 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { ArrowUpDown, ChevronDown, FlaskConical, Minus, Plus, Save } from 'lucide-react';
-import { Button, cleanPermissionRule, isEmptyAllowRule } from '@/shared/ui';
+import { ArrowUpDown, Minus, Plus, RotateCcw, Save, ShieldCheck } from 'lucide-react';
+import {
+	Button,
+	allowAllRule,
+	cleanPermissionRule,
+	grantsEverything,
+	isEmptyAllowRule,
+} from '@/shared/ui';
 import { ruleSummary, type PermissionRule as DisplayRule } from '@/shared/lib';
 import {
 	useReplaceAgentBindingPermissions,
 	type BindingPermissionRule,
 	type PermissionRuleInput,
 } from '@/modules/agents/api';
-import { AgentBindingRuleTester } from '@/modules/agents/components/detail/AgentBindingRuleTester';
 import { panelMotion } from '@/modules/agents/components/detail/shared';
 import { RuleListEditor } from '@/shared/credentials/components/RuleListEditor';
 import { useVendorOperations } from '@/shared/credentials/api/vendors-hooks';
@@ -26,22 +31,28 @@ import type { PermissionRule as PreviewPermissionRule } from '@/shared/credentia
  * uses everywhere), so the operator sees exactly which grants a save will
  * revoke or introduce before committing. Because evaluation is
  * first-match-wins, a pure reorder is also a change — dirtiness is
- * order-sensitive and reorders get their own pending-changes line. The broker
- * dry-run tester is tucked behind a disclosure — present when needed, not
- * competing with the editor.
+ * order-sensitive and reorders get their own pending-changes line.
+ *
+ * `onDirtyChange` reports that dirtiness to the host so the dry-run tester, which
+ * evaluates SAVED rules, can disable itself while a draft diverges.
  */
 export interface AgentBindingPermissionsEditorProps {
 	agentId: string;
 	credentialId: string;
 	credentialLabel: string;
 	initialRules: BindingPermissionRule[];
-	onClose: () => void;
 	/**
-	 * The API the credential is bound against — powers the operation-impact
-	 * preview below the editor so the user sees the DRAFT rules against
-	 * real ops as they edit. When omitted (e.g. binding has no served
-	 * ``ServedApiEntity`` with a version — rare, but possible) the
-	 * preview is skipped.
+	 * Dismiss affordance: renders a Cancel button and is called after a successful
+	 * save. Omit for always-open hosts — they get a "Discard changes" reset instead.
+	 */
+	onClose?: () => void;
+	/** Reports the live draft-vs-saved dirtiness (order-sensitive). */
+	onDirtyChange?: (dirty: boolean) => void;
+	/**
+	 * The API the credential is bound against. Feeds the rule editor's path
+	 * autocomplete and "no operations affected" warning from the API's real
+	 * operations. Omitted (no concrete version known) → the editor works
+	 * without suggestions.
 	 */
 	apiReference?: OpsApiReference | null;
 }
@@ -49,9 +60,9 @@ export interface AgentBindingPermissionsEditorProps {
 /**
  * Adapt a mutable ``PermissionRuleInput`` (agent-module type generated
  * from ``PermissionRuleSchema``) to the credentials-module ``PermissionRule``
- * shape the shared ``RuleListEditor`` and ops preview both expect.
- * Structurally identical for our fields; the explicit narrow avoids a
- * bare cast so a future divergence in either type is caught at build.
+ * shape the shared ``RuleListEditor`` expects. Structurally identical for our
+ * fields; the explicit narrow avoids a bare cast so a future divergence in
+ * either type is caught at build.
  */
 function toPreviewRule(rule: PermissionRuleInput): PreviewPermissionRule {
 	return {
@@ -142,12 +153,12 @@ export function AgentBindingPermissionsEditor({
 	credentialLabel,
 	initialRules,
 	onClose,
+	onDirtyChange,
 	apiReference,
 }: AgentBindingPermissionsEditorProps) {
 	const [rules, setRules] = useState<PermissionRuleInput[]>(() =>
 		initialRules.filter((r) => !r._system).map(toInput),
 	);
-	const [testerOpen, setTesterOpen] = useState(false);
 	const replace = useReplaceAgentBindingPermissions(agentId, credentialId);
 
 	// Feed op paths + templates into the shared editor so autocomplete
@@ -186,13 +197,37 @@ export function AgentBindingPermissionsEditor({
 		draftDisplay.map(canon).join('\u0000') !== savedDisplay.map(canon).join('\u0000');
 	const dirty = added.length > 0 || removed.length > 0 || reordered;
 
+	// Lift the dirty flag to the host (tester gating). Effect, not render-time
+	// call: the parent may setState in response.
+	useEffect(() => {
+		onDirtyChange?.(dirty);
+	}, [dirty, onDirtyChange]);
+
+	// Retract the report when the editor UNMOUNTS: hosts render it conditionally, and
+	// a dirty draft that disappears would otherwise leave the host's flag stuck true,
+	// disabling the tester over an editor that no longer exists.
+	const onDirtyChangeRef = useRef(onDirtyChange);
+	useEffect(() => {
+		onDirtyChangeRef.current = onDirtyChange;
+	});
+	useEffect(
+		() => () => {
+			onDirtyChangeRef.current?.(false);
+		},
+		[],
+	);
+
 	const save = () => {
 		if (hasInvalidRule || !dirty) return;
-		replace.mutate(clean, { onSuccess: () => onClose() });
+		replace.mutate(clean, { onSuccess: () => onClose?.() });
+	};
+
+	const discard = () => {
+		setRules(initialRules.filter((r) => !r._system).map(toInput));
 	};
 
 	return (
-		<div className="border-border bg-muted/20 space-y-4 border-t p-4 sm:p-5">
+		<div className="border-border bg-muted/20 space-y-4 rounded-lg border p-4 sm:p-5">
 			<div>
 				<p className="text-foreground text-sm font-semibold">
 					Permission rules for {credentialLabel}
@@ -276,52 +311,43 @@ export function AgentBindingPermissionsEditor({
 				)}
 			</AnimatePresence>
 
-			<div className="flex gap-2">
-				<Button
-					onClick={save}
-					loading={replace.isPending}
-					disabled={hasInvalidRule || !dirty}
-				>
-					<Save className="h-4 w-4" /> {replace.isPending ? 'Saving…' : 'Save rules'}
-				</Button>
-				<Button variant="secondary" onClick={onClose}>
-					Cancel
-				</Button>
-			</div>
-
-			{/* Broker dry-run, behind a disclosure so it never competes with the
-			    editor for attention. */}
-			<div className="border-border/60 border-t pt-3">
-				<Button
-					variant="ghost"
-					size="sm"
-					onClick={() => setTesterOpen((prev) => !prev)}
-					aria-expanded={testerOpen}
-					className="text-muted-foreground hover:text-foreground -ml-2 gap-1.5 text-xs"
-				>
-					<FlaskConical className="h-3.5 w-3.5" aria-hidden="true" />
-					Test a request
-					<motion.span
-						animate={{ rotate: testerOpen ? 180 : 0 }}
-						transition={{ duration: 0.18 }}
-						className="flex"
-					>
-						<ChevronDown className="h-3.5 w-3.5" aria-hidden="true" />
-					</motion.span>
-				</Button>
-				<AnimatePresence initial={false}>
-					{testerOpen && (
-						<motion.div {...panelMotion} className="overflow-hidden">
-							<div className="pt-3">
-								<AgentBindingRuleTester
-									agentId={agentId}
-									credentialId={credentialId}
-									savedRules={initialRules}
-								/>
-							</div>
-						</motion.div>
+			{/* One verb row: the catch-all shortcut on the left (reachable with
+			    rules already present — broadening a narrow grant is a normal
+			    edit), the commit pair on the right. */}
+			<div className="flex flex-wrap items-center justify-between gap-2">
+				<div className="flex flex-wrap items-center gap-2">
+					{!grantsEverything(rules) && (
+						<Button
+							variant="ghost"
+							size="sm"
+							onClick={() => setRules([...rules, allowAllRule()])}
+							className="text-muted-foreground hover:text-foreground"
+						>
+							<ShieldCheck className="h-4 w-4" /> Allow all operations
+						</Button>
 					)}
-				</AnimatePresence>
+				</div>
+				<div className="flex flex-wrap items-center gap-2">
+					{onClose ? (
+						<Button variant="secondary" size="sm" onClick={onClose}>
+							Cancel
+						</Button>
+					) : (
+						dirty && (
+							<Button variant="secondary" size="sm" onClick={discard}>
+								<RotateCcw className="h-4 w-4" /> Discard changes
+							</Button>
+						)
+					)}
+					<Button
+						size="sm"
+						onClick={save}
+						loading={replace.isPending}
+						disabled={hasInvalidRule || !dirty}
+					>
+						<Save className="h-4 w-4" /> {replace.isPending ? 'Saving…' : 'Save rules'}
+					</Button>
+				</div>
 			</div>
 		</div>
 	);

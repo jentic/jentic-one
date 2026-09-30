@@ -66,8 +66,36 @@ describe('RailEventRow — action slot vs severity (issue #652)', () => {
 			acknowledged: true,
 			tokens: { agent_id: 'agnt_1' },
 		});
-		render(<RailEventRow ev={ev} onAction={() => {}} />);
+		const { container } = render(<RailEventRow ev={ev} onAction={() => {}} />);
 		expect(screen.queryByRole('button', { name: 'Review' })).not.toBeInTheDocument();
-		expect(screen.getByText('Acked')).toBeInTheDocument();
+		// Handled rows just dim — no "Acked" label competing with the summary.
+		expect(screen.queryByText('Acked')).not.toBeInTheDocument();
+		expect(container.querySelector('[data-rail-row]')).toHaveClass('opacity-55');
+	});
+});
+
+describe('RailEventRow — plain-language rows', () => {
+	it('leads with the actor name, then the summary', () => {
+		const ev = makeEvent({ title: 'Called GitHub · createIssue', actorId: 'agnt_1' });
+		render(<RailEventRow ev={ev} actorName="invoice-bot" />);
+		expect(screen.getByText('invoice-bot')).toBeInTheDocument();
+		expect(screen.getByText(/Called GitHub · createIssue/)).toBeInTheDocument();
+	});
+
+	it('shows just the summary when the actor is unknown (no jargon prefix)', () => {
+		const ev = makeEvent({
+			title: 'Import finished',
+			type: 'import.completed',
+			kind: 'import',
+		});
+		const { container } = render(<RailEventRow ev={ev} />);
+		expect(container).toHaveTextContent(/^Import finished/);
+	});
+
+	it('only colours failures: info rows carry no stripe, errors a red one', () => {
+		const { container, rerender } = render(<RailEventRow ev={makeEvent({})} />);
+		expect(container.querySelector('[data-rail-row]')).toHaveClass('border-l-transparent');
+		rerender(<RailEventRow ev={makeEvent({ severity: 'error', title: 'boom' })} />);
+		expect(container.querySelector('[data-rail-row]')).toHaveClass('border-l-danger');
 	});
 });

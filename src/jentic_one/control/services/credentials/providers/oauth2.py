@@ -37,6 +37,7 @@ from jentic_one.control.services.credentials.schemas.provision import (
     RefreshResult,
 )
 from jentic_one.shared.context import Context
+from jentic_one.shared.egress import build_strict_pinned_transport
 from jentic_one.shared.models.credentials import CredentialType
 from jentic_one.shared.url_validation import validate_upstream_url
 
@@ -115,12 +116,19 @@ class OAuth2Provider(ABC):
         except ValueError as exc:
             raise TokenExchangeError(0, f"unsafe upstream URL: {exc}") from exc
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(
-                safe_url,
-                data=payload,
-                headers={"Accept": "application/json"},
-            )
+        try:
+            async with httpx.AsyncClient(
+                timeout=30.0, transport=build_strict_pinned_transport()
+            ) as client:
+                response = await client.post(
+                    safe_url,
+                    data=payload,
+                    headers={"Accept": "application/json"},
+                )
+        except ValueError as exc:
+            # Raised by the pinning transport: the host re-resolved to a blocked
+            # address or did not resolve at all.
+            raise TokenExchangeError(0, f"unsafe upstream URL: {exc}") from exc
 
         if response.status_code != 200:
             body = response.text

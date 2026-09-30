@@ -98,6 +98,7 @@ from jentic_one.shared.auth.permissions import has_effective_permission
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.pagination import InvalidCursorError, InvalidSearchCursorError
+from jentic_one.shared.redaction import redact_value
 from jentic_one.shared.resilience import RateLimiter
 from jentic_one.shared.state import MemoryStateBackend
 
@@ -680,7 +681,9 @@ def _is_single_source_duplicate_failure(error: str | None) -> bool:
     )
 
 
-async def _track_import_job(ctx: Context, job_id: str) -> tuple[JobView, bool]:
+async def _track_import_job(
+    ctx: Context, job_id: str, *, identity: Identity
+) -> tuple[JobView, bool]:
     """Poll the import job briefly; returns ``(job, duplicate_content)``.
 
     Mirrors Go's ``trackImportJob`` three-outcome contract: a terminal job
@@ -704,7 +707,7 @@ async def _track_import_job(ctx: Context, job_id: str) -> tuple[JobView, bool]:
     deadline = time.monotonic() + _IMPORT_WAIT_BUDGET_SECONDS
     delay = _IMPORT_POLL_STEP_SECONDS  # the first poll is immediate; back off from the step
     while True:
-        job = await svc.get_by_id(job_id)
+        job = await svc.get_by_id(job_id, identity=identity)
         if job.status != _JOB_COMPLETED and _is_single_source_duplicate_failure(job.error):
             return job, True
         if job.status in _JOB_TERMINAL_STATUSES or time.monotonic() >= deadline:
@@ -741,6 +744,14 @@ async def _promote_revisions(env: CallEnv, revisions: list[Any]) -> dict[str, st
             promoted[f"revision[{idx}]"] = "promote failed: malformed revision entry"
             continue
         state = str(rev.get("state") or "")
+        if rev.get("held_for_review"):
+            # Server-host change guard: the revision changes where the API's bound
+            # credentials are sent, so it stays a draft until an operator promotes it.
+            promoted[revision_id] = (
+                "held for operator review: the new revision changes the API's server "
+                "hosts (promoting it requires credentials:write)"
+            )
+            continue
         if state != "draft":
             promoted[revision_id] = state
             continue
@@ -885,7 +896,7 @@ async def _file_import(env: CallEnv, api_id: str) -> str:
 async def _finish_import(env: CallEnv, api_id: str, job_id: str) -> mcp_types.CallToolResult:
     """The track-and-promote tail of import_api (runs under the hard ceiling)."""
     try:
-        job, duplicate_content = await _track_import_job(env.ctx, job_id)
+        job, duplicate_content = await _track_import_job(env.ctx, job_id, identity=env.identity)
     except Exception as exc:
         # Go's poll-failure arm: a failing job poll is UNKNOWN state — never a
         # clean "still running" result (which would send the model into a
@@ -925,7 +936,7 @@ async def _finish_import(env: CallEnv, api_id: str, job_id: str) -> mcp_types.Ca
         )
 
     try:
-        view = await JobResultService(env.ctx).get(job_id)
+        view = await JobResultService(env.ctx).get(job_id, identity=env.identity)
     except Exception as exc:
         raise ToolError(
             CODE_INTERNAL_ERROR,
@@ -1036,7 +1047,9 @@ async def _execute_tool(
         )
     except Exception as exc:
         retry_safe = bool(idempotency_key) or method in ("GET", "HEAD")
-        raise ex.transport_error(exc, retry_safe=retry_safe) from exc
+        # ``from None``: the raw transport message stays out of any rendered
+        # traceback (``transport_error`` logs a redacted copy).
+        raise ex.transport_error(exc, retry_safe=retry_safe) from None
 
     if (redirect := ex.broker_redirect_error(status, response_headers)) is not None:
         raise redirect
@@ -1082,7 +1095,7 @@ async def handle_get_execution_result(
     _require_db(env.ctx, "admin", "job polling")
 
     try:
-        job = await JobService(env.ctx).get_by_id(job_id)
+        job = await JobService(env.ctx).get_by_id(job_id, identity=env.identity)
     except JobNotFoundError:
         raise ToolError(
             CODE_RESOLVE_FAILED,
@@ -1132,7 +1145,7 @@ async def _attach_job_result(env: CallEnv, job_id: str, payload: dict[str, Any])
     failing the poll — the status the model asked for is already in hand.
     """
     try:
-        view = await JobResultService(env.ctx).get(job_id)
+        view = await JobResultService(env.ctx).get(job_id, identity=env.identity)
     except Exception as exc:
         payload["result_error"] = f"the job completed but its result could not be fetched: {exc}"
         return
@@ -1352,6 +1365,16 @@ async def dispatch_tool_call(
     except MCPError:
         raise
     except Exception as exc:
+        # The exception text can carry request material (headers, credential
+        # values), so it never reaches the agent — only the class name does.
+        # The server-side log keeps a redacted copy for diagnosis.
+        logger.error(
+            "mcp_tool_unexpected_failure",
+            tool=name,
+            error_type=type(exc).__name__,
+            error=redact_value(str(exc)),
+        )
         return soft_error_result(
-            env.ctx, ToolError(CODE_INTERNAL_ERROR, f"unexpected failure: {exc}")
+            env.ctx,
+            ToolError(CODE_INTERNAL_ERROR, f"unexpected failure ({type(exc).__name__})"),
         )

@@ -39,6 +39,10 @@ type serverOut struct {
 	Host   string `yaml:"host"`
 	Port   int    `yaml:"port"`
 	Reload bool   `yaml:"reload"`
+	// PublicBaseURL is omitted unless the backend can't derive the origin from
+	// the bind (see Draft.PublicBaseURL); every externally-visible URL — OAuth
+	// callback, issuer, token audience, SPA login callback — falls back to it.
+	PublicBaseURL string `yaml:"public_base_url,omitempty"`
 }
 
 type loggingOut struct {
@@ -65,9 +69,8 @@ type idpOut struct {
 }
 
 type authOut struct {
-	CanonicalBaseURL string         `yaml:"canonical_base_url"`
-	IDSigning        []idSigningOut `yaml:"id_signing,omitempty"`
-	IDP              *idpOut        `yaml:"idp,omitempty"`
+	IDSigning []idSigningOut `yaml:"id_signing,omitempty"`
+	IDP       *idpOut        `yaml:"idp,omitempty"`
 }
 
 type adminAuthOut struct {
@@ -105,9 +108,11 @@ type connectOut struct {
 	StateSecret string `yaml:"state_secret"`
 }
 
+// directOAuth2Out registers the platform OAuth2 provider. redirect_uri is left
+// to the backend, which derives it from server.public_base_url / the request
+// origin so it can never drift from the serving port.
 type directOAuth2Out struct {
-	Kind        string `yaml:"kind"`
-	RedirectURI string `yaml:"redirect_uri"`
+	Kind string `yaml:"kind"`
 }
 
 type providersOut struct {
@@ -193,7 +198,7 @@ func (d *Draft) encryptionOut() encryptionOut {
 // authOut builds the auth config block, adding the SSO idp + id_signing key when
 // SSO is enabled (mirrors config/local-sso.yaml).
 func (d *Draft) authOut() authOut {
-	out := authOut{CanonicalBaseURL: d.CanonicalBaseURL()}
+	out := authOut{}
 	if !d.SSOEnabled {
 		return out
 	}
@@ -270,9 +275,10 @@ func (d *Draft) toConfig() configOut {
 		},
 		Runtime: runtimeOut{Debug: d.Debug, LogLevel: d.LogLevel},
 		Server: serverOut{
-			Host:   serverHost,
-			Port:   atoiOr(d.ServerPort, 8000),
-			Reload: d.Debug,
+			Host:          serverHost,
+			Port:          atoiOr(d.ServerPort, 8000),
+			Reload:        d.Debug,
+			PublicBaseURL: d.PublicBaseURL(),
 		},
 		Apps: d.Apps,
 		Auth: d.authOut(),
@@ -283,10 +289,7 @@ func (d *Draft) toConfig() configOut {
 		Credentials: credentialsOut{
 			Encryption: d.encryptionOut(),
 			Providers: providersOut{
-				DirectOAuth2: directOAuth2Out{
-					Kind:        "direct_oauth2",
-					RedirectURI: d.OAuthCallbackURL(),
-				},
+				DirectOAuth2: directOAuth2Out{Kind: "direct_oauth2"},
 			},
 			Connect: connectOut{StateSecret: d.ConnectStateSecret},
 		},

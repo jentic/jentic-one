@@ -272,7 +272,7 @@ func (a *app) finishInstall(cmd *cobra.Command, opts *installOptions, draft *ins
 	}
 	// Config contains freshly generated secrets; restrict permissions. The
 	// Docker path relaxes to 0644 because the file is bind-mounted into
-	// containers running as the unprivileged uid 999 (#992) — host-side
+	// containers running as the unprivileged uid 10001 (#992) — host-side
 	// protection comes from ~/.jentic being 0700. Only relax under the managed
 	// state dir: a user-chosen --out elsewhere has no such protective parent.
 	mode := os.FileMode(0o600)
@@ -289,7 +289,7 @@ func (a *app) finishInstall(cmd *cobra.Command, opts *installOptions, draft *ins
 	}
 	if draft.IsDocker() && mode == 0o600 {
 		fmt.Fprintln(a.Out, theme.Warnf(
-			"config written outside %s with mode 0600 — the app container (uid 999) "+
+			"config written outside %s with mode 0600 — the app container (uid 10001) "+
 				"may not be able to read it; chmod 644 %s if the stack fails to start",
 			a.Paths.Dir(), out))
 	}

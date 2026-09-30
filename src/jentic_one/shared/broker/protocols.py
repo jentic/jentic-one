@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Protocol, runtime_checkable
@@ -14,11 +15,24 @@ from jentic_one.shared.schemas import APIReference
 
 @dataclass(frozen=True, slots=True)
 class ResolveResult:
-    """A resolved operation with its API identity and extracted path parameters."""
+    """A resolved operation with its API identity and extracted path parameters.
+
+    ``server_variables`` are the concrete OpenAPI server-variable values of the
+    matched request URL (e.g. ``{"region": "eu"}`` for ``/eu/widgets``); the
+    broker only injects a credential whose ``server_variables`` agree with them.
+    ``server_variable_defaults`` are the declared defaults of variables the URL
+    left as a literal ``{name}`` placeholder, substituted when no credential
+    supplies a value. ``server_variables_unresolved`` is True when the registry
+    could not determine the URL's server-variable values; the broker then
+    injects no credential scoped by ``server_variables`` (fail closed).
+    """
 
     operation_id: str
     api: APIReference
     path_params: dict[str, str]
+    server_variables: dict[str, str] = field(default_factory=dict)
+    server_variable_defaults: dict[str, str] = field(default_factory=dict)
+    server_variables_unresolved: bool = False
 
 
 class RevisionPinOutcome(StrEnum):
@@ -164,12 +178,18 @@ class ToolkitDerivation:
     - ``identity_mismatch`` — a nearest-miss for the diagnostic when the agent is
       bound but nothing serves the API because a bound credential's identity does
       not cover the operation.
+    - ``credentials_by_toolkit`` — for each toolkit in ``toolkits``, the ids of
+      its bound credentials that cover the API. This is the **injection
+      boundary** of the toolkit path: once a toolkit is selected, only these
+      credentials may resolve. A toolkit absent from the map resolves nothing
+      (fail closed).
     """
 
     toolkits: tuple[str, ...]
     agent_bound_any: bool
     api_served_toolkits: tuple[str, ...]
     identity_mismatch: IdentityMismatch | None
+    credentials_by_toolkit: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
 
 
 @runtime_checkable
