@@ -7363,9 +7363,9 @@ type ClientInterface interface {
 	// Public metadata for every vendor known to the platform.
 	//
 	// Unioned across two sources: admin-registered ``oauth_app_registrations``
-	// rows and the platform-shipped ``vendors`` config. When a vendor slug
-	// exists in both, the DB row wins so admin-managed registrations always
-	// take precedence in the UI's "Add integration" picker. Never returns
+	// rows and the platform-shipped ``vendors`` config. The two never dedupe —
+	// each active registration and each config entry is its own picker card,
+	// and ``flow_kinds`` lists every flow that card can run. Never returns
 	// secrets.
 	//
 	// Corresponds with GET /vendors (the `ListVendors` operationId).
@@ -12303,9 +12303,9 @@ func (c *Client) RedeemInvite(ctx context.Context, body RedeemInviteJSONRequestB
 // Public metadata for every vendor known to the platform.
 //
 // Unioned across two sources: admin-registered “oauth_app_registrations“
-// rows and the platform-shipped “vendors“ config. When a vendor slug
-// exists in both, the DB row wins so admin-managed registrations always
-// take precedence in the UI's "Add integration" picker. Never returns
+// rows and the platform-shipped “vendors“ config. The two never dedupe —
+// each active registration and each config entry is its own picker card,
+// and “flow_kinds“ lists every flow that card can run. Never returns
 // secrets.
 //
 // Corresponds with GET /vendors (the `ListVendors` operationId).
@@ -24200,9 +24200,9 @@ type ClientWithResponsesInterface interface {
 	// Public metadata for every vendor known to the platform.
 	//
 	// Unioned across two sources: admin-registered ``oauth_app_registrations``
-	// rows and the platform-shipped ``vendors`` config. When a vendor slug
-	// exists in both, the DB row wins so admin-managed registrations always
-	// take precedence in the UI's "Add integration" picker. Never returns
+	// rows and the platform-shipped ``vendors`` config. The two never dedupe —
+	// each active registration and each config entry is its own picker card,
+	// and ``flow_kinds`` lists every flow that card can run. Never returns
 	// secrets.
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -42395,9 +42395,9 @@ func (c *ClientWithResponses) RedeemInviteWithResponse(ctx context.Context, body
 // Public metadata for every vendor known to the platform.
 //
 // Unioned across two sources: admin-registered “oauth_app_registrations“
-// rows and the platform-shipped “vendors“ config. When a vendor slug
-// exists in both, the DB row wins so admin-managed registrations always
-// take precedence in the UI's "Add integration" picker. Never returns
+// rows and the platform-shipped “vendors“ config. The two never dedupe —
+// each active registration and each config entry is its own picker card,
+// and “flow_kinds“ lists every flow that card can run. Never returns
 // secrets.
 //
 // Returns a wrapper object for the known response body format(s).

@@ -1537,6 +1537,7 @@
             "description": "Catalog API slug this OAuth app targets (e.g. 'github.com/api.github.com'). The credential minted through this registration carries the same slug so its operations preview resolves against a real registered API.",
             "maxLength": 255,
             "minLength": 1,
+            "pattern": "^[^/].*/.*[^/]$",
             "title": "Catalog Api Id",
             "type": "string"
           },
@@ -1556,6 +1557,9 @@
             "anyOf": [
               {
                 "items": {
+                  "maxLength": 255,
+                  "minLength": 1,
+                  "pattern": "^\\S+$",
                   "type": "string"
                 },
                 "type": "array"
@@ -3150,6 +3154,7 @@
             "description": "Catalog API slug this OAuth app targets (e.g. 'github.com/api.github.com').",
             "maxLength": 255,
             "minLength": 1,
+            "pattern": "^[^/].*/.*[^/]$",
             "title": "Catalog Api Id",
             "type": "string"
           },
@@ -3163,6 +3168,9 @@
             "anyOf": [
               {
                 "items": {
+                  "maxLength": 255,
+                  "minLength": 1,
+                  "pattern": "^\\S+$",
                   "type": "string"
                 },
                 "type": "array"
@@ -5234,6 +5242,9 @@
             "anyOf": [
               {
                 "items": {
+                  "maxLength": 255,
+                  "minLength": 1,
+                  "pattern": "^\\S+$",
                   "type": "string"
                 },
                 "type": "array"
@@ -36585,7 +36596,7 @@
     },
     "/vendors": {
       "get": {
-        "description": "Public metadata for every vendor known to the platform.\n\nUnioned across two sources: admin-registered ``oauth_app_registrations``\nrows and the platform-shipped ``vendors`` config. When a vendor slug\nexists in both, the DB row wins so admin-managed registrations always\ntake precedence in the UI's \"Add integration\" picker. Never returns\nsecrets.",
+        "description": "Public metadata for every vendor known to the platform.\n\nUnioned across two sources: admin-registered ``oauth_app_registrations``\nrows and the platform-shipped ``vendors`` config. The two never dedupe —\neach active registration and each config entry is its own picker card,\nand ``flow_kinds`` lists every flow that card can run. Never returns\nsecrets.",
         "operationId": "listVendors",
         "responses": {
           "200": {

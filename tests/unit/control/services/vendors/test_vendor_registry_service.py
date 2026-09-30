@@ -22,6 +22,7 @@ import datetime as dt
 from dataclasses import dataclass
 
 import pytest
+from pydantic import SecretStr
 
 from jentic_one.control.services.integrations.errors import (
     InvalidOAuthAppRegistrationError,
@@ -811,3 +812,86 @@ async def test_vendor_reads_never_decrypt_registration_secret() -> None:
     for f in (resolved.flow, session.flow):
         assert isinstance(f, VendorAuthorizationCodeFlowConfig)
         assert f.client_secret.get_secret_value() == ""
+
+
+# ---------------------------------------------------------------------------
+# Registration scope projection borrows the same-vendor config catalog
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_registration_scopes_take_classification_from_config_catalog() -> None:
+    """A same-vendor config catalog classifies registration scopes: write
+    scopes are flagged and not pre-selected; unknown scopes stay pre-selected
+    but are flagged as write rather than passed off as read-only."""
+    reg = _FakeRegistration(
+        api_vendor="github",
+        id="oar_gh",
+        name="Org GitHub",
+        flow_kind="device_authorization",
+        client_id="reg-cid",
+        device_authorization_details=_FakeDetails(
+            default_scopes=["repo:read", "repo:write", "gist"]
+        ),
+    )
+    svc = _service(config_entries={"github": _github_config_entry()}, registrations=[reg])
+
+    source = await svc.resolve_session_source("github", registration_id="oar_gh")
+    scopes = {s.name: (s.classification, s.default) for s in svc.merge_scopes(source.entry, None)}
+
+    assert scopes == {
+        "repo:read": ("read", True),
+        "repo:write": ("write", False),
+        "gist": ("write", True),
+    }
+    # Catalog is reference data only — the flow is still the registration's.
+    assert source.registration is not None
+    assert source.flow.client_id == reg.client_id
+
+
+@pytest.mark.asyncio()
+async def test_registration_scopes_without_catalog_are_flagged() -> None:
+    reg = _FakeRegistration(
+        api_vendor="googleapis-com",
+        id="oar_g",
+        name="Org Gmail",
+        flow_kind="device_authorization",
+        client_id="reg-cid",
+        device_authorization_details=_FakeDetails(default_scopes=["gmail.readonly"]),
+    )
+    svc = _service(registrations=[reg])
+
+    source = await svc.resolve_session_source("googleapis-com", registration_id="oar_g")
+    [scope] = svc.merge_scopes(source.entry, None)
+
+    assert (scope.classification, scope.default) == ("write", True)
+
+
+@pytest.mark.asyncio()
+async def test_list_entries_reports_every_config_flow() -> None:
+    """A config vendor offering several flows lists them all in ``flow_kinds``;
+    ``flow_kind`` stays the no-preference default (the first flow)."""
+    cfg = _github_config_entry()
+    cfg.flows.append(
+        VendorAuthorizationCodeFlowConfig(
+            client_id="ac-cid",
+            client_secret=SecretStr("ac-secret"),  # pragma: allowlist secret
+            authorize_url="https://github.com/login/oauth/authorize",
+            token_url="https://github.com/login/oauth/access_token",
+        )
+    )
+    reg = _FakeRegistration(
+        api_vendor="github",
+        id="oar_gh",
+        name="Org GitHub",
+        flow_kind="device_authorization",
+        client_id="reg-cid",
+        device_authorization_details=_FakeDetails(default_scopes=["repo"]),
+    )
+    svc = _service(config_entries={"github": cfg}, registrations=[reg])
+
+    by_source = {e.source: e for e in await svc.list_entries()}
+
+    assert by_source["config"].flow_kind == "device_authorization"
+    assert by_source["config"].flow_kinds == ["device_authorization", "authorization_code"]
+    assert by_source["db"].flow_kinds == ["device_authorization"]

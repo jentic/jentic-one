@@ -553,6 +553,14 @@ export function CreateCredentialFlow({
 		}
 		const catalogApiId = selectedApi.apiId;
 		const displayName = selectedApi.label;
+		// The server requires a `<domain>/<sub>` catalog id for shared apps;
+		// say so up front rather than surfacing a bare 422.
+		if (!/^[^/].*\/.*[^/]$/.test(catalogApiId)) {
+			setErrors({
+				name: `Shared OAuth apps need a catalog API id of the form <domain>/<api> — "${catalogApiId}" can't be shared yet.`,
+			});
+			return;
+		}
 
 		try {
 			if (grantType === 'authorization_code') {

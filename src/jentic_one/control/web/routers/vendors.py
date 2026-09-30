@@ -27,9 +27,9 @@ async def list_vendors(
     """Public metadata for every vendor known to the platform.
 
     Unioned across two sources: admin-registered ``oauth_app_registrations``
-    rows and the platform-shipped ``vendors`` config. When a vendor slug
-    exists in both, the DB row wins so admin-managed registrations always
-    take precedence in the UI's "Add integration" picker. Never returns
+    rows and the platform-shipped ``vendors`` config. The two never dedupe —
+    each active registration and each config entry is its own picker card,
+    and ``flow_kinds`` lists every flow that card can run. Never returns
     secrets.
     """
     entries = await svc.list_entries()
@@ -48,7 +48,7 @@ async def list_vendors(
                 display_name=e.display_name,
                 name=e.name,
                 source=e.source,
-                flow_kinds=[e.flow_kind],
+                flow_kinds=list(e.flow_kinds),
             )
             for e in entries
         ]

@@ -284,7 +284,9 @@ class VendorRegistryService:
         registration: OAuthAppRegistration,
         flow_kind: str | None,
     ) -> ResolvedVendorSource:
-        entry = _project_registration_to_auth_config(registration)
+        entry = _project_registration_to_auth_config(
+            registration, self._config.entries.get(registration.api_vendor)
+        )
         return ResolvedVendorSource(
             entry=entry,
             flow=self._pick_flow(vendor_key, entry, flow_kind),
@@ -302,7 +304,8 @@ class VendorRegistryService:
         """
         registrations = await self._registrations.list_active()
         result: list[VendorAuthConfig] = [
-            _project_registration_to_auth_config(row) for row in registrations
+            _project_registration_to_auth_config(row, self._config.entries.get(row.api_vendor))
+            for row in registrations
         ]
         result.extend(self._config.entries.values())
         return sorted(result, key=lambda v: v.display_name)
@@ -411,29 +414,47 @@ class VendorRegistryService:
 
 def _project_registration_to_auth_config(
     registration: OAuthAppRegistration,
+    catalog: VendorAuthConfig | None = None,
 ) -> VendorAuthConfig:
     """Build a ``VendorAuthConfig`` from a DB registration — standalone.
 
-    Registration fields *only* — the platform config is never consulted here.
-    The ``vendor`` string on the returned config is the admin-picked
+    Flows and client material come off the registration *only*. The
+    ``vendor`` string on the returned config is the admin-picked
     ``catalog_api_id``, which feeds ``credential.catalog_api_id`` at connect
     time and makes the operations preview resolve against a real registered
     API.
 
-    Scopes come off the registration's ``default_scopes`` extension column,
-    with every entry defaulted-on and classified ``read`` (no separate
-    classification catalog on the DB side). ``identity_probe`` is always
-    ``None`` on admin registrations — identity echo is a platform-config
-    concern; DB-only vendors skip that step at connect finalise and land
-    the credential with ``connected_as=None``.
+    Scopes are the registration's ``default_scopes``. ``catalog`` is the
+    platform config entry for the same ``api_vendor`` slug, if any, and is
+    consulted purely as scope reference data: a scope it knows takes its
+    classification and description, and is pre-selected only when it is a
+    read scope. A scope it does not know (or with no catalog) stays
+    pre-selected — the admin chose it — but is classified ``write`` so the
+    review page flags it instead of passing it off as read-only.
+
+    ``identity_probe`` is always ``None`` on admin registrations — identity
+    echo is a platform-config concern; DB-only vendors skip that step at
+    connect finalise and land the credential with ``connected_as=None``.
     """
     flow = _synthesize_flow(registration)
 
-    default_scopes = _extension_default_scopes(registration)
-    scopes = [
-        VendorScopeConfig(name=s, classification="read", default=True, description="")
-        for s in (default_scopes or [])
-    ]
+    known = {s.name: s for s in catalog.scopes} if catalog is not None else {}
+    scopes: list[VendorScopeConfig] = []
+    for name in _extension_default_scopes(registration) or []:
+        ref = known.get(name)
+        if ref is None:
+            scopes.append(
+                VendorScopeConfig(name=name, classification="write", default=True, description="")
+            )
+        else:
+            scopes.append(
+                VendorScopeConfig(
+                    name=name,
+                    classification=ref.classification,
+                    default=ref.classification == "read",
+                    description=ref.description,
+                )
+            )
 
     return VendorAuthConfig(
         vendor=registration.catalog_api_id,
@@ -511,6 +532,7 @@ def _project_db_registration(
         display_name=registration.display_name,
         name=registration.name,
         flow_kind=flow_kind,
+        flow_kinds=[flow_kind],
         client_id=registration.client_id,
         has_client_secret=registration.authorization_code_details is not None,
         default_scopes=default_scopes,
@@ -521,9 +543,9 @@ def _project_db_registration(
 def _project_config_entry(key: str, cfg: VendorAuthConfig) -> VendorEntry:
     """Project a config entry into the compact ``VendorEntry`` view.
 
-    Config vendors may offer multiple flows — this collapses to the first
-    entry, mirroring ``resolve_flow``'s precedence for callers that ask for
-    the vendor's default flow.
+    Config vendors may offer multiple flows: ``flow_kinds`` lists them all,
+    while ``flow_kind`` / ``client_id`` describe the first — the flow
+    ``_pick_flow`` chooses when the caller expresses no preference.
     """
     flow = cfg.flows[0]
     flow_kind: VendorFlowKind = _cast_flow_kind(flow.kind)
@@ -536,6 +558,7 @@ def _project_config_entry(key: str, cfg: VendorAuthConfig) -> VendorEntry:
         display_name=cfg.display_name,
         name=cfg.display_name,
         flow_kind=flow_kind,
+        flow_kinds=[_cast_flow_kind(f.kind) for f in cfg.flows],
         client_id=flow.client_id,
         has_client_secret=has_secret,
         default_scopes=default_scopes,

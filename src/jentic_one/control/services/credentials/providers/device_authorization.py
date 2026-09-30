@@ -132,14 +132,18 @@ class DeviceAuthorizationConnectProvider(OAuth2Provider):
         token: OAuthTokenView,
     ) -> RefreshResult:
         # Standard OAuth 2.0 refresh with a public client — no client_secret.
-        # Reads the token endpoint off the credential's device_authorization row.
-        # A credential minted through a shared registration that has since been
-        # disabled fails closed, mirroring ``DirectOAuth2Provider``.
+        # A credential minted through a shared registration refreshes against
+        # the registration's live ``token_endpoint`` / ``client_id`` so an
+        # admin endpoint edit takes effect without re-connecting; the copy on
+        # the credential's device_authorization row is only the fallback for
+        # standalone credentials. A disabled registration fails closed,
+        # mirroring ``DirectOAuth2Provider``.
         async with ctx.control_db.session() as session:
             dfc = await DeviceAuthorizationCredentialRepository.get_by_credential(
                 session, token.credential_id
             )
             credential = await CredentialRepository.get_by_id(session, token.credential_id)
+            registration = None
             if credential is not None and credential.oauth_app_registration_id is not None:
                 registration = await OAuthAppRegistrationRepository.get_by_id(
                     session, credential.oauth_app_registration_id
@@ -150,13 +154,22 @@ class DeviceAuthorizationConnectProvider(OAuth2Provider):
                     )
         if dfc is None:
             raise NotRefreshableError(f"credential {token.credential_id!r} has no device-flow row")
+        token_url, client_id = dfc.token_url, dfc.client_id
+        if registration is not None:
+            details = registration.device_authorization_details
+            if details is None:
+                raise ProviderError(
+                    f"oauth_app_registration {registration.id!r} is missing its "
+                    "device_authorization_details extension"
+                )
+            token_url, client_id = details.token_endpoint, registration.client_id
         refresh_token = await token.decrypt()
         data = await self._post_token(
-            dfc.token_url,
+            token_url,
             {
                 "grant_type": "refresh_token",
                 "refresh_token": refresh_token,
-                "client_id": dfc.client_id,
+                "client_id": client_id,
             },
         )
         access_token = data.get("access_token")

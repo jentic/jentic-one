@@ -426,6 +426,8 @@ async def test_complete_from_callback_through_registration_end_to_end(
     async with ctx.control_db.session() as session:
         row = await ConnectSessionRepository.get_by_id(session, created.session_id)
         assert row is not None
+        # Single-use verifier is not left at rest once the code is exchanged.
+        assert row.pkce_code_verifier is None
         # Token row stamped with registration provenance.
         stmt = text("SELECT app_registration_id FROM oauth_tokens WHERE credential_id = :cid")
         result_rs = await session.execute(stmt, {"cid": row.credential_id})

@@ -60,8 +60,10 @@ class VendorEntry(BaseModel):
       back to the admin's registration name when no matching config
       entry). Lets the UI show a subtitle for DB entries whose name differs
       from the vendor family label.
-    * ``flow_kind`` — discriminator determining which OAuth flow the caller
-      should run.
+    * ``flow_kind`` — the flow ``:connect`` runs when the caller expresses
+      no preference (the entry's first flow).
+    * ``flow_kinds`` — every flow the entry offers. A DB registration offers
+      exactly one; a config entry may offer several.
     * ``source`` — records where the row came from so surfaces can
       differentiate admin-managed vs platform-shipped registrations.
 
@@ -76,6 +78,7 @@ class VendorEntry(BaseModel):
     display_name: str
     name: str
     flow_kind: VendorFlowKind
+    flow_kinds: list[VendorFlowKind]
     client_id: str
     has_client_secret: bool = False
     default_scopes: list[str] | None = None

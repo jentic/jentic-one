@@ -443,3 +443,59 @@ async def test_refresh_refuses_inactive_registration(_legacy_credential_row: Asy
     ):
         await provider.refresh(ctx, token=token_view)
     mock_client_cls.assert_not_called()
+
+
+@pytest.mark.asyncio()
+async def test_refresh_uses_live_registration_token_endpoint(
+    _legacy_credential_row: AsyncMock,
+) -> None:
+    # A credential minted through a shared registration refreshes against the
+    # registration's current token_endpoint / client_id, not the copy taken
+    # onto the device-flow row at connect time — an admin endpoint edit must
+    # take effect without every user re-connecting.
+    provider = DeviceAuthorizationConnectProvider()
+    ctx = Context(_make_config())
+    ctx._control_db = _mock_control_db()
+    _legacy_credential_row.return_value = MagicMock(oauth_app_registration_id="oar_1")
+    registration = MagicMock(
+        id="oar_1",
+        is_active=True,
+        client_id="live-client",
+        device_authorization_details=MagicMock(token_endpoint="https://idp.example.com/v2/token"),
+    )
+
+    token_view = OAuthTokenView(
+        credential_id="cred_1",
+        provider="device_authorization",
+        expires_at=datetime.now(UTC),
+        decrypt=AsyncMock(return_value="rt"),
+    )
+
+    with (
+        patch(
+            "jentic_one.control.repos.device_authorization_credential_repo."
+            "DeviceAuthorizationCredentialRepository.get_by_credential",
+            new_callable=AsyncMock,
+            return_value=_FakeDFC(client_id="stale-client", token_url="https://old/token"),
+        ),
+        patch(
+            f"{_PROVIDER_MOD}.OAuthAppRegistrationRepository.get_by_id",
+            new_callable=AsyncMock,
+            return_value=registration,
+        ),
+        patch("httpx.AsyncClient") as mock_client_cls,
+    ):
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock(
+            return_value=httpx.Response(200, json={"access_token": "at_new"})
+        )
+        mock_client_cls.return_value = mock_client
+
+        result = await provider.refresh(ctx, token=token_view)
+        call = mock_client.post.await_args
+
+    assert result.access_token == "at_new"
+    assert call.args[0] == "https://idp.example.com/v2/token"
+    assert call.kwargs["data"]["client_id"] == "live-client"

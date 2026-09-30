@@ -57,6 +57,7 @@ from jentic_one.control.services.vendors.service import (
     ResolvedVendorSource,
     UnknownVendorError,
     UnsupportedFlowError,
+    VendorNotConfiguredError,
     VendorRegistryService,
 )
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_best_effort
@@ -693,14 +694,19 @@ class ConnectSessionService:
     async def _vendor_display_name(self, vendor_key: str) -> str:
         """Resolve a vendor key to its display name, tolerating removed vendors.
 
-        Either tier may drop an entry (or gain a second registration) after
-        sessions referencing it were persisted, and the list must not 500 on
-        such historical rows. Fall back to the raw key.
+        Either tier may drop an entry (gain a second registration, or be left
+        half-configured) after sessions referencing it were persisted, and the
+        list must not 500 on such historical rows. Fall back to the raw key.
         """
         try:
             entry = await self._vendors.resolve_by_pin(vendor_key)
             return entry.display_name
-        except (UnknownVendorError, AmbiguousVendorError, UnsupportedFlowError):
+        except (
+            UnknownVendorError,
+            AmbiguousVendorError,
+            UnsupportedFlowError,
+            VendorNotConfiguredError,
+        ):
             return vendor_key
 
     # ---- confirm ----------------------------------------------------------
@@ -1639,5 +1645,13 @@ class ConnectSessionService:
                 row.id, "failed", str(exc), error_code="token_exchange_failed"
             )
             return StatusResult(status="failed", error_code="token_exchange_failed")
+        finally:
+            # The verifier is single-use (RFC 7636 §4.5): once the code has
+            # been exchanged — or the exchange failed — it has no further
+            # purpose, so don't leave it at rest on the session row.
+            async with self._ctx.control_db.transaction() as session:
+                await ConnectSessionRepository.update_fields(
+                    session, row.id, pkce_code_verifier=None
+                )
 
         return await self._finalise_connected(row, handler, tokens)

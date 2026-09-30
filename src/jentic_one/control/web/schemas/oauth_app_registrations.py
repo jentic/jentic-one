@@ -12,6 +12,13 @@ from jentic_one.control.services.oauth_app_registrations.schemas import (
 )
 from jentic_one.shared.web.sensitive import SENSITIVE
 
+# ``<domain>/<sub>`` — the same shape ``VendorAuthConfig.vendor`` enforces, so
+# a registration can never project into a vendor config that fails to load.
+_CATALOG_API_ID_PATTERN = r"^[^/].*/.*[^/]$"
+
+# RFC 6749 §3.3 scope-token: non-empty, no whitespace.
+ScopeToken = Annotated[str, Field(min_length=1, max_length=255, pattern=r"^\S+$")]
+
 
 class OAuthAppRegistrationResponse(BaseModel):
     """Registration as returned to admins.
@@ -89,6 +96,7 @@ class AuthorizationCodeRegistrationCreateRequest(BaseModel):
         Field(
             min_length=1,
             max_length=255,
+            pattern=_CATALOG_API_ID_PATTERN,
             description=(
                 "Catalog API slug this OAuth app targets (e.g. 'github.com/api.github.com'). "
                 "The credential minted through this registration carries the same slug "
@@ -109,7 +117,7 @@ class AuthorizationCodeRegistrationCreateRequest(BaseModel):
     client_secret: Annotated[str, Field(min_length=1, json_schema_extra=SENSITIVE)]
     authorize_url: Annotated[str, Field(min_length=1, max_length=2048)]
     token_url: Annotated[str, Field(min_length=1, max_length=2048)]
-    default_scopes: list[str] | None = None
+    default_scopes: list[ScopeToken] | None = None
 
 
 class DeviceAuthorizationRegistrationCreateRequest(BaseModel):
@@ -141,6 +149,7 @@ class DeviceAuthorizationRegistrationCreateRequest(BaseModel):
         Field(
             min_length=1,
             max_length=255,
+            pattern=_CATALOG_API_ID_PATTERN,
             description=(
                 "Catalog API slug this OAuth app targets (e.g. 'github.com/api.github.com')."
             ),
@@ -158,7 +167,7 @@ class DeviceAuthorizationRegistrationCreateRequest(BaseModel):
     client_id: Annotated[str, Field(min_length=1, max_length=255)]
     authorization_endpoint: Annotated[str, Field(min_length=1, max_length=2048)]
     token_endpoint: Annotated[str, Field(min_length=1, max_length=2048)]
-    default_scopes: list[str] | None = None
+    default_scopes: list[ScopeToken] | None = None
 
 
 OAuthAppRegistrationCreateRequest = (
@@ -174,7 +183,7 @@ class OAuthAppRegistrationUpdateRequest(BaseModel):
     name: Annotated[str, Field(min_length=1, max_length=255)] | None = None
     display_name: Annotated[str, Field(min_length=1, max_length=255)] | None = None
     is_active: bool | None = None
-    default_scopes: list[str] | None = None
+    default_scopes: list[ScopeToken] | None = None
     authorize_url: Annotated[str, Field(min_length=1, max_length=2048)] | None = None
     token_url: Annotated[str, Field(min_length=1, max_length=2048)] | None = None
     authorization_endpoint: Annotated[str, Field(min_length=1, max_length=2048)] | None = None

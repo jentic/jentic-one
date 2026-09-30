@@ -970,6 +970,7 @@ components:
           description: Catalog API slug this OAuth app targets (e.g. 'github.com/api.github.com'). The credential minted through this registration carries the same slug so its operations preview resolves against a real registered API.
           maxLength: 255
           minLength: 1
+          pattern: ^[^/].*/.*[^/]$
           title: Catalog Api Id
           type: string
         client_id:
@@ -985,6 +986,9 @@ components:
         default_scopes:
           anyOf:
           - items:
+              maxLength: 255
+              minLength: 1
+              pattern: ^\S+$
               type: string
             type: array
           - type: 'null'
@@ -2057,6 +2061,7 @@ components:
           description: Catalog API slug this OAuth app targets (e.g. 'github.com/api.github.com').
           maxLength: 255
           minLength: 1
+          pattern: ^[^/].*/.*[^/]$
           title: Catalog Api Id
           type: string
         client_id:
@@ -2067,6 +2072,9 @@ components:
         default_scopes:
           anyOf:
           - items:
+              maxLength: 255
+              minLength: 1
+              pattern: ^\S+$
               type: string
             type: array
           - type: 'null'
@@ -3402,6 +3410,9 @@ components:
         default_scopes:
           anyOf:
           - items:
+              maxLength: 255
+              minLength: 1
+              pattern: ^\S+$
               type: string
             type: array
           - type: 'null'
@@ -19531,9 +19542,9 @@ paths:
         Public metadata for every vendor known to the platform.
 
         Unioned across two sources: admin-registered ``oauth_app_registrations``
-        rows and the platform-shipped ``vendors`` config. When a vendor slug
-        exists in both, the DB row wins so admin-managed registrations always
-        take precedence in the UI's "Add integration" picker. Never returns
+        rows and the platform-shipped ``vendors`` config. The two never dedupe —
+        each active registration and each config entry is its own picker card,
+        and ``flow_kinds`` lists every flow that card can run. Never returns
         secrets.
       operationId: listVendors
       responses:

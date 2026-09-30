@@ -197,6 +197,39 @@ def test_create_requires_display_name() -> None:
 
 
 @pytest.mark.parametrize(
+    "catalog_api_id",
+    ["gmail", "/gmail", "googleapis-com/", "/"],
+)
+def test_create_rejects_malformed_catalog_api_id(catalog_api_id: str) -> None:
+    """``catalog_api_id`` must be ``<domain>/<sub>`` — anything else would
+    project into a vendor config that fails validation on every lookup."""
+    svc = AsyncMock(spec=OAuthAppRegistrationService)
+    app = _build_app(svc=svc)
+    with TestClient(app) as client:
+        resp = client.post(
+            "/oauth-app-registrations",
+            json={**_auth_code_body(), "catalog_api_id": catalog_api_id},
+        )
+    assert resp.status_code == 422
+    svc.create_authorization_code.assert_not_called()
+
+
+@pytest.mark.parametrize("scopes", [[""], ["repo", " "], ["read user"]])
+def test_create_and_update_reject_blank_or_spaced_scopes(scopes: list[str]) -> None:
+    svc = AsyncMock(spec=OAuthAppRegistrationService)
+    app = _build_app(svc=svc)
+    with TestClient(app) as client:
+        created = client.post(
+            "/oauth-app-registrations", json={**_device_body(), "default_scopes": scopes}
+        )
+        updated = client.patch("/oauth-app-registrations/oar_test", json={"default_scopes": scopes})
+    assert created.status_code == 422
+    assert updated.status_code == 422
+    svc.create_device_authorization.assert_not_called()
+    svc.update.assert_not_called()
+
+
+@pytest.mark.parametrize(
     ("body", "method"),
     [
         ({**_auth_code_body(), "is_active": False}, "create_authorization_code"),
