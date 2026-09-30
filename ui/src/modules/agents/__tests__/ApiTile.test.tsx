@@ -26,6 +26,7 @@ function makeTile(over: Partial<ApiTileModel> = {}): ApiTileModel {
 		credentialUpdatedAt: null,
 		boundAt: new Date(Date.now() - 2 * 3_600_000).toISOString(),
 		suspended: false,
+		suspendedReason: null,
 		awaitingConsent: false,
 		...over,
 	};
@@ -159,5 +160,17 @@ describe('ApiTile credential footer', () => {
 		expect(credential).toHaveTextContent(/^No credential$/);
 		expect(screen.queryByTestId('tile-credential-label')).toBeNull();
 		expect(screen.getByTestId('tile-rules-summary')).toBeInTheDocument();
+	});
+
+	it('keeps the credential footer on a tile suspended because its API was deleted', async () => {
+		renderTile(makeTile({ suspended: true, suspendedReason: 'api_deleted' }));
+
+		expect(screen.getByTestId('tile-status-chip')).toHaveTextContent('Suspended · not serving');
+		expect(screen.getByTestId('tile-credential-label')).toHaveTextContent(/^Slack bot token$/);
+		credentialTrigger().focus();
+		const details = within(await screen.findByRole('tooltip')).getByTestId(
+			'tile-credential-details',
+		);
+		expect(details).toHaveTextContent('Name: Slack bot token');
 	});
 });
