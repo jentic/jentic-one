@@ -177,3 +177,16 @@ def test_sak_warning_is_silent_without_service_accounts(
     run_mod._print_sak_warning(RetirementOutcome(action="no_tables"))
 
     assert capsys.readouterr().out == ""
+
+
+def test_not_copied_warnings_are_printed_one_per_line(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    outcome = RetirementOutcome(action="retired", warnings=["sva_a: x", "sva_b: y"])
+
+    run_mod._print_not_copied_warnings(outcome)
+
+    assert capsys.readouterr().out.splitlines() == [
+        "==> WARNING (service-account retirement, not copied): sva_a: x",
+        "==> WARNING (service-account retirement, not copied): sva_b: y",
+    ]

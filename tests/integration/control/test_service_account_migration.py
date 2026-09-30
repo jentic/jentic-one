@@ -33,6 +33,7 @@ from sqlalchemy import text
 from jentic_one.admin.core.schema.access_tokens import AccessToken
 from jentic_one.admin.core.schema.agent_credentials import AgentCredential
 from jentic_one.admin.core.schema.agents import Agent
+from jentic_one.admin.core.schema.audit import AuditEntry
 from jentic_one.admin.core.schema.refresh_tokens import RefreshToken
 from jentic_one.admin.repos.agent_credential_repo import AgentCredentialRepository
 from jentic_one.control.core.schema.agent_permission_rules import AgentPermissionRule
@@ -1373,9 +1374,9 @@ async def test_inline_permission_rules_are_copied_idempotently_and_swept(
     rule_credential: str,
 ) -> None:
     """H2: control-DB ``agent_permission_rules`` keyed ``(sva_, credential)``
-    are copied onto the successor, re-runs never duplicate them (nor merge
-    into an operator-edited successor binding), a lost binding is healed,
-    and the sweep drops the sva_ rows."""
+    are copied onto the successor, re-runs never duplicate them, never merge
+    into an operator-edited successor binding and never refill one the
+    operator emptied, and the sweep drops the sva_ rows."""
     sa_id = await _seed_sa(
         admin_db,
         suffix="rules",
@@ -1412,22 +1413,22 @@ async def test_inline_permission_rules_are_copied_idempotently_and_swept(
     assert third.permission_rule_count == 0
     assert len(await _inline_rules(control_db, agent_id)) == 1
 
-    # A lost control step (whole binding missing on the successor) is healed.
+    # The operator empties the successor binding: a re-run leaves it empty.
     async with control_db.session() as session:
         await session.execute(
             text("DELETE FROM agent_permission_rules WHERE agent_id = :id"), {"id": agent_id}
         )
         await session.commit()
-    healed = {o.service_account_id: o for o in await svc.run()}[sa_id]
-    assert healed.outcome == "already_migrated"
-    assert healed.permission_rule_count == 2
-    assert await _inline_rules(control_db, agent_id) == source
+    emptied = {o.service_account_id: o for o in await svc.run()}[sa_id]
+    assert emptied.outcome == "already_migrated"
+    assert emptied.permission_rule_count == 0
+    assert await _inline_rules(control_db, agent_id) == []
 
     swept = await svc.sweep()
     assert swept.swept == [sa_id]
     assert swept.permission_rules_deleted == 2
     assert await _inline_rules(control_db, sa_id) == []
-    assert await _inline_rules(control_db, agent_id) == source
+    assert await _inline_rules(control_db, agent_id) == []
 
     # A repeated sweep finds nothing left to delete.
     again = await svc.sweep()
@@ -1468,7 +1469,49 @@ async def test_retire_deletes_orphan_sva_inline_rules_and_keeps_the_successor_tw
     assert await _inline_rules(control_db, successor[0].migrated_to_actor_id) == source
 
 
-async def test_sweep_ensures_the_successor_twin_before_deleting_sva_rules(
+async def test_retire_leaves_an_emptied_successor_binding_empty_and_warns(
+    integration_context: Context,
+    admin_db: DatabaseSession,
+    control_db: DatabaseSession,
+    seed_owner: None,
+    rule_credential: str,
+) -> None:
+    """No resurrection: an SA migrated by an earlier run whose successor
+    binding the operator emptied of inline rules (deny all) stays empty
+    through the retirement — never re-copied from the sva_ originals, never
+    a refusal — and the retirement summary carries a WARNING line naming the
+    service account, the successor and what was not copied."""
+    sa_id = await _seed_sa(
+        admin_db,
+        suffix="rempty",
+        api_key_plaintext="sak_t8m_rempty",
+        credential_ids=(rule_credential,),
+    )
+    await _seed_inline_rules(control_db, sa_id, rule_credential)
+    svc = ServiceAccountMigrationService(integration_context)
+    agent_id = {o.service_account_id: o for o in await svc.run()}[sa_id].successor_agent_id
+    assert agent_id is not None
+    async with control_db.session() as session:
+        await session.execute(
+            text("DELETE FROM agent_permission_rules WHERE agent_id = :id"), {"id": agent_id}
+        )
+        await session.commit()
+
+    with structlog.testing.capture_logs() as logs:
+        retired = await svc.retire()
+
+    assert (retired.action, retired.swept) == ("retired", 1)
+    assert await _inline_rules(control_db, agent_id) == []
+    assert await _inline_rules(control_db, sa_id) == []
+    [line] = retired.warnings
+    assert line.startswith(f"{sa_id}: 2 inline permission rule(s) for credential {rule_credential}")
+    assert f"NOT copied to successor agent {agent_id}" in line
+    [warning] = [log for log in logs if log["event"] == "service_account_retirement_not_copied"]
+    assert warning["log_level"] == "warning"
+    assert (warning["service_account_id"], warning["successor_agent_id"]) == (sa_id, agent_id)
+
+
+async def test_control_db_failure_before_the_admin_step_writes_nothing(
     integration_context: Context,
     admin_db: DatabaseSession,
     control_db: DatabaseSession,
@@ -1476,30 +1519,162 @@ async def test_sweep_ensures_the_successor_twin_before_deleting_sva_rules(
     rule_credential: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """H2 x L1: if the migration's control step failed and was never healed,
-    the sweep copies the rules to the successor before dropping the sva_
-    originals — the rules are never lost."""
+    """H2 x L1: the rule copy runs before the admin transaction, so a
+    control-DB outage leaves the SA unstamped with no successor; the next run
+    migrates it afresh and its successor gets every rule."""
     sa_id = await _seed_sa(admin_db, suffix="rulesheal", credential_ids=(rule_credential,))
     await _seed_inline_rules(control_db, sa_id, rule_credential)
     source = await _inline_rules(control_db, sa_id)
 
-    async def _failing_copy(session: Any, *, service_account_id: str, agent_id: str) -> int:
+    async def _failing_copy(session: Any, **_: Any) -> int:
         raise RuntimeError("simulated control-DB outage")
 
     original = ServiceAccountMigrationRepository.copy_permission_rules
     monkeypatch.setattr(ServiceAccountMigrationRepository, "copy_permission_rules", _failing_copy)
     svc = ServiceAccountMigrationService(integration_context)
     outcome = {o.service_account_id: o for o in await svc.run()}[sa_id]
-    assert outcome.reason == "control_sync_error:RuntimeError"
-    agent_id = outcome.successor_agent_id
-    assert agent_id is not None
-    assert await _inline_rules(control_db, agent_id) == []
+    assert (outcome.outcome, outcome.reason) == ("failed", "control_sync_error:RuntimeError")
+    assert outcome.successor_agent_id is None
+    assert await _stamp_of(admin_db, sa_id) == (None, None)
 
     monkeypatch.setattr(ServiceAccountMigrationRepository, "copy_permission_rules", original)
-    swept = await svc.sweep()
-    assert swept.permission_rules_deleted == 2
-    assert await _inline_rules(control_db, sa_id) == []
+    healed = {o.service_account_id: o for o in await svc.run()}[sa_id]
+    assert (healed.outcome, healed.permission_rule_count) == ("migrated", 2)
+    assert healed.successor_agent_id is not None
+    assert await _inline_rules(control_db, healed.successor_agent_id) == source
+
+
+async def test_retire_copies_the_inline_rules_of_a_post_stamp_binding(
+    integration_context: Context,
+    admin_db: DatabaseSession,
+    control_db: DatabaseSession,
+    seed_owner: None,
+    rule_credential: str,
+) -> None:
+    """A binding the retirement creates on an earlier successor (an SA
+    binding added after the stamp) gets that binding's inline rules."""
+    sa_id = await _seed_sa(admin_db, suffix="rlate", api_key_plaintext="sak_t8m_rlate")
+    svc = ServiceAccountMigrationService(integration_context)
+    agent_id = {o.service_account_id: o for o in await svc.run()}[sa_id].successor_agent_id
+    assert agent_id is not None
+    async with admin_db.session() as session:
+        await session.execute(
+            text(
+                "INSERT INTO agent_credential_bindings"
+                " (id, agent_id, credential_id, created_by, created_at)"
+                " VALUES ('acb_t8m_rlate', :id, :cred, :by, :late)"
+            ),
+            {
+                "id": sa_id,
+                "cred": rule_credential,
+                "by": _OWNER,
+                "late": dt.datetime.now(dt.UTC) + dt.timedelta(hours=1),
+            },
+        )
+        await session.commit()
+    await _seed_inline_rules(control_db, sa_id, rule_credential)
+    source = await _inline_rules(control_db, sa_id)
+
+    retired = await svc.retire()
+
+    assert (retired.post_stamp_bindings_copied, retired.post_stamp_permission_rules_copied) == (
+        1,
+        2,
+    )
+    assert retired.warnings == []
     assert await _inline_rules(control_db, agent_id) == source
+    assert await _inline_rules(control_db, sa_id) == []
+
+
+async def test_retire_never_recreates_a_removed_successor_grant_or_purged_binding(
+    integration_context: Context,
+    admin_db: DatabaseSession,
+    seed_owner: None,
+) -> None:
+    """A post-stamp SA grant/binding whose counterpart the successor held and
+    lost (audited ``replace_scopes`` removal, audited binding purge) is not
+    copied; each becomes a WARNING line, and the retirement proceeds."""
+    sa_id = await _seed_sa(admin_db, suffix="vgone", api_key_plaintext="sak_t8m_vgone")
+    svc = ServiceAccountMigrationService(integration_context)
+    agent_id = {o.service_account_id: o for o in await svc.run()}[sa_id].successor_agent_id
+    assert agent_id is not None
+    late = dt.datetime.now(dt.UTC) + dt.timedelta(hours=1)
+    async with admin_db.session() as session:
+        await session.execute(
+            text(
+                "INSERT INTO actor_scope_grants"
+                " (id, actor_id, actor_type, scope, granted_by, created_by, created_at)"
+                " VALUES ('asg_t8m_vgone', :id, 'service_account', 'capabilities:execute',"
+                " :by, :by, :late)"
+            ),
+            {"id": sa_id, "by": _OWNER, "late": late},
+        )
+        await session.execute(
+            text(
+                "INSERT INTO agent_credential_bindings"
+                " (id, agent_id, credential_id, created_by, created_at)"
+                " VALUES ('acb_t8m_vgone', :id, 'cred_t8m_vgone', :by, :late)"
+            ),
+            {"id": sa_id, "by": _OWNER, "late": late},
+        )
+        # The successor held both on its own, and the operator removed them.
+        for action, target_type, target_id, parent, before, after, reason in (
+            (
+                "grant",
+                "agent",
+                agent_id,
+                None,
+                {"scopes": ["capabilities:execute"]},
+                {"scopes": []},
+                "replace_scopes",
+            ),
+            (
+                "revoke",
+                "credential_binding",
+                "cred_t8m_vgone",
+                agent_id,
+                None,
+                None,
+                "purge_credential_binding",
+            ),
+        ):
+            session.add(
+                AuditEntry(
+                    actor_type="user",
+                    actor_id="migrate-service-accounts",  # swept by clean_tables
+                    action=action,
+                    target_type=target_type,
+                    target_id=target_id,
+                    target_parent_id=parent,
+                    before=before,
+                    after=after,
+                    reason=reason,
+                )
+            )
+        await session.commit()
+
+    retired = await svc.retire()
+
+    assert (retired.action, retired.swept) == ("retired", 1)
+    assert (retired.post_stamp_grants_copied, retired.post_stamp_bindings_copied) == (0, 0)
+    assert (
+        await _rows(
+            admin_db, "SELECT scope FROM actor_scope_grants WHERE actor_id = :id", {"id": agent_id}
+        )
+        == []
+    )
+    assert (
+        await _rows(
+            admin_db,
+            "SELECT id FROM agent_credential_bindings WHERE agent_id = :id",
+            {"id": agent_id},
+        )
+        == []
+    )
+    assert len(retired.warnings) == 2
+    assert any("scope grant 'capabilities:execute'" in w for w in retired.warnings)
+    assert any("credential binding cred_t8m_vgone" in w for w in retired.warnings)
+    assert all(w.startswith(f"{sa_id}: ") for w in retired.warnings)
 
 
 async def test_sweep_deletes_inline_rules_left_by_an_interrupted_sweep(
@@ -1516,6 +1691,17 @@ async def test_sweep_deletes_inline_rules_left_by_an_interrupted_sweep(
     await _seed_inline_rules(control_db, sa_id, rule_credential)
     svc = ServiceAccountMigrationService(integration_context)
     await svc.run()
+    # The rules pre-copied for the successor a skip never creates are gone.
+    async with control_db.session() as session:
+        holders = (
+            await session.execute(
+                text(
+                    "SELECT DISTINCT agent_id FROM agent_permission_rules WHERE credential_id = :c"
+                ),
+                {"c": rule_credential},
+            )
+        ).all()
+    assert [h.agent_id for h in holders] == [sa_id]
 
     first = await svc.sweep()
     assert first.swept == [sa_id]
@@ -1599,8 +1785,8 @@ async def test_control_db_failure_is_a_row_outcome_not_a_run_abort(
     seed_owner: None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """L1: a control-DB error for one SA is reported on that row; the run
-    continues, and the next run heals via the already_migrated path."""
+    """L1: a control-DB error for one SA is reported on that row (nothing is
+    written for it); the run continues, and the next run migrates it."""
     poisoned = await _seed_sa(admin_db, suffix="ctl_a", api_key_plaintext="sak_t8m_ctl_a")
     healthy = await _seed_sa(admin_db, suffix="ctl_b", api_key_plaintext="sak_t8m_ctl_b")
 
@@ -1617,20 +1803,20 @@ async def test_control_db_failure_is_a_row_outcome_not_a_run_abort(
 
     assert outcomes[poisoned].outcome == "failed"
     assert outcomes[poisoned].reason == "control_sync_error:RuntimeError"
-    assert outcomes[poisoned].successor_agent_id is not None  # admin side committed
-    stamp, _ = await _stamp_of(admin_db, poisoned)
-    assert stamp == outcomes[poisoned].successor_agent_id
+    assert outcomes[poisoned].successor_agent_id is None
+    assert await _stamp_of(admin_db, poisoned) == (None, None)
     assert outcomes[healthy].outcome == "migrated"
 
-    # Still failing on the already_migrated path: reported, never raised.
+    # Still failing: reported, never raised.
     rerun_failing = {o.service_account_id: o for o in await svc.run()}
     assert rerun_failing[poisoned].outcome == "failed"
     assert rerun_failing[poisoned].reason == "control_sync_error:RuntimeError"
 
     monkeypatch.setattr(ServiceAccountMigrationRepository, "copy_permission_rules", original)
     healed = {o.service_account_id: o for o in await svc.run()}
-    assert healed[poisoned].outcome == "already_migrated"
+    assert healed[poisoned].outcome == "migrated"
     assert healed[poisoned].reason is None
+    assert healed[healthy].outcome == "already_migrated"
 
 
 # ------------------------------------------------- admin-level grant reporting

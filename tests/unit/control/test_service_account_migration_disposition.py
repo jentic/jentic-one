@@ -16,6 +16,7 @@ from jentic_one.control.services.service_account_migration import (
     ServiceAccountMigrationService,
     ServiceAccountRetirementError,
     rule_parity_problems,
+    rule_parity_warnings,
 )
 from jentic_one.shared.models import ActorStatus
 
@@ -56,11 +57,23 @@ def test_rule_parity_exact_for_this_runs_migrations() -> None:
     assert "expected 2" in problem.reason
 
 
-def test_rule_parity_presence_for_earlier_migrations() -> None:
+def test_rule_parity_never_blocks_on_an_earlier_successor_with_no_rules() -> None:
+    """An earlier successor binding with no rules may have been emptied on
+    purpose: a WARNING (never re-copied), not a refusal."""
     counts = {("sva_old", "cred_2"): 3}
-    [problem] = rule_parity_problems(counts, _SUCCESSORS, set())
-    assert problem.service_account_id == "sva_old"
-    assert "holds no inline permission rules" in problem.reason
+    assert rule_parity_problems(counts, _SUCCESSORS, set()) == []
+    [warning] = rule_parity_warnings(counts, _SUCCESSORS, set())
+    assert (warning.service_account_id, warning.successor_agent_id) == ("sva_old", "agnt_old")
+    assert warning.not_copied == "3 inline permission rule(s) for credential cred_2"
+    assert warning.line().startswith("sva_old: 3 inline permission rule(s) for credential cred_2")
+    assert "NOT copied to successor agent agnt_old" in warning.line()
+
+
+def test_rule_parity_warnings_skip_this_runs_migrations_and_reported_pairs() -> None:
+    counts = {("sva_now", "cred_1"): 2, ("sva_old", "cred_2"): 3}
+    assert (
+        rule_parity_warnings(counts, _SUCCESSORS, {"sva_now"}, skip={("sva_old", "cred_2")}) == []
+    )
 
 
 def test_rule_parity_ignores_actors_without_successor() -> None:

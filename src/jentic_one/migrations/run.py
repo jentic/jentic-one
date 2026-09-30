@@ -38,7 +38,11 @@ A partial or targeted upgrade skips it — the drop revision then refuses on
 any service account the retirement has not finished. A retirement that
 retired any service account prints ``==> WARNING`` lines on stdout listing
 each service account → successor agent id: ``sak_`` keys stop working in 0.41
-and their callers must switch to a ``jak_`` key of the successor agent.
+and their callers must switch to a ``jak_`` key of the successor agent. It
+also prints one ``==> WARNING (service-account retirement, not copied)`` line
+per grant, binding, or inline rule list it deliberately did not copy to a
+successor (copying could have resurrected access removed from it), so the
+operator can re-grant what is still needed.
 """
 
 from __future__ import annotations
@@ -194,6 +198,7 @@ async def _retire_service_accounts_async() -> int:
     print(f"==> service-account retirement: {outcome.action}", flush=True)
     print(json.dumps(asdict(outcome)), flush=True)
     _print_sak_warning(outcome)
+    _print_not_copied_warnings(outcome)
     return 0
 
 
@@ -205,6 +210,12 @@ def _print_sak_warning(outcome: RetirementOutcome) -> None:
     for sa_id, agent_id in outcome.successors.items():
         target = agent_id or "no successor agent (the account was not active or disabled)"
         print(f"==> WARNING   {sa_id} -> {target}", flush=True)
+
+
+def _print_not_copied_warnings(outcome: RetirementOutcome) -> None:
+    """One line per grant/binding/rule list withheld so removed access stays removed."""
+    for line in outcome.warnings:
+        print(f"==> WARNING (service-account retirement, not copied): {line}", flush=True)
 
 
 def retire_service_accounts() -> int:

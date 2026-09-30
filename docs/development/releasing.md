@@ -245,10 +245,16 @@ drop needs it (see [Rollback (Phase 6b → 6a)](#rollback-phase-6b--6a)).
 ([below](#upgrading-to-the-theme-8-phase-4-release-service-account-tables-dropped)).
 A third rule applies:
 
-3. **Snapshot the admin and control databases first.** The service-account
-   retirement is **automatic** — there is no command to run and nothing to
-   acknowledge — but it is **irreversible**: once the tables are dropped,
-   the service-account rows come back only from a snapshot. The migration
+3. **Snapshot both the admin and the control databases before upgrading.**
+   The service-account retirement is **automatic** — there is no command to
+   run and nothing to acknowledge — but it is **irreversible**, and it
+   writes to **both** databases: the service-account tables in admin are
+   dropped, and the `sva_`-keyed inline permission rules in control are
+   deleted. Once that has happened, the data comes back only from the
+   snapshots. **Rollback** is: restore **both** the admin and the control
+   databases from these snapshots, then roll the code back to 0.40.x (see
+   [Rollback (Phase 6b → 6a)](#rollback-phase-6b--6a)); restoring admin
+   alone is not a rollback. The migration
    runner (`python -m jentic_one.migrations.run`, the deployment Job) stops
    admin just before the drop, migrates every remaining service account to
    its successor agent, verifies the result, sweeps the service-account
@@ -582,9 +588,11 @@ run the Phase-1 migration (above) first — the boot job still does it.
 (admin migration `e2f3a4b5c6d7`) and removes the last service-account code
 paths. Read this **before** running migrations.
 
-- **Snapshot first.** Take admin-DB and control-DB snapshots. The drop is
-  irreversible: its downgrade refuses, and the snapshots are the only way
-  back (see *Rollback* below).
+- **Snapshot both databases first.** Take admin-DB **and** control-DB
+  snapshots before upgrading. The drop is irreversible (its downgrade
+  refuses) and the retirement writes to both databases, so restoring both
+  snapshots, then rolling the code back, is the only way back (see
+  *Rollback* below).
 - **The retirement is automatic.** On a full upgrade (`python -m
   jentic_one.migrations.run` with no `--db` or `--target`), the runner
   migrates control, brings admin to `d1e2f3a4b5c6` (just before the drop),
@@ -594,13 +602,20 @@ paths. Read this **before** running migrations.
      permission rules and API-key digest are copied to a successor agent
      named `service-account:<sva_ id>`, and outstanding SA sessions are
      revoked. Non-active service accounts are stamped without a successor.
-     For a service account migrated earlier (by 0.40), grants and bindings
-     added to it **after** its migration are copied to the successor too;
-     anything an operator removed from the successor since is **not**
-     restored.
+     The inline rules are copied only onto bindings the retirement creates
+     in this run. For a service account migrated earlier (by 0.40), grants
+     and bindings added to it **after** its migration are copied to the
+     successor too (a binding with its inline rules), unless the successor
+     is archived or gone, or the audit log shows the successor had that
+     scope removed or that binding purged. Nothing is ever copied onto an
+     existing successor grant, binding or rule list: anything an operator
+     removed from the successor since — including a binding whose inline
+     rules were emptied — is **not** restored.
   2. **Verifies** before touching anything: no failed migration, nothing
-     left unmigrated, every grant and binding present on the successor, and
-     the inline-rule parity in the control DB. The key digest is not
+     left unmigrated, every grant and binding present on the successor
+     (except the withheld ones above), and, for the service accounts
+     migrated in this run, the same inline rules per binding in the control
+     DB. The key digest is not
      checked: `sak_` keys stop working in this release whatever the
      successor holds (the copied digest only matters for a `jntc_live_`
      toolkit key that 0.40 converted into a service account).
@@ -616,11 +631,21 @@ paths. Read this **before** running migrations.
   `service_account_keys_retired` WARNING: each service account id and its
   successor agent id (ids only, never a key), and that `sak_` keys no longer
   authenticate — callers must switch to a `jak_` key for the listed agent.
+  Every grant, binding or inline rule list the retirement deliberately did
+  **not** copy (see step 1 — including an earlier successor binding that
+  holds no inline rules while its service account's binding did) is printed
+  as a `==> WARNING (service-account retirement, not copied)` line and
+  logged as a `service_account_retirement_not_copied` WARNING, naming the
+  service account, the successor agent and what was not copied. The
+  retirement proceeds; review each line and re-grant on the successor agent
+  whatever it still needs — the service-account originals are swept.
   A second run finds nothing to do. There is no command to run, no acknowledgement, and no configuration.
   If the verification fails, see
   [If the retirement refuses](#if-the-retirement-refuses).
-- **Targeted or partial upgrades skip the retirement.** With `--db` (admin
-  only, or admin before control) or `--target`, the runner does not retire,
+- **Targeted or partial upgrades skip the retirement.** `scripts/migrate.sh`
+  with no options runs the full runner. With `--db` (admin
+  only, or admin before control) or `--target` (on the runner or
+  `scripts/migrate.sh`), the runner does not retire,
   and the drop migration's own gate refuses to run while any service account
   is unmigrated or not yet swept. It names the ids and points at the full
   runner; nothing is dropped. A fresh install (empty tables) passes.

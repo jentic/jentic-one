@@ -20,10 +20,12 @@ concurrent insert fails the transaction, never a partial write.
 
 from __future__ import annotations
 
+import json
+from collections.abc import Collection, Iterable
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import delete, func, inspect, select, text
+from sqlalchemy import bindparam, delete, func, inspect, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -228,8 +230,13 @@ class ServiceAccountMigrationRepository:
         owner_id: str,
         status: str,
         api_key_hash: str | None,
+        agent_id: str | None = None,
     ) -> str:
         """Create the successor agent + (optional) credential digest copy.
+
+        ``agent_id`` is the id :meth:`new_successor_agent_id` planned before
+        the transaction (the control-DB rule copy is keyed on it and runs
+        first); a fresh one is generated when omitted.
 
         Raw SQL, NEVER ``AgentService.create()``/``approve()`` (F1) — both
         default-grant ``DEFAULT_AGENT_SCOPES`` on empty scope sets, and a
@@ -240,7 +247,7 @@ class ServiceAccountMigrationRepository:
         fails this transaction whole — never a partial write.
         ``client_secret_hash`` is NOT copied (D3); holders are report lines.
         """
-        agent_id = generate_ksuid("agnt")
+        agent_id = agent_id or generate_ksuid("agnt")
         await session.execute(
             _INSERT_AGENT,
             {
@@ -267,6 +274,11 @@ class ServiceAccountMigrationRepository:
                 },
             )
         return agent_id
+
+    @staticmethod
+    def new_successor_agent_id() -> str:
+        """Plan a successor agent id before the admin transaction creates it."""
+        return generate_ksuid("agnt")
 
     @staticmethod
     async def list_copyable_grants(
@@ -371,7 +383,11 @@ class ServiceAccountMigrationRepository:
 
     @staticmethod
     async def copy_permission_rules(
-        session: AsyncSession, *, service_account_id: str, agent_id: str
+        session: AsyncSession,
+        *,
+        service_account_id: str,
+        agent_id: str,
+        credential_ids: Collection[str] | None = None,
     ) -> int:
         """Control-DB twin of the SA's per-binding inline permission rules.
 
@@ -380,25 +396,30 @@ class ServiceAccountMigrationRepository:
         applying once the key resolves as the successor. Copy them onto the
         successor (originals stay until the sweep, N1).
 
-        Idempotent at **binding** granularity: a binding the successor already
-        holds any rule for is skipped whole — a re-run (the ``already_migrated``
-        heal path) never merges into, or resurrects rules into, a list the
-        operator has since edited on the successor. ``ON CONFLICT (agent_id,
-        credential_id, sequence) DO NOTHING`` (``uq_agent_permission_rules_
-        binding_seq``) is the belt for a concurrent copier. Returns the number
-        of rule rows inserted.
+        Callers copy only onto bindings the migration is about to create in
+        this run — the migration BEFORE its admin transaction creates the
+        successor, the retirement before it inserts a post-stamp binding twin
+        (``credential_ids`` restricts the copy to those bindings). Rules keyed
+        on a binding that does not exist yet are inert, so a failed admin step
+        never grants anything. Never called for an existing successor binding:
+        one with zero rules may have been emptied on purpose, and "emptied"
+        cannot be told apart from "never copied".
+
+        Belt: a binding the successor already holds any rule for is skipped
+        whole, and ``ON CONFLICT (agent_id, credential_id, sequence) DO
+        NOTHING`` (``uq_agent_permission_rules_binding_seq``) covers a
+        concurrent copier. Returns the number of rule rows inserted.
         """
-        source = list(
-            (
-                await session.execute(
-                    select(AgentPermissionRule)
-                    .where(AgentPermissionRule.agent_id == service_account_id)
-                    .order_by(AgentPermissionRule.credential_id, AgentPermissionRule.sequence)
-                )
-            )
-            .scalars()
-            .all()
+        query = (
+            select(AgentPermissionRule)
+            .where(AgentPermissionRule.agent_id == service_account_id)
+            .order_by(AgentPermissionRule.credential_id, AgentPermissionRule.sequence)
         )
+        if credential_ids is not None:
+            if not credential_ids:
+                return 0
+            query = query.where(AgentPermissionRule.credential_id.in_(list(credential_ids)))
+        source = list((await session.execute(query)).scalars().all())
         if not source:
             return 0
         already = set(
@@ -671,3 +692,71 @@ class ServiceAccountMigrationRepository:
             },
         )
         return bool(result.rowcount)  # type: ignore[attr-defined]
+
+    @staticmethod
+    async def list_agent_statuses(
+        session: AsyncSession, agent_ids: Iterable[str]
+    ) -> dict[str, str]:
+        """``{agent_id: status}`` for the given agents (missing ids are absent)."""
+        ids = sorted(set(agent_ids))
+        if not ids:
+            return {}
+        rows = await session.execute(
+            text("SELECT id, status FROM agents WHERE id IN :ids").bindparams(
+                bindparam("ids", expanding=True)
+            ),
+            {"ids": ids},
+        )
+        return {str(r.id): str(r.status) for r in rows.all()}
+
+    @staticmethod
+    async def list_successor_removals(
+        session: AsyncSession, agent_ids: Iterable[str]
+    ) -> tuple[set[tuple[str, str]], set[tuple[str, str]]]:
+        """Audit evidence that a successor once held a grant or binding, then lost it.
+
+        Returns ``(removed_scopes, purged_bindings)`` as ``(agent_id, scope)``
+        and ``(agent_id, credential_id)`` pairs. The two API paths that delete
+        such rows are both audited: ``replace_scopes`` (a ``grant`` row on the
+        agent whose ``before`` scopes are not all in ``after``) and a binding
+        purge (a ``revoke`` row on ``credential_binding`` keyed by the
+        credential id, parent = the agent). A soft unbind keeps the row, so it
+        is never a gap in the first place.
+        """
+        ids = sorted(set(agent_ids))
+        if not ids:
+            return set(), set()
+        rows = await session.execute(
+            text(
+                "SELECT action, target_type, target_id, target_parent_id, before, after"
+                " FROM audit_entries"
+                " WHERE (action = 'grant' AND target_type = 'agent'"
+                "  AND reason = 'replace_scopes' AND target_id IN :ids)"
+                " OR (action = 'revoke' AND target_type = 'credential_binding'"
+                "  AND target_parent_id IN :ids)"
+            ).bindparams(bindparam("ids", expanding=True)),
+            {"ids": ids},
+        )
+        removed_scopes: set[tuple[str, str]] = set()
+        purged: set[tuple[str, str]] = set()
+        for row in rows.all():
+            if row.target_type == "credential_binding":
+                purged.add((str(row.target_parent_id), str(row.target_id)))
+                continue
+            before = _scopes_of(row.before)
+            after = _scopes_of(row.after)
+            removed_scopes.update((str(row.target_id), scope) for scope in before - after)
+        return removed_scopes, purged
+
+
+def _scopes_of(payload: Any) -> set[str]:
+    """The ``scopes`` list of an audit ``before``/``after`` JSON payload."""
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except ValueError:
+            return set()
+    if not isinstance(payload, dict):
+        return set()
+    scopes = payload.get("scopes")
+    return {str(s) for s in scopes} if isinstance(scopes, list) else set()
