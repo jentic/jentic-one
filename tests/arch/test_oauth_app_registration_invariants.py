@@ -29,12 +29,17 @@ _REGISTRATION_WRITER_ALLOWLIST: frozenset[Path] = frozenset(
     }
 )
 
-# Column-attribute assignment on a `credential` (or similarly-named) row.
-# Matches `<row>.oauth_app_registration_id = ...` and the SQLAlchemy ORM keyword
-# assignment `Credential(oauth_app_registration_id=...)`. Filter reads
-# (`Credential.oauth_app_registration_id == ...`) are intentionally NOT caught
-# here — the invariant is about writes, not reads.
+# Column-attribute assignment on a `credential` (or similarly-named) row:
+# `<row>.oauth_app_registration_id = ...`. The leading `.` is what keeps the
+# ORM column declaration and plain keyword arguments out of the match; filter
+# reads (`Credential.oauth_app_registration_id == ...`) are excluded by the
+# negative lookahead — the invariant is about writes, not reads.
 _REGISTRATION_WRITE_PATTERN = re.compile(r"\.oauth_app_registration_id\s*=(?!=)")
+# The SQLAlchemy ORM constructor form `Credential(oauth_app_registration_id=...)`,
+# which the attribute pattern above cannot see.
+_REGISTRATION_CONSTRUCTOR_PATTERN = re.compile(
+    r"\bCredential\([^)]*\boauth_app_registration_id\s*=(?!=)"
+)
 
 
 def test_oauth_app_registration_id_writers_confined_to_flow_handlers() -> None:
@@ -58,7 +63,9 @@ def test_oauth_app_registration_id_writers_confined_to_flow_handlers() -> None:
             text = py_file.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue
-        if _REGISTRATION_WRITE_PATTERN.search(text):
+        if _REGISTRATION_WRITE_PATTERN.search(text) or _REGISTRATION_CONSTRUCTOR_PATTERN.search(
+            text
+        ):
             offenders.append(str(py_file.relative_to(SRC_ROOT)))
 
     assert not offenders, (
