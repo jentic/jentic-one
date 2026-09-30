@@ -240,9 +240,20 @@ export function preflightTallyLabel(outcome: PreflightOutcome, count: number): s
 	}
 }
 
-/** The tally line for picks the agent already reaches. */
+/**
+ * The tally line for picks the agent already reaches. A second credential that
+ * ties on scope makes the broker refuse every call that does not name one (409
+ * `ambiguous_credential_binding`), so the tally says so before anything is
+ * committed.
+ */
 export function anotherAccountTallyLabel(count: number): string {
 	return count === 1
-		? '1 API is already added — this adds another credential'
-		: `${count} APIs are already added — this adds another credential to each`;
+		? '1 API is already added — once another credential is added, calls to it must name one with the Jentic-Credential-Id header, unless one is scoped more narrowly'
+		: `${count} APIs are already added — once another credential is added, calls to each must name one with the Jentic-Credential-Id header, unless one is scoped more narrowly`;
+}
+
+/** The setup-queue warning for a pick that adds another credential to an API
+ * the agent already reaches — see {@link anotherAccountTallyLabel}. */
+export function anotherCredentialWarning(apiLabel: string): string {
+	return `Once added, calls to ${apiLabel} must name a credential with the Jentic-Credential-Id header, unless one is scoped more narrowly.`;
 }

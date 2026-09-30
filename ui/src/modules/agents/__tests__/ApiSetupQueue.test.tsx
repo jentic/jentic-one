@@ -284,6 +284,29 @@ describe('ApiSetupQueue — finishing a batch one API at a time', () => {
 		).toBeVisible();
 	});
 
+	it('warns before a second credential is added to an API the agent already reaches', async () => {
+		renderWithProviders(
+			<QueueHarness
+				items={[
+					makeItem('slack.com', 'form', {
+						existing: [
+							{ bindingId: 'bind_1', credentialId: 'cred_slack', name: 'Slack bot' },
+						],
+					}),
+				]}
+			/>,
+		);
+
+		const pane = await screen.findByTestId('queue-active-pane');
+		expect(within(pane).getByTestId('queue-existing-accounts')).toHaveTextContent(
+			'Added via Slack bot. Pick another credential to add it to Support bot.',
+		);
+		expect(within(pane).getByTestId('queue-ambiguity-warning')).toHaveTextContent(
+			'Once added, calls to slack must name a credential with the Jentic-Credential-Id header, unless one is scoped more narrowly.',
+		);
+		expect(pane.textContent).not.toMatch(/access to both/);
+	});
+
 	it('walks the batch in pick order, stopping on every API', async () => {
 		const { calls } = watchBinds();
 		renderWithProviders(

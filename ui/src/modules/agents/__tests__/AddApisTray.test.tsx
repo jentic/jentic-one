@@ -265,7 +265,7 @@ describe('AddApisTray — multi-select picks and the preflight tally', () => {
 		await waitFor(() =>
 			expect(tallyLines()).toEqual([
 				'1 API needs a new credential',
-				'1 API is already added — this adds another credential',
+				'1 API is already added — once another credential is added, calls to it must name one with the Jentic-Credential-Id header, unless one is scoped more narrowly',
 			]),
 		);
 

@@ -34,6 +34,7 @@ import {
 import { CredentialOptions } from '@/shared/credentials/components/CredentialOptions';
 import {
 	addedViaLabel,
+	anotherCredentialWarning,
 	defaultChoice,
 	type PreflightItem,
 } from '@/modules/agents/lib/apiPreflight';
@@ -483,10 +484,22 @@ function ActivePane({
 			</div>
 
 			{entry.existing.length > 0 && (
-				<p data-testid="queue-existing-accounts" className="text-muted-foreground text-xs">
-					{addedViaLabel(entry.existing)}. Pick another credential to give {agentName}{' '}
-					access to both.
-				</p>
+				<div className="space-y-1.5">
+					<p
+						data-testid="queue-existing-accounts"
+						className="text-muted-foreground text-xs"
+					>
+						{addedViaLabel(entry.existing)}. Pick another credential to add it to{' '}
+						{agentName}.
+					</p>
+					<p
+						data-testid="queue-ambiguity-warning"
+						className="text-foreground flex items-start gap-2 text-xs"
+					>
+						<AlertTriangle className="text-warning mt-0.5 h-3.5 w-3.5 shrink-0" />
+						<span>{anotherCredentialWarning(entry.api.label)}</span>
+					</p>
+				</div>
 			)}
 
 			{count > 0 && (

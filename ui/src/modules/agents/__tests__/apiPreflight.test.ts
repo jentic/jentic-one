@@ -9,6 +9,7 @@ import { describe, it, expect } from 'vitest';
 import {
 	credentialCoversApi,
 	anotherAccountTallyLabel,
+	anotherCredentialWarning,
 	coveringCountLabel,
 	defaultChoice,
 	preflightApi,
@@ -389,10 +390,13 @@ describe('preflightTallyLabel', () => {
 		expect(preflightTallyLabel('form', 1)).toBe('1 API needs a new credential');
 		expect(preflightTallyLabel('form', 2)).toBe('2 APIs need a new credential');
 		expect(anotherAccountTallyLabel(1)).toBe(
-			'1 API is already added — this adds another credential',
+			'1 API is already added — once another credential is added, calls to it must name one with the Jentic-Credential-Id header, unless one is scoped more narrowly',
 		);
 		expect(anotherAccountTallyLabel(2)).toBe(
-			'2 APIs are already added — this adds another credential to each',
+			'2 APIs are already added — once another credential is added, calls to each must name one with the Jentic-Credential-Id header, unless one is scoped more narrowly',
+		);
+		expect(anotherCredentialWarning('GitHub')).toBe(
+			'Once added, calls to GitHub must name a credential with the Jentic-Credential-Id header, unless one is scoped more narrowly.',
 		);
 	});
 });
