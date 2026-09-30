@@ -75,10 +75,14 @@ function makeBinding(over: Partial<CredentialBindingEntity> = {}): CredentialBin
  * selected agent live outside it, so a spec can dismiss, reopen and switch. */
 function TrayHarness({
 	bindings = [],
+	bindingsError = null,
+	onRetryBindings,
 	onContinue = (): void => {},
 	seed = null,
 }: {
 	bindings?: CredentialBindingEntity[];
+	bindingsError?: Error | null;
+	onRetryBindings?: () => void;
 	onContinue?: (items: PreflightItem[]) => void;
 	seed?: QueueBackSeed | null;
 }) {
@@ -98,6 +102,8 @@ function TrayHarness({
 				agentId={agentId}
 				agentName="Support bot"
 				bindings={bindings}
+				bindingsError={bindingsError}
+				onRetryBindings={onRetryBindings}
 				onContinue={onContinue}
 				seed={seed}
 			/>
@@ -226,6 +232,26 @@ describe('AddApisTray — multi-select picks and the preflight tally', () => {
 		// oauth2 credential costs a consent round-trip and nothing typed.
 		expect(within(selectionRows()[0]).getByText('One sign-in click')).toBeVisible();
 		await waitFor(() => expect(tallyLines()).toEqual(['1 API needs one sign-in click']));
+	});
+
+	it('holds on a failed bindings read: the error and its retry show, Continue stays off', async () => {
+		const onRetryBindings = vi.fn();
+		const user = userEvent.setup();
+		renderWithProviders(
+			<TrayHarness bindingsError={new Error('boom')} onRetryBindings={onRetryBindings} />,
+		);
+
+		expect(
+			await screen.findByText(/Could not read which APIs Support bot already has/),
+		).toBeInTheDocument();
+		await user.click(await row(/Stripe/));
+		await waitFor(() => expect(selectionRows()).toHaveLength(1));
+		// No tally on a guessed binding set: every bound credential would look new.
+		expect(tallyLines()).toEqual([]);
+		expect(screen.getByRole('button', { name: 'Continue' })).toBeDisabled();
+
+		await user.click(screen.getByRole('button', { name: 'Try again' }));
+		expect(onRetryBindings).toHaveBeenCalledTimes(1);
 	});
 
 	it('withholds the tally until the whole credential list is read', async () => {

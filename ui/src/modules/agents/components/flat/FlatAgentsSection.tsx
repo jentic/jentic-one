@@ -887,10 +887,10 @@ function SelectedAgentPanel({
 			)}
 
 			{/* The tray keeps its draft across a dismissal so it stays mounted; the queue
-			    mounts only while it owns a batch. The tray opens once bindings load —
-			    before that, every bound API would look new and invite a duplicate bind —
-			    or once their read has failed (the error above says so), rather than not
-			    at all. */}
+			    mounts only while it owns a batch. The tray opens once the bindings read
+			    settles: while it is pending every bound API would look new. A failed read
+			    opens it on the error with a retry, and nothing continues until the read
+			    succeeds — an unknown binding set would offer bound credentials again. */}
 			{canBind && (
 				<>
 					<AddApisTray
@@ -906,6 +906,9 @@ function SelectedAgentPanel({
 						agentId={agent.id}
 						agentName={agent.name}
 						bindings={bindings ?? []}
+						bindingsError={bindingsFailedToLoad ? (bindingsQuery.error as Error) : null}
+						onRetryBindings={() => void bindingsQuery.refetch()}
+						bindingsRetrying={bindingsQuery.isFetching}
 						seed={batchEdit?.seed ?? null}
 						onContinue={(items) => {
 							onQueueBatchChange(agent.id, items);

@@ -77,6 +77,14 @@ export interface AddApisTrayProps {
 	agentName: string;
 	/** The agent's existing bindings — they say which APIs it already reaches. */
 	bindings: CredentialBindingEntity[];
+	/** The bindings read failed. Without them every credential the agent holds
+	 * looks unbound and would be offered again (a 409 on bind), so the tray shows
+	 * the error with a retry and nothing continues until the read succeeds. */
+	bindingsError?: Error | null;
+	/** Re-read the bindings — the retry for {@link bindingsError}. */
+	onRetryBindings?: () => void;
+	/** A re-read of the bindings is in flight. */
+	bindingsRetrying?: boolean;
 	/** Hand the preflighted batch on, in pick order. While
 	 * editing a batch (`seed`), this may be empty: every owed API was unticked. */
 	onContinue: (items: PreflightItem[]) => void;
@@ -91,6 +99,9 @@ export function AddApisTray({
 	agentId,
 	agentName,
 	bindings,
+	bindingsError = null,
+	onRetryBindings,
+	bindingsRetrying = false,
 	onContinue,
 	seed = null,
 }: AddApisTrayProps) {
@@ -176,7 +187,7 @@ export function AddApisTray({
 			return [...current, ...apis.filter((api) => !keys.has(apiRefKey(api)))];
 		});
 
-	const preflightReady = credentialsSource.complete && !credentialsSource.error;
+	const preflightReady = credentialsSource.complete && !credentialsSource.error && !bindingsError;
 	// Editing a batch may end with nothing left to set up — that is still an answer.
 	const canContinue = preflightReady && (tally.total > 0 || editingBatch);
 
@@ -221,6 +232,14 @@ export function AddApisTray({
 				</header>
 
 				<div className="flex-1 overflow-y-auto px-5 py-4">
+					{bindingsError && (
+						<ErrorAlert
+							className="mb-4"
+							message={`Could not read which APIs ${agentName} already has, so nothing can be added yet.`}
+							onRetry={onRetryBindings}
+							retrying={bindingsRetrying}
+						/>
+					)}
 					<ApiPicker
 						searchInputRef={searchRef}
 						onSelect={toggle}
@@ -306,7 +325,7 @@ export function AddApisTray({
 							))}
 						</ul>
 
-						{credentialsSource.error ? (
+						{bindingsError ? null : credentialsSource.error ? (
 							<ErrorAlert
 								message="Could not read your credentials, so the cost of these picks is unknown."
 								onRetry={credentialsSource.retry}

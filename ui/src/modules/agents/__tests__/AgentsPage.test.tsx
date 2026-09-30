@@ -1061,6 +1061,42 @@ describe('AgentsPage — flat agents surface', () => {
 		expect(stripTab('support-agent')).toBeInTheDocument();
 	});
 
+	it('the Add-APIs tray holds on a failed bindings read and retries in place', async () => {
+		let bindingsHealthy = false;
+		worker.use(
+			http.get('/agents/:id/credentials', () =>
+				bindingsHealthy
+					? HttpResponse.json({ data: [] })
+					: HttpResponse.json({ detail: 'Server error' }, { status: 500 }),
+			),
+		);
+		const user = userEvent.setup();
+		resetApisStore([{ row: apiRow('stripe.com', 'Stripe', 10), spec: {} }]);
+		renderPage('/?agent=agnt_disabled_1');
+		await screen.findAllByText('inbox-triage-bot');
+
+		await user.click(await screen.findByRole('button', { name: 'Add APIs' }));
+		const tray = await screen.findByRole('dialog', { name: 'Add APIs' });
+		// Without the bindings every credential the agent holds would look unbound
+		// and be offered again, so nothing continues until the read succeeds.
+		expect(
+			await within(tray).findByText(/Could not read which APIs legacy-scraper already has/),
+		).toBeInTheDocument();
+		await user.click(await within(tray).findByRole('checkbox', { name: /Stripe/ }));
+		expect(within(tray).getByRole('button', { name: 'Continue' })).toBeDisabled();
+
+		bindingsHealthy = true;
+		await user.click(within(tray).getByRole('button', { name: /Try again/ }));
+		await waitFor(() =>
+			expect(
+				within(tray).queryByText(/Could not read which APIs legacy-scraper already has/),
+			).not.toBeInTheDocument(),
+		);
+		await waitFor(() =>
+			expect(within(tray).getByRole('button', { name: 'Continue' })).toBeEnabled(),
+		);
+	});
+
 	it('shows the zero-agents landing when no agents are registered', async () => {
 		worker.use(
 			http.get('/agents', () =>
