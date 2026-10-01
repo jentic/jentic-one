@@ -732,6 +732,70 @@ describe('Agents page — zero agents', () => {
 		);
 	});
 
+	/** Approves the card's agent while another one waits: the fleet then sorts
+	 * the pending agent first, so its default selection is not the approved one. */
+	async function approvedWithAnotherPending(user: ReturnType<typeof userEvent.setup>) {
+		const { queryClient } = renderPage();
+		await landing();
+		const id = await arrive('my-first-agent', queryClient);
+		selfRegisterAgent('second-bot');
+		await queryClient.invalidateQueries();
+		await screen.findByTestId('more-pending');
+		await user.click(screen.getByRole('button', { name: 'Approve my-first-agent' }));
+		await screen.findByTestId('first-api-panel');
+		return id;
+	}
+
+	const expectHandedOffTo = async (id: string) => {
+		await waitFor(() =>
+			expect(screen.getByTestId('location-search')).toHaveTextContent(`agent=${id}`),
+		);
+		expect(screen.getByRole('tab', { name: /my-first-agent/ })).toHaveAttribute(
+			'aria-selected',
+			'true',
+		);
+		expect(screen.getByRole('tab', { name: /second-bot/ })).toHaveAttribute(
+			'aria-selected',
+			'false',
+		);
+	};
+
+	it('"Skip for now" with another agent pending focuses and selects the approved agent', async () => {
+		const user = userEvent.setup();
+		const id = await approvedWithAnotherPending(user);
+
+		await user.click(screen.getByRole('button', { name: 'Skip for now' }));
+		await waitFor(() =>
+			expect(screen.getByRole('tab', { name: /my-first-agent/ })).toHaveFocus(),
+		);
+		await expectHandedOffTo(id);
+		// Settled: no later default selection takes it back.
+		await new Promise((resolve) => setTimeout(resolve, 100));
+		await expectHandedOffTo(id);
+		expect(screen.getByRole('tab', { name: /my-first-agent/ })).toHaveFocus();
+	});
+
+	it('"Continue with GitHub" with another agent pending selects the approved agent', async () => {
+		const user = userEvent.setup();
+		const id = await approvedWithAnotherPending(user);
+
+		const github = screen.getByRole('button', { name: 'Continue with GitHub' });
+		await waitFor(() => expect(github).toBeEnabled());
+		await user.click(github);
+		const queue = await screen.findByRole('dialog', { name: 'Set up 1 API' });
+		expect(within(queue).getByTestId('queue-active-pane')).toHaveAccessibleName(/GitHub/);
+		await expectHandedOffTo(id);
+	});
+
+	it('"Add another API" with another agent pending selects the approved agent', async () => {
+		const user = userEvent.setup();
+		const id = await approvedWithAnotherPending(user);
+
+		await user.click(screen.getByRole('button', { name: 'Add another API' }));
+		await screen.findByRole('dialog', { name: 'Add APIs' });
+		await expectHandedOffTo(id);
+	});
+
 	it('"Add another API" opens the tray with nothing ticked', async () => {
 		const user = userEvent.setup();
 		await approved(user);
@@ -1282,7 +1346,9 @@ describe('Agents page — resuming the first run on load', () => {
 		}
 		expect(screen.queryByTestId('agents-empty-landing')).toBeNull();
 		expect(screen.queryByText(/archived agents/)).toBeNull();
-		expect(await screen.findByText('This agent is retired.', { exact: false })).toBeVisible();
+		// Retried: the state banner fades in.
+		const retired = await screen.findByText('This agent is retired.', { exact: false });
+		await waitFor(() => expect(retired).toBeVisible());
 		expect(screen.getByRole('button', { name: 'New agent' })).toBeInTheDocument();
 		await waitFor(() => checkA11y(container), { timeout: 3000 });
 	});

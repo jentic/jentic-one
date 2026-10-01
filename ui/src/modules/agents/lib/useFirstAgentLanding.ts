@@ -50,6 +50,8 @@ export interface FirstAgentLandingOptions {
 	deny: Pick<ReturnType<typeof useDenyAgent>, 'variables' | 'isSuccess'>;
 	/** Select an agent in the fleet view (`?agent=`). */
 	selectAgent: (id: string, opts?: { replace?: boolean }) => void;
+	/** The agent the URL selects (`?agent=`), or null when it names none. */
+	selectedAgentId: string | null;
 	/** Open the Add-APIs flow for an agent (`queue` skips the tray), or clear it. */
 	openAddApis: (target: { agentId: string; queue: SelectedApi[] } | null) => void;
 }
@@ -58,6 +60,7 @@ export function useFirstAgentLanding({
 	approve,
 	deny,
 	selectAgent,
+	selectedAgentId,
 	openAddApis,
 }: FirstAgentLandingOptions) {
 	// Set once the org is seen with no fleet; cleared when the landing hands off.
@@ -168,18 +171,28 @@ export function useFirstAgentLanding({
 
 	// The hand-off's last beat: the agent's tab glides from where the preview's
 	// slot sat to its place in the strip, and takes focus. Transform only;
-	// reduced motion skips the glide.
+	// reduced motion skips the glide. It targets the handed-off agent by id and
+	// waits for the URL to select it: the router applies `?agent=` in a
+	// transition, so the fleet view can render a frame before that selection
+	// lands, with another tab (or none) selected.
 	const reducedMotion = useReducedMotionConfig() ?? false;
 	const slotRef = useRef<HTMLElement | null>(null);
-	const handoffRef = useRef<{ from: DOMRect | null } | null>(null);
+	const [handoff, setHandoff] = useState<{
+		from: DOMRect | null;
+		agentId: string | null;
+	} | null>(null);
 	useLayoutEffect(() => {
-		const handoff = handoffRef.current;
 		if (visible || !handoff) return;
-		handoffRef.current = null;
+		if (handoff.agentId != null && selectedAgentId !== handoff.agentId) return;
+		setHandoff(null);
 		// The tab list, not the rail: its tabs and selection marker travel together
 		// while the rail's own surface stays put.
 		const tablist = document.querySelector<HTMLElement>(STRIP_TABLIST);
-		const tab = tablist?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]');
+		const tab = tablist?.querySelector<HTMLElement>(
+			handoff.agentId != null
+				? `[role="tab"][data-agent-id="${CSS.escape(handoff.agentId)}"]`
+				: '[role="tab"][aria-selected="true"]',
+		);
 		if (!tablist || !tab) return;
 		tab.focus({ preventScroll: true });
 		const { from } = handoff;
@@ -190,7 +203,7 @@ export function useFirstAgentLanding({
 			{ x: [from.left - to.left, 0], y: [from.top - to.top, 0] },
 			{ duration: 0.56, ease: EASE_OUT_SOFT },
 		);
-	}, [visible]);
+	}, [visible, handoff, selectedAgentId]);
 
 	function endLanding() {
 		setUp(false);
@@ -201,9 +214,10 @@ export function useFirstAgentLanding({
 	 * the suggestion is the operator's answer to it: a reload must not ask again. */
 	function exit(to: FirstAgentExit) {
 		if (!agent) return;
-		handoffRef.current = {
+		setHandoff({
 			from: reducedMotion ? null : (slotRef.current?.getBoundingClientRect() ?? null),
-		};
+			agentId: agent.id,
+		});
 		selectAgent(agent.id, { replace: true });
 		openAddApis(
 			to.kind === 'skip'
@@ -217,7 +231,7 @@ export function useFirstAgentLanding({
 	/** "+N more waiting": the fleet, where every pending agent is listed. */
 	function showFleet() {
 		if (agent) selectAgent(agent.id);
-		handoffRef.current = { from: null };
+		setHandoff({ from: null, agentId: agent?.id ?? null });
 		endLanding();
 	}
 
@@ -249,6 +263,9 @@ export function useFirstAgentLanding({
 		expectedName: commandShown ? commandName : null,
 		/** The preview slot the hand-off glides from. */
 		slotRef,
+		/** The agent an exit handed the fleet view, until the URL selects it —
+		 * the fleet's own default selection must not overwrite it meanwhile. */
+		handoffAgentId: handoff?.agentId ?? null,
 		exit,
 		showFleet,
 		finishedElsewhere,

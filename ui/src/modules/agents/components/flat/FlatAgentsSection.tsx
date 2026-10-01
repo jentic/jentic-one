@@ -139,6 +139,7 @@ export function FlatAgentsSection({
 		approve,
 		deny,
 		selectAgent,
+		selectedAgentId: agentParam,
 		openAddApis: setAddApisFor,
 	});
 	const { query } = landing;
@@ -157,11 +158,18 @@ export function FlatAgentsSection({
 		[landing.agents],
 	);
 
-	const selected = agents.find((a) => a.id === agentParam) ?? agents[0] ?? null;
+	// Until the URL catches up with an exit's hand-off, the handed-off agent is
+	// the one on screen.
+	const shownId = agentParam ?? landing.handoffAgentId;
+	const selected = agents.find((a) => a.id === shownId) ?? agents[0] ?? null;
 	// Written back only once the fleet view is decided and on screen, so the
-	// landing leaves the URL plain.
+	// landing leaves the URL plain — and not while a hand-off's own selection
+	// is still on its way.
 	const fleetShown = landing.ready && !landing.visible;
-	const fallbackId = agentParam == null && fleetShown ? (selected?.id ?? null) : null;
+	const fallbackId =
+		agentParam == null && fleetShown && landing.handoffAgentId == null
+			? (selected?.id ?? null)
+			: null;
 	useEffect(() => {
 		if (fallbackId != null) selectAgent(fallbackId, { replace: true });
 	}, [fallbackId, selectAgent]);
