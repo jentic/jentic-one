@@ -114,6 +114,7 @@ async def list_executions(
             actor_id=actor_id,
             origin=origin,
         ),
+        identity=identity,
         cursor=cursor,
         limit=limit,
     )
@@ -132,5 +133,5 @@ async def get_execution(
     exec_svc: ExecutionService = Depends(get_execution_service),
 ) -> ExecutionResponse:
     """Get an execution record by ID."""
-    view = await exec_svc.get_by_id(execution_id)
+    view = await exec_svc.get_by_id(execution_id, identity=identity)
     return _execution_response(view, request)

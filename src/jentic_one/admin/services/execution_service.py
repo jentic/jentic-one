@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from jentic_one.admin.core.schema.execution_records import ExecutionRecord
 from jentic_one.admin.repos import ExecutionRecordRepository
+from jentic_one.admin.scoping.filters import build_access_filters
 from jentic_one.admin.services._support.pagination import Page, decode_cursor, encode_cursor
 from jentic_one.admin.services.errors import ExecutionNotFoundError
 from jentic_one.admin.services.schemas.executions import (
@@ -12,11 +14,17 @@ from jentic_one.admin.services.schemas.executions import (
     ExecutionFilter,
     ExecutionView,
 )
+from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 
 
 class ExecutionService:
-    """Manages execution record queries."""
+    """Manages execution record queries.
+
+    Every read is scoped to the caller (``build_access_filters``): an execution
+    is visible to the actor that ran it, to the human owner of the agent that
+    ran it, and to ``org:admin``. Anything else reads as not found.
+    """
 
     def __init__(self, ctx: Context) -> None:
         self._ctx = ctx
@@ -24,9 +32,12 @@ class ExecutionService:
     async def list_all(
         self,
         filter: ExecutionFilter,
+        *,
+        identity: Identity,
         cursor: str | None = None,
         limit: int = 25,
     ) -> Page[ExecutionView]:
+        access_filters = build_access_filters(identity, ExecutionRecord)
         cursor_ts: Any = None
         cursor_id: str | None = None
         if cursor is not None:
@@ -48,6 +59,7 @@ class ExecutionService:
                 api_version=filter.api_version,
                 actor_id=filter.actor_id,
                 origin=filter.origin,
+                filters=access_filters,
             )
 
         has_more = len(records) > limit
@@ -61,9 +73,12 @@ class ExecutionService:
 
         return Page(data=views, has_more=has_more, next_cursor=next_cursor)
 
-    async def get_by_id(self, execution_id: str) -> ExecutionView:
+    async def get_by_id(self, execution_id: str, *, identity: Identity) -> ExecutionView:
+        access_filters = build_access_filters(identity, ExecutionRecord)
         async with self._ctx.admin_db.session() as session:
-            record = await ExecutionRecordRepository.get_by_id(session, execution_id)
+            record = await ExecutionRecordRepository.get_by_id(
+                session, execution_id, filters=access_filters
+            )
         if record is None:
             raise ExecutionNotFoundError(execution_id)
 
