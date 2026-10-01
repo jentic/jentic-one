@@ -27,10 +27,10 @@ Every API endpoint grouped by its **typical caller**, then by surface, annotated
 
 > The grouping and the _Typical caller_ column are an **advisory hint** at who usually calls a route, inferred from the scope family. They are **not** an enforced restriction: access is gated by the **scope**, not the actor kind, so any actor holding the required scope can call the endpoint.
 
-_Total endpoints: **174**._
+_Total endpoints: **175**._
 
 
-## Agent-facing (typically an agent) (32)
+## Agent-facing (typically an agent) (33)
 
 
 ### `apis`
@@ -65,6 +65,7 @@ _Total endpoints: **174**._
 |---|---|---|---|---|
 | GET | `/catalog` | `capabilities:read` | agent | List Catalog |
 | GET | `/catalog/{api_id}` | `capabilities:read` | agent | Get Catalog Entry |
+| GET | `/catalog/{api_id}/logo` | `capabilities:read` | agent | Get Catalog Logo |
 | GET | `/catalog/{api_id}/operations` | `capabilities:read` | agent | Preview Catalog Operations |
 | POST | `/catalog/{api_id}:import` | `catalog:import` | agent | Import Catalog Entry |
 

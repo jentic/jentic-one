@@ -12,6 +12,7 @@ from jentic_one.registry.web.deps import get_governed_hosts_service
 from jentic_one.registry.web.schemas.governed_hosts import GovernedHostsResponse
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.web import get_current_identity
+from jentic_one.shared.web.conditional import etag_matches
 
 router = APIRouter()
 
@@ -29,23 +30,6 @@ _ETAG_HEADER_SPEC = {
     ),
     "schema": {"type": "string"},
 }
-
-
-def _etag_matches(if_none_match: str, etag: str) -> bool:
-    """RFC 9110 ``If-None-Match`` comparison (weak comparison, ``*`` honoured).
-
-    The digest ETag is content-derived and strong, but clients may echo it back
-    weakened (``W/"…"``) through caches, so compare opaque-tags only. As a
-    compatibility arm, the bare (unquoted) digest is accepted too — the body's
-    ``digest`` field is what integrators actually hold, and rejecting the
-    obvious ``If-None-Match: <digest>`` form would silently disable the poll
-    seam with no error.
-    """
-    candidates = [v.strip() for v in if_none_match.split(",")]
-    if "*" in candidates:
-        return True
-    opaque = {v.removeprefix("W/") for v in candidates}
-    return etag in opaque or etag.strip('"') in opaque
 
 
 @router.get(
@@ -107,7 +91,7 @@ async def get_governed_hosts(
     etag = f'"{view.digest}"'
     headers = {"ETag": etag, **_RESPONSE_HEADERS}
 
-    if if_none_match is not None and _etag_matches(if_none_match, etag):
+    if if_none_match is not None and etag_matches(if_none_match, etag):
         return Response(status_code=304, headers=headers)
 
     resp = GovernedHostsResponse(data=list(view.hosts), digest=view.digest)

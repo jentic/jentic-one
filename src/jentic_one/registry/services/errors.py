@@ -260,6 +260,14 @@ class CatalogEntryNotFoundError(RegistryServiceError):
         self.api_id = api_id
 
 
+class CatalogLogoNotFoundError(RegistryServiceError):
+    """Raised when a catalog entry has no logo the registry can serve."""
+
+    def __init__(self, api_id: str) -> None:
+        super().__init__(f"Catalog entry '{api_id}' has no logo")
+        self.api_id = api_id
+
+
 class CatalogUnavailableError(RegistryServiceError):
     """Raised when the upstream catalog manifest/spec cannot be fetched or parsed."""
 

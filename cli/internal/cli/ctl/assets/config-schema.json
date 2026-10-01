@@ -286,6 +286,18 @@
     "CatalogConfig": {
       "description": "Public API catalog settings (manifest source + staleness).",
       "properties": {
+        "logo_max_age_seconds": {
+          "default": 604800,
+          "minimum": 0,
+          "title": "Logo Max Age Seconds",
+          "type": "integer"
+        },
+        "logo_max_bytes": {
+          "default": 262144,
+          "exclusiveMinimum": 0,
+          "title": "Logo Max Bytes",
+          "type": "integer"
+        },
         "manifest_max_age_seconds": {
           "default": 86400,
           "title": "Manifest Max Age Seconds",

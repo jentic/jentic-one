@@ -1672,6 +1672,15 @@ class CatalogConfig(BaseModel):
     # upstream at the same interval boundary. Bounded (default 15%, capped at 100%)
     # so the cadence stays ~daily; 0 disables jitter (deterministic, e.g. for tests).
     update_sweep_jitter_ratio: float = Field(default=0.15, ge=0.0, le=1.0)
+    # Vendor logos (``GET /catalog/{api_id}/logo``): on first request the registry
+    # fetches the logo the manifest lists for an entry (SSRF-guarded via
+    # ``ingest.egress``), caches the bytes in the registry DB and serves them from
+    # there, so browsers never contact the upstream host. A cached logo is
+    # revalidated (If-None-Match) once it is older than this. Zero disables logos
+    # entirely: no upstream fetches, no ``_links.logo``, and the endpoint answers 404.
+    logo_max_age_seconds: int = Field(default=7 * 86400, ge=0)
+    # Largest logo accepted from upstream; bigger responses are not cached or served.
+    logo_max_bytes: int = Field(default=256 * 1024, gt=0)
 
 
 class McpOAuthConfig(BaseModel):

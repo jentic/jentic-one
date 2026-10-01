@@ -374,6 +374,12 @@ func (j *BrokerResilienceConfig) UnmarshalJSON(value []byte) error {
 
 // Public API catalog settings (manifest source + staleness).
 type CatalogConfig struct {
+	// LogoMaxAgeSeconds corresponds to the JSON schema field "logo_max_age_seconds".
+	LogoMaxAgeSeconds int `json:"logo_max_age_seconds,omitempty,omitzero" yaml:"logo_max_age_seconds,omitempty" mapstructure:"logo_max_age_seconds,omitempty"`
+
+	// LogoMaxBytes corresponds to the JSON schema field "logo_max_bytes".
+	LogoMaxBytes int `json:"logo_max_bytes,omitempty,omitzero" yaml:"logo_max_bytes,omitempty" mapstructure:"logo_max_bytes,omitempty"`
+
 	// ManifestMaxAgeSeconds corresponds to the JSON schema field
 	// "manifest_max_age_seconds".
 	ManifestMaxAgeSeconds int `json:"manifest_max_age_seconds,omitempty,omitzero" yaml:"manifest_max_age_seconds,omitempty" mapstructure:"manifest_max_age_seconds,omitempty"`
@@ -409,6 +415,18 @@ func (j *CatalogConfig) UnmarshalJSON(value []byte) error {
 	var plain Plain
 	if err := json.Unmarshal(value, &plain); err != nil {
 		return err
+	}
+	if v, ok := raw["logo_max_age_seconds"]; !ok || v == nil {
+		plain.LogoMaxAgeSeconds = 604800
+	}
+	if 0 > plain.LogoMaxAgeSeconds {
+		return fmt.Errorf("field %s: must be >= %v", "logo_max_age_seconds", 0)
+	}
+	if v, ok := raw["logo_max_bytes"]; !ok || v == nil {
+		plain.LogoMaxBytes = 262144
+	}
+	if 0 >= plain.LogoMaxBytes {
+		return fmt.Errorf("field %s: must be > %v", "logo_max_bytes", 0)
 	}
 	if v, ok := raw["manifest_max_age_seconds"]; !ok || v == nil {
 		plain.ManifestMaxAgeSeconds = 86400
