@@ -172,7 +172,7 @@ export function ApiCard({
 						data-testid="workspace-api-card-credential-missing"
 					>
 						<AlertTriangle size={12} className="shrink-0" aria-hidden="true" />
-						Credential missing — agents can’t call it
+						No credential — agents can’t call it
 					</p>
 				) : null}
 			</div>

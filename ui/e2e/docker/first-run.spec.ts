@@ -25,7 +25,7 @@ test('Agents renders the first-run checklist against an empty backend, console c
 
 	// No agents → the setup checklist, then the self-registration route.
 	await expect(page.getByRole('heading', { name: 'Set up your workspace' })).toBeVisible();
-	await expect(page.getByRole('link', { name: /Discover an API/ })).toBeVisible();
+	await expect(page.getByRole('link', { name: /Add an API from the Library/ })).toBeVisible();
 	await expect(page.getByRole('link', { name: /Add a credential/ })).toBeVisible();
 	await expect(page.getByRole('button', { name: /Create an agent/ })).toBeVisible();
 	await expect(page.getByText('Register an agent from the command line')).toBeVisible();
@@ -39,7 +39,7 @@ test('first-run checklist links navigate to their surfaces', async ({ page }) =>
 	await expect(page.getByRole('heading', { name: 'Set up your workspace' })).toBeVisible();
 
 	// Checklist links route into the module surfaces (real router, real guard).
-	await page.getByRole('link', { name: /Discover an API/ }).click();
+	await page.getByRole('link', { name: /Add an API from the Library/ }).click();
 	await expect(page).toHaveURL(/\/app\/library\b/);
 	await expect(page.getByRole('heading', { name: 'Library', exact: true })).toBeVisible();
 });

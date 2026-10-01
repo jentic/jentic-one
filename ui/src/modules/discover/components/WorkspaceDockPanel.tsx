@@ -12,7 +12,7 @@
  * and usage reads) or the live event stream; a signal whose read hasn't
  * answered — or isn't readable for this user — is omitted, never zeroed.
  *
- * A "no credential yet" API name is a button, not a link: it opens the shared
+ * A "no credential" API name is a button, not a link: it opens the shared
  * Add credential flow in place, on that API's form (the host owns the flow —
  * `usePanelCredentialFlow`), and the panel confirms a usable credential with a
  * transient "Credential added" row at the top.
@@ -98,7 +98,7 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 }
 
 function hrefFor(row: WorkspaceDigestRow, entry: AttentionEntry): string {
-	// Without an in-place flow, "No credential yet" still names one API per
+	// Without an in-place flow, "No credential" still names one API per
 	// link, each opening that API's hub straight onto its Add credential form.
 	return ROUTE_PATHS.workspaceApiHub(row.ref, entry.tab, {
 		addCredential: entry.id === 'credentials',
@@ -271,7 +271,7 @@ interface PanelContentProps {
 	/** Opens the import-your-own-spec dialog. */
 	onImportOwn: () => void;
 	/**
-	 * Opens the Add credential flow in place for a "no credential yet" API.
+	 * Opens the Add credential flow in place for a "no credential" API.
 	 * Omitted ⇒ those names link to the API hub's form instead.
 	 */
 	onAddCredential?: (row: WorkspaceDigestRow) => void;
@@ -570,8 +570,8 @@ export const WorkspaceDockPanel = memo(function WorkspaceDockPanel({
 						variant="ghost"
 						size="sm"
 						className="h-8 w-8 p-0"
-						aria-label="Expand to the full workspace"
-						title="Expand to the full workspace"
+						aria-label="Open the full workspace"
+						title="Open the full workspace"
 						data-testid="workspace-panel-expand"
 					>
 						<Maximize2 className="h-4 w-4" aria-hidden="true" />

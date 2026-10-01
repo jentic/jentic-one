@@ -163,7 +163,7 @@ describe('WorkspacePanelBody attention links', () => {
 				digest={digestWith([
 					{
 						id: 'credentials',
-						label: 'no credential yet',
+						label: 'no credential',
 						rows: [rows[0]],
 						tab: 'overview',
 					},

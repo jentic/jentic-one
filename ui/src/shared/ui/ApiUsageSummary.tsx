@@ -115,7 +115,7 @@ export function ApiUsageSummary({
 					) : calls > 0 ? (
 						'no failures'
 					) : (
-						'no calls this week'
+						'no calls in the last 7 days'
 					)}
 					{' · all versions'}
 				</p>

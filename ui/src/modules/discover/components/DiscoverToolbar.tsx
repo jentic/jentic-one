@@ -33,7 +33,7 @@ const FILTER_OPTIONS: { value: CatalogFilter; label: string }[] = [
 	{ value: 'all', label: 'All' },
 	// Same word as the card / sheet pill (CardStatusPill).
 	{ value: 'unregistered', label: 'Available' },
-	{ value: 'outdated', label: 'Updates' },
+	{ value: 'outdated', label: 'Update available' },
 ];
 
 export function DiscoverToolbar({

@@ -337,7 +337,7 @@ export function validateUpdate(
  * registry's ingested spec need not report the same string.
  *
  * `pinVersion` is for a host that opened the flow FROM one registered API (its
- * hub, the Library panel's "no credential yet" item): that API's version is the
+ * hub, the Library panel's "no credential" item): that API's version is the
  * registry's own, so the credential defaults to it. The form still offers
  * "Any version" to unpin.
  *

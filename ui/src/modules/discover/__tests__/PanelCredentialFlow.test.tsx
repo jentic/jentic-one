@@ -1,5 +1,5 @@
 /**
- * The workspace panel's "no credential yet" item adds the credential IN PLACE:
+ * The workspace panel's "no credential" item adds the credential IN PLACE:
  * an API name is a button that opens the shared Add credential flow on that
  * API's form (step 2, seeded like the API hub), and a usable credential is
  * confirmed in the panel — the API then drops off the list once the
@@ -177,7 +177,7 @@ describe('workspace panel — add a credential in place', () => {
 function digestOf(rows: WorkspaceDigest['rows']): WorkspaceDigest {
 	return {
 		rows,
-		attention: [{ id: 'credentials', label: 'no credential yet', rows, tab: 'overview' }],
+		attention: [{ id: 'credentials', label: 'no credential', rows, tab: 'overview' }],
 		attentionComplete: true,
 		attentionSettled: true,
 		byCatalogApiId: new Map(),

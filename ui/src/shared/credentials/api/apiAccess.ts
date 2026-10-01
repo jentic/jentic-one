@@ -9,7 +9,7 @@
  *     mirror of the broker's `credential_covers`), not an exact-triple group.
  *     An inactive credential can't serve a call, so it never counts. This is
  *     the one credential ↔ API rule: the catalog's "Credential ready" and the
- *     hub / panel / tile "Credential missing" all read it.
+ *     hub / panel / tile "No credential" all read it.
  *   - `GET /credentials/{id}/agents` (first page, per credential): the agents
  *     directly bound to a credential — theme 5's agent ↔ credential binding,
  *     the same read the credential sheet's "Bound agents" section uses (and the

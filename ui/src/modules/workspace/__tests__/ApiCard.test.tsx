@@ -116,7 +116,7 @@ describe('ApiCard health rows', () => {
 		expect(screen.getByTestId('workspace-api-card-usage')).toHaveTextContent('1,204 calls');
 		expect(screen.getByTestId('workspace-api-card-failures')).toHaveTextContent('3 failed');
 		expect(screen.getByTestId('workspace-api-card-credential-missing')).toHaveTextContent(
-			'Credential missing — agents can’t call it',
+			'No credential — agents can’t call it',
 		);
 		await checkA11y(container);
 	});

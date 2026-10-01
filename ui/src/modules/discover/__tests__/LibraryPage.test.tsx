@@ -211,7 +211,7 @@ describe('LibraryPage', () => {
 		renderWithProviders(<LibraryPage />);
 		await screen.findByText('stripe.com');
 		const toolbar = screen.getByTestId('discover-toolbar');
-		for (const name of ['All', 'Available', 'Updates']) {
+		for (const name of ['All', 'Available', 'Update available']) {
 			expect(within(toolbar).getByRole('button', { name })).toBeInTheDocument();
 		}
 		expect(

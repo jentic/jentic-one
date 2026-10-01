@@ -198,7 +198,7 @@ export function useWorkspaceDigest(): WorkspaceDigest {
 			},
 			{
 				id: 'credentials',
-				label: 'no credential yet — agents can’t call it',
+				label: 'no credential — agents can’t call it',
 				rows: noCredential,
 				tab: 'overview',
 			},

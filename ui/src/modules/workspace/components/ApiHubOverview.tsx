@@ -139,7 +139,7 @@ function AccessCard({ api }: { api: WorkspaceApi }) {
 
 	// The Add credential flow opens here, on this API's form — the hub already
 	// knows the API, so asking for it again would be redundant. `?credential=new`
-	// is the open state, so the docked panel's "no credential yet" links land
+	// is the open state, so the docked panel's "no credential" links land
 	// straight on the form too. Mounted once; the flow owns its reset.
 	const [searchParams, setSearchParams] = useSearchParams();
 	const createOpen = searchParams.get('credential') === 'new';
@@ -522,7 +522,8 @@ function UsageCard({ api, className }: { api: WorkspaceApi; className?: string }
 				<Skeleton className="h-10 w-full" />
 			) : total == null ? (
 				<p className="text-muted-foreground text-sm">
-					Outside the top APIs by volume this week — see Monitor for the breakdown.
+					Outside the top APIs by volume in the last 7 days — see Monitor for the
+					breakdown.
 				</p>
 			) : (
 				<ApiUsageSummary

@@ -1,6 +1,6 @@
 /**
  * The Library's in-place "add a credential for this API" flow, opened from
- * the workspace panel's "no credential yet" attention item (docked card or
+ * the workspace panel's "no credential" attention item (docked card or
  * mobile sheet). Mounts the shared `CreateCredentialFlow` once, seeded on the
  * clicked API's form (the same `initialApiFor` seed the API hub uses), runs
  * the shared OAuth connect-after-create, and — once the credential is actually
@@ -8,7 +8,7 @@
  *
  * The flow's own "Credential created" toast is untouched; the notice is the
  * panel-local confirmation next to the list it just changed (the create
- * invalidates the credentials slice, so the API drops off "no credential yet"
+ * invalidates the credentials slice, so the API drops off "no credential"
  * on the refetch).
  */
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';

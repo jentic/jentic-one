@@ -23,9 +23,9 @@ describe('ApiUsageSummary', () => {
 		);
 	});
 
-	it('large: says "no calls this week" for a true zero, "no failures" otherwise', () => {
+	it('large: says "no calls in the last 7 days" for a true zero, "no failures" otherwise', () => {
 		const { unmount } = renderWithProviders(<ApiUsageSummary size="large" calls={0} />);
-		expect(screen.getByText(/no calls this week/)).toBeInTheDocument();
+		expect(screen.getByText(/no calls in the last 7 days/)).toBeInTheDocument();
 		unmount();
 		renderWithProviders(<ApiUsageSummary size="large" calls={9} />);
 		expect(screen.getByText(/no failures/)).toBeInTheDocument();

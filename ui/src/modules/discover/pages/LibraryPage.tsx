@@ -73,7 +73,7 @@ export default function LibraryPage() {
 	// Toasts sit left of the docked workspace panel (the grid's last column at xl).
 	const dockGridRef = useRef<HTMLDivElement>(null);
 	useReportRightDock(dockGridRef, { lastChild: true });
-	// The panel's "no credential yet" names open the shared Add credential
+	// The panel's "no credential" names open the shared Add credential
 	// flow here, over the catalog, on that API's form.
 	const credentialFlow = usePanelCredentialFlow();
 	// The same drained list (and cache slice) the digest's health index reads;

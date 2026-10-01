@@ -4,7 +4,7 @@
  * API's form (step 2) instead of the picker.
  *
  * Shared so every "add a credential for THIS API" entry point (the API hub's
- * "Who can use it", the Library panel's "no credential yet" item) seeds the
+ * "Who can use it", the Library panel's "no credential" item) seeds the
  * flow identically: same identity, same catalog slug (stored on the
  * credential), same scheme hint, same label.
  */

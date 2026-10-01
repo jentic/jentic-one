@@ -13,7 +13,7 @@
  * The sheet is a modal dialog (SheetPrimitive): Escape / backdrop close it,
  * focus is trapped inside and returns to the bar on close. It portals above
  * the mobile BottomNavbar and pads for the device's bottom safe area. Any link
- * inside closes it as it navigates; a "no credential yet" API closes it and
+ * inside closes it as it navigates; a "no credential" API closes it and
  * hands over to the host's in-place Add credential flow (like "Import your own
  * API"), rather than stacking a drawer on the sheet.
  */
@@ -44,7 +44,7 @@ export interface WorkspaceSummaryBarProps {
 	pendingImports: PendingImport[];
 	/** Opens the import-your-own-spec dialog. */
 	onImportOwn: () => void;
-	/** Opens the in-place Add credential flow for a "no credential yet" API. */
+	/** Opens the in-place Add credential flow for a "no credential" API. */
 	onAddCredential?: (row: WorkspaceDigestRow) => void;
 	credentialNotice?: CredentialAddedNotice | null;
 	onDismissCredentialNotice?: () => void;
