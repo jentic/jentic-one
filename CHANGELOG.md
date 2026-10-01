@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.41.1](https://github.com/jentic/jentic-one/compare/v0.41.0...v0.41.1) (2026-10-01)
+
+
+### Bug Fixes
+
+* **openapi:** publish placeholder hosts and advertise the deployment's own hosts ([#1504](https://github.com/jentic/jentic-one/issues/1504)) ([7b99c77](https://github.com/jentic/jentic-one/commit/7b99c771761fabe6318e7f8a3f5ae9b8e95d5fc9))
+
+
+### Build System
+
+* **deps:** bump pyjwt from 2.14.0 to 2.15.0 ([#1502](https://github.com/jentic/jentic-one/issues/1502)) ([e6327df](https://github.com/jentic/jentic-one/commit/e6327df3230e31af1dff6174d604b844a4cc54e8))
+
 ## [0.41.0](https://github.com/jentic/jentic-one/compare/v0.40.1...v0.41.0) (2026-09-30)
 
 
