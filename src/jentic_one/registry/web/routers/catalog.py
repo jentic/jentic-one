@@ -53,6 +53,8 @@ def _entry_response(request: Request, view: CatalogEntryView) -> CatalogEntryRes
         vendor=view.vendor,
         path=view.path,
         spec_url=view.spec_url,
+        title=view.title,
+        description=view.description,
         registered=view.registered,
         update_available=view.update_available,
         links=CatalogEntryLinksResponse(
