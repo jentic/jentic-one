@@ -404,6 +404,25 @@ describe('Agents page — the New agent panel over a fleet', () => {
 		expect(registerTab()).toHaveAttribute('aria-selected', 'true');
 	});
 
+	it('a deny with another agent waiting moves focus to the next arrival heading', async () => {
+		const user = userEvent.setup();
+		const { queryClient } = renderPage();
+		const sheet = await openRegister(user);
+		await register(queryClient, 'research-bot');
+		await arrival();
+		await register(queryClient, 'second-bot');
+		await within(sheet).findByTestId('more-pending');
+
+		await user.click(within(sheet).getByRole('button', { name: 'Deny research-bot' }));
+		const dialog = await screen.findByRole('dialog', { name: 'Deny research-bot' });
+		await user.type(within(dialog).getByLabelText('Reason'), 'Not ours');
+		await user.click(within(dialog).getByRole('button', { name: 'Deny' }));
+
+		await waitFor(() =>
+			expect(within(panel()).getByRole('heading', { name: 'second-bot' })).toHaveFocus(),
+		);
+	});
+
 	it('polls only while open on the register tab', async () => {
 		const user = userEvent.setup();
 		const { queryClient } = renderPage();

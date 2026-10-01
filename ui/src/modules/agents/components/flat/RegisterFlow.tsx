@@ -7,9 +7,10 @@
  * CLI install hint.
  *
  * The host decides which agent is `agent` and what its exits do. An in-session
- * phase change swaps content out from under the keyboard (the Approve button
- * focused a moment ago is gone), so focus moves to the new view's heading; the
- * phase the flow mounted in keeps focus where it is. A change made from a modal
+ * view change — a new phase, or the next pending agent replacing a denied one —
+ * swaps content out from under the keyboard (the Approve or Deny button focused
+ * a moment ago is gone), so focus moves to the new view's heading; the view the
+ * flow mounted in keeps focus where it is. A change made from a modal
  * (the deny dialog) lands once it closes — its own focus return targets a
  * trigger that is on its way out.
  */
@@ -95,10 +96,13 @@ export function RegisterFlow({
 	const phase: FirstAgentPhase = agent == null ? 'listening' : agentPhase;
 	const titleId = registerFlowTitleId(baseId, agent);
 
-	const lastPhaseRef = useRef(phase);
+	// The view is the phase *and* the agent: denying one pending agent while
+	// another waits keeps the phase at 'arrived' but replaces the card.
+	const viewKey = `${phase}:${agent?.id ?? ''}`;
+	const lastViewRef = useRef(viewKey);
 	useEffect(() => {
-		if (lastPhaseRef.current === phase) return;
-		lastPhaseRef.current = phase;
+		if (lastViewRef.current === viewKey) return;
+		lastViewRef.current = viewKey;
 		const focusTitle = () => document.getElementById(titleId)?.focus({ preventScroll: true });
 		const modal = document.querySelector('dialog[open]');
 		if (!modal) {
@@ -108,7 +112,7 @@ export function RegisterFlow({
 		const onModalClose = () => requestAnimationFrame(focusTitle);
 		modal.addEventListener('close', onModalClose, { once: true });
 		return () => modal.removeEventListener('close', onModalClose);
-	}, [phase, titleId]);
+	}, [viewKey, titleId]);
 
 	return (
 		<>

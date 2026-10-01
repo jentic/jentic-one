@@ -818,6 +818,28 @@ describe('Agents page — zero agents', () => {
 		);
 	});
 
+	it('a deny with another agent waiting moves focus to the next arrival heading', async () => {
+		const user = userEvent.setup();
+		const { queryClient } = renderPage();
+		await landing();
+		await arrive('my-first-agent', queryClient);
+		selfRegisterAgent('second-bot');
+		await queryClient.invalidateQueries();
+		await screen.findByTestId('more-pending');
+
+		await user.click(screen.getByRole('button', { name: 'Deny my-first-agent' }));
+		const dialog = await screen.findByRole('dialog', { name: 'Deny my-first-agent' });
+		await user.type(within(dialog).getByLabelText('Reason'), 'Not ours');
+		await user.click(within(dialog).getByRole('button', { name: 'Deny' }));
+
+		// Still 'arrived', but a different card: the Deny button just used is gone.
+		const card = screen.getByTestId('first-agent-card');
+		await waitFor(() =>
+			expect(within(card).getByRole('heading', { name: 'second-bot' })).toHaveFocus(),
+		);
+		expect(screen.getByTestId('agents-empty-landing')).toHaveAttribute('data-phase', 'arrived');
+	});
+
 	it('a failed approval keeps the arrival, with Approve available again', async () => {
 		worker.use(
 			http.post('/agents/:id\\:approve', () =>
