@@ -3,7 +3,12 @@
 // surface that lists siblings leans on the same facts: auth type, when it was
 // added, and a short id tail.
 import { slugifyApiField } from '@/shared/lib/apiSlug';
-import { CREDENTIAL_TYPE_LABELS, CredentialType, type Credential } from '@/shared/credentials/api';
+import {
+	CREDENTIAL_TYPE_LABELS,
+	CredentialType,
+	credentialDetails,
+	type Credential,
+} from '@/shared/credentials/api';
 
 /** Characters of the credential id shown as its tail — enough to tell siblings apart. */
 const ID_TAIL_LENGTH = 6;
@@ -19,6 +24,34 @@ export function formatCredentialDate(value: string | null | undefined): string {
 /** The last few characters of the id, the one fact two same-named siblings never share. */
 export function credentialIdTail(cred: Pick<Credential, 'credential_id'>): string {
 	return cred.credential_id.slice(-ID_TAIL_LENGTH);
+}
+
+/**
+ * A short hint that tells `cred` apart from the siblings sharing its name, or
+ * null when its name is already unique among `siblings`. The first real fact
+ * no same-named sibling shares wins: the redacted key hint (`details.hint`,
+ * e.g. `••••4242`), then the pinned version (`v2024-01-01`), else the id tail
+ * (`…a1b2c3`), which siblings never share.
+ */
+export function credentialSiblingHint(
+	cred: Credential,
+	siblings: readonly Credential[],
+): string | null {
+	const key = nameKey(cred.name);
+	const twins = siblings.filter((s) => nameKey(s.name) === key);
+	if (twins.length < 2) return null;
+	const facts: ((c: Credential) => string | null)[] = [
+		(c) => {
+			const hint = credentialDetails(c).hint;
+			return typeof hint === 'string' && hint.trim() ? hint.trim() : null;
+		},
+		(c) => (c.api.version?.trim() ? `v${c.api.version.trim()}` : null),
+	];
+	for (const fact of facts) {
+		const mine = fact(cred);
+		if (mine && twins.filter((t) => fact(t) === mine).length === 1) return mine;
+	}
+	return `…${credentialIdTail(cred)}`;
 }
 
 /** `API key · added 23 Sept 2026 · …a1b2c3` — one line that tells siblings apart.

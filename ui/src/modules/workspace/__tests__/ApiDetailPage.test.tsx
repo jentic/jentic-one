@@ -792,7 +792,7 @@ describe('ApiDetailPage', () => {
 			await waitFor(() => expect(dialog).not.toBeVisible());
 			const toast = await screen.findByTestId('toast');
 			expect(toast).toHaveTextContent('Credential bound');
-			expect(toast).toHaveTextContent('Bound Stripe to support-agent.');
+			expect(toast).toHaveTextContent('Bound “Stripe live” to support-agent.');
 			expect(within(toast).queryByRole('link')).toBeNull();
 
 			// The credential's agent roster refetched, so the card now lists it.
@@ -829,6 +829,37 @@ describe('ApiDetailPage', () => {
 			expect(picker).toHaveValue('cred_stripe_live');
 			await user.selectOptions(picker, 'cred_stripe_test');
 			expect(picker).toHaveValue('cred_stripe_test');
+		});
+
+		it('tells same-name credentials apart in the rows and the bind picker', async () => {
+			const user = userEvent.setup();
+			resetCredentialsStore([
+				makeMockCredential({
+					credential_id: 'cred_same_aaaaaa',
+					name: 'Stripe key',
+					api: { vendor: 'stripe', name: 'stripe-api', version: '' },
+					details: { hint: '••••4242' },
+				}),
+				makeMockCredential({
+					credential_id: 'cred_same_bbbbbb',
+					name: 'Stripe key',
+					api: { vendor: 'stripe', name: 'stripe-api', version: '' },
+					details: { hint: '••••9999' },
+				}),
+			]);
+			renderAt('/library/workspace/stripe/stripe-api/2024-01-01');
+
+			const access = await screen.findByTestId('hub-access');
+			const hints = await within(access).findAllByTestId('hub-access-credential-hint');
+			expect(hints.map((h) => h.textContent)).toEqual(['••••4242', '••••9999']);
+
+			await user.click(await screen.findByTestId('hub-access-bind-agent'));
+			const dialog = await screen.findByRole('dialog', { name: 'Bind to an agent' });
+			expect(
+				within(dialog)
+					.getAllByRole('option')
+					.map((o) => o.textContent),
+			).toEqual(['Stripe key · ••••4242', 'Stripe key · ••••9999']);
 		});
 
 		it('shows a create-an-agent empty state when there are no agents', async () => {

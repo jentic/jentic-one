@@ -3,6 +3,7 @@ import { makeMockCredential } from '@/shared/credentials/mocks/handlers';
 import {
 	credentialApiGroupKey,
 	credentialNamed,
+	credentialSiblingHint,
 	credentialsSharingApi,
 	suggestUniqueName,
 } from '@/shared/credentials/lib/credentialIdentity';
@@ -85,5 +86,32 @@ describe('credentialApiGroupKey', () => {
 		expect(credentialApiGroupKey(cred(api, 'example.co.uk/payments'))).not.toBe(
 			credentialApiGroupKey(cred(api, 'example.co.uk/accounts')),
 		);
+	});
+});
+
+describe('credentialSiblingHint', () => {
+	const cred = (id: string, version: string, hint?: string) =>
+		makeMockCredential({
+			credential_id: id,
+			name: 'Stripe key',
+			api: { vendor: 'stripe', name: 'stripe-api', version },
+			details: hint ? { hint } : {},
+		});
+
+	it('is null when the name is unique', () => {
+		const a = cred('cred_aaaaaa', '');
+		expect(credentialSiblingHint(a, [a, named('Other')])).toBeNull();
+	});
+
+	it('prefers the key hint, then the version, then the id tail', () => {
+		const a = cred('cred_aaaaaa', '1', '••••4242');
+		const b = cred('cred_bbbbbb', '2', '••••9999');
+		expect(credentialSiblingHint(a, [a, b])).toBe('••••4242');
+		const c = cred('cred_cccccc', '1');
+		const d = cred('cred_dddddd', '2');
+		expect(credentialSiblingHint(c, [c, d])).toBe('v1');
+		const e = cred('cred_eeeeee', '');
+		const f = cred('cred_ffffff', '');
+		expect(credentialSiblingHint(e, [e, f])).toBe('…eeeeee');
 	});
 });

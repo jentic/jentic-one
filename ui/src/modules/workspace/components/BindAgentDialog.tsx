@@ -41,6 +41,7 @@ import {
 import { ROUTES } from '@/shared/app/routes';
 import { useOptionalCurrentUser } from '@/shared/auth';
 import { credentialsBindableBy } from '@/shared/credentials/lib/bindAuthority';
+import { credentialSiblingHint } from '@/shared/credentials/lib/credentialIdentity';
 import { useAllCredentialAgents, type Credential } from '@/shared/credentials/api';
 import {
 	useAgentsForPicker,
@@ -138,7 +139,7 @@ export function BindAgentDialog({
 				onSuccess: () => {
 					toast({
 						title: 'Credential bound',
-						description: `Bound ${apiLabel} to ${agentList(picked.map((a) => a.name))}.`,
+						description: `Bound “${credential.name}” to ${agentList(picked.map((a) => a.name))}.`,
 						variant: 'success',
 					});
 					// Reset the draft only on a successful commit.
@@ -194,12 +195,14 @@ export function BindAgentDialog({
 							onChange={(e): void => setCredentialId(e.target.value)}
 							data-testid="bind-agent-credential"
 						>
-							{usable.map((c) => (
-								<option key={c.credential_id} value={c.credential_id}>
-									{c.name}
-									{c.active ? '' : ' (inactive)'}
-								</option>
-							))}
+							{usable.map((c) => {
+								const hint = credentialSiblingHint(c, usable);
+								return (
+									<option key={c.credential_id} value={c.credential_id}>
+										{hint ? `${c.name} · ${hint}` : c.name}
+									</option>
+								);
+							})}
 						</Select>
 					</div>
 				) : (

@@ -58,6 +58,7 @@ import { useAgentStreamOptional } from '@/shared/lib';
 import { timeAgo } from '@/shared/lib/utils';
 import { CredentialType, useCreateCredential, type Credential } from '@/shared/credentials/api';
 import { initialApiFor } from '@/shared/credentials/lib/initialApiFor';
+import { credentialSiblingHint } from '@/shared/credentials/lib/credentialIdentity';
 import {
 	CreateCredentialFlow,
 	type CreatedCredentialInfo,
@@ -398,44 +399,59 @@ function AccessCard({ api }: { api: WorkspaceApi }) {
 								Credentials
 							</p>
 							<ul className="-mx-1.5 space-y-0.5">
-								{entry.credentials.map((c) => (
-									<li key={c.credential_id}>
-										{/* The whole row opens the credential's details — the shared
+								{entry.credentials.map((c) => {
+									const hint = credentialSiblingHint(c, entry.credentials);
+									return (
+										<li key={c.credential_id}>
+											{/* The whole row opens the credential's details — the shared
 										    edit sheet every other credential surface uses — in place. */}
-										<Button
-											variant="ghost"
-											fullWidth
-											onClick={(): void => openCredential(c.credential_id)}
-											aria-label={`View ${c.name}`}
-											data-testid="hub-access-credential"
-											className="group justify-between gap-2 rounded-md px-1.5 py-1 text-left font-normal active:scale-100"
-										>
-											<span className="text-foreground flex min-w-0 items-center gap-1.5">
-												<KeyRound
-													className="text-muted-foreground h-3.5 w-3.5 shrink-0"
-													aria-hidden="true"
-												/>
-												<span className="truncate">{c.name}</span>
-											</span>
-											<span className="flex shrink-0 items-center gap-1.5">
-												{credentialIsConnected(c) && (
-													<Badge variant="success">Connected</Badge>
-												)}
-												{credentialIsPendingSignIn(c) && (
-													<Badge variant="pending">Pending sign-in</Badge>
-												)}
-												<CredentialTypeBadge credential={c} />
-												<span className="text-muted-foreground group-hover:text-foreground inline-flex items-center text-xs">
-													View
-													<ChevronRight
-														className="h-3.5 w-3.5"
+											<Button
+												variant="ghost"
+												fullWidth
+												onClick={(): void =>
+													openCredential(c.credential_id)
+												}
+												aria-label={`View ${c.name}`}
+												data-testid="hub-access-credential"
+												className="group justify-between gap-2 rounded-md px-1.5 py-1 text-left font-normal active:scale-100"
+											>
+												<span className="text-foreground flex min-w-0 items-center gap-1.5">
+													<KeyRound
+														className="text-muted-foreground h-3.5 w-3.5 shrink-0"
 														aria-hidden="true"
 													/>
+													<span className="truncate">{c.name}</span>
+													{hint && (
+														<span
+															className="text-muted-foreground shrink-0 font-mono text-[11px]"
+															data-testid="hub-access-credential-hint"
+														>
+															{hint}
+														</span>
+													)}
 												</span>
-											</span>
-										</Button>
-									</li>
-								))}
+												<span className="flex shrink-0 items-center gap-1.5">
+													{credentialIsConnected(c) && (
+														<Badge variant="success">Connected</Badge>
+													)}
+													{credentialIsPendingSignIn(c) && (
+														<Badge variant="pending">
+															Pending sign-in
+														</Badge>
+													)}
+													<CredentialTypeBadge credential={c} />
+													<span className="text-muted-foreground group-hover:text-foreground inline-flex items-center text-xs">
+														View
+														<ChevronRight
+															className="h-3.5 w-3.5"
+															aria-hidden="true"
+														/>
+													</span>
+												</span>
+											</Button>
+										</li>
+									);
+								})}
 							</ul>
 						</div>
 					</div>
