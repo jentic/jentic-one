@@ -37,6 +37,8 @@ export interface WorkspaceDigestRow {
 	key: string;
 	ref: { vendor: string; name: string; version: string };
 	title: string;
+	/** The spec's description (`GET /apis` → `description`) — matched by the list filter. */
+	description: string | null;
 	host: string | null;
 	iconUrl: string | null;
 	catalogApiId: string | null;
@@ -136,6 +138,7 @@ export function useWorkspaceDigest(): WorkspaceDigest {
 				key,
 				ref,
 				title: titleFor(r),
+				description: r.description ?? null,
 				host: r.api.host ?? null,
 				iconUrl: r.icon_url,
 				catalogApiId: r.catalog_api_id,

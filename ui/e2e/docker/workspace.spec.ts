@@ -1,20 +1,34 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 import { captureConsoleErrors, importInlineApi, sampleOpenApiSpec, uniqueSuffix } from './helpers';
 
 /**
- * Workspace (real backend) — the Library's full Workspace view
- * (`/app/library/workspace`), reached from the Library nav item by expanding
- * the docked "Your workspace" panel. It lists the APIs registered in
- * this instance and owns the import dialog. Import is ASYNC on the real backend
- * (POST /apis -> 202 + job id, the UI polls /jobs/{id}), unlike the synchronous
- * MSW mock — so the paste-import spec asserts the dialog INITIATED the import
- * rather than racing its (timing-sensitive) completion, while a helper-seeded
- * spec covers the card landing in the grid deterministically.
+ * Workspace (real backend) — the "Your workspace" panel docked beside the
+ * Library's catalog (`/app/library`). There is no separate workspace page any
+ * more: the panel lists every API registered in this instance (filterable),
+ * links each to its hub, and its footer opens the import dialog. The retired
+ * `/app/library/workspace` URL redirects to `/app/library` with its query.
  *
- * On a clean DB the grid is empty; each spec seeds its own API so they stay
- * hermetic.
+ * Import is ASYNC on the real backend (POST /apis -> 202 + job id, the UI
+ * polls /jobs/{id}), unlike the synchronous MSW mock — so the paste-import
+ * spec asserts the dialog INITIATED the import rather than racing its
+ * (timing-sensitive) completion, while a helper-seeded spec covers the row
+ * landing in the list deterministically.
+ *
+ * The default viewport (1280 wide) is `xl`, where the panel is docked.
  */
-test('workspace renders its empty state on a clean backend', async ({ page }) => {
+
+function panel(page: Page) {
+	return page.getByTestId('workspace-dock-panel');
+}
+
+/** The panel row for an imported API (rows carry the humanized title, #631). */
+async function rowFor(page: Page, apiName: string) {
+	// Narrow the (full, possibly long) list to this API first.
+	await panel(page).getByLabel('Filter your APIs').fill(apiName);
+	return panel(page).getByTestId('workspace-panel-api').first();
+}
+
+test('the workspace panel renders on the Library', async ({ page }) => {
 	const errors = captureConsoleErrors(page);
 
 	await page.goto('/app');
@@ -23,13 +37,19 @@ test('workspace renders its empty state on a clean backend', async ({ page }) =>
 		.getByRole('link', { name: 'Library' })
 		.click();
 	await expect(page).toHaveURL(/\/app\/library$/);
-	// The docked panel's expand control opens the full Workspace view.
-	await page.getByTestId('workspace-panel-expand').click();
-
-	await expect(page).toHaveURL(/\/app\/library\/workspace$/);
-	await expect(page.getByRole('heading', { name: 'Your workspace', exact: true })).toBeVisible();
+	await expect(panel(page).getByRole('heading', { name: 'Your workspace' })).toBeVisible();
+	// No expand / "Open your workspace" — the panel is the whole view.
+	await expect(page.getByLabel('Open the full workspace')).toHaveCount(0);
 
 	expect(errors, `unexpected console errors:\n${errors.join('\n')}`).toEqual([]);
+});
+
+test('the retired workspace page redirects to the Library, keeping its filter', async ({
+	page,
+}) => {
+	await page.goto('/app/library/workspace?status=draft');
+	await expect(page).toHaveURL(/\/app\/library\?status=draft$/);
+	await expect(panel(page)).toBeVisible();
 });
 
 test('import an API by pasting a spec drives the async import', async ({ page }) => {
@@ -37,10 +57,11 @@ test('import an API by pasting a spec drives the async import', async ({ page })
 
 	const title = `E2E Paste ${uniqueSuffix()}`;
 
-	await page.goto('/app/library/workspace');
-	await expect(page.getByRole('heading', { name: 'Your workspace', exact: true })).toBeVisible();
+	await page.goto('/app/library');
+	await expect(panel(page)).toBeVisible();
 
-	await page.getByTestId('workspace-import-open').first().click();
+	// Empty workspace ⇒ the empty state's button; otherwise the footer's.
+	await panel(page).getByRole('button', { name: 'Import your own API' }).first().click();
 	await expect(page.getByRole('heading', { name: 'Choose import method' })).toBeVisible();
 	await page.getByRole('radio', { name: /Paste content/i }).click();
 	await page.getByTestId('import-spec-paste').fill(sampleOpenApiSpec(title));
@@ -60,12 +81,12 @@ test('import an API by pasting a spec drives the async import', async ({ page })
 	await expect(page.getByTestId('import-spec-error')).toBeHidden();
 });
 
-test('an imported API renders as a card in the grid', async ({ page, request }) => {
+test('an imported API is listed in the workspace panel', async ({ page, request }) => {
 	// A cold worker's first import can take ~25s; widen the per-test budget so
 	// the deterministic job-poll (helpers.ts) fits inside it.
 	test.slow();
 
-	// Seed via the helper (polls the job to done) so the card assertion is
+	// Seed via the helper (polls the job to done) so the row assertion is
 	// deterministic rather than racing the UI's import poll.
 	const apiName = `e2e-grid-${uniqueSuffix()}`;
 	await importInlineApi(request, {
@@ -74,16 +95,14 @@ test('an imported API renders as a card in the grid', async ({ page, request }) 
 		title: `E2E Grid ${apiName}`,
 	});
 
-	await page.goto('/app/library/workspace');
-	// The card heading is humanized (#631: apiRefDisplayName title-cases the
-	// slug), so match on the mono `vendor/name/version` subtitle, which still
-	// renders the raw api_name verbatim, and scope to the enclosing card.
-	await expect(
-		page.getByTestId('workspace-api-card').filter({ hasText: apiName }).first(),
-	).toBeVisible({ timeout: 30_000 });
+	await page.goto('/app/library');
+	const row = await rowFor(page, apiName);
+	await expect(row).toBeVisible({ timeout: 30_000 });
+	// The row links to the API's hub (raw api_name in the URL).
+	await expect(row).toHaveAttribute('href', new RegExp(`/library/workspace/[^/]+/${apiName}/`));
 });
 
-test('open an API detail page for an imported spec', async ({ page, request }) => {
+test('open an API hub from the workspace panel', async ({ page, request }) => {
 	test.slow();
 
 	// Seed the API through the public import endpoint so this spec owns its
@@ -95,14 +114,10 @@ test('open an API detail page for an imported spec', async ({ page, request }) =
 		title: `E2E Detail ${apiName}`,
 	});
 
-	await page.goto('/app/library/workspace');
-	await expect(page.getByRole('heading', { name: 'Your workspace', exact: true })).toBeVisible();
-
-	// Match the mono `vendor/name/version` subtitle (raw api_name) rather than
-	// the humanized heading/aria-label (#631), then click the enclosing card.
-	const card = page.getByTestId('workspace-api-card').filter({ hasText: apiName }).first();
-	await expect(card).toBeVisible({ timeout: 30_000 });
-	await card.click();
+	await page.goto('/app/library');
+	const row = await rowFor(page, apiName);
+	await expect(row).toBeVisible({ timeout: 30_000 });
+	await row.click();
 
 	// The API hub (Overview tab by default). An inline import lands as a draft
 	// revision with nothing promoted, so the Operations tab shows its

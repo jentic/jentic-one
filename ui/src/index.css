@@ -472,10 +472,8 @@
 		display: none;
 	}
 
-	/* The activity stream and the Library's "your workspace" surface (docked
-	   panel ⇄ full Workspace view) morph the same way. */
-	::view-transition-group(activity-stream),
-	::view-transition-group(library-workspace) {
+	/* The activity stream morphs between its dockings (rail ⇄ Monitor panel). */
+	::view-transition-group(activity-stream) {
 		animation-duration: 420ms;
 		animation-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1);
 		/* No radius here: the rail is flush and square, and a group radius
@@ -485,9 +483,7 @@
 	}
 
 	::view-transition-old(activity-stream),
-	::view-transition-new(activity-stream),
-	::view-transition-old(library-workspace),
-	::view-transition-new(library-workspace) {
+	::view-transition-new(activity-stream) {
 		width: 100%;
 		height: 100%;
 		object-fit: none;
@@ -498,13 +494,11 @@
 	   the first frame and sits on top, so the box travels with the new content
 	   inside it — and a rail that stays put between pages never shows two
 	   feeds ghosting over each other. */
-	::view-transition-new(activity-stream),
-	::view-transition-new(library-workspace) {
+	::view-transition-new(activity-stream) {
 		animation: none;
 	}
 
-	::view-transition-old(activity-stream),
-	::view-transition-old(library-workspace) {
+	::view-transition-old(activity-stream) {
 		animation: j1-page-out 90ms ease-in both;
 	}
 

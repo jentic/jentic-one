@@ -217,6 +217,9 @@ export function ApiDetailSheet({
 						{entity.registered && workspaceHref && (
 							<AppLink
 								href={workspaceHref}
+								// Several versions ⇒ the link filters the workspace panel
+								// on this same page; close so the panel shows.
+								onClick={onClose}
 								variant="primary"
 								size="sm"
 								data-testid="sheet-open-workspace"

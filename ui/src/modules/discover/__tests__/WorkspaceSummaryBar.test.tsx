@@ -89,13 +89,16 @@ describe('WorkspaceSummaryBar', () => {
 		expect(bar.getAttribute('aria-controls')).toBe(
 			screen.getByTestId('workspace-summary-sheet').id,
 		);
-		// The shared panel body: newest API first, plus the footer actions.
+		// The shared panel body: newest API first, the list filter, and the
+		// footer's import action — no "open the full workspace" any more.
 		const apis = screen.getAllByTestId('workspace-panel-api');
 		expect(apis.map((a) => a.textContent)).toEqual([
 			expect.stringContaining('Slack'),
 			expect.stringContaining('Stripe'),
 		]);
-		expect(screen.getByTestId('workspace-panel-open')).toBeInTheDocument();
+		expect(screen.getByLabelText('Filter your APIs')).toBeInTheDocument();
+		expect(screen.getByTestId('workspace-panel-import-own')).toBeInTheDocument();
+		expect(screen.queryByLabelText('Open the full workspace')).not.toBeInTheDocument();
 		expect(sheet).toBeInTheDocument();
 		await checkA11y(document.body, { modal: true });
 
@@ -115,8 +118,31 @@ describe('WorkspaceSummaryBar', () => {
 			/>,
 		);
 		await user.click(screen.getByTestId('workspace-summary-bar'));
-		await user.click(await screen.findByTestId('workspace-panel-open'));
+		// A row opens that API's hub.
+		const [first] = await screen.findAllByTestId('workspace-panel-api');
+		expect(first).toHaveAttribute('href', '/library/workspace/slack/slack-api/1');
+		await user.click(first);
 		await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+	});
+
+	it('opens on a filtered workspace link and the sheet body narrows the list', async () => {
+		const user = userEvent.setup();
+		renderWithProviders(
+			<WorkspaceSummaryBar
+				digest={digestWith()}
+				pendingImports={[]}
+				onImportOwn={() => {}}
+			/>,
+			{ route: '/library?q=stri' },
+		);
+		// `?q=` is a request to see the list: the sheet opens on it, filtered.
+		await screen.findByRole('dialog', { name: 'Your workspace' });
+		const scroll = screen.getByTestId('workspace-panel-scroll');
+		expect(scroll.className).toMatch(/overflow-y-auto/);
+		expect(screen.getByLabelText('Filter your APIs')).toHaveValue('stri');
+		expect(screen.getAllByTestId('workspace-panel-api')).toHaveLength(1);
+		await user.clear(screen.getByLabelText('Filter your APIs'));
+		expect(screen.getAllByTestId('workspace-panel-api')).toHaveLength(2);
 	});
 
 	it('"Import your own API" closes the sheet and hands over to the import dialog', async () => {

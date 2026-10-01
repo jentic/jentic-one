@@ -4,6 +4,7 @@ import {
 	credentialsCoveringEntry,
 	readyCredentialsFor,
 	readyCredentialsForEntry,
+	workspaceHrefFor,
 } from '@/modules/discover/lib/catalogRelations';
 import type { Credential } from '@/shared/credentials/api';
 
@@ -189,5 +190,26 @@ describe('readyCredentialsForEntry', () => {
 		expect(
 			readyCredentialsForEntry(ARTICLE_SEARCH, [{ credentials: null }], [vendorWide]),
 		).toBeNull();
+	});
+});
+
+describe('workspaceHrefFor', () => {
+	const hub = (v: string, catalogApiId: string | null = 'stripe.com') => ({
+		href: `/library/workspace/stripe/stripe-api/${v}`,
+		catalogApiId,
+	});
+
+	it('opens the hub when exactly one workspace API matches', () => {
+		expect(workspaceHrefFor([hub('1')])).toBe('/library/workspace/stripe/stripe-api/1');
+	});
+
+	it('filters the workspace panel to the entry when several versions match', () => {
+		expect(workspaceHrefFor([hub('1'), hub('2')])).toBe('/library?q=stripe.com');
+	});
+
+	it('falls back to the Library (never the retired workspace page) with no match', () => {
+		expect(workspaceHrefFor(undefined)).toBe('/library');
+		expect(workspaceHrefFor([])).toBe('/library');
+		expect(workspaceHrefFor([hub('1', null), hub('2', null)])).toBe('/library');
 	});
 });

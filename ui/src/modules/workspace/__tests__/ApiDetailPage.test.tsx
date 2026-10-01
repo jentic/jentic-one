@@ -17,7 +17,10 @@ import { AuthProvider } from '@/shared/auth/AuthContext';
 import { makeMockCredential, resetCredentialsStore } from '@/shared/credentials/mocks/handlers';
 import { patchMockApi } from '@/modules/workspace/mocks/handlers';
 
-/** See WorkspacePage.test for why we settle the PageHeader entrance animation. */
+/**
+ * Settle the PageHeader entrance animation before asserting (framer-motion's
+ * opacity would otherwise trip the a11y colour-contrast checks).
+ */
 async function settleAnimations(container: HTMLElement): Promise<void> {
 	await waitFor(() => {
 		const faded = Array.from(container.querySelectorAll<HTMLElement>('*')).find((el) => {
@@ -94,14 +97,14 @@ describe('ApiDetailPage', () => {
 			);
 		}
 
-		/** Workspace list → (push) hub, so there's real history behind the hub. */
+		/** Library (its workspace panel) → (push) hub, so there's real history behind the hub. */
 		function renderFromWorkspace() {
 			return renderWithProviders(
 				<Routes>
 					<Route
-						path="/library/workspace"
+						path="/library"
 						element={
-							<div data-testid="workspace-page">
+							<div data-testid="library-page">
 								<Link to={HUB}>open hub</Link>
 							</div>
 						}
@@ -116,7 +119,7 @@ describe('ApiDetailPage', () => {
 						}
 					/>
 				</Routes>,
-				{ route: '/library/workspace' },
+				{ route: '/library' },
 			);
 		}
 
@@ -134,7 +137,7 @@ describe('ApiDetailPage', () => {
 			await user.click(screen.getByRole('link', { name: 'open hub' }));
 			await screen.findByTestId('workspace-overview-strip');
 			await user.click(screen.getByTestId('back-button'));
-			expect(await screen.findByTestId('workspace-page')).toBeInTheDocument();
+			expect(await screen.findByTestId('library-page')).toBeInTheDocument();
 		});
 
 		it('Back leaves the hub in one step after several tab switches', async () => {
@@ -145,24 +148,21 @@ describe('ApiDetailPage', () => {
 			expect(back.tagName).toBe('BUTTON');
 			expect(back).toHaveTextContent(/^Back$/);
 			await user.click(back);
-			expect(await screen.findByTestId('workspace-page')).toBeInTheDocument();
+			expect(await screen.findByTestId('library-page')).toBeInTheDocument();
 		});
 
-		it('Back falls back to /library/workspace on a direct visit', async () => {
+		it('Back falls back to the Library on a direct visit', async () => {
 			const user = userEvent.setup();
 			renderWithProviders(
 				<Routes>
-					<Route
-						path="/library/workspace"
-						element={<div data-testid="workspace-page" />}
-					/>
+					<Route path="/library" element={<div data-testid="library-page" />} />
 					<Route path={PATH} element={<ApiDetailPage />} />
 				</Routes>,
 				{ route: HUB },
 			);
 			await screen.findByTestId('workspace-overview-strip');
 			await user.click(screen.getByTestId('back-button'));
-			expect(await screen.findByTestId('workspace-page')).toBeInTheDocument();
+			expect(await screen.findByTestId('library-page')).toBeInTheDocument();
 		});
 
 		it('tab switches replace the history entry, so browser Back skips them', async () => {
@@ -170,7 +170,7 @@ describe('ApiDetailPage', () => {
 			renderFromWorkspace();
 			await visitTabs(user);
 			await user.click(screen.getByRole('button', { name: 'browser back' }));
-			expect(await screen.findByTestId('workspace-page')).toBeInTheDocument();
+			expect(await screen.findByTestId('library-page')).toBeInTheDocument();
 		});
 	});
 

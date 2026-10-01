@@ -47,11 +47,12 @@ describe('LibraryPage', () => {
 		renderWithProviders(<LibraryPage />);
 		await screen.findByText('stripe.com');
 
-		// The single registered card (stripe.com) links to the Workspace view:
-		// the default registry has no row whose `catalog_api_id` is `stripe.com`,
-		// so there's no unambiguous hub to deep-link to.
+		// The single registered card (stripe.com) links to the Library (whose
+		// docked panel lists the workspace): the default registry has no row
+		// whose `catalog_api_id` is `stripe.com`, so there's no unambiguous hub
+		// to deep-link to — and no versions to filter the panel to.
 		const link = screen.getByTestId('discovery-card-open-workspace');
-		expect(link).toHaveAttribute('href', '/library/workspace');
+		expect(link).toHaveAttribute('href', '/library');
 
 		// Available cards expose Import, never the workspace link — there's exactly
 		// one imported entry in the default catalog, so exactly one such link.

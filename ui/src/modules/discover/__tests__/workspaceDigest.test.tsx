@@ -16,7 +16,7 @@ import { makeDigestRow } from '@/modules/discover/__tests__/digestFixtures';
  * The docked panel's "Needs attention" block: which rules put an API there
  * (from real registry / credential / overlay / usage reads) and where each
  * link lands — the hub (on the right tab, straight onto Add credential for a
- * missing credential), or the Workspace view pre-filtered by `?status=`.
+ * missing credential).
  */
 
 function api(

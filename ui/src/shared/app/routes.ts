@@ -39,17 +39,23 @@ export const ROUTES = {
 	// a single shared constant instead of a scattered literal. These MUST stay
 	// in lockstep with `nav.ts` and each module's `routes.tsx`. New surfaces
 	// append here.
-	// The Library is ONE nav area with two views: the public Catalog (default,
-	// `/library`, owned by the discover module) and your Workspace (`/library/
-	// workspace`, owned by the workspace module), plus each workspace API's hub
-	// under it. The retired `/discover` and `/workspace` URLs redirect here
-	// (see each module's routes.tsx).
+	// The Library is ONE page: the public Catalog with your workspace docked
+	// beside it (`/library`, owned by the discover module), plus each workspace
+	// API's hub under `/library/workspace/…` (owned by the workspace module —
+	// build those with `ROUTE_PATHS.workspaceApiHub`). There is no workspace
+	// list page: `/library/workspace`, and the retired `/discover` and
+	// `/workspace` URLs, redirect to `/library` (see each module's routes.tsx).
 	library: '/library',
-	workspace: '/library/workspace',
 	agents: '/agents',
 	monitor: '/monitor',
 	docs: '/docs',
 } as const;
+
+/**
+ * Path prefix of every workspace API hub (`/library/workspace/:v/:n/:ver`).
+ * Not a page of its own (it redirects to the Library) — never link to it bare.
+ */
+export const WORKSPACE_API_HUB_BASE = '/library/workspace';
 
 /**
  * Detail-route path builders for surfaces addressed by an id/sub-path. Kept as
@@ -74,7 +80,7 @@ export const ROUTE_PATHS = {
 		// form (read by the workspace module's `ApiHubOverview`).
 		if (opts?.addCredential === true) q.set('credential', 'new');
 		const qs = q.toString();
-		return `${ROUTES.workspace}/${path}${qs ? `?${qs}` : ''}`;
+		return `${WORKSPACE_API_HUB_BASE}/${path}${qs ? `?${qs}` : ''}`;
 	},
 	agent: (agentId: string) => `${ROUTES.agents}/${encodeURIComponent(agentId)}`,
 	/**

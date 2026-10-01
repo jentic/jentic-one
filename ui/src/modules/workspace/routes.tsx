@@ -1,8 +1,13 @@
 /**
- * Workspace module routes — the Library's Workspace view and API hubs. Paths
- * are RELATIVE to the `/app` shell, so these mount at `/app/library/workspace`
- * (the full workspace) and `/app/library/workspace/:vendor/:name/:version`
- * (one API's hub). Registered additively into `@/shared/app/routes.ts`.
+ * Workspace module routes — the API hubs. Paths are RELATIVE to the `/app`
+ * shell, so a hub mounts at `/app/library/workspace/:vendor/:name/:version`.
+ * Registered additively into `@/shared/app/routes.ts`.
+ *
+ * There is no workspace list page: the workspace lives in the panel docked
+ * beside the Library's catalog. `/app/library/workspace` (the retired full
+ * view) and the older `/app/workspace` redirect to `/app/library` with the
+ * search string and hash kept — the panel reads the same `?q=` / `?status=`
+ * filter params the page did, and `?import=1` opens the import dialog there.
  *
  * The hub route spreads the API's `(vendor, name, version)` identity triple
  * across three path segments — the same shape the backend uses
@@ -11,32 +16,35 @@
  * (which percent-encodes each segment); the page reads them back from
  * `useParams`.
  *
- * The retired `/app/workspace` and `/app/workspace/:vendor/:name/:version`
- * URLs redirect to their Library equivalents with the search string and hash
- * preserved (so `?import=1` and `?tab=` deep links keep working).
+ * The retired `/app/workspace/:vendor/:name/:version` redirects to its hub
+ * with the search string and hash preserved (so `?tab=` deep links keep
+ * working).
  */
 import type { RouteObject } from 'react-router';
 import { Navigate, useLocation, useParams } from 'react-router';
-import { ROUTES } from '@/shared/app';
-import WorkspacePage from '@/modules/workspace/pages/WorkspacePage';
+import { ROUTES, ROUTE_PATHS } from '@/shared/app';
 import ApiDetailPage from '@/modules/workspace/pages/ApiDetailPage';
 
 // Components (not inline elements) so `ROUTES` is read at render time — see
 // the TDZ note in the agents module's routes.
 function RetiredWorkspaceRedirect() {
 	const { search, hash } = useLocation();
-	return <Navigate to={`${ROUTES.workspace}${search}${hash}`} replace />;
+	return <Navigate to={`${ROUTES.library}${search}${hash}`} replace />;
 }
 
 function RetiredWorkspaceApiRedirect() {
 	const { vendor = '', name = '', version = '' } = useParams();
 	const { search, hash } = useLocation();
-	const path = [vendor, name, version].map(encodeURIComponent).join('/');
-	return <Navigate to={`${ROUTES.workspace}/${path}${search}${hash}`} replace />;
+	return (
+		<Navigate
+			to={`${ROUTE_PATHS.workspaceApiHub({ vendor, name, version })}${search}${hash}`}
+			replace
+		/>
+	);
 }
 
 export const workspaceRoutes: RouteObject[] = [
-	{ path: 'library/workspace', element: <WorkspacePage /> },
+	{ path: 'library/workspace', element: <RetiredWorkspaceRedirect /> },
 	{ path: 'library/workspace/:vendor/:name/:version', element: <ApiDetailPage /> },
 	{ path: 'workspace', element: <RetiredWorkspaceRedirect /> },
 	{ path: 'workspace/:vendor/:name/:version', element: <RetiredWorkspaceApiRedirect /> },

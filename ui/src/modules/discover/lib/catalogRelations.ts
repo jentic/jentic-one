@@ -20,11 +20,19 @@ import { apiScopeCovers, catalogImportRef } from '@/shared/credentials/lib/apiId
 
 /**
  * Where "Open" goes for an imported catalog entry: the API's hub when the
- * registry maps the entry to exactly one workspace API, else the Workspace view
- * (none known yet, or several versions to choose from).
+ * registry maps the entry to exactly one workspace API; with several versions,
+ * the Library with the workspace panel's list filtered to that catalog entry
+ * (`?q=<catalog id>`); with none known yet, the Library itself (the panel
+ * lists every workspace API).
  */
-export function workspaceHrefFor(matches: ReadonlyArray<{ href: string }> | undefined): string {
-	return matches?.length === 1 ? matches[0].href : ROUTES.workspace;
+export function workspaceHrefFor(
+	matches: ReadonlyArray<{ href: string; catalogApiId: string | null }> | undefined,
+): string {
+	if (matches?.length === 1) return matches[0].href;
+	const catalogApiId = matches?.find((m) => m.catalogApiId)?.catalogApiId;
+	return catalogApiId
+		? `${ROUTES.library}?${new URLSearchParams({ q: catalogApiId })}`
+		: ROUTES.library;
 }
 
 /**

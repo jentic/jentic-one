@@ -5,8 +5,17 @@
  *
  *   1. Does anything need me?   — only non-zero attention items, else "All good"
  *   2. What's importing?        — the catalog's own in-flight imports (transient)
- *   3. What's in my workspace?  — compact list: state, agents with access, 7-day line
+ *   3. What's in my workspace?  — the FULL list (newest first), narrowed by a
+ *                                 text filter + Live / Draft / Update toggle
+ *                                 (`?q=` / `?status=` on `/library`); each row
+ *                                 links to the API's hub
  *   4. What just happened?      — API events off the shell's live stream
+ *                                 (collapsed under the list)
+ *
+ * This panel IS the workspace view — there is no separate Workspace page any
+ * more (`/library/workspace` redirects here). The card's header and footer
+ * stay put; only the body scrolls, so it fits the viewport like the sticky
+ * dock it is.
  *
  * Every figure comes from {@link useWorkspaceDigest} (real registry, credential
  * and usage reads) or the live event stream; a signal whose read hasn't
@@ -16,22 +25,18 @@
  * Add credential flow in place, on that API's form (the host owns the flow —
  * `usePanelCredentialFlow`), and the panel confirms a usable credential with a
  * transient "Credential added" row at the top.
- *
- * Expand (and the footer link) is an ordinary link to the full Workspace view;
- * both surfaces carry the `library-workspace` view-transition name, so the
- * shell's link transitions morph this card into the page.
  */
-import { memo, useId, useMemo, useState } from 'react';
+import { memo, useId, useMemo, useState, type Ref } from 'react';
 import {
 	AlertTriangle,
-	ArrowRight,
 	Bot,
 	CheckCircle2,
+	ChevronDown,
 	FileClock,
+	Filter,
 	GitPullRequestArrow,
 	KeyRound,
 	Loader2,
-	Maximize2,
 	Plus,
 	RefreshCw,
 	Upload,
@@ -47,14 +52,15 @@ import {
 	CardHeader,
 	CardTitle,
 	ErrorAlert,
+	SearchInput,
+	SegmentedToggle,
 	Skeleton,
 	ApiUsageSummary,
 	StreamEventRow,
 	VendorIcon,
 } from '@/shared/ui';
 import { callsInWeek, useAgentFigures } from '@/shared/credentials/api/apiHealth';
-import { ROUTES, ROUTE_PATHS } from '@/shared/app/routes';
-import { libraryWorkspaceVtStyle } from '@/shared/app/viewTransitions';
+import { ROUTE_PATHS } from '@/shared/app/routes';
 import { useAgentStreamOptional, vendorIconPropsFor } from '@/shared/lib';
 import { cn } from '@/shared/lib/utils';
 import { newestFirst } from '@/shared/lib/newestFirst';
@@ -65,8 +71,13 @@ import type {
 	WorkspaceDigestRow,
 } from '@/modules/discover/api';
 import type { CredentialAddedNotice } from '@/modules/discover/components/usePanelCredentialFlow';
+import {
+	matchesStatus,
+	matchesText,
+	useWorkspaceListFilter,
+	type WorkspaceStatusFilter,
+} from '@/modules/discover/lib/workspaceListFilter';
 
-const LIST_LIMIT = 8;
 const RECENT_LIMIT = 5;
 
 const ATTENTION_ICON: Record<AttentionId, typeof AlertTriangle> = {
@@ -317,6 +328,86 @@ function CredentialAddedRow({
 }
 
 /**
+ * "Your APIs" heading + the list's filter controls. Sticky at the top of the
+ * panel's scrolling body, so a long list stays narrowable mid-scroll. The
+ * text filter and the toggle are client-side over the loaded rows (Filter
+ * affordance, not Search); counts appear only once every page answered, and
+ * both disable when there's nothing to narrow.
+ */
+function WorkspaceListControls({
+	digest,
+	rows,
+	q,
+	onQChange,
+	status,
+	onStatusChange,
+	resultsLabel,
+}: {
+	digest: WorkspaceDigest;
+	rows: WorkspaceDigestRow[];
+	q: string;
+	onQChange: (next: string) => void;
+	status: WorkspaceStatusFilter;
+	onStatusChange: (next: WorkspaceStatusFilter) => void;
+	resultsLabel?: string;
+}) {
+	const counts = useMemo(
+		() => ({
+			live: rows.filter((r) => matchesStatus(r, 'live')).length,
+			draft: rows.filter((r) => matchesStatus(r, 'draft')).length,
+			update: rows.filter((r) => matchesStatus(r, 'update')).length,
+		}),
+		[rows],
+	);
+	// Never a "· 0" while loading — counts only once the list is whole.
+	const countSuffix = (n: number) => (digest.complete ? ` · ${n}` : '');
+	const options: { value: WorkspaceStatusFilter; label: string }[] = [
+		{ value: 'all', label: 'All' },
+		{ value: 'live', label: `Live${countSuffix(counts.live)}` },
+		{ value: 'draft', label: `Draft${countSuffix(counts.draft)}` },
+		...(counts.update > 0 || status === 'update'
+			? [{ value: 'update' as const, label: `Update available${countSuffix(counts.update)}` }]
+			: []),
+	];
+	const disabled = rows.length === 0;
+	return (
+		<div
+			className="bg-card sticky -top-3 z-10 -mx-3 space-y-2 px-3 pt-1 pb-2"
+			data-testid="workspace-panel-filter"
+		>
+			<div className="flex items-baseline justify-between gap-2 px-1">
+				<h3 className="font-heading text-foreground text-sm font-semibold">Your APIs</h3>
+				{resultsLabel && (
+					<span
+						className="text-muted-foreground text-xs"
+						data-testid="workspace-panel-filter-results"
+					>
+						{resultsLabel}
+					</span>
+				)}
+			</div>
+			<SearchInput
+				value={q}
+				onValueChange={onQChange}
+				size="sm"
+				icon={<Filter className="h-3.5 w-3.5" />}
+				placeholder="Filter by name, vendor or description…"
+				aria-label="Filter your APIs"
+				disabled={disabled}
+			/>
+			<SegmentedToggle
+				options={options}
+				value={status}
+				onChange={onStatusChange}
+				ariaLabel="Filter by serving state"
+				disabled={disabled}
+				className="w-fit max-w-full"
+			/>
+		</div>
+	);
+}
+
+/**
  * The panel's scrolling body — attention, importing, your APIs, recent changes
  * (or the empty / loading / error state). Shared verbatim by the docked
  * desktop card and the mobile bottom sheet.
@@ -331,6 +422,9 @@ export function WorkspacePanelBody({
 	className,
 }: PanelContentProps & { className?: string }) {
 	const stream = useAgentStreamOptional();
+	const filter = useWorkspaceListFilter();
+	const [recentOpen, setRecentOpen] = useState(false);
+	const recentId = useId();
 	// "What just happened?" — API-side events (imports, catalog updates,
 	// overlay lifecycle) from the shell's one live stream.
 	const recent = useMemo(
@@ -340,16 +434,20 @@ export function WorkspacePanelBody({
 				.slice(0, RECENT_LIMIT),
 		[stream?.events],
 	);
-	// Most recently imported first (`GET /apis` → `created_at`), matching the
-	// expanded Workspace grid. What needs attention is already surfaced by the
-	// "Needs attention" block, so the list itself stays chronological.
+	// Most recently imported first (`GET /apis` → `created_at`). What needs
+	// attention is already surfaced by the "Needs attention" block, so the
+	// list itself stays chronological.
 	const rows = useMemo(
 		() => [...digest.rows].sort(newestFirst((a, b) => a.title.localeCompare(b.title))),
 		[digest.rows],
 	);
+	const shownRows = useMemo(
+		() => rows.filter((row) => matchesStatus(row, filter.status) && matchesText(row, filter.q)),
+		[rows, filter.status, filter.q],
+	);
 	const empty = digest.complete && rows.length === 0 && pendingImports.length === 0;
-	// Bound agents are read only for the rows the list shows.
-	const shownRows = rows.slice(0, LIST_LIMIT);
+	// Bound agents are read only for the rows the list shows (the shared
+	// reader caps the fan-out either way).
 	const agentFigure = useAgentFigures(
 		shownRows.map((row) => row.credentials),
 		digest.credentialsError,
@@ -453,38 +551,83 @@ export function WorkspacePanelBody({
 					)}
 
 					{rows.length > 0 && (
-						<div>
-							<SectionLabel>Your APIs</SectionLabel>
-							<ul className="space-y-0.5">
-								{shownRows.map((row) => {
-									const figure = agentFigure(row.credentials);
-									return (
-										<ApiRow
-											key={row.key}
-											row={row}
-											agentCount={figure.agentCount}
-											agentsAtLeast={figure.agentsAtLeast}
-											showUsage={digest.usageAvailable}
-											usageExhaustive={digest.usageExhaustive}
-										/>
-									);
-								})}
-							</ul>
-							{rows.length > LIST_LIMIT && (
-								<AppLink
-									href={ROUTES.workspace}
-									className="text-muted-foreground hover:text-foreground mt-1 block px-1.5 text-xs"
+						<div data-testid="workspace-panel-apis">
+							<WorkspaceListControls
+								digest={digest}
+								rows={rows}
+								q={filter.q}
+								onQChange={filter.setQ}
+								status={filter.status}
+								onStatusChange={filter.setStatus}
+								resultsLabel={
+									filter.active
+										? `${shownRows.length} of ${rows.length}`
+										: undefined
+								}
+							/>
+							{shownRows.length > 0 ? (
+								<ul className="mt-1.5 space-y-0.5">
+									{shownRows.map((row) => {
+										const figure = agentFigure(row.credentials);
+										return (
+											<ApiRow
+												key={row.key}
+												row={row}
+												agentCount={figure.agentCount}
+												agentsAtLeast={figure.agentsAtLeast}
+												showUsage={digest.usageAvailable}
+												usageExhaustive={digest.usageExhaustive}
+											/>
+										);
+									})}
+								</ul>
+							) : (
+								<div
+									className="px-1 py-4 text-center"
+									data-testid="workspace-panel-no-matches"
 								>
-									+{rows.length - LIST_LIMIT} more in your workspace
-								</AppLink>
+									<p className="text-muted-foreground text-sm">
+										No APIs match this filter.
+									</p>
+									<Button
+										variant="ghost"
+										size="sm"
+										className="mt-1 h-7 text-xs"
+										onClick={filter.clear}
+									>
+										Clear filter
+									</Button>
+								</div>
 							)}
 						</div>
 					)}
 
 					{recent.length > 0 && (
 						<div data-testid="workspace-panel-recent">
-							<SectionLabel>Recent changes</SectionLabel>
-							<ul className="space-y-0.5">
+							<Button
+								variant="ghost"
+								size="sm"
+								onClick={() => setRecentOpen((v) => !v)}
+								aria-expanded={recentOpen}
+								aria-controls={recentId}
+								className="font-heading text-foreground hover:bg-muted/60 h-auto w-full justify-between rounded-md px-1 py-1 text-sm font-semibold active:scale-100"
+								data-testid="workspace-panel-recent-toggle"
+							>
+								<span>
+									Recent changes{' '}
+									<span className="text-muted-foreground text-xs font-normal">
+										· {recent.length}
+									</span>
+								</span>
+								<ChevronDown
+									className={cn(
+										'text-muted-foreground h-4 w-4 transition-transform',
+										recentOpen && 'rotate-180',
+									)}
+									aria-hidden="true"
+								/>
+							</Button>
+							<ul id={recentId} hidden={!recentOpen} className="mt-1 space-y-0.5">
 								{recent.map((ev) => (
 									<StreamEventRow key={ev.id} ev={ev} />
 								))}
@@ -497,49 +640,52 @@ export function WorkspacePanelBody({
 	);
 }
 
-/** "Import your own API" + "Open your workspace →" — the panel's footer actions. */
+/** "Import your own API" — the panel's footer action (opens the dialog in place). */
 export function WorkspacePanelFooterActions({ onImportOwn }: { onImportOwn: () => void }) {
 	return (
-		<>
-			<Button
-				variant="ghost"
-				size="sm"
-				onClick={onImportOwn}
-				className="text-muted-foreground -ml-2 h-7 gap-1 px-2 text-xs"
-			>
-				<Plus size={12} aria-hidden="true" />
-				Import your own API
-			</Button>
-			<AppLink
-				href={ROUTES.workspace}
-				className="text-primary inline-flex items-center gap-1 text-sm font-medium hover:underline"
-				data-testid="workspace-panel-open"
-			>
-				Open your workspace
-				<ArrowRight size={14} aria-hidden="true" />
-			</AppLink>
-		</>
+		<Button
+			variant="ghost"
+			size="sm"
+			onClick={onImportOwn}
+			className="text-primary hover:text-primary -ml-2 h-7 gap-1 px-2 text-sm font-medium"
+			data-testid="workspace-panel-import-own"
+		>
+			<Plus size={14} aria-hidden="true" />
+			Import your own API
+		</Button>
 	);
 }
 
-/** "N APIs" beside the title, once the list has answered. */
+/**
+ * "N APIs · X live · Y drafts" beside the title, once the list has answered
+ * (folded in from the retired Workspace page's stats strip). A zero part is
+ * left out rather than shown as "0 drafts".
+ */
 export function WorkspaceApiCount({ digest }: { digest: WorkspaceDigest }) {
-	const count = digest.rows.length;
-	if (!digest.complete || count === 0) return null;
+	const { apis, live, draft } = digest.totals;
+	if (!digest.complete || apis === 0) return null;
+	const parts = [`${apis} API${apis === 1 ? '' : 's'}`];
+	// "All live" needs no breakdown; only a mix (or all-draft) says more.
+	if (draft > 0) {
+		if (live > 0) parts.push(`${live} live`);
+		parts.push(`${draft} draft${draft === 1 ? '' : 's'}`);
+	}
 	return (
-		<span className="text-muted-foreground text-xs">
-			{count} API{count === 1 ? '' : 's'}
+		<span className="text-muted-foreground truncate text-xs" data-testid="workspace-api-count">
+			{parts.join(' · ')}
 		</span>
 	);
 }
 
 export interface WorkspaceDockPanelProps extends PanelContentProps {
 	className?: string;
+	ref?: Ref<HTMLElement>;
 }
 
 /**
  * The docked desktop card (≥ xl), beside the catalog. Memoised so a catalog
- * search keystroke doesn't re-render the whole panel.
+ * search keystroke doesn't re-render the whole panel. Header and footer are
+ * fixed; only the body scrolls (the host sizes the card to the viewport).
  */
 export const WorkspaceDockPanel = memo(function WorkspaceDockPanel({
 	digest,
@@ -549,36 +695,26 @@ export const WorkspaceDockPanel = memo(function WorkspaceDockPanel({
 	credentialNotice,
 	onDismissCredentialNotice,
 	className,
+	ref,
 }: WorkspaceDockPanelProps) {
 	return (
 		<section
+			ref={ref}
 			aria-label="Your workspace"
 			className={className}
-			style={libraryWorkspaceVtStyle}
 			data-testid="workspace-dock-panel"
 		>
-			<Card className="flex h-full flex-col">
-				<CardHeader className="flex items-center justify-between gap-2 py-3">
+			<Card className="flex h-full flex-col overflow-hidden">
+				<CardHeader className="flex shrink-0 items-center gap-2 py-3">
 					<div className="flex min-w-0 items-baseline gap-2">
-						<CardTitle as="h2" className="text-base">
+						<CardTitle as="h2" className="shrink-0 text-base">
 							Your workspace
 						</CardTitle>
 						<WorkspaceApiCount digest={digest} />
 					</div>
-					<AppLink
-						href={ROUTES.workspace}
-						variant="ghost"
-						size="sm"
-						className="h-8 w-8 p-0"
-						aria-label="Open the full workspace"
-						title="Open the full workspace"
-						data-testid="workspace-panel-expand"
-					>
-						<Maximize2 className="h-4 w-4" aria-hidden="true" />
-					</AppLink>
 				</CardHeader>
 
-				<CardBody className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
+				<CardBody className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-3">
 					<WorkspacePanelBody
 						digest={digest}
 						pendingImports={pendingImports}
@@ -589,7 +725,7 @@ export const WorkspaceDockPanel = memo(function WorkspaceDockPanel({
 					/>
 				</CardBody>
 
-				<CardFooter className="flex items-center justify-between gap-2 py-2">
+				<CardFooter className="flex shrink-0 items-center gap-2 py-2">
 					<WorkspacePanelFooterActions onImportOwn={onImportOwn} />
 				</CardFooter>
 			</Card>

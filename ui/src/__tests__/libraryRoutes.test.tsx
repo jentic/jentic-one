@@ -6,8 +6,8 @@ import { discoverRoutes } from '@/modules/discover/routes';
 import { workspaceRoutes } from '@/modules/workspace/routes';
 
 /**
- * The Library's retired URLs (`/discover`, `/workspace`, `/workspace/:v/:n/:ver`)
- * must land on their Library equivalents with the whole deep link intact —
+ * The Library's retired URLs (`/discover`, `/workspace`, `/library/workspace`,
+ * `/workspace/:v/:n/:ver`) must land on their Library equivalents with the whole deep link intact —
  * path params re-encoded, search string and hash kept — and the hub URL
  * builder must produce exactly the shape the hub route reads back.
  */
@@ -24,11 +24,9 @@ function Harness() {
 		[...discoverRoutes, ...workspaceRoutes].map((r) =>
 			r.path === 'library'
 				? { ...r, path: '/library', element: stub('Catalog') }
-				: r.path === 'library/workspace'
-					? { ...r, path: '/library/workspace', element: stub('Workspace') }
-					: r.path === 'library/workspace/:vendor/:name/:version'
-						? { ...r, path: `/${r.path}`, element: stub('Hub') }
-						: { ...r, path: `/${r.path}` },
+				: r.path === 'library/workspace/:vendor/:name/:version'
+					? { ...r, path: `/${r.path}`, element: stub('Hub') }
+					: { ...r, path: `/${r.path}` },
 		),
 	);
 }
@@ -54,9 +52,14 @@ describe('Library retired-route redirects', () => {
 		expect(await landedAt('Catalog')).toBe('/library?q=stripe&filter=outdated#top');
 	});
 
-	it('/workspace → the Workspace view, keeping ?import=1 / ?status=', async () => {
+	it('/workspace → the Library (its docked workspace panel), keeping ?import=1 / ?status=', async () => {
 		renderAt('/workspace?import=1&status=draft#grid');
-		expect(await landedAt('Workspace')).toBe('/library/workspace?import=1&status=draft#grid');
+		expect(await landedAt('Catalog')).toBe('/library?import=1&status=draft#grid');
+	});
+
+	it('/library/workspace (the retired full view) → the Library, keeping its filter params', async () => {
+		renderAt('/library/workspace?status=update&q=stripe#top');
+		expect(await landedAt('Catalog')).toBe('/library?status=update&q=stripe#top');
 	});
 
 	it('/workspace/:v/:n/:ver → the hub, re-encoding each segment and keeping ?tab=', async () => {

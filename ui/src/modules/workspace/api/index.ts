@@ -6,7 +6,6 @@
  * `client.ts` directly (the repository tier, reached only via hooks).
  */
 export {
-	useAllWorkspaceApis,
 	useWorkspaceApi,
 	useApiOperations,
 	useApiRevisions,
@@ -35,13 +34,7 @@ export {
 	agentsExhaustive,
 } from '@/shared/credentials/api/apiAccess';
 export { useApiUsageWeek, apiUsageKeyFor } from '@/shared/hooks';
-export {
-	useApiHealthIndex,
-	useAgentFigures,
-	isCredentialMissing,
-	callsInWeek,
-} from '@/shared/credentials/api/apiHealth';
-export type { AgentFigure, ApiHealth, ApiHealthIndex } from '@/shared/credentials/api/apiHealth';
+export { callsInWeek } from '@/shared/credentials/api/apiHealth';
 
 export {
 	parseSpecOperations,

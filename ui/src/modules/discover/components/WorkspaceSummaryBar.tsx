@@ -6,7 +6,8 @@
  *
  *   Your workspace · 6 APIs · ⚠ 5 need attention · Adding 1…
  *
- * Tapping it opens the full panel content in a bottom sheet — the SAME
+ * Tapping it opens the full panel content (filterable full API list
+ * included) in a bottom sheet — the SAME
  * {@link WorkspacePanelBody} / footer the docked card renders, fed by the same
  * {@link WorkspaceDigest}; nothing is fetched or derived here beyond counts.
  *
@@ -17,18 +18,9 @@
  * hands over to the host's in-place Add credential flow (like "Import your own
  * API"), rather than stacking a drawer on the sheet.
  */
-import { useId, useState, type MouseEvent, type ReactNode } from 'react';
-import {
-	AlertTriangle,
-	CheckCircle2,
-	ChevronUp,
-	Layers,
-	Loader2,
-	Maximize2,
-	X,
-} from 'lucide-react';
-import { AppLink, Button, SheetPrimitive } from '@/shared/ui';
-import { ROUTES } from '@/shared/app/routes';
+import { useEffect, useId, useState, type MouseEvent, type ReactNode } from 'react';
+import { AlertTriangle, CheckCircle2, ChevronUp, Layers, Loader2, X } from 'lucide-react';
+import { Button, SheetPrimitive } from '@/shared/ui';
 import { cn } from '@/shared/lib/utils';
 import type { WorkspaceDigest, WorkspaceDigestRow } from '@/modules/discover/api';
 import type { CredentialAddedNotice } from '@/modules/discover/components/usePanelCredentialFlow';
@@ -38,6 +30,7 @@ import {
 	WorkspacePanelFooterActions,
 	type PendingImport,
 } from '@/modules/discover/components/WorkspaceDockPanel';
+import { useWorkspaceListFilter } from '@/modules/discover/lib/workspaceListFilter';
 
 export interface WorkspaceSummaryBarProps {
 	digest: WorkspaceDigest;
@@ -81,6 +74,15 @@ export function WorkspaceSummaryBar({
 }: WorkspaceSummaryBarProps) {
 	const [open, setOpen] = useState(false);
 	const titleId = useId();
+	// A filtered workspace link (`/library?status=draft`, e.g. a redirected
+	// `/library/workspace?…` or a catalog card's "Open" over several versions)
+	// is a request to see the list — open the sheet on it. Keyed on the values,
+	// so closing the sheet with a filter applied keeps it closed.
+	const listFilter = useWorkspaceListFilter();
+	const filterKey = listFilter.active ? `${listFilter.q}\n${listFilter.status}` : null;
+	useEffect(() => {
+		if (filterKey != null) setOpen(true);
+	}, [filterKey]);
 	const contentId = useId();
 
 	const apiCount = digest.rows.length;
@@ -219,16 +221,6 @@ export function WorkspaceSummaryBar({
 							<WorkspaceApiCount digest={digest} />
 						</div>
 						<div className="flex items-center gap-1">
-							<AppLink
-								href={ROUTES.workspace}
-								variant="ghost"
-								size="sm"
-								className="h-8 w-8 p-0"
-								aria-label="Open the full workspace"
-								title="Open the full workspace"
-							>
-								<Maximize2 className="h-4 w-4" aria-hidden="true" />
-							</AppLink>
 							<Button
 								variant="ghost"
 								size="icon"
@@ -241,7 +233,10 @@ export function WorkspaceSummaryBar({
 							</Button>
 						</div>
 					</div>
-					<div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-3">
+					<div
+						className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-3"
+						data-testid="workspace-panel-scroll"
+					>
 						<WorkspacePanelBody
 							digest={digest}
 							pendingImports={pendingImports}
@@ -251,7 +246,7 @@ export function WorkspaceSummaryBar({
 							onDismissCredentialNotice={onDismissCredentialNotice}
 						/>
 					</div>
-					<div className="border-border/60 flex items-center justify-between gap-2 border-t px-4 py-2">
+					<div className="border-border/60 flex items-center gap-2 border-t px-4 py-2">
 						<WorkspacePanelFooterActions onImportOwn={importOwn} />
 					</div>
 				</div>

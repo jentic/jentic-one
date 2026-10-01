@@ -50,14 +50,7 @@ import type {
 // The job poll is shared with the spec import (which is itself shared, so the
 // Add-APIs tray can upload a spec) — one loop, two callers, one reading of the
 // backend's terminal-status vocabulary.
-import {
-	invalidateApiLists,
-	jobSucceeded,
-	pollJobToTerminal,
-	useAllApis,
-	type DrainedList,
-} from '@/shared/credentials/api';
-import { toWorkspaceApi } from '@/modules/workspace/api/adapters';
+import { invalidateApiLists, jobSucceeded, pollJobToTerminal } from '@/shared/credentials/api';
 import { sharedQueryKeys } from '@/shared/api';
 import { pendingOverlaysRoot } from '@/shared/hooks';
 
@@ -77,18 +70,6 @@ export const workspaceKeys = {
 	revisionSpec: (key: ApiKey, revisionId: string) =>
 		[...workspaceKeys.all, 'spec', formatApiKey(key), revisionId] as const,
 };
-
-/**
- * EVERY workspace API as the module's `WorkspaceApi` — the shared drained
- * `GET /apis` list ({@link useAllApis}), the same cache the Library's docked
- * panel reads, so the full view and the panel always agree on the rows, their
- * counts and their order. `complete` is false until every page loaded.
- */
-export function useAllWorkspaceApis(): DrainedList<WorkspaceApi> {
-	const all = useAllApis();
-	const items = useMemo(() => all.items.map(toWorkspaceApi), [all.items]);
-	return { ...all, items };
-}
 
 /**
  * Notes attached to an API (`GET /notes?api=…`, first page). Degrades quietly:

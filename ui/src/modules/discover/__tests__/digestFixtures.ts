@@ -17,6 +17,7 @@ export function makeDigestRow(
 	return {
 		key: `${ref.vendor}/${ref.name}/${ref.version}`,
 		title,
+		description: null,
 		host: null,
 		iconUrl: null,
 		catalogApiId: null,

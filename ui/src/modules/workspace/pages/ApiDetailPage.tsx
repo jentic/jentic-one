@@ -184,7 +184,7 @@ export default function ApiDetailPage() {
 	if (!apiKey) {
 		return (
 			<PageShell>
-				<BackButton to={ROUTES.workspace} label="Back" />
+				<BackButton to={ROUTES.library} label="Back" />
 				<ErrorAlert message="That API reference is malformed." />
 			</PageShell>
 		);
@@ -281,7 +281,7 @@ export default function ApiDetailPage() {
 				}
 			/>
 			<div className="flex flex-wrap items-center justify-between gap-2">
-				<BackButton to={ROUTES.workspace} label="Back" />
+				<BackButton to={ROUTES.library} label="Back" />
 				{api ? (
 					<div className="flex items-center gap-1.5" data-testid="hub-state">
 						<ApiStateBadges
@@ -369,7 +369,7 @@ export default function ApiDetailPage() {
 					deleteApi.mutate(apiKey, {
 						onSuccess: () => {
 							setDeleteOpen(false);
-							navigate(ROUTES.workspace);
+							navigate(ROUTES.library);
 						},
 					})
 				}

@@ -6,13 +6,14 @@
  *   - the public **Catalog** (this page): browse/search the Jentic catalog
  *     (`GET /catalog`, keyset-paged), preview an entry's operations in a sheet,
  *     and import it (`POST /catalog/{id}:import`, async);
- *   - **Your workspace**: docked here on the right as a live digest (what needs
- *     you, what's importing, what you have, what just changed), and one click
- *     (Expand / "Open your workspace") away from the full Workspace view
- *     (`/library/workspace`, owned by the workspace module) — the two morph via
- *     a shared view transition. Below `xl` (one column) the panel isn't docked
- *     under the endless catalog; a summary bar above it opens the same content
- *     in a bottom sheet (`WorkspaceSummaryBar`).
+ *   - **Your workspace**: docked here on the right — what needs you, what's
+ *     importing, every API you have (filterable by text and serving state,
+ *     `?q=` / `?status=`), and what just changed. It is the whole workspace
+ *     view: the retired `/library/workspace` page redirects here, and each
+ *     row opens the API's hub (`/library/workspace/:vendor/:name/:version`).
+ *     Below `xl` (one column) the panel isn't docked under the endless
+ *     catalog; a summary bar above it opens the same content in a bottom
+ *     sheet (`WorkspaceSummaryBar`).
  *
  * Imported catalog cards link straight to the API's hub when the registry maps
  * the entry (`catalog_api_id`) to exactly one workspace API.
@@ -41,6 +42,7 @@ import { WorkspaceSummaryBar } from '@/modules/discover/components/WorkspaceSumm
 import { usePanelCredentialFlow } from '@/modules/discover/components/usePanelCredentialFlow';
 import { useConsumedFlagParam, useMediaQuery } from '@/shared/hooks';
 import { useDebouncedValue } from '@/modules/discover/lib/useDebouncedValue';
+import { useFitToViewport } from '@/modules/discover/lib/useFitToViewport';
 import {
 	useDiscoverCatalog,
 	useImportCatalogApi,
@@ -82,6 +84,8 @@ export default function LibraryPage() {
 	const credentials = allCredentials.complete ? allCredentials.items : null;
 	// Tailwind `xl` — where the grid below goes two-column and docks the panel.
 	const isXl = useMediaQuery(XL_QUERY);
+	const dockRef = useRef<HTMLElement>(null);
+	useFitToViewport(dockRef, { enabled: isXl });
 
 	// When the (polled) feed updates, resolve any pending import whose entry has
 	// flipped to registered — clears the card's "Adding…" state + toasts.
@@ -216,7 +220,12 @@ export default function LibraryPage() {
 
 			<div
 				ref={dockGridRef}
-				className="grid grid-cols-1 items-start gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(320px,24rem)]"
+				// The panel widens with the viewport (24 → 28 → 30rem) so the full,
+				// filterable list has room, while the catalog keeps its xl 2 /
+				// 2xl 3 columns at a usable card width (1280 stays as before). The
+				// width is a custom property so the arbitrary breakpoints can't be
+				// out-ordered by `xl:`.
+				className="grid grid-cols-1 items-start gap-6 [--ws-dock-w:24rem] min-[1440px]:[--ws-dock-w:28rem] min-[1800px]:[--ws-dock-w:30rem] xl:grid-cols-[minmax(0,1fr)_var(--ws-dock-w)]"
 			>
 				{/* The catalog's counts head its column, and the sticky toolbar's
 				    own padding spaces them from the search — no full-width strip
@@ -264,8 +273,10 @@ export default function LibraryPage() {
 
 				{isXl && (
 					<WorkspaceDockPanel
+						ref={dockRef}
 						// Sticks 1rem under the 3rem top bar and stops 1rem above the
-						// viewport's bottom edge; the body scrolls inside.
+						// viewport's bottom edge (`useFitToViewport` keeps that true
+						// before it has stuck, too); the body scrolls inside.
 						className="xl:sticky xl:top-4 xl:h-[calc(100dvh-5rem)]"
 						digest={digest}
 						pendingImports={pendingImports}
