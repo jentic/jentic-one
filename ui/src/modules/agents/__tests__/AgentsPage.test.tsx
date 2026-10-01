@@ -1883,6 +1883,14 @@ describe('AgentsPage — Add APIs: Back from the setup queue to the tray', () =>
 			expect(
 				within(sidebar).getByText(`Jentic-Credential-Id: ${credentialId}`),
 			).toBeVisible();
+			await user.click(
+				within(sidebar).getByRole('button', {
+					name: 'Copy the Jentic-Credential-Id header',
+				}),
+			);
+			expect(await navigator.clipboard.readText()).toBe(
+				`Jentic-Credential-Id: ${credentialId}`,
+			);
 		});
 
 		it('the mock binds a second credential for one API but 409s the same one twice', async () => {

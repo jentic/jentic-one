@@ -425,6 +425,7 @@ export function ApiAccessSidebar({
 										<CodeSnippet
 											label="Header that picks this credential"
 											code={credentialIdHeader(shown.credentialId)}
+											copyAriaLabel="Copy the Jentic-Credential-Id header"
 										/>
 									</>
 								)}
