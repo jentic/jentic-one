@@ -123,7 +123,10 @@ class Credential(AuditableMixin, ControlBase):
         uselist=False,
         lazy="selectin",
     )
+    # ``raise``, not ``selectin``: eager-loading would pull the registration,
+    # its flow details and sealed client secret into every credential read.
+    # Callers that need it load it explicitly (by id, through the repository).
     oauth_app_registration: Mapped[OAuthAppRegistration | None] = relationship(
         back_populates="credentials",
-        lazy="selectin",
+        lazy="raise",
     )

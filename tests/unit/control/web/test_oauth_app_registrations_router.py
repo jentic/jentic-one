@@ -230,6 +230,39 @@ def test_create_and_update_reject_blank_or_spaced_scopes(scopes: list[str]) -> N
     svc.update.assert_not_called()
 
 
+def test_create_reports_one_error_for_the_chosen_flow() -> None:
+    """The body is discriminated on ``flow_kind``, so a missing device field
+    yields one error for that flow — not one per union member.
+    """
+    svc = AsyncMock(spec=OAuthAppRegistrationService)
+    app = _build_app(svc=svc)
+    body = _device_body()
+    del body["token_endpoint"]
+    with TestClient(app) as client:
+        resp = client.post("/oauth-app-registrations", json=body)
+    assert resp.status_code == 422
+    errors = resp.json()["detail"]
+    assert [e["loc"] for e in errors] == [["body", "device_authorization", "token_endpoint"]]
+    svc.create_device_authorization.assert_not_called()
+
+
+def test_create_and_rotate_reject_oversized_client_secret() -> None:
+    svc = AsyncMock(spec=OAuthAppRegistrationService)
+    app = _build_app(svc=svc)
+    oversized = "s" * 4097
+    with TestClient(app) as client:
+        created = client.post(
+            "/oauth-app-registrations", json={**_auth_code_body(), "client_secret": oversized}
+        )
+        rotated = client.post(
+            "/oauth-app-registrations/oar_x:rotate-secret", json={"client_secret": oversized}
+        )
+    assert created.status_code == 422
+    assert rotated.status_code == 422
+    svc.create_authorization_code.assert_not_called()
+    svc.rotate_client_secret.assert_not_called()
+
+
 @pytest.mark.parametrize(
     ("body", "method"),
     [

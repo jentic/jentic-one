@@ -122,6 +122,17 @@ class OAuthAppRegistrationRepository:
         return await session.get(OAuthAppRegistration, registration_id)
 
     @staticmethod
+    async def get_names_by_ids(session: AsyncSession, ids: list[str]) -> dict[str, str]:
+        """Batch-resolve registration IDs to their admin-facing names (missing ids omitted)."""
+        if not ids:
+            return {}
+        stmt = select(OAuthAppRegistration.id, OAuthAppRegistration.name).where(
+            OAuthAppRegistration.id.in_(ids)
+        )
+        result = await session.execute(stmt)
+        return {row.id: row.name for row in result}
+
+    @staticmethod
     async def list_all(
         session: AsyncSession,
         *,

@@ -4611,6 +4611,10 @@ func (t CreateOauthAppRegistrationJSONBody) AsAuthorizationCodeRegistrationCreat
 // FromAuthorizationCodeRegistrationCreateRequest overwrites any union data inside the CreateOauthAppRegistrationJSONBody as the provided AuthorizationCodeRegistrationCreateRequest
 func (t *CreateOauthAppRegistrationJSONBody) FromAuthorizationCodeRegistrationCreateRequest(v AuthorizationCodeRegistrationCreateRequest) error {
 	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"flow_kind":"authorization_code"}`))
 	t.union = b
 	return err
 }
@@ -4618,6 +4622,10 @@ func (t *CreateOauthAppRegistrationJSONBody) FromAuthorizationCodeRegistrationCr
 // MergeAuthorizationCodeRegistrationCreateRequest performs a merge with any union data inside the CreateOauthAppRegistrationJSONBody, using the provided AuthorizationCodeRegistrationCreateRequest
 func (t *CreateOauthAppRegistrationJSONBody) MergeAuthorizationCodeRegistrationCreateRequest(v AuthorizationCodeRegistrationCreateRequest) error {
 	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"flow_kind":"authorization_code"}`))
 	if err != nil {
 		return err
 	}
@@ -4637,6 +4645,10 @@ func (t CreateOauthAppRegistrationJSONBody) AsDeviceAuthorizationRegistrationCre
 // FromDeviceAuthorizationRegistrationCreateRequest overwrites any union data inside the CreateOauthAppRegistrationJSONBody as the provided DeviceAuthorizationRegistrationCreateRequest
 func (t *CreateOauthAppRegistrationJSONBody) FromDeviceAuthorizationRegistrationCreateRequest(v DeviceAuthorizationRegistrationCreateRequest) error {
 	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"flow_kind":"device_authorization"}`))
 	t.union = b
 	return err
 }
@@ -4647,10 +4659,37 @@ func (t *CreateOauthAppRegistrationJSONBody) MergeDeviceAuthorizationRegistratio
 	if err != nil {
 		return err
 	}
+	b, err = runtime.JSONMerge(b, []byte(`{"flow_kind":"device_authorization"}`))
+	if err != nil {
+		return err
+	}
 
 	merged, err := runtime.JSONMerge(t.union, b)
 	t.union = merged
 	return err
+}
+
+func (t CreateOauthAppRegistrationJSONBody) Discriminator() (string, error) {
+	var discriminator struct {
+		Discriminator string `json:"flow_kind"`
+	}
+	err := json.Unmarshal(t.union, &discriminator)
+	return discriminator.Discriminator, err
+}
+
+func (t CreateOauthAppRegistrationJSONBody) ValueByDiscriminator() (interface{}, error) {
+	discriminator, err := t.Discriminator()
+	if err != nil {
+		return nil, err
+	}
+	switch discriminator {
+	case "authorization_code":
+		return t.AsAuthorizationCodeRegistrationCreateRequest()
+	case "device_authorization":
+		return t.AsDeviceAuthorizationRegistrationCreateRequest()
+	default:
+		return nil, errors.New("unknown discriminator value: " + discriminator)
+	}
 }
 
 func (t CreateOauthAppRegistrationJSONBody) MarshalJSON() ([]byte, error) {
@@ -30666,6 +30705,8 @@ type GetConnectSessionHTTPResp struct {
 	ApplicationproblemJSON401 *ProblemDetail
 	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
 	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *ProblemDetail
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *ProblemDetail
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -30692,6 +30733,11 @@ func (r GetConnectSessionHTTPResp) GetApplicationproblemJSON401() *ProblemDetail
 // GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
 func (r GetConnectSessionHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
 	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r GetConnectSessionHTTPResp) GetApplicationproblemJSON409() *ProblemDetail {
+	return r.ApplicationproblemJSON409
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
@@ -30908,6 +30954,10 @@ type ConfirmConnectSessionHTTPResp struct {
 	ApplicationproblemJSON401 *ProblemDetail
 	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
 	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *ProblemDetail
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *ProblemDetail
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -30934,6 +30984,16 @@ func (r ConfirmConnectSessionHTTPResp) GetApplicationproblemJSON401() *ProblemDe
 // GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
 func (r ConfirmConnectSessionHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
 	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r ConfirmConnectSessionHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r ConfirmConnectSessionHTTPResp) GetApplicationproblemJSON409() *ProblemDetail {
+	return r.ApplicationproblemJSON409
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
@@ -47773,6 +47833,13 @@ func ParseGetConnectSessionHTTPResp(rsp *http.Response) (*GetConnectSessionHTTPR
 		}
 		response.ApplicationproblemJSON403 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest ProblemDetail
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -47972,6 +48039,20 @@ func ParseConfirmConnectSessionHTTPResp(rsp *http.Response) (*ConfirmConnectSess
 			return nil, err
 		}
 		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest ProblemDetail

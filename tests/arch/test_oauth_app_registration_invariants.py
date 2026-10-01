@@ -8,10 +8,14 @@ direct write elsewhere would bypass it.
 
 from __future__ import annotations
 
-import re
+import ast
 from pathlib import Path
 
+import pytest
+
 from tests.arch.conftest import SRC_ROOT, python_files_in
+
+_COLUMN = "oauth_app_registration_id"
 
 # Sanctioned modules for writing credentials.oauth_app_registration_id.
 _REGISTRATION_WRITER_ALLOWLIST: frozenset[Path] = frozenset(
@@ -29,17 +33,51 @@ _REGISTRATION_WRITER_ALLOWLIST: frozenset[Path] = frozenset(
     }
 )
 
-# Column-attribute assignment on a `credential` (or similarly-named) row:
-# `<row>.oauth_app_registration_id = ...`. The leading `.` is what keeps the
-# ORM column declaration and plain keyword arguments out of the match; filter
-# reads (`Credential.oauth_app_registration_id == ...`) are excluded by the
-# negative lookahead — the invariant is about writes, not reads.
-_REGISTRATION_WRITE_PATTERN = re.compile(r"\.oauth_app_registration_id\s*=(?!=)")
-# The SQLAlchemy ORM constructor form `Credential(oauth_app_registration_id=...)`,
-# which the attribute pattern above cannot see.
-_REGISTRATION_CONSTRUCTOR_PATTERN = re.compile(
-    r"\bCredential\([^)]*\boauth_app_registration_id\s*=(?!=)"
-)
+# Calls whose keyword / dict-literal arguments write columns: the ORM
+# constructor ``Credential(...)``, Core ``insert(...).values(...)`` /
+# ``update(...).values(...)``, and ``Query.update({...})``.
+_WRITING_CALLS = frozenset({"Credential", "values", "update"})
+
+
+def _call_name(func: ast.expr) -> str | None:
+    if isinstance(func, ast.Name):
+        return func.id
+    if isinstance(func, ast.Attribute):
+        return func.attr
+    return None
+
+
+def _writes_column(node: ast.AST) -> bool:
+    """Whether ``node`` assigns the column (reads and filters never match)."""
+    if isinstance(node, ast.Assign | ast.AugAssign | ast.AnnAssign):
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        # Attribute targets only: the ORM declaration ``oauth_app_registration_id:
+        # Mapped[...] = mapped_column(...)`` assigns a bare name.
+        return any(isinstance(t, ast.Attribute) and t.attr == _COLUMN for t in targets)
+    if not isinstance(node, ast.Call):
+        return False
+    name = _call_name(node.func)
+    if name == "setattr":
+        return (
+            len(node.args) >= 2
+            and isinstance(node.args[1], ast.Constant)
+            and node.args[1].value == _COLUMN
+        )
+    if name not in _WRITING_CALLS:
+        return False
+    if any(kw.arg == _COLUMN for kw in node.keywords):
+        return True
+    return any(
+        isinstance(arg, ast.Dict)
+        and any(isinstance(k, ast.Constant) and k.value == _COLUMN for k in arg.keys)
+        for arg in node.args
+    )
+
+
+def _offending_lines(source: str) -> list[int]:
+    return [
+        getattr(node, "lineno", 0) for node in ast.walk(ast.parse(source)) if _writes_column(node)
+    ]
 
 
 def test_oauth_app_registration_id_writers_confined_to_flow_handlers() -> None:
@@ -56,20 +94,47 @@ def test_oauth_app_registration_id_writers_confined_to_flow_handlers() -> None:
         # runtime query sites.
         if "migrations" in py_file.parts:
             continue
-        # The ORM model declaration itself uses ``oauth_app_registration_id =``.
-        if py_file.name == "credentials.py" and "core/schema" in str(py_file):
-            continue
         try:
-            text = py_file.read_text(encoding="utf-8")
+            source = py_file.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue
-        if _REGISTRATION_WRITE_PATTERN.search(text) or _REGISTRATION_CONSTRUCTOR_PATTERN.search(
-            text
-        ):
-            offenders.append(str(py_file.relative_to(SRC_ROOT)))
+        offenders.extend(
+            f"{py_file.relative_to(SRC_ROOT)}:{line}" for line in _offending_lines(source)
+        )
 
     assert not offenders, (
         "credentials.oauth_app_registration_id is assigned outside the "
         "sanctioned writer seams. Route the write through the credential "
         "service or flow handler. Offenders:\n" + "\n".join(f"  - {o}" for o in offenders)
     )
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "row.oauth_app_registration_id = rid",
+        "row.oauth_app_registration_id: str | None = rid",
+        "Credential(name=f(x), oauth_app_registration_id=rid)",
+        "models.Credential(oauth_app_registration_id=rid)",
+        "insert(Credential).values(name=g(h(x)), oauth_app_registration_id=rid)",
+        "update(Credential).where(Credential.id == cid).values(oauth_app_registration_id=rid)",
+        "update(Credential).values({'oauth_app_registration_id': rid})",
+        "q.update({'oauth_app_registration_id': rid})",
+        "setattr(row, 'oauth_app_registration_id', rid)",
+    ],
+)
+def test_detector_flags_every_write_form(source: str) -> None:
+    assert _offending_lines(source)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "oauth_app_registration_id: Mapped[str | None] = mapped_column(String)",
+        "select(Credential).where(Credential.oauth_app_registration_id == rid)",
+        "rid = row.oauth_app_registration_id",
+        "await svc.create_session(vendor_key=v, oauth_app_registration_id=rid)",
+    ],
+)
+def test_detector_ignores_reads_and_declarations(source: str) -> None:
+    assert not _offending_lines(source)

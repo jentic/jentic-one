@@ -16,6 +16,10 @@ from jentic_one.shared.web.sensitive import SENSITIVE
 # a registration can never project into a vendor config that fails to load.
 _CATALOG_API_ID_PATTERN = r"^[^/].*/.*[^/]$"
 
+# Generous for any vendor's client secret, but bounded so a request can't
+# make us seal and store an arbitrarily large blob.
+_CLIENT_SECRET_MAX_LENGTH = 4096
+
 # RFC 6749 §3.3 scope-token: non-empty, no whitespace.
 ScopeToken = Annotated[str, Field(min_length=1, max_length=255, pattern=r"^\S+$")]
 
@@ -116,7 +120,10 @@ class AuthorizationCodeRegistrationCreateRequest(BaseModel):
     ]
     flow_kind: Literal[OAuthAppRegistrationFlowKind.AUTHORIZATION_CODE]
     client_id: Annotated[str, Field(min_length=1, max_length=255)]
-    client_secret: Annotated[str, Field(min_length=1, json_schema_extra=SENSITIVE)]
+    client_secret: Annotated[
+        str,
+        Field(min_length=1, max_length=_CLIENT_SECRET_MAX_LENGTH, json_schema_extra=SENSITIVE),
+    ]
     authorize_url: Annotated[str, Field(min_length=1, max_length=2048)]
     token_url: Annotated[str, Field(min_length=1, max_length=2048)]
     default_scopes: list[ScopeToken] | None = None
@@ -172,9 +179,13 @@ class DeviceAuthorizationRegistrationCreateRequest(BaseModel):
     default_scopes: list[ScopeToken] | None = None
 
 
-OAuthAppRegistrationCreateRequest = (
-    AuthorizationCodeRegistrationCreateRequest | DeviceAuthorizationRegistrationCreateRequest
-)
+# Discriminated on ``flow_kind``: the spec gets a ``oneOf`` with a
+# discriminator, and a bad body fails with one error for its own flow instead
+# of one per union member.
+OAuthAppRegistrationCreateRequest = Annotated[
+    AuthorizationCodeRegistrationCreateRequest | DeviceAuthorizationRegistrationCreateRequest,
+    Field(discriminator="flow_kind"),
+]
 
 
 class OAuthAppRegistrationUpdateRequest(BaseModel):
@@ -197,4 +208,7 @@ class OAuthAppRegistrationRotateSecretRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    client_secret: Annotated[str, Field(min_length=1, json_schema_extra=SENSITIVE)]
+    client_secret: Annotated[
+        str,
+        Field(min_length=1, max_length=_CLIENT_SECRET_MAX_LENGTH, json_schema_extra=SENSITIVE),
+    ]

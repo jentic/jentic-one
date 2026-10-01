@@ -979,6 +979,7 @@ components:
           title: Client Id
           type: string
         client_secret:
+          maxLength: 4096
           minLength: 1
           title: Client Secret
           type: string
@@ -3391,6 +3392,7 @@ components:
       description: Rotate the client secret on an auth-code registration.
       properties:
         client_secret:
+          maxLength: 4096
           minLength: 1
           title: Client Secret
           type: string
@@ -16461,7 +16463,12 @@ paths:
         content:
           application/json:
             schema:
-              anyOf:
+              discriminator:
+                mapping:
+                  authorization_code: '#/components/schemas/AuthorizationCodeRegistrationCreateRequest'
+                  device_authorization: '#/components/schemas/DeviceAuthorizationRegistrationCreateRequest'
+                propertyName: flow_kind
+              oneOf:
               - $ref: '#/components/schemas/AuthorizationCodeRegistrationCreateRequest'
               - $ref: '#/components/schemas/DeviceAuthorizationRegistrationCreateRequest'
               title: Body
