@@ -7,6 +7,7 @@ import {
 } from '@/modules/discover/components/WorkspaceDockPanel';
 import type { WorkspaceDigest, WorkspaceDigestRow } from '@/modules/discover/api';
 import { makeDigestRow } from '@/modules/discover/__tests__/digestFixtures';
+import { makeMockCredential } from '@/shared/credentials/mocks/handlers';
 
 /**
  * The docked panel is the whole workspace view now: the FULL "Your APIs"
@@ -84,6 +85,14 @@ describe('WorkspaceDockPanel — full, filterable list', () => {
 		);
 	});
 
+	it('shows the one-line "No credential" hint on a row that needs one', () => {
+		renderPanel(digestWith(manyRows()));
+		const flagged = screen
+			.getAllByTestId('workspace-panel-api')
+			.filter((r) => within(r).queryByTestId('workspace-panel-api-no-credential'));
+		expect(flagged.map((r) => r.textContent)).toEqual([expect.stringContaining('Api03')]);
+	});
+
 	it('filters by text (name / description) and mirrors it into ?q=', async () => {
 		const user = userEvent.setup();
 		renderPanel(digestWith(manyRows()));
@@ -136,6 +145,86 @@ describe('WorkspaceDockPanel — full, filterable list', () => {
 		// No stream in this harness ⇒ no recent block at all (never an empty one).
 		renderPanel(digestWith(manyRows()));
 		expect(screen.queryByTestId('workspace-panel-recent')).not.toBeInTheDocument();
+	});
+});
+
+describe('WorkspaceDockPanel — row meta (ops · credentials · agents)', () => {
+	function single(extra: Partial<WorkspaceDigestRow>) {
+		renderPanel(digestWith([makeDigestRow('Solo', extra)]));
+		return screen.getByTestId('workspace-panel-api');
+	}
+
+	it('shows the credential count with an accessible name when some cover the API', () => {
+		const creds = [
+			makeMockCredential({ credential_id: 'c1' }),
+			makeMockCredential({ credential_id: 'c2' }),
+		];
+		const row = single({ needsAuth: true, credentials: creds, credentialCount: 2 });
+		const figure = within(row).getByTestId('workspace-panel-api-credentials');
+		expect(figure).toHaveTextContent('2');
+		expect(within(figure).getByText('2 credentials')).toHaveClass('sr-only');
+		expect(
+			within(row).queryByTestId('workspace-panel-api-no-credential'),
+		).not.toBeInTheDocument();
+	});
+
+	it('says "1 credential" in the singular', () => {
+		const row = single({ credentials: [makeMockCredential()], credentialCount: 1 });
+		expect(within(row).getByText('1 credential')).toBeInTheDocument();
+	});
+
+	it('shows "No credential" when one is required and none covers it', () => {
+		const row = single({ needsAuth: true, credentials: [], credentialCount: 0 });
+		expect(within(row).getByTestId('workspace-panel-api-no-credential')).toHaveTextContent(
+			'No credential',
+		);
+		expect(
+			within(row).queryByTestId('workspace-panel-api-credentials'),
+		).not.toBeInTheDocument();
+	});
+
+	it('shows nothing about credentials when none are required and none exist', () => {
+		const row = single({ needsAuth: false, credentials: [], credentialCount: 0 });
+		expect(
+			within(row).queryByTestId('workspace-panel-api-credentials'),
+		).not.toBeInTheDocument();
+		expect(
+			within(row).queryByTestId('workspace-panel-api-no-credential'),
+		).not.toBeInTheDocument();
+	});
+
+	it('never shows a "0" (or "No credential") while credentials are still loading', () => {
+		const row = single({ needsAuth: true, credentials: null, credentialCount: null });
+		expect(
+			within(row).queryByTestId('workspace-panel-api-credentials'),
+		).not.toBeInTheDocument();
+		expect(
+			within(row).queryByTestId('workspace-panel-api-no-credential'),
+		).not.toBeInTheDocument();
+	});
+
+	it('shows the operation count with an accessible name, in agents · ops · creds order', async () => {
+		const row = single({
+			operationCount: 21,
+			credentials: [makeMockCredential()],
+			credentialCount: 1,
+		});
+		const ops = within(row).getByTestId('workspace-panel-api-ops');
+		expect(ops).toHaveTextContent('21');
+		expect(within(ops).getByText('21 operations')).toHaveClass('sr-only');
+		const creds = within(row).getByTestId('workspace-panel-api-credentials');
+		// Bound agents arrive from the (mocked) per-credential read.
+		const agents = await within(row).findByTestId('workspace-panel-api-agents');
+		const follows = (a: Node, b: Node) =>
+			(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+		// Credentials last, so a missing / amber one leaves the rest aligned.
+		expect(follows(agents, ops)).toBe(true);
+		expect(follows(ops, creds)).toBe(true);
+	});
+
+	it('shows a draft API’s reported operation count too', () => {
+		const row = single({ currentRevisionId: null, operationCount: 1 });
+		expect(within(row).getByText('1 operation')).toBeInTheDocument();
 	});
 });
 

@@ -41,6 +41,7 @@ import {
 	RefreshCw,
 	Upload,
 	X,
+	Zap,
 } from 'lucide-react';
 import {
 	ApiStateBadges,
@@ -59,7 +60,11 @@ import {
 	StreamEventRow,
 	VendorIcon,
 } from '@/shared/ui';
-import { callsInWeek, useAgentFigures } from '@/shared/credentials/api/apiHealth';
+import {
+	callsInWeek,
+	isCredentialMissing,
+	useAgentFigures,
+} from '@/shared/credentials/api/apiHealth';
 import { ROUTE_PATHS } from '@/shared/app/routes';
 import { useAgentStreamOptional, vendorIconPropsFor } from '@/shared/lib';
 import { cn } from '@/shared/lib/utils';
@@ -193,6 +198,34 @@ function AttentionItem({
 	);
 }
 
+function plural(n: number, noun: string): string {
+	return `${n.toLocaleString()} ${noun}${n === 1 ? '' : 's'}`;
+}
+
+/** One muted "icon + number" figure on a row's meta line, with a spoken name. */
+function MetaCount({
+	icon: Icon,
+	value,
+	label,
+	title,
+	testId,
+}: {
+	icon: typeof Bot;
+	value: string;
+	/** Accessible name, e.g. "2 credentials". */
+	label: string;
+	title: string;
+	testId: string;
+}) {
+	return (
+		<span className="inline-flex items-center gap-0.5" title={title} data-testid={testId}>
+			<Icon className="h-3 w-3 shrink-0" aria-hidden="true" />
+			<span aria-hidden="true">{value}</span>
+			<span className="sr-only">{label}</span>
+		</span>
+	);
+}
+
 function ApiRow({
 	row,
 	agentCount,
@@ -209,6 +242,9 @@ function ApiRow({
 	usageExhaustive: boolean;
 }) {
 	const calls = callsInWeek(row.usage, usageExhaustive);
+	// The one-line health hint ApiCard carried: only with every credential
+	// page loaded (`credentialCount` non-null) may "No credential" be claimed.
+	const credentialMissing = isCredentialMissing(row.needsAuth, row.credentialCount);
 	return (
 		<li>
 			<AppLink
@@ -231,7 +267,10 @@ function ApiRow({
 							{row.title}
 						</span>
 					</div>
-					<div className="text-muted-foreground mt-0.5 flex items-center gap-1.5 text-[11px]">
+					{/* state · 🤖 agents · ⚡ ops · 🔑 credentials (last, so a missing
+					    or amber one leaves the rest aligned) — one line at
+					    docked widths; wraps to a tidy second line, never overflows. */}
+					<div className="text-muted-foreground mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px]">
 						<ApiStateBadges
 							currentRevisionId={row.currentRevisionId}
 							updateAvailable={row.updateAvailable}
@@ -239,31 +278,57 @@ function ApiRow({
 							className="px-1.5 py-0 text-[10px]"
 						/>
 						{agentCount != null && (
-							<span
-								className="inline-flex items-center gap-0.5"
+							<MetaCount
+								icon={Bot}
+								value={`${agentCount}${agentsAtLeast ? '+' : ''}`}
+								label={`${agentCount}${agentsAtLeast ? '+' : ''} ${
+									agentCount === 1 && !agentsAtLeast ? 'agent' : 'agents'
+								} with access`}
 								title={
 									agentsAtLeast
 										? 'At least this many agents are bound to a credential for this API'
 										: 'Agents bound to a credential for this API'
 								}
-								data-testid="workspace-panel-api-agents"
-							>
-								<Bot className="h-3 w-3" aria-hidden="true" />
-								<span aria-hidden="true">
-									{agentCount}
-									{agentsAtLeast ? '+' : ''}
-								</span>
-								<span className="sr-only">
-									{`${agentCount}${agentsAtLeast ? '+' : ''} ${
-										agentCount === 1 && !agentsAtLeast ? 'agent' : 'agents'
-									} with access`}
-								</span>
-							</span>
+								testId="workspace-panel-api-agents"
+							/>
 						)}
+						{row.operationCount != null && (
+							<MetaCount
+								icon={Zap}
+								value={row.operationCount.toLocaleString()}
+								label={plural(row.operationCount, 'operation')}
+								title="Operations in this API's spec"
+								testId="workspace-panel-api-ops"
+							/>
+						)}
+						{credentialMissing ? (
+							<span
+								className="text-accent-orange inline-flex min-w-0 items-center gap-0.5 truncate"
+								title="No credential — agents can’t call it"
+								data-testid="workspace-panel-api-no-credential"
+							>
+								<KeyRound className="h-3 w-3 shrink-0" aria-hidden="true" />
+								No credential
+							</span>
+						) : row.credentialCount != null && row.credentialCount > 0 ? (
+							<MetaCount
+								icon={KeyRound}
+								value={row.credentialCount.toLocaleString()}
+								label={plural(row.credentialCount, 'credential')}
+								title="Active credentials covering this API"
+								testId="workspace-panel-api-credentials"
+							/>
+						) : null}
 					</div>
 				</div>
 				{showUsage && calls != null && (
-					<ApiUsageSummary size="compact" calls={calls} trend={row.usage?.trend} />
+					<ApiUsageSummary
+						size="compact"
+						calls={calls}
+						failed={row.usage?.failed}
+						trend={row.usage?.trend}
+						failuresTestId="workspace-panel-api-failed"
+					/>
 				)}
 			</AppLink>
 		</li>
