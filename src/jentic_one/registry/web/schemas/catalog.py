@@ -66,6 +66,9 @@ class CatalogEntryResponse(BaseModel):
                 {
                     "api_id": "stripe.com",
                     "vendor": "stripe.com",
+                    "title": "Stripe API",
+                    "description": "The Stripe REST API.",
+                    "logo_url": "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/stripe.com/logo.png",
                     "path": "apis/openapi/stripe.com",
                     "spec_url": "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/stripe.com/main/2024-01-01/openapi.json",
                     "registered": False,
@@ -84,6 +87,17 @@ class CatalogEntryResponse(BaseModel):
     )
     vendor: str | None = Field(
         description="Registrable-domain vendor derived from `api_id` (e.g. `stripe.com`)."
+    )
+    title: str | None = Field(
+        default=None,
+        description="Human display title from the manifest (e.g. `Stripe API`), when known.",
+    )
+    description: str | None = Field(
+        default=None,
+        description="Short plain-text description from the manifest, when known.",
+    )
+    logo_url: str | None = Field(
+        default=None, description="Absolute `https` URL of the API's logo image, when known."
     )
     path: str | None = Field(description="Manifest path of the entry within the public-APIs repo.")
     spec_url: str | None = Field(

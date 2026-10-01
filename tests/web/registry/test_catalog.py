@@ -40,7 +40,12 @@ _MANIFEST_URL = f"{_MANIFEST_BASE}/openapi/apis.json"
 def _manifest() -> dict[str, Any]:
     return {
         "include": [
-            {"url": f"{_MANIFEST_BASE}/openapi/stripe.com/main/2024-01-01/apis.json"},
+            {
+                "name": "stripe.com:main@2024-01-01 - Stripe API",
+                "url": f"{_MANIFEST_BASE}/openapi/stripe.com/main/2024-01-01/apis.json",
+                "description": "The Stripe REST API.",
+                "image": "https://example.com/stripe.png",
+            },
             {"url": f"{_MANIFEST_BASE}/openapi/slack.com/main/1.0/apis.json"},
         ]
     }
@@ -422,6 +427,18 @@ def test_get_entry(admin_client: TestClient) -> None:
     body = r.json()
     assert body["api_id"] == "stripe.com"
     assert "import" in body["_links"]
+
+
+def test_entry_carries_manifest_display_metadata(admin_client: TestClient) -> None:
+    admin_client.post("/catalog:refresh")
+    by_id = {e["api_id"]: e for e in admin_client.get("/catalog").json()["data"]}
+    stripe = by_id["stripe.com"]
+    assert stripe["title"] == "Stripe API"
+    assert stripe["description"] == "The Stripe REST API."
+    assert stripe["logo_url"] == "https://example.com/stripe.png"
+    slack = by_id["slack.com"]
+    assert (slack["title"], slack["description"], slack["logo_url"]) == (None, None, None)
+    assert admin_client.get("/catalog/stripe.com").json()["title"] == "Stripe API"
 
 
 def test_get_unknown_entry_404(admin_client: TestClient) -> None:

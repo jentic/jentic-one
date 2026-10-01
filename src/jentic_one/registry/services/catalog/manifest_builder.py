@@ -28,6 +28,10 @@ _VERSION_SUBDIR_RE = re.compile(r"^(main|master|latest|heads|v\d|[0-9])", re.IGN
 _CATALOG_PATH = "apis/openapi"
 _GITHUB_REPO = "jentic/jentic-public-apis"
 
+#: Ceiling on a manifest-supplied description kept in the snapshot blob. The
+#: catalog list is a browse surface; the full prose lives in the spec preview.
+DESCRIPTION_MAX_CHARS = 500
+
 _HTTP_METHODS = ("get", "post", "put", "patch", "delete", "head", "options")
 
 #: Hard ceiling on operations returned by a single preview response.
@@ -43,6 +47,12 @@ class ManifestEntry:
     spec_url: str | None
     github_url: str
     vendor: str | None = None
+    #: Human display title from the manifest ``include[].name``.
+    title: str | None = None
+    #: Short description from the manifest ``include[].description``, when present.
+    description: str | None = None
+    #: Absolute ``https`` logo URL from the manifest ``include[].image``, when present.
+    logo_url: str | None = None
 
     def to_dict(self) -> dict[str, str | None]:
         """Serialise to the plain dict shape persisted in the snapshot blob."""
@@ -52,6 +62,9 @@ class ManifestEntry:
             "spec_url": self.spec_url,
             "github_url": self.github_url,
             "vendor": self.vendor,
+            "title": self.title,
+            "description": self.description,
+            "logo_url": self.logo_url,
         }
 
     @classmethod
@@ -70,6 +83,9 @@ class ManifestEntry:
             spec_url=data.get("spec_url"),
             github_url=data.get("github_url") or "",
             vendor=vendor_from_api_id(api_id),
+            title=data.get("title"),
+            description=data.get("description"),
+            logo_url=data.get("logo_url"),
         )
 
 
@@ -78,12 +94,48 @@ def github_tree_url(path: str) -> str:
     return f"https://github.com/{_GITHUB_REPO}/tree/main/{path}"
 
 
+def title_from_include_name(name: Any) -> str | None:
+    """Extract the display title from an ``include[].name``.
+
+    Names have the shape ``{domain}:{sub}@{version} - {title}``; the title is
+    everything after the first `` - `` (titles may themselves contain one).
+    """
+    if not isinstance(name, str):
+        return None
+    _, sep, title = name.partition(" - ")
+    title = title.strip()
+    return title if sep and title else None
+
+
+def _clean_description(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    text = " ".join(value.split())
+    if not text:
+        return None
+    if len(text) > DESCRIPTION_MAX_CHARS:
+        text = text[: DESCRIPTION_MAX_CHARS - 1].rstrip() + "\u2026"
+    return text
+
+
+def _clean_logo_url(value: Any) -> str | None:
+    # Only absolute https URLs: the UI renders this as an <img src>, so plain
+    # http (mixed content) and non-network schemes (data:, javascript:) are dropped.
+    if not isinstance(value, str):
+        return None
+    url = value.strip()
+    return url if url.lower().startswith("https://") and len(url) > len("https://") else None
+
+
 def parse_apis_json(data: dict[str, Any]) -> list[ManifestEntry]:
     """Build catalog entries from the curated ``apis.json`` index document.
 
     Mirrors mini's ``_build_manifest_from_apis_json``: one entry per unique
     ``api_id`` with umbrella-vendor expansion (a non-version ``sub`` segment is
     folded into the id as ``domain/sub``). Pure: takes the already-fetched dict.
+
+    Display metadata (``title``, ``description``, ``logo_url``) is taken from the
+    first ``include`` entry seen for each ``api_id``; every field is optional.
     """
     includes = data.get("include") or []
     entries: list[ManifestEntry] = []
@@ -111,6 +163,9 @@ def parse_apis_json(data: dict[str, Any]) -> list[ManifestEntry]:
                 spec_url=spec_url,
                 github_url=github_tree_url(path),
                 vendor=vendor_from_api_id(api_id),
+                title=title_from_include_name(entry.get("name")),
+                description=_clean_description(entry.get("description")),
+                logo_url=_clean_logo_url(entry.get("image")),
             )
         )
     entries.sort(key=lambda e: e.api_id)
